@@ -13,6 +13,11 @@ module.exports = {
           'postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge',
         HCP_DATABASE_URL:
           'postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp',
+        // v1.6 phase 5: triple extraction routes call claude-pool too.
+        // Read from the host env so the key survives cold pm2 starts
+        // when launched via `CLAUDE_POOL_API_KEY=... pm2 start ecosystem.config.cjs`.
+        CLAUDE_POOL_URL: process.env.CLAUDE_POOL_URL || 'http://127.0.0.1:8092',
+        CLAUDE_POOL_API_KEY: process.env.CLAUDE_POOL_API_KEY || '',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-control-error.log',
