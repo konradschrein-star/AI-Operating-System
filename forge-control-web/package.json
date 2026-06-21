@@ -1,0 +1,27 @@
+{
+  "name": "forge-control-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal AI OS Console — mobile-first PWA against forge-control (port 7701)",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev -p 7701",
+    "build": "next build",
+    "start": "next start -p 7701",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.1.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "@tanstack/react-query": "5.62.7",
+    "next-auth": "5.0.0-beta.25"
+  },
+  "devDependencies": {
+    "typescript": "5.7.2",
+    "@types/react": "19.0.2",
+    "@types/react-dom": "19.0.2",
+    "@types/node": "22.10.2"
+  }
+}
