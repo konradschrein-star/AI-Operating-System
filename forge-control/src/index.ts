@@ -18,6 +18,7 @@ import chat from "./routes/chat.ts";
 import skills from "./routes/skills.ts";
 import pipeline from "./routes/pipeline.ts";
 import autonomy from "./routes/autonomy.ts";
+import media from "./routes/media.ts";
 
 const app = new Hono();
 
@@ -105,6 +106,7 @@ app.route("/api/chat", chat);
 app.route("/api/skills", skills);
 app.route("/api/pipeline", pipeline);
 app.route("/api/autonomy", autonomy);
+app.route("/api/media", media);
 
 const port = Number(process.env.PORT ?? 7700);
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });

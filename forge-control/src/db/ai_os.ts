@@ -175,6 +175,277 @@ export async function listOpenInbox(limit = 50): Promise<InboxItem[]> {
   })) as InboxItem[];
 }
 
+/* ============================================================================
+ * Inbox preview — JOIN against content_jobs so the desktop/mobile inbox card
+ * can show video player + scene thumbs + stats instead of just title + buttons.
+ * ========================================================================== */
+
+export interface InboxPreview {
+  inbox_item_id: string;
+  job: {
+    id: string;
+    title: string;
+    format: string;
+    status: string;
+    channel_id: string;
+    channel_name: string | null;
+    render_engine: string | null;
+    production_version: string;
+    enqueued_for_qc_at: string | null;
+    render_started_at: string | null;
+    render_completed_at: string | null;
+    total_render_time_seconds: number | null;
+  } | null;
+  video: {
+    url: string;
+    poster_url: string | null;
+    duration_sec: number;
+    size_mb: number;
+    aspect_ratio: string | null;
+    width: number | null;
+    height: number | null;
+    fps: number | null;
+    bitrate_kbps: number | null;
+  } | null;
+  scenes: Array<{
+    index: number;
+    thumb_url: string | null;
+    duration_sec: number;
+    visual_type: string | null;
+    sentence: string | null;
+  }>;
+  stats: Array<{ label: string; value: string }>;
+  format_extras: Record<string, unknown>;
+}
+
+interface JoinedRow {
+  inbox_id: string;
+  related_job_id: string | null;
+  job_id: string | null;
+  job_title: string | null;
+  job_format: string | null;
+  job_status: string | null;
+  channel_id: string | null;
+  channel_name: string | null;
+  render_engine: string | null;
+  production_version: string | null;
+  render_started_at: string | null;
+  render_completed_at: string | null;
+  total_render_time_seconds: number | null;
+  status_updated_at: string | null;
+  final_video_size_bytes: string | null;
+  final_video_duration_seconds: number | null;
+  duration_frames: number | null;
+  aspect_ratio: string | null;
+  assembly_manifest: { scenes?: SceneRaw[] } | null;
+  metadata: Record<string, unknown> | null;
+}
+
+interface SceneRaw {
+  scene_index?: number;
+  duration_frames?: number | null;
+  visual_type?: string | null;
+  paragraph?: string | null;
+  sentence_images?: Array<{ r2_key?: string | null; sentence_text?: string }>;
+}
+
+function parseAspectDims(
+  aspect: string | null,
+): [number | null, number | null] {
+  if (!aspect) return [null, null];
+  const m = /^(\d+):(\d+)$/.exec(aspect);
+  if (!m) return [null, null];
+  const w = parseInt(m[1], 10);
+  const h = parseInt(m[2], 10);
+  if (w === 16 && h === 9) return [1920, 1080];
+  if (w === 9 && h === 16) return [1080, 1920];
+  if (w === 1 && h === 1) return [1080, 1080];
+  if (w === 4 && h === 3) return [1440, 1080];
+  return [null, null];
+}
+
+function formatDuration(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+function basenameSafe(p: string | null | undefined): string | null {
+  if (!p) return null;
+  const parts = String(p).split(/[\\/]/);
+  const last = parts[parts.length - 1] || "";
+  return /^[\w.\-]+\.(?:png|jpg|jpeg|webp|gif)$/i.test(last) ? last : null;
+}
+
+export async function getInboxItemPreview(
+  itemId: string,
+): Promise<InboxPreview | null> {
+  const r = await pool.query<JoinedRow>(
+    `SELECT i.id::text AS inbox_id,
+            i.related_job_id::text AS related_job_id,
+            j.id::text AS job_id,
+            j.title AS job_title,
+            j.format::text AS job_format,
+            j.status::text AS job_status,
+            j.channel_id::text AS channel_id,
+            c.name AS channel_name,
+            j.render_engine::text AS render_engine,
+            j.production_version::text AS production_version,
+            j.render_started_at::text AS render_started_at,
+            j.render_completed_at::text AS render_completed_at,
+            j.total_render_time_seconds,
+            j.status_updated_at::text AS status_updated_at,
+            j.final_video_size_bytes::text AS final_video_size_bytes,
+            j.final_video_duration_seconds,
+            j.duration_frames,
+            j.aspect_ratio,
+            j.assembly_manifest,
+            j.metadata
+       FROM inbox_items i
+       LEFT JOIN content_jobs j ON j.id = i.related_job_id
+       LEFT JOIN channels c ON c.id = j.channel_id
+      WHERE i.id = $1
+      LIMIT 1`,
+    [itemId],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+
+  // No related job → return preview shell only.
+  if (!row.job_id) {
+    return {
+      inbox_item_id: row.inbox_id,
+      job: null,
+      video: null,
+      scenes: [],
+      stats: [],
+      format_extras: {},
+    };
+  }
+
+  const sizeMb = row.final_video_size_bytes
+    ? Math.round(Number(row.final_video_size_bytes) / 1024 / 1024)
+    : 0;
+  const durationSec = row.final_video_duration_seconds ?? 0;
+  const [w, h] = parseAspectDims(row.aspect_ratio);
+  const fps =
+    row.duration_frames && durationSec
+      ? Math.round(row.duration_frames / durationSec)
+      : null;
+  const bitrate =
+    durationSec > 0 && sizeMb > 0
+      ? Math.round((sizeMb * 8192) / durationSec)
+      : null;
+
+  let video: InboxPreview["video"] = null;
+  if (sizeMb > 0 || durationSec > 0) {
+    video = {
+      url: `/api/media/job/${row.job_id}/final.mp4`,
+      poster_url: null,
+      duration_sec: durationSec,
+      size_mb: sizeMb,
+      aspect_ratio: row.aspect_ratio,
+      width: w,
+      height: h,
+      fps,
+      bitrate_kbps: bitrate,
+    };
+  }
+
+  // Build scenes — sample every Nth if there are >60.
+  const am = row.assembly_manifest ?? {};
+  const sceneList: SceneRaw[] = Array.isArray(am.scenes) ? am.scenes : [];
+  const step = sceneList.length > 60 ? Math.ceil(sceneList.length / 60) : 1;
+  const scenes: InboxPreview["scenes"] = [];
+  for (let i = 0; i < sceneList.length; i += step) {
+    if (scenes.length >= 60) break;
+    const s = sceneList[i];
+    const firstImg = Array.isArray(s.sentence_images)
+      ? s.sentence_images[0]
+      : null;
+    const thumbBasename = basenameSafe(firstImg?.r2_key);
+    scenes.push({
+      index: typeof s.scene_index === "number" ? s.scene_index : i,
+      thumb_url: thumbBasename
+        ? `/api/media/job/${row.job_id}/asset/${thumbBasename}`
+        : null,
+      duration_sec:
+        s.duration_frames && fps
+          ? Math.round(s.duration_frames / fps)
+          : s.duration_frames
+            ? Math.round(s.duration_frames / 30)
+            : 0,
+      visual_type: s.visual_type ?? null,
+      sentence: s.paragraph ?? firstImg?.sentence_text ?? null,
+    });
+  }
+  if (video && scenes[0]?.thumb_url) {
+    video.poster_url = scenes[0].thumb_url;
+  }
+
+  const stats: Array<{ label: string; value: string }> = [];
+  if (durationSec > 0)
+    stats.push({ label: "duration", value: formatDuration(durationSec) });
+  if (sizeMb > 0) stats.push({ label: "size", value: `${sizeMb} MB` });
+  if (sceneList.length > 0)
+    stats.push({ label: "scenes", value: String(sceneList.length) });
+  if (w && h)
+    stats.push({
+      label: "resolution",
+      value: `${w}×${h}${fps ? " · " + fps + "fps" : ""}`,
+    });
+  if (bitrate) stats.push({ label: "bitrate", value: `${bitrate} kbps` });
+  if (row.aspect_ratio)
+    stats.push({ label: "aspect ratio", value: row.aspect_ratio });
+  if (row.production_version)
+    stats.push({
+      label: "pipeline",
+      value:
+        row.production_version +
+        (row.render_engine ? ` / ${row.render_engine}` : ""),
+    });
+  if (row.job_format) stats.push({ label: "format", value: row.job_format });
+  if (row.channel_name)
+    stats.push({ label: "channel", value: row.channel_name });
+  if (row.total_render_time_seconds)
+    stats.push({
+      label: "render time",
+      value: formatDuration(row.total_render_time_seconds),
+    });
+
+  return {
+    inbox_item_id: row.inbox_id,
+    job: {
+      id: row.job_id,
+      title: row.job_title ?? "",
+      format: row.job_format ?? "",
+      status: row.job_status ?? "",
+      channel_id: row.channel_id ?? "",
+      channel_name: row.channel_name,
+      render_engine: row.render_engine,
+      production_version: row.production_version ?? "V2",
+      enqueued_for_qc_at: row.status_updated_at,
+      render_started_at: row.render_started_at,
+      render_completed_at: row.render_completed_at,
+      total_render_time_seconds: row.total_render_time_seconds,
+    },
+    video,
+    scenes,
+    stats,
+    format_extras: (row.metadata as Record<string, unknown>) ?? {},
+  };
+}
+
+/** Look up `{channel_id}` for a content job — used by routes/media.ts to
+ *  build the on-disk path without trusting the URL. */
+export async function getJobChannelId(jobId: string): Promise<string | null> {
+  const r = await pool.query<{ channel_id: string }>(
+    `SELECT channel_id::text FROM content_jobs WHERE id = $1 LIMIT 1`,
+    [jobId],
+  );
+  return r.rows[0]?.channel_id ?? null;
+}
+
 export async function resolveInbox(
   id: string,
   resolvedBy = "user",

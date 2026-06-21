@@ -78,20 +78,75 @@ export const fetchInbox = async (): Promise<InboxItemUi[]> => {
   return r.items;
 };
 
+/* v1.6 phase 3: rich preview joined against content_jobs. */
+export interface InboxPreviewJob {
+  id: string;
+  title: string;
+  format: string;
+  status: string;
+  channel_id: string;
+  channel_name: string | null;
+  render_engine: string | null;
+  production_version: string;
+  enqueued_for_qc_at: string | null;
+  render_started_at: string | null;
+  render_completed_at: string | null;
+  total_render_time_seconds: number | null;
+}
+
+export interface InboxPreviewVideo {
+  url: string;
+  poster_url: string | null;
+  duration_sec: number;
+  size_mb: number;
+  aspect_ratio: string | null;
+  width: number | null;
+  height: number | null;
+  fps: number | null;
+  bitrate_kbps: number | null;
+}
+
+export interface InboxPreviewScene {
+  index: number;
+  thumb_url: string | null;
+  duration_sec: number;
+  visual_type: string | null;
+  sentence: string | null;
+}
+
+export interface InboxPreview {
+  inbox_item_id: string;
+  job: InboxPreviewJob | null;
+  video: InboxPreviewVideo | null;
+  scenes: InboxPreviewScene[];
+  stats: Array<{ label: string; value: string }>;
+  format_extras: Record<string, unknown>;
+}
+
+export const fetchInboxPreview = async (id: string): Promise<InboxPreview> => {
+  const r = await getJson<{ preview: InboxPreview }>(`/inbox/${id}/preview`);
+  return r.preview;
+};
+
 export const resolveInboxItem = async (
   id: string,
   payload: {
     resolved_by?: string;
     action_id?: string;
+    reason?: string;
     resolution?: Record<string, unknown>;
   } = {},
 ) => {
-  const { action_id, resolution, ...rest } = payload;
-  const merged =
-    action_id !== undefined
-      ? { ...rest, resolution: { ...(resolution ?? {}), action_id } }
-      : { ...rest, resolution };
-  return postJson<{ item: InboxApiItem }>(`/inbox/${id}/resolve`, merged);
+  const { action_id, reason, resolution, ...rest } = payload;
+  // Reason rides in resolution.reason — resolveInbox() forwards it to HCP
+  // as APPROVAL_DECISION.body.reason / ANSWER.body.reason.
+  const mergedResolution: Record<string, unknown> = { ...(resolution ?? {}) };
+  if (action_id !== undefined) mergedResolution.action_id = action_id;
+  if (reason !== undefined && reason !== "") mergedResolution.reason = reason;
+  return postJson<{ item: InboxApiItem }>(`/inbox/${id}/resolve`, {
+    ...rest,
+    resolution: mergedResolution,
+  });
 };
 
 /* ----------------------------------------------------------------------------
