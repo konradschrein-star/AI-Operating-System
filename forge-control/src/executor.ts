@@ -20,6 +20,12 @@
 
 import pg from "pg";
 import { evaluateGuardrails } from "./db/autonomy.ts";
+import {
+  compressThread,
+  emptyCompressorState,
+  readCompressorState,
+  type CompressorOptions,
+} from "./lib/thread-compressor.ts";
 
 const { Pool } = pg;
 
@@ -39,6 +45,32 @@ const HEARTBEAT_STUCK_THRESHOLD_MS = Number(
 );
 const MAX_THREAD_CHARS = 24_000;
 
+// v1.6 Tier-2 phase 1: trajectory compression.
+// Ported from NousResearch/hermes-agent context_compressor.py — see
+// forge-control/src/lib/thread-compressor.ts. Compresses runs.thread when it
+// exceeds THREAD_COMPRESS_THRESHOLD_CHARS by replacing the middle window with
+// an LLM-generated structured summary. Compression is in-memory only — the
+// stored runs.thread keeps every original turn for UI rendering; only the
+// prompt the model sees is shortened.
+const THREAD_COMPRESS_THRESHOLD_CHARS = Number(
+  process.env.THREAD_COMPRESS_THRESHOLD_CHARS ?? "80000",
+);
+const THREAD_COMPRESS_PROTECT_LAST_N = Number(
+  process.env.THREAD_COMPRESS_PROTECT_LAST_N ?? "10",
+);
+const THREAD_COMPRESS_PROTECT_FIRST_N = Number(
+  process.env.THREAD_COMPRESS_PROTECT_FIRST_N ?? "2",
+);
+const THREAD_COMPRESS_TAIL_RATIO = Number(
+  process.env.THREAD_COMPRESS_TAIL_RATIO ?? "0.30",
+);
+const THREAD_COMPRESS_SUMMARY_BUDGET_CHARS = Number(
+  process.env.THREAD_COMPRESS_SUMMARY_BUDGET_CHARS ?? "8000",
+);
+const THREAD_COMPRESS_TIMEOUT_MS = Number(
+  process.env.THREAD_COMPRESS_TIMEOUT_MS ?? "60000",
+);
+
 if (!POOL_KEY) {
   console.warn(
     "[executor] CLAUDE_POOL_API_KEY is empty — runs will fail with 401",
@@ -53,7 +85,7 @@ const pool = new Pool({
 });
 pool.on("error", (e) => console.error("[executor pool]", e.message));
 
-interface ThreadEntry {
+export interface ThreadEntry {
   role: "user" | "assistant" | "system" | "tool" | "agent";
   content: string;
   ts: string;
@@ -114,6 +146,75 @@ function buildPromptFromThread(thread: ThreadEntry[]): string {
   }
   lines.push("[ASSISTANT]\n");
   return lines.join("\n");
+}
+
+/**
+ * Compress the thread in-memory before building the prompt sent to claude-pool.
+ * Returns a single string ready for the `/v1/run` payload. The stored
+ * `runs.thread` is NOT mutated — the live chat UI keeps every original turn.
+ */
+async function buildCompressedPrompt(
+  runId: string,
+  thread: ThreadEntry[],
+  metadata: Record<string, unknown> | null | undefined,
+): Promise<string> {
+  const totalChars = thread.reduce(
+    (n, e) => n + String(e.content ?? "").length + 16,
+    0,
+  );
+  if (totalChars <= THREAD_COMPRESS_THRESHOLD_CHARS) {
+    return buildPromptFromThread(thread);
+  }
+
+  // Iterative compression carries the previous summary across calls so
+  // re-runs of the same long thread don't re-summarize identical content.
+  const priorState = readCompressorState(metadata);
+
+  const opt: CompressorOptions = {
+    thresholdChars: THREAD_COMPRESS_THRESHOLD_CHARS,
+    protectLastN: THREAD_COMPRESS_PROTECT_LAST_N,
+    protectFirstN: THREAD_COMPRESS_PROTECT_FIRST_N,
+    tailRatio: THREAD_COMPRESS_TAIL_RATIO,
+    summaryBudgetChars: THREAD_COMPRESS_SUMMARY_BUDGET_CHARS,
+    summarize: async (payload) => {
+      try {
+        return await callClaudePool(payload, THREAD_COMPRESS_TIMEOUT_MS);
+      } catch (e) {
+        console.warn(
+          `[compressor] summarize call failed for run ${runId}:`,
+          e instanceof Error ? e.message : e,
+        );
+        return null;
+      }
+    },
+  };
+
+  const t0 = Date.now();
+  const result = await compressThread(thread, priorState, opt);
+  const ms = Date.now() - t0;
+
+  if (result.compressed) {
+    console.log(
+      `[compressor] run ${runId}: collapsed ${result.collapsedCount} turns, ` +
+        `saved ${result.charsSaved}ch (${totalChars} → ${totalChars - result.charsSaved}) in ${ms}ms`,
+    );
+    // Persist updated state so the next pass uses iterative-update mode.
+    await pool
+      .query(
+        `UPDATE runs
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('compression_state', $2::jsonb),
+                updated_at = now()
+          WHERE id = $1`,
+        [runId, JSON.stringify(result.state)],
+      )
+      .catch((e) =>
+        console.warn(
+          `[compressor] failed to persist compression_state: ${e.message}`,
+        ),
+      );
+  }
+
+  return buildPromptFromThread(result.thread);
 }
 
 function getTimeoutFor(
@@ -255,7 +356,11 @@ async function processRun(run: ClaimedRun): Promise<void> {
     return;
   }
 
-  const prompt = buildPromptFromThread(run.thread ?? []);
+  const prompt = await buildCompressedPrompt(
+    run.id,
+    run.thread ?? [],
+    run.metadata,
+  );
   const timeoutMs = getTimeoutFor(run.metadata);
   const hb = setInterval(() => heartbeat(run.id), 5_000);
   try {
