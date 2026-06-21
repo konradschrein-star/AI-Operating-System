@@ -455,7 +455,9 @@ export async function upsertTriples(
 
 /** Run extraction for one note: re-embed-source-of-truth is chunks already
  *  indexed in knowledge_embeddings. Walks those chunks, calls the LLM per
- *  chunk, inserts triples. */
+ *  chunk, inserts triples. Matches by suffix so both vault notes (`%.md`)
+ *  and other source layouts (`hermes://msg-…`) work — caller passes the
+ *  filename or message id, we LIKE-match. */
 export async function extractTriplesForNote(slug: string): Promise<{
   chunks: number;
   triples: number;
@@ -467,12 +469,44 @@ export async function extractTriplesForNote(slug: string): Promise<{
   }>(
     `SELECT source_path, chunk_index, content
        FROM knowledge_embeddings
-       WHERE source_path LIKE $1
+       WHERE source_path LIKE $1 OR source_path LIKE $2
        ORDER BY chunk_index ASC`,
-    [`%${slug}.md`],
+    [`%${slug}.md`, `%${slug}`],
   );
   let triplesTotal = 0;
   for (const row of r.rows) {
+    const tps = await extractTriplesFromChunk(row.content);
+    const n = await upsertTriples(slug, row.source_path, row.chunk_index, tps);
+    triplesTotal += n;
+  }
+  return { chunks: r.rows.length, triples: triplesTotal };
+}
+
+/** Bulk extractor — walks the next N un-extracted chunks (any source) and
+ *  persists triples. Idempotent; safe to re-run. Used as a one-shot warm-up
+ *  endpoint before turning on the cron job. */
+export async function extractTriplesNextBatch(limit = 20): Promise<{
+  chunks: number;
+  triples: number;
+}> {
+  const r = await cf.query<{
+    source_path: string;
+    chunk_index: number;
+    content: string;
+  }>(
+    `SELECT e.source_path, e.chunk_index, e.content
+       FROM knowledge_embeddings e
+       LEFT JOIN knowledge_triples t
+         ON t.source_path = e.source_path
+        AND t.chunk_index = e.chunk_index
+      WHERE t.id IS NULL
+      ORDER BY e.source_path, e.chunk_index
+      LIMIT $1`,
+    [limit],
+  );
+  let triplesTotal = 0;
+  for (const row of r.rows) {
+    const slug = slugify(row.source_path);
     const tps = await extractTriplesFromChunk(row.content);
     const n = await upsertTriples(slug, row.source_path, row.chunk_index, tps);
     triplesTotal += n;

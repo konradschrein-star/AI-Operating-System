@@ -5,6 +5,7 @@ import {
   searchMemory,
   searchMemoryWithGraph,
   extractTriplesForNote,
+  extractTriplesNextBatch,
   pingMemory,
 } from "../db/memory.ts";
 
@@ -40,9 +41,21 @@ r.get("/search", async (c) => {
   return c.json({ q, count: hits.length, hits });
 });
 
+/* POST /triples/extract-batch?limit=N — walks the next N un-extracted
+ * chunks (across all source_path schemes) and persists triples. Bulk
+ * vault-wide cron deferred to v1.7. Mounted BEFORE the slug-scoped
+ * version so Hono routes correctly. */
+r.post("/triples/extract-batch", async (c) => {
+  const limit = Math.min(
+    50,
+    Math.max(1, Number(c.req.query("limit") ?? "20")),
+  );
+  const r2 = await extractTriplesNextBatch(limit);
+  return c.json({ batch_limit: limit, ...r2 });
+});
+
 /* POST /:slug/triples/extract — run the LLM extractor across every chunk of
- * one note and persist triples. Used as a one-shot warm-up; a bulk job
- * across the whole vault is a separate cron task (deferred). */
+ * one note and persist triples. */
 r.post("/:slug/triples/extract", async (c) => {
   const slug = c.req.param("slug");
   if (!slug || slug.length > 200)
