@@ -26,16 +26,24 @@ r.get("/search", async (c) => {
   const q = c.req.query("q")?.trim() ?? "";
   if (!q) return c.json({ q, hits: [], message: "query required" }, 400);
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit") ?? "12")));
-  // v1.6 phase 5: ?expand=1 enables the 1-hop GraphRAG expansion on top of
-  // vector-only halfvec cosine. Hit shape carries `via` so the UI can show
-  // which lane (vector / graph) each result came from.
+  // v1.6 phase 5: ?expand=1 enables GraphRAG expansion on top of vector-only
+  // halfvec cosine. Hit shape carries `via` ('vector' | 'graph') so the UI
+  // can lane each result.
+  // v1.7 phase 1: ?hops=N controls multi-hop expansion (1-3). Defaults to
+  // server-side MEMORY_GRAPH_MAX_HOPS. Each hit also carries `hop` (0 for
+  // vector, 1..N for graph) so the UI can render the hop depth.
   const expand = c.req.query("expand") === "1";
   if (expand) {
+    const hopsRaw = c.req.query("hops");
+    const maxHops = hopsRaw !== undefined
+      ? Math.max(0, Math.min(3, Number(hopsRaw)))
+      : undefined;
     const hits = await searchMemoryWithGraph(q, {
       vectorLimit: limit,
       graphLimit: Math.max(4, Math.floor(limit / 2)),
+      maxHops,
     });
-    return c.json({ q, count: hits.length, hits, expand: true });
+    return c.json({ q, count: hits.length, hits, expand: true, max_hops: maxHops });
   }
   const hits = await searchMemory(q, limit);
   return c.json({ q, count: hits.length, hits });
