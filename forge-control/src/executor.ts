@@ -543,12 +543,30 @@ async function alreadyMirrored(ids: string[]): Promise<Set<string>> {
   return new Set(r.rows.map((row) => row.external_id.replace(/^hcp:/, "")));
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Pull a content_jobs UUID out of a Hermes message body. cf-worker sends
+ *  `cfJobId`; other senders may send `jobId` / `job_id`. Returns null if no
+ *  valid UUID is found — the inbox row just won't have a job preview. */
+function pickRelatedJobId(b: EscalateBody): string | null {
+  const raw =
+    (b.cfJobId as string | undefined) ??
+    (b.jobId as string | undefined) ??
+    (b.job_id as string | undefined) ??
+    null;
+  if (!raw) return null;
+  const s = String(raw).trim();
+  return UUID_RE.test(s) ? s : null;
+}
+
 async function createInboxFromMessage(m: AgentMessageRow): Promise<void> {
   const body = m.body ?? {};
   await pool.query(
     `INSERT INTO inbox_items
-       (type, status, title, ask, tried, actions, source, external_id)
-     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8)
+       (type, status, title, ask, tried, actions, source, external_id,
+        related_job_id)
+     VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9::uuid)
      ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING`,
     [
       inboxTypeFor(m.intent),
@@ -559,6 +577,7 @@ async function createInboxFromMessage(m: AgentMessageRow): Promise<void> {
       JSON.stringify(actionsFor(m.intent)),
       `hermes:${m.sender_id}`,
       `hcp:${m.id}`,
+      pickRelatedJobId(body),
     ],
   );
 }
