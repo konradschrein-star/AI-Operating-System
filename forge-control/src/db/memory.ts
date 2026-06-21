@@ -333,10 +333,27 @@ const POOL_URL =
   process.env.CLAUDE_POOL_URL ?? "http://127.0.0.1:8092";
 const POOL_KEY = process.env.CLAUDE_POOL_API_KEY ?? "";
 
+/* v1.7 phase 2 — closed ontology on knowledge_triples. The extractor asks
+ * the LLM to pick one of these per triple; anything off-list collapses to
+ * 'other'. Matches migration 0025's CHECK constraint. */
+export const TRIPLE_CATEGORIES = [
+  "decision",
+  "rule",
+  "error",
+  "provider",
+  "job",
+  "format",
+  "person",
+  "other",
+] as const;
+export type TripleCategory = (typeof TRIPLE_CATEGORIES)[number];
+const TRIPLE_CATEGORY_SET = new Set<string>(TRIPLE_CATEGORIES);
+
 export interface Triple {
   subject: string;
   predicate: string;
   object: string;
+  category: TripleCategory;
   confidence?: number;
 }
 
@@ -349,11 +366,26 @@ function normaliseKey(s: string): string {
 }
 
 const EXTRACTION_PROMPT = `You are a knowledge extractor. Read the passage
-below and emit a JSON array of {subject, predicate, object, confidence}
-triples capturing factual relations. Keep predicates short and consistent
-(e.g. "deprecates", "replaces", "uses", "owns", "rules-against", "located-in",
-"belongs-to", "decided-on"). Use Title Case for proper nouns. Confidence is
-0.0-1.0. Reply with ONLY the JSON array, no preface, no markdown fences.
+below and emit a JSON array of {subject, predicate, object, category, confidence}
+triples capturing factual relations.
+
+Predicates: short and consistent (e.g. "deprecates", "replaces", "uses",
+"owns", "rules-against", "located-in", "belongs-to", "decided-on"). Use
+Title Case for proper nouns.
+
+Category — pick EXACTLY one of the following for each triple based on what
+the triple is about. If you can't tell, use "other".
+  - decision  : a discrete choice the user made ("X over Y because Z")
+  - rule      : a standing preference / policy ("never do X", "always Y")
+  - error     : a known failure mode, bug, circuit-breaker tripped
+  - provider  : an external service / API / pool (AI33, ElevenLabs, …)
+  - job       : a content_jobs row or pipeline state
+  - format    : a content format (CASUALLY_EXPLAINED, SPACE_VIDEO, …)
+  - person    : Konrad, collaborators, fleet workers, anyone
+  - other     : everything else
+
+Confidence is 0.0-1.0. Reply with ONLY the JSON array, no preface, no
+markdown fences.
 
 Passage:
 ---
@@ -402,7 +434,13 @@ export async function extractTriplesFromChunk(text: string): Promise<Triple[]> {
         r.confidence <= 1
           ? r.confidence
           : undefined;
-      out.push({ subject, predicate, object, confidence });
+      // v1.7 phase 2: closed-set category, default 'other' on miss.
+      const rawCat =
+        typeof r.category === "string" ? r.category.trim().toLowerCase() : "";
+      const category: TripleCategory = TRIPLE_CATEGORY_SET.has(rawCat)
+        ? (rawCat as TripleCategory)
+        : "other";
+      out.push({ subject, predicate, object, category, confidence });
     }
     return out;
   } catch (e) {
@@ -436,19 +474,21 @@ export async function upsertTriples(
       sourcePath,
       chunkIndex,
       t.confidence ?? null,
+      t.category, // v1.7 phase 2
     );
     const placeholders = Array.from(
-      { length: 9 },
+      { length: 10 },
       (_, i) => `$${start + i}`,
     ).join(",");
     values.push(`(${placeholders})`);
   }
   const sql = `INSERT INTO knowledge_triples
                  (subject, predicate, object, subject_key, object_key,
-                  note_slug, source_path, chunk_index, confidence)
+                  note_slug, source_path, chunk_index, confidence, category)
                VALUES ${values.join(",")}
                ON CONFLICT (subject_key, predicate, object_key,
-                            source_path, chunk_index) DO NOTHING`;
+                            source_path, chunk_index) DO UPDATE
+                 SET category = EXCLUDED.category`;
   const r = await cf.query(sql, params);
   return r.rowCount ?? 0;
 }
@@ -516,11 +556,14 @@ export async function extractTriplesNextBatch(limit = 20): Promise<{
 
 /** Look up chunks that share at least one entity (subject_key OR object_key)
  *  with the seed set. Returns SearchHit shape so callers can merge with
- *  vector results. */
+ *  vector results. v1.7 phase 2: optional `category` filter narrows the
+ *  walk to triples of that category only — lets the UI ask "expand only
+ *  via decisions" or "only via errors". */
 export async function neighborhoodHits(
   entities: Iterable<string>,
   excludePaths: string[],
   limit = 8,
+  category?: TripleCategory,
 ): Promise<SearchHit[]> {
   const keys = [...new Set(entities)].filter(Boolean);
   if (keys.length === 0) return [];
@@ -534,7 +577,8 @@ export async function neighborhoodHits(
     `WITH neighbours AS (
        SELECT source_path, chunk_index, COUNT(*)::int AS hit_count
          FROM knowledge_triples
-        WHERE subject_key = ANY($1::text[]) OR object_key = ANY($1::text[])
+        WHERE (subject_key = ANY($1::text[]) OR object_key = ANY($1::text[]))
+          AND ($4::text IS NULL OR category = $4)
         GROUP BY source_path, chunk_index
      )
      SELECT e.source_path, e.chunk_index, e.title, e.content,
@@ -546,7 +590,7 @@ export async function neighborhoodHits(
       WHERE NOT (e.source_path = ANY($2::text[]))
       ORDER BY n.hit_count DESC
       LIMIT $3`,
-    [keys, excludePaths, limit],
+    [keys, excludePaths, limit, category ?? null],
   );
   return r.rows.map((row) => ({
     slug: slugify(row.source_path),
@@ -606,13 +650,16 @@ async function entitiesForChunks(
   return set;
 }
 
-/** Vector + N-hop GraphRAG expansion. */
+/** Vector + N-hop GraphRAG expansion. v1.7 phase 2: when `category` is set,
+ *  the graph walk only follows triples of that category — useful for
+ *  "show me decisions about TTS" vs "show me errors about TTS". */
 export async function searchMemoryWithGraph(
   query: string,
   opts: {
     vectorLimit?: number;
     graphLimit?: number;
     maxHops?: number;
+    category?: TripleCategory;
   } = {},
 ): Promise<SearchHitWithLane[]> {
   const vectorLimit = opts.vectorLimit ?? 8;
@@ -647,7 +694,12 @@ export async function searchMemoryWithGraph(
   for (let hop = 1; hop <= maxHops; hop++) {
     const entities = await entitiesForChunks(frontier);
     if (entities.size === 0) break;
-    const raw = await neighborhoodHits(entities, [...seenPaths], perHopBudget);
+    const raw = await neighborhoodHits(
+      entities,
+      [...seenPaths],
+      perHopBudget,
+      opts.category,
+    );
     const fresh: SearchHitWithLane[] = [];
     for (const h of raw) {
       const key = `${h.vault_path}#${h.chunk_index}`;
