@@ -40,6 +40,22 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function patchJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${ROOT}${path}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  return (await res.json()) as T;
+}
+
+async function deleteJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${ROOT}${path}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  return (await res.json()) as T;
+}
+
 /* ----------------------------------------------------------------------------
  * Today
  * -------------------------------------------------------------------------- */
@@ -542,3 +558,138 @@ export const emptyControl: ControlResponse = {
 
 // Re-export TabKey for convenience.
 export type { TabKey };
+
+/* ----------------------------------------------------------------------------
+ * Webhooks (v1.6 tier-2 phase 4)
+ * -------------------------------------------------------------------------- */
+export interface Webhook {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  secret_preview: string;
+  enabled: boolean;
+  prompt_template: string;
+  title_template: string | null;
+  worker_label: string | null;
+  total_calls: number;
+  last_called_at: string | null;
+  last_run_id: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchWebhooks = async (): Promise<Webhook[]> => {
+  const r = await getJson<{ count: number; webhooks: Webhook[] }>("/webhooks");
+  return r.webhooks;
+};
+
+export const createWebhook = async (input: {
+  slug: string;
+  name: string;
+  description?: string;
+  prompt_template: string;
+  title_template?: string;
+  worker_label?: string;
+}): Promise<Webhook> => {
+  const r = await postJson<{ webhook: Webhook }>("/webhooks", input);
+  return r.webhook;
+};
+
+export const updateWebhook = async (
+  id: string,
+  patch: Partial<{
+    name: string;
+    description: string | null;
+    prompt_template: string;
+    title_template: string | null;
+    worker_label: string | null;
+    enabled: boolean;
+  }>,
+): Promise<Webhook> => {
+  const r = await patchJson<{ webhook: Webhook }>(`/webhooks/${id}`, patch);
+  return r.webhook;
+};
+
+export const rotateWebhookSecret = async (
+  id: string,
+): Promise<string> => {
+  const r = await postJson<{ secret: string }>(`/webhooks/${id}/rotate-secret`);
+  return r.secret;
+};
+
+export const deleteWebhook = async (id: string): Promise<void> => {
+  await deleteJson(`/webhooks/${id}`);
+};
+
+/* ----------------------------------------------------------------------------
+ * Cron schedules (v1.6 tier-2 phase 4)
+ * -------------------------------------------------------------------------- */
+export interface CronSchedule {
+  id: string;
+  name: string;
+  description: string | null;
+  cron_expr: string;
+  enabled: boolean;
+  prompt_template: string;
+  title_template: string | null;
+  worker_label: string | null;
+  next_run_at: string;
+  last_run_at: string | null;
+  last_run_id: string | null;
+  last_error: string | null;
+  total_fires: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export const fetchSchedules = async (): Promise<CronSchedule[]> => {
+  const r = await getJson<{ count: number; schedules: CronSchedule[] }>(
+    "/cron",
+  );
+  return r.schedules;
+};
+
+export const previewCron = async (
+  cron_expr: string,
+  count = 5,
+): Promise<string[]> => {
+  const r = await postJson<{ fires: string[] }>("/cron/preview", {
+    cron_expr,
+    count,
+  });
+  return r.fires;
+};
+
+export const createSchedule = async (input: {
+  name: string;
+  description?: string;
+  cron_expr: string;
+  prompt_template: string;
+  title_template?: string;
+  worker_label?: string;
+}): Promise<CronSchedule> => {
+  const r = await postJson<{ schedule: CronSchedule }>("/cron", input);
+  return r.schedule;
+};
+
+export const updateSchedule = async (
+  id: string,
+  patch: Partial<{
+    name: string;
+    description: string | null;
+    cron_expr: string;
+    enabled: boolean;
+    prompt_template: string;
+    title_template: string | null;
+    worker_label: string | null;
+  }>,
+): Promise<CronSchedule> => {
+  const r = await patchJson<{ schedule: CronSchedule }>(`/cron/${id}`, patch);
+  return r.schedule;
+};
+
+export const deleteSchedule = async (id: string): Promise<void> => {
+  await deleteJson(`/cron/${id}`);
+};

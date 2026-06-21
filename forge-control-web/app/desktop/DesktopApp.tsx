@@ -34,6 +34,7 @@ import { ChatSurface } from "./ChatSurface";
 import { SkillsSurface } from "./SkillsSurface";
 import { PipelineSurface } from "./PipelineSurface";
 import { AutonomySurface } from "./AutonomySurface";
+import { AutomationSurface } from "./AutomationSurface";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -51,6 +52,7 @@ type Surface =
   | "live"
   | "control"
   | "autonomy"
+  | "automation"
   | "goals"
   | "journal"
   | "map"
@@ -77,6 +79,7 @@ const NAV: NavItem[] = [
   { key: "live", label: "LIVE", group: "ai" },
   { key: "control", label: "CONTROL", group: "ai" },
   { key: "autonomy", label: "AUTONOMY", group: "ai" },
+  { key: "automation", label: "AUTOMATION", group: "ai" },
   { key: "goals", label: "GOALS", group: "recall" },
   { key: "journal", label: "JOURNAL", group: "recall" },
   { key: "map", label: "MAP", group: "recall" },
@@ -404,12 +407,14 @@ export function DesktopApp() {
           {surface === "skills" && <SkillsSurface />}
           {surface === "pipeline" && <PipelineSurface />}
           {surface === "autonomy" && <AutonomySurface />}
+          {surface === "automation" && <AutomationSurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
             surface !== "chat" &&
             surface !== "skills" &&
             surface !== "pipeline" &&
-            surface !== "autonomy" && (
+            surface !== "autonomy" &&
+            surface !== "automation" && (
               <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
             )}
         </div>
