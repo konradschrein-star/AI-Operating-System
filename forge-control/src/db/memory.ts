@@ -317,6 +317,268 @@ export async function searchMemory(
   }));
 }
 
+/* ============================================================================
+ * v1.6 phase 5 — knowledge_triples + 1-hop GraphRAG expansion.
+ *
+ * Builds a small entity/relation index on top of knowledge_embeddings. An LLM
+ * pass (claude-pool) reads each chunk and emits `{subject, predicate, object}`
+ * triples; we persist them with provenance back to the source chunk.
+ *
+ * At search time, top vector hits seed an entity set; we then expand 1-hop
+ * across knowledge_triples to surface chunks that share an entity even if
+ * the vector cosine missed them. Postgres-only — no TrustGraph deploy.
+ * ========================================================================== */
+
+const POOL_URL =
+  process.env.CLAUDE_POOL_URL ?? "http://127.0.0.1:8092";
+const POOL_KEY = process.env.CLAUDE_POOL_API_KEY ?? "";
+
+export interface Triple {
+  subject: string;
+  predicate: string;
+  object: string;
+  confidence?: number;
+}
+
+function normaliseKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const EXTRACTION_PROMPT = `You are a knowledge extractor. Read the passage
+below and emit a JSON array of {subject, predicate, object, confidence}
+triples capturing factual relations. Keep predicates short and consistent
+(e.g. "deprecates", "replaces", "uses", "owns", "rules-against", "located-in",
+"belongs-to", "decided-on"). Use Title Case for proper nouns. Confidence is
+0.0-1.0. Reply with ONLY the JSON array, no preface, no markdown fences.
+
+Passage:
+---
+{TEXT}
+---`;
+
+async function callPoolForJson(prompt: string): Promise<unknown> {
+  const res = await fetch(`${POOL_URL}/v1/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-api-key": POOL_KEY },
+    body: JSON.stringify({ prompt, timeout_ms: 120_000 }),
+  });
+  const j = (await res.json().catch(() => ({}))) as {
+    text?: string;
+    error?: string;
+  };
+  if (!res.ok)
+    throw new Error(`pool ${res.status}: ${j.error ?? res.statusText}`);
+  if (typeof j.text !== "string") throw new Error("pool returned no text");
+  // Strip trailing/leading whitespace and any accidental ``` fences.
+  const body = j.text
+    .trim()
+    .replace(/^```(?:json)?\n?/i, "")
+    .replace(/\n?```$/, "");
+  return JSON.parse(body);
+}
+
+/** Extract triples for a single chunk via claude-pool. Best-effort: returns
+ *  an empty array if the pool errors or the response can't be parsed. */
+export async function extractTriplesFromChunk(text: string): Promise<Triple[]> {
+  try {
+    const raw = await callPoolForJson(EXTRACTION_PROMPT.replace("{TEXT}", text));
+    if (!Array.isArray(raw)) return [];
+    const out: Triple[] = [];
+    for (const t of raw) {
+      if (!t || typeof t !== "object") continue;
+      const r = t as Record<string, unknown>;
+      const subject = typeof r.subject === "string" ? r.subject.trim() : "";
+      const predicate =
+        typeof r.predicate === "string" ? r.predicate.trim() : "";
+      const object = typeof r.object === "string" ? r.object.trim() : "";
+      if (!subject || !predicate || !object) continue;
+      const confidence =
+        typeof r.confidence === "number" &&
+        r.confidence >= 0 &&
+        r.confidence <= 1
+          ? r.confidence
+          : undefined;
+      out.push({ subject, predicate, object, confidence });
+    }
+    return out;
+  } catch (e) {
+    console.error(
+      "[memory triples] extraction failed:",
+      e instanceof Error ? e.message : e,
+    );
+    return [];
+  }
+}
+
+/** Insert triples for one chunk. Idempotent thanks to the unique index. */
+export async function upsertTriples(
+  noteSlug: string,
+  sourcePath: string,
+  chunkIndex: number,
+  triples: Triple[],
+): Promise<number> {
+  if (triples.length === 0) return 0;
+  const values: string[] = [];
+  const params: unknown[] = [];
+  for (const t of triples) {
+    const start = params.length + 1;
+    params.push(
+      t.subject,
+      t.predicate,
+      t.object,
+      normaliseKey(t.subject),
+      normaliseKey(t.object),
+      noteSlug,
+      sourcePath,
+      chunkIndex,
+      t.confidence ?? null,
+    );
+    const placeholders = Array.from(
+      { length: 9 },
+      (_, i) => `$${start + i}`,
+    ).join(",");
+    values.push(`(${placeholders})`);
+  }
+  const sql = `INSERT INTO knowledge_triples
+                 (subject, predicate, object, subject_key, object_key,
+                  note_slug, source_path, chunk_index, confidence)
+               VALUES ${values.join(",")}
+               ON CONFLICT (subject_key, predicate, object_key,
+                            source_path, chunk_index) DO NOTHING`;
+  const r = await cf.query(sql, params);
+  return r.rowCount ?? 0;
+}
+
+/** Run extraction for one note: re-embed-source-of-truth is chunks already
+ *  indexed in knowledge_embeddings. Walks those chunks, calls the LLM per
+ *  chunk, inserts triples. */
+export async function extractTriplesForNote(slug: string): Promise<{
+  chunks: number;
+  triples: number;
+}> {
+  const r = await cf.query<{
+    source_path: string;
+    chunk_index: number;
+    content: string;
+  }>(
+    `SELECT source_path, chunk_index, content
+       FROM knowledge_embeddings
+       WHERE source_path LIKE $1
+       ORDER BY chunk_index ASC`,
+    [`%${slug}.md`],
+  );
+  let triplesTotal = 0;
+  for (const row of r.rows) {
+    const tps = await extractTriplesFromChunk(row.content);
+    const n = await upsertTriples(slug, row.source_path, row.chunk_index, tps);
+    triplesTotal += n;
+  }
+  return { chunks: r.rows.length, triples: triplesTotal };
+}
+
+/** Pull the entity set from a list of SearchHits' chunks. We re-fetch the
+ *  triples that fired against those (source_path, chunk_index) pairs to
+ *  seed the neighborhood walk. */
+async function entitiesForHits(
+  hits: SearchHit[],
+): Promise<Set<string>> {
+  if (hits.length === 0) return new Set();
+  // Build a pair list (path, chunk).
+  const paths = hits.map((h) => h.vault_path);
+  const chunks = hits.map((h) => h.chunk_index);
+  const r = await cf.query<{ subject_key: string; object_key: string }>(
+    `SELECT DISTINCT subject_key, object_key
+       FROM knowledge_triples
+       WHERE (source_path, chunk_index) = ANY(
+              SELECT * FROM UNNEST($1::text[], $2::int[])
+            )`,
+    [paths, chunks],
+  );
+  const set = new Set<string>();
+  for (const row of r.rows) {
+    set.add(row.subject_key);
+    set.add(row.object_key);
+  }
+  return set;
+}
+
+/** Look up chunks that share at least one entity (subject_key OR object_key)
+ *  with the seed set. Returns SearchHit shape so callers can merge with
+ *  vector results. */
+export async function neighborhoodHits(
+  entities: Iterable<string>,
+  excludePaths: string[],
+  limit = 8,
+): Promise<SearchHit[]> {
+  const keys = [...new Set(entities)].filter(Boolean);
+  if (keys.length === 0) return [];
+  const r = await cf.query<{
+    source_path: string;
+    chunk_index: number;
+    title: string;
+    content: string;
+    hit_count: string;
+  }>(
+    `WITH neighbours AS (
+       SELECT source_path, chunk_index, COUNT(*)::int AS hit_count
+         FROM knowledge_triples
+        WHERE subject_key = ANY($1::text[]) OR object_key = ANY($1::text[])
+        GROUP BY source_path, chunk_index
+     )
+     SELECT e.source_path, e.chunk_index, e.title, e.content,
+            n.hit_count::text AS hit_count
+       FROM neighbours n
+       JOIN knowledge_embeddings e
+         ON e.source_path = n.source_path
+        AND e.chunk_index = n.chunk_index
+      WHERE NOT (e.source_path = ANY($2::text[]))
+      ORDER BY n.hit_count DESC
+      LIMIT $3`,
+    [keys, excludePaths, limit],
+  );
+  return r.rows.map((row) => ({
+    slug: slugify(row.source_path),
+    vault_path: row.source_path,
+    title: row.title,
+    snippet: row.content.slice(0, 220),
+    score: 0.5 + Math.min(0.49, Number(row.hit_count) * 0.1),
+    chunk_index: row.chunk_index,
+  }));
+}
+
+/** Vector + 1-hop GraphRAG expansion. Backed by claude-pool + halfvec
+ *  + knowledge_triples. Returns SearchHit[] with `meta.via` set to either
+ *  'vector' or 'graph' so callers can show the path. */
+export async function searchMemoryWithGraph(
+  query: string,
+  opts: { vectorLimit?: number; graphLimit?: number } = {},
+): Promise<Array<SearchHit & { via: "vector" | "graph" }>> {
+  const vectorLimit = opts.vectorLimit ?? 8;
+  const graphLimit = opts.graphLimit ?? 6;
+
+  const vectorHits = await searchMemory(query, vectorLimit);
+  const entities = await entitiesForHits(vectorHits);
+  const seenPaths = vectorHits.map((h) => h.vault_path);
+  const graphHits = await neighborhoodHits(entities, seenPaths, graphLimit);
+
+  // Dedup graph hits against vector hits by (source_path, chunk_index).
+  const seenKey = new Set(
+    vectorHits.map((h) => `${h.vault_path}#${h.chunk_index}`),
+  );
+  const dedupedGraph = graphHits.filter(
+    (g) => !seenKey.has(`${g.vault_path}#${g.chunk_index}`),
+  );
+
+  return [
+    ...vectorHits.map((h) => ({ ...h, via: "vector" as const })),
+    ...dedupedGraph.map((h) => ({ ...h, via: "graph" as const })),
+  ];
+}
+
 /** Health-check the vault dir + the embedding sidecar. */
 export async function pingMemory(): Promise<{
   vault_ok: boolean;

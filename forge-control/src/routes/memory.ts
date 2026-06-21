@@ -3,6 +3,8 @@ import {
   listMemory,
   getMemory,
   searchMemory,
+  searchMemoryWithGraph,
+  extractTriplesForNote,
   pingMemory,
 } from "../db/memory.ts";
 
@@ -23,8 +25,30 @@ r.get("/search", async (c) => {
   const q = c.req.query("q")?.trim() ?? "";
   if (!q) return c.json({ q, hits: [], message: "query required" }, 400);
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit") ?? "12")));
+  // v1.6 phase 5: ?expand=1 enables the 1-hop GraphRAG expansion on top of
+  // vector-only halfvec cosine. Hit shape carries `via` so the UI can show
+  // which lane (vector / graph) each result came from.
+  const expand = c.req.query("expand") === "1";
+  if (expand) {
+    const hits = await searchMemoryWithGraph(q, {
+      vectorLimit: limit,
+      graphLimit: Math.max(4, Math.floor(limit / 2)),
+    });
+    return c.json({ q, count: hits.length, hits, expand: true });
+  }
   const hits = await searchMemory(q, limit);
   return c.json({ q, count: hits.length, hits });
+});
+
+/* POST /:slug/triples/extract — run the LLM extractor across every chunk of
+ * one note and persist triples. Used as a one-shot warm-up; a bulk job
+ * across the whole vault is a separate cron task (deferred). */
+r.post("/:slug/triples/extract", async (c) => {
+  const slug = c.req.param("slug");
+  if (!slug || slug.length > 200)
+    return c.json({ error: "invalid slug" }, 400);
+  const r2 = await extractTriplesForNote(slug);
+  return c.json({ slug, ...r2 });
 });
 
 // Slug may contain spaces (vault file names do). Hono decodes path params.
