@@ -87,3 +87,71 @@ Keep their copyright header in any verbatim file copy.
 **Cherry-pick.** Lift `slashExec.ts` + `SlashPopover.tsx` + `fuzzy.ts` (~15KB,
 ~3 h port), steal the curator lifecycle as a design pattern for Skills/Memory.
 Ignore the Python agent core entirely.
+
+---
+
+## Maximalist evaluation (2026-06-21)
+
+Re-audit triggered by Konrad: personal side project, no commercial/distribution
+constraint, so license + ops surface are no longer veto factors. Re-walked the
+repo with the "buffet" lens.
+
+**Deeper findings vs. first pass:**
+
+- `agent/conversation_loop.py` (4561 LOC) is the real engine: streaming + tool
+  dispatch + retry/failover + image-error backoff + compression + post-turn
+  memory/skill review. Cleanly extracted from `run_agent.py` via
+  `build_turn_context(agent, ...)`. **Could replace `forge-executor` if we run
+  a Python sidecar; but adapter surface to our Hono `runs` table is non-trivial.**
+- `agent/curator.py` (1916 LOC) + `memory_manager.py` (949 LOC) +
+  `conversation_compression.py` (958 LOC) + `context_compressor.py` (2475 LOC)
+  are a complete memory subsystem with provider plug-in slots. Maps onto our
+  Postgres+halfvec layer as a richer brain, not a replacement.
+- Multi-channel adapters are **massive**: telegram/discord adapters are ~7100
+  LOC each, slack ~4100. They speak a `BasePlatformAdapter` contract
+  (`gateway/platforms/base.py`) — too coupled to lift wholesale, but the
+  contract + Telegram adapter alone is enough for "DM your AI OS from your phone".
+- Dashboard pages all import `@nous-research/ui` (private kit) + `lucide-react`
+  + Tailwind utilities — every page lift needs V2 inline-style port. Their
+  `WebhooksPage`, `CronPage`, `ModelsPage`, `PluginsPage`, `ScheduleBuilder`
+  are the most reusable.
+- `trajectory_compressor.py` (1579 LOC) targets training data, but the
+  middle-turn compression algorithm is exactly what `runs.thread` needs at
+  long lengths. Port the algorithm, not the CLI.
+
+**VPS ground truth (just measured):** 62 GB RAM, 41 GB available, 372 GB free
+on `/opt`, 16 cores, load 1.34. Hermes-agent's Python stack (uv venv ~3 GB,
+runtime ~500 MB-1 GB) fits comfortably. Plenty of headroom.
+
+### Tier 1 — Minimal (~3 h, status quo)
+What we had: lift `web/src/lib/slashExec.ts` + `web/src/components/SlashPopover.tsx` + `web/src/lib/fuzzy.ts` (~15KB) → `apps/hermes-workspace/src/screens/chat/`. V2 inline-style port, swap `@nous-research/ui` `ListItem` for `GlassCard` row, wire to local command registry. **Gain:** slash autocomplete, fuzzy ranking, keyboard contract. **VPS impact:** zero. **Risk:** none.
+
+### Tier 2 — Mid (~25-35 h, recommended)
+Tier 1 plus:
+1. **Port `trajectory_compressor.py` middle-turn algorithm** → `apps/hermes-control-plane/src/lib/thread-compressor.ts` (TS rewrite, ~400 LOC). Compresses `runs.thread` when token budget exceeded. **6 h.**
+2. **Lift `WebhooksPage.tsx` + `CronPage.tsx` + `ScheduleBuilder.tsx`** → `apps/hermes-workspace/src/screens/{webhooks,cron}/`. Strip lucide-react + `@nous-research/ui`, port to V2 inline + Material Symbols. New Webhooks surface = inbound triggers from external services. CronPage replaces our `tasks` cron UI with their richer `ScheduleBuilder` (NL→cron). **12 h.**
+3. **Port `curator.py` lifecycle** to `apps/hermes-control-plane/src/services/skills-curator.ts` (~500 LOC TS). Drives `skills.last_used_at` → stale/archived transitions, LLM consolidation via claude-pool. **8 h.**
+4. **`agent/memory_manager.py` design** → augment our `memory/` tables with pre-turn prefetch + post-turn sync hooks called from `forge-executor`. Pattern-only lift. **4 h.**
+
+**Gain:** thread compression unblocks 1M-context Opus 4.7 runs; new webhooks surface (Stripe/GitHub/Telegram callbacks → AI OS task); richer cron UI; self-maintaining skills bank. **VPS impact:** zero new processes. **Risk:** V2 port mechanical but slow; curator LLM calls add claude-pool load (negligible at personal scale).
+
+### Tier 3 — Maximalist (~80-120 h)
+Tier 2 plus:
+1. **Run hermes-agent Python as `forge-executor-py` PM2 process** on VPS (~1 GB RAM, ~3 GB venv on disk). Adapter shim: Hono backend POSTs runs to FastAPI sidecar, sidecar streams turn events back over SSE → writes `runs.events`. Replace `forge-executor` TS loop with `conversation_loop.run_conversation()`. Gets us: streaming tool dispatch, failover across providers, image/context compression, prompt caching, account-usage tracking — all production-hardened. **40-60 h.**
+2. **Wire Telegram adapter** (`plugins/platforms/telegram/adapter.py`) to ingest into AI OS as a new run source. BotFather setup, `TELEGRAM_BOT_TOKEN` env, route inbound DMs → `runs` table with `source=telegram`. Phone control of AI OS without the V2 web UI. **12 h.** (Discord/Slack same shape, +6 h each.)
+3. **Lift `ModelsPage.tsx` + `PluginsPage.tsx`** as full pages → AI OS surfaces for claude-pool slots and Skill registry browser. Replaces our weak Models tab. **20 h.**
+
+**Gain:** AI OS becomes a battle-tested agent runtime with multi-channel ingress; Konrad can text his AI OS from anywhere. **VPS impact:** +1 PM2 process (~1 GB RAM), +3 GB disk for venv, slight CPU bump from streaming loop. Comfortable on current hardware. **Risk:** Python/TS bridge adds debugging surface; two source-of-truth risk if executor logic drifts between TS forge-executor and Python sidecar — pick one.
+
+### Recommendation: **Tier 2**
+
+Tier 3's Python sidecar means maintaining two executors forever; the gain (failover, prompt-cache discipline) is real but we get most of it by porting key concepts to TS. Tier 2 hits the high-leverage wins (thread compression for Opus 1M, webhooks surface, skill curator) without splitting the brain.
+
+**Concrete next-step lifts (Tier 2):**
+
+- `web/src/lib/slashExec.ts` → `apps/hermes-workspace/src/screens/chat/slash-exec.ts`
+- `web/src/components/SlashPopover.tsx` → `apps/hermes-workspace/src/screens/chat/SlashPopover.tsx`
+- `web/src/lib/fuzzy.ts` → `apps/hermes-workspace/src/lib/fuzzy.ts`
+- `trajectory_compressor.py` (algorithm only) → `apps/hermes-control-plane/src/lib/thread-compressor.ts`
+- `web/src/pages/WebhooksPage.tsx` + `CronPage.tsx` + `components/ScheduleBuilder.tsx` → `apps/hermes-workspace/src/screens/{webhooks,cron}/`
+- `agent/curator.py` (pattern + state-machine) → `apps/hermes-control-plane/src/services/skills-curator.ts`
