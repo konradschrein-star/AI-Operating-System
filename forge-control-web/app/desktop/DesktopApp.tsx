@@ -379,7 +379,28 @@ export function DesktopApp() {
           )}
           {surface === "tasks" && <TasksSurface />}
           {surface === "memory" && <MemorySurface />}
-          {surface === "chat" && <ChatSurface />}
+          {surface === "chat" && (
+            <ChatSurface
+              onNavigate={(s) => {
+                // Slash navigation commands. SurfaceKey is a superset of
+                // the local Surface union; only forward keys that match.
+                if (
+                  s === "today" ||
+                  s === "inbox" ||
+                  s === "live" ||
+                  s === "control" ||
+                  s === "memory" ||
+                  s === "skills" ||
+                  s === "pipeline" ||
+                  s === "autonomy"
+                ) {
+                  setSurface(s);
+                } else if (s === "chat") {
+                  // already here
+                }
+              }}
+            />
+          )}
           {surface === "skills" && <SkillsSurface />}
           {surface === "pipeline" && <PipelineSurface />}
           {surface === "autonomy" && <AutonomySurface />}

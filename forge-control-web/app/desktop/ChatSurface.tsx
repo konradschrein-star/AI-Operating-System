@@ -16,10 +16,21 @@ import {
   sendChatMessage,
   setChatStatus,
   resumeChat,
+  freezeFleet,
+  resumeFleet,
   type RunStatus,
   type RunSummary,
   type ThreadEntry,
 } from "../api";
+import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
+import {
+  findSlash,
+  parseSlash,
+  type SlashContext,
+  type SlashDirective,
+  type SurfaceKey,
+} from "./chat/slash-registry";
+import { MessageMarkdown } from "./chat/MessageMarkdown";
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
@@ -50,7 +61,11 @@ function humanAge(ts: string | null | undefined): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-export function ChatSurface() {
+export function ChatSurface({
+  onNavigate,
+}: {
+  onNavigate?: (s: SurfaceKey) => void;
+} = {}) {
   const qc = useQueryClient();
   const listQ = useQuery({
     queryKey: ["chat", "list"],
@@ -253,6 +268,7 @@ export function ChatSurface() {
           />
         ) : detailQ.data ? (
           <ChatThread
+            key={detailQ.data.id}
             run={detailQ.data}
             onSend={(content) =>
               sendM.mutate({ id: detailQ.data!.id, content })
@@ -261,6 +277,7 @@ export function ChatSurface() {
               statusM.mutate({ id: detailQ.data!.id, status })
             }
             onResume={() => resumeM.mutate(detailQ.data!.id)}
+            onNavigate={onNavigate}
             isSending={sendM.isPending}
             isResuming={resumeM.isPending}
           />
@@ -362,6 +379,7 @@ function ChatThread({
   onSend,
   onStatus,
   onResume,
+  onNavigate,
   isSending,
   isResuming,
 }: {
@@ -377,11 +395,61 @@ function ChatThread({
   onSend: (content: string) => void;
   onStatus: (status: RunStatus) => void;
   onResume: () => void;
+  onNavigate?: (s: SurfaceKey) => void;
   isSending: boolean;
   isResuming: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  const [localSys, setLocalSys] = useState<
+    Array<{ text: string; ts: string }>
+  >([]);
+  const popoverRef = useRef<SlashPopoverHandle | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const pushSys = (text: string) =>
+    setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
+
+  // Slash context — handlers reach back into the chat surface for the
+  // mutations they need (cancel, resume, freeze, etc.). Built per-render
+  // because runId/runStatus can change; cheap.
+  const slashCtx: SlashContext = {
+    runId: run.id,
+    runStatus: run.status,
+    sys: pushSys,
+    nav: (s) => {
+      if (onNavigate) onNavigate(s);
+      else pushSys(`(no navigate handler — would open ${s})`);
+    },
+    freezeFleet: () => freezeFleet("chat-slash"),
+    resumeFleet: () => resumeFleet("chat-slash"),
+    resumeRun: (id) => resumeChat(id),
+    setRunStatus: (id, status) => setChatStatus(id, status),
+  };
+
+  const dispatchSlash = async (raw: string) => {
+    const { name } = parseSlash(raw);
+    if (!name) return false;
+    const cmd = findSlash(name);
+    if (!cmd) {
+      // Unknown slash — treat as a normal message so user can still send
+      // literal text starting with "/" if they want.
+      return false;
+    }
+    try {
+      const result: SlashDirective = await Promise.resolve(
+        cmd.handler(slashCtx, parseSlash(raw).args),
+      );
+      if (result.kind === "navigate") slashCtx.nav(result.surface);
+      else if (result.kind === "send-message") {
+        onSend(result.message);
+      }
+    } catch (e) {
+      pushSys(
+        `slash /${name} error: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    return true;
+  };
   // v1.6: sticky auto-scroll. Only yank to bottom if the user is already
   // within ~120px of the bottom; otherwise leave them where they are.
   useEffect(() => {
@@ -492,9 +560,39 @@ function ChatThread({
         {run.thread.map((entry, i) => (
           <ThreadBubble key={i} entry={entry} />
         ))}
+        {localSys.map((m, i) => (
+          <div
+            key={`localsys-${i}`}
+            style={{
+              alignSelf: "stretch",
+              padding: "8px 12px",
+              borderLeft: `2px solid ${tokens.info}`,
+              background: "rgba(79, 176, 196, 0.06)",
+              borderRadius: 6,
+              fontSize: 12,
+              color: tokens.textSecondary,
+              whiteSpace: "pre-wrap",
+              fontFamily:
+                "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                color: tokens.info,
+                letterSpacing: "0.08em",
+                marginBottom: 3,
+              }}
+            >
+              SLASH · {humanAge(m.ts)}
+            </div>
+            {m.text}
+          </div>
+        ))}
       </div>
       <div
         style={{
+          position: "relative",
           borderTop: `1px solid ${tokens.borderSoft}`,
           padding: "12px 18px",
           display: "flex",
@@ -502,13 +600,21 @@ function ChatThread({
           alignItems: "flex-end",
         }}
       >
+        <SlashPopover
+          ref={popoverRef}
+          input={draft}
+          onApply={(cmd) => {
+            // Tab/click on popover: replace input with "/name " ready for args.
+            setDraft(`/${cmd.name} `);
+          }}
+        />
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            // v1.6: Enter sends, Shift+Enter newline. Skip when an IME
-            // composition is in flight so CJK candidate confirmation doesn't
-            // accidentally send.
+            // Popover gets first crack at the key — arrows, Tab, Esc.
+            if (popoverRef.current?.handleKey(e)) return;
+            // v1.6 phase 1: Enter sends; Shift+Enter newline; IME-safe.
             if (
               e.key === "Enter" &&
               !e.shiftKey &&
@@ -516,16 +622,27 @@ function ChatThread({
             ) {
               e.preventDefault();
               const v = draft.trim();
-              if (v) {
-                onSend(v);
+              if (!v) return;
+              // v1.6 phase 4: if the input is a slash command, dispatch it
+              // locally and DO NOT send to the run executor.
+              if (v.startsWith("/")) {
+                // If the popover is open and a command is highlighted, accept
+                // that instead of relying on the typed name. Otherwise parse
+                // the typed string directly.
+                const accepted = popoverRef.current?.acceptSelected() ?? null;
+                const target = accepted ? `/${accepted.name}` : v;
+                void dispatchSlash(target);
                 setDraft("");
+                return;
               }
+              onSend(v);
+              setDraft("");
             }
           }}
           placeholder={
             run.status === "running"
-              ? "running… Enter to interrupt with a message · Shift+Enter newline"
-              : "message · Enter to send · Shift+Enter newline"
+              ? "running… Enter to interrupt · / for commands · Shift+Enter newline"
+              : "message · Enter to send · / for commands · Shift+Enter newline"
           }
           rows={2}
           style={{
@@ -546,6 +663,13 @@ function ChatThread({
           onClick={() => {
             const v = draft.trim();
             if (!v) return;
+            if (v.startsWith("/")) {
+              const accepted = popoverRef.current?.acceptSelected() ?? null;
+              const target = accepted ? `/${accepted.name}` : v;
+              void dispatchSlash(target);
+              setDraft("");
+              return;
+            }
             onSend(v);
             setDraft("");
           }}
@@ -575,9 +699,16 @@ function ChatThread({
 
 function ThreadBubble({ entry }: { entry: ThreadEntry }) {
   const isUser = entry.role === "user";
+  const isError = entry.kind === "error";
+  // v1.6 phase 4: render assistant/system markdown via react-markdown. User
+  // messages stay plaintext (pre-wrap) so leading "/" and exact phrasing
+  // are visible. Error and stuck_notice entries also stay plaintext so the
+  // raw message reads cleanly.
+  const useMarkdown = !isUser && !isError && entry.kind !== "stuck_notice";
+
   const color = ROLE_COLOR[entry.role] ?? tokens.textMuted;
   const bubbleStyle: CSSProperties = {
-    maxWidth: "78%",
+    maxWidth: "82%",
     background: isUser ? tokens.primaryActionBg : tokens.bgCard,
     border: `1px solid ${isUser ? tokens.accent : tokens.border}`,
     borderRadius: 10,
@@ -585,7 +716,7 @@ function ThreadBubble({ entry }: { entry: ThreadEntry }) {
     color: tokens.text,
     fontSize: 13,
     lineHeight: 1.6,
-    whiteSpace: "pre-wrap",
+    whiteSpace: useMarkdown ? "normal" : "pre-wrap",
     overflowWrap: "anywhere",
   };
   return (
@@ -612,7 +743,13 @@ function ThreadBubble({ entry }: { entry: ThreadEntry }) {
           {humanAge(entry.ts)}
         </span>
       </div>
-      <div style={bubbleStyle}>{entry.content}</div>
+      <div style={bubbleStyle}>
+        {useMarkdown ? (
+          <MessageMarkdown source={entry.content} />
+        ) : (
+          entry.content
+        )}
+      </div>
     </div>
   );
 }
