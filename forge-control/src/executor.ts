@@ -26,6 +26,10 @@ import {
   readCompressorState,
   type CompressorOptions,
 } from "./lib/thread-compressor.ts";
+import {
+  prefetchMemoryForUserTurn,
+  lastUserText,
+} from "./lib/memory-prefetch.ts";
 
 const { Pool } = pg;
 
@@ -356,11 +360,28 @@ async function processRun(run: ClaimedRun): Promise<void> {
     return;
   }
 
-  const prompt = await buildCompressedPrompt(
+  // v1.6 Tier-2 phase 3: prefetch memory hits relevant to the latest user
+  // turn and prepend a [MEMORY] block to the prompt. No-op if disabled, the
+  // query is too short, the search errors, or no hits land.
+  const userText = lastUserText(run.thread ?? []);
+  const memory = userText
+    ? await prefetchMemoryForUserTurn(userText)
+    : { hits: [], block: null };
+  if (memory.hits.length > 0) {
+    const vector = memory.hits.filter((h) => h.via === "vector").length;
+    const graph = memory.hits.length - vector;
+    console.log(
+      `[executor] run ${run.id}: memory prefetch ${memory.hits.length} hits ` +
+        `(${vector} vector + ${graph} graph)`,
+    );
+  }
+
+  const baseCompressed = await buildCompressedPrompt(
     run.id,
     run.thread ?? [],
     run.metadata,
   );
+  const prompt = memory.block ? `${memory.block}${baseCompressed}` : baseCompressed;
   const timeoutMs = getTimeoutFor(run.metadata);
   const hb = setInterval(() => heartbeat(run.id), 5_000);
   try {
