@@ -514,32 +514,6 @@ export async function extractTriplesNextBatch(limit = 20): Promise<{
   return { chunks: r.rows.length, triples: triplesTotal };
 }
 
-/** Pull the entity set from a list of SearchHits' chunks. We re-fetch the
- *  triples that fired against those (source_path, chunk_index) pairs to
- *  seed the neighborhood walk. */
-async function entitiesForHits(
-  hits: SearchHit[],
-): Promise<Set<string>> {
-  if (hits.length === 0) return new Set();
-  // Build a pair list (path, chunk).
-  const paths = hits.map((h) => h.vault_path);
-  const chunks = hits.map((h) => h.chunk_index);
-  const r = await cf.query<{ subject_key: string; object_key: string }>(
-    `SELECT DISTINCT subject_key, object_key
-       FROM knowledge_triples
-       WHERE (source_path, chunk_index) = ANY(
-              SELECT * FROM UNNEST($1::text[], $2::int[])
-            )`,
-    [paths, chunks],
-  );
-  const set = new Set<string>();
-  for (const row of r.rows) {
-    set.add(row.subject_key);
-    set.add(row.object_key);
-  }
-  return set;
-}
-
 /** Look up chunks that share at least one entity (subject_key OR object_key)
  *  with the seed set. Returns SearchHit shape so callers can merge with
  *  vector results. */
@@ -584,33 +558,116 @@ export async function neighborhoodHits(
   }));
 }
 
-/** Vector + 1-hop GraphRAG expansion. Backed by claude-pool + halfvec
- *  + knowledge_triples. Returns SearchHit[] with `meta.via` set to either
- *  'vector' or 'graph' so callers can show the path. */
+/* ============================================================================
+ * v1.7 Phase 1 — multi-hop GraphRAG expansion.
+ *
+ * Generalisation of the v1.6 phase 5 1-hop walk: seed entities from the vector
+ * hits, then walk outward up to MEMORY_GRAPH_MAX_HOPS (default 2) hops, with
+ * each successive hop's hits scored down by MEMORY_GRAPH_HOP_DECAY (default
+ * 0.65). 2-hop catches "what did Konrad decide about TTS providers and how
+ * does that connect to AI33 deprecation" — the kind of multi-hop reasoning
+ * single-hop expansion misses.
+ *
+ * Hit ordering: vector first (hop=0), then graph in hop-order. Score decay is
+ * applied across the row so callers can sort by score within a hop if they
+ * want. Each hit carries both `via` ('vector' | 'graph') and `hop` (0|1|2|…)
+ * so the UI can render lane chips per hit.
+ * ========================================================================== */
+
+const MAX_HOPS = Number(process.env.MEMORY_GRAPH_MAX_HOPS ?? "2");
+const HOP_DECAY = Number(process.env.MEMORY_GRAPH_HOP_DECAY ?? "0.65");
+
+export type SearchHitWithLane = SearchHit & {
+  via: "vector" | "graph";
+  hop: number;
+};
+
+/** Look up triples that fired against a specific set of (path, chunk) pairs
+ *  and return the entity set so callers can walk outward from those chunks. */
+async function entitiesForChunks(
+  chunks: Array<{ vault_path: string; chunk_index: number }>,
+): Promise<Set<string>> {
+  if (chunks.length === 0) return new Set();
+  const paths = chunks.map((h) => h.vault_path);
+  const idxs = chunks.map((h) => h.chunk_index);
+  const r = await cf.query<{ subject_key: string; object_key: string }>(
+    `SELECT DISTINCT subject_key, object_key
+       FROM knowledge_triples
+       WHERE (source_path, chunk_index) = ANY(
+              SELECT * FROM UNNEST($1::text[], $2::int[])
+            )`,
+    [paths, idxs],
+  );
+  const set = new Set<string>();
+  for (const row of r.rows) {
+    set.add(row.subject_key);
+    set.add(row.object_key);
+  }
+  return set;
+}
+
+/** Vector + N-hop GraphRAG expansion. */
 export async function searchMemoryWithGraph(
   query: string,
-  opts: { vectorLimit?: number; graphLimit?: number } = {},
-): Promise<Array<SearchHit & { via: "vector" | "graph" }>> {
+  opts: {
+    vectorLimit?: number;
+    graphLimit?: number;
+    maxHops?: number;
+  } = {},
+): Promise<SearchHitWithLane[]> {
   const vectorLimit = opts.vectorLimit ?? 8;
   const graphLimit = opts.graphLimit ?? 6;
+  const maxHops = Math.max(0, Math.min(5, opts.maxHops ?? MAX_HOPS));
+  // Spread the graph budget across hops; ceil so the first hop gets at least 1.
+  const perHopBudget = Math.max(1, Math.ceil(graphLimit / Math.max(1, maxHops)));
 
+  // Hop 0: vector hits.
   const vectorHits = await searchMemory(query, vectorLimit);
-  const entities = await entitiesForHits(vectorHits);
-  const seenPaths = vectorHits.map((h) => h.vault_path);
-  const graphHits = await neighborhoodHits(entities, seenPaths, graphLimit);
+  const vectorLane: SearchHitWithLane[] = vectorHits.map((h) => ({
+    ...h,
+    via: "vector",
+    hop: 0,
+  }));
 
-  // Dedup graph hits against vector hits by (source_path, chunk_index).
-  const seenKey = new Set(
+  // Track every (path, chunk) we've already surfaced so subsequent hops don't
+  // resurrect them. Same key format as the previous 1-hop dedup.
+  const seenChunkKey = new Set(
     vectorHits.map((h) => `${h.vault_path}#${h.chunk_index}`),
   );
-  const dedupedGraph = graphHits.filter(
-    (g) => !seenKey.has(`${g.vault_path}#${g.chunk_index}`),
-  );
+  // Path-level exclusion for the SQL — we exclude entire vault paths from
+  // graph expansion once we've seen any chunk from them, so multi-hop doesn't
+  // recirculate. This is consistent with v1.6 phase 5 behaviour for hop 1.
+  const seenPaths = new Set(vectorHits.map((h) => h.vault_path));
 
-  return [
-    ...vectorHits.map((h) => ({ ...h, via: "vector" as const })),
-    ...dedupedGraph.map((h) => ({ ...h, via: "graph" as const })),
-  ];
+  // Walk outward: each iteration seeds from the previous hop's NEW chunks.
+  let frontier: Array<{ vault_path: string; chunk_index: number }> =
+    vectorHits.map((h) => ({ vault_path: h.vault_path, chunk_index: h.chunk_index }));
+  const graphLanes: SearchHitWithLane[] = [];
+
+  for (let hop = 1; hop <= maxHops; hop++) {
+    const entities = await entitiesForChunks(frontier);
+    if (entities.size === 0) break;
+    const raw = await neighborhoodHits(entities, [...seenPaths], perHopBudget);
+    const fresh: SearchHitWithLane[] = [];
+    for (const h of raw) {
+      const key = `${h.vault_path}#${h.chunk_index}`;
+      if (seenChunkKey.has(key)) continue;
+      seenChunkKey.add(key);
+      seenPaths.add(h.vault_path);
+      // Diminishing weight per hop. Hop 1 keeps decay^1, hop 2 decay^2, etc.
+      const decayed = h.score * Math.pow(HOP_DECAY, hop);
+      fresh.push({ ...h, score: decayed, via: "graph", hop });
+    }
+    if (fresh.length === 0) break;
+    graphLanes.push(...fresh);
+    // Seed next hop from the chunks we just discovered.
+    frontier = fresh.map((h) => ({
+      vault_path: h.vault_path,
+      chunk_index: h.chunk_index,
+    }));
+  }
+
+  return [...vectorLane, ...graphLanes];
 }
 
 /** Health-check the vault dir + the embedding sidecar. */

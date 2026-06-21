@@ -18,7 +18,7 @@
  * assistant turns into the vault or persist them directly.
  */
 
-import { searchMemoryWithGraph, type SearchHit } from "../db/memory.ts";
+import { searchMemoryWithGraph, type SearchHitWithLane } from "../db/memory.ts";
 
 const PREFETCH_ENABLED =
   (process.env.MEMORY_PREFETCH_ENABLED ?? "1") !== "0";
@@ -32,16 +32,15 @@ const MIN_QUERY_CHARS = Number(
 const SNIPPET_CHARS = Number(process.env.MEMORY_PREFETCH_SNIPPET_CHARS ?? "320");
 
 export interface PrefetchedMemory {
-  hits: Array<SearchHit & { via: "vector" | "graph" }>;
+  hits: SearchHitWithLane[];
   block: string | null;
 }
 
 /** Build a single `[MEMORY]` block from the hits, suitable for prepending to a
- *  prompt sent to claude-pool. Vector and graph hits are interleaved in the
- *  order returned (vector first by score, then graph by entity-overlap count). */
-function formatMemoryBlock(
-  hits: Array<SearchHit & { via: "vector" | "graph" }>,
-): string {
+ *  prompt sent to claude-pool. Vector hits come first (hop=0), then graph
+ *  hits in hop order. Each entry's lane label distinguishes vector from
+ *  graph-N-hop so the model knows how indirect the connection is. */
+function formatMemoryBlock(hits: SearchHitWithLane[]): string {
   if (hits.length === 0) return "";
   const lines: string[] = [
     "[MEMORY]",
@@ -51,7 +50,7 @@ function formatMemoryBlock(
   ];
   for (const h of hits) {
     const snippet = h.snippet.slice(0, SNIPPET_CHARS).replace(/\s+/g, " ").trim();
-    const lane = h.via === "graph" ? "graph" : "vector";
+    const lane = h.via === "graph" ? `graph ${h.hop}-hop` : "vector";
     lines.push(
       `- ${h.title || h.slug} (${lane}, score=${h.score.toFixed(2)}): ${snippet}`,
     );
@@ -67,7 +66,7 @@ export async function prefetchMemoryForUserTurn(
   const query = userText.trim();
   if (query.length < MIN_QUERY_CHARS) return { hits: [], block: null };
 
-  let hits: Array<SearchHit & { via: "vector" | "graph" }> = [];
+  let hits: SearchHitWithLane[] = [];
   try {
     hits = await searchMemoryWithGraph(query, {
       vectorLimit: VECTOR_LIMIT,
