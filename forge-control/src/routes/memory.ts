@@ -7,6 +7,8 @@ import {
   extractTriplesForNote,
   extractTriplesNextBatch,
   pingMemory,
+  TRIPLE_CATEGORIES,
+  type TripleCategory,
 } from "../db/memory.ts";
 
 const r = new Hono();
@@ -38,12 +40,35 @@ r.get("/search", async (c) => {
     const maxHops = hopsRaw !== undefined
       ? Math.max(0, Math.min(3, Number(hopsRaw)))
       : undefined;
+    // v1.7 phase 2: ?category=decision|rule|… filters the graph walk so
+    // only triples of that category propagate. Unknown values 400.
+    const catRaw = c.req.query("category");
+    let category: TripleCategory | undefined;
+    if (catRaw) {
+      if (!(TRIPLE_CATEGORIES as readonly string[]).includes(catRaw)) {
+        return c.json(
+          {
+            error: `unknown category "${catRaw}" — valid: ${TRIPLE_CATEGORIES.join(", ")}`,
+          },
+          400,
+        );
+      }
+      category = catRaw as TripleCategory;
+    }
     const hits = await searchMemoryWithGraph(q, {
       vectorLimit: limit,
       graphLimit: Math.max(4, Math.floor(limit / 2)),
       maxHops,
+      category,
     });
-    return c.json({ q, count: hits.length, hits, expand: true, max_hops: maxHops });
+    return c.json({
+      q,
+      count: hits.length,
+      hits,
+      expand: true,
+      max_hops: maxHops,
+      category,
+    });
   }
   const hits = await searchMemory(q, limit);
   return c.json({ q, count: hits.length, hits });
