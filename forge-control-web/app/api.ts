@@ -304,7 +304,14 @@ export interface ThreadEntry {
   role: "user" | "assistant" | "system" | "tool" | "agent";
   content: string;
   ts: string;
-  kind?: "text" | "tool_call" | "tool_result" | "heartbeat" | "error";
+  kind?:
+    | "text"
+    | "tool_call"
+    | "tool_result"
+    | "heartbeat"
+    | "error"
+    | "stuck_notice"
+    | "continue_marker";
   meta?: Record<string, unknown>;
 }
 
