@@ -19,6 +19,10 @@ import skills from "./routes/skills.ts";
 import pipeline from "./routes/pipeline.ts";
 import autonomy from "./routes/autonomy.ts";
 import media from "./routes/media.ts";
+import webhooks from "./routes/webhooks.ts";
+import webhookIn from "./routes/webhook-in.ts";
+import cron from "./routes/cron.ts";
+import { startCronTick } from "./lib/cron-tick.ts";
 
 const app = new Hono();
 
@@ -108,6 +112,18 @@ app.route("/api/pipeline", pipeline);
 app.route("/api/autonomy", autonomy);
 app.route("/api/media", media);
 
+// v1.6 Tier-2 phase 4
+app.route("/api/webhooks", webhooks);
+app.route("/api/cron", cron);
+// Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
+// NOT under /api so the CORS preflight middleware above doesn't affect it.
+app.route("/webhooks", webhookIn);
+
 const port = Number(process.env.PORT ?? 7700);
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 console.log(`forge-control listening on 127.0.0.1:${port}`);
+
+// v1.6 Tier-2 phase 4: cron scheduler tick. Single in-process scheduler is
+// fine for personal scale; multi-instance is safe thanks to FOR UPDATE SKIP
+// LOCKED in claimDueSchedules().
+startCronTick();
