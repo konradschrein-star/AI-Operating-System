@@ -82,3 +82,39 @@ ssh root@127.0.0.1 'cd /opt/forge-ai-os && bash scripts/bench-multihop.sh'
 ```
 
 Appends a fresh row to this doc each time triple coverage moves materially.
+
+---
+
+## v1.8 follow-up — same queries at full coverage
+
+Triple extraction loop drained the corpus. Re-ran the same five queries.
+
+Corpus at run: **205 of 205 chunks extracted (100%), 1452 triples, 498 distinct entities**, all 8 categories populated (first time `decision=9` and `rule=14` are non-zero). Bench was identical at 200/205 — the last 5 chunks didn't move any of these queries.
+
+| Query                          | new@hop2 at 72/205 (v1.7) | new@hop2 at 205/205 (v1.8) | Δ      |
+| ------------------------------ | ------------------------- | -------------------------- | ------ |
+| `worker gemini`                | 2                         | 1                          | **-1** |
+| `tts providers ai33`           | 2                         | 0                          | **-2** |
+| `fastgen gateway image`        | 1                         | 3                          | **+2** |
+| `drama stock chain`            | 3                         | 1                          | **-2** |
+| `tutorial studio claude pool`  | 3                         | 1                          | **-2** |
+
+Counter-intuitive at first: more triples ≠ more hop-2 lift. The marginal value of hop 2 **falls** as triple density rises for 4 of 5 queries; `tts providers ai33` collapses to zero.
+
+The mechanism is graph densification: at high triple density more chunks are reachable directly from the seed at hop 1, so hop 2 has less new ground to cover. The 3-slot hop-2 budget chases chunks that hop 1 — given enough triples — already finds. `fastgen gateway image` is the exception: it gained new bridging entities (the v1.8 batches included more chunks discussing fastgen + image flows together) that opened up genuinely-novel 2-hop reach.
+
+### Updated takeaway
+
+Multi-hop **isn't strictly better at scale**. It's a discovery method that pays best at **medium density**, when 1-hop alone leaves obvious gaps and 2-hop bridges the entity graph cheaply. At full density, the same fixed budget is better spent widening hop 1 than reaching for hop 2.
+
+Concrete implications for the default UI behavior:
+
+- `hops=2` (current default) is the right choice during the early phase of a vault, when triple coverage is sparse-to-medium.
+- Once the vault grows triple-dense (informal threshold: >~7 triples per chunk on a corpus), the default should probably fall back to `hops=1` or the budget should grow to compensate. Worth a UI hint when this regime is detected.
+- The category-narrowed walk (`?category=decision`) becomes more interesting at high density — narrowing the lens through a sparse category should still surface novel bridges. Untested.
+
+### Open
+
+- **Wider-budget bench**: re-run with a fixed total budget that grows with `hops` (e.g. `12 + 6*hops`) instead of redistributing the same 18. Would isolate "more depth surfaces more chunks" from "depth displaces width".
+- **Category-narrowed bench**: same queries, run with `?category=decision` and `?category=rule` once those categories have meaningful row counts.
+- **LLM-judge quality pass**: of the chunks hop-2 surfaces (new@hop2), how many are load-bearing for the original query?
