@@ -30,7 +30,9 @@ const STALE_AFTER_DAYS = Number(process.env.CURATOR_STALE_AFTER_DAYS ?? "30");
 const ARCHIVE_AFTER_DAYS = Number(
   process.env.CURATOR_ARCHIVE_AFTER_DAYS ?? "90",
 );
-const CURATOR_TIMEOUT_MS = Number(process.env.CURATOR_TIMEOUT_MS ?? "90000");
+// Claude needs real time on a 90+ skill catalog. 90s was too tight in
+// practice (timed out on first deploy). Pool's hard cap is 600_000.
+const CURATOR_TIMEOUT_MS = Number(process.env.CURATOR_TIMEOUT_MS ?? "180000");
 
 // Built-ins that should never be archived/consolidated automatically.
 //
