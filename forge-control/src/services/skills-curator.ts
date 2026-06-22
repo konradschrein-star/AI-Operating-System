@@ -32,13 +32,32 @@ const ARCHIVE_AFTER_DAYS = Number(
 );
 const CURATOR_TIMEOUT_MS = Number(process.env.CURATOR_TIMEOUT_MS ?? "90000");
 
-// Built-ins that should never be archived/consolidated automatically. Matches
-// Hermes's "protected" set semantics — these are load-bearing for the user's
-// workflow regardless of mtime.
+// Built-ins that should never be archived/consolidated automatically.
+//
+// Three layers, all OR'd together:
+//   1. DEFAULT_PROTECTED_IDS — hardcoded local-fallback. These are Konrad's
+//      personal user:* skills; harmless on the VPS where USER_SKILLS_DIR is
+//      empty, but they keep the local catalog safe out-of-the-box.
+//   2. CURATOR_PROTECTED_IDS env var — comma-separated list, set per-host.
+//      Use this on the VPS to protect specific hermes:* IDs the user
+//      considers load-bearing.
+//   3. frontmatter `protected: true` on the skill itself — per-skill escape
+//      hatch that travels with the SKILL.md file. Same mechanic as `pinned`
+//      but explicit about intent (pinned ≈ "show me first", protected ≈
+//      "never suggest archiving").
+const DEFAULT_PROTECTED_IDS = ["user:graphify", "user:gemini-video-review", "user:plan"];
+
+function parseProtectedEnv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 const PROTECTED_SKILL_IDS = new Set([
-  "user:graphify",
-  "user:gemini-video-review",
-  "user:plan",
+  ...DEFAULT_PROTECTED_IDS,
+  ...parseProtectedEnv(process.env.CURATOR_PROTECTED_IDS),
 ]);
 
 export type Lifecycle = "active" | "stale" | "archive_candidate" | "protected";
@@ -91,16 +110,20 @@ async function classifyLifecycle(): Promise<SkillLifecycleEntry[]> {
       // file vanished between listSkills() and stat — skip silently
       continue;
     }
-    // Need the full skill to read pinned: frontmatter
+    // Need the full skill to read pinned: + protected: frontmatter
     const detail = await getSkill(s.id);
     const pinned =
       detail && typeof detail.frontmatter.pinned !== "undefined"
         ? String(detail.frontmatter.pinned).toLowerCase() === "true"
         : false;
+    const frontmatterProtected =
+      detail && typeof detail.frontmatter.protected !== "undefined"
+        ? String(detail.frontmatter.protected).toLowerCase() === "true"
+        : false;
 
     const days = Math.floor((now - mtime) / (1000 * 60 * 60 * 24));
     let lifecycle: Lifecycle;
-    if (PROTECTED_SKILL_IDS.has(s.id) || pinned) {
+    if (PROTECTED_SKILL_IDS.has(s.id) || pinned || frontmatterProtected) {
       lifecycle = "protected";
     } else if (days >= ARCHIVE_AFTER_DAYS) {
       lifecycle = "archive_candidate";
