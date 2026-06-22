@@ -6,10 +6,24 @@ import { tokens } from "../tokens";
 import {
   fetchMemoryList,
   fetchMemoryNote,
-  searchMemory,
+  searchMemoryExpanded,
+  TRIPLE_CATEGORIES,
   type MemoryCategory,
   type MemoryNote,
+  type MemorySearchHitWithLane,
+  type TripleCategory,
 } from "../api";
+
+/* v1.7 phase 4: lane viz. Vector hits and each graph hop get a distinct
+ * colour so Konrad can SEE which lane / hop a result came from. */
+const LANE_COLOR = (h: MemorySearchHitWithLane): string => {
+  if (h.via === "vector") return tokens.ok;
+  if (h.hop === 1) return tokens.warn;
+  if (h.hop === 2) return tokens.decide;
+  return tokens.stuck; // hop >= 3
+};
+const LANE_LABEL = (h: MemorySearchHitWithLane): string =>
+  h.via === "vector" ? "vector" : `graph ${h.hop}-hop`;
 
 const CATEGORY_COLOR: Record<MemoryCategory, string> = {
   rule: tokens.decide,
@@ -38,6 +52,9 @@ export function MemorySurface() {
   const [cat, setCat] = useState<MemoryCategory | "all">("all");
   const [selSlug, setSelSlug] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  // v1.7 phase 4: search controls
+  const [searchCategory, setSearchCategory] = useState<TripleCategory | null>(null);
+  const [hops, setHops] = useState<number>(2);
 
   const allNotes = listQ.data ?? [];
   const visibleNotes = useMemo(
@@ -47,8 +64,12 @@ export function MemorySurface() {
   );
 
   const searchQ = useQuery({
-    queryKey: ["memory", "search", q],
-    queryFn: () => searchMemory(q),
+    queryKey: ["memory", "search-expanded", q, hops, searchCategory],
+    queryFn: () =>
+      searchMemoryExpanded(q, {
+        hops,
+        category: searchCategory ?? undefined,
+      }),
     enabled: q.length >= 2,
   });
 
@@ -66,7 +87,15 @@ export function MemorySurface() {
     return m;
   }, [allNotes]);
 
-  const searchHits = searchQ.data ?? [];
+  const searchHits = searchQ.data?.hits ?? [];
+  const laneCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const h of searchHits) {
+      const k = h.via === "vector" ? "vector" : `${h.hop}h`;
+      m[k] = (m[k] ?? 0) + 1;
+    }
+    return m;
+  }, [searchHits]);
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
@@ -283,6 +312,88 @@ export function MemorySurface() {
         <div style={{ flex: 1, overflowY: "auto" }}>
           {q.length >= 2 ? (
             <>
+              {/* v1.7 phase 4: lane-viz controls — hop slider + category chips */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 14px 6px",
+                  borderBottom: `1px solid ${tokens.borderDivider}`,
+                }}
+              >
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 9,
+                    color: tokens.textFaint,
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  HOPS
+                </span>
+                {[0, 1, 2, 3].map((n) => (
+                  <span
+                    key={n}
+                    onClick={() => setHops(n)}
+                    className="mono"
+                    style={{
+                      cursor: "pointer",
+                      fontSize: 10,
+                      padding: "2px 7px",
+                      borderRadius: 4,
+                      background: hops === n ? tokens.primaryActionBg : "transparent",
+                      color: hops === n ? tokens.textHi : tokens.textMuted,
+                      border: `1px solid ${hops === n ? tokens.accent : tokens.borderSoft}`,
+                    }}
+                  >
+                    {n}
+                  </span>
+                ))}
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 5,
+                  padding: "6px 14px 10px",
+                  borderBottom: `1px solid ${tokens.borderDivider}`,
+                }}
+              >
+                <span
+                  onClick={() => setSearchCategory(null)}
+                  className="mono"
+                  style={{
+                    cursor: "pointer",
+                    fontSize: 9.5,
+                    padding: "2px 7px",
+                    borderRadius: 4,
+                    background: !searchCategory ? tokens.primaryActionBg : "transparent",
+                    color: !searchCategory ? tokens.textHi : tokens.textMuted,
+                    border: `1px solid ${!searchCategory ? tokens.accent : tokens.borderSoft}`,
+                  }}
+                >
+                  any
+                </span>
+                {TRIPLE_CATEGORIES.map((c) => (
+                  <span
+                    key={c}
+                    onClick={() => setSearchCategory(c === searchCategory ? null : c)}
+                    className="mono"
+                    style={{
+                      cursor: "pointer",
+                      fontSize: 9.5,
+                      padding: "2px 7px",
+                      borderRadius: 4,
+                      background: searchCategory === c ? tokens.primaryActionBg : "transparent",
+                      color: searchCategory === c ? tokens.textHi : tokens.textMuted,
+                      border: `1px solid ${searchCategory === c ? tokens.accent : tokens.borderSoft}`,
+                    }}
+                  >
+                    {c}
+                  </span>
+                ))}
+              </div>
               <div
                 className="mono"
                 style={{
@@ -290,9 +401,17 @@ export function MemorySurface() {
                   color: tokens.textFaint,
                   letterSpacing: "0.1em",
                   padding: "10px 15px 4px",
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
                 }}
               >
-                SEMANTIC HITS · {searchHits.length}
+                <span>HITS · {searchHits.length}</span>
+                {Object.entries(laneCounts).map(([k, v]) => (
+                  <span key={k} style={{ color: tokens.textMuted }}>
+                    · {k}={v}
+                  </span>
+                ))}
               </div>
               {searchQ.isLoading && (
                 <div
@@ -306,56 +425,71 @@ export function MemorySurface() {
                   searching…
                 </div>
               )}
-              {searchHits.map((h) => (
-                <div
-                  key={`${h.slug}_${h.chunk_index}`}
-                  onClick={() => {
-                    setSelSlug(h.slug);
-                    setQ("");
-                  }}
-                  style={{
-                    padding: "11px 14px",
-                    cursor: "pointer",
-                    borderBottom: `1px solid ${tokens.borderDivider}`,
-                  }}
-                >
+              {searchHits.map((h) => {
+                const laneColor = LANE_COLOR(h);
+                return (
                   <div
-                    style={{ display: "flex", alignItems: "baseline", gap: 8 }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 12.5,
-                        color: tokens.textLabel,
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      {h.title}
-                    </span>
-                    <span style={{ flex: 1 }} />
-                    <span
-                      className="mono"
-                      style={{ fontSize: 9.5, color: tokens.ok }}
-                    >
-                      {h.score.toFixed(2)}
-                    </span>
-                  </div>
-                  <div
-                    className="mono"
+                    key={`${h.slug}_${h.chunk_index}_${h.hop}`}
+                    onClick={() => {
+                      setSelSlug(h.slug);
+                      setQ("");
+                    }}
                     style={{
-                      fontSize: 10,
-                      color: tokens.textFaint,
-                      marginTop: 4,
-                      lineHeight: 1.4,
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
+                      padding: "11px 14px",
+                      cursor: "pointer",
+                      borderBottom: `1px solid ${tokens.borderDivider}`,
+                      borderLeft: `3px solid ${laneColor}`,
                     }}
                   >
-                    {h.snippet}
+                    <div
+                      style={{ display: "flex", alignItems: "baseline", gap: 8 }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          color: tokens.textLabel,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        {h.title}
+                      </span>
+                      <span style={{ flex: 1 }} />
+                      <span
+                        className="mono"
+                        style={{
+                          fontSize: 9,
+                          color: laneColor,
+                          letterSpacing: "0.06em",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {LANE_LABEL(h)}
+                      </span>
+                      <span
+                        className="mono"
+                        style={{ fontSize: 9.5, color: laneColor }}
+                      >
+                        {h.score.toFixed(2)}
+                      </span>
+                    </div>
+                    <div
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        color: tokens.textFaint,
+                        marginTop: 4,
+                        lineHeight: 1.4,
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {h.snippet}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </>
           ) : (
             visibleNotes.map((n: MemoryNote) => {
