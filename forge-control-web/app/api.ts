@@ -486,6 +486,54 @@ export const fetchSkill = async (id: string) => {
 };
 
 /* ----------------------------------------------------------------------------
+ * Skills curator audit (v1.6 Tier-2 backend, v1.8 UI hook)
+ * -------------------------------------------------------------------------- */
+export type SkillLifecycle =
+  | "active"
+  | "stale"
+  | "archive_candidate"
+  | "protected";
+
+export interface SkillLifecycleEntry {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  source: string;
+  path: string;
+  pinned: boolean;
+  lifecycle: SkillLifecycle;
+  last_touched_at: string;
+  days_since_touch: number;
+}
+
+export interface ConsolidationSuggestion {
+  from: string;
+  into: string;
+  strategy: "merge_into_existing" | "create_new_umbrella" | "demote_to_support";
+  reason: string;
+}
+
+export interface CuratorAuditResult {
+  duration_ms: number;
+  generated_at: string;
+  total_skills: number;
+  lifecycle_summary: {
+    active: number;
+    stale: number;
+    archive_candidate: number;
+    protected: number;
+  };
+  lifecycle: SkillLifecycleEntry[];
+  consolidations: ConsolidationSuggestion[];
+  llm_used: boolean;
+  llm_error?: string;
+}
+
+export const runCuratorAudit = () =>
+  postJson<CuratorAuditResult>("/skills/curate");
+
+/* ----------------------------------------------------------------------------
  * Pipeline (content_jobs grouped by phase)
  * -------------------------------------------------------------------------- */
 export interface PipelineCard {
