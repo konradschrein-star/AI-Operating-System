@@ -1,13 +1,34 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { tokens } from "../tokens";
-import { fetchSkills, fetchSkill, type SkillSummary } from "../api";
+import {
+  fetchSkills,
+  fetchSkill,
+  runCuratorAudit,
+  type SkillSummary,
+  type SkillLifecycle,
+  type CuratorAuditResult,
+} from "../api";
 
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
   hermes: { label: "hermes", color: tokens.decide },
   user: { label: "claude", color: tokens.accent },
+};
+
+const LIFECYCLE_COLOR: Record<SkillLifecycle, string> = {
+  active: tokens.ok,
+  stale: tokens.warn,
+  archive_candidate: tokens.stuck,
+  protected: tokens.decide,
+};
+
+const LIFECYCLE_LABEL: Record<SkillLifecycle, string> = {
+  active: "ACTIVE",
+  stale: "STALE",
+  archive_candidate: "ARCHIVE?",
+  protected: "PROTECTED",
 };
 
 export function SkillsSurface() {
@@ -18,6 +39,23 @@ export function SkillsSurface() {
   const [cat, setCat] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [selId, setSelId] = useState<string | null>(null);
+  // Detail-panel mode: "skill" shows the selected SKILL.md; "audit" shows the
+  // last curator audit report. Mutually exclusive — selecting a skill flips
+  // back to "skill", clicking Run Audit flips to "audit".
+  const [detailMode, setDetailMode] = useState<"skill" | "audit">("skill");
+
+  const auditMut = useMutation({
+    mutationFn: runCuratorAudit,
+    onSuccess: () => setDetailMode("audit"),
+  });
+  const audit: CuratorAuditResult | undefined = auditMut.data;
+  // Lifecycle lookup by skill id, populated only after an audit runs. Used
+  // to decorate card chips and to drive the report panel.
+  const lifecycleById = useMemo(() => {
+    const m = new Map<string, SkillLifecycle>();
+    if (audit) for (const e of audit.lifecycle) m.set(e.id, e.lifecycle);
+    return m;
+  }, [audit]);
 
   const filtered = useMemo<SkillSummary[]>(() => {
     const all = listQ.data?.skills ?? [];
@@ -132,6 +170,28 @@ export function SkillsSurface() {
               outline: "none",
             }}
           />
+          <button
+            onClick={() => auditMut.mutate()}
+            disabled={auditMut.isPending}
+            className="mono"
+            style={{
+              background: auditMut.isPending ? tokens.bgGutter : "#101013",
+              border: `1px solid ${audit ? tokens.accent : tokens.borderEmphasis}`,
+              borderRadius: 6,
+              padding: "6px 12px",
+              color: auditMut.isPending ? tokens.textFaint : tokens.text,
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              cursor: auditMut.isPending ? "wait" : "pointer",
+              outline: "none",
+            }}
+          >
+            {auditMut.isPending
+              ? "AUDITING…"
+              : audit
+                ? "RE-RUN AUDIT"
+                : "RUN AUDIT"}
+          </button>
         </div>
         <div
           style={{
@@ -174,7 +234,10 @@ export function SkillsSurface() {
             return (
               <div
                 key={s.id}
-                onClick={() => setSelId(s.id)}
+                onClick={() => {
+                  setSelId(s.id);
+                  setDetailMode("skill");
+                }}
                 style={{
                   background: tokens.bgCard,
                   border: `1px solid ${selected ? tokens.accent : tokens.border}`,
@@ -222,6 +285,28 @@ export function SkillsSurface() {
                       GUARDED
                     </span>
                   )}
+                  {(() => {
+                    const lc = lifecycleById.get(s.id);
+                    if (!lc) return null;
+                    const color = LIFECYCLE_COLOR[lc];
+                    return (
+                      <span
+                        className="mono"
+                        title={`curator: ${lc}`}
+                        style={{
+                          fontSize: 9,
+                          color,
+                          border: `1px solid ${color}55`,
+                          borderRadius: 4,
+                          padding: "1px 5px",
+                          letterSpacing: "0.08em",
+                          marginLeft: "auto",
+                        }}
+                      >
+                        {LIFECYCLE_LABEL[lc]}
+                      </span>
+                    );
+                  })()}
                 </div>
                 <div
                   style={{
@@ -263,7 +348,16 @@ export function SkillsSurface() {
           minHeight: 0,
         }}
       >
-        {!selId && (
+        {detailMode === "audit" && audit && (
+          <AuditPanel
+            audit={audit}
+            onPickSkill={(id) => {
+              setSelId(id);
+              setDetailMode("skill");
+            }}
+          />
+        )}
+        {detailMode === "skill" && !selId && (
           <div
             className="mono"
             style={{
@@ -273,10 +367,34 @@ export function SkillsSurface() {
               textAlign: "center",
             }}
           >
-            select a skill
+            {audit ? (
+              <>
+                select a skill
+                <div style={{ marginTop: 12 }}>
+                  <button
+                    onClick={() => setDetailMode("audit")}
+                    className="mono"
+                    style={{
+                      background: "transparent",
+                      border: `1px solid ${tokens.borderEmphasis}`,
+                      borderRadius: 5,
+                      padding: "5px 10px",
+                      color: tokens.textMuted,
+                      fontSize: 10,
+                      letterSpacing: "0.08em",
+                      cursor: "pointer",
+                    }}
+                  >
+                    SHOW AUDIT REPORT
+                  </button>
+                </div>
+              </>
+            ) : (
+              "select a skill"
+            )}
           </div>
         )}
-        {selId && detailQ.isLoading && (
+        {detailMode === "skill" && selId && detailQ.isLoading && (
           <div
             className="mono"
             style={{
@@ -288,7 +406,7 @@ export function SkillsSurface() {
             loading…
           </div>
         )}
-        {detailQ.data && (
+        {detailMode === "skill" && detailQ.data && (
           <>
             <div
               style={{
@@ -380,6 +498,275 @@ export function SkillsSurface() {
         )}
       </div>
     </div>
+  );
+}
+
+function AuditPanel({
+  audit,
+  onPickSkill,
+}: {
+  audit: CuratorAuditResult;
+  onPickSkill: (id: string) => void;
+}) {
+  // Stale + archive_candidate skills sorted by days_since_touch desc — these
+  // are what the user actually needs to look at.
+  const needsAttention = useMemo(
+    () =>
+      audit.lifecycle.filter(
+        (e) => e.lifecycle === "stale" || e.lifecycle === "archive_candidate",
+      ),
+    [audit.lifecycle],
+  );
+  const generatedAt = new Date(audit.generated_at).toLocaleString();
+
+  return (
+    <>
+      <div
+        style={{
+          padding: "16px 18px",
+          borderBottom: `1px solid ${tokens.borderSoft}`,
+        }}
+      >
+        <div
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textFaint,
+            letterSpacing: "0.1em",
+            marginBottom: 8,
+          }}
+        >
+          CURATOR REPORT · {audit.duration_ms}ms
+        </div>
+        <div
+          style={{
+            fontSize: 15,
+            fontWeight: 500,
+            color: tokens.textHi,
+            marginBottom: 8,
+          }}
+        >
+          {audit.total_skills} skills audited
+        </div>
+        <div
+          className="mono"
+          style={{ fontSize: 10, color: tokens.textMuted, marginBottom: 12 }}
+        >
+          generated {generatedAt}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {(
+            ["active", "stale", "archive_candidate", "protected"] as const
+          ).map((lc) => {
+            const n = audit.lifecycle_summary[lc];
+            const color = LIFECYCLE_COLOR[lc];
+            return (
+              <span
+                key={lc}
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color,
+                  border: `1px solid ${color}55`,
+                  borderRadius: 5,
+                  padding: "3px 8px",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                {LIFECYCLE_LABEL[lc]} {n}
+              </span>
+            );
+          })}
+        </div>
+        {audit.llm_error && (
+          <div
+            className="mono"
+            style={{
+              marginTop: 10,
+              fontSize: 10,
+              color: tokens.warn,
+              lineHeight: 1.5,
+            }}
+          >
+            llm pass skipped: {audit.llm_error}
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "12px 18px 18px",
+        }}
+      >
+        <div
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textFaint,
+            letterSpacing: "0.1em",
+            marginBottom: 8,
+          }}
+        >
+          NEEDS ATTENTION ({needsAttention.length})
+        </div>
+        {needsAttention.length === 0 && (
+          <div
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: tokens.textMuted,
+              padding: "6px 0 14px",
+            }}
+          >
+            nothing stale.
+          </div>
+        )}
+        {needsAttention.map((e) => {
+          const color = LIFECYCLE_COLOR[e.lifecycle];
+          return (
+            <div
+              key={e.id}
+              onClick={() => onPickSkill(e.id)}
+              style={{
+                background: tokens.bgCard,
+                border: `1px solid ${tokens.border}`,
+                borderLeft: `3px solid ${color}`,
+                borderRadius: 6,
+                padding: "9px 11px",
+                marginBottom: 8,
+                cursor: "pointer",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 4,
+                }}
+              >
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 9,
+                    color,
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  {LIFECYCLE_LABEL[e.lifecycle]}
+                </span>
+                <span
+                  className="mono"
+                  style={{ fontSize: 9, color: tokens.textFaint }}
+                >
+                  {e.days_since_touch}d
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: tokens.textHi,
+                  marginBottom: 2,
+                }}
+              >
+                {e.name}
+              </div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  color: tokens.textFaint,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {e.id}
+              </div>
+            </div>
+          );
+        })}
+
+        <div
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textFaint,
+            letterSpacing: "0.1em",
+            margin: "18px 0 8px",
+          }}
+        >
+          CONSOLIDATION SUGGESTIONS ({audit.consolidations.length})
+        </div>
+        {audit.consolidations.length === 0 && (
+          <div
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: tokens.textMuted,
+              padding: "6px 0",
+            }}
+          >
+            none.
+          </div>
+        )}
+        {audit.consolidations.map((c, i) => (
+          <div
+            key={`${c.from}-${c.into}-${i}`}
+            style={{
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 6,
+              padding: "10px 12px",
+              marginBottom: 8,
+            }}
+          >
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                color: tokens.accent,
+                letterSpacing: "0.08em",
+                marginBottom: 6,
+              }}
+            >
+              {c.strategy.replace(/_/g, " ").toUpperCase()}
+            </div>
+            <div
+              className="mono"
+              style={{ fontSize: 10.5, color: tokens.textHi, marginBottom: 4 }}
+            >
+              <span style={{ color: tokens.textMuted }}>from</span>{" "}
+              <span
+                onClick={() => onPickSkill(c.from)}
+                style={{ cursor: "pointer", textDecoration: "underline" }}
+              >
+                {c.from}
+              </span>{" "}
+              <span style={{ color: tokens.textMuted }}>→ into</span>{" "}
+              <span
+                onClick={() => onPickSkill(c.into)}
+                style={{ cursor: "pointer", textDecoration: "underline" }}
+              >
+                {c.into}
+              </span>
+            </div>
+            <div
+              style={{
+                fontSize: 11,
+                color: tokens.textSecondary,
+                lineHeight: 1.5,
+              }}
+            >
+              {c.reason}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 
