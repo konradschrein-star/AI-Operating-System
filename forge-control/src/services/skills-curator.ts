@@ -150,13 +150,54 @@ async function classifyLifecycle(): Promise<SkillLifecycleEntry[]> {
   return out;
 }
 
-function buildConsolidationPrompt(entries: SkillLifecycleEntry[]): string {
-  // Catalog payload: id + name + description per skill. Body bytes excluded.
-  const catalog = entries
-    .filter((e) => e.lifecycle !== "protected")
-    .map((e) => `  - id: ${e.id}\n    name: ${e.name}\n    description: ${e.description}`)
-    .join("\n");
+/** claude-pool's /v1/run caps prompts at 10_000 chars (z.string().max(10_000)
+ *  in apps/claude-pool/src/routes/run.ts). Leave a margin so the framing
+ *  prose + JSON template doesn't get clipped. */
+const PROMPT_CHAR_LIMIT = Number(process.env.CURATOR_PROMPT_CHAR_LIMIT ?? "9500");
 
+function buildCatalog(
+  entries: SkillLifecycleEntry[],
+  descCap: number | null,
+): string {
+  // Catalog payload: id + name + (capped) description per skill. Body bytes
+  // excluded. descCap=null → no description column at all (smallest form).
+  return entries
+    .filter((e) => e.lifecycle !== "protected")
+    .map((e) => {
+      if (descCap === null) {
+        return `  - ${e.id} | ${e.name}`;
+      }
+      const desc =
+        e.description.length > descCap
+          ? e.description.slice(0, descCap).trimEnd() + "…"
+          : e.description;
+      return `  - ${e.id} | ${e.name} | ${desc}`;
+    })
+    .join("\n");
+}
+
+function buildConsolidationPrompt(entries: SkillLifecycleEntry[]): string {
+  // Adaptive sizer: try richest catalog first, drop description detail
+  // progressively until the assembled prompt fits the pool's char cap.
+  // Steps: full description → 120-char cap → 60-char cap → name-only.
+  // Special sentinel: `descCap === undefined` means "uncapped description";
+  // `descCap === null` means "drop description entirely".
+  const steps: (number | null | undefined)[] = [undefined, 120, 60, null];
+  for (const descCap of steps) {
+    const catalog = buildCatalog(
+      entries,
+      descCap === undefined ? Number.MAX_SAFE_INTEGER : descCap,
+    );
+    const prompt = renderPromptShell(catalog);
+    if (prompt.length <= PROMPT_CHAR_LIMIT) return prompt;
+  }
+  // Even name-only overflowed — catalog is enormous. Return the name-only
+  // form anyway; pool will 400 and the caller surfaces llm_error. The
+  // lifecycle pass still works regardless.
+  return renderPromptShell(buildCatalog(entries, null));
+}
+
+function renderPromptShell(catalog: string): string {
   return `You are a SKILL CATALOG CURATOR. The user maintains a personal library of agent SKILL.md files; many were written ad-hoc over months and the catalog has likely grown overlapping clusters that a thoughtful maintainer would consolidate.
 
 HARD RULES:
