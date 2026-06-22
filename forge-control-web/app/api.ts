@@ -248,6 +248,44 @@ export interface MemorySearchHit {
   chunk_index: number;
 }
 
+/* v1.7 phase 1+2 — expanded hit shape from /api/memory/search?expand=1.
+ * Each row carries lane (`via`, `hop`) so the UI can colour-code by graph
+ * depth, and the response carries the category that was used (if any). */
+export type TripleCategory =
+  | "decision"
+  | "rule"
+  | "error"
+  | "provider"
+  | "job"
+  | "format"
+  | "person"
+  | "other";
+
+export const TRIPLE_CATEGORIES: TripleCategory[] = [
+  "decision",
+  "rule",
+  "error",
+  "provider",
+  "job",
+  "format",
+  "person",
+  "other",
+];
+
+export interface MemorySearchHitWithLane extends MemorySearchHit {
+  via: "vector" | "graph";
+  hop: number;
+}
+
+export interface MemorySearchExpandedResponse {
+  q: string;
+  count: number;
+  hits: MemorySearchHitWithLane[];
+  expand: true;
+  max_hops?: number;
+  category?: TripleCategory;
+}
+
 export const fetchMemoryList = async (): Promise<MemoryNote[]> => {
   const r = await getJson<{ count: number; notes: MemoryNote[] }>("/memory");
   return r.notes;
@@ -267,6 +305,19 @@ export const searchMemory = async (q: string): Promise<MemorySearchHit[]> => {
     `/memory/search?q=${encodeURIComponent(q)}`,
   );
   return r.hits;
+};
+
+/** v1.7 phase 1+2 — expanded search with multi-hop graph + optional category
+ *  filter. Each hit's `via`+`hop` lane lets the UI render lane chips. */
+export const searchMemoryExpanded = async (
+  q: string,
+  opts: { hops?: number; category?: TripleCategory; limit?: number } = {},
+): Promise<MemorySearchExpandedResponse> => {
+  const params = new URLSearchParams({ q, expand: "1" });
+  if (opts.hops !== undefined) params.set("hops", String(opts.hops));
+  if (opts.category) params.set("category", opts.category);
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  return getJson<MemorySearchExpandedResponse>(`/memory/search?${params}`);
 };
 
 /* ----------------------------------------------------------------------------
