@@ -29,6 +29,15 @@ import {
   emptyToday,
   emptyLive,
   emptyControl,
+  fetchWebhooks,
+  fetchSchedules,
+  updateWebhook,
+  rotateWebhookSecret,
+  deleteWebhook,
+  updateSchedule,
+  deleteSchedule,
+  type Webhook,
+  type CronSchedule,
 } from "./api";
 
 /* ----------------------------------------------------------------------------
@@ -39,6 +48,7 @@ const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "inbox", label: "Inbox", icon: "inbox" },
   { key: "live", label: "Live", icon: "sensors" },
   { key: "control", label: "Control", icon: "tune" },
+  { key: "auto", label: "Auto", icon: "webhook" },
 ];
 
 const actionStyle = (variant: InboxAction["variant"]): CSSProperties => {
@@ -236,6 +246,7 @@ export function MobileApp() {
             onCycle={() => freezeM.mutate()}
           />
         )}
+        {tab === "auto" && <AutoScreen />}
       </div>
 
       {/* BOTTOM TAB BAR */}
@@ -1288,6 +1299,489 @@ function ControlScreen({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+ * AUTO (Webhooks + Cron) — mobile is read + toggle + delete, not create.
+ * Create flows stay on desktop; phone surface is for "what's firing" + kill
+ * switches. v1.9.
+ * -------------------------------------------------------------------------- */
+function AutoScreen() {
+  const [sub, setSub] = useState<"webhooks" | "cron">("webhooks");
+  const qc = useQueryClient();
+  const whQ = useQuery({
+    queryKey: ["webhooks"],
+    queryFn: fetchWebhooks,
+    enabled: sub === "webhooks",
+  });
+  const crQ = useQuery({
+    queryKey: ["cron"],
+    queryFn: fetchSchedules,
+    enabled: sub === "cron",
+  });
+
+  const inval = () =>
+    qc.invalidateQueries({ queryKey: [sub === "webhooks" ? "webhooks" : "cron"] });
+
+  return (
+    <div className="slidein" style={{ padding: "18px 18px 28px" }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 9,
+          marginBottom: 14,
+        }}
+      >
+        <span
+          style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em" }}
+        >
+          Auto
+        </span>
+        <span style={{ flex: 1 }} />
+        <span
+          className="mono"
+          style={{ fontSize: 10, color: tokens.textFaint }}
+        >
+          create from desktop
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <SubTab
+          label="WEBHOOKS"
+          active={sub === "webhooks"}
+          onClick={() => setSub("webhooks")}
+          count={whQ.data?.length}
+        />
+        <SubTab
+          label="CRON"
+          active={sub === "cron"}
+          onClick={() => setSub("cron")}
+          count={crQ.data?.length}
+        />
+      </div>
+
+      {sub === "webhooks" && (
+        <>
+          {whQ.isLoading && <EmptyHint>loading webhooks…</EmptyHint>}
+          {whQ.data && whQ.data.length === 0 && (
+            <EmptyHint>
+              no webhooks.
+              <br />
+              create one from the desktop Automation tab.
+            </EmptyHint>
+          )}
+          {whQ.data?.map((w) => (
+            <WebhookRowMobile key={w.id} w={w} onChange={inval} />
+          ))}
+        </>
+      )}
+      {sub === "cron" && (
+        <>
+          {crQ.isLoading && <EmptyHint>loading schedules…</EmptyHint>}
+          {crQ.data && crQ.data.length === 0 && (
+            <EmptyHint>
+              no schedules.
+              <br />
+              create one from the desktop Automation tab.
+            </EmptyHint>
+          )}
+          {crQ.data?.map((s) => (
+            <CronRowMobile key={s.id} s={s} onChange={inval} />
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
+function SubTab({
+  label,
+  active,
+  onClick,
+  count,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  count?: number;
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className="mono"
+      style={{
+        flex: 1,
+        background: active ? tokens.primaryActionBg : "transparent",
+        border: `1px solid ${active ? tokens.accent : tokens.border}`,
+        borderRadius: 8,
+        padding: "9px 0",
+        textAlign: "center",
+        fontSize: 11,
+        letterSpacing: "0.08em",
+        color: active ? tokens.textHi : tokens.textMuted,
+        cursor: "pointer",
+      }}
+    >
+      {label}
+      {typeof count === "number" && (
+        <span
+          style={{
+            color: active ? tokens.accent : tokens.textFaint,
+            marginLeft: 6,
+          }}
+        >
+          {count}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function WebhookRowMobile({
+  w,
+  onChange,
+}: {
+  w: Webhook;
+  onChange: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await updateWebhook(w.id, { enabled: !w.enabled });
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const rotate = async () => {
+    setBusy(true);
+    try {
+      const fresh = await rotateWebhookSecret(w.id);
+      setRevealed(fresh);
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteWebhook(w.id);
+      onChange();
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  };
+
+  const stateColor = w.enabled ? tokens.ok : tokens.textGhost;
+
+  return (
+    <div
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderLeft: `2px solid ${stateColor}`,
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={dot(stateColor, false)} />
+        <span
+          className="mono"
+          style={{ fontSize: 9.5, color: stateColor, letterSpacing: "0.06em" }}
+        >
+          {w.enabled ? "ENABLED" : "DISABLED"}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span
+          className="mono"
+          style={{ fontSize: 10, color: tokens.textFaint }}
+        >
+          {w.total_calls} calls
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 500,
+          color: tokens.textHi,
+          marginTop: 8,
+        }}
+      >
+        {w.name}
+      </div>
+      <code
+        style={{
+          display: "block",
+          fontSize: 11,
+          color: tokens.textMuted,
+          marginTop: 3,
+          wordBreak: "break-all",
+        }}
+      >
+        /webhooks/in/{w.slug}
+      </code>
+      <div
+        className="mono"
+        style={{
+          display: "flex",
+          gap: 10,
+          marginTop: 6,
+          fontSize: 10,
+          color: tokens.textFaint,
+          flexWrap: "wrap",
+        }}
+      >
+        <span>last: {w.last_called_at ?? "never"}</span>
+        <span>·</span>
+        <span>secret: {w.secret_preview}</span>
+      </div>
+      {w.last_error && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            color: tokens.bleed,
+            lineHeight: 1.4,
+          }}
+        >
+          last error: {w.last_error}
+        </div>
+      )}
+      {revealed && (
+        <div
+          style={{
+            marginTop: 10,
+            padding: 9,
+            border: `1px solid ${tokens.okActionBorder}`,
+            background: tokens.okActionBg,
+            borderRadius: 8,
+          }}
+        >
+          <div
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: tokens.textLabel,
+              letterSpacing: "0.06em",
+              marginBottom: 4,
+            }}
+          >
+            ROTATED — COPY NOW
+          </div>
+          <code
+            style={{
+              fontSize: 11,
+              color: tokens.textHi,
+              wordBreak: "break-all",
+            }}
+          >
+            {revealed}
+          </code>
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 7, marginTop: 12 }}>
+        <div
+          className="mono"
+          style={{
+            ...actionStyle(w.enabled ? "neutral" : "primary"),
+            opacity: busy ? 0.5 : 1,
+          }}
+          onClick={() => !busy && toggle()}
+        >
+          {w.enabled ? "Disable" : "Enable"}
+        </div>
+        <div
+          className="mono"
+          style={{ ...actionStyle("neutral"), opacity: busy ? 0.5 : 1 }}
+          onClick={() => !busy && rotate()}
+        >
+          Rotate
+        </div>
+        {confirmDelete ? (
+          <>
+            <div
+              className="mono"
+              style={{ ...actionStyle("danger"), opacity: busy ? 0.5 : 1 }}
+              onClick={() => !busy && remove()}
+            >
+              Sure?
+            </div>
+            <div
+              className="mono"
+              style={{ ...actionStyle("neutral") }}
+              onClick={() => setConfirmDelete(false)}
+            >
+              ✕
+            </div>
+          </>
+        ) : (
+          <div
+            className="mono"
+            style={{ ...actionStyle("danger"), opacity: busy ? 0.5 : 1 }}
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CronRowMobile({
+  s,
+  onChange,
+}: {
+  s: CronSchedule;
+  onChange: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      await updateSchedule(s.id, { enabled: !s.enabled });
+      onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteSchedule(s.id);
+      onChange();
+    } finally {
+      setBusy(false);
+      setConfirmDelete(false);
+    }
+  };
+
+  const stateColor = s.enabled ? tokens.ok : tokens.textGhost;
+
+  return (
+    <div
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderLeft: `2px solid ${stateColor}`,
+        borderRadius: 12,
+        padding: 14,
+        marginBottom: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={dot(stateColor, false)} />
+        <span
+          className="mono"
+          style={{ fontSize: 9.5, color: stateColor, letterSpacing: "0.06em" }}
+        >
+          {s.enabled ? "ENABLED" : "DISABLED"}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span
+          className="mono"
+          style={{ fontSize: 10, color: tokens.textFaint }}
+        >
+          {s.total_fires} fires
+        </span>
+      </div>
+      <div
+        style={{
+          fontSize: 14,
+          fontWeight: 500,
+          color: tokens.textHi,
+          marginTop: 8,
+        }}
+      >
+        {s.name}
+      </div>
+      <code
+        style={{
+          display: "block",
+          fontSize: 11,
+          color: tokens.textMuted,
+          marginTop: 3,
+        }}
+      >
+        {s.cron_expr}
+      </code>
+      <div
+        className="mono"
+        style={{
+          fontSize: 10,
+          color: tokens.textFaint,
+          marginTop: 6,
+          lineHeight: 1.5,
+        }}
+      >
+        next: {s.next_run_at}
+        <br />
+        last: {s.last_run_at ?? "never"}
+      </div>
+      {s.last_error && (
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 11,
+            color: tokens.bleed,
+            lineHeight: 1.4,
+          }}
+        >
+          last error: {s.last_error}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 7, marginTop: 12 }}>
+        <div
+          className="mono"
+          style={{
+            ...actionStyle(s.enabled ? "neutral" : "primary"),
+            opacity: busy ? 0.5 : 1,
+          }}
+          onClick={() => !busy && toggle()}
+        >
+          {s.enabled ? "Disable" : "Enable"}
+        </div>
+        {confirmDelete ? (
+          <>
+            <div
+              className="mono"
+              style={{ ...actionStyle("danger"), opacity: busy ? 0.5 : 1 }}
+              onClick={() => !busy && remove()}
+            >
+              Sure?
+            </div>
+            <div
+              className="mono"
+              style={{ ...actionStyle("neutral") }}
+              onClick={() => setConfirmDelete(false)}
+            >
+              ✕
+            </div>
+          </>
+        ) : (
+          <div
+            className="mono"
+            style={{ ...actionStyle("danger"), opacity: busy ? 0.5 : 1 }}
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete
+          </div>
+        )}
+      </div>
     </div>
   );
 }

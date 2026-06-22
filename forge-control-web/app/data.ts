@@ -97,7 +97,7 @@ export interface DecisionLogEntry {
   action: string;
 }
 
-export type TabKey = "today" | "inbox" | "live" | "control";
+export type TabKey = "today" | "inbox" | "live" | "control" | "auto";
 
 /* ----------------------------------------------------------------------------
  * Semantic color mapping. The ONLY place hex codes are chosen by status.
