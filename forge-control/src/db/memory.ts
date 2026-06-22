@@ -392,19 +392,47 @@ Passage:
 {TEXT}
 ---`;
 
+/** Pool-level failure (HTTP non-2xx, empty body, transport error). Distinct
+ *  from JSON-parse failures so the extractor's caller can react — most
+ *  importantly, 429 rate limits should stop a bulk extraction batch rather
+ *  than silently producing zero triples per chunk. */
+export class TripleExtractorPoolError extends Error {
+  status?: number;
+  rateLimited: boolean;
+  constructor(message: string, opts: { status?: number; rateLimited?: boolean } = {}) {
+    super(message);
+    this.name = "TripleExtractorPoolError";
+    this.status = opts.status;
+    this.rateLimited = opts.rateLimited ?? false;
+  }
+}
+
 async function callPoolForJson(prompt: string): Promise<unknown> {
-  const res = await fetch(`${POOL_URL}/v1/run`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": POOL_KEY },
-    body: JSON.stringify({ prompt, timeout_ms: 120_000 }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${POOL_URL}/v1/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": POOL_KEY },
+      body: JSON.stringify({ prompt, timeout_ms: 120_000 }),
+    });
+  } catch (e) {
+    throw new TripleExtractorPoolError(
+      `pool transport error: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
   const j = (await res.json().catch(() => ({}))) as {
     text?: string;
     error?: string;
   };
-  if (!res.ok)
-    throw new Error(`pool ${res.status}: ${j.error ?? res.statusText}`);
-  if (typeof j.text !== "string") throw new Error("pool returned no text");
+  if (!res.ok) {
+    throw new TripleExtractorPoolError(
+      `pool ${res.status}: ${j.error ?? res.statusText}`,
+      { status: res.status, rateLimited: res.status === 429 },
+    );
+  }
+  if (typeof j.text !== "string") {
+    throw new TripleExtractorPoolError("pool returned no text");
+  }
   // Strip trailing/leading whitespace and any accidental ``` fences.
   const body = j.text
     .trim()
@@ -413,43 +441,69 @@ async function callPoolForJson(prompt: string): Promise<unknown> {
   return JSON.parse(body);
 }
 
-/** Extract triples for a single chunk via claude-pool. Best-effort: returns
- *  an empty array if the pool errors or the response can't be parsed. */
-export async function extractTriplesFromChunk(text: string): Promise<Triple[]> {
+/** Discriminated result for a single-chunk extraction.
+ *  - `ok: true`  → triples extracted (possibly empty if the chunk genuinely
+ *    has no facts the LLM could lift).
+ *  - `ok: false` → either a pool failure (`poolFailure: true`, batch should
+ *    consider stopping) or a parse failure (`poolFailure: false`, batch can
+ *    keep going — that one chunk's pool response was malformed). */
+export type ExtractionResult =
+  | { ok: true; triples: Triple[] }
+  | { ok: false; error: string; poolFailure: boolean; rateLimited?: boolean };
+
+/** Extract triples for a single chunk via claude-pool. Errors are returned
+ *  via the discriminated union — callers MUST distinguish pool failures
+ *  (rate limits, 5xx, network) from parse failures so a flooded pool
+ *  doesn't masquerade as "chunk had no triples". */
+export async function extractTriplesFromChunk(
+  text: string,
+): Promise<ExtractionResult> {
+  let raw: unknown;
   try {
-    const raw = await callPoolForJson(EXTRACTION_PROMPT.replace("{TEXT}", text));
-    if (!Array.isArray(raw)) return [];
-    const out: Triple[] = [];
-    for (const t of raw) {
-      if (!t || typeof t !== "object") continue;
-      const r = t as Record<string, unknown>;
-      const subject = typeof r.subject === "string" ? r.subject.trim() : "";
-      const predicate =
-        typeof r.predicate === "string" ? r.predicate.trim() : "";
-      const object = typeof r.object === "string" ? r.object.trim() : "";
-      if (!subject || !predicate || !object) continue;
-      const confidence =
-        typeof r.confidence === "number" &&
-        r.confidence >= 0 &&
-        r.confidence <= 1
-          ? r.confidence
-          : undefined;
-      // v1.7 phase 2: closed-set category, default 'other' on miss.
-      const rawCat =
-        typeof r.category === "string" ? r.category.trim().toLowerCase() : "";
-      const category: TripleCategory = TRIPLE_CATEGORY_SET.has(rawCat)
-        ? (rawCat as TripleCategory)
-        : "other";
-      out.push({ subject, predicate, object, category, confidence });
-    }
-    return out;
+    raw = await callPoolForJson(EXTRACTION_PROMPT.replace("{TEXT}", text));
   } catch (e) {
-    console.error(
-      "[memory triples] extraction failed:",
-      e instanceof Error ? e.message : e,
-    );
-    return [];
+    if (e instanceof TripleExtractorPoolError) {
+      console.error("[memory triples] pool failure:", e.message);
+      return {
+        ok: false,
+        error: e.message,
+        poolFailure: true,
+        rateLimited: e.rateLimited,
+      };
+    }
+    // JSON.parse blew up — pool replied, response is malformed. Don't
+    // count this as a pool outage; the next chunk's response may parse
+    // cleanly. Treat as parse failure.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[memory triples] parse failure:", msg);
+    return { ok: false, error: msg, poolFailure: false };
   }
+  if (!Array.isArray(raw)) {
+    return { ok: true, triples: [] };
+  }
+  const out: Triple[] = [];
+  for (const t of raw) {
+    if (!t || typeof t !== "object") continue;
+    const r = t as Record<string, unknown>;
+    const subject = typeof r.subject === "string" ? r.subject.trim() : "";
+    const predicate = typeof r.predicate === "string" ? r.predicate.trim() : "";
+    const object = typeof r.object === "string" ? r.object.trim() : "";
+    if (!subject || !predicate || !object) continue;
+    const confidence =
+      typeof r.confidence === "number" &&
+      r.confidence >= 0 &&
+      r.confidence <= 1
+        ? r.confidence
+        : undefined;
+    // v1.7 phase 2: closed-set category, default 'other' on miss.
+    const rawCat =
+      typeof r.category === "string" ? r.category.trim().toLowerCase() : "";
+    const category: TripleCategory = TRIPLE_CATEGORY_SET.has(rawCat)
+      ? (rawCat as TripleCategory)
+      : "other";
+    out.push({ subject, predicate, object, category, confidence });
+  }
+  return { ok: true, triples: out };
 }
 
 /** Insert triples for one chunk. Idempotent thanks to the unique index. */
@@ -493,15 +547,34 @@ export async function upsertTriples(
   return r.rowCount ?? 0;
 }
 
+/** After this many consecutive pool failures, the bulk extractor aborts
+ *  the batch and surfaces the reason. Stops the cascading-no-op failure
+ *  mode where every chunk in a batch hits a rate-limited pool. Tunable
+ *  via env so a future cron job can pick a more permissive threshold. */
+const EXTRACTOR_CIRCUIT_BREAKER_THRESHOLD = Number(
+  process.env.EXTRACTOR_CIRCUIT_BREAKER_THRESHOLD ?? "3",
+);
+
+/** Per-batch counters surfaced in the API response so smoke scripts +
+ *  the UI can tell "chunk had no facts" from "pool was down". */
+export interface BatchExtractionStats {
+  chunks: number;
+  chunks_processed: number;
+  triples: number;
+  pool_failures: number;
+  parse_failures: number;
+  circuit_broken: boolean;
+  errors: string[];
+}
+
 /** Run extraction for one note: re-embed-source-of-truth is chunks already
  *  indexed in knowledge_embeddings. Walks those chunks, calls the LLM per
  *  chunk, inserts triples. Matches by suffix so both vault notes (`%.md`)
  *  and other source layouts (`hermes://msg-…`) work — caller passes the
  *  filename or message id, we LIKE-match. */
-export async function extractTriplesForNote(slug: string): Promise<{
-  chunks: number;
-  triples: number;
-}> {
+export async function extractTriplesForNote(
+  slug: string,
+): Promise<BatchExtractionStats> {
   const r = await cf.query<{
     source_path: string;
     chunk_index: number;
@@ -513,22 +586,15 @@ export async function extractTriplesForNote(slug: string): Promise<{
        ORDER BY chunk_index ASC`,
     [`%${slug}.md`, `%${slug}`],
   );
-  let triplesTotal = 0;
-  for (const row of r.rows) {
-    const tps = await extractTriplesFromChunk(row.content);
-    const n = await upsertTriples(slug, row.source_path, row.chunk_index, tps);
-    triplesTotal += n;
-  }
-  return { chunks: r.rows.length, triples: triplesTotal };
+  return runBatch(slug, r.rows);
 }
 
 /** Bulk extractor — walks the next N un-extracted chunks (any source) and
  *  persists triples. Idempotent; safe to re-run. Used as a one-shot warm-up
  *  endpoint before turning on the cron job. */
-export async function extractTriplesNextBatch(limit = 20): Promise<{
-  chunks: number;
-  triples: number;
-}> {
+export async function extractTriplesNextBatch(
+  limit = 20,
+): Promise<BatchExtractionStats> {
   const r = await cf.query<{
     source_path: string;
     chunk_index: number;
@@ -544,14 +610,71 @@ export async function extractTriplesNextBatch(limit = 20): Promise<{
       LIMIT $1`,
     [limit],
   );
-  let triplesTotal = 0;
-  for (const row of r.rows) {
-    const slug = slugify(row.source_path);
-    const tps = await extractTriplesFromChunk(row.content);
-    const n = await upsertTriples(slug, row.source_path, row.chunk_index, tps);
-    triplesTotal += n;
+  return runBatch(null, r.rows);
+}
+
+/** Shared batch loop: walks rows, calls the extractor, persists triples,
+ *  tracks pool vs parse failures, trips a circuit breaker after N
+ *  consecutive pool failures. */
+async function runBatch(
+  forcedSlug: string | null,
+  rows: { source_path: string; chunk_index: number; content: string }[],
+): Promise<BatchExtractionStats> {
+  let triples = 0;
+  let processed = 0;
+  let poolFailures = 0;
+  let parseFailures = 0;
+  let consecutivePoolFailures = 0;
+  const errors: string[] = [];
+  let circuitBroken = false;
+
+  for (const row of rows) {
+    const result = await extractTriplesFromChunk(row.content);
+    processed += 1;
+    if (result.ok) {
+      consecutivePoolFailures = 0;
+      const slug = forcedSlug ?? slugify(row.source_path);
+      const n = await upsertTriples(
+        slug,
+        row.source_path,
+        row.chunk_index,
+        result.triples,
+      );
+      triples += n;
+      continue;
+    }
+
+    if (result.poolFailure) {
+      poolFailures += 1;
+      consecutivePoolFailures += 1;
+      errors.push(
+        `pool@${row.source_path}#${row.chunk_index}: ${result.error}`,
+      );
+      if (consecutivePoolFailures >= EXTRACTOR_CIRCUIT_BREAKER_THRESHOLD) {
+        circuitBroken = true;
+        console.error(
+          `[memory triples] circuit-breaker tripped after ${consecutivePoolFailures} consecutive pool failures — aborting batch`,
+        );
+        break;
+      }
+    } else {
+      parseFailures += 1;
+      consecutivePoolFailures = 0;
+      errors.push(
+        `parse@${row.source_path}#${row.chunk_index}: ${result.error}`,
+      );
+    }
   }
-  return { chunks: r.rows.length, triples: triplesTotal };
+
+  return {
+    chunks: rows.length,
+    chunks_processed: processed,
+    triples,
+    pool_failures: poolFailures,
+    parse_failures: parseFailures,
+    circuit_broken: circuitBroken,
+    errors,
+  };
 }
 
 /** Look up chunks that share at least one entity (subject_key OR object_key)
