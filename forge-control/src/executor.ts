@@ -20,6 +20,7 @@
 
 import pg from "pg";
 import { evaluateGuardrails } from "./db/autonomy.ts";
+import { todaySpendRollup } from "./db/spend.ts";
 import {
   compressThread,
   emptyCompressorState,
@@ -324,6 +325,13 @@ async function processRun(run: ClaimedRun): Promise<void> {
     0,
   );
   const estSpendEur = Math.max(0.01, (threadChars / 1000) * 0.04);
+  // v1.9: today's actual rolled-up spend from spend_log so the
+  // spend.daily_cap guardrail can finally trip when it should. Failures
+  // here MUST NOT block the run — fall back to estimating from this turn
+  // alone if the rollup query fails.
+  const dailySpendEur = await todaySpendRollup()
+    .then((r) => r.total_eur + estSpendEur)
+    .catch(() => estSpendEur);
   const guard = await evaluateGuardrails({
     agent: "forge-executor",
     action: "claude-pool.run",
@@ -331,6 +339,7 @@ async function processRun(run: ClaimedRun): Promise<void> {
     payload: {
       run_id: run.id,
       spend_eur: estSpendEur,
+      daily_spend_eur: dailySpendEur,
       thread_chars: threadChars,
       bypass_blanket: true,
     },
