@@ -351,15 +351,31 @@ export function MemorySurface() {
                   </span>
                 ))}
               </div>
+              {/* v1.9: reframed from "filter" to "lens". The category arg
+                  affects only the 6-slot graph budget; the 12-slot vector
+                  seed always survives, so at most 33% of result slots rotate.
+                  See docs/ai-os-v17/multihop-bench.md for the bench finding. */}
               <div
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
+                  alignItems: "center",
                   gap: 5,
                   padding: "6px 14px 10px",
                   borderBottom: `1px solid ${tokens.borderDivider}`,
                 }}
               >
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 9,
+                    color: tokens.textFaint,
+                    letterSpacing: "0.08em",
+                    marginRight: 4,
+                  }}
+                >
+                  LENS
+                </span>
                 <span
                   onClick={() => setSearchCategory(null)}
                   className="mono"
@@ -373,26 +389,38 @@ export function MemorySurface() {
                     border: `1px solid ${!searchCategory ? tokens.accent : tokens.borderSoft}`,
                   }}
                 >
-                  any
+                  off
                 </span>
-                {TRIPLE_CATEGORIES.map((c) => (
-                  <span
-                    key={c}
-                    onClick={() => setSearchCategory(c === searchCategory ? null : c)}
-                    className="mono"
-                    style={{
-                      cursor: "pointer",
-                      fontSize: 9.5,
-                      padding: "2px 7px",
-                      borderRadius: 4,
-                      background: searchCategory === c ? tokens.primaryActionBg : "transparent",
-                      color: searchCategory === c ? tokens.textHi : tokens.textMuted,
-                      border: `1px solid ${searchCategory === c ? tokens.accent : tokens.borderSoft}`,
-                    }}
-                  >
-                    {c}
-                  </span>
-                ))}
+                {TRIPLE_CATEGORIES.map((c) => {
+                  const sparse = c === "decision" || c === "rule";
+                  return (
+                    <span
+                      key={c}
+                      onClick={() => setSearchCategory(c === searchCategory ? null : c)}
+                      title={
+                        sparse
+                          ? `${c} has few triples — graph budget often won't fill`
+                          : undefined
+                      }
+                      className="mono"
+                      style={{
+                        cursor: "pointer",
+                        fontSize: 9.5,
+                        padding: "2px 7px",
+                        borderRadius: 4,
+                        background: searchCategory === c ? tokens.primaryActionBg : "transparent",
+                        color: searchCategory === c ? tokens.textHi : tokens.textMuted,
+                        border: `1px solid ${searchCategory === c ? tokens.accent : tokens.borderSoft}`,
+                        opacity: sparse && searchCategory !== c ? 0.65 : 1,
+                      }}
+                    >
+                      {c}
+                      {sparse && (
+                        <span style={{ color: tokens.warn, marginLeft: 3 }}>·</span>
+                      )}
+                    </span>
+                  );
+                })}
               </div>
               <div
                 className="mono"
