@@ -116,5 +116,75 @@ Concrete implications for the default UI behavior:
 ### Open
 
 - **Wider-budget bench**: re-run with a fixed total budget that grows with `hops` (e.g. `12 + 6*hops`) instead of redistributing the same 18. Would isolate "more depth surfaces more chunks" from "depth displaces width".
-- **Category-narrowed bench**: same queries, run with `?category=decision` and `?category=rule` once those categories have meaningful row counts.
+- **~~Category-narrowed bench~~**: shipped in v1.9, results below.
 - **LLM-judge quality pass**: of the chunks hop-2 surfaces (new@hop2), how many are load-bearing for the original query?
+
+---
+
+## v1.9 — Category-narrowed bench
+
+Tests whether the `?category=` filter we added in v1.7 phase 2 actually changes *which* chunks surface vs just trimming the result set. Method: for each query, run baseline `hops=2` (no category) and `hops=2` filtered to each of seven categories. Report result-set size, Jaccard overlap with baseline, and the symmetric difference.
+
+Script: `scripts/bench-category-narrowed.sh`. Corpus: 205/205, 1452 triples, all 8 categories populated.
+
+### Setup constraint that bounds the change
+
+Baseline at `hops=2` is 12 vector seed hits + 6 graph hits. The category filter applies **only to the graph walk**; the vector seed is unchanged. So at most 6 of 18 chunks can change between baseline and narrowed. Maximum `new` and `lost` per query is 6.
+
+### Results
+
+| query                          | category   | n   | jaccard | new | lost |
+| ------------------------------ | ---------- | --- | ------- | --- | ---- |
+| `worker gemini`                | decision   | 12  | 0.67    | 0   | 6    |
+|                                | rule       | 13  | 0.63    | 1   | 6    |
+|                                | error      | 18  | 0.50    | 6   | 6    |
+|                                | provider   | 17  | 0.52    | 5   | 6    |
+|                                | format     | 18  | 0.57    | 5   | 5    |
+|                                | job        | 18  | 0.57    | 5   | 5    |
+|                                | person     | 18  | 0.50    | 6   | 6    |
+| `tts providers ai33`           | decision   | 12  | 0.67    | 0   | 6    |
+|                                | rule       | 13  | 0.63    | 1   | 6    |
+|                                | error      | 18  | 0.80    | 2   | 2    |
+|                                | provider   | 18  | **0.89**| 1   | 1    |
+|                                | format     | 18  | 0.50    | 6   | 6    |
+|                                | job        | 18  | 0.50    | 6   | 6    |
+|                                | person     | 18  | 0.50    | 6   | 6    |
+| `fastgen gateway image`        | decision   | 12  | 0.67    | 0   | 6    |
+|                                | rule       | 13  | 0.63    | 1   | 6    |
+|                                | error      | 18  | 0.64    | 4   | 4    |
+|                                | provider   | 18  | 0.71    | 3   | 3    |
+|                                | format     | 18  | 0.57    | 5   | 5    |
+|                                | job        | 18  | 0.50    | 6   | 6    |
+|                                | person     | 18  | 0.50    | 6   | 6    |
+| `drama stock chain`            | decision   | 14  | 0.60    | 2   | 6    |
+|                                | rule       | 13  | 0.63    | 1   | 6    |
+|                                | error      | 18  | 0.57    | 5   | 5    |
+|                                | provider   | 18  | 0.50    | 6   | 6    |
+|                                | format     | 18  | 0.57    | 5   | 5    |
+|                                | job        | 18  | 0.64    | 4   | 4    |
+|                                | person     | 18  | 0.50    | 6   | 6    |
+| `tutorial studio claude pool`  | decision   | 12  | 0.67    | 0   | 6    |
+|                                | rule       | 13  | 0.63    | 1   | 6    |
+|                                | error      | 18  | 0.57    | 5   | 5    |
+|                                | provider   | 16  | 0.55    | 4   | 6    |
+|                                | format     | 18  | 0.64    | 4   | 4    |
+|                                | job        | 18  | 0.57    | 5   | 5    |
+|                                | person     | 18  | 0.50    | 6   | 6    |
+
+### Findings
+
+1. **The filter is not trimming — it's rotating.** For every non-sparse category (error/provider/format/job/person), the result set fills to 18 but with substantially different chunks (Jaccard 0.50-0.89). Only `decision` and `rule` reduce total size, because they're sparse (9 and 14 triples total).
+
+2. **Topical alignment matters.** `provider`-filtered walk on `tts providers ai33` is the highest-Jaccard pair in the table (0.89, only 1 new + 1 lost) — narrowing by the category that already dominates the query's natural triple graph leaves the walk nearly unchanged. Sanity check passed.
+
+3. **Cross-category narrowing reveals different angles.** `format` on the same query collapses to Jaccard 0.50 — the 6 graph slots fill with chunks about formats that *use* TTS providers, a different question from "what providers are configured." This is the right behavior for an analyst toggling lenses.
+
+4. **`person` narrowing is uniformly Jaccard 0.50** across all 5 queries. With person=66 triples but topically orthogonal to the seed queries, the walk consistently rotates the entire 6-slot graph budget. Useful for "who's involved" but rarely refines the query.
+
+5. **`decision` narrowing consistently kills the graph slots** (n=12 for 4 of 5 queries, n=14 for `drama stock chain`). At 9 decision triples total, the graph walk almost never finds a qualifying chunk reachable from the seed entities. The `decision` filter is useful for "show me only decisions" intent but won't broaden discovery.
+
+### Implication for the UI
+
+The current MemorySurface treats `category` as a filter chip. The bench says it's actually a **lens**, not a filter: the vector seed always survives, and the graph budget rotates entirely. The label "filter to category X" is misleading because at most 33% of the 18 result slots are affected.
+
+Better UI framing: "view through {category} lens" with a per-lens result-set-size hint so the user knows which categories have meaningful graph density. A sparse-category lens (`decision`, `rule`) should display the size collapse explicitly ("12 of 18 — graph walk found no qualifying triples").
