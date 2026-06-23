@@ -6,8 +6,11 @@ import {
   type Worker,
   type Heartbeat,
 } from "../db/hermes.ts";
+import { todaySpendRollup } from "../db/spend.ts";
 
 const r = new Hono();
+
+const SPEND_CAP_EUR = Number(process.env.SPEND_DAILY_CAP_EUR ?? "50");
 
 function mapHermesToFleet(): TodayPayload["fleet"] {
   let workers: Worker[] = [];
@@ -56,12 +59,31 @@ function mapHermesToFleet(): TodayPayload["fleet"] {
 
 r.get("/", async (c) => {
   const fleet = mapHermesToFleet();
-  // Spend tracking lives in a future skill; for now we surface a flat zero.
+
+  // Spend rollup. If gateways haven't started reporting yet (row_count=0),
+  // the Today screen surfaces "not tracked yet" instead of lying about €0.
+  // The cap is shown either way so the user always sees the budget ceiling.
+  const rollup = await todaySpendRollup().catch(() => ({
+    total_eur: 0,
+    row_count: 0,
+    by_provider: [],
+  }));
+
   const payload = await getTodayPayload({
     fleet,
-    spendEur: 0,
-    spendCapEur: 50,
+    spendEur: rollup.total_eur,
+    spendCapEur: SPEND_CAP_EUR,
   });
+
+  // Override the spend block when there is genuinely no data yet — better
+  // to be honest about ignorance than to imply zero burn.
+  if (rollup.row_count === 0) {
+    payload.spend = {
+      value: "— not tracked",
+      cap: `of €${SPEND_CAP_EUR} cap`,
+    };
+  }
+
   return c.json(payload);
 });
 
