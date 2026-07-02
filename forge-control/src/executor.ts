@@ -37,6 +37,7 @@ import {
   prefetchMemoryForUserTurn,
   lastUserText,
 } from "./lib/memory-prefetch.ts";
+import { queueNotification } from "./db/notifications.ts";
 
 const { Pool } = pg;
 
@@ -351,6 +352,36 @@ async function completeRun(
   }
 }
 
+/**
+ * v2.2: push run outcomes to Telegram. Only runs born on a push channel
+ * (telegram) or from a schedule (cron) notify; web chats have the live SSE
+ * stream. A cron run whose final text starts with [SILENT] stays quiet —
+ * that's how the hourly watchdog avoids 24 "all clear" pings a day.
+ * Never throws: a lost push must not fail the run.
+ */
+async function notifyRunOutcome(
+  run: { id: string; title: string; metadata: Record<string, unknown> },
+  status: "completed" | "failed" | "stuck",
+  text: string | null,
+): Promise<void> {
+  const source = String(run.metadata?.source ?? "");
+  if (source !== "telegram" && source !== "cron") return;
+  const body = (text ?? "").trim();
+  if (status === "completed" && /^\s*\[SILENT\]/i.test(body)) return;
+
+  let msg: string;
+  if (status === "completed") {
+    msg =
+      source === "cron"
+        ? `🤖 ${run.title}\n\n${body || "(no output)"}`
+        : body || "(no output)";
+  } else {
+    const what = status === "stuck" ? "got stuck (resumable)" : "failed";
+    msg = `⚠️ ${source === "cron" ? run.title : "your request"} ${what}${body ? `:\n${body.slice(0, 500)}` : ""}`;
+  }
+  await queueNotification(msg, `run:${source}`);
+}
+
 /** Append a thread entry without touching status (streamed CC events). */
 async function appendThreadEntry(id: string, entry: ThreadEntry): Promise<void> {
   await pool.query(
@@ -504,6 +535,7 @@ async function processRun(run: ClaimedRun): Promise<void> {
         },
         "completed",
       );
+      await notifyRunOutcome(run, "completed", text);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -543,6 +575,7 @@ async function processRun(run: ClaimedRun): Promise<void> {
         "stuck",
         "timeout",
       );
+      await notifyRunOutcome(run, "stuck", `timed out after ${Math.round(timeoutMs / 1000)}s`);
     } else {
       console.error(`[executor] run ${run.id} failed: ${msg}`);
       await completeRun(
@@ -556,6 +589,7 @@ async function processRun(run: ClaimedRun): Promise<void> {
         },
         "failed",
       );
+      await notifyRunOutcome(run, "failed", msg);
     }
   } finally {
     clearInterval(hb);
@@ -626,7 +660,13 @@ async function processWithClaudeCode(
   const baseMessage = priorSession
     ? trailingUserBlock(thread)
     : buildPromptFromThread(thread, { assistantMarker: false });
-  const message = memoryBlock ? `${memoryBlock}${baseMessage}` : baseMessage;
+  // v2.2: turns born on Telegram land on Konrad's phone — tell the engine so
+  // it keeps the final reply short (the system prompt carries the details).
+  const sourceHint =
+    String(run.metadata?.source ?? "") === "telegram"
+      ? "[SYSTEM] This turn came from Telegram. Final reply goes to Konrad's phone: keep it under ~1200 chars, plain text, front-load the answer.\n\n"
+      : "";
+  const message = `${memoryBlock ?? ""}${sourceHint}${baseMessage}`;
 
   // Serialize streamed appends so thread order matches event order.
   let chain: Promise<void> = Promise.resolve();
@@ -747,6 +787,11 @@ async function processWithClaudeCode(
       `(${result.numTurns} turns, $${result.costUsd.toFixed(4)})`,
   );
   await completeRun(run.id, finalEntry, "completed");
+  await notifyRunOutcome(
+    run,
+    "completed",
+    result.text || finalEntry?.content || null,
+  );
 }
 
 let running = true;
@@ -1065,6 +1110,12 @@ async function reminderTick(): Promise<void> {
         .catch((e) =>
           console.error(`[reminders] inbox insert failed: ${e.message}`),
         );
+      // v2.2: reminders also push to Telegram — the inbox is where they're
+      // tracked, the phone is where they're actually seen.
+      await queueNotification(
+        `⏰ ${rem.text}${rem.recur ? ` (repeats ${rem.recur})` : ""}`,
+        "reminder",
+      );
     }
     if (due.length > 0) {
       console.log(`[reminders] delivered ${due.length} reminder(s) → inbox`);

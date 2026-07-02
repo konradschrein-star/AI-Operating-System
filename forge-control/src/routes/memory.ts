@@ -7,6 +7,7 @@ import {
   extractTriplesForNote,
   extractTriplesNextBatch,
   pingMemory,
+  knowledgeGraph,
   TRIPLE_CATEGORIES,
   type TripleCategory,
 } from "../db/memory.ts";
@@ -14,6 +15,16 @@ import {
 const r = new Hono();
 
 r.get("/health", async (c) => c.json(await pingMemory()));
+
+/* v2.2: entity graph for the 3D visualization. Registered before /:slug so
+ * the catch-all param route doesn't shadow it. */
+r.get("/graph", async (c) => {
+  const maxLinks = Math.min(
+    6000,
+    Math.max(100, Number(c.req.query("limit") ?? "3000")),
+  );
+  return c.json(await knowledgeGraph(maxLinks));
+});
 
 r.get("/", async (c) => {
   const limit = Math.min(

@@ -21,6 +21,12 @@ module.exports = {
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
         REMINDER_TZ: 'Europe/Berlin',
         UPLOAD_DIR: '/opt/ai-os/uploads',
+        // v2.2: cron expressions + reminders read as Berlin wall-clock.
+        TZ: 'Europe/Berlin',
+        // v2.2: Telegram bridge (VPS Cat). Token from host env at pm2 start —
+        // never bake the token into version control.
+        TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || '',
+        TELEGRAM_CHAT_ID: '123456789',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-control-error.log',
@@ -50,6 +56,7 @@ module.exports = {
         MCP_TIMEOUT: '30000',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
         REMINDER_TZ: 'Europe/Berlin',
+        TZ: 'Europe/Berlin',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-executor-error.log',

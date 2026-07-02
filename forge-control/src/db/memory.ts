@@ -886,3 +886,81 @@ export async function pingMemory(): Promise<{
   }
   return { vault_ok, vault_notes, embeddings_ok, embed_sidecar_ok };
 }
+
+/* ============================================================================
+ * v2.2 — knowledge graph export for the 3D visualization.
+ *
+ * Entities (triple subjects/objects) become nodes; each distinct
+ * (subject, predicate, object) becomes a link. Node degree drives size,
+ * the notes[] provenance list powers the click-through panel.
+ * ========================================================================== */
+
+export interface GraphNode {
+  id: string; // normalised entity key
+  label: string; // display form (first-seen original casing)
+  degree: number;
+  notes: string[]; // note slugs this entity appears in (capped)
+}
+
+export interface GraphLink {
+  source: string;
+  target: string;
+  predicate: string;
+}
+
+export interface KnowledgeGraph {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  triples: number;
+}
+
+export async function knowledgeGraph(maxLinks = 3000): Promise<KnowledgeGraph> {
+  const r = await cf.query<{
+    subject: string;
+    predicate: string;
+    object: string;
+    subject_key: string;
+    object_key: string;
+    note_slug: string;
+  }>(
+    `SELECT subject, predicate, object, subject_key, object_key, note_slug
+       FROM knowledge_triples
+       ORDER BY created_at DESC
+       LIMIT $1`,
+    [maxLinks],
+  );
+
+  const nodes = new Map<string, GraphNode>();
+  const seen = new Set<string>();
+  const links: GraphLink[] = [];
+
+  const touch = (key: string, label: string, slug: string): void => {
+    let n = nodes.get(key);
+    if (!n) {
+      n = { id: key, label, degree: 0, notes: [] };
+      nodes.set(key, n);
+    }
+    n.degree += 1;
+    if (n.notes.length < 12 && !n.notes.includes(slug)) n.notes.push(slug);
+  };
+
+  for (const t of r.rows) {
+    if (t.subject_key === t.object_key) continue; // self-loops render badly
+    const linkKey = `${t.subject_key}→${t.predicate}→${t.object_key}`;
+    if (seen.has(linkKey)) continue;
+    seen.add(linkKey);
+    touch(t.subject_key, t.subject, t.note_slug);
+    touch(t.object_key, t.object, t.note_slug);
+    links.push({
+      source: t.subject_key,
+      target: t.object_key,
+      predicate: t.predicate,
+    });
+  }
+
+  return {
+    nodes: [...nodes.values()],
+    links,
+    triples: r.rows.length,
+  };
+}

@@ -210,6 +210,26 @@ export async function createRun(input: {
   return run;
 }
 
+/** Most recent non-terminal run from a given source (e.g. 'telegram') inside
+ *  a freshness window. The telegram bridge uses this to decide whether a
+ *  plain message continues the active thread or starts a new one. */
+export async function findActiveRunBySource(
+  source: string,
+  windowHours: number,
+): Promise<RunDetail | null> {
+  const r = await pool.query<{ id: string }>(
+    `SELECT id::text FROM runs
+      WHERE metadata->>'source' = $1
+        AND status NOT IN ('cancelled', 'failed')
+        AND updated_at > now() - ($2 || ' hours')::interval
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [source, String(windowHours)],
+  );
+  if (!r.rows[0]) return null;
+  return getRun(r.rows[0].id);
+}
+
 export async function appendMessage(
   id: string,
   entry: ThreadEntry,
