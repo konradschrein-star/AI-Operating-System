@@ -65,6 +65,13 @@ const CC_ALLOWED_TOOLS = (
     "mcp__forge-memory",
     "mcp__chrome-devtools",
     "mcp__shadcn",
+    "mcp__sequential-thinking",
+    "mcp__memory",
+    "mcp__fetch",
+    "mcp__docker",
+    "mcp__redis",
+    "mcp__pexels",
+    "mcp__auto-browser",
   ].join(",")
 )
   .split(",")
