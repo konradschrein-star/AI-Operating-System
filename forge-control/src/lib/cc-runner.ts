@@ -29,6 +29,16 @@ const CC_ADD_DIRS = (process.env.CC_ADD_DIRS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+// Explicit tool allowlist instead of --dangerously-skip-permissions —
+// the CLI refuses that flag under root (pm2 runs as root), and an
+// allowlist is the better guardrail anyway. Comma-separated env override.
+const CC_ALLOWED_TOOLS = (
+  process.env.CC_ALLOWED_TOOLS ??
+  "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
 
 const SYSTEM_PROMPT = `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
 
@@ -106,15 +116,9 @@ export async function runClaudeCode(opts: {
   /** Polled every ~5s; return true to kill the child (cancel/pause). */
   isCancelled?: () => Promise<boolean>;
 }): Promise<CcResult> {
-  const args = [
-    "-p",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--dangerously-skip-permissions",
-    "--add-dir",
-    VAULT_DIR,
-  ];
+  const args = ["-p", "--output-format", "stream-json", "--verbose"];
+  for (const t of CC_ALLOWED_TOOLS) args.push("--allowedTools", t);
+  args.push("--add-dir", VAULT_DIR);
   for (const d of CC_ADD_DIRS) args.push("--add-dir", d);
   if (CC_MODEL) args.push("--model", CC_MODEL);
   if (opts.sessionId) args.push("--resume", opts.sessionId);
