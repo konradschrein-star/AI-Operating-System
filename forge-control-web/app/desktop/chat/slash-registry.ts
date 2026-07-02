@@ -57,6 +57,8 @@ export interface SlashContext {
   createReminder(input: {
     when: string;
   }): Promise<{ ok: boolean; reminder: Reminder }>;
+  /** POST /api/chat/:id/model — engine model for subsequent turns. */
+  setModel(id: string, model: string): Promise<unknown>;
 }
 
 export interface SlashCommand {
@@ -196,6 +198,32 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     help: "clear the local UI bubbles (does NOT touch runs.thread)",
     handler: (ctx) => {
       ctx.sys("[local clear marker — refresh the page to see the real thread]");
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "model",
+    help: "engine model for this chat · /model opus · sonnet is standard",
+    handler: async (ctx, args) => {
+      if (!ctx.runId) {
+        ctx.sys("no chat selected.");
+        return { kind: "noop" };
+      }
+      const m = args.trim().toLowerCase();
+      if (!m) {
+        ctx.sys(
+          "usage: /model <sonnet|opus|haiku|default> — sonnet (Sonnet 5) is the standard; opus for hard problems; haiku for quick lookups. Takes effect on the next turn.",
+        );
+        return { kind: "noop" };
+      }
+      if (!["sonnet", "opus", "haiku", "default"].includes(m)) {
+        ctx.sys(`unknown model '${m}' — use sonnet, opus, haiku, or default.`);
+        return { kind: "noop" };
+      }
+      await ctx.setModel(ctx.runId, m);
+      ctx.sys(
+        `model set to ${m === "default" ? "sonnet (standard)" : m} — applies from the next message.`,
+      );
       return { kind: "noop" };
     },
   },

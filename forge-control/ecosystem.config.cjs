@@ -20,6 +20,7 @@ module.exports = {
         CLAUDE_POOL_API_KEY: process.env.CLAUDE_POOL_API_KEY || '',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
         REMINDER_TZ: 'Europe/Berlin',
+        UPLOAD_DIR: '/opt/ai-os/uploads',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-control-error.log',
@@ -43,6 +44,8 @@ module.exports = {
         // v2.0: Claude Code engine (default). 'claude-pool' = legacy path.
         EXECUTOR_ENGINE: 'claude-code',
         CC_WORKSPACE: '/opt/ai-os/workspace',
+        // v2.1: Sonnet 5 is the standard; per-run override via metadata.model.
+        CC_MODEL: 'sonnet',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
         REMINDER_TZ: 'Europe/Berlin',
       },

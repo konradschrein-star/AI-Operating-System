@@ -6,6 +6,7 @@ import {
   createRun,
   appendMessage,
   setRunStatus,
+  setRunModel,
   runCounts,
   type RunStatus,
 } from "../db/runs.ts";
@@ -168,6 +169,23 @@ r.post("/:id/resume", async (c) => {
     },
     { setStatus: "queued" },
   );
+  if (!updated) return c.json({ error: "run not found" }, 404);
+  return c.json({ run: updated });
+});
+
+/* v2.1: set the engine model for subsequent turns of this run. Aliases
+ * (sonnet/opus/haiku) or full model ids; "default" clears the override. */
+r.post("/:id/model", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { model?: string };
+  const raw = (body.model ?? "").trim();
+  if (!raw) return c.json({ error: "model required" }, 400);
+  const model = raw === "default" ? null : raw;
+  if (model !== null && !/^[a-z0-9[\]().-]+$/i.test(model)) {
+    return c.json({ error: `invalid model: ${raw}` }, 400);
+  }
+  const updated = await setRunModel(id, model);
   if (!updated) return c.json({ error: "run not found" }, 404);
   return c.json({ run: updated });
 });

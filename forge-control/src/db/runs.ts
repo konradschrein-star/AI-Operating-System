@@ -235,6 +235,26 @@ export async function appendMessage(
   return getRun(id);
 }
 
+/** Set (or clear with null) metadata.model — the engine model override. */
+export async function setRunModel(
+  id: string,
+  model: string | null,
+): Promise<RunDetail | null> {
+  const r = await pool.query<{ id: string }>(
+    model === null
+      ? `UPDATE runs SET metadata = COALESCE(metadata, '{}'::jsonb) - 'model',
+                         updated_at = now()
+          WHERE id = $1 RETURNING id::text`
+      : `UPDATE runs SET metadata = COALESCE(metadata, '{}'::jsonb) ||
+                         jsonb_build_object('model', $2::text),
+                         updated_at = now()
+          WHERE id = $1 RETURNING id::text`,
+    model === null ? [id] : [id, model],
+  );
+  if (r.rowCount === 0) return null;
+  return getRun(id);
+}
+
 export async function setRunStatus(
   id: string,
   status: RunStatus,

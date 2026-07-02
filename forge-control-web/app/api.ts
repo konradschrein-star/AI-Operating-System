@@ -426,10 +426,57 @@ export const createChat = async (input: {
   title?: string;
   worker?: string;
   budget_usd?: number;
+  metadata?: Record<string, unknown>;
 }) => {
   const r = await postJson<{ run: RunDetail }>("/chat", input);
   return r.run;
 };
+
+/** Engine model aliases the UI offers. "sonnet" (Sonnet 5) is the standard;
+ *  opus for hard judgment work, haiku for cheap/fast tasks. */
+export const MODEL_OPTIONS = ["sonnet", "opus", "haiku"] as const;
+export type ModelOption = (typeof MODEL_OPTIONS)[number];
+
+export const setChatModel = async (id: string, model: string) => {
+  const r = await postJson<{ run: RunDetail }>(`/chat/${id}/model`, { model });
+  return r.run;
+};
+
+/* ----------------------------------------------------------------------------
+ * Uploads (chat attachments — drag & drop / paste)
+ * -------------------------------------------------------------------------- */
+export interface UploadedFile {
+  id: string;
+  name: string;
+  /** Absolute path on the VPS — embedded in the message for the engine. */
+  path: string;
+  /** Relative API url for browser preview (prepend /api/proxy). */
+  url: string;
+  mime: string;
+  size: number;
+}
+
+export const uploadFiles = async (files: File[]): Promise<UploadedFile[]> => {
+  const form = new FormData();
+  for (const f of files) form.append("files", f, f.name);
+  const res = await fetch(`${ROOT}/uploads`, { method: "POST", body: form });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(j.error ?? `${res.status} ${res.statusText} on upload`);
+  }
+  const j = (await res.json()) as { files: UploadedFile[] };
+  return j.files;
+};
+
+/** Message block appended below the user's text so the CC engine knows
+ *  exactly where the attachments live on disk. */
+export function attachmentsBlock(files: UploadedFile[]): string {
+  if (files.length === 0) return "";
+  const lines = files.map(
+    (f) => `- ${f.path} (${f.mime}, ${Math.max(1, Math.round(f.size / 1024))}KB)`,
+  );
+  return `\n\n[attached-files]\n${lines.join("\n")}\n[/attached-files]`;
+}
 
 export const sendChatMessage = async (id: string, content: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/message`, {
