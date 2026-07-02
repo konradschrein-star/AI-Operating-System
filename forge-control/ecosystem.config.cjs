@@ -46,6 +46,8 @@ module.exports = {
         CC_WORKSPACE: '/opt/ai-os/workspace',
         // v2.1: Sonnet 5 is the standard; per-run override via metadata.model.
         CC_MODEL: 'sonnet',
+        // forge-memory MCP cold-starts via tsx — give stdio servers headroom.
+        MCP_TIMEOUT: '30000',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
         REMINDER_TZ: 'Europe/Berlin',
       },
