@@ -451,6 +451,61 @@ export const resumeChat = async (id: string) => {
 };
 
 /* ----------------------------------------------------------------------------
+ * Vault (Obsidian write path) + Reminders — v2.0 quick capture
+ * -------------------------------------------------------------------------- */
+export type VaultSection = "Tasks" | "Notes" | "Journal";
+
+export interface VaultWriteResult {
+  ok: boolean;
+  path: string;
+  created: boolean;
+}
+
+export const vaultAppend = (input: {
+  section: VaultSection;
+  text: string;
+  prefix?: string;
+}) => postJson<VaultWriteResult>("/vault/append", input);
+
+export const vaultCreateNote = (input: {
+  title: string;
+  content?: string;
+  folder?: string;
+}) => postJson<VaultWriteResult>("/vault/note", input);
+
+export const fetchVaultDaily = () =>
+  getJson<{ path: string; date: string; content: string | null }>(
+    "/vault/daily",
+  );
+
+export interface Reminder {
+  id: string;
+  text: string;
+  due_at: string;
+  recur: "daily" | "weekly" | null;
+  status: "pending" | "delivered" | "dismissed";
+  source: string;
+  created_at: string;
+  delivered_at: string | null;
+}
+
+export const createReminder = (input: {
+  text?: string;
+  when: string;
+  source?: string;
+}) => postJson<{ ok: boolean; reminder: Reminder }>("/reminders", input);
+
+export const fetchReminders = async () => {
+  const r = await getJson<{ count: number; reminders: Reminder[] }>(
+    "/reminders",
+  );
+  return r.reminders;
+};
+
+export const dismissReminder = (id: string) =>
+  postJson<{ ok: boolean }>(`/reminders/${id}/dismiss`);
+
+/* ----------------------------------------------------------------------------
  * Skills (SKILL.md files across system)
  * -------------------------------------------------------------------------- */
 export interface SkillSummary {

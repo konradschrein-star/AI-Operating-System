@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
@@ -18,9 +12,12 @@ import {
   resumeChat,
   freezeFleet,
   resumeFleet,
+  vaultAppend,
+  vaultCreateNote,
+  createReminder,
+  type RunDetail,
   type RunStatus,
   type RunSummary,
-  type ThreadEntry,
 } from "../api";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
 import {
@@ -30,7 +27,8 @@ import {
   type SlashDirective,
   type SurfaceKey,
 } from "./chat/slash-registry";
-import { MessageMarkdown } from "./chat/MessageMarkdown";
+import { AssistantThread } from "./chat/AssistantThread";
+import { useRunEvents } from "./chat/useRunEvents";
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
@@ -40,14 +38,6 @@ const STATUS_COLOR: Record<RunStatus, string> = {
   completed: tokens.ok,
   failed: tokens.bleed,
   cancelled: tokens.textFaint,
-};
-
-const ROLE_COLOR: Record<string, string> = {
-  user: tokens.accent,
-  assistant: tokens.ok,
-  system: tokens.info,
-  tool: tokens.warn,
-  agent: tokens.decide,
 };
 
 function humanAge(ts: string | null | undefined): string {
@@ -81,11 +71,14 @@ export function ChatSurface({
     }
   }, [listQ.data, selId]);
 
+  // v2.0: SSE stream is the primary sync path; the query interval is only
+  // a safety net (tight when the stream is down, lazy when it's live).
+  const { live } = useRunEvents(selId, !composing);
   const detailQ = useQuery({
     queryKey: ["chat", "run", selId],
     queryFn: () => fetchChat(selId!),
     enabled: !!selId && !composing,
-    refetchInterval: 3000,
+    refetchInterval: live ? 20000 : 3000,
   });
 
   const createM = useMutation({
@@ -270,6 +263,7 @@ export function ChatSurface({
           <ChatThread
             key={detailQ.data.id}
             run={detailQ.data}
+            live={live}
             onSend={(content) =>
               sendM.mutate({ id: detailQ.data!.id, content })
             }
@@ -376,6 +370,7 @@ function ChatListItem({
 
 function ChatThread({
   run,
+  live,
   onSend,
   onStatus,
   onResume,
@@ -383,15 +378,8 @@ function ChatThread({
   isSending,
   isResuming,
 }: {
-  run: {
-    id: string;
-    title: string;
-    status: RunStatus;
-    worker: string | null;
-    thread: ThreadEntry[];
-    budget_usd: string;
-    spent_usd: string;
-  };
+  run: RunDetail;
+  live: boolean;
   onSend: (content: string) => void;
   onStatus: (status: RunStatus) => void;
   onResume: () => void;
@@ -404,7 +392,6 @@ function ChatThread({
     Array<{ text: string; ts: string }>
   >([]);
   const popoverRef = useRef<SlashPopoverHandle | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
@@ -424,6 +411,9 @@ function ChatThread({
     resumeFleet: () => resumeFleet("chat-slash"),
     resumeRun: (id) => resumeChat(id),
     setRunStatus: (id, status) => setChatStatus(id, status),
+    vaultAppend: (input) => vaultAppend(input),
+    vaultCreateNote: (input) => vaultCreateNote(input),
+    createReminder: (input) => createReminder(input),
   };
 
   const dispatchSlash = async (raw: string) => {
@@ -450,16 +440,8 @@ function ChatThread({
     }
     return true;
   };
-  // v1.6: sticky auto-scroll. Only yank to bottom if the user is already
-  // within ~120px of the bottom; otherwise leave them where they are.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - (el.scrollTop + el.clientHeight) < 120;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
-  }, [run.thread.length]);
-
   const color = STATUS_COLOR[run.status];
+  const engine = String(run.metadata?.engine ?? "claude-code");
 
   return (
     <>
@@ -490,8 +472,11 @@ function ChatThread({
             className="mono"
             style={{ fontSize: 10.5, color: tokens.textFaint, marginTop: 2 }}
           >
-            {run.status} · {run.worker ?? "no worker"} · spent ${run.spent_usd}{" "}
-            / cap ${run.budget_usd}
+            {run.status} · {engine} · spent ${run.spent_usd} / cap $
+            {run.budget_usd} ·{" "}
+            <span style={{ color: live ? tokens.ok : tokens.warn }}>
+              {live ? "live" : "polling"}
+            </span>
           </div>
         </div>
         {run.status === "stuck" && (
@@ -532,64 +517,48 @@ function ChatThread({
             </button>
           )}
       </div>
-      <div
-        ref={scrollRef}
-        className="scroll-tinted"
-        style={{
-          flex: 1,
-          overflowY: "auto",
-          padding: "20px 28px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
-      >
-        {run.thread.length === 0 && (
-          <div
-            className="mono"
-            style={{
-              fontSize: 11,
-              color: tokens.textFaint,
-              textAlign: "center",
-              padding: 24,
-            }}
-          >
-            empty thread
-          </div>
-        )}
-        {run.thread.map((entry, i) => (
-          <ThreadBubble key={i} entry={entry} />
-        ))}
-        {localSys.map((m, i) => (
-          <div
-            key={`localsys-${i}`}
-            style={{
-              alignSelf: "stretch",
-              padding: "8px 12px",
-              borderLeft: `2px solid ${tokens.info}`,
-              background: "rgba(79, 176, 196, 0.06)",
-              borderRadius: 6,
-              fontSize: 12,
-              color: tokens.textSecondary,
-              whiteSpace: "pre-wrap",
-              fontFamily:
-                "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
-            }}
-          >
+      <AssistantThread run={run} />
+      {localSys.length > 0 && (
+        <div
+          style={{
+            maxHeight: 180,
+            overflowY: "auto",
+            padding: "8px 28px 0",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          {localSys.map((m, i) => (
             <div
+              key={`localsys-${i}`}
               style={{
-                fontSize: 9,
-                color: tokens.info,
-                letterSpacing: "0.08em",
-                marginBottom: 3,
+                padding: "8px 12px",
+                borderLeft: `2px solid ${tokens.info}`,
+                background: "rgba(79, 176, 196, 0.06)",
+                borderRadius: 6,
+                fontSize: 12,
+                color: tokens.textSecondary,
+                whiteSpace: "pre-wrap",
+                fontFamily:
+                  "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
               }}
             >
-              SLASH · {humanAge(m.ts)}
+              <div
+                style={{
+                  fontSize: 9,
+                  color: tokens.info,
+                  letterSpacing: "0.08em",
+                  marginBottom: 3,
+                }}
+              >
+                SLASH · {humanAge(m.ts)}
+              </div>
+              {m.text}
             </div>
-            {m.text}
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
       <div
         style={{
           position: "relative",
@@ -641,8 +610,8 @@ function ChatThread({
           }}
           placeholder={
             run.status === "running"
-              ? "running… Enter to interrupt · / for commands · Shift+Enter newline"
-              : "message · Enter to send · / for commands · Shift+Enter newline"
+              ? "engine working… Enter to queue a message · / for commands"
+              : "message · Enter to send · /note /todo /remind /capture · Shift+Enter newline"
           }
           rows={2}
           style={{
@@ -694,63 +663,6 @@ function ChatThread({
         </button>
       </div>
     </>
-  );
-}
-
-function ThreadBubble({ entry }: { entry: ThreadEntry }) {
-  const isUser = entry.role === "user";
-  const isError = entry.kind === "error";
-  // v1.6 phase 4: render assistant/system markdown via react-markdown. User
-  // messages stay plaintext (pre-wrap) so leading "/" and exact phrasing
-  // are visible. Error and stuck_notice entries also stay plaintext so the
-  // raw message reads cleanly.
-  const useMarkdown = !isUser && !isError && entry.kind !== "stuck_notice";
-
-  const color = ROLE_COLOR[entry.role] ?? tokens.textMuted;
-  const bubbleStyle: CSSProperties = {
-    maxWidth: "82%",
-    background: isUser ? tokens.primaryActionBg : tokens.bgCard,
-    border: `1px solid ${isUser ? tokens.accent : tokens.border}`,
-    borderRadius: 10,
-    padding: "10px 13px",
-    color: tokens.text,
-    fontSize: 13,
-    lineHeight: 1.6,
-    whiteSpace: useMarkdown ? "normal" : "pre-wrap",
-    overflowWrap: "anywhere",
-  };
-  return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: isUser ? "flex-end" : "flex-start",
-        gap: 4,
-      }}
-    >
-      <div
-        className="mono"
-        style={{
-          fontSize: 9.5,
-          color,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-        }}
-      >
-        {entry.role}
-        {entry.kind && entry.kind !== "text" ? ` · ${entry.kind}` : ""}
-        <span style={{ color: tokens.textFaint, marginLeft: 8 }}>
-          {humanAge(entry.ts)}
-        </span>
-      </div>
-      <div style={bubbleStyle}>
-        {useMarkdown ? (
-          <MessageMarkdown source={entry.content} />
-        ) : (
-          entry.content
-        )}
-      </div>
-    </div>
   );
 }
 

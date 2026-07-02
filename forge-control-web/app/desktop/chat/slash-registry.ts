@@ -12,7 +12,7 @@
  * Tab / Enter / click.
  */
 
-import type { RunStatus } from "../../api";
+import type { RunStatus, VaultSection, VaultWriteResult, Reminder } from "../../api";
 
 export type SlashDirective =
   | { kind: "noop" }
@@ -44,6 +44,19 @@ export interface SlashContext {
   resumeRun(id: string): Promise<unknown>;
   /** POST /api/chat/:id/status with the new status. */
   setRunStatus(id: string, status: RunStatus): Promise<unknown>;
+  /** v2.0 quick-capture actions — write into Obsidian / reminders. */
+  vaultAppend(input: {
+    section: VaultSection;
+    text: string;
+    prefix?: string;
+  }): Promise<VaultWriteResult>;
+  vaultCreateNote(input: {
+    title: string;
+    content?: string;
+  }): Promise<VaultWriteResult>;
+  createReminder(input: {
+    when: string;
+  }): Promise<{ ok: boolean; reminder: Reminder }>;
 }
 
 export interface SlashCommand {
@@ -183,6 +196,91 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     help: "clear the local UI bubbles (does NOT touch runs.thread)",
     handler: (ctx) => {
       ctx.sys("[local clear marker — refresh the page to see the real thread]");
+      return { kind: "noop" };
+    },
+  },
+  /* v2.0 — capture commands that WRITE (vault + reminders), no LLM run. */
+  {
+    name: "note",
+    help: "append to today's daily note · /note buy new SSD",
+    handler: async (ctx, args) => {
+      if (!args) {
+        ctx.sys("usage: /note <text> — lands under ## Notes in today's daily note");
+        return { kind: "noop" };
+      }
+      const r = await ctx.vaultAppend({ section: "Notes", text: args });
+      ctx.sys(`noted → ${r.path}`);
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "todo",
+    help: "add a task to today's daily note · /todo pay invoice",
+    handler: async (ctx, args) => {
+      if (!args) {
+        ctx.sys("usage: /todo <text> — lands as - [ ] under ## Tasks");
+        return { kind: "noop" };
+      }
+      const r = await ctx.vaultAppend({
+        section: "Tasks",
+        text: args,
+        prefix: "- [ ] ",
+      });
+      ctx.sys(`todo added → ${r.path}`);
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "journal",
+    help: "append to today's journal · /journal shipped the CC engine",
+    handler: async (ctx, args) => {
+      if (!args) {
+        ctx.sys("usage: /journal <text> — lands under ## Journal");
+        return { kind: "noop" };
+      }
+      const r = await ctx.vaultAppend({ section: "Journal", text: args });
+      ctx.sys(`journaled → ${r.path}`);
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "capture",
+    help: "new note in vault Inbox · /capture idea: reactor v2 hooks",
+    handler: async (ctx, args) => {
+      if (!args) {
+        ctx.sys("usage: /capture <text> — creates a note in the vault Inbox folder");
+        return { kind: "noop" };
+      }
+      const title = args.split(/\s+/).slice(0, 8).join(" ");
+      const r = await ctx.vaultCreateNote({ title, content: args });
+      ctx.sys(`captured → ${r.path}`);
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "remind",
+    help: "set a reminder · /remind in 2h call mom · /remind daily 08:30 review inbox",
+    handler: async (ctx, args) => {
+      if (!args) {
+        ctx.sys(
+          'usage: /remind <when> <text> — when: "in 2h", "tomorrow 9:00", "18:30", "daily 08:30", "2026-07-04 14:00"',
+        );
+        return { kind: "noop" };
+      }
+      try {
+        const r = await ctx.createReminder({ when: args });
+        const due = new Date(r.reminder.due_at).toLocaleString("de-DE", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+        ctx.sys(
+          `reminder set: "${r.reminder.text}" · due ${due}${r.reminder.recur ? ` · repeats ${r.reminder.recur}` : ""}`,
+        );
+      } catch (e) {
+        ctx.sys(
+          `could not set reminder: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
       return { kind: "noop" };
     },
   },

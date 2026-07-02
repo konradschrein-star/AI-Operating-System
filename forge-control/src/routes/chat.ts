@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import {
   listRuns,
   getRun,
@@ -32,6 +33,53 @@ r.get("/", async (c) => {
   );
   const [runs, counts] = await Promise.all([listRuns(limit), runCounts()]);
   return c.json({ count: runs.length, runs, counts });
+});
+
+/* v2.0: live run events. Emits a `snapshot` (full run JSON) immediately
+ * and whenever status / thread length / updated_at changes; `ping` keeps
+ * proxies from closing the pipe. DB-poll at 1s — the executor streams CC
+ * tool events into runs.thread, so this is what makes chat feel alive. */
+r.get("/:id/events", (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  return streamSSE(c, async (stream) => {
+    let alive = true;
+    stream.onAbort(() => {
+      alive = false;
+    });
+    let lastKey = "";
+    let lastPing = Date.now();
+    while (alive) {
+      let run;
+      try {
+        run = await getRun(id);
+      } catch (e) {
+        console.error(
+          "[chat events] getRun failed:",
+          e instanceof Error ? e.message : e,
+        );
+        await stream.sleep(2_000);
+        continue;
+      }
+      if (!run) {
+        await stream.writeSSE({ event: "gone", data: "{}" });
+        break;
+      }
+      const key = `${run.status}:${run.thread.length}:${run.updated_at}`;
+      if (key !== lastKey) {
+        lastKey = key;
+        lastPing = Date.now();
+        await stream.writeSSE({
+          event: "snapshot",
+          data: JSON.stringify({ run }),
+        });
+      } else if (Date.now() - lastPing > 15_000) {
+        lastPing = Date.now();
+        await stream.writeSSE({ event: "ping", data: String(Date.now()) });
+      }
+      await stream.sleep(1_000);
+    }
+  });
 });
 
 /* Full thread detail. */

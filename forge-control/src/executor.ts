@@ -20,7 +20,13 @@
 
 import pg from "pg";
 import { evaluateGuardrails } from "./db/autonomy.ts";
-import { todaySpendRollup } from "./db/spend.ts";
+import { todaySpendRollup, recordSpend } from "./db/spend.ts";
+import { claimDueReminders } from "./db/reminders.ts";
+import {
+  runClaudeCode,
+  CcResumeError,
+  type CcEvent,
+} from "./lib/cc-runner.ts";
 import {
   compressThread,
   emptyCompressorState,
@@ -39,6 +45,12 @@ const CONTENT_URL =
   "postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge";
 const POOL_URL = process.env.CLAUDE_POOL_URL ?? "http://127.0.0.1:8092";
 const POOL_KEY = process.env.CLAUDE_POOL_API_KEY ?? "";
+// v2.0: engine per run. 'claude-code' spawns the CC CLI (tools, sessions,
+// streamed events); 'claude-pool' is the legacy text-only HTTP path.
+// Per-run override via runs.metadata.engine.
+const DEFAULT_ENGINE = process.env.EXECUTOR_ENGINE ?? "claude-code";
+// USD→EUR for spend_log rows written from CC's total_cost_usd.
+const USD_EUR = Number(process.env.CC_USD_EUR ?? "0.86");
 const POLL_INTERVAL_MS = 1500;
 // v1.6: default raised 180s → 600s. Per-run override via runs.metadata.timeout_ms.
 const DEFAULT_RUN_TIMEOUT_MS = Number(process.env.RUN_TIMEOUT_MS ?? "600000");
@@ -129,9 +141,14 @@ async function claimNextRun(): Promise<ClaimedRun | null> {
   return r.rows[0] ?? null;
 }
 
-function buildPromptFromThread(thread: ThreadEntry[]): string {
+function buildPromptFromThread(
+  thread: ThreadEntry[],
+  { assistantMarker = true }: { assistantMarker?: boolean } = {},
+): string {
   // Compact transcript format claude-pool will handle as a single prompt.
   // We rely on claude-pool's underlying model to follow the role markers.
+  // The CC engine reuses this (without the trailing completion marker) when
+  // adopting a pool-era thread that has no CC session yet.
   const lines: string[] = [];
   let chars = 0;
   for (const e of thread) {
@@ -149,8 +166,31 @@ function buildPromptFromThread(thread: ThreadEntry[]): string {
     chars += block.length;
     lines.push(block);
   }
-  lines.push("[ASSISTANT]\n");
+  if (assistantMarker) lines.push("[ASSISTANT]\n");
   return lines.join("\n");
+}
+
+/** Messages appended after the last engine output — what a resumed CC
+ *  session needs to see (its own context carries the rest). */
+function trailingUserBlock(thread: ThreadEntry[]): string {
+  let lastEngineIdx = -1;
+  for (let i = thread.length - 1; i >= 0; i--) {
+    if (thread[i].role === "assistant" || thread[i].role === "tool") {
+      lastEngineIdx = i;
+      break;
+    }
+  }
+  const tail = thread.slice(lastEngineIdx + 1);
+  if (tail.length === 0) {
+    // Shouldn't happen (a queued run always has a fresh user/system turn),
+    // but never send an empty prompt.
+    return "[SYSTEM]\nContinue.";
+  }
+  return tail
+    .map((e) =>
+      e.role === "system" ? `[SYSTEM]\n${e.content}` : String(e.content ?? ""),
+    )
+    .join("\n\n");
 }
 
 /**
@@ -270,7 +310,7 @@ async function callClaudePool(
 
 async function completeRun(
   id: string,
-  entry: ThreadEntry,
+  entry: ThreadEntry | null,
   status: "completed" | "failed" | "stuck",
   stuckSignal: string | null = null,
 ): Promise<void> {
@@ -279,30 +319,75 @@ async function completeRun(
   // completed_at = now(). Split into two queries because Postgres can't
   // reconcile the status-enum binding when $3 is also referenced via $3::text
   // in a CASE expression (deduces conflicting types for the parameter).
+  // entry === null: the CC engine already streamed its turns into the
+  // thread — only flip status.
+  const threadConcat = entry ? `thread = thread || $2::jsonb,` : "";
+  const params: unknown[] = entry ? [id, JSON.stringify([entry])] : [id];
   if (status === "stuck") {
+    params.push(status, stuckSignal);
     await pool.query(
       `UPDATE runs
-          SET thread = thread || $2::jsonb,
-              status = $3,
-              stuck_signal = $4,
+          SET ${threadConcat}
+              status = $${params.length - 1},
+              stuck_signal = $${params.length},
               updated_at = now(),
               last_heartbeat_at = now()
         WHERE id = $1`,
-      [id, JSON.stringify([entry]), status, stuckSignal],
+      params,
     );
   } else {
+    params.push(status);
     await pool.query(
       `UPDATE runs
-          SET thread = thread || $2::jsonb,
-              status = $3,
+          SET ${threadConcat}
+              status = $${params.length},
               stuck_signal = NULL,
               completed_at = now(),
               updated_at = now(),
               last_heartbeat_at = now()
         WHERE id = $1`,
-      [id, JSON.stringify([entry]), status],
+      params,
     );
   }
+}
+
+/** Append a thread entry without touching status (streamed CC events). */
+async function appendThreadEntry(id: string, entry: ThreadEntry): Promise<void> {
+  await pool.query(
+    `UPDATE runs
+        SET thread = thread || $2::jsonb,
+            updated_at = now(),
+            last_heartbeat_at = now()
+      WHERE id = $1`,
+    [id, JSON.stringify([entry])],
+  );
+}
+
+async function saveCcSession(id: string, sessionId: string): Promise<void> {
+  await pool.query(
+    `UPDATE runs
+        SET metadata = COALESCE(metadata, '{}'::jsonb) ||
+                       jsonb_build_object('cc_session_id', $2::text, 'engine', 'claude-code'),
+            updated_at = now()
+      WHERE id = $1`,
+    [id, sessionId],
+  );
+}
+
+async function addRunSpend(id: string, usd: number): Promise<void> {
+  await pool.query(
+    `UPDATE runs SET spent_usd = COALESCE(spent_usd, 0) + $2, updated_at = now()
+      WHERE id = $1`,
+    [id, usd],
+  );
+}
+
+async function getRunStatus(id: string): Promise<string | null> {
+  const r = await pool.query<{ status: string }>(
+    "SELECT status FROM runs WHERE id = $1",
+    [id],
+  );
+  return r.rows[0]?.status ?? null;
 }
 
 async function heartbeat(id: string): Promise<void> {
@@ -385,36 +470,56 @@ async function processRun(run: ClaimedRun): Promise<void> {
     );
   }
 
-  const baseCompressed = await buildCompressedPrompt(
-    run.id,
-    run.thread ?? [],
-    run.metadata,
-  );
-  const prompt = memory.block ? `${memory.block}${baseCompressed}` : baseCompressed;
+  const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
   const timeoutMs = getTimeoutFor(run.metadata);
   const hb = setInterval(() => heartbeat(run.id), 5_000);
   try {
-    const t0 = Date.now();
-    const text = await callClaudePool(prompt, timeoutMs);
-    const ms = Date.now() - t0;
-    console.log(`[executor] run ${run.id} ok in ${ms}ms (${text.length}ch)`);
-    await completeRun(
-      run.id,
-      {
-        role: "assistant",
-        content: text,
-        ts: new Date().toISOString(),
-        kind: "text",
-        meta: {
-          provider: "claude-pool",
-          duration_ms: ms,
-          timeout_ms: timeoutMs,
+    if (engine === "claude-code") {
+      await processWithClaudeCode(run, memory.block, timeoutMs);
+    } else {
+      const baseCompressed = await buildCompressedPrompt(
+        run.id,
+        run.thread ?? [],
+        run.metadata,
+      );
+      const prompt = memory.block
+        ? `${memory.block}${baseCompressed}`
+        : baseCompressed;
+      const t0 = Date.now();
+      const text = await callClaudePool(prompt, timeoutMs);
+      const ms = Date.now() - t0;
+      console.log(`[executor] run ${run.id} ok in ${ms}ms (${text.length}ch)`);
+      await completeRun(
+        run.id,
+        {
+          role: "assistant",
+          content: text,
+          ts: new Date().toISOString(),
+          kind: "text",
+          meta: {
+            provider: "claude-pool",
+            duration_ms: ms,
+            timeout_ms: timeoutMs,
+          },
         },
-      },
-      "completed",
-    );
+        "completed",
+      );
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // The user cancelled/paused mid-run — the engine was killed on purpose.
+    // Leave their chosen status alone; just leave a marker in the thread.
+    if (msg.includes("run cancelled")) {
+      console.log(`[executor] run ${run.id} cancelled mid-flight`);
+      await appendThreadEntry(run.id, {
+        role: "system",
+        content: "Run stopped — engine process terminated.",
+        ts: new Date().toISOString(),
+        kind: "text",
+        meta: { cancelled: true },
+      }).catch(() => {});
+      return;
+    }
     const isTimeout =
       msg.includes("timed out") ||
       msg.includes("AbortError") ||
@@ -447,7 +552,7 @@ async function processRun(run: ClaimedRun): Promise<void> {
           content: `Executor failed: ${msg}`,
           ts: new Date().toISOString(),
           kind: "error",
-          meta: { error: msg },
+          meta: { error: msg, engine },
         },
         "failed",
       );
@@ -455,6 +560,187 @@ async function processRun(run: ClaimedRun): Promise<void> {
   } finally {
     clearInterval(hb);
   }
+}
+
+/* ============================================================================
+ * Claude Code engine — CLAUDE-DESIGN-BRIEF.md §20 step 2, finally real.
+ * Streams tool calls + interim text into runs.thread as they happen; keeps
+ * a CC session per run so follow-up turns resume with full agent context.
+ * ========================================================================== */
+
+const INPUT_PREVIEW_CHARS = 1_500;
+const RESULT_PREVIEW_CHARS = 2_500;
+
+function toolCallEntry(e: CcEvent): ThreadEntry {
+  let inputStr = "";
+  try {
+    inputStr = JSON.stringify(e.toolInput ?? {});
+  } catch {
+    inputStr = String(e.toolInput);
+  }
+  if (inputStr.length > INPUT_PREVIEW_CHARS) {
+    inputStr = inputStr.slice(0, INPUT_PREVIEW_CHARS) + "…";
+  }
+  return {
+    role: "tool",
+    content: `${e.toolName ?? "tool"} ${inputStr}`,
+    ts: new Date().toISOString(),
+    kind: "tool_call",
+    meta: {
+      tool_use_id: e.toolUseId,
+      tool: e.toolName,
+      input: inputStr,
+    },
+  };
+}
+
+function toolResultEntry(e: CcEvent): ThreadEntry {
+  let text = e.text ?? "";
+  if (text.length > RESULT_PREVIEW_CHARS) {
+    text = text.slice(0, RESULT_PREVIEW_CHARS) + `\n… [truncated]`;
+  }
+  return {
+    role: "tool",
+    content: text,
+    ts: new Date().toISOString(),
+    kind: "tool_result",
+    meta: { tool_use_id: e.toolUseId, is_error: e.isError === true },
+  };
+}
+
+async function processWithClaudeCode(
+  run: ClaimedRun,
+  memoryBlock: string | null,
+  timeoutMs: number,
+): Promise<void> {
+  const thread = run.thread ?? [];
+  const priorSession =
+    typeof run.metadata?.cc_session_id === "string"
+      ? (run.metadata.cc_session_id as string)
+      : null;
+
+  const baseMessage = priorSession
+    ? trailingUserBlock(thread)
+    : buildPromptFromThread(thread, { assistantMarker: false });
+  const message = memoryBlock ? `${memoryBlock}${baseMessage}` : baseMessage;
+
+  // Serialize streamed appends so thread order matches event order.
+  let chain: Promise<void> = Promise.resolve();
+  const enqueue = (fn: () => Promise<void>) => {
+    chain = chain.then(fn).catch((e) => {
+      console.error(
+        `[executor] run ${run.id} stream append failed:`,
+        e instanceof Error ? e.message : e,
+      );
+    });
+  };
+
+  const onEvent = (e: CcEvent) => {
+    if (e.type === "init" && e.sessionId) {
+      const sid = e.sessionId;
+      enqueue(() => saveCcSession(run.id, sid));
+    } else if (e.type === "assistant_text" && e.text) {
+      const entry: ThreadEntry = {
+        role: "assistant",
+        content: e.text,
+        ts: new Date().toISOString(),
+        kind: "text",
+        meta: { provider: "claude-code" },
+      };
+      enqueue(() => appendThreadEntry(run.id, entry));
+    } else if (e.type === "tool_call") {
+      const entry = toolCallEntry(e);
+      enqueue(() => appendThreadEntry(run.id, entry));
+    } else if (e.type === "tool_result") {
+      const entry = toolResultEntry(e);
+      enqueue(() => appendThreadEntry(run.id, entry));
+    }
+  };
+
+  const isCancelled = async () => {
+    const status = await getRunStatus(run.id).catch(() => null);
+    return status === "cancelled" || status === "paused";
+  };
+
+  let result;
+  try {
+    result = await runClaudeCode({
+      prompt: message,
+      sessionId: priorSession,
+      timeoutMs,
+      onEvent,
+      isCancelled,
+    });
+  } catch (err) {
+    if (err instanceof CcResumeError) {
+      // Session file evaporated (CC upgrade, cleanup). Retry ONCE with the
+      // full transcript so no context is silently lost — and say so loudly.
+      console.warn(`[executor] run ${run.id}: ${err.message} — retrying fresh`);
+      await appendThreadEntry(run.id, {
+        role: "system",
+        content:
+          "Engine session expired — restarted with full transcript context.",
+        ts: new Date().toISOString(),
+        kind: "text",
+        meta: { resume_miss: true },
+      });
+      const fullMessage = buildPromptFromThread(thread, {
+        assistantMarker: false,
+      });
+      result = await runClaudeCode({
+        prompt: memoryBlock ? `${memoryBlock}${fullMessage}` : fullMessage,
+        sessionId: null,
+        timeoutMs,
+        onEvent,
+        isCancelled,
+      });
+    } else {
+      await chain; // flush whatever streamed before the failure
+      throw err;
+    }
+  }
+
+  await chain; // all streamed entries persisted, in order
+
+  // The final assistant message already arrived via assistant_text events;
+  // only fall back to result.text if the stream somehow produced none.
+  const finalEntry: ThreadEntry | null =
+    result.assistantTextEvents === 0 && result.text
+      ? {
+          role: "assistant",
+          content: result.text,
+          ts: new Date().toISOString(),
+          kind: "text",
+          meta: { provider: "claude-code", from_result: true },
+        }
+      : null;
+
+  if (result.sessionId) {
+    await saveCcSession(run.id, result.sessionId).catch((e) =>
+      console.warn(`[executor] save session failed: ${e.message}`),
+    );
+  }
+  if (result.costUsd > 0) {
+    await addRunSpend(run.id, result.costUsd).catch(() => {});
+    await recordSpend([
+      {
+        provider: "claude-code",
+        kind: "llm_output",
+        amount_eur: result.costUsd * USD_EUR,
+        job_id: null,
+        units: result.numTurns,
+        meta: { run_id: run.id, usd: result.costUsd },
+      },
+    ]).catch((e) =>
+      console.warn(`[executor] spend_log write failed: ${e.message}`),
+    );
+  }
+
+  console.log(
+    `[executor] run ${run.id} ok via claude-code in ${result.durationMs}ms ` +
+      `(${result.numTurns} turns, $${result.costUsd.toFixed(4)})`,
+  );
+  await completeRun(run.id, finalEntry, "completed");
 }
 
 let running = true;
@@ -742,6 +1028,49 @@ async function managerTick(): Promise<void> {
   }
 }
 
+/* v2.0: deliver due reminders into the inbox. Recurrence is advanced by
+ * claimDueReminders; external_id includes the due timestamp so a daily
+ * reminder can mirror once per firing. */
+async function reminderTick(): Promise<void> {
+  try {
+    const due = await claimDueReminders();
+    for (const rem of due) {
+      const dueLocal = new Date(rem.due_at).toLocaleString("de-DE", {
+        timeZone: process.env.REMINDER_TZ ?? "Europe/Berlin",
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      await pool
+        .query(
+          `INSERT INTO inbox_items
+             (type, status, title, ask, tried, actions, source, external_id)
+           VALUES ('REMINDER', 'DECIDE', $1, $2, '[]'::jsonb, $3::jsonb,
+                   'reminders', $4)
+           ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING`,
+          [
+            rem.text.slice(0, 120),
+            `Reminder — due ${dueLocal}${rem.recur ? ` (repeats ${rem.recur})` : ""}`,
+            JSON.stringify([
+              { label: "Done", variant: "ok", action_id: "resolve" },
+            ]),
+            `reminder:${rem.id}:${rem.due_at}`,
+          ],
+        )
+        .catch((e) =>
+          console.error(`[reminders] inbox insert failed: ${e.message}`),
+        );
+    }
+    if (due.length > 0) {
+      console.log(`[reminders] delivered ${due.length} reminder(s) → inbox`);
+    }
+  } catch (e) {
+    console.error(
+      "[reminders] tick failed:",
+      e instanceof Error ? e.message : e,
+    );
+  }
+}
+
 async function managerLoop(): Promise<void> {
   console.log(`[manager] starting · hcp=${HCP_URL.replace(/:.+@/, ":***@")}`);
   // Stagger first tick to avoid hammering the DB at startup with the executor.
@@ -749,6 +1078,7 @@ async function managerLoop(): Promise<void> {
   while (running) {
     await managerTick();
     await stuckWatchdogTick();
+    await reminderTick();
     await new Promise((r) => setTimeout(r, 10_000));
   }
   await hcp.end().catch(() => {});
