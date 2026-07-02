@@ -18,6 +18,8 @@ module.exports = {
         // when launched via `CLAUDE_POOL_API_KEY=... pm2 start ecosystem.config.cjs`.
         CLAUDE_POOL_URL: process.env.CLAUDE_POOL_URL || 'http://127.0.0.1:8092',
         CLAUDE_POOL_API_KEY: process.env.CLAUDE_POOL_API_KEY || '',
+        OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
+        REMINDER_TZ: 'Europe/Berlin',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-control-error.log',
@@ -38,6 +40,11 @@ module.exports = {
         CLAUDE_POOL_URL: 'http://127.0.0.1:8092',
         // CLAUDE_POOL_API_KEY is set from the host pm2 env at startup time
         // (see deploy notes) — never bake the key into version control.
+        // v2.0: Claude Code engine (default). 'claude-pool' = legacy path.
+        EXECUTOR_ENGINE: 'claude-code',
+        CC_WORKSPACE: '/opt/ai-os/workspace',
+        OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',
+        REMINDER_TZ: 'Europe/Berlin',
       },
       max_memory_restart: '300M',
       error_file: '/root/.pm2/logs/forge-executor-error.log',

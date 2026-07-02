@@ -23,6 +23,8 @@ import webhooks from "./routes/webhooks.ts";
 import webhookIn from "./routes/webhook-in.ts";
 import cron from "./routes/cron.ts";
 import spend from "./routes/spend.ts";
+import vault from "./routes/vault.ts";
+import reminders from "./routes/reminders.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 
 const app = new Hono();
@@ -89,6 +91,12 @@ app.get("/", (c) =>
       "/api/autonomy/rules/:id",
       "/api/spend (POST rows from gateways)",
       "/api/spend/today",
+      "/api/chat/:id/events (SSE)",
+      "/api/vault/append",
+      "/api/vault/note",
+      "/api/vault/daily",
+      "/api/reminders",
+      "/api/reminders/:id/dismiss",
     ],
   }),
 );
@@ -121,6 +129,10 @@ app.route("/api/cron", cron);
 
 // v1.9: honest cost tracking — gateways POST, Today + autonomy read.
 app.route("/api/spend", spend);
+
+// v2.0: Obsidian write path + reminders (quick capture, life OS).
+app.route("/api/vault", vault);
+app.route("/api/reminders", reminders);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);

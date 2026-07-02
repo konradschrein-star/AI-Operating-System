@@ -36,8 +36,14 @@ import {
   deleteWebhook,
   updateSchedule,
   deleteSchedule,
+  vaultAppend,
+  vaultCreateNote,
+  createReminder,
+  fetchReminders,
+  dismissReminder,
   type Webhook,
   type CronSchedule,
+  type VaultSection,
 } from "./api";
 
 /* ----------------------------------------------------------------------------
@@ -46,6 +52,7 @@ import {
 const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "today", label: "Today", icon: "wb_sunny" },
   { key: "inbox", label: "Inbox", icon: "inbox" },
+  { key: "capture", label: "Capture", icon: "edit_note" },
   { key: "live", label: "Live", icon: "sensors" },
   { key: "control", label: "Control", icon: "tune" },
   { key: "auto", label: "Auto", icon: "webhook" },
@@ -246,6 +253,7 @@ export function MobileApp() {
             onCycle={() => freezeM.mutate()}
           />
         )}
+        {tab === "capture" && <CaptureScreen />}
         {tab === "auto" && <AutoScreen />}
       </div>
 
@@ -1858,6 +1866,301 @@ function EmptyHint({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------
+ * CAPTURE — v2.0 quick capture into Obsidian + reminders. The whole point:
+ * zero-friction "get it out of my head" on the phone. One textarea, one
+ * target row, one save. Reminders list below for visibility.
+ * -------------------------------------------------------------------------- */
+type CaptureTarget = "note" | "todo" | "journal" | "remind" | "inbox";
+
+const CAPTURE_TARGETS: { key: CaptureTarget; label: string; icon: string }[] = [
+  { key: "note", label: "Note", icon: "sticky_note_2" },
+  { key: "todo", label: "Todo", icon: "check_box" },
+  { key: "journal", label: "Journal", icon: "history_edu" },
+  { key: "remind", label: "Remind", icon: "alarm" },
+  { key: "inbox", label: "Inbox note", icon: "note_add" },
+];
+
+function CaptureScreen() {
+  const qc = useQueryClient();
+  const [text, setText] = useState("");
+  const [target, setTarget] = useState<CaptureTarget>("note");
+  const [when, setWhen] = useState("");
+  const [saved, setSaved] = useState<Array<{ label: string; ts: number }>>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  const remindersQ = useQuery({
+    queryKey: ["reminders"],
+    queryFn: fetchReminders,
+    refetchInterval: 60_000,
+  });
+
+  const dismissM = useMutation({
+    mutationFn: (id: string) => dismissReminder(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["reminders"] }),
+  });
+
+  const saveM = useMutation({
+    mutationFn: async () => {
+      const t = text.trim();
+      if (!t) throw new Error("nothing to capture");
+      if (target === "remind") {
+        const w = when.trim();
+        if (!w)
+          throw new Error('when required — e.g. "in 2h", "tomorrow 9:00"');
+        const r = await createReminder({ when: w, text: t, source: "mobile" });
+        const due = new Date(r.reminder.due_at).toLocaleString("de-DE", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        });
+        return `reminder · due ${due}`;
+      }
+      if (target === "inbox") {
+        const title = t.split(/\s+/).slice(0, 8).join(" ");
+        const r = await vaultCreateNote({ title, content: t });
+        return r.path;
+      }
+      const section: VaultSection =
+        target === "todo"
+          ? "Tasks"
+          : target === "journal"
+            ? "Journal"
+            : "Notes";
+      const r = await vaultAppend({
+        section,
+        text: t,
+        prefix: target === "todo" ? "- [ ] " : undefined,
+      });
+      return r.path;
+    },
+    onSuccess: (label) => {
+      setSaved((prev) => [{ label, ts: Date.now() }, ...prev].slice(0, 6));
+      setText("");
+      setWhen("");
+      setError(null);
+      void qc.invalidateQueries({ queryKey: ["reminders"] });
+    },
+    onError: (e) => setError(e instanceof Error ? e.message : String(e)),
+  });
+
+  const canSave =
+    text.trim().length > 0 &&
+    !saveM.isPending &&
+    (target !== "remind" || when.trim().length > 0);
+
+  return (
+    <div
+      style={{
+        padding: "16px 16px 24px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 14,
+      }}
+    >
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="what's on your mind? it lands in Obsidian."
+        rows={5}
+        autoFocus
+        style={{
+          resize: "none",
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.border}`,
+          borderRadius: 12,
+          padding: "13px 14px",
+          color: tokens.text,
+          fontSize: 15,
+          lineHeight: 1.55,
+          outline: "none",
+          fontFamily: "Inter, system-ui",
+        }}
+      />
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {CAPTURE_TARGETS.map((t) => {
+          const on = target === t.key;
+          return (
+            <div
+              key={t.key}
+              onClick={() => setTarget(t.key)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 12px",
+                borderRadius: 9,
+                border: `1px solid ${on ? tokens.accent : tokens.border}`,
+                background: on ? tokens.primaryActionBg : "transparent",
+                color: on ? tokens.accent : tokens.textMuted,
+                fontSize: 12,
+                cursor: "pointer",
+                userSelect: "none",
+              }}
+            >
+              <span className="ms" style={{ fontSize: 16 }}>
+                {t.icon}
+              </span>
+              {t.label}
+            </div>
+          );
+        })}
+      </div>
+
+      {target === "remind" && (
+        <input
+          value={when}
+          onChange={(e) => setWhen(e.target.value)}
+          placeholder='when — "in 2h" · "tomorrow 9:00" · "daily 08:30"'
+          className="mono"
+          style={{
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 10,
+            padding: "11px 13px",
+            color: tokens.text,
+            fontSize: 13,
+            outline: "none",
+          }}
+        />
+      )}
+
+      <div
+        onClick={() => canSave && saveM.mutate()}
+        style={{
+          textAlign: "center",
+          padding: "13px 0",
+          borderRadius: 12,
+          fontSize: 14,
+          fontWeight: 600,
+          color: canSave ? tokens.accent : tokens.textFaint,
+          border: `1px solid ${canSave ? tokens.accent : tokens.border}`,
+          background: canSave ? tokens.primaryActionBg : "transparent",
+          cursor: canSave ? "pointer" : "default",
+          userSelect: "none",
+        }}
+      >
+        {saveM.isPending ? "saving…" : "capture"}
+      </div>
+
+      {error && (
+        <div
+          className="mono"
+          style={{
+            fontSize: 11.5,
+            color: tokens.bleed,
+            padding: "8px 12px",
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            background: tokens.dangerActionBg,
+            borderRadius: 8,
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {saved.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {saved.map((s, i) => (
+            <div
+              key={`${s.ts}-${i}`}
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                color: tokens.ok,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <span className="ms" style={{ fontSize: 14 }}>
+                check_circle
+              </span>
+              {s.label}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div
+        className="mono"
+        style={{
+          fontSize: 10,
+          color: tokens.textFaint,
+          letterSpacing: "0.1em",
+          marginTop: 10,
+        }}
+      >
+        REMINDERS
+      </div>
+      {(remindersQ.data ?? []).length === 0 && (
+        <div className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+          none pending.
+        </div>
+      )}
+      {(remindersQ.data ?? []).map((r) => {
+        const due = new Date(r.due_at);
+        const overdue = due.getTime() < Date.now() && r.status === "pending";
+        return (
+          <div
+            key={r.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "10px 12px",
+              border: `1px solid ${tokens.borderDivider}`,
+              borderRadius: 10,
+              background: tokens.bgCard,
+            }}
+          >
+            <span
+              className="ms"
+              style={{
+                fontSize: 17,
+                color: overdue
+                  ? tokens.bleed
+                  : r.status === "delivered"
+                    ? tokens.textFaint
+                    : tokens.warn,
+              }}
+            >
+              alarm
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, color: tokens.textLabel }}>
+                {r.text}
+              </div>
+              <div
+                className="mono"
+                style={{ fontSize: 10, color: tokens.textMuted2, marginTop: 2 }}
+              >
+                {due.toLocaleString("de-DE", {
+                  dateStyle: "medium",
+                  timeStyle: "short",
+                })}
+                {r.recur ? ` · ${r.recur}` : ""}
+                {r.status === "delivered" ? " · delivered" : ""}
+              </div>
+            </div>
+            <span
+              className="ms"
+              onClick={() => dismissM.mutate(r.id)}
+              style={{
+                fontSize: 17,
+                color: tokens.textFaint,
+                cursor: "pointer",
+              }}
+            >
+              close
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
