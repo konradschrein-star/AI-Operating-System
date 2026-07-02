@@ -22,7 +22,12 @@ import { createInterface } from "node:readline";
 
 const CC_BIN = process.env.CC_BIN ?? "claude";
 const CC_WORKSPACE = process.env.CC_WORKSPACE ?? "/opt/ai-os/workspace";
-const CC_MODEL = process.env.CC_MODEL ?? ""; // empty = CLI default
+// Default model for runs. "sonnet" = latest Sonnet (Sonnet 5) — the
+// workhorse. Per-run override via runs.metadata.model ("opus" for hard
+// architecture/judgment tasks, "haiku" for cheap fast lookups). Subagents
+// (.claude/agents/*.md) carry their own model in frontmatter, so a sonnet
+// main loop can still delegate an architecture question to an opus agent.
+const CC_MODEL = process.env.CC_MODEL ?? "sonnet";
 const VAULT_DIR = process.env.OBSIDIAN_VAULT_DIR ?? "/opt/obsidian-vault";
 // Extra --add-dir entries, comma-separated.
 const CC_ADD_DIRS = (process.env.CC_ADD_DIRS ?? "")
@@ -32,13 +37,48 @@ const CC_ADD_DIRS = (process.env.CC_ADD_DIRS ?? "")
 // Explicit tool allowlist instead of --dangerously-skip-permissions —
 // the CLI refuses that flag under root (pm2 runs as root), and an
 // allowlist is the better guardrail anyway. Comma-separated env override.
+// "mcp__<server>" allows every tool of that MCP server; "Skill" unlocks
+// the global skill library (/root/.claude/skills incl. hermes symlinks).
 const CC_ALLOWED_TOOLS = (
   process.env.CC_ALLOWED_TOOLS ??
-  "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,WebFetch,WebSearch,Task,TodoWrite,NotebookEdit"
+  [
+    "Bash",
+    "Read",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "Task",
+    "TodoWrite",
+    "NotebookEdit",
+    "Skill",
+    "SlashCommand",
+    "mcp__context7",
+    "mcp__github",
+    "mcp__playwright",
+    "mcp__postgres",
+    "mcp__filesystem",
+    "mcp__obsidian",
+    "mcp__forge-memory",
+    "mcp__chrome-devtools",
+    "mcp__shadcn",
+  ].join(",")
 )
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
+
+/** Models we let the UI/metadata select. Aliases resolve CLI-side. */
+const MODEL_RE = /^[a-z0-9[\]().-]+$/i;
+export function sanitizeModel(m: unknown): string | null {
+  if (typeof m !== "string") return null;
+  const v = m.trim();
+  if (!v || v === "default" || !MODEL_RE.test(v) || v.length > 64) return null;
+  return v;
+}
 
 const SYSTEM_PROMPT = `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
 
@@ -47,6 +87,12 @@ Environment you control:
 - Content Forge (video automation monorepo): /opt/content-forge — PostgreSQL 'content_forge' (psql -U postgres), pm2-managed workers, Redis/BullMQ queues.
 - forge-control API: http://127.0.0.1:7700/api/* (today, inbox, memory search, reminders, vault, spend, pipeline).
 - Reminders: POST http://127.0.0.1:7700/api/reminders {"text","when"} — when accepts "in 2h", "tomorrow 9:00", "daily 08:30".
+
+Your arms and hands:
+- Skills (Skill tool): a global library — hermes skills, taste/design skills, remotion motion graphics, playwright browser automation, ui-ux-pro-max, superpowers workflows, tuning skills. If a skill plausibly matches the task, invoke it before improvising.
+- MCP servers: github (Konrad's account), context7 (library docs — use for ANY framework/API question instead of guessing), playwright + chrome-devtools (real browser), postgres, filesystem, obsidian, forge-memory (Konrad's knowledge graph), shadcn (UI registry).
+- Subagents (Task tool): architect (opus — system design), planner (sonnet — break down goals), builder (sonnet — implement), reviewer (sonnet — adversarial check), scout (haiku — fast recon). Delegate instead of doing everything in one context; pick the agent whose model tier matches the difficulty.
+- Attachments: user messages may contain an [attached-files] block listing absolute paths on this machine (images included) — Read them; do not claim you cannot see attachments.
 
 Rules:
 - Be decisive. Research with your tools instead of asking; only escalate when truly blocked (POST /api/inbox is read by Konrad).
@@ -112,6 +158,8 @@ export async function runClaudeCode(opts: {
   prompt: string;
   sessionId?: string | null;
   timeoutMs: number;
+  /** Model alias/id for this run; falls back to CC_MODEL (sonnet). */
+  model?: string | null;
   onEvent: (e: CcEvent) => void;
   /** Polled every ~5s; return true to kill the child (cancel/pause). */
   isCancelled?: () => Promise<boolean>;
@@ -120,7 +168,8 @@ export async function runClaudeCode(opts: {
   for (const t of CC_ALLOWED_TOOLS) args.push("--allowedTools", t);
   args.push("--add-dir", VAULT_DIR);
   for (const d of CC_ADD_DIRS) args.push("--add-dir", d);
-  if (CC_MODEL) args.push("--model", CC_MODEL);
+  const model = sanitizeModel(opts.model) ?? CC_MODEL;
+  if (model) args.push("--model", model);
   if (opts.sessionId) args.push("--resume", opts.sessionId);
   args.push("--append-system-prompt", SYSTEM_PROMPT);
 

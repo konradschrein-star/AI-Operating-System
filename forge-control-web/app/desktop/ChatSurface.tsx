@@ -15,10 +15,15 @@ import {
   vaultAppend,
   vaultCreateNote,
   createReminder,
+  setChatModel,
+  attachmentsBlock,
+  MODEL_OPTIONS,
+  type ModelOption,
   type RunDetail,
   type RunStatus,
   type RunSummary,
 } from "../api";
+import { useAttachments, AttachmentChips } from "./chat/useAttachments";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
 import {
   findSlash,
@@ -82,8 +87,11 @@ export function ChatSurface({
   });
 
   const createM = useMutation({
-    mutationFn: (input: { prompt: string; title?: string }) =>
-      createChat(input),
+    mutationFn: (input: {
+      prompt: string;
+      title?: string;
+      metadata?: Record<string, unknown>;
+    }) => createChat(input),
     onSuccess: (run) => {
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       setSelId(run.id);
@@ -255,8 +263,12 @@ export function ChatSurface({
           <NewChat
             isCreating={createM.isPending}
             onCancel={() => setComposing(false)}
-            onCreate={(prompt, title) =>
-              createM.mutate({ prompt, title: title || undefined })
+            onCreate={(prompt, title, model) =>
+              createM.mutate({
+                prompt,
+                title: title || undefined,
+                metadata: model === "sonnet" ? undefined : { model },
+              })
             }
           />
         ) : detailQ.data ? (
@@ -392,9 +404,15 @@ function ChatThread({
     Array<{ text: string; ts: string }>
   >([]);
   const popoverRef = useRef<SlashPopoverHandle | null>(null);
+  const att = useAttachments();
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
+
+  const sendWithAttachments = (text: string) => {
+    onSend(`${text}${attachmentsBlock(att.attachments)}`);
+    att.clear();
+  };
 
   // Slash context — handlers reach back into the chat surface for the
   // mutations they need (cancel, resume, freeze, etc.). Built per-render
@@ -414,6 +432,7 @@ function ChatThread({
     vaultAppend: (input) => vaultAppend(input),
     vaultCreateNote: (input) => vaultCreateNote(input),
     createReminder: (input) => createReminder(input),
+    setModel: (id, model) => setChatModel(id, model),
   };
 
   const dispatchSlash = async (raw: string) => {
@@ -442,6 +461,7 @@ function ChatThread({
   };
   const color = STATUS_COLOR[run.status];
   const engine = String(run.metadata?.engine ?? "claude-code");
+  const model = String(run.metadata?.model ?? "sonnet");
 
   return (
     <>
@@ -472,7 +492,7 @@ function ChatThread({
             className="mono"
             style={{ fontSize: 10.5, color: tokens.textFaint, marginTop: 2 }}
           >
-            {run.status} · {engine} · spent ${run.spent_usd} / cap $
+            {run.status} · {engine} · {model} · spent ${run.spent_usd} / cap $
             {run.budget_usd} ·{" "}
             <span style={{ color: live ? tokens.ok : tokens.warn }}>
               {live ? "live" : "polling"}
@@ -560,107 +580,127 @@ function ChatThread({
         </div>
       )}
       <div
+        {...att.dropHandlers}
         style={{
           position: "relative",
           borderTop: `1px solid ${tokens.borderSoft}`,
-          padding: "12px 18px",
+          padding: "8px 18px 12px",
           display: "flex",
-          gap: 10,
-          alignItems: "flex-end",
+          flexDirection: "column",
         }}
       >
-        <SlashPopover
-          ref={popoverRef}
-          input={draft}
-          onApply={(cmd) => {
-            // Tab/click on popover: replace input with "/name " ready for args.
-            setDraft(`/${cmd.name} `);
-          }}
+        <AttachmentChips
+          attachments={att.attachments}
+          uploading={att.uploading}
+          uploadError={att.uploadError}
+          onRemove={att.remove}
         />
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            // Popover gets first crack at the key — arrows, Tab, Esc.
-            if (popoverRef.current?.handleKey(e)) return;
-            // v1.6 phase 1: Enter sends; Shift+Enter newline; IME-safe.
-            if (
-              e.key === "Enter" &&
-              !e.shiftKey &&
-              !e.nativeEvent.isComposing
-            ) {
-              e.preventDefault();
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginTop: 8 }}>
+          <SlashPopover
+            ref={popoverRef}
+            input={draft}
+            onApply={(cmd) => {
+              // Tab/click on popover: replace input with "/name " ready for args.
+              setDraft(`/${cmd.name} `);
+            }}
+          />
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onPaste={att.onPaste}
+            onKeyDown={(e) => {
+              // Popover gets first crack at the key — arrows, Tab, Esc.
+              if (popoverRef.current?.handleKey(e)) return;
+              // v1.6 phase 1: Enter sends; Shift+Enter newline; IME-safe.
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
+                e.preventDefault();
+                const v = draft.trim();
+                if (!v && att.attachments.length === 0) return;
+                // v1.6 phase 4: if the input is a slash command, dispatch it
+                // locally and DO NOT send to the run executor.
+                if (v.startsWith("/")) {
+                  // If the popover is open and a command is highlighted, accept
+                  // that instead of relying on the typed name. Otherwise parse
+                  // the typed string directly.
+                  const accepted = popoverRef.current?.acceptSelected() ?? null;
+                  const target = accepted ? `/${accepted.name}` : v;
+                  void dispatchSlash(target);
+                  setDraft("");
+                  return;
+                }
+                sendWithAttachments(v || "See attached files.");
+                setDraft("");
+              }
+            }}
+            placeholder={
+              run.status === "running"
+                ? "engine working… Enter to queue a message · / for commands"
+                : "message · Enter to send · drop/paste files · /note /todo /remind · Shift+Enter newline"
+            }
+            rows={2}
+            style={{
+              flex: 1,
+              resize: "none",
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 8,
+              padding: "10px 12px",
+              color: tokens.text,
+              fontSize: 13,
+              fontFamily: "Inter, system-ui",
+              outline: "none",
+            }}
+          />
+          <button
+            disabled={
+              isSending ||
+              (draft.trim().length === 0 && att.attachments.length === 0)
+            }
+            onClick={() => {
               const v = draft.trim();
-              if (!v) return;
-              // v1.6 phase 4: if the input is a slash command, dispatch it
-              // locally and DO NOT send to the run executor.
+              if (!v && att.attachments.length === 0) return;
               if (v.startsWith("/")) {
-                // If the popover is open and a command is highlighted, accept
-                // that instead of relying on the typed name. Otherwise parse
-                // the typed string directly.
                 const accepted = popoverRef.current?.acceptSelected() ?? null;
                 const target = accepted ? `/${accepted.name}` : v;
                 void dispatchSlash(target);
                 setDraft("");
                 return;
               }
-              onSend(v);
+              sendWithAttachments(v || "See attached files.");
               setDraft("");
-            }
-          }}
-          placeholder={
-            run.status === "running"
-              ? "engine working… Enter to queue a message · / for commands"
-              : "message · Enter to send · /note /todo /remind /capture · Shift+Enter newline"
-          }
-          rows={2}
-          style={{
-            flex: 1,
-            resize: "none",
-            background: tokens.bgCard,
-            border: `1px solid ${tokens.border}`,
-            borderRadius: 8,
-            padding: "10px 12px",
-            color: tokens.text,
-            fontSize: 13,
-            fontFamily: "Inter, system-ui",
-            outline: "none",
-          }}
-        />
-        <button
-          disabled={isSending || draft.trim().length === 0}
-          onClick={() => {
-            const v = draft.trim();
-            if (!v) return;
-            if (v.startsWith("/")) {
-              const accepted = popoverRef.current?.acceptSelected() ?? null;
-              const target = accepted ? `/${accepted.name}` : v;
-              void dispatchSlash(target);
-              setDraft("");
-              return;
-            }
-            onSend(v);
-            setDraft("");
-          }}
-          className="mono"
-          style={{
-            fontSize: 11.5,
-            color: draft.trim().length === 0 ? tokens.textFaint : tokens.accent,
-            border: `1px solid ${draft.trim().length === 0 ? tokens.border : tokens.accent}`,
-            background:
-              draft.trim().length === 0
-                ? "transparent"
-                : tokens.primaryActionBg,
-            borderRadius: 6,
-            padding: "10px 14px",
-            cursor:
-              isSending || draft.trim().length === 0
-                ? "not-allowed"
-                : "pointer",
-          }}
-        >
-          {isSending ? "…" : "send"}
-        </button>
+            }}
+            className="mono"
+            style={{
+              fontSize: 11.5,
+              color:
+                draft.trim().length === 0 && att.attachments.length === 0
+                  ? tokens.textFaint
+                  : tokens.accent,
+              border: `1px solid ${
+                draft.trim().length === 0 && att.attachments.length === 0
+                  ? tokens.border
+                  : tokens.accent
+              }`,
+              background:
+                draft.trim().length === 0 && att.attachments.length === 0
+                  ? "transparent"
+                  : tokens.primaryActionBg,
+              borderRadius: 6,
+              padding: "10px 14px",
+              cursor:
+                isSending ||
+                (draft.trim().length === 0 && att.attachments.length === 0)
+                  ? "not-allowed"
+                  : "pointer",
+            }}
+          >
+            {isSending ? "…" : "send"}
+          </button>
+        </div>
       </div>
     </>
   );
@@ -672,18 +712,25 @@ function NewChat({
   isCreating,
 }: {
   onCancel: () => void;
-  onCreate: (prompt: string, title: string) => void;
+  onCreate: (prompt: string, title: string, model: ModelOption) => void;
   isCreating: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
-  const canCreate = prompt.trim().length > 0;
+  const [model, setModel] = useState<ModelOption>("sonnet");
+  const att = useAttachments();
+  const canCreate = prompt.trim().length > 0 || att.attachments.length > 0;
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+  const create = () => {
+    const text = prompt.trim() || "See attached files.";
+    onCreate(`${text}${attachmentsBlock(att.attachments)}`, title.trim(), model);
+  };
   return (
     <div
+      {...att.dropHandlers}
       style={{
         padding: "24px 28px",
         display: "flex",
@@ -694,14 +741,41 @@ function NewChat({
       }}
     >
       <div
-        className="mono"
-        style={{
-          fontSize: 10,
-          color: tokens.accent,
-          letterSpacing: "0.12em",
-        }}
+        style={{ display: "flex", alignItems: "center", gap: 12 }}
       >
-        NEW CHAT
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.accent,
+            letterSpacing: "0.12em",
+          }}
+        >
+          NEW CHAT
+        </span>
+        <span style={{ flex: 1 }} />
+        {MODEL_OPTIONS.map((m) => {
+          const on = m === model;
+          return (
+            <button
+              key={m}
+              onClick={() => setModel(m)}
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                color: on ? tokens.accent : tokens.textMuted,
+                border: `1px solid ${on ? tokens.accent : tokens.border}`,
+                background: on ? tokens.primaryActionBg : "transparent",
+                borderRadius: 6,
+                padding: "4px 10px",
+                cursor: "pointer",
+              }}
+            >
+              {m}
+              {m === "sonnet" ? " ·std" : ""}
+            </button>
+          );
+        })}
       </div>
       <input
         value={title}
@@ -718,10 +792,17 @@ function NewChat({
           outline: "none",
         }}
       />
+      <AttachmentChips
+        attachments={att.attachments}
+        uploading={att.uploading}
+        uploadError={att.uploadError}
+        onRemove={att.remove}
+      />
       <textarea
         ref={inputRef}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
+        onPaste={att.onPaste}
         onKeyDown={(e) => {
           // v1.6: Enter dispatches, Shift+Enter newline. Skip during IME composition.
           if (
@@ -731,10 +812,10 @@ function NewChat({
             canCreate
           ) {
             e.preventDefault();
-            onCreate(prompt.trim(), title.trim());
+            create();
           }
         }}
-        placeholder="what's the task?  Enter to dispatch · Shift+Enter newline"
+        placeholder="what's the task?  Enter to dispatch · drop/paste files · Shift+Enter newline"
         rows={10}
         style={{
           flex: 1,
@@ -768,7 +849,7 @@ function NewChat({
         </button>
         <button
           disabled={!canCreate || isCreating}
-          onClick={() => onCreate(prompt.trim(), title.trim())}
+          onClick={create}
           className="mono"
           style={{
             fontSize: 11.5,

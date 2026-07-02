@@ -618,6 +618,10 @@ async function processWithClaudeCode(
     typeof run.metadata?.cc_session_id === "string"
       ? (run.metadata.cc_session_id as string)
       : null;
+  const model =
+    typeof run.metadata?.model === "string"
+      ? (run.metadata.model as string)
+      : null;
 
   const baseMessage = priorSession
     ? trailingUserBlock(thread)
@@ -668,6 +672,7 @@ async function processWithClaudeCode(
       prompt: message,
       sessionId: priorSession,
       timeoutMs,
+      model,
       onEvent,
       isCancelled,
     });
@@ -691,6 +696,7 @@ async function processWithClaudeCode(
         prompt: memoryBlock ? `${memoryBlock}${fullMessage}` : fullMessage,
         sessionId: null,
         timeoutMs,
+        model,
         onEvent,
         isCancelled,
       });
