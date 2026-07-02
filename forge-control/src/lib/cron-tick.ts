@@ -28,6 +28,7 @@ async function fireSchedule(s: {
   prompt_template: string;
   title_template: string | null;
   worker_label: string | null;
+  run_metadata: Record<string, unknown>;
 }): Promise<void> {
   try {
     const prompt = s.prompt_template;
@@ -37,8 +38,11 @@ async function fireSchedule(s: {
       prompt,
       worker: s.worker_label ?? undefined,
       metadata: {
+        // Schedule-provided keys first (model, notify, …); reserved keys win.
+        ...(s.run_metadata ?? {}),
         source: "cron",
         cron_id: s.id,
+        cron_name: s.name,
         fired_at: new Date().toISOString(),
       },
     });

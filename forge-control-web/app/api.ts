@@ -320,6 +320,26 @@ export const searchMemoryExpanded = async (
   return getJson<MemorySearchExpandedResponse>(`/memory/search?${params}`);
 };
 
+/* v2.2: entity graph for the 3D memory visualization. */
+export interface GraphNode {
+  id: string;
+  label: string;
+  degree: number;
+  notes: string[];
+}
+export interface GraphLink {
+  source: string;
+  target: string;
+  predicate: string;
+}
+export interface KnowledgeGraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+  triples: number;
+}
+export const fetchMemoryGraph = async (): Promise<KnowledgeGraphData> =>
+  getJson<KnowledgeGraphData>(`/memory/graph`);
+
 /* ----------------------------------------------------------------------------
  * Routing hypervisor search
  * -------------------------------------------------------------------------- */

@@ -69,6 +69,7 @@ r.post("/", async (c) => {
     title_template?: string;
     worker_label?: string;
     enabled?: boolean;
+    run_metadata?: Record<string, unknown>;
   };
   const name = (body.name ?? "").trim();
   if (!name) return c.json({ error: "name required" }, 400);
@@ -94,6 +95,10 @@ r.post("/", async (c) => {
     title_template: body.title_template,
     worker_label: body.worker_label,
     enabled: body.enabled,
+    run_metadata:
+      body.run_metadata && typeof body.run_metadata === "object"
+        ? body.run_metadata
+        : undefined,
   });
   return c.json({ schedule: s }, 201);
 });

@@ -38,6 +38,9 @@ export interface CronSchedule {
   last_run_id: string | null;
   last_error: string | null;
   total_fires: number;
+  /** Merged into the metadata of every run this schedule creates
+   *  (e.g. {"model": "haiku", "notify": "always"}). */
+  run_metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -52,7 +55,7 @@ export async function listSchedules(): Promise<CronSchedule[]> {
     `SELECT id::text, name, description, cron_expr, enabled, prompt_template,
             title_template, worker_label,
             next_run_at::text, last_run_at::text, last_run_id::text,
-            last_error, total_fires,
+            last_error, total_fires, run_metadata,
             created_at::text, updated_at::text
        FROM cron_schedules
        ORDER BY created_at DESC`,
@@ -67,7 +70,7 @@ export async function getScheduleById(
     `SELECT id::text, name, description, cron_expr, enabled, prompt_template,
             title_template, worker_label,
             next_run_at::text, last_run_at::text, last_run_id::text,
-            last_error, total_fires,
+            last_error, total_fires, run_metadata,
             created_at::text, updated_at::text
        FROM cron_schedules
        WHERE id = $1
@@ -85,18 +88,19 @@ export async function createSchedule(input: {
   title_template?: string;
   worker_label?: string;
   enabled?: boolean;
+  run_metadata?: Record<string, unknown>;
 }): Promise<CronSchedule> {
   validateCronExpr(input.cron_expr);
   const next = nextFireFromExpr(input.cron_expr, new Date());
   const r = await pool.query<CronSchedule>(
     `INSERT INTO cron_schedules
         (name, description, cron_expr, enabled, prompt_template,
-         title_template, worker_label, next_run_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         title_template, worker_label, next_run_at, run_metadata)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
      RETURNING id::text, name, description, cron_expr, enabled, prompt_template,
                title_template, worker_label,
                next_run_at::text, last_run_at::text, last_run_id::text,
-               last_error, total_fires,
+               last_error, total_fires, run_metadata, run_metadata,
                created_at::text, updated_at::text`,
     [
       input.name,
@@ -107,6 +111,7 @@ export async function createSchedule(input: {
       input.title_template ?? null,
       input.worker_label ?? null,
       next.toISOString(),
+      JSON.stringify(input.run_metadata ?? {}),
     ],
   );
   return r.rows[0];
@@ -149,7 +154,7 @@ export async function updateSchedule(
      RETURNING id::text, name, description, cron_expr, enabled, prompt_template,
                title_template, worker_label,
                next_run_at::text, last_run_at::text, last_run_id::text,
-               last_error, total_fires,
+               last_error, total_fires, run_metadata, run_metadata,
                created_at::text, updated_at::text`,
     args,
   );
@@ -186,7 +191,7 @@ export async function claimDueSchedules(): Promise<CronSchedule[]> {
      RETURNING c.id::text, name, description, cron_expr, enabled, prompt_template,
                title_template, worker_label,
                next_run_at::text, last_run_at::text, last_run_id::text,
-               last_error, total_fires,
+               last_error, total_fires, run_metadata, run_metadata,
                created_at::text, updated_at::text`,
     [placeholder.toISOString()],
   );

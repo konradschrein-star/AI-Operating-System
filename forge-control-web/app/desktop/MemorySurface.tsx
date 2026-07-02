@@ -13,6 +13,7 @@ import {
   type MemorySearchHitWithLane,
   type TripleCategory,
 } from "../api";
+import { MemoryGraph3D } from "./MemoryGraph3D";
 
 /* v1.7 phase 4: lane viz. Vector hits and each graph hop get a distinct
  * colour so Konrad can SEE which lane / hop a result came from. */
@@ -52,6 +53,8 @@ export function MemorySurface() {
   const [cat, setCat] = useState<MemoryCategory | "all">("all");
   const [selSlug, setSelSlug] = useState<string | null>(null);
   const [q, setQ] = useState("");
+  // v2.2: 3D luminescent net view of the knowledge graph.
+  const [view, setView] = useState<"notes" | "graph">("notes");
   // v1.7 phase 4: search controls
   const [searchCategory, setSearchCategory] = useState<TripleCategory | null>(null);
   const [hops, setHops] = useState<number>(2);
@@ -209,6 +212,40 @@ export function MemorySurface() {
           );
         })}
 
+        {/* v2.2: view toggle — note reader vs 3D net */}
+        <div
+          onClick={() => setView(view === "graph" ? "notes" : "graph")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "7px 12px",
+            marginTop: 10,
+            borderRadius: 6,
+            cursor: "pointer",
+            border: `1px solid ${view === "graph" ? tokens.accent : tokens.borderSoft}`,
+            background: view === "graph" ? tokens.primaryActionBg : "transparent",
+          }}
+        >
+          <span
+            className="ms"
+            style={{
+              fontSize: 14,
+              color: view === "graph" ? tokens.accent : tokens.textFaint,
+            }}
+          >
+            graph_3
+          </span>
+          <span
+            style={{
+              fontSize: 12.5,
+              color: view === "graph" ? tokens.text : tokens.textSecondary,
+            }}
+          >
+            3D net
+          </span>
+        </div>
+
         <div style={{ flex: 1 }} />
         <div
           className="mono"
@@ -227,6 +264,15 @@ export function MemorySurface() {
         </div>
       </div>
 
+      {view === "graph" ? (
+        <MemoryGraph3D
+          onSelectNote={(slug) => {
+            setSelSlug(slug);
+            setView("notes");
+          }}
+        />
+      ) : (
+        <>
       {/* Middle column — note list with search */}
       <div
         style={{
@@ -877,6 +923,8 @@ export function MemorySurface() {
           </div>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }
