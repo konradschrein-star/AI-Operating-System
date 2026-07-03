@@ -10,7 +10,7 @@
  *             tg_state so restarts neither drop nor replay messages.
  *   outbound: drains the notifications table every 3s → sendMessage.
  *             Producers: executor (run completions, reminders), cron
- *             error paths, coach heartbeats.
+ *             error paths, mentor heartbeats.
  *
  * Only TELEGRAM_CHAT_ID (Konrad) is served. Other chats get one polite
  * refusal and are logged — this is a single-user OS, not a public bot.
@@ -55,7 +55,7 @@ Photos/files → attached to the conversation.
 /journal <text> — journal entry
 /capture <text> — new note in vault Inbox
 /remind <when> <text> — "in 2h call X", "daily 08:30 gym", "tomorrow 9:00"
-/coach — on-demand coach check-in
+/mentor — on-demand mentor check-in
 /new [text] — start a fresh conversation thread
 /status — what the OS is doing right now
 /help — this`;
@@ -134,17 +134,19 @@ async function handleCommand(text: string): Promise<string> {
       ];
       return lines.join("\n");
     }
+    case "mentor":
     case "coach": {
+      // /coach kept as a hidden alias — muscle memory from v2.2.
       const run = await createRun({
-        title: "coach: on-demand check-in",
+        title: "mentor: on-demand check-in",
         prompt:
-          "You are Konrad's coach. Read /opt/obsidian-vault/Coach/PERSONA.md and embody it fully. " +
-          "Read today's daily note (/opt/obsidian-vault/Daily/) and Coach/log.md for context. " +
+          "You are Konrad's mentor. Read /opt/obsidian-vault/Mentor/PERSONA.md and embody it fully. " +
+          "Read today's daily note (/opt/obsidian-vault/Daily/) and Mentor/log.md for context. " +
           "Give a short, hard-hitting check-in: where he stands today, what the next needle-mover is. " +
           "Under 150 words — this lands on his phone.",
-        metadata: { source: "telegram", kind: "coach" },
+        metadata: { source: "telegram", kind: "mentor" },
       });
-      return `🥊 coach incoming… (run ${run.id.slice(0, 8)})`;
+      return `🥊 mentor incoming… (run ${run.id.slice(0, 8)})`;
     }
     case "new": {
       if (!args) return "fresh thread — send your message.";

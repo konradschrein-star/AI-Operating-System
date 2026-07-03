@@ -28,7 +28,7 @@ import reminders from "./routes/reminders.ts";
 import uploads from "./routes/uploads.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
-import coach from "./routes/coach.ts";
+import mentor from "./routes/mentor.ts";
 
 const app = new Hono();
 
@@ -140,8 +140,8 @@ app.route("/api/reminders", reminders);
 // v2.1: chat attachments (drag & drop / paste).
 app.route("/api/uploads", uploads);
 
-// v2.2: coach accountability metrics (evening coach POSTs, Today reads).
-app.route("/api/coach", coach);
+// v2.2: mentor accountability metrics (evening mentor POSTs, Today reads).
+app.route("/api/mentor", mentor);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);

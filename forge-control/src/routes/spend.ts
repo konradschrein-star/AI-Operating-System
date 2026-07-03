@@ -1,8 +1,10 @@
 /**
  * /api/spend — gateway-side ingest + UI-side rollup.
  *
- * POST /api/spend       — accepts SpendRow[] or single SpendRow, persists.
- * GET  /api/spend/today — returns the daily rollup the Today screen consumes.
+ * POST /api/spend         — accepts SpendRow[] or single SpendRow, persists.
+ * GET  /api/spend/today   — returns the daily rollup the Today screen consumes.
+ * GET  /api/spend/summary — 30-day windows + area breakdown + daily series
+ *                           for the Money surface (v2.3).
  *
  * The POST endpoint is intentionally permissive: it accepts both `[row]` and
  * `row` payload shapes so gateways can fire-and-forget without ceremony.
@@ -14,6 +16,7 @@ import { Hono } from "hono";
 import {
   recordSpend,
   todaySpendRollup,
+  spendSummary,
   type SpendKind,
   type SpendRow,
 } from "../db/spend.ts";
@@ -89,6 +92,10 @@ r.post("/", async (c) => {
 r.get("/today", async (c) => {
   const rollup = await todaySpendRollup();
   return c.json(rollup);
+});
+
+r.get("/summary", async (c) => {
+  return c.json(await spendSummary());
 });
 
 export default r;

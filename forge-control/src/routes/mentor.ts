@@ -1,15 +1,15 @@
 /**
- * Coach metrics routes (v2.2).
+ * Mentor metrics routes (v2.2, renamed coach → mentor in v2.3).
  *
- *   POST /api/coach/metrics  {day?, committed, completed, notes?}
- *     — the evening coach run curls this after counting the daily note's
+ *   POST /api/mentor/metrics  {day?, committed, completed, notes?}
+ *     — the evening mentor run curls this after counting the daily note's
  *       checkboxes. day defaults to today in REMINDER_TZ.
- *   GET  /api/coach/metrics  → {days: [...], streak}
- *     — Today surface + future coach runs read the accountability history.
+ *   GET  /api/mentor/metrics  → {days: [...], streak}
+ *     — Today surface + future mentor runs read the accountability history.
  */
 
 import { Hono } from "hono";
-import { upsertCoachDay, listCoachDays, currentStreak } from "../db/coach.ts";
+import { upsertMentorDay, listMentorDays, currentStreak } from "../db/mentor.ts";
 
 const r = new Hono();
 
@@ -39,7 +39,7 @@ r.post("/metrics", async (c) => {
   const day = body.day && /^\d{4}-\d{2}-\d{2}$/.test(body.day)
     ? body.day
     : todayInTz();
-  const row = await upsertCoachDay({
+  const row = await upsertMentorDay({
     day,
     committed,
     completed,
@@ -49,7 +49,7 @@ r.post("/metrics", async (c) => {
 });
 
 r.get("/metrics", async (c) => {
-  const days = await listCoachDays(30);
+  const days = await listMentorDays(30);
   return c.json({ days, streak: await currentStreak() });
 });
 
