@@ -35,6 +35,7 @@ import { SkillsSurface } from "./SkillsSurface";
 import { PipelineSurface } from "./PipelineSurface";
 import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
+import { MoneySurface } from "./MoneySurface";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -124,17 +125,6 @@ const PLACEHOLDER_SURFACES: Record<
       { icon: "graphic_eq", label: "voices" },
       { icon: "image", label: "images" },
       { icon: "dashboard", label: "templates" },
-    ],
-  },
-  money: {
-    tag: "MONEY",
-    title: "Financial cockpit",
-    desc: "Revenue, spend, net, runway — plus provider cost breakdown and a per-channel P&L ledger.",
-    items: [
-      { icon: "payments", label: "rev / spend / net / runway" },
-      { icon: "show_chart", label: "revenue vs spend, 30 days" },
-      { icon: "pie_chart", label: "provider cost breakdown" },
-      { icon: "receipt_long", label: "per-job imputed cost ledger" },
     ],
   },
   skills: {
@@ -408,6 +398,7 @@ export function DesktopApp() {
           {surface === "pipeline" && <PipelineSurface />}
           {surface === "autonomy" && <AutonomySurface />}
           {surface === "automation" && <AutomationSurface />}
+          {surface === "money" && <MoneySurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
             surface !== "chat" &&

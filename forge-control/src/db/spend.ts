@@ -82,6 +82,100 @@ export async function recordSpend(rows: SpendRow[]): Promise<number> {
   return r.rowCount ?? 0;
 }
 
+export interface SpendWindow {
+  total_eur: number;
+  calls: number;
+}
+
+export interface SpendSummary {
+  today: SpendWindow;
+  d7: SpendWindow;
+  d30: SpendWindow;
+  /** Per provider×kind over the last 30 days, sorted desc by total. */
+  by_area: Array<{
+    provider: string;
+    kind: string;
+    total_eur: number;
+    calls: number;
+    units: number;
+  }>;
+  /** UTC-day series over the last 30 days, ascending, gap days omitted. */
+  daily: Array<{ day: string; total_eur: number; calls: number }>;
+}
+
+/** The Money surface's one query fan-out: window totals, provider×kind
+ *  breakdown, and a daily series — all over a 30-day horizon. today uses
+ *  the UTC day boundary (consistent with todaySpendRollup); d7/d30 are
+ *  rolling windows. */
+export async function spendSummary(): Promise<SpendSummary> {
+  const windows = await pool.query<{
+    today_eur: string;
+    today_calls: string;
+    d7_eur: string;
+    d7_calls: string;
+    d30_eur: string;
+    d30_calls: string;
+  }>(
+    `SELECT
+       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0)::text AS today_eur,
+       COUNT(*)   FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::text        AS today_calls,
+       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= now() - interval '7 days'), 0)::text  AS d7_eur,
+       COUNT(*)   FILTER (WHERE created_at >= now() - interval '7 days')::text                    AS d7_calls,
+       COALESCE(SUM(amount_eur), 0)::text AS d30_eur,
+       COUNT(*)::text                     AS d30_calls
+     FROM spend_log
+     WHERE created_at >= now() - interval '30 days'`,
+  );
+  const byArea = await pool.query<{
+    provider: string;
+    kind: string;
+    total_eur: string;
+    calls: string;
+    units: string;
+  }>(
+    `SELECT provider, kind,
+            COALESCE(SUM(amount_eur), 0)::text AS total_eur,
+            COUNT(*)::text                     AS calls,
+            COALESCE(SUM(units), 0)::text      AS units
+       FROM spend_log
+      WHERE created_at >= now() - interval '30 days'
+      GROUP BY provider, kind
+      ORDER BY SUM(amount_eur) DESC, COUNT(*) DESC`,
+  );
+  const daily = await pool.query<{
+    day: string;
+    total_eur: string;
+    calls: string;
+  }>(
+    `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+            COALESCE(SUM(amount_eur), 0)::text AS total_eur,
+            COUNT(*)::text                     AS calls
+       FROM spend_log
+      WHERE created_at >= now() - interval '30 days'
+      GROUP BY 1
+      ORDER BY 1`,
+  );
+
+  const w = windows.rows[0];
+  return {
+    today: { total_eur: Number(w?.today_eur ?? "0"), calls: Number(w?.today_calls ?? "0") },
+    d7: { total_eur: Number(w?.d7_eur ?? "0"), calls: Number(w?.d7_calls ?? "0") },
+    d30: { total_eur: Number(w?.d30_eur ?? "0"), calls: Number(w?.d30_calls ?? "0") },
+    by_area: byArea.rows.map((r) => ({
+      provider: r.provider,
+      kind: r.kind,
+      total_eur: Number(r.total_eur),
+      calls: Number(r.calls),
+      units: Number(r.units),
+    })),
+    daily: daily.rows.map((r) => ({
+      day: r.day,
+      total_eur: Number(r.total_eur),
+      calls: Number(r.calls),
+    })),
+  };
+}
+
 /** Sum + breakdown of today's spend in UTC. UTC chosen because gateways
  *  run on VPS time and the cap is a daily reset, not a tz-localized total.
  *  Always returns a row, even when there's nothing logged yet. */

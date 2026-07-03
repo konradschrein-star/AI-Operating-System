@@ -72,6 +72,39 @@ export interface TodayResponse {
 export const fetchToday = () => getJson<TodayResponse>("/today");
 
 /* ----------------------------------------------------------------------------
+ * Spend (Money surface) — mirrors routes/spend.ts GET /summary
+ * -------------------------------------------------------------------------- */
+export interface SpendWindow {
+  total_eur: number;
+  calls: number;
+}
+
+export interface SpendArea {
+  provider: string;
+  kind: string;
+  total_eur: number;
+  calls: number;
+  units: number;
+}
+
+export interface SpendDay {
+  day: string; // YYYY-MM-DD (UTC)
+  total_eur: number;
+  calls: number;
+}
+
+export interface SpendSummaryResponse {
+  today: SpendWindow;
+  d7: SpendWindow;
+  d30: SpendWindow;
+  by_area: SpendArea[];
+  daily: SpendDay[];
+}
+
+export const fetchSpendSummary = () =>
+  getJson<SpendSummaryResponse>("/spend/summary");
+
+/* ----------------------------------------------------------------------------
  * Inbox
  * -------------------------------------------------------------------------- */
 interface InboxApiItem {
