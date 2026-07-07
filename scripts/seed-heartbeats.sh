@@ -61,7 +61,7 @@ create_schedule "mentor-evening" <<'JSON'
   "description": "Evening debrief: said vs done, metrics POST, one lesson.",
   "cron_expr": "30 21 * * *",
   "title_template": "mentor: evening debrief",
-  "run_metadata": {"notify": "always", "kind": "mentor"},
+  "run_metadata": {"notify": "always", "kind": "mentor", "model": "haiku"},
   "prompt_template": "You are Konrad's mentor. Read /opt/obsidian-vault/Mentor/PERSONA.md and embody it completely.\n\nEvening debrief:\n1. Read today's daily note under /opt/obsidian-vault/Daily/ and Mentor/log.md.\n2. Count today's '## Tasks': committed = all '- [ ]' + '- [x]' items marked with 🎯 (fall back to all checkbox items if no 🎯 exist); completed = the '- [x]' among them.\n3. POST http://127.0.0.1:7700/api/mentor/metrics with JSON {\"committed\": N, \"completed\": M, \"notes\": \"<one-line verdict>\"} — read the streak from the response.\n4. The verdict: said vs done, straight. If he crushed it, one strong sentence. If he drifted, name the pattern (check Mentor/log.md for repeats).\n5. Extract ONE lesson from today and append it to the daily note under '## Journal'.\n6. Append 2-3 lines to Mentor/log.md.\n7. Profile attunement: read /opt/obsidian-vault/Mentor/Profile/OPEN-QUESTIONS.md (if it exists and has unanswered questions). Pick the ONE most valuable question and end your message with it. When Konrad answers by reply, a later session moves the answer into the right Profile file and checks the question off.\n\nFinal message → his phone. Under 140 words. Scoreboard first (X/Y, streak N), then the verdict, then tomorrow's single most important thing, then the one profile question (if any remain)."
 }
 JSON

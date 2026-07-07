@@ -50,8 +50,11 @@ module.exports = {
         // v2.0: Claude Code engine (default). 'claude-pool' = legacy path.
         EXECUTOR_ENGINE: 'claude-code',
         CC_WORKSPACE: '/opt/ai-os/workspace',
-        // v2.1: Sonnet 5 is the standard; per-run override via metadata.model.
-        CC_MODEL: 'sonnet',
+        // v2.4: Opus 4.8 is the standard — Konrad's call: Sonnet 5 isn't
+        // better than Opus 4.8 but costs the same usage, so there's no
+        // reason to default to it. Per-run override via metadata.model
+        // ("haiku" for cheap/frequent heartbeats).
+        CC_MODEL: 'opus',
         // forge-memory MCP cold-starts via tsx — give stdio servers headroom.
         MCP_TIMEOUT: '30000',
         OBSIDIAN_VAULT_DIR: '/opt/obsidian-vault',

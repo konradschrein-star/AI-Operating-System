@@ -22,12 +22,12 @@ import { createInterface } from "node:readline";
 
 const CC_BIN = process.env.CC_BIN ?? "claude";
 const CC_WORKSPACE = process.env.CC_WORKSPACE ?? "/opt/ai-os/workspace";
-// Default model for runs. "sonnet" = latest Sonnet (Sonnet 5) — the
-// workhorse. Per-run override via runs.metadata.model ("opus" for hard
-// architecture/judgment tasks, "haiku" for cheap fast lookups). Subagents
-// (.claude/agents/*.md) carry their own model in frontmatter, so a sonnet
-// main loop can still delegate an architecture question to an opus agent.
-const CC_MODEL = process.env.CC_MODEL ?? "sonnet";
+// Default model for runs. "opus" = latest Opus (Opus 4.8) — the workhorse
+// (v2.4: Sonnet 5 costs the same usage without being better, so it's not
+// used as a default anywhere). Per-run override via runs.metadata.model
+// ("haiku" for cheap/frequent heartbeats). Subagents (.claude/agents/*.md)
+// carry their own model in frontmatter, independent of this default.
+const CC_MODEL = process.env.CC_MODEL ?? "opus";
 const VAULT_DIR = process.env.OBSIDIAN_VAULT_DIR ?? "/opt/obsidian-vault";
 // Extra --add-dir entries, comma-separated.
 const CC_ADD_DIRS = (process.env.CC_ADD_DIRS ?? "")
