@@ -39,6 +39,7 @@ import {
   appendMessage,
   findActiveRunBySource,
 } from "../db/runs.ts";
+import { getFleetState, setFleetState } from "../db/ai_os.ts";
 
 const CHAT_ID = Number(process.env.TELEGRAM_CHAT_ID ?? "123456789");
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
@@ -58,6 +59,8 @@ Photos/files → attached to the conversation.
 /mentor — on-demand mentor check-in
 /new [text] — start a fresh conversation thread
 /status — what the OS is doing right now
+/off — pause everything (no cron, no runs, no usage spent)
+/on — resume
 /help — this`;
 
 /* ---------------------------------------------------------------- inbound */
@@ -228,6 +231,29 @@ async function handleUpdateMessage(msg: TgMessage): Promise<void> {
   }
   try {
     const text = msg.text ?? "";
+    const cmd = isCommand(text) ? text.match(/^\/(\w+)/)?.[1]?.toLowerCase() : null;
+
+    // /on and /off always go through, even while paused — otherwise a
+    // paused fleet has no way back on except the web UI or SSH.
+    if (cmd === "on" || cmd === "off") {
+      const fleet = await setFleetState(cmd === "on" ? "running" : "paused", "telegram");
+      await sendMessage(
+        msg.chat.id,
+        fleet.status === "running"
+          ? "🟢 back on."
+          : "🔴 paused — no cron, no runs, no usage spent until /on.",
+      );
+      return;
+    }
+
+    const fleet = await getFleetState().catch(
+      () => ({ status: "running" }) as { status: string },
+    );
+    if (fleet.status === "paused") {
+      await sendMessage(msg.chat.id, "🔴 paused — /on to resume.");
+      return;
+    }
+
     const reply =
       text && isCommand(text)
         ? await handleCommand(text)

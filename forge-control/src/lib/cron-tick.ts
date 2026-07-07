@@ -16,11 +16,13 @@ import {
   recordError,
 } from "../db/cron.ts";
 import { createRun } from "../db/runs.ts";
+import { getFleetState } from "../db/ai_os.ts";
 
 const TICK_INTERVAL_MS = Number(process.env.CRON_TICK_INTERVAL_MS ?? "15000");
 
 let running = false;
 let tickHandle: NodeJS.Timeout | null = null;
+let lastPauseLogAt = 0;
 
 async function fireSchedule(s: {
   id: string;
@@ -69,6 +71,23 @@ async function tickOnce(): Promise<void> {
     return;
   }
   if (due.length === 0) return;
+
+  // claimDueSchedules() already advanced next_run_at for every row above —
+  // that happens unconditionally so a paused fleet never builds a firing
+  // backlog to burst-process on resume. We only gate the actual fire here.
+  const fleet = await getFleetState().catch(
+    () => ({ status: "running" }) as { status: string },
+  );
+  if (fleet.status === "paused") {
+    const now = Date.now();
+    if (now - lastPauseLogAt > 5 * 60 * 1000) {
+      console.log(
+        `[cron-tick] fleet paused — skipped ${due.length} due schedule(s): ${due.map((s) => s.name).join(", ")}`,
+      );
+      lastPauseLogAt = now;
+    }
+    return;
+  }
   await Promise.allSettled(due.map(fireSchedule));
 }
 
