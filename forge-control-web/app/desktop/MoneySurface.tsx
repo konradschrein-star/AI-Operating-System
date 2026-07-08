@@ -59,10 +59,11 @@ export function MoneySurface() {
     refetchInterval: 60_000,
   });
 
+  const emptyWindow = { total_eur: 0, calls: 0, claude_eur: 0, claude_calls: 0 };
   const data: SpendSummaryResponse = q.data ?? {
-    today: { total_eur: 0, calls: 0 },
-    d7: { total_eur: 0, calls: 0 },
-    d30: { total_eur: 0, calls: 0 },
+    today: emptyWindow,
+    d7: emptyWindow,
+    d30: emptyWindow,
     by_area: [],
     daily: [],
   };
@@ -83,11 +84,12 @@ export function MoneySurface() {
         )}
       </div>
       <div className="mono" style={{ fontSize: 11, color: tokens.textMuted, marginBottom: 18 }}>
-        every billable call lands here — images, TTS, video are real spend.
-        claude-code rows are a shadow price: you're on a subscription (flat
-        rate), so those $ are what the tokens would've cost on metered API
-        pricing, not an actual bill. watchdog pings your phone past{" "}
-        {eur(DAILY_ALERT_EUR)}/day.
+        the totals below are real spend only — images, TTS, video, everything
+        actually billed. claude-code is excluded: you're on a flat-rate
+        subscription, so its number (shown small, under each total) is just
+        what those tokens would've cost on metered API pricing — not money
+        that left your account. watchdog pings your phone past{" "}
+        {eur(DAILY_ALERT_EUR)}/day of real spend.
       </div>
 
       {/* Window totals */}
@@ -97,18 +99,21 @@ export function MoneySurface() {
           value={eur(data.today.total_eur)}
           sub={`${data.today.calls} calls`}
           tone={data.today.total_eur > DAILY_ALERT_EUR ? tokens.warn : tokens.textHi}
+          claudeEur={data.today.claude_eur}
         />
         <StatCard
           label="LAST 7 DAYS"
           value={eur(data.d7.total_eur)}
           sub={`${data.d7.calls} calls · ${eur(data.d7.total_eur / 7)}/day`}
           tone={tokens.textHi}
+          claudeEur={data.d7.claude_eur}
         />
         <StatCard
           label="LAST 30 DAYS"
           value={eur(data.d30.total_eur)}
           sub={`${data.d30.calls} calls · ${eur(data.d30.total_eur / 30)}/day`}
           tone={tokens.textHi}
+          claudeEur={data.d30.claude_eur}
         />
       </div>
 
@@ -259,11 +264,13 @@ function StatCard({
   value,
   sub,
   tone,
+  claudeEur,
 }: {
   label: string;
   value: string;
   sub: string;
   tone: string;
+  claudeEur?: number;
 }) {
   return (
     <div
@@ -290,6 +297,15 @@ function StatCard({
       <div className="mono" style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4 }}>
         {sub}
       </div>
+      {claudeEur !== undefined && claudeEur > 0 && (
+        <div
+          className="mono"
+          style={{ fontSize: 9.5, color: tokens.textGhost, marginTop: 4 }}
+          title="claude-code is a flat-rate subscription — this is what the tokens would've cost on metered API pricing, not a real charge"
+        >
+          + {eur(claudeEur)} claude (not billed)
+        </div>
+      )}
     </div>
   );
 }

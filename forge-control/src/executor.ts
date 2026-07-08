@@ -657,6 +657,10 @@ async function processWithClaudeCode(
     typeof run.metadata?.model === "string"
       ? (run.metadata.model as string)
       : null;
+  const effort =
+    typeof run.metadata?.effort === "string"
+      ? (run.metadata.effort as string)
+      : null;
   // Coding-project tasks run inside their project's git worktree instead of
   // the shared CC_WORKSPACE — see db/projects.ts / lib/project-tick.ts.
   const cwd =
@@ -725,6 +729,7 @@ async function processWithClaudeCode(
       sessionId: priorSession,
       timeoutMs,
       model,
+      effort,
       cwd,
       allowedTools,
       onEvent,
@@ -751,6 +756,7 @@ async function processWithClaudeCode(
         sessionId: null,
         timeoutMs,
         model,
+        effort,
         cwd,
         allowedTools,
         onEvent,

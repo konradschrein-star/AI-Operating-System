@@ -83,8 +83,14 @@ export async function recordSpend(rows: SpendRow[]): Promise<number> {
 }
 
 export interface SpendWindow {
+  /** Real spend — every provider except claude-code (flat-rate subscription). */
   total_eur: number;
   calls: number;
+  /** claude-code shadow price: what the tokens would've cost on metered API
+   *  pricing. Not billed — surfaced separately so it never inflates total_eur
+   *  and spikes anyone's blood pressure reading the headline number. */
+  claude_eur: number;
+  claude_calls: number;
 }
 
 export interface SpendSummary {
@@ -111,18 +117,30 @@ export async function spendSummary(): Promise<SpendSummary> {
   const windows = await pool.query<{
     today_eur: string;
     today_calls: string;
+    today_claude_eur: string;
+    today_claude_calls: string;
     d7_eur: string;
     d7_calls: string;
+    d7_claude_eur: string;
+    d7_claude_calls: string;
     d30_eur: string;
     d30_calls: string;
+    d30_claude_eur: string;
+    d30_claude_calls: string;
   }>(
     `SELECT
-       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'), 0)::text AS today_eur,
-       COUNT(*)   FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::text        AS today_calls,
-       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= now() - interval '7 days'), 0)::text  AS d7_eur,
-       COUNT(*)   FILTER (WHERE created_at >= now() - interval '7 days')::text                    AS d7_calls,
-       COALESCE(SUM(amount_eur), 0)::text AS d30_eur,
-       COUNT(*)::text                     AS d30_calls
+       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND provider <> 'claude-code'), 0)::text AS today_eur,
+       COUNT(*)   FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND provider <> 'claude-code')::text        AS today_calls,
+       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND provider = 'claude-code'), 0)::text AS today_claude_eur,
+       COUNT(*)   FILTER (WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND provider = 'claude-code')::text        AS today_claude_calls,
+       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= now() - interval '7 days' AND provider <> 'claude-code'), 0)::text  AS d7_eur,
+       COUNT(*)   FILTER (WHERE created_at >= now() - interval '7 days' AND provider <> 'claude-code')::text                    AS d7_calls,
+       COALESCE(SUM(amount_eur) FILTER (WHERE created_at >= now() - interval '7 days' AND provider = 'claude-code'), 0)::text  AS d7_claude_eur,
+       COUNT(*)   FILTER (WHERE created_at >= now() - interval '7 days' AND provider = 'claude-code')::text                    AS d7_claude_calls,
+       COALESCE(SUM(amount_eur) FILTER (WHERE provider <> 'claude-code'), 0)::text AS d30_eur,
+       COUNT(*)   FILTER (WHERE provider <> 'claude-code')::text                   AS d30_calls,
+       COALESCE(SUM(amount_eur) FILTER (WHERE provider = 'claude-code'), 0)::text AS d30_claude_eur,
+       COUNT(*)   FILTER (WHERE provider = 'claude-code')::text                   AS d30_claude_calls
      FROM spend_log
      WHERE created_at >= now() - interval '30 days'`,
   );
@@ -152,15 +170,31 @@ export async function spendSummary(): Promise<SpendSummary> {
             COUNT(*)::text                     AS calls
        FROM spend_log
       WHERE created_at >= now() - interval '30 days'
+        AND provider <> 'claude-code'
       GROUP BY 1
       ORDER BY 1`,
   );
 
   const w = windows.rows[0];
   return {
-    today: { total_eur: Number(w?.today_eur ?? "0"), calls: Number(w?.today_calls ?? "0") },
-    d7: { total_eur: Number(w?.d7_eur ?? "0"), calls: Number(w?.d7_calls ?? "0") },
-    d30: { total_eur: Number(w?.d30_eur ?? "0"), calls: Number(w?.d30_calls ?? "0") },
+    today: {
+      total_eur: Number(w?.today_eur ?? "0"),
+      calls: Number(w?.today_calls ?? "0"),
+      claude_eur: Number(w?.today_claude_eur ?? "0"),
+      claude_calls: Number(w?.today_claude_calls ?? "0"),
+    },
+    d7: {
+      total_eur: Number(w?.d7_eur ?? "0"),
+      calls: Number(w?.d7_calls ?? "0"),
+      claude_eur: Number(w?.d7_claude_eur ?? "0"),
+      claude_calls: Number(w?.d7_claude_calls ?? "0"),
+    },
+    d30: {
+      total_eur: Number(w?.d30_eur ?? "0"),
+      calls: Number(w?.d30_calls ?? "0"),
+      claude_eur: Number(w?.d30_claude_eur ?? "0"),
+      claude_calls: Number(w?.d30_claude_calls ?? "0"),
+    },
     by_area: byArea.rows.map((r) => ({
       provider: r.provider,
       kind: r.kind,

@@ -75,8 +75,13 @@ export const fetchToday = () => getJson<TodayResponse>("/today");
  * Spend (Money surface) — mirrors routes/spend.ts GET /summary
  * -------------------------------------------------------------------------- */
 export interface SpendWindow {
+  /** Real spend — every provider except claude-code (flat-rate subscription). */
   total_eur: number;
   calls: number;
+  /** claude-code shadow price: what those tokens would've cost on metered
+   *  API pricing. Not billed — kept separate from total_eur on purpose. */
+  claude_eur: number;
+  claude_calls: number;
 }
 
 export interface SpendArea {
