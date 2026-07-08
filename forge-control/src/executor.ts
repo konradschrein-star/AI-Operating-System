@@ -38,6 +38,7 @@ import {
   lastUserText,
 } from "./lib/memory-prefetch.ts";
 import { queueNotification } from "./db/notifications.ts";
+import { projectTick } from "./lib/project-tick.ts";
 
 const { Pool } = pg;
 
@@ -656,6 +657,17 @@ async function processWithClaudeCode(
     typeof run.metadata?.model === "string"
       ? (run.metadata.model as string)
       : null;
+  // Coding-project tasks run inside their project's git worktree instead of
+  // the shared CC_WORKSPACE — see db/projects.ts / lib/project-tick.ts.
+  const cwd =
+    typeof run.metadata?.workspace_dir === "string"
+      ? (run.metadata.workspace_dir as string)
+      : null;
+  const allowedTools = Array.isArray(run.metadata?.allowed_tools)
+    ? (run.metadata.allowed_tools as unknown[]).filter(
+        (t): t is string => typeof t === "string",
+      )
+    : null;
 
   const baseMessage = priorSession
     ? trailingUserBlock(thread)
@@ -713,6 +725,8 @@ async function processWithClaudeCode(
       sessionId: priorSession,
       timeoutMs,
       model,
+      cwd,
+      allowedTools,
       onEvent,
       isCancelled,
     });
@@ -737,6 +751,8 @@ async function processWithClaudeCode(
         sessionId: null,
         timeoutMs,
         model,
+        cwd,
+        allowedTools,
         onEvent,
         isCancelled,
       });
@@ -813,6 +829,32 @@ async function isFleetPaused(): Promise<boolean> {
   }
 }
 
+// v2.5: concurrency. Reads the agent.spawn_cap guardrail (config.max,
+// currently 8) that's existed in guardrail_rules since migration 0021 but
+// was never enforced — the executor claimed and processed exactly one run
+// at a time. Coding projects need real parallelism (multiple task runs in
+// flight per tick), so this became load-bearing. Disabled/missing rule
+// falls back to a safety default rather than "unlimited" — this cap
+// controls how many `claude` child processes run at once on the VPS.
+const CONCURRENCY_SAFETY_DEFAULT = 4;
+const CONCURRENCY_HARD_CEILING = 16;
+
+async function getConcurrencyLimit(): Promise<number> {
+  try {
+    const r = await pool.query<{ enabled: boolean; config: { max?: number } }>(
+      `SELECT enabled, config FROM guardrail_rules WHERE id = 'agent.spawn_cap' LIMIT 1`,
+    );
+    const row = r.rows[0];
+    const max = Number(row?.config?.max);
+    if (!row || !row.enabled || !Number.isFinite(max) || max < 1) {
+      return CONCURRENCY_SAFETY_DEFAULT;
+    }
+    return Math.min(max, CONCURRENCY_HARD_CEILING);
+  } catch {
+    return CONCURRENCY_SAFETY_DEFAULT;
+  }
+}
+
 /* Flip 'running' rows that haven't heartbeat in HEARTBEAT_STUCK_THRESHOLD_MS
  * to 'stuck' so the manager loop / UI can surface them. Idempotent. */
 async function stuckWatchdogTick(): Promise<void> {
@@ -846,6 +888,14 @@ async function loop(): Promise<void> {
     `[executor] starting · pool=${POOL_URL} · keylen=${POOL_KEY.length}`,
   );
   let lastPauseLogAt = 0;
+  // Fire-and-forget map of in-flight processRun() calls, keyed by run id.
+  // We claim up to `limit` concurrently instead of awaiting each one before
+  // claiming the next — that's the whole change from v2.4's strictly serial
+  // loop. processRun() already never throws in normal operation (it catches
+  // internally and writes 'failed'/'stuck'); the .catch() here only guards
+  // against something escaping before that try block (e.g. memory prefetch).
+  const inFlight = new Map<string, Promise<void>>();
+
   while (running) {
     try {
       if (await isFleetPaused()) {
@@ -859,10 +909,23 @@ async function loop(): Promise<void> {
         await new Promise((r) => setTimeout(r, 5_000));
         continue;
       }
-      const run = await claimNextRun();
-      if (run) {
-        await processRun(run);
-        continue; // poll immediately for more work
+      const limit = await getConcurrencyLimit();
+      if (inFlight.size < limit) {
+        const run = await claimNextRun();
+        if (run) {
+          const p = processRun(run)
+            .catch((err) => {
+              console.error(
+                `[executor] run ${run.id} escaped processRun uncaught:`,
+                err instanceof Error ? err.message : err,
+              );
+            })
+            .finally(() => {
+              inFlight.delete(run.id);
+            });
+          inFlight.set(run.id, p);
+          continue; // try to fill remaining concurrency headroom immediately
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -870,7 +933,10 @@ async function loop(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
-  console.log("[executor] shutting down");
+  console.log(
+    `[executor] shutting down — waiting for ${inFlight.size} in-flight run(s)`,
+  );
+  await Promise.allSettled([...inFlight.values()]);
   await pool.end().catch(() => {});
 }
 
@@ -1136,6 +1202,9 @@ async function managerLoop(): Promise<void> {
     await managerTick();
     await stuckWatchdogTick();
     await reminderTick();
+    // v2.5: coding-project stage advancement — same tick cadence as
+    // everything else here, gated on fleet_state internally like cron-tick.
+    await projectTick();
     await new Promise((r) => setTimeout(r, 10_000));
   }
   await hcp.end().catch(() => {});

@@ -26,6 +26,7 @@ import spend from "./routes/spend.ts";
 import vault from "./routes/vault.ts";
 import reminders from "./routes/reminders.ts";
 import uploads from "./routes/uploads.ts";
+import projects from "./routes/projects.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import mentor from "./routes/mentor.ts";
@@ -100,6 +101,11 @@ app.get("/", (c) =>
       "/api/vault/daily",
       "/api/reminders",
       "/api/reminders/:id/dismiss",
+      "/api/projects",
+      "/api/projects/board",
+      "/api/projects/:id",
+      "/api/projects/:id/tasks",
+      "/api/projects/:id/status",
     ],
   }),
 );
@@ -142,6 +148,11 @@ app.route("/api/uploads", uploads);
 
 // v2.2: mentor accountability metrics (evening mentor POSTs, Today reads).
 app.route("/api/mentor", mentor);
+
+// v2.5: coding projects — multi-agent dev work (architect/planner/scout/
+// builder/reviewer) on top of the runs engine. Stage advancement runs
+// inside forge-executor's manager loop (lib/project-tick.ts), not here.
+app.route("/api/projects", projects);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);
