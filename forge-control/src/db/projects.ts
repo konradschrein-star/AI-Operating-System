@@ -345,6 +345,7 @@ export async function createRunForTask(input: {
   task_id: string;
   workspace_dir: string;
   model?: string;
+  effort?: string;
   allowed_tools?: string[];
 }) {
   return createRun({
@@ -357,6 +358,7 @@ export async function createRunForTask(input: {
       role: input.role,
       workspace_dir: input.workspace_dir,
       ...(input.model ? { model: input.model } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
       ...(input.allowed_tools ? { allowed_tools: input.allowed_tools } : {}),
     },
   });

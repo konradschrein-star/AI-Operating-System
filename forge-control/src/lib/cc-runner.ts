@@ -87,6 +87,13 @@ export function sanitizeModel(m: unknown): string | null {
   return v;
 }
 
+const EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
+export function sanitizeEffort(e: unknown): string | null {
+  if (typeof e !== "string") return null;
+  const v = e.trim().toLowerCase();
+  return EFFORT_LEVELS.has(v) ? v : null;
+}
+
 const SYSTEM_PROMPT = `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
 
 Environment you control:
@@ -186,6 +193,10 @@ export async function runClaudeCode(opts: {
   timeoutMs: number;
   /** Model alias/id for this run; falls back to CC_MODEL (sonnet). */
   model?: string | null;
+  /** Reasoning effort for this run (low/medium/high/xhigh/max). Omitted
+   *  entirely when unset — let the CLI's own default stand rather than
+   *  forcing a level on every run. */
+  effort?: string | null;
   /** Working directory override — e.g. a coding project's git worktree.
    *  Falls back to CC_WORKSPACE, the shared scratch dir every other run uses. */
   cwd?: string | null;
@@ -207,6 +218,8 @@ export async function runClaudeCode(opts: {
   for (const d of CC_ADD_DIRS) args.push("--add-dir", d);
   const model = sanitizeModel(opts.model) ?? CC_MODEL;
   if (model) args.push("--model", model);
+  const effort = sanitizeEffort(opts.effort);
+  if (effort) args.push("--effort", effort);
   if (opts.sessionId) args.push("--resume", opts.sessionId);
   args.push("--append-system-prompt", SYSTEM_PROMPT);
 

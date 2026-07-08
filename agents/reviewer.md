@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Adversarial review of finished work — code, plans, or configs. Use after building anything non-trivial and before deploys. Tries to break it, not to praise it.
-model: sonnet
+model: claude-sonnet-4-6
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
 ---
 

@@ -37,6 +37,7 @@ import {
 } from "../db/projects.ts";
 import { provisionWorkspace } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
+import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
 
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
 const MAX_FIX_CYCLES = 3;
@@ -45,6 +46,8 @@ let lastPauseLogAt = 0;
 interface RoleConfig {
   mission: string;
   tools: string[] | null;
+  model: string | null;
+  effort: string | null;
 }
 
 const roleConfigCache = new Map<TaskRole, RoleConfig>();
@@ -68,12 +71,19 @@ function roleConfig(role: TaskRole): RoleConfig {
     const tools = toolsLine
       ? toolsLine.split(",").map((t) => t.trim()).filter(Boolean)
       : null;
-    const cfg: RoleConfig = { mission, tools };
+    const model = sanitizeModel(/^model:\s*(.+)$/m.exec(frontmatter)?.[1]);
+    const effort = sanitizeEffort(/^effort:\s*(.+)$/m.exec(frontmatter)?.[1]);
+    const cfg: RoleConfig = { mission, tools, model, effort };
     roleConfigCache.set(role, cfg);
     return cfg;
   } catch {
     console.warn(`[project-tick] no agent definition for role ${role}, using a bare fallback`);
-    const cfg: RoleConfig = { mission: `You are the ${role} for this coding project.`, tools: null };
+    const cfg: RoleConfig = {
+      mission: `You are the ${role} for this coding project.`,
+      tools: null,
+      model: null,
+      effort: null,
+    };
     roleConfigCache.set(role, cfg);
     return cfg;
   }
@@ -131,7 +141,7 @@ async function spawnTaskRuns(): Promise<void> {
         task.project.work_branch = ws.work_branch;
       }
       const prompt = buildPrompt(task, task.project);
-      const tools = roleConfig(task.role).tools;
+      const cfg = roleConfig(task.role);
       const run = await createRunForTask({
         title: `${task.project.name} · ${task.title}`,
         prompt,
@@ -139,7 +149,9 @@ async function spawnTaskRuns(): Promise<void> {
         project_id: task.project_id,
         task_id: task.id,
         workspace_dir: task.project.workspace_dir,
-        ...(tools ? { allowed_tools: tools } : {}),
+        ...(cfg.tools ? { allowed_tools: cfg.tools } : {}),
+        ...(cfg.model ? { model: cfg.model } : {}),
+        ...(cfg.effort ? { effort: cfg.effort } : {}),
       });
       await attachRun(task.id, run.id);
     } catch (e) {

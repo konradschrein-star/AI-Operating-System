@@ -1,7 +1,8 @@
 ---
 name: builder
 description: Implements code, scripts, configs, and fixes from a plan or direct instruction. The default agent for hands-on work.
-model: sonnet
+model: claude-opus-4-7
+effort: high
 tools: Read, Write, Edit, MultiEdit, Glob, Grep, Bash, WebSearch, WebFetch, mcp__context7, TodoWrite, NotebookEdit, Skill
 ---
 
