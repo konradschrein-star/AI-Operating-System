@@ -171,8 +171,18 @@ async function embedQuery(text: string): Promise<number[] | null> {
  * Queries
  * ========================================================================== */
 
-/** List vault notes joined with a one-chunk preview from the embeddings store. */
-export async function listMemory(limit = 200): Promise<NoteRow[]> {
+export interface NoteListPage {
+  notes: NoteRow[];
+  hasMore: boolean;
+}
+
+/** List vault notes joined with a one-chunk preview from the embeddings
+ *  store. Paged (fetches limit+1 to derive hasMore) — the vault only grows,
+ *  so the caller should page rather than pull everything every time. */
+export async function listMemoryPage(
+  limit = 30,
+  offset = 0,
+): Promise<NoteListPage> {
   const noteResult = await hcp.query<{
     id: string;
     topic: string;
@@ -184,11 +194,48 @@ export async function listMemory(limit = 200): Promise<NoteRow[]> {
     `SELECT id, topic, vault_path, tags, links, created_at::text
        FROM knowledge_note
        ORDER BY created_at DESC
-       LIMIT $1`,
-    [limit],
+       LIMIT $1 OFFSET $2`,
+    [limit + 1, offset],
   );
+  const hasMore = noteResult.rows.length > limit;
+  if (hasMore) noteResult.rows.length = limit;
 
-  const paths = noteResult.rows.map((r) => r.vault_path);
+  const notes = await notesWithPreview(noteResult.rows);
+  return { notes, hasMore };
+}
+
+/** True per-category totals across the WHOLE vault, independent of the
+ *  paged list above — cheap (topic+tags only, no embeddings preview join)
+ *  so the category rail's counts stay correct no matter how far the user
+ *  has paged. */
+export async function noteCounts(): Promise<Record<NoteCategory | "all", number>> {
+  const r = await hcp.query<{ topic: string; tags: string[] }>(
+    `SELECT topic, tags FROM knowledge_note`,
+  );
+  const out: Record<NoteCategory | "all", number> = {
+    all: r.rows.length,
+    rule: 0,
+    pref: 0,
+    fact: 0,
+    person: 0,
+    project: 0,
+    note: 0,
+  };
+  for (const row of r.rows) out[inferCategory(row.topic, row.tags ?? [])]++;
+  return out;
+}
+
+async function notesWithPreview(
+  noteRows: {
+    id: string;
+    topic: string;
+    vault_path: string;
+    tags: string[];
+    links: string[];
+    created_at: string;
+  }[],
+): Promise<NoteRow[]> {
+  const paths = noteRows.map((r) => r.vault_path);
   const previews = new Map<string, string>();
   if (paths.length > 0) {
     const previewResult = await cf.query<{
@@ -206,7 +253,7 @@ export async function listMemory(limit = 200): Promise<NoteRow[]> {
     }
   }
 
-  return noteResult.rows.map((r) => ({
+  return noteRows.map((r) => ({
     id: r.id,
     slug: slugify(r.vault_path),
     topic: r.topic,

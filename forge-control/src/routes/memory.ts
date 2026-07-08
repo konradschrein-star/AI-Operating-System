@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import {
-  listMemory,
+  listMemoryPage,
+  noteCounts,
   getMemory,
   searchMemory,
   searchMemoryWithGraph,
@@ -26,13 +27,18 @@ r.get("/graph", async (c) => {
   return c.json(await knowledgeGraph(maxLinks));
 });
 
+/* Vault-wide per-category totals, independent of pagination. Mounted before
+ * the slug-scoped GET so Hono routes correctly. */
+r.get("/counts", async (c) => c.json(await noteCounts()));
+
 r.get("/", async (c) => {
   const limit = Math.min(
     500,
-    Math.max(1, Number(c.req.query("limit") ?? "200")),
+    Math.max(1, Number(c.req.query("limit") ?? "30")),
   );
-  const notes = await listMemory(limit);
-  return c.json({ count: notes.length, notes });
+  const offset = Math.max(0, Number(c.req.query("offset") ?? "0"));
+  const { notes, hasMore } = await listMemoryPage(limit, offset);
+  return c.json({ count: notes.length, notes, hasMore });
 });
 
 r.get("/search", async (c) => {

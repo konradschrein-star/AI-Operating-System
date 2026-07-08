@@ -104,6 +104,23 @@ export interface SpendSummaryResponse {
 export const fetchSpendSummary = () =>
   getJson<SpendSummaryResponse>("/spend/summary");
 
+/** Runs that bounced off the Claude subscription's weekly/5-hour usage
+ *  wall. Reactive only — the CLI has no proactive "X% of quota used" API,
+ *  so this is the closest thing to a usage meter: how often (and when)
+ *  you've actually hit the ceiling recently. */
+export interface LimitHit {
+  run_id: string;
+  title: string;
+  ts: string;
+  message: string;
+}
+export const fetchLimitHits = async (days = 14): Promise<LimitHit[]> => {
+  const r = await getJson<{ days: number; hits: LimitHit[] }>(
+    `/spend/limit-hits?days=${days}`,
+  );
+  return r.hits;
+};
+
 /* ----------------------------------------------------------------------------
  * Inbox
  * -------------------------------------------------------------------------- */
@@ -319,10 +336,31 @@ export interface MemorySearchExpandedResponse {
   category?: TripleCategory;
 }
 
-export const fetchMemoryList = async (): Promise<MemoryNote[]> => {
-  const r = await getJson<{ count: number; notes: MemoryNote[] }>("/memory");
-  return r.notes;
+export interface MemoryListPage {
+  notes: MemoryNote[];
+  hasMore: boolean;
+}
+
+/** Paged — the vault only grows, so a single unbounded fetch would slow to
+ *  a crawl eventually. Defaults to the newest 30, "load more" fetches the
+ *  next page. */
+export const fetchMemoryList = async (
+  opts: { limit?: number; offset?: number } = {},
+): Promise<MemoryListPage> => {
+  const params = new URLSearchParams();
+  params.set("limit", String(opts.limit ?? 30));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  const r = await getJson<{ count: number; notes: MemoryNote[]; hasMore: boolean }>(
+    `/memory?${params}`,
+  );
+  return { notes: r.notes, hasMore: r.hasMore };
 };
+
+/** Vault-wide per-category totals — independent of the paged note list, so
+ *  the category rail stays correct no matter how many pages are loaded. */
+export const fetchMemoryCounts = async (): Promise<
+  Record<MemoryCategory | "all", number>
+> => getJson(`/memory/counts`);
 
 export const fetchMemoryNote = async (
   slug: string,
@@ -448,6 +486,7 @@ export interface RunSummary {
   message_count: number;
   last_message_preview: string;
   last_role: string;
+  archived: boolean;
 }
 
 export interface RunDetail extends RunSummary {
@@ -460,13 +499,41 @@ export interface RunDetail extends RunSummary {
   completed_at: string | null;
 }
 
-export const fetchChatList = async () => {
+export const fetchChatList = async (
+  opts: { limit?: number; offset?: number } = {},
+) => {
+  const params = new URLSearchParams();
+  if (opts.limit !== undefined) params.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  const qs = params.toString();
   const r = await getJson<{
     count: number;
     runs: RunSummary[];
     counts: Record<RunStatus, number>;
-  }>("/chat");
+    hasMore: boolean;
+  }>(`/chat${qs ? `?${qs}` : ""}`);
   return r;
+};
+
+/** Search past chats — title + prompt + every message in the thread.
+ *  Includes closed/archived chats so a closed conversation stays findable. */
+export const searchChats = async (q: string): Promise<RunSummary[]> => {
+  const r = await getJson<{ q: string; runs: RunSummary[] }>(
+    `/chat/search?q=${encodeURIComponent(q)}`,
+  );
+  return r.runs;
+};
+
+/** Close (archive) one chat — cancels it first if it's still active. */
+export const archiveChat = async (id: string): Promise<RunDetail> => {
+  const r = await postJson<{ run: RunDetail }>(`/chat/${id}/archive`, {});
+  return r.run;
+};
+
+/** Close every open chat at once. Returns how many were touched. */
+export const archiveAllChats = async (): Promise<number> => {
+  const r = await postJson<{ archived: number }>("/chat/archive-all", {});
+  return r.archived;
 };
 
 export const fetchChat = async (id: string) => {

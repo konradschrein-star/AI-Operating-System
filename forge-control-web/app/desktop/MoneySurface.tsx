@@ -13,7 +13,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../tokens";
-import { fetchSpendSummary, type SpendSummaryResponse } from "../api";
+import {
+  fetchSpendSummary,
+  fetchLimitHits,
+  type SpendSummaryResponse,
+  type LimitHit,
+} from "../api";
 
 /** €15/day is the watchdog's alert line — mirror it here so the surface
  *  and the Telegram alert agree on what "too much" means. */
@@ -48,6 +53,11 @@ export function MoneySurface() {
     queryFn: fetchSpendSummary,
     refetchInterval: 60_000,
   });
+  const limitHitsQ = useQuery({
+    queryKey: ["spend-limit-hits"],
+    queryFn: () => fetchLimitHits(14),
+    refetchInterval: 60_000,
+  });
 
   const data: SpendSummaryResponse = q.data ?? {
     today: { total_eur: 0, calls: 0 },
@@ -73,8 +83,11 @@ export function MoneySurface() {
         )}
       </div>
       <div className="mono" style={{ fontSize: 11, color: tokens.textMuted, marginBottom: 18 }}>
-        every billable call lands here — claude-code runs, images, TTS, video.
-        watchdog pings your phone past {eur(DAILY_ALERT_EUR)}/day.
+        every billable call lands here — images, TTS, video are real spend.
+        claude-code rows are a shadow price: you're on a subscription (flat
+        rate), so those $ are what the tokens would've cost on metered API
+        pricing, not an actual bill. watchdog pings your phone past{" "}
+        {eur(DAILY_ALERT_EUR)}/day.
       </div>
 
       {/* Window totals */}
@@ -139,6 +152,104 @@ export function MoneySurface() {
           <AreaBreakdown areas={data.by_area} />
         </div>
       </div>
+
+      <div style={{ marginTop: 20 }}>
+        <div
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textFaint,
+            letterSpacing: "0.12em",
+            marginBottom: 9,
+          }}
+        >
+          CLAUDE SUBSCRIPTION · WEEKLY/5H LIMIT HITS · 14 DAYS
+        </div>
+        <LimitHitsPanel hits={limitHitsQ.data ?? []} loading={limitHitsQ.isLoading} />
+      </div>
+    </div>
+  );
+}
+
+/** Claude Code has no proactive "X% of quota used" API — the CLI only ever
+ *  says so once a run actually bounces. This is the closest thing to a
+ *  usage meter: how often, and when, that's happened lately. */
+function LimitHitsPanel({
+  hits,
+  loading,
+}: {
+  hits: LimitHit[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="mono" style={{ fontSize: 11, color: tokens.textFaint, padding: "10px 0" }}>
+        loading…
+      </div>
+    );
+  }
+  if (hits.length === 0) {
+    return (
+      <div
+        className="mono"
+        style={{
+          background: tokens.bgCard,
+          border: `1px dashed ${tokens.border}`,
+          borderRadius: 8,
+          padding: 16,
+          fontSize: 11,
+          color: tokens.textFaint,
+        }}
+      >
+        no weekly/5-hour limit hits in the last 14 days.
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 8,
+        overflow: "hidden",
+      }}
+    >
+      {hits.map((h, i) => (
+        <div
+          key={h.run_id + h.ts}
+          style={{
+            padding: "10px 15px",
+            borderBottom: i === hits.length - 1 ? "none" : `1px solid ${tokens.borderDivider}`,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span className="mono" style={{ fontSize: 10.5, color: tokens.warn }}>
+              {new Date(h.ts).toLocaleString()}
+            </span>
+            <span style={{ flex: 1 }} />
+            <span
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                color: tokens.textMuted,
+                maxWidth: 260,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={h.title}
+            >
+              {h.title}
+            </span>
+          </div>
+          <div
+            className="mono"
+            style={{ fontSize: 10.5, color: tokens.textSecondary, marginTop: 4, lineHeight: 1.5 }}
+          >
+            {h.message}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

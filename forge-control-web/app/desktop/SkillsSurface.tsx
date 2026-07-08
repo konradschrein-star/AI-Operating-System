@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { tokens } from "../tokens";
 import {
@@ -43,6 +43,21 @@ export function SkillsSurface() {
   // last curator audit report. Mutually exclusive — selecting a skill flips
   // back to "skill", clicking Run Audit flips to "audit".
   const [detailMode, setDetailMode] = useState<"skill" | "audit">("skill");
+  const searchRef = useRef<HTMLInputElement | null>(null);
+
+  // "/" focuses the filter box (unless already typing somewhere) — same
+  // discoverability convention as GitHub/Slack search.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/") return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA")) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const auditMut = useMutation({
     mutationFn: runCuratorAudit,
@@ -66,7 +81,9 @@ export function SkillsSurface() {
         (s) =>
           s.name.toLowerCase().includes(qq) ||
           s.description.toLowerCase().includes(qq) ||
-          s.category.toLowerCase().includes(qq),
+          s.category.toLowerCase().includes(qq) ||
+          s.id.toLowerCase().includes(qq) ||
+          s.source.toLowerCase().includes(qq),
       );
     }
     return out;
@@ -155,9 +172,10 @@ export function SkillsSurface() {
           </span>
           <span style={{ flex: 1 }} />
           <input
+            ref={searchRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="filter skills…"
+            placeholder="filter skills… (name, id, category, source) · / to focus"
             className="mono"
             style={{
               background: tokens.bgCard,

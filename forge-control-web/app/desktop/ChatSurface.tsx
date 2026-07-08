@@ -10,6 +10,9 @@ import {
   sendChatMessage,
   setChatStatus,
   resumeChat,
+  archiveChat,
+  archiveAllChats,
+  searchChats,
   freezeFleet,
   resumeFleet,
   vaultAppend,
@@ -62,13 +65,22 @@ export function ChatSurface({
   onNavigate?: (s: SurfaceKey) => void;
 } = {}) {
   const qc = useQueryClient();
+  const PAGE_SIZE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const listQ = useQuery({
-    queryKey: ["chat", "list"],
-    queryFn: fetchChatList,
+    queryKey: ["chat", "list", visibleCount],
+    queryFn: () => fetchChatList({ limit: visibleCount }),
     refetchInterval: 8000,
   });
   const [selId, setSelId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [search, setSearch] = useState("");
+  const searching = search.trim().length >= 2;
+  const searchQ = useQuery({
+    queryKey: ["chat", "search", search],
+    queryFn: () => searchChats(search.trim()),
+    enabled: searching,
+  });
 
   useEffect(() => {
     if (!selId && (listQ.data?.runs.length ?? 0) > 0) {
@@ -125,6 +137,25 @@ export function ChatSurface({
     },
   });
 
+  // Close = archive. Stops the underlying agent first (if it's still
+  // queued/running/paused/stuck — same mechanism as the Cancel button, so
+  // the executor kills the claude-code process within ~5s) then hides the
+  // chat from the rail. Logs stay in the DB and stay searchable.
+  const archiveM = useMutation({
+    mutationFn: (id: string) => archiveChat(id),
+    onSuccess: (_run, id) => {
+      qc.invalidateQueries({ queryKey: ["chat", "list"] });
+      if (selId === id) setSelId(null);
+    },
+  });
+  const archiveAllM = useMutation({
+    mutationFn: () => archiveAllChats(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chat", "list"] });
+      setSelId(null);
+    },
+  });
+
   const counts = listQ.data?.counts ?? null;
 
   return (
@@ -165,6 +196,11 @@ export function ChatSurface({
             {listQ.data?.count ?? 0}
           </span>
           <span style={{ flex: 1 }} />
+          <CloseAllButton
+            disabled={(listQ.data?.count ?? 0) === 0}
+            pending={archiveAllM.isPending}
+            onConfirm={() => archiveAllM.mutate()}
+          />
           <button
             onClick={() => {
               setSelId(null);
@@ -184,7 +220,43 @@ export function ChatSurface({
             + new
           </button>
         </div>
-        {counts && (
+        <div
+          style={{
+            flex: "none",
+            padding: "9px 12px",
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="ms" style={{ fontSize: 14, color: tokens.textFaint }}>
+              search
+            </span>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="search past chats — titles + what was said…"
+              className="mono"
+              style={{
+                flex: 1,
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                color: tokens.text,
+                fontSize: 11.5,
+              }}
+            />
+            {search && (
+              <span
+                onClick={() => setSearch("")}
+                className="mono"
+                style={{ fontSize: 10, color: tokens.textFaint, cursor: "pointer" }}
+              >
+                ✕
+              </span>
+            )}
+          </div>
+        </div>
+        {!searching && counts && (
           <div
             className="mono"
             style={{
@@ -206,46 +278,107 @@ export function ChatSurface({
           </div>
         )}
         <div style={{ flex: 1, overflowY: "auto" }}>
-          {listQ.isLoading && (
-            <div
-              className="mono"
-              style={{
-                padding: 24,
-                fontSize: 11,
-                color: tokens.textFaint,
-                textAlign: "center",
-              }}
-            >
-              loading…
-            </div>
+          {searching ? (
+            <>
+              {searchQ.isLoading && (
+                <div
+                  className="mono"
+                  style={{ padding: 24, fontSize: 11, color: tokens.textFaint, textAlign: "center" }}
+                >
+                  searching…
+                </div>
+              )}
+              {!searchQ.isLoading && (searchQ.data?.length ?? 0) === 0 && (
+                <div
+                  className="mono"
+                  style={{
+                    padding: "32px 16px",
+                    fontSize: 11,
+                    color: tokens.textFaint,
+                    textAlign: "center",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  no chats match “{search.trim()}”.
+                </div>
+              )}
+              {searchQ.data?.map((r) => (
+                <ChatListItem
+                  key={r.id}
+                  run={r}
+                  selected={r.id === selId && !composing}
+                  onSelect={() => {
+                    setSelId(r.id);
+                    setComposing(false);
+                    setSearch("");
+                  }}
+                  onClose={() => archiveM.mutate(r.id)}
+                  closing={archiveM.isPending && archiveM.variables === r.id}
+                />
+              ))}
+            </>
+          ) : (
+            <>
+              {listQ.isLoading && (
+                <div
+                  className="mono"
+                  style={{
+                    padding: 24,
+                    fontSize: 11,
+                    color: tokens.textFaint,
+                    textAlign: "center",
+                  }}
+                >
+                  loading…
+                </div>
+              )}
+              {!listQ.isLoading && (listQ.data?.runs.length ?? 0) === 0 && (
+                <div
+                  className="mono"
+                  style={{
+                    padding: "32px 16px",
+                    fontSize: 11,
+                    color: tokens.textFaint,
+                    textAlign: "center",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  no chats yet.
+                  <br />
+                  hit “+ new” to start one.
+                </div>
+              )}
+              {listQ.data?.runs.map((r) => (
+                <ChatListItem
+                  key={r.id}
+                  run={r}
+                  selected={r.id === selId && !composing}
+                  onSelect={() => {
+                    setSelId(r.id);
+                    setComposing(false);
+                  }}
+                  onClose={() => archiveM.mutate(r.id)}
+                  closing={archiveM.isPending && archiveM.variables === r.id}
+                />
+              ))}
+              {listQ.data?.hasMore && (
+                <div
+                  onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                  className="mono"
+                  style={{
+                    padding: "12px 14px",
+                    fontSize: 11,
+                    color: tokens.accent,
+                    textAlign: "center",
+                    cursor: "pointer",
+                    borderTop: `1px solid ${tokens.borderDivider}`,
+                  }}
+                >
+                  load more
+                </div>
+              )}
+            </>
           )}
-          {!listQ.isLoading && (listQ.data?.runs.length ?? 0) === 0 && (
-            <div
-              className="mono"
-              style={{
-                padding: "32px 16px",
-                fontSize: 11,
-                color: tokens.textFaint,
-                textAlign: "center",
-                lineHeight: 1.6,
-              }}
-            >
-              no chats yet.
-              <br />
-              hit “+ new” to start one.
-            </div>
-          )}
-          {listQ.data?.runs.map((r) => (
-            <ChatListItem
-              key={r.id}
-              run={r}
-              selected={r.id === selId && !composing}
-              onSelect={() => {
-                setSelId(r.id);
-                setComposing(false);
-              }}
-            />
-          ))}
         </div>
       </div>
 
@@ -311,21 +444,30 @@ function ChatListItem({
   run,
   selected,
   onSelect,
+  onClose,
+  closing,
 }: {
   run: RunSummary;
   selected: boolean;
   onSelect: () => void;
+  onClose: () => void;
+  closing: boolean;
 }) {
   const color = STATUS_COLOR[run.status];
+  const [hover, setHover] = useState(false);
   return (
     <div
       onClick={onSelect}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       style={{
         padding: "12px 14px",
         cursor: "pointer",
         borderBottom: `1px solid ${tokens.borderDivider}`,
         borderLeft: `2px solid ${selected ? color : "transparent"}`,
         background: selected ? "#101013" : "transparent",
+        opacity: closing ? 0.5 : 1,
+        position: "relative",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -336,13 +478,48 @@ function ChatListItem({
         >
           {run.status}
         </span>
+        {run.archived && (
+          <span
+            className="mono"
+            style={{
+              fontSize: 9,
+              color: tokens.textFaint,
+              border: `1px solid ${tokens.borderEmphasis}`,
+              borderRadius: 4,
+              padding: "0 4px",
+              letterSpacing: "0.06em",
+            }}
+          >
+            closed
+          </span>
+        )}
         <span style={{ flex: 1 }} />
-        <span
-          className="mono"
-          style={{ fontSize: 9.5, color: tokens.textFaint }}
-        >
-          {humanAge(run.updated_at)}
-        </span>
+        {hover ? (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!closing) onClose();
+            }}
+            title="Close this chat — stops the agent if it's still working, and hides it from the list. Nothing is deleted; it stays searchable."
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: tokens.bleed,
+              cursor: closing ? "wait" : "pointer",
+              padding: "1px 5px",
+              borderRadius: 4,
+            }}
+          >
+            ✕
+          </span>
+        ) : (
+          <span
+            className="mono"
+            style={{ fontSize: 9.5, color: tokens.textFaint }}
+          >
+            {humanAge(run.updated_at)}
+          </span>
+        )}
       </div>
       <div
         style={{
@@ -377,6 +554,55 @@ function ChatListItem({
         </div>
       )}
     </div>
+  );
+}
+
+/** Two-click confirm so "close all" can't fire from a stray click — closes
+ *  every open chat (stops any still-active agents, archives the rest). */
+function CloseAllButton({
+  disabled,
+  pending,
+  onConfirm,
+}: {
+  disabled: boolean;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
+
+  return (
+    <button
+      disabled={disabled || pending}
+      onClick={() => {
+        if (!armed) {
+          setArmed(true);
+          timerRef.current = setTimeout(() => setArmed(false), 4000);
+          return;
+        }
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setArmed(false);
+        onConfirm();
+      }}
+      title="Closes every chat — stops any that are still working and hides them from the list. Logs are kept."
+      className="mono"
+      style={{
+        fontSize: 11,
+        color: armed ? tokens.bleed : tokens.textMuted,
+        background: armed ? tokens.dangerActionBg : "transparent",
+        border: `1px solid ${armed ? tokens.dangerActionBorder : tokens.border}`,
+        borderRadius: 6,
+        padding: "4px 10px",
+        cursor: disabled || pending ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {pending ? "closing…" : armed ? "confirm close all?" : "close all"}
+    </button>
   );
 }
 

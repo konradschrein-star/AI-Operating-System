@@ -8,6 +8,9 @@ import {
   setRunStatus,
   setRunModel,
   runCounts,
+  archiveRun,
+  archiveAllRuns,
+  searchRuns,
   type RunStatus,
 } from "../db/runs.ts";
 
@@ -26,14 +29,38 @@ const VALID_STATUSES = new Set<RunStatus>([
   "cancelled",
 ]);
 
-/* List threads (newest first) plus counts by status for the rail. */
+/* List threads (newest first, archived excluded) plus counts by status for
+ * the rail. limit/offset page the rail — default 30 + "load more". */
 r.get("/", async (c) => {
   const limit = Math.min(
     200,
-    Math.max(1, Number(c.req.query("limit") ?? "80")),
+    Math.max(1, Number(c.req.query("limit") ?? "30")),
   );
-  const [runs, counts] = await Promise.all([listRuns(limit), runCounts()]);
-  return c.json({ count: runs.length, runs, counts });
+  const offset = Math.max(0, Number(c.req.query("offset") ?? "0"));
+  const [{ runs, hasMore }, counts] = await Promise.all([
+    listRuns(limit, offset),
+    runCounts(),
+  ]);
+  return c.json({ count: runs.length, runs, counts, hasMore });
+});
+
+/* Search past chats — title, prompt, and every message in the thread, so a
+ * word Konrad typed (or the engine replied with) is enough to find the
+ * conversation, not just a title match. Includes closed/archived chats:
+ * closing hides a chat from the rail but must never make it unfindable. */
+r.get("/search", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  if (!q) return c.json({ q, runs: [] });
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? "30")));
+  const runs = await searchRuns(q, limit);
+  return c.json({ q, runs });
+});
+
+/* Close every open chat in one shot — archives each and cancels any that
+ * were still queued/running/paused/stuck. */
+r.post("/archive-all", async (c) => {
+  const archived = await archiveAllRuns();
+  return c.json({ archived });
 });
 
 /* v2.0: live run events. Emits a `snapshot` (full run JSON) immediately
@@ -186,6 +213,16 @@ r.post("/:id/model", async (c) => {
     return c.json({ error: `invalid model: ${raw}` }, 400);
   }
   const updated = await setRunModel(id, model);
+  if (!updated) return c.json({ error: "run not found" }, 404);
+  return c.json({ run: updated });
+});
+
+/* Close (archive) a single chat. Cancels it first if it's still doing
+ * anything — see archiveRun. Logs are kept, just hidden from the rail. */
+r.post("/:id/archive", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const updated = await archiveRun(id);
   if (!updated) return c.json({ error: "run not found" }, 404);
   return c.json({ run: updated });
 });
