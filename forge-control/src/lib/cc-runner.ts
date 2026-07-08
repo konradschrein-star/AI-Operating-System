@@ -186,12 +186,23 @@ export async function runClaudeCode(opts: {
   timeoutMs: number;
   /** Model alias/id for this run; falls back to CC_MODEL (sonnet). */
   model?: string | null;
+  /** Working directory override — e.g. a coding project's git worktree.
+   *  Falls back to CC_WORKSPACE, the shared scratch dir every other run uses. */
+  cwd?: string | null;
+  /** Tool allowlist override — e.g. a coding-project role (reviewer gets no
+   *  Write/Edit so it can only report findings, never silently fix them).
+   *  Falls back to CC_ALLOWED_TOOLS, the full default list. */
+  allowedTools?: string[] | null;
   onEvent: (e: CcEvent) => void;
   /** Polled every ~5s; return true to kill the child (cancel/pause). */
   isCancelled?: () => Promise<boolean>;
 }): Promise<CcResult> {
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
-  for (const t of CC_ALLOWED_TOOLS) args.push("--allowedTools", t);
+  const allowedTools =
+    opts.allowedTools && opts.allowedTools.length > 0
+      ? opts.allowedTools
+      : CC_ALLOWED_TOOLS;
+  for (const t of allowedTools) args.push("--allowedTools", t);
   args.push("--add-dir", VAULT_DIR);
   for (const d of CC_ADD_DIRS) args.push("--add-dir", d);
   const model = sanitizeModel(opts.model) ?? CC_MODEL;
@@ -204,7 +215,7 @@ export async function runClaudeCode(opts: {
 
   const t0 = Date.now();
   const child = spawn(CC_BIN, args, {
-    cwd: CC_WORKSPACE,
+    cwd: opts.cwd || CC_WORKSPACE,
     env,
     stdio: ["pipe", "pipe", "pipe"],
   });

@@ -36,6 +36,7 @@ import { PipelineSurface } from "./PipelineSurface";
 import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
 import { MoneySurface } from "./MoneySurface";
+import { ProjectsSurface } from "./ProjectsSurface";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -71,7 +72,7 @@ const NAV: NavItem[] = [
   { key: "today", label: "TODAY", group: "operator" },
   { key: "inbox", label: "INBOX", group: "operator" },
   { key: "chat", label: "CHAT", group: "operator" },
-  { key: "tasks", label: "TASKS", group: "work" },
+  { key: "tasks", label: "PROJECTS", group: "work" },
   { key: "pipeline", label: "PIPELINE", group: "work" },
   { key: "library", label: "LIBRARY", group: "work" },
   { key: "money", label: "MONEY", group: "work" },
@@ -370,7 +371,7 @@ export function DesktopApp() {
               onFreeze={() => freezeM.mutate()}
             />
           )}
-          {surface === "tasks" && <TasksSurface />}
+          {surface === "tasks" && <ProjectsSurface />}
           {surface === "memory" && <MemorySurface />}
           {surface === "chat" && (
             <ChatSurface
@@ -2319,79 +2320,6 @@ function ControlSurface({
             ))}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-/* ----------------------------------------------------------------------------
- * Tasks — minimal until /api/tasks lands
- * -------------------------------------------------------------------------- */
-function TasksSurface() {
-  return (
-    <div
-      className="slidein"
-      style={{ maxWidth: 1120, margin: "0 auto", padding: "40px 40px 64px" }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          gap: 12,
-          marginBottom: 20,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 22,
-            fontWeight: 500,
-            letterSpacing: "-0.02em",
-            color: tokens.textHi,
-          }}
-        >
-          Tasks
-        </span>
-        <span
-          className="mono"
-          style={{ fontSize: 11, color: tokens.textMuted }}
-        >
-          long-running runs · dispatched, owned, tracked
-        </span>
-      </div>
-      <div
-        className="mono"
-        style={{
-          background: tokens.bgCard,
-          border: `1px dashed ${tokens.border}`,
-          borderRadius: 10,
-          padding: "32px 28px",
-          fontSize: 12,
-          color: tokens.textMuted,
-          maxWidth: 760,
-          lineHeight: 1.7,
-        }}
-      >
-        <div
-          style={{
-            color: tokens.textHi,
-            marginBottom: 10,
-            fontFamily: "Inter, system-ui",
-          }}
-        >
-          Runs surface — coming next
-        </div>
-        The runs table is provisioned (migration 0021), and forge-control will
-        expose{" "}
-        <span className="mono" style={{ color: tokens.accent }}>
-          /api/tasks
-        </span>{" "}
-        next. Once the run executor is up, this surface will show:
-        <ul style={{ marginTop: 12, paddingLeft: 18, color: tokens.textFaint }}>
-          <li>filterable run list (active / stuck / queued / done / all)</li>
-          <li>thread view: agent messages, tool calls, inter-agent → arrows</li>
-          <li>STUCK banner with the manager-tried block</li>
-          <li>run tree (parent + children) and per-provider cost</li>
-        </ul>
       </div>
     </div>
   );

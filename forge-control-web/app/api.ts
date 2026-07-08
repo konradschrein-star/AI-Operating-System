@@ -946,4 +946,84 @@ export const updateSchedule = async (
 
 export const deleteSchedule = async (id: string): Promise<void> => {
   await deleteJson(`/cron/${id}`);
+  return;
+};
+
+/* ----------------------------------------------------------------------------
+ * Coding projects — mirrors routes/projects.ts. A task's run is a normal
+ * chat run under the hood (same `runs` table), so task detail reuses
+ * fetchChat/useRunEvents unchanged — no separate run-fetching path needed.
+ * -------------------------------------------------------------------------- */
+export type ProjectRepo = "ai-os" | "content-forge";
+export type ProjectStatus = "active" | "paused" | "done" | "blocked" | "cancelled";
+export type TaskRole = "architect" | "planner" | "scout" | "builder" | "reviewer";
+export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
+
+export const PROJECT_REPO_OPTIONS: ProjectRepo[] = ["ai-os", "content-forge"];
+
+export interface Project {
+  id: string;
+  name: string;
+  brief: string;
+  repo: ProjectRepo;
+  workspace_dir: string | null;
+  base_branch: string;
+  work_branch: string | null;
+  status: ProjectStatus;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectTask {
+  id: string;
+  project_id: string;
+  round: number;
+  role: TaskRole;
+  title: string;
+  brief: string;
+  status: TaskStatus;
+  run_id: string | null;
+  fix_cycle: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectTaskWithProject extends ProjectTask {
+  project_name: string;
+}
+
+export const fetchProjects = async (): Promise<Project[]> => {
+  const r = await getJson<{ count: number; projects: Project[] }>("/projects");
+  return r.projects;
+};
+
+export const fetchProject = async (
+  id: string,
+): Promise<{ project: Project; tasks: ProjectTask[] }> =>
+  getJson<{ project: Project; tasks: ProjectTask[] }>(`/projects/${id}`);
+
+export const fetchProjectBoard = async (): Promise<ProjectTaskWithProject[]> => {
+  const r = await getJson<{ count: number; tasks: ProjectTaskWithProject[] }>(
+    "/projects/board",
+  );
+  return r.tasks;
+};
+
+export const createProject = async (input: {
+  name: string;
+  brief: string;
+  repo: ProjectRepo;
+  base_branch?: string;
+}): Promise<{ project: Project; architectTask: ProjectTask; warning?: string }> =>
+  postJson("/projects", input);
+
+export const setProjectStatus = async (
+  id: string,
+  status: ProjectStatus,
+): Promise<Project> => {
+  const r = await postJson<{ project: Project }>(`/projects/${id}/status`, {
+    status,
+  });
+  return r.project;
 };
