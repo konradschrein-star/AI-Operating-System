@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../tokens";
 import {
   fetchMemoryList,
+  fetchMemoryCounts,
   fetchMemoryNote,
   searchMemoryExpanded,
   TRIPLE_CATEGORIES,
@@ -46,11 +47,24 @@ const CAT_LABEL: { key: MemoryCategory | "all"; label: string }[] = [
 ];
 
 export function MemorySurface() {
-  const listQ = useQuery({
-    queryKey: ["memory", "list"],
-    queryFn: fetchMemoryList,
-  });
+  // Paged — the vault only grows, so a single unbounded fetch would slow to
+  // a crawl eventually. Same "load more" pattern as the Chats rail.
+  const PAGE_SIZE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [cat, setCat] = useState<MemoryCategory | "all">("all");
+  // Category is a client-side filter over whatever page is loaded, so a
+  // specific category needs a bigger candidate pool than the "all" default
+  // — otherwise picking "Rules" would only search the 30 most recent notes
+  // across every category and mostly come up empty.
+  const effectiveLimit = cat === "all" ? visibleCount : 300;
+  const listQ = useQuery({
+    queryKey: ["memory", "list", effectiveLimit],
+    queryFn: () => fetchMemoryList({ limit: effectiveLimit }),
+  });
+  const countsQ = useQuery({
+    queryKey: ["memory", "counts"],
+    queryFn: fetchMemoryCounts,
+  });
   const [selSlug, setSelSlug] = useState<string | null>(null);
   const [q, setQ] = useState("");
   // v2.2: 3D luminescent net view of the knowledge graph.
@@ -59,7 +73,7 @@ export function MemorySurface() {
   const [searchCategory, setSearchCategory] = useState<TripleCategory | null>(null);
   const [hops, setHops] = useState<number>(2);
 
-  const allNotes = listQ.data ?? [];
+  const allNotes = listQ.data?.notes ?? [];
   const visibleNotes = useMemo(
     () =>
       cat === "all" ? allNotes : allNotes.filter((n) => n.category === cat),
@@ -84,11 +98,7 @@ export function MemorySurface() {
   });
   const note = detailQ.data;
 
-  const counts = useMemo(() => {
-    const m: Record<string, number> = { all: allNotes.length };
-    for (const n of allNotes) m[n.category] = (m[n.category] ?? 0) + 1;
-    return m;
-  }, [allNotes]);
+  const counts: Record<string, number> = countsQ.data ?? { all: allNotes.length };
 
   const searchHits = searchQ.data?.hits ?? [];
   const laneCounts = useMemo(() => {
@@ -626,6 +636,22 @@ export function MemorySurface() {
                 </div>
               );
             })
+          )}
+          {q.length < 2 && cat === "all" && listQ.data?.hasMore && (
+            <div
+              onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+              className="mono"
+              style={{
+                padding: "12px 14px",
+                fontSize: 11,
+                color: tokens.accent,
+                textAlign: "center",
+                cursor: "pointer",
+                borderTop: `1px solid ${tokens.borderDivider}`,
+              }}
+            >
+              load more
+            </div>
           )}
           {!listQ.isLoading && visibleNotes.length === 0 && q.length < 2 && (
             <div

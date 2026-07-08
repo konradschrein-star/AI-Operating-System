@@ -20,6 +20,7 @@ import {
   type SpendKind,
   type SpendRow,
 } from "../db/spend.ts";
+import { recentLimitHits } from "../db/runs.ts";
 
 const r = new Hono();
 
@@ -96,6 +97,16 @@ r.get("/today", async (c) => {
 
 r.get("/summary", async (c) => {
   return c.json(await spendSummary());
+});
+
+/* Claude Code has no proactive quota API — the CLI only ever tells you
+ * you're out when a run actually bounces off the weekly/5-hour wall. This
+ * surfaces those bounces so Money can show subscription pressure instead of
+ * pretending the claude-code $ figures above are a real bill. */
+r.get("/limit-hits", async (c) => {
+  const days = Math.min(60, Math.max(1, Number(c.req.query("days") ?? "14")));
+  const hits = await recentLimitHits(days);
+  return c.json({ days, hits });
 });
 
 export default r;

@@ -57,6 +57,7 @@ export interface RunSummary {
   message_count: number;
   last_message_preview: string;
   last_role: string;
+  archived: boolean;
 }
 
 export interface RunDetail extends RunSummary {
@@ -84,7 +85,19 @@ function previewOf(thread: ThreadEntry[]): {
   return { text, role: last.role ?? "" };
 }
 
-export async function listRuns(limit = 80): Promise<RunSummary[]> {
+export interface RunListPage {
+  runs: RunSummary[];
+  hasMore: boolean;
+}
+
+/** Newest-first, archived runs excluded by default — that's the "closed"
+ *  state (see archiveRun). Fetches limit+1 to derive hasMore without a
+ *  separate COUNT query. */
+export async function listRuns(
+  limit = 80,
+  offset = 0,
+  opts: { includeArchived?: boolean } = {},
+): Promise<RunListPage> {
   const r = await pool.query<{
     id: string;
     title: string;
@@ -96,13 +109,70 @@ export async function listRuns(limit = 80): Promise<RunSummary[]> {
     updated_at: string;
     last_heartbeat_at: string | null;
     thread: ThreadEntry[];
+    archived: boolean;
   }>(
     `SELECT id::text, title, status, worker, budget_usd::text, spent_usd::text,
-            created_at::text, updated_at::text, last_heartbeat_at::text, thread
+            created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived
        FROM runs
+       WHERE archived = false OR $3::boolean
        ORDER BY updated_at DESC
-       LIMIT $1`,
-    [limit],
+       LIMIT $1 OFFSET $2`,
+    [limit + 1, offset, opts.includeArchived ?? false],
+  );
+  const hasMore = r.rows.length > limit;
+  const rows = hasMore ? r.rows.slice(0, limit) : r.rows;
+  const runs = rows.map((row) => {
+    const pv = previewOf(row.thread ?? []);
+    return {
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      worker: row.worker,
+      budget_usd: row.budget_usd,
+      spent_usd: row.spent_usd,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      last_heartbeat_at: row.last_heartbeat_at,
+      message_count: Array.isArray(row.thread) ? row.thread.length : 0,
+      last_message_preview: pv.text,
+      last_role: pv.role,
+      archived: row.archived,
+    };
+  });
+  return { runs, hasMore };
+}
+
+/** Full-text-ish search across title, prompt, and every message in the
+ *  thread (both roles — a reply often echoes the topic the user asked
+ *  about). Includes archived runs: closing a chat hides it from the
+ *  default rail but it must stay findable. */
+export async function searchRuns(q: string, limit = 30): Promise<RunSummary[]> {
+  const like = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  const r = await pool.query<{
+    id: string;
+    title: string;
+    status: RunStatus;
+    worker: string | null;
+    budget_usd: string;
+    spent_usd: string;
+    created_at: string;
+    updated_at: string;
+    last_heartbeat_at: string | null;
+    thread: ThreadEntry[];
+    archived: boolean;
+  }>(
+    `SELECT id::text, title, status, worker, budget_usd::text, spent_usd::text,
+            created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived
+       FROM runs
+       WHERE title ILIKE $1
+          OR prompt ILIKE $1
+          OR EXISTS (
+               SELECT 1 FROM jsonb_array_elements(thread) elem
+                WHERE elem->>'content' ILIKE $1
+             )
+       ORDER BY updated_at DESC
+       LIMIT $2`,
+    [like, limit],
   );
   return r.rows.map((row) => {
     const pv = previewOf(row.thread ?? []);
@@ -119,6 +189,7 @@ export async function listRuns(limit = 80): Promise<RunSummary[]> {
       message_count: Array.isArray(row.thread) ? row.thread.length : 0,
       last_message_preview: pv.text,
       last_role: pv.role,
+      archived: row.archived,
     };
   });
 }
@@ -141,11 +212,12 @@ export async function getRun(id: string): Promise<RunDetail | null> {
     started_at: string | null;
     completed_at: string | null;
     last_heartbeat_at: string | null;
+    archived: boolean;
   }>(
     `SELECT id::text, title, prompt, status, worker, budget_usd::text, spent_usd::text,
             thread, metadata, parent_run_id::text AS parent_run_id,
             stuck_signal, created_at::text, updated_at::text,
-            started_at::text, completed_at::text, last_heartbeat_at::text
+            started_at::text, completed_at::text, last_heartbeat_at::text, archived
        FROM runs
        WHERE id = $1
        LIMIT 1`,
@@ -174,6 +246,7 @@ export async function getRun(id: string): Promise<RunDetail | null> {
     message_count: Array.isArray(row.thread) ? row.thread.length : 0,
     last_message_preview: pv.text,
     last_role: pv.role,
+    archived: row.archived,
   };
 }
 
@@ -287,9 +360,85 @@ export async function setRunStatus(
   return getRun(id);
 }
 
+const NON_TERMINAL: RunStatus[] = ["queued", "running", "paused", "stuck"];
+
+/** "Close" a chat: archive it (hidden from the default rail, still
+ *  searchable) and, if it's still doing anything, cancel it — same
+ *  mechanism the existing Cancel button uses, so the executor's poll loop
+ *  kills the underlying claude-code process within ~5s instead of letting
+ *  it keep working or notifying in the background. */
+export async function archiveRun(id: string): Promise<RunDetail | null> {
+  const r = await pool.query<{ id: string }>(
+    `UPDATE runs
+        SET archived = true,
+            status = CASE WHEN status = ANY($2::text[]) THEN 'cancelled' ELSE status END,
+            updated_at = now()
+      WHERE id = $1
+      RETURNING id::text`,
+    [id, NON_TERMINAL],
+  );
+  if (r.rowCount === 0) return null;
+  return getRun(id);
+}
+
+/** Close every open chat in one shot. Returns how many were touched. */
+export async function archiveAllRuns(): Promise<number> {
+  const r = await pool.query(
+    `UPDATE runs
+        SET archived = true,
+            status = CASE WHEN status = ANY($1::text[]) THEN 'cancelled' ELSE status END,
+            updated_at = now()
+      WHERE archived = false`,
+    [NON_TERMINAL],
+  );
+  return r.rowCount ?? 0;
+}
+
+export interface LimitHit {
+  run_id: string;
+  title: string;
+  ts: string;
+  message: string;
+}
+
+/** Runs that failed because the Claude subscription hit a usage wall
+ *  (weekly / 5-hour limit) rather than an actual bug — the executor writes
+ *  these as a plain error entry (see executor.ts's catch block), there's no
+ *  proactive quota API to poll instead. This is reactive by necessity: it
+ *  only knows the wall was hit AFTER a run bounced off it. */
+export async function recentLimitHits(days = 14, limit = 20): Promise<LimitHit[]> {
+  const r = await pool.query<{
+    id: string;
+    title: string;
+    updated_at: string;
+    message: string;
+  }>(
+    `SELECT id::text, title, updated_at::text,
+            (SELECT elem->>'content' FROM jsonb_array_elements(thread) elem
+              WHERE elem->>'kind' = 'error' AND elem->>'content' ILIKE '%limit%'
+              ORDER BY elem->>'ts' DESC LIMIT 1) AS message
+       FROM runs
+      WHERE status = 'failed'
+        AND updated_at > now() - ($1 || ' days')::interval
+        AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(thread) elem
+               WHERE elem->>'kind' = 'error' AND elem->>'content' ILIKE '%limit%'
+            )
+      ORDER BY updated_at DESC
+      LIMIT $2`,
+    [String(days), limit],
+  );
+  return r.rows.map((row) => ({
+    run_id: row.id,
+    title: row.title,
+    ts: row.updated_at,
+    message: row.message,
+  }));
+}
+
 export async function runCounts(): Promise<Record<RunStatus, number>> {
   const r = await pool.query<{ status: RunStatus; count: string }>(
-    `SELECT status, COUNT(*)::text AS count FROM runs GROUP BY status`,
+    `SELECT status, COUNT(*)::text AS count FROM runs WHERE archived = false GROUP BY status`,
   );
   const out: Record<RunStatus, number> = {
     queued: 0,
