@@ -12,7 +12,13 @@
  * Tab / Enter / click.
  */
 
-import type { RunStatus, VaultSection, VaultWriteResult, Reminder } from "../../api";
+import type {
+  RunStatus,
+  VaultSection,
+  VaultWriteResult,
+  Reminder,
+  GuardrailRule,
+} from "../../api";
 
 export type SlashDirective =
   | { kind: "noop" }
@@ -59,6 +65,10 @@ export interface SlashContext {
   }): Promise<{ ok: boolean; reminder: Reminder }>;
   /** POST /api/chat/:id/model — engine model for subsequent turns. */
   setModel(id: string, model: string): Promise<unknown>;
+  /** GET /api/autonomy — guardrail rules (spend caps, kill switches). */
+  fetchRules(): Promise<GuardrailRule[]>;
+  /** POST /api/autonomy/rules/:id — merge-patch a rule's config. */
+  updateRuleConfig(id: string, config: Record<string, unknown>): Promise<GuardrailRule>;
 }
 
 export interface SlashCommand {
@@ -224,6 +234,51 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       ctx.sys(
         `model set to ${m === "default" ? "sonnet (standard)" : m} — applies from the next message.`,
       );
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "rules",
+    help: "list guardrails (spend caps, kill switches) and their current values",
+    handler: async (ctx) => {
+      const rules = await ctx.fetchRules();
+      const lines = rules
+        .map(
+          (r) =>
+            `${r.enabled ? "🟢" : "⚪"} ${r.id} — ${r.label}${
+              Object.keys(r.config ?? {}).length ? ` (${JSON.stringify(r.config)})` : ""
+            }`,
+        )
+        .join("\n");
+      ctx.sys(`guardrails:\n${lines}`);
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "cap",
+    help: "change a spend-cap guardrail · /cap spend.per_run_cap 75",
+    handler: async (ctx, args) => {
+      const m = args.match(/^(\S+)\s+(\d+(?:\.\d+)?)$/);
+      if (!m) {
+        ctx.sys('usage: /cap <rule_id> <euros> — e.g. "/cap spend.per_run_cap 75". Run /rules to see rule ids.');
+        return { kind: "noop" };
+      }
+      const [, ruleId, valueStr] = m;
+      const rules = await ctx.fetchRules();
+      const existing = rules.find((r) => r.id === ruleId);
+      if (!existing) {
+        ctx.sys(`no rule "${ruleId}" — run /rules to see valid ids.`);
+        return { kind: "noop" };
+      }
+      if (!("cap_eur" in (existing.config ?? {}))) {
+        ctx.sys(`"${ruleId}" has no cap_eur to set (config: ${JSON.stringify(existing.config)}).`);
+        return { kind: "noop" };
+      }
+      const updated = await ctx.updateRuleConfig(ruleId, {
+        ...existing.config,
+        cap_eur: Number(valueStr),
+      });
+      ctx.sys(`✅ ${ruleId} → cap_eur ${updated.config.cap_eur}`);
       return { kind: "noop" };
     },
   },
