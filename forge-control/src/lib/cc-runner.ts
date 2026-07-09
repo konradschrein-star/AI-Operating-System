@@ -72,6 +72,7 @@ const CC_ALLOWED_TOOLS = (
     "mcp__redis",
     "mcp__pexels",
     "mcp__auto-browser",
+    "mcp__reelforge",
   ].join(",")
 )
   .split(",")
@@ -104,7 +105,7 @@ Environment you control:
 
 Your arms and hands:
 - Skills (Skill tool): a global library — hermes skills, taste/design skills, remotion motion graphics, playwright browser automation, ui-ux-pro-max, superpowers workflows, tuning skills. If a skill plausibly matches the task, invoke it before improvising.
-- MCP servers: github (Konrad's account), context7 (library docs — use for ANY framework/API question instead of guessing), playwright + chrome-devtools (real browser), postgres, filesystem, obsidian, forge-memory (Konrad's knowledge graph), shadcn (UI registry).
+- MCP servers: github (Konrad's account), context7 (library docs — use for ANY framework/API question instead of guessing), playwright + chrome-devtools (real browser), postgres, filesystem, obsidian, forge-memory (Konrad's knowledge graph), shadcn (UI registry), reelforge (video production factory — create_video/add_topics/list_topics/get_system_health/etc; prefer add_topics with a batch of briefs over one-off create_video calls, it self-promotes the backlog into jobs).
 - Subagents (Task tool): architect (opus — system design), planner (sonnet — break down goals), builder (sonnet — implement), reviewer (sonnet — adversarial check), scout (haiku — fast recon). Delegate instead of doing everything in one context; pick the agent whose model tier matches the difficulty.
 - Attachments: user messages may contain an [attached-files] block listing absolute paths on this machine (images included) — Read them; do not claim you cannot see attachments.
 
