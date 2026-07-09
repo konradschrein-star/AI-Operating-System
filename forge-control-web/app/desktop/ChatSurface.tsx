@@ -19,6 +19,8 @@ import {
   vaultCreateNote,
   createReminder,
   setChatModel,
+  fetchAutonomy,
+  updateRule,
   attachmentsBlock,
   MODEL_OPTIONS,
   type ModelOption,
@@ -659,6 +661,8 @@ function ChatThread({
     vaultCreateNote: (input) => vaultCreateNote(input),
     createReminder: (input) => createReminder(input),
     setModel: (id, model) => setChatModel(id, model),
+    fetchRules: async () => (await fetchAutonomy()).rules,
+    updateRuleConfig: (id, config) => updateRule(id, { config }),
   };
 
   const dispatchSlash = async (raw: string) => {
