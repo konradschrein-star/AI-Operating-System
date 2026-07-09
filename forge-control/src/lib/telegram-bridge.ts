@@ -40,6 +40,7 @@ import {
   findActiveRunBySource,
 } from "../db/runs.ts";
 import { getFleetState, setFleetState } from "../db/ai_os.ts";
+import { getAutonomy, updateRule } from "../db/autonomy.ts";
 
 const CHAT_ID = Number(process.env.TELEGRAM_CHAT_ID ?? "123456789");
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
@@ -59,6 +60,8 @@ Photos/files → attached to the conversation.
 /mentor — on-demand mentor check-in
 /new [text] — start a fresh conversation thread
 /status — what the OS is doing right now
+/rules — list guardrails (spend caps, kill switches) and their current values
+/cap <rule_id> <euros> — change a spend-cap guardrail, e.g. "/cap spend.per_run_cap 75"
 /off — pause everything (no cron, no runs, no usage spent)
 /on — resume
 /help — this`;
@@ -150,6 +153,36 @@ async function handleCommand(text: string): Promise<string> {
         metadata: { source: "telegram", kind: "mentor" },
       });
       return `🥊 mentor incoming… (run ${run.id.slice(0, 8)})`;
+    }
+    case "rules": {
+      const { rules } = await getAutonomy();
+      return rules
+        .map(
+          (r) =>
+            `${r.enabled ? "🟢" : "⚪"} ${r.id} — ${r.label}${
+              Object.keys(r.config ?? {}).length
+                ? ` (${JSON.stringify(r.config)})`
+                : ""
+            }`,
+        )
+        .join("\n");
+    }
+    case "cap": {
+      const m2 = args.match(/^(\S+)\s+(\d+(?:\.\d+)?)$/);
+      if (!m2) {
+        return 'usage: /cap <rule_id> <euros> — e.g. "/cap spend.per_run_cap 75". Run /rules to see rule ids.';
+      }
+      const [, ruleId, valueStr] = m2;
+      const { rules } = await getAutonomy();
+      const existing = rules.find((r) => r.id === ruleId);
+      if (!existing) return `no rule "${ruleId}" — run /rules to see valid ids.`;
+      if (!("cap_eur" in (existing.config ?? {}))) {
+        return `"${ruleId}" has no cap_eur to set (config: ${JSON.stringify(existing.config)}).`;
+      }
+      const updated = await updateRule(ruleId, {
+        config: { ...existing.config, cap_eur: Number(valueStr) },
+      });
+      return `✅ ${ruleId} → cap_eur ${updated?.config.cap_eur}`;
     }
     case "new": {
       if (!args) return "fresh thread — send your message.";

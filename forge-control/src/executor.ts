@@ -483,6 +483,14 @@ async function processRun(run: ClaimedRun): Promise<void> {
       },
       "failed",
     );
+    // A guardrail trip is exactly the "you're not looking at the screen
+    // right now" case — push it regardless of run source (unlike
+    // notifyRunOutcome, which only pings for telegram/cron so a normal
+    // web-chat reply doesn't also buzz the phone).
+    await queueNotification(
+      `🚫 "${run.title}" blocked — ${guard.rule_label}: ${guard.reason}\n/rules to see current caps, /cap <rule_id> <euros> to raise one.`,
+      "guardrail",
+    ).catch(() => {});
     return;
   }
 
