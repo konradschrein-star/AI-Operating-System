@@ -33,6 +33,7 @@ import {
   type RunSummary,
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
+import { FileExplorerPanel } from "./chat/FileExplorerPanel";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
 import {
   findSlash,
@@ -96,53 +97,14 @@ const TASK_STATUS_COLOR: Record<string, string> = {
  *  opens that run in the same chat pane (a project task IS an ordinary
  *  `runs` row) — that's the "interact with them directly" part, reusing
  *  the exact send/thread machinery already built for regular chats. */
-function LiveProjectsPanel({
-  collapsed,
-  onToggle,
-  onOpenRun,
-}: {
-  collapsed: boolean;
-  onToggle: () => void;
-  onOpenRun: (runId: string) => void;
-}) {
+/** Just the task-list body — SidePanel owns the collapse/tab chrome around it. */
+function LiveProjectsBody({ onOpenRun }: { onOpenRun: (runId: string) => void }) {
   const boardQ = useQuery({
     queryKey: ["projects", "board"],
     queryFn: fetchProjectBoard,
     refetchInterval: 6_000,
   });
   const tasks = boardQ.data ?? [];
-
-  if (collapsed) {
-    return (
-      <div
-        style={{
-          width: 34,
-          flex: "none",
-          borderLeft: `1px solid ${tokens.borderSoft}`,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          paddingTop: 12,
-        }}
-      >
-        <button
-          onClick={onToggle}
-          title="Show live projects panel"
-          className="mono"
-          style={{
-            fontSize: 10,
-            color: tasks.some((t) => t.status === "running") ? tokens.accent : tokens.textFaint,
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            writingMode: "vertical-rl",
-          }}
-        >
-          ● LIVE
-        </button>
-      </div>
-    );
-  }
 
   const byProject = new Map<string, { name: string; tasks: ProjectTaskWithProject[] }>();
   for (const t of tasks) {
@@ -153,46 +115,20 @@ function LiveProjectsPanel({
   }
 
   return (
-    <div
-      style={{
-        width: 260,
-        flex: "none",
-        borderLeft: `1px solid ${tokens.borderSoft}`,
-        display: "flex",
-        flexDirection: "column",
-        minHeight: 0,
-      }}
-    >
+    <>
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 8,
-          padding: "12px 14px",
-          borderBottom: `1px solid ${tokens.borderSoft}`,
+          padding: "8px 10px",
         }}
       >
-        <span style={{ fontSize: 12, fontWeight: 500, color: tokens.text }}>Live</span>
         <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
           {tasks.filter((t) => t.status === "running").length} running
         </span>
-        <span style={{ flex: 1 }} />
-        <button
-          onClick={onToggle}
-          title="Collapse"
-          className="mono"
-          style={{
-            fontSize: 11,
-            color: tokens.textMuted,
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          ✕
-        </button>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 10px 8px" }}>
         {byProject.size === 0 && (
           <div
             className="mono"
@@ -282,6 +218,143 @@ function LiveProjectsPanel({
           </div>
         ))}
       </div>
+    </>
+  );
+}
+
+/** Collapsible right-hand panel with two tabs: Live (project/task board) and
+ *  Files (VPS explorer). Owns collapse state; each tab's body is a plain
+ *  component with no chrome of its own. */
+function SidePanel({
+  collapsed,
+  onToggle,
+  tab,
+  onTab,
+  onOpenRun,
+  fileAtt,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  tab: "live" | "files";
+  onTab: (t: "live" | "files") => void;
+  onOpenRun: (runId: string) => void;
+  fileAtt: ReturnType<typeof useAttachments> | null;
+}) {
+  if (collapsed) {
+    return (
+      <div
+        style={{
+          width: 34,
+          flex: "none",
+          borderLeft: `1px solid ${tokens.borderSoft}`,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 14,
+          paddingTop: 12,
+        }}
+      >
+        <button
+          onClick={() => {
+            onTab("live");
+            onToggle();
+          }}
+          title="Show live projects panel"
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textFaint,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            writingMode: "vertical-rl",
+          }}
+        >
+          ● LIVE
+        </button>
+        <button
+          onClick={() => {
+            onTab("files");
+            onToggle();
+          }}
+          title="Show file explorer"
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textFaint,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            writingMode: "vertical-rl",
+          }}
+        >
+          FILES
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        width: tab === "files" ? 420 : 260,
+        flex: "none",
+        borderLeft: `1px solid ${tokens.borderSoft}`,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "8px 10px",
+          borderBottom: `1px solid ${tokens.borderSoft}`,
+        }}
+      >
+        {(["live", "files"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => onTab(t)}
+            className="mono"
+            style={{
+              fontSize: 10.5,
+              color: tab === t ? tokens.accent : tokens.textMuted,
+              background: tab === t ? tokens.primaryActionBg : "transparent",
+              border: `1px solid ${tab === t ? tokens.accent : tokens.border}`,
+              borderRadius: 6,
+              padding: "3px 9px",
+              cursor: "pointer",
+            }}
+          >
+            {t === "live" ? "Live" : "Files"}
+          </button>
+        ))}
+        <span style={{ flex: 1 }} />
+        <button
+          onClick={onToggle}
+          title="Collapse"
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.textMuted,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {tab === "live" ? (
+          <LiveProjectsBody onOpenRun={onOpenRun} />
+        ) : (
+          <FileExplorerPanel onAttach={fileAtt ? fileAtt.addExisting : null} />
+        )}
+      </div>
     </div>
   );
 }
@@ -301,8 +374,17 @@ export function ChatSurface({
   });
   const [selId, setSelId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
-  const [liveCollapsed, setLiveCollapsed] = useState(false);
+  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  const [panelTab, setPanelTab] = useState<"live" | "files">("live");
   const [search, setSearch] = useState("");
+  // Lifted out of ChatThread (rather than created per-mount) so the file
+  // explorer's "attach to chat" action can reach the active thread's
+  // composer state directly.
+  const threadAtt = useAttachments();
+  useEffect(() => {
+    threadAtt.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
   const searching = search.trim().length >= 2;
   const searchQ = useQuery({
     queryKey: ["chat", "search", search],
@@ -650,6 +732,7 @@ export function ChatSurface({
             onNavigate={onNavigate}
             isSending={sendM.isPending}
             isResuming={resumeM.isPending}
+            att={threadAtt}
           />
         ) : (
           <div
@@ -668,13 +751,16 @@ export function ChatSurface({
         )}
       </div>
 
-      <LiveProjectsPanel
-        collapsed={liveCollapsed}
-        onToggle={() => setLiveCollapsed((c) => !c)}
+      <SidePanel
+        collapsed={panelCollapsed}
+        onToggle={() => setPanelCollapsed((c) => !c)}
+        tab={panelTab}
+        onTab={setPanelTab}
         onOpenRun={(runId) => {
           setComposing(false);
           setSelId(runId);
         }}
+        fileAtt={composing ? null : threadAtt}
       />
     </div>
   );
@@ -989,6 +1075,7 @@ function ChatThread({
   onNavigate,
   isSending,
   isResuming,
+  att,
 }: {
   run: RunDetail;
   live: boolean;
@@ -998,13 +1085,15 @@ function ChatThread({
   onNavigate?: (s: SurfaceKey) => void;
   isSending: boolean;
   isResuming: boolean;
+  /** Lifted to ChatSurface so the file-explorer panel can attach into the
+   *  currently open thread's composer without prop-drilling through state. */
+  att: ReturnType<typeof useAttachments>;
 }) {
   const [draft, setDraft] = useState("");
   const [localSys, setLocalSys] = useState<
     Array<{ text: string; ts: string }>
   >([]);
   const popoverRef = useRef<SlashPopoverHandle | null>(null);
-  const att = useAttachments();
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);

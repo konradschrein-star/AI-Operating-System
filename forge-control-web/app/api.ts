@@ -608,6 +608,50 @@ export const uploadFiles = async (files: File[]): Promise<UploadedFile[]> => {
   return j.files;
 };
 
+/* ----------------------------------------------------------------------------
+ * VPS file explorer — browse the vault/workspace, attach an existing file
+ * to a chat without re-uploading it.
+ * -------------------------------------------------------------------------- */
+export interface FileRoot {
+  key: string;
+  label: string;
+}
+
+export interface FileEntry {
+  name: string;
+  isDir: boolean;
+  size: number;
+  mtime: string;
+}
+
+export const fetchFileRoots = async (): Promise<FileRoot[]> => {
+  const r = await getJson<{ roots: FileRoot[] }>("/files/roots");
+  return r.roots;
+};
+
+export const fetchFileList = async (
+  root: string,
+  path: string,
+): Promise<FileEntry[]> => {
+  const r = await getJson<{ entries: FileEntry[] }>(
+    `/files/list?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
+  );
+  return r.entries;
+};
+
+/** Full browser-usable URL (already proxy-prefixed) — drop straight into
+ *  an <img>/<video>/<audio>/<iframe> src, or fetch() it directly for text. */
+export const fileReadUrl = (root: string, path: string): string =>
+  `${ROOT}/files/read?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`;
+
+export const attachExistingFile = async (
+  root: string,
+  path: string,
+): Promise<UploadedFile> => {
+  const r = await postJson<{ file: UploadedFile }>("/files/attach", { root, path });
+  return r.file;
+};
+
 /** Message block appended below the user's text so the CC engine knows
  *  exactly where the attachments live on disk. */
 export function attachmentsBlock(files: UploadedFile[]): string {

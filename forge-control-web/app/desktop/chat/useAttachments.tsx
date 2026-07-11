@@ -43,6 +43,12 @@ export function useAttachments() {
     setAttachments((prev) => prev.filter((f) => f.id !== id));
   }, []);
 
+  /** Add an already-server-side file (e.g. from the VPS file explorer) —
+   *  no upload round-trip, it's already on disk where the CC engine reads it. */
+  const addExisting = useCallback((file: UploadedFile) => {
+    setAttachments((prev) => [...prev, file]);
+  }, []);
+
   const clear = useCallback(() => {
     setAttachments([]);
     setUploadError(null);
@@ -74,6 +80,7 @@ export function useAttachments() {
     uploading,
     uploadError,
     addFiles,
+    addExisting,
     remove,
     clear,
     dropHandlers,
