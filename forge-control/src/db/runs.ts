@@ -348,6 +348,26 @@ export async function setRunModel(
   return getRun(id);
 }
 
+/** Set (or clear with null) metadata.effort — same pattern as setRunModel. */
+export async function setRunEffort(
+  id: string,
+  effort: string | null,
+): Promise<RunDetail | null> {
+  const r = await pool.query<{ id: string }>(
+    effort === null
+      ? `UPDATE runs SET metadata = COALESCE(metadata, '{}'::jsonb) - 'effort',
+                         updated_at = now()
+          WHERE id = $1 RETURNING id::text`
+      : `UPDATE runs SET metadata = COALESCE(metadata, '{}'::jsonb) ||
+                         jsonb_build_object('effort', $2::text),
+                         updated_at = now()
+          WHERE id = $1 RETURNING id::text`,
+    effort === null ? [id] : [id, effort],
+  );
+  if (r.rowCount === 0) return null;
+  return getRun(id);
+}
+
 export async function setRunStatus(
   id: string,
   status: RunStatus,

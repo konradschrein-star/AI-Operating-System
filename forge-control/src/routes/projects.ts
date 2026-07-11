@@ -11,6 +11,7 @@ import {
   type ProjectRepo,
   type ProjectStatus,
   type TaskRole,
+  type TaskTier,
 } from "../db/projects.ts";
 import { provisionWorkspace, removeWorkspace } from "../lib/workspace.ts";
 
@@ -33,6 +34,7 @@ const STATUSES = new Set<ProjectStatus>([
   "blocked",
   "cancelled",
 ]);
+const TIERS = new Set<TaskTier>(["fast", "standard", "flagship"]);
 
 /* Unified board feed — every task across every active/blocked project,
  * for the Kanban UI. Registered before /:id so "board" doesn't get parsed
@@ -53,6 +55,7 @@ r.post("/", async (c) => {
     brief?: string;
     repo?: string;
     base_branch?: string;
+    architect_tier?: string;
   };
   const name = (body.name ?? "").trim();
   const brief = (body.brief ?? "").trim();
@@ -61,12 +64,16 @@ r.post("/", async (c) => {
   if (!body.repo || !REPOS.has(body.repo as ProjectRepo)) {
     return c.json({ error: `repo must be one of: ${[...REPOS].join(", ")}` }, 400);
   }
+  if (body.architect_tier && !TIERS.has(body.architect_tier as TaskTier)) {
+    return c.json({ error: `architect_tier must be one of: ${[...TIERS].join(", ")}` }, 400);
+  }
 
   const { project, architectTask } = await createProject({
     name,
     brief,
     repo: body.repo as ProjectRepo,
     base_branch: body.base_branch,
+    architect_tier: body.architect_tier as TaskTier | undefined,
   });
 
   try {
@@ -110,6 +117,7 @@ r.post("/:id/tasks", async (c) => {
     round?: number;
     title?: string;
     brief?: string;
+    tier?: string;
   };
   if (!body.role || !ROLES.has(body.role as TaskRole)) {
     return c.json({ error: `role must be one of: ${[...ROLES].join(", ")}` }, 400);
@@ -122,6 +130,9 @@ r.post("/:id/tasks", async (c) => {
   const brief = (body.brief ?? "").trim();
   if (!title) return c.json({ error: "title required" }, 400);
   if (!brief) return c.json({ error: "brief required" }, 400);
+  if (body.tier && !TIERS.has(body.tier as TaskTier)) {
+    return c.json({ error: `tier must be one of: ${[...TIERS].join(", ")}` }, 400);
+  }
 
   const task = await createTask({
     project_id: id,
@@ -129,6 +140,7 @@ r.post("/:id/tasks", async (c) => {
     role: body.role as TaskRole,
     title,
     brief,
+    tier: body.tier as TaskTier | undefined,
   });
   return c.json({ task }, 201);
 });

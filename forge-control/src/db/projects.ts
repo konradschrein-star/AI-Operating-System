@@ -30,6 +30,10 @@ export type ProjectRepo = "ai-os" | "content-forge";
 export type ProjectStatus = "active" | "paused" | "done" | "blocked" | "cancelled";
 export type TaskRole = "architect" | "planner" | "scout" | "builder" | "reviewer";
 export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
+/** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
+ *  the role file's static model:/effort: default. Only architect and
+ *  builder tasks are ever assigned one. */
+export type TaskTier = "fast" | "standard" | "flagship";
 
 export interface Project {
   id: string;
@@ -55,6 +59,7 @@ export interface ProjectTask {
   status: TaskStatus;
   run_id: string | null;
   fix_cycle: number;
+  tier: TaskTier | null;
   created_at: string;
   updated_at: string;
 }
@@ -66,7 +71,7 @@ export interface ProjectTaskWithProject extends ProjectTask {
 const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, work_branch,
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
-  run_id::text, fix_cycle, created_at::text, updated_at::text`;
+  run_id::text, fix_cycle, tier, created_at::text, updated_at::text`;
 
 export async function listProjects(): Promise<Project[]> {
   const r = await pool.query<Project>(
@@ -91,6 +96,7 @@ export async function createProject(input: {
   brief: string;
   repo: ProjectRepo;
   base_branch?: string;
+  architect_tier?: TaskTier;
 }): Promise<{ project: Project; architectTask: ProjectTask }> {
   const client = await pool.connect();
   try {
@@ -103,10 +109,10 @@ export async function createProject(input: {
     );
     const project = pr.rows[0];
     const tr = await client.query<ProjectTask>(
-      `INSERT INTO project_tasks (project_id, round, role, title, brief)
-       VALUES ($1, 0, 'architect', $2, $3)
+      `INSERT INTO project_tasks (project_id, round, role, title, brief, tier)
+       VALUES ($1, 0, 'architect', $2, $3, $4)
        RETURNING ${TASK_COLS}`,
-      [project.id, `Plan: ${project.name}`, project.brief],
+      [project.id, `Plan: ${project.name}`, project.brief, input.architect_tier ?? null],
     );
     await client.query("COMMIT");
     return { project, architectTask: tr.rows[0] };
@@ -184,10 +190,11 @@ export async function createTask(input: {
   title: string;
   brief: string;
   fix_cycle?: number;
+  tier?: TaskTier;
 }): Promise<ProjectTask> {
   const r = await pool.query<ProjectTask>(
-    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING ${TASK_COLS}`,
     [
       input.project_id,
@@ -196,6 +203,7 @@ export async function createTask(input: {
       input.title.slice(0, 200),
       input.brief,
       input.fix_cycle ?? 0,
+      input.tier ?? null,
     ],
   );
   return r.rows[0];
@@ -319,7 +327,7 @@ export async function listSettledRunningTasks(): Promise<
     ProjectTask & { run_status: RunStatus; last_text: string | null }
   >(
     `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle,
+            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
             pt.created_at::text, pt.updated_at::text,
             r.status AS run_status,
             (SELECT elem->>'content'
@@ -347,6 +355,7 @@ export async function createRunForTask(input: {
   model?: string;
   effort?: string;
   allowed_tools?: string[];
+  vault_access?: boolean;
 }) {
   return createRun({
     title: input.title,
@@ -360,6 +369,7 @@ export async function createRunForTask(input: {
       ...(input.model ? { model: input.model } : {}),
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.allowed_tools ? { allowed_tools: input.allowed_tools } : {}),
+      ...(input.vault_access !== undefined ? { vault_access: input.vault_access } : {}),
     },
   });
 }

@@ -7,12 +7,14 @@ import {
   appendMessage,
   setRunStatus,
   setRunModel,
+  setRunEffort,
   runCounts,
   archiveRun,
   archiveAllRuns,
   searchRuns,
   type RunStatus,
 } from "../db/runs.ts";
+import { sanitizeEffort } from "../lib/cc-runner.ts";
 
 const r = new Hono();
 
@@ -213,6 +215,24 @@ r.post("/:id/model", async (c) => {
     return c.json({ error: `invalid model: ${raw}` }, 400);
   }
   const updated = await setRunModel(id, model);
+  if (!updated) return c.json({ error: "run not found" }, 404);
+  return c.json({ run: updated });
+});
+
+/* v2.5: set the reasoning effort for subsequent turns of this run. One of
+ * low/medium/high/xhigh/max; "default" clears the override. The web UI caps
+ * its own picker at "high" — xhigh/max stay reachable via API/Telegram only. */
+r.post("/:id/effort", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { effort?: string };
+  const raw = (body.effort ?? "").trim();
+  if (!raw) return c.json({ error: "effort required" }, 400);
+  const effort = raw === "default" ? null : sanitizeEffort(raw);
+  if (raw !== "default" && effort === null) {
+    return c.json({ error: `invalid effort: ${raw}` }, 400);
+  }
+  const updated = await setRunEffort(id, effort);
   if (!updated) return c.json({ error: "run not found" }, 404);
   return c.json({ run: updated });
 });

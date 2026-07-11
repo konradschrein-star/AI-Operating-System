@@ -19,6 +19,9 @@ import {
   vaultCreateNote,
   createReminder,
   setChatModel,
+  setChatEffort,
+  ENGINE_MODEL_CHOICES,
+  ENGINE_EFFORT_CHOICES,
   fetchAutonomy,
   updateRule,
   attachmentsBlock,
@@ -608,6 +611,140 @@ function CloseAllButton({
   );
 }
 
+/** Tiny expandable model+effort picker next to Send — sets the engine for
+ *  subsequent turns of this run (POST /:id/model and /:id/effort). Local
+ *  state is optimistic; it re-syncs from run.metadata whenever the run
+ *  object updates (e.g. after a page refresh or SSE-driven refetch). */
+function EngineControls({ run }: { run: RunDetail }) {
+  const [open, setOpen] = useState(false);
+  const currentModel = String(run.metadata?.model ?? "opus");
+  const currentEffort = String(run.metadata?.effort ?? "high");
+  const [model, setModelLocal] = useState(currentModel);
+  const [effort, setEffortLocal] = useState(currentEffort);
+  useEffect(() => {
+    setModelLocal(currentModel);
+    setEffortLocal(currentEffort);
+  }, [currentModel, currentEffort]);
+
+  const modelLabel =
+    ENGINE_MODEL_CHOICES.find((m) => m.value === model)?.label ?? model;
+
+  return (
+    <div
+      style={{ position: "relative" }}
+      tabIndex={-1}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="mono"
+        title="Engine model + effort for this run"
+        style={{
+          fontSize: 10.5,
+          color: tokens.textMuted,
+          border: `1px solid ${tokens.border}`,
+          background: "transparent",
+          borderRadius: 6,
+          padding: "10px 10px",
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {modelLabel} · {effort} ▾
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            bottom: "calc(100% + 6px)",
+            right: 0,
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            zIndex: 20,
+            minWidth: 190,
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span
+              className="mono"
+              style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.1em" }}
+            >
+              MODEL
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+              {ENGINE_MODEL_CHOICES.map((m) => {
+                const on = m.value === model;
+                return (
+                  <button
+                    key={m.value}
+                    onClick={() => {
+                      setModelLocal(m.value);
+                      void setChatModel(run.id, m.value);
+                    }}
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: on ? tokens.accent : tokens.textMuted,
+                      border: `1px solid ${on ? tokens.accent : tokens.border}`,
+                      background: on ? tokens.primaryActionBg : "transparent",
+                      borderRadius: 6,
+                      padding: "3px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span
+              className="mono"
+              style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.1em" }}
+            >
+              EFFORT
+            </span>
+            <div style={{ display: "flex", gap: 4 }}>
+              {ENGINE_EFFORT_CHOICES.map((e) => {
+                const on = e === effort;
+                return (
+                  <button
+                    key={e}
+                    onClick={() => {
+                      setEffortLocal(e);
+                      void setChatEffort(run.id, e);
+                    }}
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: on ? tokens.accent : tokens.textMuted,
+                      border: `1px solid ${on ? tokens.accent : tokens.border}`,
+                      background: on ? tokens.primaryActionBg : "transparent",
+                      borderRadius: 6,
+                      padding: "3px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {e}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChatThread({
   run,
   live,
@@ -885,6 +1022,7 @@ function ChatThread({
               outline: "none",
             }}
           />
+          <EngineControls run={run} />
           <button
             disabled={
               isSending ||
