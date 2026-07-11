@@ -26,6 +26,7 @@ import spend from "./routes/spend.ts";
 import vault from "./routes/vault.ts";
 import reminders from "./routes/reminders.ts";
 import uploads from "./routes/uploads.ts";
+import files from "./routes/files.ts";
 import projects from "./routes/projects.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
@@ -145,6 +146,7 @@ app.route("/api/reminders", reminders);
 
 // v2.1: chat attachments (drag & drop / paste).
 app.route("/api/uploads", uploads);
+app.route("/api/files", files);
 
 // v2.2: mentor accountability metrics (evening mentor POSTs, Today reads).
 app.route("/api/mentor", mentor);
