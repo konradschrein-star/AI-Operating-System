@@ -10,7 +10,13 @@
 
 import { useCallback, useRef, useState } from "react";
 import { tokens } from "../../tokens";
-import { uploadFiles, type UploadedFile } from "../../api";
+import { uploadFiles, attachExistingFile, type UploadedFile } from "../../api";
+
+/** Matches FileExplorerPanel.tsx's drag-out payload — kept as a plain
+ *  literal here (rather than importing that component) so this generic hook
+ *  doesn't pull in the file-manager library for composers that never render
+ *  the file explorer. */
+const VPS_FILE_DRAG_MIME = "application/x-forge-vps-file";
 
 export function previewUrl(f: UploadedFile): string {
   // backend returns /api/uploads/... — the browser reaches it via the proxy
@@ -54,12 +60,27 @@ export function useAttachments() {
     setUploadError(null);
   }, []);
 
-  /** Wire to any container: onDragOver + onDrop. */
+  /** Wire to any container: onDragOver + onDrop. Handles both real OS files
+   *  (drag from desktop / paste) and a VPS file dragged out of the file
+   *  explorer panel (a JSON {root,rel} payload — no upload round-trip). */
   const dropHandlers = {
     onDragOver: (e: React.DragEvent) => {
-      if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+      if (e.dataTransfer.types.includes("Files") || e.dataTransfer.types.includes(VPS_FILE_DRAG_MIME)) {
+        e.preventDefault();
+      }
     },
     onDrop: (e: React.DragEvent) => {
+      const vps = e.dataTransfer.getData(VPS_FILE_DRAG_MIME);
+      if (vps) {
+        e.preventDefault();
+        try {
+          const { root, rel } = JSON.parse(vps) as { root: string; rel: string };
+          void attachExistingFile(root, rel).then(addExisting);
+        } catch {
+          setUploadError("Couldn't attach that file.");
+        }
+        return;
+      }
       if (e.dataTransfer.files.length === 0) return;
       e.preventDefault();
       void addFiles(e.dataTransfer.files);

@@ -3,18 +3,26 @@
 /**
  * VPS file explorer panel — browse the Obsidian vault / agent workspace
  * directly in the desktop UI instead of only ever uploading fresh copies.
- * Read-only browsing + download + "attach to this chat" (which just
- * registers the existing VPS path as an attachment, no re-upload).
+ * Read-only browsing + download + drag-to-chat + "attach to this chat"
+ * button (which just registers the existing VPS path as an attachment, no
+ * re-upload).
  *
- * Modeled as two virtual top-level folders ("/vault", "/workspace") over
- * @cubone/react-file-manager's single flat `files` array, populated lazily
- * per-directory as the user navigates (onFolderChange), since eagerly
- * listing the whole vault tree up front would be wasteful.
+ * Modeled as two virtual top-level folders over @cubone/react-file-manager's
+ * single flat `files` array, populated lazily per-directory as the user
+ * navigates (onFolderChange), since eagerly listing the whole vault tree up
+ * front would be wasteful.
+ *
+ * react-file-manager requires every node's `path` to end with its own
+ * `name` (that's how it derives a folder's children — see splitVirtualPath
+ * below), so root nodes use the human label ("Obsidian Vault") as both name
+ * and trailing path segment; splitVirtualPath resolves that back to the
+ * short API root key ("vault") via the fetched roots list.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FileManager } from "@cubone/react-file-manager";
 import "@cubone/react-file-manager/dist/style.css";
+import "./FileExplorerPanel.css";
 import { tokens } from "../../tokens";
 import {
   fetchFileRoots,
@@ -39,20 +47,25 @@ const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 const VIDEO_EXT = new Set([".mp4", ".webm", ".mov"]);
 const AUDIO_EXT = new Set([".mp3", ".wav", ".m4a"]);
 
+/** Native drag-out payload mime type — read by useAttachments' dropHandlers. */
+export const VPS_FILE_DRAG_MIME = "application/x-forge-vps-file";
+
 function ext(name: string): string {
   const i = name.lastIndexOf(".");
   return i === -1 ? "" : name.slice(i).toLowerCase();
 }
 
-/** "/vault/AI OS/Operator Log.md" -> { root: "vault", rel: "AI OS/Operator Log.md" } */
-function splitVirtualPath(virtualPath: string): { root: string; rel: string } | null {
+/** "/Obsidian Vault/20_Coding/notes.md" -> { root: "vault", rel: "20_Coding/notes.md" } */
+function splitVirtualPath(virtualPath: string, roots: FileRoot[]): { root: string; rel: string } | null {
   const parts = virtualPath.split("/").filter(Boolean);
   if (parts.length === 0) return null;
-  return { root: parts[0], rel: parts.slice(1).join("/") };
+  const rootEntry = roots.find((r) => r.label === parts[0]);
+  if (!rootEntry) return null;
+  return { root: rootEntry.key, rel: parts.slice(1).join("/") };
 }
 
-function FilePreview({ file }: { file: FMFile }) {
-  const split = splitVirtualPath(file.path);
+function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
+  const split = splitVirtualPath(file.path, roots);
   if (!split) return null;
   const url = fileReadUrl(split.root, split.rel);
   const e = ext(file.name);
@@ -133,26 +146,38 @@ export function FileExplorerPanel({
    *  one) — the attach action is disabled in that case. */
   onAttach: ((file: UploadedFile) => void) | null;
 }) {
+  const [roots, setRoots] = useState<FileRoot[]>([]);
   const [files, setFiles] = useState<FMFile[]>([]);
   const [selected, setSelected] = useState<FMFile[]>([]);
   const [attaching, setAttaching] = useState(false);
+  const [currentPath, setCurrentPath] = useState("");
+  const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const filesRef = useRef<FMFile[]>([]);
+  const rootsRef = useRef<FileRoot[]>([]);
+  filesRef.current = files;
+  rootsRef.current = roots;
 
-  useEffect(() => {
-    fetchFileRoots().then((roots: FileRoot[]) => {
-      setFiles(
-        roots.map((r) => ({
-          name: r.label,
-          isDirectory: true,
-          path: `/${r.key}`,
-          updatedAt: new Date().toISOString(),
-        })),
-      );
-    });
+  const loadRoots = useCallback(async () => {
+    const rs = await fetchFileRoots();
+    setRoots(rs);
+    setFiles(
+      rs.map((r) => ({
+        name: r.label,
+        isDirectory: true,
+        path: `/${r.label}`,
+        updatedAt: new Date().toISOString(),
+      })),
+    );
   }, []);
 
+  useEffect(() => {
+    void loadRoots();
+  }, [loadRoots]);
+
   const loadDir = useCallback(async (virtualPath: string) => {
-    const split = splitVirtualPath(virtualPath);
-    if (!split) return; // the virtual "/" root — already seeded
+    const split = splitVirtualPath(virtualPath, rootsRef.current);
+    if (!split) return; // the virtual "/" root — already seeded by loadRoots
     const entries = await fetchFileList(split.root, split.rel).catch(() => []);
     setFiles((prev) => {
       const prefix = virtualPath.endsWith("/") ? virtualPath : `${virtualPath}/`;
@@ -172,9 +197,45 @@ export function FileExplorerPanel({
     });
   }, []);
 
+  const handleFolderChange = useCallback(
+    (path: string) => {
+      setCurrentPath(path);
+      setQuery("");
+      void loadDir(path);
+    },
+    [loadDir],
+  );
+
+  const refresh = useCallback(() => {
+    if (currentPath === "") void loadRoots();
+    else void loadDir(currentPath);
+  }, [currentPath, loadDir, loadRoots]);
+
+  // react-file-manager only sets the native `draggable` attribute on rows
+  // when permissions.move is on (it's built for internal drag-to-move — we
+  // leave onPaste/onCut unwired so that stays inert) — we piggyback on that
+  // attribute to drag a *file* row out onto the chat composer. Delegated at
+  // the panel container so it survives re-renders of the row list.
   useEffect(() => {
-    void loadDir("");
-  }, [loadDir]);
+    const el = containerRef.current;
+    if (!el) return;
+    const onDragStart = (e: DragEvent) => {
+      const row = (e.target as HTMLElement | null)?.closest?.(".file-item-container");
+      const name = row?.getAttribute("title");
+      if (!name) return;
+      const prefix = currentPath === "" ? "/" : `${currentPath}/`;
+      const file = filesRef.current.find((f) => f.path === `${prefix}${name}`);
+      if (!file || file.isDirectory) {
+        e.preventDefault();
+        return;
+      }
+      const split = splitVirtualPath(file.path, rootsRef.current);
+      if (!split) return;
+      e.dataTransfer?.setData(VPS_FILE_DRAG_MIME, JSON.stringify(split));
+    };
+    el.addEventListener("dragstart", onDragStart);
+    return () => el.removeEventListener("dragstart", onDragStart);
+  }, [currentPath]);
 
   const attachSelected = async () => {
     if (!onAttach || selected.length === 0) return;
@@ -182,7 +243,7 @@ export function FileExplorerPanel({
     try {
       for (const f of selected) {
         if (f.isDirectory) continue;
-        const split = splitVirtualPath(f.path);
+        const split = splitVirtualPath(f.path, roots);
         if (!split) continue;
         const attached = await attachExistingFile(split.root, split.rel);
         onAttach(attached);
@@ -192,44 +253,84 @@ export function FileExplorerPanel({
     }
   };
 
+  const q = query.trim().toLowerCase();
+  const visibleFiles = q
+    ? files.filter((f) => {
+        // Keep every ancestor of the current dir (breadcrumb/tree bookkeeping)
+        // plus direct children of the current dir whose name matches.
+        const prefix = currentPath === "" ? "/" : `${currentPath}/`;
+        if (!f.path.startsWith(prefix) || f.path.slice(prefix.length).includes("/")) return true;
+        return f.name.toLowerCase().includes(q);
+      })
+    : files;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div
+      ref={containerRef}
+      style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
+    >
+      <div
+        style={{
+          padding: "8px 10px",
+          borderBottom: `1px solid ${tokens.borderSoft}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="filter this folder…"
+          className="mono"
+          style={{
+            flex: 1,
+            fontSize: 11,
+            color: tokens.text,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 6,
+            padding: "5px 8px",
+            outline: "none",
+          }}
+        />
+        {onAttach && (
+          <>
+            <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+              {selected.filter((f) => !f.isDirectory).length} selected
+            </span>
+            <button
+              disabled={attaching || selected.filter((f) => !f.isDirectory).length === 0}
+              onClick={() => void attachSelected()}
+              className="mono"
+              style={{
+                fontSize: 10.5,
+                color: tokens.accent,
+                background: tokens.primaryActionBg,
+                border: `1px solid ${tokens.accent}`,
+                borderRadius: 6,
+                padding: "4px 10px",
+                cursor: "pointer",
+                opacity: attaching ? 0.6 : 1,
+                whiteSpace: "nowrap",
+              }}
+            >
+              {attaching ? "attaching…" : "attach"}
+            </button>
+          </>
+        )}
+      </div>
       {onAttach && (
         <div
-          style={{
-            padding: "8px 10px",
-            borderBottom: `1px solid ${tokens.borderSoft}`,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
+          className="mono"
+          style={{ padding: "5px 10px", fontSize: 9.5, color: tokens.textGhost, borderBottom: `1px solid ${tokens.borderSoft}` }}
         >
-          <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-            {selected.filter((f) => !f.isDirectory).length} selected
-          </span>
-          <span style={{ flex: 1 }} />
-          <button
-            disabled={attaching || selected.filter((f) => !f.isDirectory).length === 0}
-            onClick={() => void attachSelected()}
-            className="mono"
-            style={{
-              fontSize: 10.5,
-              color: tokens.accent,
-              background: tokens.primaryActionBg,
-              border: `1px solid ${tokens.accent}`,
-              borderRadius: 6,
-              padding: "4px 10px",
-              cursor: "pointer",
-              opacity: attaching ? 0.6 : 1,
-            }}
-          >
-            {attaching ? "attaching…" : "attach to chat"}
-          </button>
+          drag a file onto the composer to attach it, or select + attach
         </div>
       )}
       <div style={{ flex: 1, minHeight: 0 }}>
         <FileManager
-          files={files}
+          files={visibleFiles}
           height="100%"
           width="100%"
           layout="list"
@@ -237,15 +338,18 @@ export function FileExplorerPanel({
           permissions={{
             create: false,
             upload: false,
-            move: false,
+            move: true,
             copy: false,
             rename: false,
             delete: false,
             download: true,
           }}
-          onFolderChange={(path: string) => void loadDir(path)}
+          collapsibleNav
+          defaultNavExpanded={false}
+          onFolderChange={handleFolderChange}
+          onRefresh={refresh}
           onSelectionChange={(sel: FMFile[]) => setSelected(sel)}
-          filePreviewComponent={(file: FMFile) => <FilePreview file={file} />}
+          filePreviewComponent={(file: FMFile) => <FilePreview file={file} roots={roots} />}
         />
       </div>
     </div>
