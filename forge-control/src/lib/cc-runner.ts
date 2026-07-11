@@ -95,12 +95,20 @@ export function sanitizeEffort(e: unknown): string | null {
   return EFFORT_LEVELS.has(v) ? v : null;
 }
 
-const SYSTEM_PROMPT = `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
+/** v2.5: the system prompt is built per-run instead of a single static
+ *  const — most of it is unconditional, but the vault/knowledge block only
+ *  applies when this run actually has vault access (--add-dir + Read/Grep
+ *  scoped to it). Ticker-spawned roles that don't need Konrad's whole
+ *  knowledge base (planner/scout/builder/reviewer today) skip it entirely —
+ *  it was previously force-fed to every run regardless of relevance, pure
+ *  wasted context for scoped roles. See docs/superpowers/specs/2026-07-11-
+ *  manager-orchestration-model-tiering-design.md. */
+function buildSystemPrompt(vaultAccess: boolean): string {
+  return `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
 
 Environment you control:
-- Obsidian vault (Konrad's second brain): ${VAULT_DIR} — read AND write markdown. Daily notes: Daily/YYYY-MM-DD.md (sections: ## Tasks, ## Notes, ## Journal). Quick captures: Inbox/. Never delete or truncate notes; append or create.
-- Content Forge (video automation monorepo): /opt/content-forge — PostgreSQL 'content_forge' (psql -U postgres), pm2-managed workers, Redis/BullMQ queues.
-- forge-control API: http://127.0.0.1:7700/api/* (today, inbox, memory search, reminders, vault, spend, pipeline).
+${vaultAccess ? `- Obsidian vault (Konrad's second brain): ${VAULT_DIR} — read AND write markdown. Daily notes: Daily/YYYY-MM-DD.md (sections: ## Tasks, ## Notes, ## Journal). Quick captures: Inbox/. Never delete or truncate notes; append or create.\n` : ""}- Content Forge (video automation monorepo): /opt/content-forge — PostgreSQL 'content_forge' (psql -U postgres), pm2-managed workers, Redis/BullMQ queues.
+- forge-control API: http://127.0.0.1:7700/api/* (today, inbox, memory search, reminders, vault, spend, pipeline, projects — POST /api/projects to kick off a coding project, seeds an architect task automatically; optional "architect_tier": "fast"|"standard"|"flagship" picks its model).
 - Reminders: POST http://127.0.0.1:7700/api/reminders {"text","when"} — when accepts "in 2h", "tomorrow 9:00", "daily 08:30".
 
 Your arms and hands:
@@ -108,7 +116,7 @@ Your arms and hands:
 - MCP servers: github (Konrad's account), context7 (library docs — use for ANY framework/API question instead of guessing), playwright + chrome-devtools (real browser), postgres, filesystem, obsidian, forge-memory (Konrad's knowledge graph), shadcn (UI registry), reelforge (video production factory — create_video/add_topics/list_topics/get_system_health/etc; prefer add_topics with a batch of briefs over one-off create_video calls, it self-promotes the backlog into jobs).
 - Subagents (Task tool): architect (opus — system design), planner (sonnet — break down goals), builder (sonnet — implement), reviewer (sonnet — adversarial check), scout (haiku — fast recon). Delegate instead of doing everything in one context; pick the agent whose model tier matches the difficulty.
 - Attachments: user messages may contain an [attached-files] block listing absolute paths on this machine (images included) — Read them; do not claim you cannot see attachments.
-
+${vaultAccess ? `
 Knowledge — search BEFORE you answer (v2.2):
 - Any question touching Konrad's life, projects, decisions, notes, or preferences: search his knowledge base FIRST, answer SECOND. Never answer from training data what the vault can answer from his actual notes.
 - Fast lane: GET "http://127.0.0.1:7700/api/memory/search?q=<query>" — vector + graph search over the indexed vault. Then Read the full note from ${VAULT_DIR} when a hit matters.
@@ -116,7 +124,7 @@ Knowledge — search BEFORE you answer (v2.2):
 - A [MEMORY] block may be prepended to the prompt — that's prefetched context, treat it as a starting point, not the full picture.
 - When you use his notes, say which ones — Konrad should see his second brain working.
 - Konrad's personal profile lives at ${VAULT_DIR}/Mentor/Profile/ (goals, operating manual, principles, current chapter). READ IT before advising on priorities, life decisions, or anything where who-he-is changes the answer. If reality contradicts the profile, say so — and append the correction, never overwrite.
-
+` : ""}
 Google Workspace (konrad.schrein@gmail.com — durable OAuth, all major services):
 - CLI: python3 "/var/lib/docker/volumes/hermes-workspace_hermes-agent-data/_data/skills/productivity/google-workspace/scripts/google_api.py" {gmail,calendar,drive,contacts,sheets,docs} — run with --help on a subcommand before first use.
 - gmail search/read (e.g. gmail search 'is:unread' --max 10); SENDING email requires an explicit instruction in the CURRENT task.
@@ -133,6 +141,7 @@ Rules:
 - Destructive operations (rm -rf, DROP/TRUNCATE, force-push, pm2 delete, mass file deletes) require an explicit instruction in the CURRENT task — otherwise refuse and propose the safe alternative.
 - Keep final answers tight: what you did, what you found, what needs Konrad. No filler.
 - When you learn something durable about Konrad's systems or preferences, append it to the vault note "AI OS/Operator Log.md" (create if missing).`;
+}
 
 export interface CcEvent {
   type: "init" | "assistant_text" | "tool_call" | "tool_result";
@@ -205,24 +214,30 @@ export async function runClaudeCode(opts: {
    *  Write/Edit so it can only report findings, never silently fix them).
    *  Falls back to CC_ALLOWED_TOOLS, the full default list. */
   allowedTools?: string[] | null;
+  /** Whether this run gets the Obsidian vault mounted (--add-dir) and the
+   *  system prompt's knowledge-search instructions. Defaults to true —
+   *  plain Chat/Manager runs keep today's behavior. Ticker-spawned roles
+   *  that don't need Konrad's whole knowledge base pass false. */
+  vaultAccess?: boolean;
   onEvent: (e: CcEvent) => void;
   /** Polled every ~5s; return true to kill the child (cancel/pause). */
   isCancelled?: () => Promise<boolean>;
 }): Promise<CcResult> {
+  const vaultAccess = opts.vaultAccess ?? true;
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
   const allowedTools =
     opts.allowedTools && opts.allowedTools.length > 0
       ? opts.allowedTools
       : CC_ALLOWED_TOOLS;
   for (const t of allowedTools) args.push("--allowedTools", t);
-  args.push("--add-dir", VAULT_DIR);
+  if (vaultAccess) args.push("--add-dir", VAULT_DIR);
   for (const d of CC_ADD_DIRS) args.push("--add-dir", d);
   const model = sanitizeModel(opts.model) ?? CC_MODEL;
   if (model) args.push("--model", model);
   const effort = sanitizeEffort(opts.effort);
   if (effort) args.push("--effort", effort);
   if (opts.sessionId) args.push("--resume", opts.sessionId);
-  args.push("--append-system-prompt", SYSTEM_PROMPT);
+  args.push("--append-system-prompt", buildSystemPrompt(vaultAccess));
 
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY; // OAuth only — never bill the API key.

@@ -680,6 +680,12 @@ async function processWithClaudeCode(
         (t): t is string => typeof t === "string",
       )
     : null;
+  // Undefined (plain Chat/Manager runs) falls back to runClaudeCode's own
+  // default of true; ticker-spawned tasks set this explicitly per role.
+  const vaultAccess =
+    typeof run.metadata?.vault_access === "boolean"
+      ? (run.metadata.vault_access as boolean)
+      : undefined;
 
   const baseMessage = priorSession
     ? trailingUserBlock(thread)
@@ -740,6 +746,7 @@ async function processWithClaudeCode(
       effort,
       cwd,
       allowedTools,
+      vaultAccess,
       onEvent,
       isCancelled,
     });
@@ -767,6 +774,7 @@ async function processWithClaudeCode(
         effort,
         cwd,
         allowedTools,
+        vaultAccess,
         onEvent,
         isCancelled,
       });

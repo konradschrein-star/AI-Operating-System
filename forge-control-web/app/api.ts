@@ -567,6 +567,26 @@ export const setChatModel = async (id: string, model: string) => {
   return r.run;
 };
 
+/** Concrete engine choices for the per-run composer picker (next to Send) —
+ *  distinct from MODEL_OPTIONS' new-chat aliases because one entry (the
+ *  "cheap" Sonnet) needs an exact model id, not an alias that resolves to
+ *  latest. Default is Opus 4.8. */
+export const ENGINE_MODEL_CHOICES = [
+  { value: "opus", label: "Opus 4.8" },
+  { value: "sonnet", label: "Sonnet 5" },
+  { value: "claude-sonnet-4-6", label: "Sonnet 4.6 (cheap)" },
+  { value: "haiku", label: "Haiku 4.5" },
+] as const;
+
+/** Effort choices offered in the web UI — capped at "high"; xhigh/max stay
+ *  reachable via API/Telegram only, per design. */
+export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high"] as const;
+
+export const setChatEffort = async (id: string, effort: string) => {
+  const r = await postJson<{ run: RunDetail }>(`/chat/${id}/effort`, { effort });
+  return r.run;
+};
+
 /* ----------------------------------------------------------------------------
  * Uploads (chat attachments — drag & drop / paste)
  * -------------------------------------------------------------------------- */

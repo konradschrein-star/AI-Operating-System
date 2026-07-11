@@ -31,17 +31,30 @@ import {
   createTask,
   setProjectStatus,
   closeFinishedProjects,
+  getProject,
   type ProjectTask,
   type Project,
   type TaskRole,
+  type TaskTier,
 } from "../db/projects.ts";
 import { provisionWorkspace } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
+import { queueNotification } from "../db/notifications.ts";
 
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
 const MAX_FIX_CYCLES = 3;
 let lastPauseLogAt = 0;
+
+/** Model/effort per tier — only architect and builder tasks are ever
+ *  assigned one (see docs/superpowers/specs/2026-07-11-manager-orchestration-
+ *  model-tiering-design.md). Overrides the role file's static model:/effort:
+ *  when a task carries a tier. */
+const TIER_MODELS: Record<TaskTier, { model: string; effort: string }> = {
+  fast: { model: "claude-haiku-4-5-20251001", effort: "medium" },
+  standard: { model: "claude-sonnet-4-6", effort: "high" },
+  flagship: { model: "claude-opus-4-8", effort: "high" },
+};
 
 interface RoleConfig {
   mission: string;
@@ -104,10 +117,13 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `\nWhen you're done: write a short plan to PLAN.md in the repo root. Then create the next ` +
       `round(s) of work by calling forge-control directly, e.g.:\n` +
       `curl -sX POST http://127.0.0.1:7700/api/projects/${project.id}/tasks -H 'content-type: application/json' ` +
-      `-d '{"role":"builder","round":1,"title":"...","brief":"..."}'\n` +
+      `-d '{"role":"builder","round":1,"title":"...","brief":"...","tier":"standard"}'\n` +
       `Split implementation into focused, independently-completable builder tasks. Always end with exactly one ` +
       `"reviewer" task in the round right after your last builder round, briefed to review the whole diff. ` +
-      `Do not write implementation code or commit anything yourself — that's the builder's job.`
+      `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
+      `Each builder task's "tier" picks its model: "fast" (Haiku) for straightforward, well-specified work, ` +
+      `"standard" (Sonnet) for most tasks, "flagship" (Opus) only when a task genuinely needs the strongest ` +
+      `model. Omit tier to fall back to the default. Don't over-use flagship — it's the expensive one.`
     );
   }
   if (task.role === "reviewer") {
@@ -142,6 +158,7 @@ async function spawnTaskRuns(): Promise<void> {
       }
       const prompt = buildPrompt(task, task.project);
       const cfg = roleConfig(task.role);
+      const tierCfg = task.tier ? TIER_MODELS[task.tier] : null;
       const run = await createRunForTask({
         title: `${task.project.name} · ${task.title}`,
         prompt,
@@ -150,8 +167,11 @@ async function spawnTaskRuns(): Promise<void> {
         task_id: task.id,
         workspace_dir: task.project.workspace_dir,
         ...(cfg.tools ? { allowed_tools: cfg.tools } : {}),
-        ...(cfg.model ? { model: cfg.model } : {}),
-        ...(cfg.effort ? { effort: cfg.effort } : {}),
+        ...(tierCfg?.model ?? cfg.model ? { model: tierCfg?.model ?? cfg.model! } : {}),
+        ...(tierCfg?.effort ?? cfg.effort ? { effort: tierCfg?.effort ?? cfg.effort! } : {}),
+        // Only architect gets Konrad's vault — the other four roles don't
+        // need his whole knowledge base to implement/review/research a task.
+        vault_access: task.role === "architect",
       });
       await attachRun(task.id, run.id);
     } catch (e) {
@@ -180,6 +200,11 @@ async function reconcileReviewer(
     // No parseable verdict — don't guess, surface it instead of looping.
     console.warn(`[project-tick] reviewer task ${task.id} produced no VERDICT line`);
     await setProjectStatus(task.project_id, "blocked");
+    const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+    await queueNotification(
+      `🚫 Project "${name}" blocked — reviewer produced no parseable VERDICT line. Check the run's last message.`,
+      "project",
+    ).catch(() => {});
     return;
   }
 
@@ -188,6 +213,11 @@ async function reconcileReviewer(
     console.warn(
       `[project-tick] project ${task.project_id} blocked — ${MAX_FIX_CYCLES} fix cycles exhausted`,
     );
+    const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+    await queueNotification(
+      `🚫 Project "${name}" blocked — ${MAX_FIX_CYCLES} fix cycles exhausted, reviewer still finds issues.`,
+      "project",
+    ).catch(() => {});
     return;
   }
 
