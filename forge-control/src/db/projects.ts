@@ -165,7 +165,7 @@ export async function listTasksForProject(
 export async function listActiveTasks(): Promise<ProjectTaskWithProject[]> {
   const r = await pool.query<ProjectTaskWithProject>(
     `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle,
+            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
             pt.created_at::text, pt.updated_at::text, p.name AS project_name
        FROM project_tasks pt
        JOIN projects p ON p.id = pt.project_id
