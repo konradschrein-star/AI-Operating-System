@@ -25,13 +25,14 @@ import {
   fetchAutonomy,
   updateRule,
   attachmentsBlock,
-  MODEL_OPTIONS,
-  type ModelOption,
+  fetchProjectBoard,
+  type ProjectTaskWithProject,
+  type TaskRole,
   type RunDetail,
   type RunStatus,
   type RunSummary,
 } from "../api";
-import { useAttachments, AttachmentChips } from "./chat/useAttachments";
+import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
 import {
   findSlash,
@@ -64,6 +65,227 @@ function humanAge(ts: string | null | undefined): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
+const ROLE_LABEL: Record<TaskRole, string> = {
+  architect: "architect",
+  planner: "planner",
+  scout: "scout",
+  builder: "builder",
+  reviewer: "reviewer",
+};
+
+const ROLE_COLOR: Record<TaskRole, string> = {
+  architect: tokens.decide,
+  planner: tokens.info,
+  scout: tokens.textMuted,
+  builder: tokens.accent,
+  reviewer: tokens.warn,
+};
+
+const TASK_STATUS_COLOR: Record<string, string> = {
+  pending: tokens.textFaint,
+  ready: tokens.info,
+  running: tokens.accent,
+  done: tokens.ok,
+  failed: tokens.bleed,
+  blocked: tokens.warn,
+};
+
+/** Live "what's the plan, what's it doing right now" sidebar — every active
+ *  project's tasks, shares the same query cache as ProjectsSurface's board
+ *  so opening both doesn't double-poll. Clicking a task with a run just
+ *  opens that run in the same chat pane (a project task IS an ordinary
+ *  `runs` row) — that's the "interact with them directly" part, reusing
+ *  the exact send/thread machinery already built for regular chats. */
+function LiveProjectsPanel({
+  collapsed,
+  onToggle,
+  onOpenRun,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  onOpenRun: (runId: string) => void;
+}) {
+  const boardQ = useQuery({
+    queryKey: ["projects", "board"],
+    queryFn: fetchProjectBoard,
+    refetchInterval: 6_000,
+  });
+  const tasks = boardQ.data ?? [];
+
+  if (collapsed) {
+    return (
+      <div
+        style={{
+          width: 34,
+          flex: "none",
+          borderLeft: `1px solid ${tokens.borderSoft}`,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          paddingTop: 12,
+        }}
+      >
+        <button
+          onClick={onToggle}
+          title="Show live projects panel"
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tasks.some((t) => t.status === "running") ? tokens.accent : tokens.textFaint,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            writingMode: "vertical-rl",
+          }}
+        >
+          ● LIVE
+        </button>
+      </div>
+    );
+  }
+
+  const byProject = new Map<string, { name: string; tasks: ProjectTaskWithProject[] }>();
+  for (const t of tasks) {
+    if (!byProject.has(t.project_id)) {
+      byProject.set(t.project_id, { name: t.project_name, tasks: [] });
+    }
+    byProject.get(t.project_id)!.tasks.push(t);
+  }
+
+  return (
+    <div
+      style={{
+        width: 260,
+        flex: "none",
+        borderLeft: `1px solid ${tokens.borderSoft}`,
+        display: "flex",
+        flexDirection: "column",
+        minHeight: 0,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "12px 14px",
+          borderBottom: `1px solid ${tokens.borderSoft}`,
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 500, color: tokens.text }}>Live</span>
+        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+          {tasks.filter((t) => t.status === "running").length} running
+        </span>
+        <span style={{ flex: 1 }} />
+        <button
+          onClick={onToggle}
+          title="Collapse"
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.textMuted,
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}>
+        {byProject.size === 0 && (
+          <div
+            className="mono"
+            style={{
+              padding: "24px 8px",
+              fontSize: 10.5,
+              color: tokens.textFaint,
+              lineHeight: 1.6,
+              textAlign: "center",
+            }}
+          >
+            no active projects — the manager hasn't kicked one off yet
+          </div>
+        )}
+        {[...byProject.entries()].map(([projectId, p]) => (
+          <div key={projectId} style={{ marginBottom: 14 }}>
+            <div
+              className="mono"
+              style={{
+                fontSize: 10,
+                color: tokens.textFaint,
+                letterSpacing: "0.06em",
+                marginBottom: 6,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={p.name}
+            >
+              {p.name}
+            </div>
+            {p.tasks
+              .sort((a, b) => a.round - b.round)
+              .map((t) => {
+                const clickable = !!t.run_id;
+                return (
+                  <div
+                    key={t.id}
+                    onClick={() => clickable && onOpenRun(t.run_id!)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "5px 6px",
+                      borderRadius: 6,
+                      cursor: clickable ? "pointer" : "default",
+                      opacity: clickable ? 1 : 0.55,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (clickable) e.currentTarget.style.background = tokens.bgCard;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <span style={dot(TASK_STATUS_COLOR[t.status] ?? tokens.textFaint)} />
+                    <span
+                      className="mono"
+                      style={{ fontSize: 9.5, color: ROLE_COLOR[t.role], flex: "none" }}
+                    >
+                      {ROLE_LABEL[t.role]}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        color: tokens.textMuted,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        flex: 1,
+                      }}
+                      title={t.title}
+                    >
+                      {t.title}
+                    </span>
+                    {t.tier && (
+                      <span
+                        className="mono"
+                        style={{ fontSize: 9, color: tokens.textFaint, flex: "none" }}
+                      >
+                        {t.tier}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ChatSurface({
   onNavigate,
 }: {
@@ -79,6 +301,7 @@ export function ChatSurface({
   });
   const [selId, setSelId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
+  const [liveCollapsed, setLiveCollapsed] = useState(false);
   const [search, setSearch] = useState("");
   const searching = search.trim().length >= 2;
   const searchQ = useQuery({
@@ -401,11 +624,14 @@ export function ChatSurface({
           <NewChat
             isCreating={createM.isPending}
             onCancel={() => setComposing(false)}
-            onCreate={(prompt, title, model) =>
+            onCreate={(prompt, title, model, effort) =>
               createM.mutate({
                 prompt,
                 title: title || undefined,
-                metadata: model === "sonnet" ? undefined : { model },
+                metadata: {
+                  ...(model !== "opus" ? { model } : {}),
+                  effort,
+                },
               })
             }
           />
@@ -441,6 +667,15 @@ export function ChatSurface({
           </div>
         )}
       </div>
+
+      <LiveProjectsPanel
+        collapsed={liveCollapsed}
+        onToggle={() => setLiveCollapsed((c) => !c)}
+        onOpenRun={(runId) => {
+          setComposing(false);
+          setSelId(runId);
+        }}
+      />
     </div>
   );
 }
@@ -1080,12 +1315,13 @@ function NewChat({
   isCreating,
 }: {
   onCancel: () => void;
-  onCreate: (prompt: string, title: string, model: ModelOption) => void;
+  onCreate: (prompt: string, title: string, model: string, effort: string) => void;
   isCreating: boolean;
 }) {
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
-  const [model, setModel] = useState<ModelOption>("sonnet");
+  const [model, setModel] = useState<string>("opus");
+  const [effort, setEffort] = useState<string>("high");
   const att = useAttachments();
   const canCreate = prompt.trim().length > 0 || att.attachments.length > 0;
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1094,7 +1330,7 @@ function NewChat({
   }, []);
   const create = () => {
     const text = prompt.trim() || "See attached files.";
-    onCreate(`${text}${attachmentsBlock(att.attachments)}`, title.trim(), model);
+    onCreate(`${text}${attachmentsBlock(att.attachments)}`, title.trim(), model, effort);
   };
   return (
     <div
@@ -1122,12 +1358,12 @@ function NewChat({
           NEW CHAT
         </span>
         <span style={{ flex: 1 }} />
-        {MODEL_OPTIONS.map((m) => {
-          const on = m === model;
+        {ENGINE_MODEL_CHOICES.map((m) => {
+          const on = m.value === model;
           return (
             <button
-              key={m}
-              onClick={() => setModel(m)}
+              key={m.value}
+              onClick={() => setModel(m.value)}
               className="mono"
               style={{
                 fontSize: 10.5,
@@ -1139,11 +1375,31 @@ function NewChat({
                 cursor: "pointer",
               }}
             >
-              {m}
-              {m === "sonnet" ? " ·std" : ""}
+              {m.label}
             </button>
           );
         })}
+        <select
+          value={effort}
+          onChange={(e) => setEffort(e.target.value)}
+          className="mono"
+          title="Reasoning effort"
+          style={{
+            fontSize: 10.5,
+            color: tokens.textMuted,
+            border: `1px solid ${tokens.border}`,
+            background: tokens.bgCard,
+            borderRadius: 6,
+            padding: "4px 8px",
+            cursor: "pointer",
+          }}
+        >
+          {ENGINE_EFFORT_CHOICES.map((e) => (
+            <option key={e} value={e}>
+              {e} effort
+            </option>
+          ))}
+        </select>
       </div>
       <input
         value={title}
@@ -1166,39 +1422,69 @@ function NewChat({
         uploadError={att.uploadError}
         onRemove={att.remove}
       />
-      <textarea
-        ref={inputRef}
-        value={prompt}
-        onChange={(e) => setPrompt(e.target.value)}
-        onPaste={att.onPaste}
-        onKeyDown={(e) => {
-          // v1.6: Enter dispatches, Shift+Enter newline. Skip during IME composition.
-          if (
-            e.key === "Enter" &&
-            !e.shiftKey &&
-            !e.nativeEvent.isComposing &&
-            canCreate
-          ) {
-            e.preventDefault();
-            create();
-          }
-        }}
-        placeholder="what's the task?  Enter to dispatch · drop/paste files · Shift+Enter newline"
-        rows={10}
-        style={{
-          flex: 1,
-          resize: "none",
-          background: tokens.bgCard,
-          border: `1px solid ${tokens.border}`,
-          borderRadius: 8,
-          padding: "12px 14px",
-          color: tokens.text,
-          fontSize: 13,
-          fontFamily: "Inter, system-ui",
-          lineHeight: 1.55,
-          outline: "none",
-        }}
-      />
+      <div style={{ position: "relative", flex: 1, display: "flex" }}>
+        <HiddenFileInput fileInputRef={att.fileInputRef} addFiles={att.addFiles} />
+        <textarea
+          ref={inputRef}
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onPaste={att.onPaste}
+          onKeyDown={(e) => {
+            // v1.6: Enter dispatches, Shift+Enter newline. Skip during IME composition.
+            if (
+              e.key === "Enter" &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing &&
+              canCreate
+            ) {
+              e.preventDefault();
+              create();
+            }
+          }}
+          placeholder="what's the task?  Enter to dispatch · drop/paste files · Shift+Enter newline"
+          rows={10}
+          style={{
+            flex: 1,
+            resize: "none",
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: "12px 14px",
+            color: tokens.text,
+            fontSize: 13,
+            fontFamily: "Inter, system-ui",
+            lineHeight: 1.55,
+            outline: "none",
+          }}
+        />
+        {prompt.trim().length === 0 && att.attachments.length === 0 && (
+          <button
+            onClick={att.openPicker}
+            title="Attach files or images"
+            className="mono"
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              width: 56,
+              height: 56,
+              borderRadius: "50%",
+              border: `1px solid ${tokens.border}`,
+              background: tokens.bgCard,
+              color: tokens.textMuted,
+              fontSize: 26,
+              lineHeight: 1,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            +
+          </button>
+        )}
+      </div>
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <button
           onClick={onCancel}

@@ -557,11 +557,6 @@ export const createChat = async (input: {
   return r.run;
 };
 
-/** Engine model aliases the UI offers. "sonnet" (Sonnet 5) is the standard;
- *  opus for hard judgment work, haiku for cheap/fast tasks. */
-export const MODEL_OPTIONS = ["sonnet", "opus", "haiku"] as const;
-export type ModelOption = (typeof MODEL_OPTIONS)[number];
-
 export const setChatModel = async (id: string, model: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/model`, { model });
   return r.run;
@@ -1050,6 +1045,7 @@ export type ProjectRepo = "ai-os" | "content-forge";
 export type ProjectStatus = "active" | "paused" | "done" | "blocked" | "cancelled";
 export type TaskRole = "architect" | "planner" | "scout" | "builder" | "reviewer";
 export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
+export type TaskTier = "fast" | "standard" | "flagship";
 
 export const PROJECT_REPO_OPTIONS: ProjectRepo[] = ["ai-os", "content-forge"];
 
@@ -1077,6 +1073,7 @@ export interface ProjectTask {
   status: TaskStatus;
   run_id: string | null;
   fix_cycle: number;
+  tier: TaskTier | null;
   created_at: string;
   updated_at: string;
 }
@@ -1107,6 +1104,7 @@ export const createProject = async (input: {
   brief: string;
   repo: ProjectRepo;
   base_branch?: string;
+  architect_tier?: TaskTier;
 }): Promise<{ project: Project; architectTask: ProjectTask; warning?: string }> =>
   postJson("/projects", input);
 

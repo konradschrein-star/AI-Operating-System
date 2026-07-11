@@ -8,7 +8,7 @@
  * VPS paths so the CC engine can Read them.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { tokens } from "../../tokens";
 import { uploadFiles, type UploadedFile } from "../../api";
 
@@ -21,6 +21,8 @@ export function useAttachments() {
   const [attachments, setAttachments] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const openPicker = useCallback(() => fileInputRef.current?.click(), []);
 
   const addFiles = useCallback(async (list: FileList | File[] | null) => {
     const files = Array.from(list ?? []);
@@ -76,7 +78,32 @@ export function useAttachments() {
     clear,
     dropHandlers,
     onPaste,
+    fileInputRef,
+    openPicker,
   };
+}
+
+/** Hidden <input type=file>, click-triggered via openPicker() — wire
+ *  fileInputRef/addFiles from the same useAttachments() instance. */
+export function HiddenFileInput({
+  fileInputRef,
+  addFiles,
+}: {
+  fileInputRef: React.RefObject<HTMLInputElement | null>;
+  addFiles: (list: FileList | File[] | null) => void;
+}) {
+  return (
+    <input
+      ref={fileInputRef}
+      type="file"
+      multiple
+      style={{ display: "none" }}
+      onChange={(e) => {
+        void addFiles(e.target.files);
+        e.target.value = "";
+      }}
+    />
+  );
 }
 
 export function AttachmentChips({
