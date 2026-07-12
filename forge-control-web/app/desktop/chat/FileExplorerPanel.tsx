@@ -253,6 +253,29 @@ export function FileExplorerPanel({
     }
   };
 
+  const [pathCopied, setPathCopied] = useState(false);
+
+  /** Simpler alternative to drag/attach: resolve the selection to absolute
+   *  VPS paths and put them on the clipboard — paste directly into any
+   *  composer, no drag gesture or attachment round-trip required.
+   *  /files/attach is read-only (just stats the file), so reusing it here
+   *  has no side effects. */
+  const copySelectedPaths = async () => {
+    const targets = selected.filter((f) => !f.isDirectory);
+    if (targets.length === 0) return;
+    const resolved = await Promise.all(
+      targets.map((f) => {
+        const split = splitVirtualPath(f.path, roots);
+        return split ? attachExistingFile(split.root, split.rel).catch(() => null) : null;
+      }),
+    );
+    const paths = resolved.filter((f): f is UploadedFile => f !== null).map((f) => f.path);
+    if (paths.length === 0) return;
+    await navigator.clipboard.writeText(paths.join("\n"));
+    setPathCopied(true);
+    setTimeout(() => setPathCopied(false), 1500);
+  };
+
   const q = query.trim().toLowerCase();
   const visibleFiles = q
     ? files.filter((f) => {
@@ -294,40 +317,54 @@ export function FileExplorerPanel({
             outline: "none",
           }}
         />
+        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+          {selected.filter((f) => !f.isDirectory).length} selected
+        </span>
+        <button
+          disabled={selected.filter((f) => !f.isDirectory).length === 0}
+          onClick={() => void copySelectedPaths()}
+          className="mono"
+          style={{
+            fontSize: 10.5,
+            color: pathCopied ? tokens.ok : tokens.textLabel,
+            background: tokens.bgGutter,
+            border: `1px solid ${pathCopied ? tokens.ok : tokens.borderEmphasis}`,
+            borderRadius: 6,
+            padding: "4px 10px",
+            cursor: "pointer",
+            opacity: selected.filter((f) => !f.isDirectory).length === 0 ? 0.5 : 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {pathCopied ? "copied ✓" : "copy path"}
+        </button>
         {onAttach && (
-          <>
-            <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-              {selected.filter((f) => !f.isDirectory).length} selected
-            </span>
-            <button
-              disabled={attaching || selected.filter((f) => !f.isDirectory).length === 0}
-              onClick={() => void attachSelected()}
-              className="mono"
-              style={{
-                fontSize: 10.5,
-                color: tokens.accent,
-                background: tokens.primaryActionBg,
-                border: `1px solid ${tokens.accent}`,
-                borderRadius: 6,
-                padding: "4px 10px",
-                cursor: "pointer",
-                opacity: attaching ? 0.6 : 1,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {attaching ? "attaching…" : "attach"}
-            </button>
-          </>
+          <button
+            disabled={attaching || selected.filter((f) => !f.isDirectory).length === 0}
+            onClick={() => void attachSelected()}
+            className="mono"
+            style={{
+              fontSize: 10.5,
+              color: tokens.accent,
+              background: tokens.primaryActionBg,
+              border: `1px solid ${tokens.accent}`,
+              borderRadius: 6,
+              padding: "4px 10px",
+              cursor: "pointer",
+              opacity: attaching ? 0.6 : 1,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {attaching ? "attaching…" : "attach"}
+          </button>
         )}
       </div>
-      {onAttach && (
-        <div
-          className="mono"
-          style={{ padding: "5px 10px", fontSize: 9.5, color: tokens.textGhost, borderBottom: `1px solid ${tokens.borderSoft}` }}
-        >
-          drag a file onto the composer to attach it, or select + attach
-        </div>
-      )}
+      <div
+        className="mono"
+        style={{ padding: "5px 10px", fontSize: 9.5, color: tokens.textGhost, borderBottom: `1px solid ${tokens.borderSoft}` }}
+      >
+        select a file, then copy path{onAttach ? " or attach" : ""} — or drag it onto the composer
+      </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         <FileManager
           files={visibleFiles}
