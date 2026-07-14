@@ -29,6 +29,7 @@ import {
   fetchFileList,
   fileReadUrl,
   attachExistingFile,
+  searchFiles,
   type FileRoot,
   type UploadedFile,
 } from "../../api";
@@ -152,6 +153,9 @@ export function FileExplorerPanel({
   const [attaching, setAttaching] = useState(false);
   const [currentPath, setCurrentPath] = useState("");
   const [query, setQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<FMFile[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchTruncated, setSearchTruncated] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const filesRef = useRef<FMFile[]>([]);
   const rootsRef = useRef<FileRoot[]>([]);
@@ -210,6 +214,60 @@ export function FileExplorerPanel({
     if (currentPath === "") void loadRoots();
     else void loadDir(currentPath);
   }, [currentPath, loadDir, loadRoots]);
+
+  // Real recursive search (debounced), scoped to the current folder — or,
+  // at the virtual Home root, across every root at once. Replaces the old
+  // "filter" which only ever matched direct children of whatever directory
+  // happened to already be loaded — not a real search over a 296-file vault.
+  useEffect(() => {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) {
+      setSearchResults(null);
+      setSearchTruncated(false);
+      return;
+    }
+    let cancelled = false;
+    setSearching(true);
+    const handle = setTimeout(() => {
+      const run = async () => {
+        const split = currentPath === "" ? null : splitVirtualPath(currentPath, rootsRef.current);
+        const scopes = split
+          ? [{ label: currentPath.split("/").filter(Boolean)[0] ?? "", ...split }]
+          : rootsRef.current.map((r) => ({ label: r.label, root: r.key, rel: "" }));
+        const results = await Promise.all(
+          scopes.map((s) =>
+            searchFiles(s.root, s.rel, q)
+              .then((r) => ({ label: s.label, ...r }))
+              .catch(() => ({ label: s.label, entries: [], truncated: false })),
+          ),
+        );
+        if (cancelled) return;
+        // Files only — a folder result can't be "opened" from this flat
+        // list without re-syncing react-file-manager's own internal nav
+        // state (it isn't rendered while searching), so it'd dead-end.
+        // The actual use case here is finding a file to copy-path/attach.
+        const files: FMFile[] = results.flatMap((r) =>
+          r.entries
+            .filter((e) => !e.isDir)
+            .map((e) => ({
+              name: e.name,
+              isDirectory: false,
+              path: `/${r.label}/${e.path}`,
+              updatedAt: e.mtime,
+              size: e.size,
+            })),
+        );
+        setSearchResults(files);
+        setSearchTruncated(results.some((r) => r.truncated));
+        setSearching(false);
+      };
+      void run();
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [query, currentPath]);
 
   // react-file-manager only sets the native `draggable` attribute on rows
   // when permissions.move is on (it's built for internal drag-to-move — we
@@ -276,16 +334,7 @@ export function FileExplorerPanel({
     setTimeout(() => setPathCopied(false), 1500);
   };
 
-  const q = query.trim().toLowerCase();
-  const visibleFiles = q
-    ? files.filter((f) => {
-        // Keep every ancestor of the current dir (breadcrumb/tree bookkeeping)
-        // plus direct children of the current dir whose name matches.
-        const prefix = currentPath === "" ? "/" : `${currentPath}/`;
-        if (!f.path.startsWith(prefix) || f.path.slice(prefix.length).includes("/")) return true;
-        return f.name.toLowerCase().includes(q);
-      })
-    : files;
+  const isSearching = query.trim().length >= 2;
 
   return (
     <div
@@ -304,7 +353,9 @@ export function FileExplorerPanel({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="filter this folder…"
+          placeholder={
+            currentPath === "" ? "search the whole vault…" : "search this folder, recursively…"
+          }
           className="mono"
           style={{
             flex: 1,
@@ -363,32 +414,137 @@ export function FileExplorerPanel({
         className="mono"
         style={{ padding: "5px 10px", fontSize: 9.5, color: tokens.textGhost, borderBottom: `1px solid ${tokens.borderSoft}` }}
       >
-        select a file, then copy path{onAttach ? " or attach" : ""} — or drag it onto the composer
+        {isSearching
+          ? searching
+            ? "searching…"
+            : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""} — click to select`
+          : `select a file, then copy path${onAttach ? " or attach" : ""} — or drag it onto the composer`}
       </div>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <FileManager
-          files={visibleFiles}
-          height="100%"
-          width="100%"
-          layout="list"
-          primaryColor={tokens.accent}
-          permissions={{
-            create: false,
-            upload: false,
-            move: true,
-            copy: false,
-            rename: false,
-            delete: false,
-            download: true,
-          }}
-          collapsibleNav
-          defaultNavExpanded={false}
-          onFolderChange={handleFolderChange}
-          onRefresh={refresh}
-          onSelectionChange={(sel: FMFile[]) => setSelected(sel)}
-          filePreviewComponent={(file: FMFile) => <FilePreview file={file} roots={roots} />}
-        />
+      <div style={{ flex: 1, minHeight: 0, overflowY: isSearching ? "auto" : undefined }}>
+        {isSearching ? (
+          <SearchResultsList
+            results={searchResults ?? []}
+            searching={searching}
+            selected={selected}
+            onToggle={(f) =>
+              setSelected((prev) =>
+                prev.some((s) => s.path === f.path)
+                  ? prev.filter((s) => s.path !== f.path)
+                  : [...prev, f],
+              )
+            }
+          />
+        ) : (
+          <FileManager
+            files={files}
+            height="100%"
+            width="100%"
+            layout="list"
+            primaryColor={tokens.accent}
+            permissions={{
+              create: false,
+              upload: false,
+              move: true,
+              copy: false,
+              rename: false,
+              delete: false,
+              download: true,
+            }}
+            collapsibleNav
+            defaultNavExpanded={false}
+            onFolderChange={handleFolderChange}
+            onRefresh={refresh}
+            onSelectionChange={(sel: FMFile[]) => setSelected(sel)}
+            filePreviewComponent={(file: FMFile) => <FilePreview file={file} roots={roots} />}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Search results span multiple folders, so they can't be rendered through
+ *  react-file-manager's own list (it derives a folder's children from path
+ *  prefix matching against the current directory — a flat cross-folder
+ *  result set isn't a "folder" it can express). Own lightweight list
+ *  instead, reusing the same `selected` state so copy-path/attach need no
+ *  special-casing for where a file came from. Files only — folders are
+ *  filtered out before this ever renders (see the search effect above). */
+function SearchResultsList({
+  results,
+  searching,
+  selected,
+  onToggle,
+}: {
+  results: FMFile[];
+  searching: boolean;
+  selected: FMFile[];
+  onToggle: (f: FMFile) => void;
+}) {
+  if (results.length === 0) {
+    return (
+      <div
+        className="mono"
+        style={{ padding: "48px 24px", fontSize: 11.5, color: tokens.textFaint, textAlign: "center" }}
+      >
+        {searching ? "searching…" : "no matches."}
+      </div>
+    );
+  }
+  return (
+    <div>
+      {results.map((f) => {
+        const parts = f.path.split("/").filter(Boolean);
+        const rootLabel = parts[0] ?? "";
+        const dir = parts.slice(1, -1).join("/");
+        const seld = selected.some((s) => s.path === f.path);
+        return (
+          <div
+            key={f.path}
+            onClick={() => onToggle(f)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 12px",
+              cursor: "pointer",
+              borderBottom: `1px solid ${tokens.borderSoft}`,
+              background: seld ? "rgba(91, 141, 239, 0.12)" : "transparent",
+            }}
+          >
+            <span className="ms" style={{ fontSize: 15, color: tokens.textMuted }}>
+              description
+            </span>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 11.5,
+                  color: seld ? tokens.text : tokens.textLabel,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {f.name}
+              </div>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  color: tokens.textGhost,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {rootLabel}
+                {dir ? ` / ${dir}` : ""}
+              </div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

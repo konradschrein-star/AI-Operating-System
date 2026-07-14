@@ -654,6 +654,25 @@ export const fetchFileList = async (
   return r.entries;
 };
 
+export interface FileSearchEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  size?: number;
+  mtime: string;
+}
+
+/** Recursive filename search under root+path (path="" searches the whole
+ *  root). Capped server-side — `truncated` tells the UI more results exist. */
+export const searchFiles = async (
+  root: string,
+  path: string,
+  q: string,
+): Promise<{ entries: FileSearchEntry[]; truncated: boolean }> =>
+  getJson(
+    `/files/search?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}`,
+  );
+
 /** Full browser-usable URL (already proxy-prefixed) — drop straight into
  *  an <img>/<video>/<audio>/<iframe> src, or fetch() it directly for text. */
 export const fileReadUrl = (root: string, path: string): string =>

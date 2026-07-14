@@ -120,6 +120,66 @@ r.get("/list", async (c) => {
   return c.json({ root: rootKey, path: rel, entries: filtered });
 });
 
+const SEARCH_RESULT_CAP = 200;
+
+/** Recursive filename search under root+path — the panel's old "filter"
+ *  only matched direct children of whatever directory was already loaded,
+ *  which isn't a real search across a 296-file vault. Capped and depth-
+ *  first; stops walking as soon as the cap is hit. */
+async function searchDir(
+  rootDir: string,
+  relDir: string,
+  query: string,
+  out: { name: string; path: string; isDir: boolean; size?: number; mtime: string }[],
+): Promise<void> {
+  if (out.length >= SEARCH_RESULT_CAP) return;
+  const abs = path.join(rootDir, relDir);
+  const names = await fs.readdir(abs).catch(() => []);
+  for (const name of names) {
+    if (out.length >= SEARCH_RESULT_CAP) return;
+    if (name.startsWith(".")) continue;
+    const entryRel = relDir ? `${relDir}/${name}` : name;
+    const entryAbs = path.join(rootDir, entryRel);
+    const st = await fs.stat(entryAbs).catch(() => null);
+    if (!st) continue;
+    if (name.toLowerCase().includes(query)) {
+      out.push({
+        name,
+        path: entryRel,
+        isDir: st.isDirectory(),
+        size: st.isDirectory() ? undefined : st.size,
+        mtime: st.mtime.toISOString(),
+      });
+    }
+    if (st.isDirectory()) await searchDir(rootDir, entryRel, query, out);
+  }
+}
+
+r.get("/search", async (c) => {
+  const rootKey = c.req.query("root") ?? "";
+  const rel = c.req.query("path") ?? "";
+  const q = (c.req.query("q") ?? "").trim().toLowerCase();
+  if (!q) return c.json({ entries: [], truncated: false });
+  let abs: string;
+  let rootDir: string;
+  try {
+    ({ abs, rootDir } = await resolveInRoot(rootKey, rel));
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "bad path" }, 400);
+  }
+  const st = await fs.stat(abs).catch(() => null);
+  if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
+  const entries: { name: string; path: string; isDir: boolean; size?: number; mtime: string }[] = [];
+  await searchDir(rootDir, rel, q, entries);
+  return c.json({
+    root: rootKey,
+    path: rel,
+    q,
+    entries,
+    truncated: entries.length >= SEARCH_RESULT_CAP,
+  });
+});
+
 /** Stream a file with HTTP Range support — same technique as routes/media.ts's
  *  serveFileWithRange, generalized to any resolved absolute path. */
 function serveFileWithRange(c: Parameters<typeof stream>[0], file: string) {
