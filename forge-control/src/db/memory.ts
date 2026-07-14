@@ -363,9 +363,15 @@ async function notesWithPreview(
     created_at: string;
   }[],
 ): Promise<NoteRow[]> {
-  const paths = noteRows.map((r) => r.vault_path);
+  // Only real vault files have embedded-chunk previews — agent briefs carry
+  // their full text in `topic` itself (see shortTopic()) and have no rows
+  // in knowledge_embeddings at all (indexAgentMessages() embeds raw
+  // agent_message rows under an unrelated worker-task://… scheme).
+  const vaultPaths = noteRows
+    .filter((r) => sourceOf(r.created_by) === "vault")
+    .map((r) => r.vault_path);
   const previews = new Map<string, string>();
-  if (paths.length > 0) {
+  if (vaultPaths.length > 0) {
     const previewResult = await cf.query<{
       source_path: string;
       content: string;
@@ -374,44 +380,50 @@ async function notesWithPreview(
          FROM knowledge_embeddings
          WHERE source_path = ANY($1::text[])
          ORDER BY source_path, chunk_index ASC`,
-      [paths],
+      [vaultPaths],
     );
     for (const row of previewResult.rows) {
       previews.set(row.source_path, row.content.slice(0, 240));
     }
   }
 
-  return noteRows.map((r) => ({
-    id: r.id,
-    slug: slugify(r.vault_path),
-    topic: r.topic,
-    vault_path: r.vault_path,
-    category: inferCategory(r.topic, r.tags ?? []),
-    source: sourceOf(r.created_by),
-    created_by: r.created_by,
-    tags: r.tags ?? [],
-    links: r.links ?? [],
-    created_at: r.created_at,
-    preview: previews.get(r.vault_path) ?? "",
-  }));
+  return noteRows.map((r) => {
+    const source = sourceOf(r.created_by);
+    return {
+      id: r.id,
+      slug: slugify(r.vault_path),
+      topic: source === "agent" ? shortTopic(r.topic) : r.topic,
+      vault_path: r.vault_path,
+      category: inferCategory(r.topic, r.tags ?? []),
+      source,
+      created_by: r.created_by,
+      tags: r.tags ?? [],
+      links: r.links ?? [],
+      created_at: r.created_at,
+      preview:
+        source === "agent"
+          ? r.topic.slice(0, 240)
+          : (previews.get(r.vault_path) ?? ""),
+    };
+  });
 }
 
-/** Full concatenated body for a note that has no on-disk file — a Hermes
- *  fleet worker's brief, stored only as embedded chunks. */
-async function bodyFromEmbeddings(vaultPath: string): Promise<string | null> {
-  const r = await cf.query<{ content: string }>(
-    `SELECT content FROM knowledge_embeddings
-       WHERE source_path = $1
-       ORDER BY chunk_index ASC`,
-    [vaultPath],
-  );
-  if (r.rows.length === 0) return null;
-  return r.rows.map((row) => row.content).join("\n\n");
+/** A Hermes worker's brief has no title/body split — the worker POSTs the
+ *  whole write-up as `topic` (it's a `text` column, no length limit). Derive
+ *  a short display title from its first line so list rows don't render a
+ *  wall of text; the full text is still used as the note body untouched. */
+function shortTopic(full: string, max = 90): string {
+  const firstLine = (full.split(/\r?\n/)[0] ?? full).trim();
+  if (!firstLine) return full.slice(0, max);
+  return firstLine.length > max ? `${firstLine.slice(0, max).trimEnd()}…` : firstLine;
 }
 
 /** Single note detail — reads the on-disk markdown for real vault notes;
- *  for Hermes fleet-worker briefs (no file ever existed) reconstructs the
- *  body from its embedded chunks instead. Joins backlinks either way.
+ *  for Hermes fleet-worker briefs (no file ever existed, and — unlike real
+ *  notes — no embeddings either, since indexAgentMessages() embeds raw
+ *  agent_message rows under an unrelated worker-task://… URI scheme, not
+ *  these self-declared vault_path labels) the full write-up already lives in
+ *  `topic` itself. Joins backlinks either way.
  *
  *  slugify() only strips a trailing .md, so a vault-sync slug round-trips
  *  to `${slug}.md` — but an agent-authored vault_path never had .md to
@@ -447,7 +459,9 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
   let wikilinks: string[] = [];
   let body: string | null;
   if (source === "agent") {
-    body = await bodyFromEmbeddings(vaultPath);
+    // reg is guaranteed here — sourceOf() only returns "agent" when reg
+    // exists (the fallback default is VAULT_SYNC_AUTHOR → "vault").
+    body = reg?.topic ?? null;
   } else {
     const raw = await safeReadVaultFile(vaultPath);
     if (raw !== null) {
@@ -464,7 +478,8 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
   const tags =
     reg?.tags ?? (Array.isArray(meta.tags) ? (meta.tags as string[]) : []);
   const links = reg?.links ?? wikilinks;
-  const topic = reg?.topic ?? slug.replace(/_/g, " ");
+  const fullTopic = reg?.topic ?? slug.replace(/_/g, " ");
+  const topic = source === "agent" ? shortTopic(fullTopic) : fullTopic;
 
   // Backlinks: notes that link TO this slug.
   const backRes = await hcp.query<{ vault_path: string; topic: string }>(
@@ -485,7 +500,7 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
     slug,
     topic,
     vault_path: vaultPath,
-    category: inferCategory(topic, tags),
+    category: inferCategory(fullTopic, tags),
     source,
     created_by: reg?.created_by ?? VAULT_SYNC_AUTHOR,
     tags,
