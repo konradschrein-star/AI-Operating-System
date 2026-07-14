@@ -411,12 +411,17 @@ async function bodyFromEmbeddings(vaultPath: string): Promise<string | null> {
 
 /** Single note detail — reads the on-disk markdown for real vault notes;
  *  for Hermes fleet-worker briefs (no file ever existed) reconstructs the
- *  body from its embedded chunks instead. Joins backlinks either way. */
+ *  body from its embedded chunks instead. Joins backlinks either way.
+ *
+ *  slugify() only strips a trailing .md, so a vault-sync slug round-trips
+ *  to `${slug}.md` — but an agent-authored vault_path never had .md to
+ *  begin with (workers self-declare it, e.g. "tech/hcp/heartbeat-probe"),
+ *  so the two forms must both be tried rather than assumed. */
 export async function getMemory(slug: string): Promise<NoteDetail | null> {
-  const vaultPath = `${slug}.md`;
-
   // Registry row, if it exists — tells us whether this is a real vault file
-  // or an agent-authored brief before we decide how to fetch the body.
+  // or an agent-authored brief, and gives us the exact vault_path to use
+  // (never guess/reconstruct it — the two sources disagree on the .md
+  // suffix).
   const registry = await hcp.query<{
     id: string;
     topic: string;
@@ -424,14 +429,18 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
     links: string[];
     created_by: string;
     created_at: string;
+    vault_path: string;
   }>(
-    `SELECT id, topic, tags, links, created_by, created_at::text
+    `SELECT id, topic, tags, links, created_by, created_at::text, vault_path
        FROM knowledge_note
-       WHERE vault_path = $1
+       WHERE vault_path = $1 OR vault_path = $1 || '.md'
        LIMIT 1`,
-    [vaultPath],
+    [slug],
   );
   const reg = registry.rows[0];
+  // No registry row (e.g. a vault file created since the last sync tick) —
+  // fall back to the vault-file assumption, same as before this fix.
+  const vaultPath = reg?.vault_path ?? `${slug}.md`;
   const source: NoteSource = sourceOf(reg?.created_by ?? VAULT_SYNC_AUTHOR);
 
   let meta: Record<string, unknown> = {};
