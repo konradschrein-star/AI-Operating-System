@@ -317,7 +317,7 @@ export function FileExplorerPanel({
             outline: "none",
           }}
         />
-        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint, whiteSpace: "nowrap" }}>
           {selected.filter((f) => !f.isDirectory).length} selected
         </span>
         <button

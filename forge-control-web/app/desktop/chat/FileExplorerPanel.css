@@ -21,6 +21,14 @@
   background: #08080a !important;
   border-color: #1c1c1f !important;
 }
+/* The library's own selection-action bar (Cut / Download / "N item
+   selected" / clear) duplicates our custom header's selection UI —
+   competing "N selected" text stacked directly under it read as broken.
+   Our header already has copy-path/attach; Cut is unwired (dead) and
+   Download is still reachable via the row's right-click menu. */
+.file-explorer .toolbar.file-selected {
+  display: none !important;
+}
 .file-explorer .item-action {
   color: #b8b8be !important;
 }
