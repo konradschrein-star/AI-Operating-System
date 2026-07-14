@@ -12,7 +12,7 @@
  */
 
 import pg from "pg";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, readdir } from "node:fs/promises";
 import path from "node:path";
 
 const { Pool } = pg;
@@ -55,12 +55,20 @@ export type NoteCategory =
   | "project"
   | "note";
 
+/** "vault" = indexed from a real file in /opt/obsidian-vault (syncVaultNotes).
+ *  "agent" = written directly by a Hermes fleet worker via knowledge.ts's
+ *  POST /knowledge — a status brief, not a real vault file; vault_path there
+ *  is a self-declared label, not a path that exists on disk. */
+export type NoteSource = "vault" | "agent";
+
 export interface NoteRow {
   id: string;
   slug: string;
   topic: string;
   vault_path: string;
   category: NoteCategory;
+  source: NoteSource;
+  created_by: string;
   tags: string[];
   links: string[];
   created_at: string;
@@ -87,10 +95,21 @@ export interface SearchHit {
 /* ============================================================================
  * Helpers
  * ========================================================================== */
-/** Convert a Markdown filename → URL-safe slug. Reversible (the slug IS the
- * filename without the .md, so /api/memory/:slug maps back to disk). */
+/** Convert a vault-relative path → URL-safe slug. Reversible (the slug IS
+ * the full relative path without the .md, so /api/memory/:slug maps back to
+ * disk) — keeping the folder is required: two notes with the same filename
+ * in different folders (common in a 296-note vault) would otherwise collide,
+ * and every nested note would 404 on open (basename-only lost the folder). */
 export function slugify(vaultPath: string): string {
-  return path.basename(vaultPath, ".md");
+  return vaultPath.replace(/\.md$/i, "");
+}
+
+export const VAULT_SYNC_AUTHOR = "vault-sync";
+
+/** Rows written by syncVaultNotes() are real vault files; everything else
+ *  came from a Hermes fleet worker's POST /knowledge (see NoteSource). */
+function sourceOf(createdBy: string): NoteSource {
+  return createdBy === VAULT_SYNC_AUTHOR ? "vault" : "agent";
 }
 
 /** Map our notion of category to whatever signals exist in the registry. */
@@ -168,6 +187,95 @@ async function embedQuery(text: string): Promise<number[] | null> {
 }
 
 /* ============================================================================
+ * Vault sync — the missing half of km-indexer.js. That process only ever
+ * wrote to knowledge_embeddings; knowledge_note (this module's registry) was
+ * never populated from the real on-disk vault, only from Hermes fleet
+ * workers' own briefs (see NoteSource). This walks the real vault and keeps
+ * knowledge_note in sync with it, without ever touching worker-authored rows.
+ * ========================================================================== */
+
+export interface VaultSyncResult {
+  scanned: number;
+  upserted: number;
+  deleted: number;
+  errors: number;
+}
+
+/** Full reconciliation pass: walk every .md file under VAULT_DIR, upsert its
+ *  topic/tags/links (from frontmatter) into knowledge_note as a 'vault-sync'
+ *  row, then delete any 'vault-sync' row whose file no longer exists. The
+ *  DO UPDATE's WHERE guard means a hypothetical vault_path collision with a
+ *  worker-authored row is left untouched rather than overwritten. */
+export async function syncVaultNotes(): Promise<VaultSyncResult> {
+  const entries = await readdir(VAULT_DIR, {
+    withFileTypes: true,
+    recursive: true,
+  }).catch(() => []);
+
+  const seenPaths: string[] = [];
+  let upserted = 0;
+  let errors = 0;
+
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.toLowerCase().endsWith(".md")) continue;
+    // Node >=20.12 exposes parentPath; older releases used `path`.
+    const parentAbs =
+      (e as unknown as { parentPath?: string; path?: string }).parentPath ??
+      (e as unknown as { path?: string }).path ??
+      VAULT_DIR;
+    const abs = path.join(parentAbs, e.name);
+    const rel = path.relative(VAULT_DIR, abs).split(path.sep).join("/");
+    if (rel.split("/").some((seg) => seg.startsWith("."))) continue;
+
+    seenPaths.push(rel);
+    try {
+      const raw = await readFile(abs, "utf8");
+      const { meta, body } = extractFrontmatter(raw);
+      const wikilinks = extractWikilinks(body);
+      const rawTags = meta.tags;
+      const tags = Array.isArray(rawTags)
+        ? rawTags.map(String)
+        : typeof rawTags === "string" && rawTags.trim()
+          ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
+          : [];
+      const topic =
+        typeof meta.title === "string" && meta.title.trim()
+          ? meta.title.trim()
+          : path.basename(rel, ".md").replace(/[_-]+/g, " ");
+
+      await hcp.query(
+        `INSERT INTO knowledge_note (topic, vault_path, tags, links, created_by)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (vault_path) DO UPDATE
+             SET topic = EXCLUDED.topic, tags = EXCLUDED.tags, links = EXCLUDED.links
+             WHERE knowledge_note.created_by = $5`,
+        [topic, rel, tags, wikilinks, VAULT_SYNC_AUTHOR],
+      );
+      upserted++;
+    } catch (err) {
+      errors++;
+      console.error(
+        `[vault-sync] failed to index ${rel}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  const del = await hcp.query(
+    `DELETE FROM knowledge_note
+       WHERE created_by = $1 AND NOT (vault_path = ANY($2::text[]))`,
+    [VAULT_SYNC_AUTHOR, seenPaths],
+  );
+
+  return {
+    scanned: seenPaths.length,
+    upserted,
+    deleted: del.rowCount ?? 0,
+    errors,
+  };
+}
+
+/* ============================================================================
  * Queries
  * ========================================================================== */
 
@@ -176,26 +284,41 @@ export interface NoteListPage {
   hasMore: boolean;
 }
 
+/** vault = real files indexed by syncVaultNotes(); agent = Hermes fleet
+ *  worker briefs (POST /knowledge) — see NoteSource. Omit for both. */
+function sourceWhere(source?: NoteSource): { clause: string; value: string | null } {
+  if (source === "vault") return { clause: "created_by = $SOURCE", value: VAULT_SYNC_AUTHOR };
+  if (source === "agent") return { clause: "created_by != $SOURCE", value: VAULT_SYNC_AUTHOR };
+  return { clause: "TRUE", value: null };
+}
+
 /** List vault notes joined with a one-chunk preview from the embeddings
  *  store. Paged (fetches limit+1 to derive hasMore) — the vault only grows,
  *  so the caller should page rather than pull everything every time. */
 export async function listMemoryPage(
   limit = 30,
   offset = 0,
+  source?: NoteSource,
 ): Promise<NoteListPage> {
+  const where = sourceWhere(source);
+  const params: unknown[] = where.value !== null ? [where.value, limit + 1, offset] : [limit + 1, offset];
+  const clause = where.value !== null ? where.clause.replace("$SOURCE", "$1") : where.clause;
+  const limitIdx = where.value !== null ? 2 : 1;
   const noteResult = await hcp.query<{
     id: string;
     topic: string;
     vault_path: string;
     tags: string[];
     links: string[];
+    created_by: string;
     created_at: string;
   }>(
-    `SELECT id, topic, vault_path, tags, links, created_at::text
+    `SELECT id, topic, vault_path, tags, links, created_by, created_at::text
        FROM knowledge_note
+       WHERE ${clause}
        ORDER BY created_at DESC
-       LIMIT $1 OFFSET $2`,
-    [limit + 1, offset],
+       LIMIT $${limitIdx} OFFSET $${limitIdx + 1}`,
+    params,
   );
   const hasMore = noteResult.rows.length > limit;
   if (hasMore) noteResult.rows.length = limit;
@@ -204,13 +327,17 @@ export async function listMemoryPage(
   return { notes, hasMore };
 }
 
-/** True per-category totals across the WHOLE vault, independent of the
- *  paged list above — cheap (topic+tags only, no embeddings preview join)
- *  so the category rail's counts stay correct no matter how far the user
- *  has paged. */
-export async function noteCounts(): Promise<Record<NoteCategory | "all", number>> {
+/** True per-category totals, scoped to one source (or both if omitted) and
+ *  independent of the paged list above — cheap (topic+tags only, no
+ *  embeddings preview join) so the category rail's counts stay correct no
+ *  matter how far the user has paged. */
+export async function noteCounts(
+  source?: NoteSource,
+): Promise<Record<NoteCategory | "all", number>> {
+  const where = sourceWhere(source);
   const r = await hcp.query<{ topic: string; tags: string[] }>(
-    `SELECT topic, tags FROM knowledge_note`,
+    `SELECT topic, tags FROM knowledge_note WHERE ${where.value !== null ? where.clause.replace("$SOURCE", "$1") : where.clause}`,
+    where.value !== null ? [where.value] : [],
   );
   const out: Record<NoteCategory | "all", number> = {
     all: r.rows.length,
@@ -232,6 +359,7 @@ async function notesWithPreview(
     vault_path: string;
     tags: string[];
     links: string[];
+    created_by: string;
     created_at: string;
   }[],
 ): Promise<NoteRow[]> {
@@ -259,6 +387,8 @@ async function notesWithPreview(
     topic: r.topic,
     vault_path: r.vault_path,
     category: inferCategory(r.topic, r.tags ?? []),
+    source: sourceOf(r.created_by),
+    created_by: r.created_by,
     tags: r.tags ?? [],
     links: r.links ?? [],
     created_at: r.created_at,
@@ -266,31 +396,62 @@ async function notesWithPreview(
   }));
 }
 
-/** Single note detail — reads the on-disk markdown, joins backlinks. */
+/** Full concatenated body for a note that has no on-disk file — a Hermes
+ *  fleet worker's brief, stored only as embedded chunks. */
+async function bodyFromEmbeddings(vaultPath: string): Promise<string | null> {
+  const r = await cf.query<{ content: string }>(
+    `SELECT content FROM knowledge_embeddings
+       WHERE source_path = $1
+       ORDER BY chunk_index ASC`,
+    [vaultPath],
+  );
+  if (r.rows.length === 0) return null;
+  return r.rows.map((row) => row.content).join("\n\n");
+}
+
+/** Single note detail — reads the on-disk markdown for real vault notes;
+ *  for Hermes fleet-worker briefs (no file ever existed) reconstructs the
+ *  body from its embedded chunks instead. Joins backlinks either way. */
 export async function getMemory(slug: string): Promise<NoteDetail | null> {
   const vaultPath = `${slug}.md`;
-  const raw = await safeReadVaultFile(vaultPath);
-  if (raw === null) return null;
 
-  const { meta, body } = extractFrontmatter(raw);
-  const wikilinks = extractWikilinks(body);
-
-  // Registry row, if it exists.
+  // Registry row, if it exists — tells us whether this is a real vault file
+  // or an agent-authored brief before we decide how to fetch the body.
   const registry = await hcp.query<{
     id: string;
     topic: string;
     tags: string[];
     links: string[];
+    created_by: string;
     created_at: string;
   }>(
-    `SELECT id, topic, tags, links, created_at::text
+    `SELECT id, topic, tags, links, created_by, created_at::text
        FROM knowledge_note
        WHERE vault_path = $1
        LIMIT 1`,
     [vaultPath],
   );
-
   const reg = registry.rows[0];
+  const source: NoteSource = sourceOf(reg?.created_by ?? VAULT_SYNC_AUTHOR);
+
+  let meta: Record<string, unknown> = {};
+  let wikilinks: string[] = [];
+  let body: string | null;
+  if (source === "agent") {
+    body = await bodyFromEmbeddings(vaultPath);
+  } else {
+    const raw = await safeReadVaultFile(vaultPath);
+    if (raw !== null) {
+      const parsed = extractFrontmatter(raw);
+      meta = parsed.meta;
+      body = parsed.body;
+      wikilinks = extractWikilinks(body);
+    } else {
+      body = null;
+    }
+  }
+  if (body === null) return null;
+
   const tags =
     reg?.tags ?? (Array.isArray(meta.tags) ? (meta.tags as string[]) : []);
   const links = reg?.links ?? wikilinks;
@@ -316,6 +477,8 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
     topic,
     vault_path: vaultPath,
     category: inferCategory(topic, tags),
+    source,
+    created_by: reg?.created_by ?? VAULT_SYNC_AUTHOR,
     tags,
     links,
     created_at: reg?.created_at ?? new Date(0).toISOString(),

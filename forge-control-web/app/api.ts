@@ -274,12 +274,20 @@ export type MemoryCategory =
   | "project"
   | "note";
 
+/** "vault" = a real file in the Obsidian vault (indexed by the vault-sync
+ *  job). "agent" = a status brief written directly by a Hermes fleet worker
+ *  (cc-architect, sysop-01, …) — never a real file, vault_path is just a
+ *  self-declared label. */
+export type MemorySource = "vault" | "agent";
+
 export interface MemoryNote {
   id: string;
   slug: string;
   topic: string;
   vault_path: string;
   category: MemoryCategory;
+  source: MemorySource;
+  created_by: string;
   tags: string[];
   links: string[];
   created_at: string;
@@ -350,11 +358,12 @@ export interface MemoryListPage {
  *  a crawl eventually. Defaults to the newest 30, "load more" fetches the
  *  next page. */
 export const fetchMemoryList = async (
-  opts: { limit?: number; offset?: number } = {},
+  opts: { limit?: number; offset?: number; source?: MemorySource } = {},
 ): Promise<MemoryListPage> => {
   const params = new URLSearchParams();
   params.set("limit", String(opts.limit ?? 30));
   if (opts.offset !== undefined) params.set("offset", String(opts.offset));
+  if (opts.source) params.set("source", opts.source);
   const r = await getJson<{ count: number; notes: MemoryNote[]; hasMore: boolean }>(
     `/memory?${params}`,
   );
@@ -363,9 +372,10 @@ export const fetchMemoryList = async (
 
 /** Vault-wide per-category totals — independent of the paged note list, so
  *  the category rail stays correct no matter how many pages are loaded. */
-export const fetchMemoryCounts = async (): Promise<
-  Record<MemoryCategory | "all", number>
-> => getJson(`/memory/counts`);
+export const fetchMemoryCounts = async (
+  source?: MemorySource,
+): Promise<Record<MemoryCategory | "all", number>> =>
+  getJson(`/memory/counts${source ? `?source=${source}` : ""}`);
 
 export const fetchMemoryNote = async (
   slug: string,

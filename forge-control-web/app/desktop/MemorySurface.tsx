@@ -12,6 +12,7 @@ import {
   type MemoryCategory,
   type MemoryNote,
   type MemorySearchHitWithLane,
+  type MemorySource,
   type TripleCategory,
 } from "../api";
 import { MemoryGraph3D } from "./MemoryGraph3D";
@@ -52,18 +53,23 @@ export function MemorySurface() {
   const PAGE_SIZE = 30;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [cat, setCat] = useState<MemoryCategory | "all">("all");
+  // "vault" = real notes from your Obsidian vault (indexed by the vault-sync
+  // job). "agent" = status briefs your Hermes fleet workers write directly
+  // to the DB — never real files. Kept as separate tabs so the two don't
+  // read as one confusing, half-broken list.
+  const [source, setSource] = useState<MemorySource>("vault");
   // Category is a client-side filter over whatever page is loaded, so a
   // specific category needs a bigger candidate pool than the "all" default
   // — otherwise picking "Rules" would only search the 30 most recent notes
   // across every category and mostly come up empty.
   const effectiveLimit = cat === "all" ? visibleCount : 300;
   const listQ = useQuery({
-    queryKey: ["memory", "list", effectiveLimit],
-    queryFn: () => fetchMemoryList({ limit: effectiveLimit }),
+    queryKey: ["memory", "list", source, effectiveLimit],
+    queryFn: () => fetchMemoryList({ limit: effectiveLimit, source }),
   });
   const countsQ = useQuery({
-    queryKey: ["memory", "counts"],
-    queryFn: fetchMemoryCounts,
+    queryKey: ["memory", "counts", source],
+    queryFn: () => fetchMemoryCounts(source),
   });
   const [selSlug, setSelSlug] = useState<string | null>(null);
   const [q, setQ] = useState("");
@@ -143,7 +149,7 @@ export function MemorySurface() {
               letterSpacing: "0.04em",
             }}
           >
-            Obsidian vault
+            {source === "vault" ? "Obsidian vault" : "Agent notes"}
           </span>
         </div>
         <div
@@ -169,6 +175,42 @@ export function MemorySurface() {
           >
             {listQ.isLoading ? "loading…" : `${counts.all ?? 0} notes`}
           </span>
+        </div>
+
+        {/* Real vault files vs Hermes fleet-worker status briefs — these
+            used to be silently mixed in one list under "Obsidian vault",
+            which is why every note looked broken (agent briefs have no
+            file on disk to open). */}
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            padding: "0 4px 10px",
+          }}
+        >
+          {(["vault", "agent"] as const).map((s) => (
+            <div
+              key={s}
+              onClick={() => {
+                setSource(s);
+                setSelSlug(null);
+              }}
+              className="mono"
+              style={{
+                flex: 1,
+                textAlign: "center",
+                fontSize: 10,
+                padding: "5px 0",
+                borderRadius: 5,
+                cursor: "pointer",
+                color: source === s ? tokens.text : tokens.textFaint,
+                background: source === s ? "#141417" : "transparent",
+                border: `1px solid ${source === s ? tokens.borderEmphasis : "transparent"}`,
+              }}
+            >
+              {s === "vault" ? "Vault" : "Agent"}
+            </div>
+          ))}
         </div>
 
         {CAT_LABEL.map((c) => {
@@ -611,6 +653,14 @@ export function MemorySurface() {
                       {n.category}
                     </span>
                     <span style={{ flex: 1 }} />
+                    {n.source === "agent" && (
+                      <span
+                        className="mono"
+                        style={{ fontSize: 8.5, color: tokens.textGhost }}
+                      >
+                        {n.created_by}
+                      </span>
+                    )}
                   </div>
                   <div
                     style={{
@@ -663,7 +713,9 @@ export function MemorySurface() {
                 textAlign: "center",
               }}
             >
-              no notes in this category.
+              {source === "vault"
+                ? "no vault notes in this category."
+                : "no agent notes in this category."}
             </div>
           )}
         </div>

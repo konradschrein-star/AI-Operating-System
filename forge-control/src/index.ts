@@ -30,6 +30,7 @@ import files from "./routes/files.ts";
 import projects from "./routes/projects.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
+import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
 import mentor from "./routes/mentor.ts";
 
 const app = new Hono();
@@ -170,3 +171,7 @@ startCronTick();
 
 // v2.2: Telegram bridge (VPS Cat). Inbound long poll + outbound push drain.
 startTelegramBridge();
+
+// Keeps hcp.knowledge_note in sync with the real on-disk Obsidian vault —
+// km-indexer.js only ever wrote embeddings, never the note registry.
+startVaultSyncTick();
