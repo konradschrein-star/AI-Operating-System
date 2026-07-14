@@ -791,7 +791,7 @@ export function MemorySurface() {
                 className="mono"
                 style={{ fontSize: 10.5, color: tokens.textMuted }}
               >
-                Vault › {note.vault_path}
+                {note.source === "vault" ? "Vault" : "Agent"} › {note.vault_path}
               </span>
               <span
                 className="mono"
@@ -800,31 +800,33 @@ export function MemorySurface() {
                 · {note.word_count} words
               </span>
               <span style={{ flex: 1 }} />
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  cursor: "pointer",
-                  border: `1px solid ${tokens.invariantBorder}`,
-                  borderRadius: 6,
-                  padding: "4px 9px",
-                  background: "#0e0c14",
-                }}
-              >
-                <span
-                  className="ms"
-                  style={{ fontSize: 13, color: tokens.decide }}
+              {note.source === "vault" && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    cursor: "pointer",
+                    border: `1px solid ${tokens.invariantBorder}`,
+                    borderRadius: 6,
+                    padding: "4px 9px",
+                    background: "#0e0c14",
+                  }}
                 >
-                  open_in_new
-                </span>
-                <span
-                  className="mono"
-                  style={{ fontSize: 10, color: tokens.decide }}
-                >
-                  Open in Obsidian
-                </span>
-              </div>
+                  <span
+                    className="ms"
+                    style={{ fontSize: 13, color: tokens.decide }}
+                  >
+                    open_in_new
+                  </span>
+                  <span
+                    className="mono"
+                    style={{ fontSize: 10, color: tokens.decide }}
+                  >
+                    Open in Obsidian
+                  </span>
+                </div>
+              )}
             </div>
 
             {note.tags.length > 0 && (
