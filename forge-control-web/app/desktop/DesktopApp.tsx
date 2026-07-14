@@ -22,6 +22,7 @@ import {
   fetchLive,
   fetchControl,
   resolveInboxItem,
+  clearAllInbox,
   freezeFleet,
   resumeFleet,
   emptyToday,
@@ -309,6 +310,14 @@ export function DesktopApp() {
     },
   });
 
+  const clearNeedsM = useMutation({
+    mutationFn: clearAllInbox,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["today"] });
+      qc.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
+
   const inboxBadges: Record<string, string> = {};
   if (inboxCount > 0) inboxBadges.inbox = String(inboxCount);
   if (bleedCount > 0) inboxBadges.live = `${bleedCount}!`;
@@ -347,6 +356,8 @@ export function DesktopApp() {
               data={todayQ.data ?? emptyToday}
               inboxCount={inboxCount}
               onNav={setSurface}
+              onClearNeeds={() => clearNeedsM.mutate()}
+              clearingNeeds={clearNeedsM.isPending}
             />
           )}
           {surface === "inbox" && (
@@ -985,10 +996,14 @@ function TodaySurface({
   data,
   inboxCount,
   onNav,
+  onClearNeeds,
+  clearingNeeds,
 }: {
   data: TodayResponse;
   inboxCount: number;
   onNav: (s: Surface) => void;
+  onClearNeeds: () => void;
+  clearingNeeds: boolean;
 }) {
   return (
     <div
@@ -1122,15 +1137,39 @@ function TodaySurface({
 
         <div>
           <div
-            className="mono"
             style={{
-              fontSize: 10,
-              color: tokens.textFaint,
-              letterSpacing: "0.12em",
+              display: "flex",
+              alignItems: "center",
               marginBottom: 12,
             }}
           >
-            NEEDS YOU
+            <div
+              className="mono"
+              style={{
+                fontSize: 10,
+                color: tokens.textFaint,
+                letterSpacing: "0.12em",
+              }}
+            >
+              NEEDS YOU
+            </div>
+            <span style={{ flex: 1 }} />
+            {inboxCount > 0 && (
+              <div
+                onClick={() => !clearingNeeds && onClearNeeds()}
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  color: clearingNeeds ? tokens.textFaint : tokens.textMuted,
+                  cursor: clearingNeeds ? "default" : "pointer",
+                  border: `1px solid ${tokens.border}`,
+                  borderRadius: 5,
+                  padding: "3px 8px",
+                }}
+              >
+                {clearingNeeds ? "clearing…" : "clear all"}
+              </div>
+            )}
           </div>
           {data.needs.length === 0 ? (
             <div
