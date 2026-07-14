@@ -9,13 +9,25 @@ import {
   extractTriplesNextBatch,
   pingMemory,
   knowledgeGraph,
+  syncVaultNotes,
   TRIPLE_CATEGORIES,
   type TripleCategory,
+  type NoteSource,
 } from "../db/memory.ts";
 
 const r = new Hono();
 
+function parseSource(c: { req: { query: (k: string) => string | undefined } }): NoteSource | undefined {
+  const raw = c.req.query("source");
+  return raw === "vault" || raw === "agent" ? raw : undefined;
+}
+
 r.get("/health", async (c) => c.json(await pingMemory()));
+
+/* Manual trigger for the vault↔knowledge_note reconciliation pass — the
+ * periodic tick (vault-sync-tick.ts) covers the steady state, this lets the
+ * UI (or a curl) force an immediate resync after editing the vault. */
+r.post("/sync", async (c) => c.json(await syncVaultNotes()));
 
 /* v2.2: entity graph for the 3D visualization. Registered before /:slug so
  * the catch-all param route doesn't shadow it. */
@@ -29,7 +41,7 @@ r.get("/graph", async (c) => {
 
 /* Vault-wide per-category totals, independent of pagination. Mounted before
  * the slug-scoped GET so Hono routes correctly. */
-r.get("/counts", async (c) => c.json(await noteCounts()));
+r.get("/counts", async (c) => c.json(await noteCounts(parseSource(c))));
 
 r.get("/", async (c) => {
   const limit = Math.min(
@@ -37,7 +49,7 @@ r.get("/", async (c) => {
     Math.max(1, Number(c.req.query("limit") ?? "30")),
   );
   const offset = Math.max(0, Number(c.req.query("offset") ?? "0"));
-  const { notes, hasMore } = await listMemoryPage(limit, offset);
+  const { notes, hasMore } = await listMemoryPage(limit, offset, parseSource(c));
   return c.json({ count: notes.length, notes, hasMore });
 });
 
