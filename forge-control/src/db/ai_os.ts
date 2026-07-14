@@ -525,6 +525,31 @@ export async function resolveInbox(
   }
 }
 
+/** Bulk-dismiss every currently open inbox item — the Today screen's "NEEDS
+ *  YOU" panel is just a 3-item preview of this same open set (see
+ *  getTodayPayload below), so "clear the important box" means resolving
+ *  all of it, not only the 3 shown. Reuses resolveInbox() per item (not a
+ *  single bulk UPDATE) so each one still gets its decision-log row and HCP
+ *  relay — a dismiss is a real resolution, not a silent hide. One item
+ *  failing doesn't block the rest. */
+export async function resolveAllOpenInbox(
+  resolvedBy = "user",
+): Promise<{ resolved: number; failed: number }> {
+  const open = await listOpenInbox(500);
+  const results = await Promise.allSettled(
+    open.map((i) =>
+      resolveInbox(i.id, resolvedBy, {
+        action: "resolve",
+        reason: "cleared from Today",
+      }),
+    ),
+  );
+  const resolved = results.filter(
+    (r) => r.status === "fulfilled" && r.value !== null,
+  ).length;
+  return { resolved, failed: open.length - resolved };
+}
+
 /**
  * If an inbox item was mirrored from HCP (external_id "hcp:<msg_id>"), write
  * a reply row into hcp.agent_message so the upstream worker unblocks.

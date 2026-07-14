@@ -220,6 +220,11 @@ export const resolveInboxItem = async (
   });
 };
 
+/** "NEEDS YOU" on Today is a 3-item preview of the whole open-inbox set —
+ *  clearing it means dismissing all of it, not just the 3 shown. */
+export const clearAllInbox = async (): Promise<{ resolved: number; failed: number }> =>
+  postJson("/inbox/resolve-all", {});
+
 /* ----------------------------------------------------------------------------
  * Live
  * -------------------------------------------------------------------------- */

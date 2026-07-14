@@ -3,6 +3,7 @@ import {
   getInboxItemPreview,
   listOpenInbox,
   resolveInbox,
+  resolveAllOpenInbox,
 } from "../db/ai_os.ts";
 
 const r = new Hono();
@@ -17,6 +18,18 @@ r.get("/", async (c) => {
   );
   const items = await listOpenInbox(limit);
   return c.json({ count: items.length, items });
+});
+
+/* Bulk-dismiss every open item — the Today screen's "NEEDS YOU" clear-all
+ * button. Mounted before /:id/* so the literal "resolve-all" segment can't
+ * be swallowed by a param route (it can't here since :id routes are
+ * suffixed, but keeping the literal route first is the defensive habit). */
+r.post("/resolve-all", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    resolved_by?: string;
+  };
+  const result = await resolveAllOpenInbox(body.resolved_by ?? "user");
+  return c.json(result);
 });
 
 /* GET /:id/preview — rich preview payload for the inbox detail pane.
