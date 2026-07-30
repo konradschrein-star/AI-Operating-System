@@ -49,7 +49,7 @@ function activityLabel(act: CurrentActivity | null): string {
   if (!act) return "";
   if (act.kind === "tool_call") return act.tool ?? act.kind;
   if (act.kind === "tool_result") return "← result";
-  if (act.kind === "text" && act.text) return act.text.slice(0, 60);
+  if ((act.kind === "text" || act.kind === "assistant_text") && act.text) return act.text.slice(0, 60);
   return act.kind;
 }
 
@@ -240,7 +240,7 @@ export function AgentActivity() {
             {(q.error as Error).message}
           </div>
         )}
-        {!q.isLoading && !agents.length && (
+        {!q.isLoading && !q.isError && !agents.length && (
           <div
             className="mono"
             style={{
