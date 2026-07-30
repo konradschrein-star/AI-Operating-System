@@ -93,9 +93,10 @@ function AgentLine({ a, depth = 0 }: { a: AgentRow; depth?: number }) {
 
   const usage = live && a.usage_running ? a.usage_running : a.usage_total;
   const toks = tokenLine(usage);
+  const label = activityLabel(a.current_activity);
 
   return (
-    <div>
+    <div style={{ position: "relative" }}>
       <div
         style={{
           display: "flex",
@@ -104,7 +105,6 @@ function AgentLine({ a, depth = 0 }: { a: AgentRow; depth?: number }) {
           padding: "5px 6px",
           paddingLeft: 6 + depth * 14,
           borderRadius: 6,
-          position: "relative",
         }}
       >
         {/* Tree rail: makes "this agent lives inside that one" unmistakable. */}
@@ -165,7 +165,7 @@ function AgentLine({ a, depth = 0 }: { a: AgentRow; depth?: number }) {
         {!isSub && a.model && (
           <span style={{ color: tokens.textMuted }}>{a.model}</span>
         )}
-        {activityLabel(a.current_activity) && (
+        {label && (
           <span
             style={{
               color: tokens.textMuted2,
@@ -175,9 +175,9 @@ function AgentLine({ a, depth = 0 }: { a: AgentRow; depth?: number }) {
               flex: 1,
               minWidth: 0,
             }}
-            title={activityLabel(a.current_activity)}
+            title={label}
           >
-            {activityLabel(a.current_activity)}
+            {label}
           </span>
         )}
       </div>
@@ -198,12 +198,9 @@ export function AgentActivity() {
 
   const agents = q.data?.agents ?? [];
   const s = q.data?.summary;
-  const active = agents.filter(
-    (a) => a.status === "running" || a.status === "queued",
-  );
-  const recent = agents.filter(
-    (a) => a.status !== "running" && a.status !== "queued",
-  );
+  const ACTIVE_STATUSES = new Set(["running", "queued", "stuck", "paused"]);
+  const active = agents.filter((a) => ACTIVE_STATUSES.has(a.status));
+  const recent = agents.filter((a) => !ACTIVE_STATUSES.has(a.status));
 
   return (
     <>
