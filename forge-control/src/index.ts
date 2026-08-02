@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
+import { startProbeLoop } from "./lib/accounts.ts";
 import health from "./routes/health.ts";
 import hermes from "./routes/hermes.ts";
 import pm2 from "./routes/pm2.ts";
@@ -9,6 +10,7 @@ import system from "./routes/system.ts";
 import inbox from "./routes/inbox.ts";
 import fleet from "./routes/fleet.ts";
 import agents from "./routes/agents.ts";
+import accounts from "./routes/accounts.ts";
 import decisions from "./routes/decisions.ts";
 import today from "./routes/today.ts";
 import live from "./routes/live.ts";
@@ -131,6 +133,7 @@ app.route("/api/live", live);
 app.route("/api/control", control);
 app.route("/api/fleet", fleet);
 app.route("/api/agents", agents);
+app.route("/api/accounts", accounts);
 app.route("/api/decisions", decisions);
 app.route("/api/memory", memory);
 app.route("/api/search", search);
@@ -188,3 +191,9 @@ startTelegramBridge();
 // Keeps hcp.knowledge_note in sync with the real on-disk Obsidian vault —
 // km-indexer.js only ever wrote embeddings, never the note registry.
 startVaultSyncTick();
+
+// 2026-08-02: Claude account health probing. Cheap tier (credential file +
+// last confirmed run) every 10 minutes. This is the half of the account system
+// that would actually have prevented the 2026-08-02 outage — an account died in
+// June and nothing noticed until August.
+startProbeLoop();

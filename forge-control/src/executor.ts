@@ -28,6 +28,11 @@ import {
   type CcEvent,
 } from "./lib/cc-runner.ts";
 import {
+  resolveAccount,
+  resolveFailoverAccount,
+  recordRunOutcome,
+} from "./lib/accounts.ts";
+import {
   compressThread,
   emptyCompressorState,
   readCompressorState,
@@ -792,11 +797,23 @@ async function processWithClaudeCode(
     return status === "cancelled" || status === "paused";
   };
 
-  let result;
-  try {
-    result = await runClaudeCode({
-      prompt: message,
-      sessionId: priorSession,
+  // Which Claude identity serves this run. Throws NoHealthyAccountError naming
+  // every account and why it was rejected — the diagnosis that was missing on
+  // 2026-08-02, when the only signal was a bare authentication failure.
+  let account = await resolveAccount();
+  console.log(
+    `[executor] run ${run.id}: account=${account.slug} health=${account.health}`,
+  );
+
+  const callEngine = (over: {
+    prompt: string;
+    sessionId: string | null;
+    configDir: string;
+  }) =>
+    runClaudeCode({
+      prompt: over.prompt,
+      sessionId: over.sessionId,
+      configDir: over.configDir,
       timeoutMs,
       model,
       effort,
@@ -805,6 +822,14 @@ async function processWithClaudeCode(
       vaultAccess,
       onEvent,
       isCancelled,
+    });
+
+  let result;
+  try {
+    result = await callEngine({
+      prompt: message,
+      sessionId: priorSession,
+      configDir: account.configDir,
     });
   } catch (err) {
     if (err instanceof CcResumeError) {
@@ -822,25 +847,88 @@ async function processWithClaudeCode(
       const fullMessage = buildPromptFromThread(thread, {
         assistantMarker: false,
       });
-      result = await runClaudeCode({
+      result = await callEngine({
         prompt: memoryBlock ? `${memoryBlock}${fullMessage}` : fullMessage,
         sessionId: null,
-        timeoutMs,
-        model,
-        effort,
-        cwd,
-        allowedTools,
-        vaultAccess,
-        onEvent,
-        isCancelled,
+        configDir: account.configDir,
       });
     } else {
-      await chain; // flush whatever streamed before the failure
-      throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      // Classifies the failure and, for auth ONLY, marks the account broken.
+      // A rate-limited account is busy, not broken: it is left healthy and
+      // failover is refused, so the run fails visibly instead of quietly
+      // consuming a second account's capacity.
+      const outcome = await recordRunOutcome(account.slug, {
+        ok: false,
+        errorMessage: msg,
+      });
+      if (!outcome.failover) {
+        if (outcome.classification === "rate_limit") {
+          console.warn(
+            `[executor] run ${run.id}: ${account.slug} is rate-limited — ` +
+              `failing visibly, NOT switching accounts`,
+          );
+        }
+        await chain; // flush whatever streamed before the failure
+        throw err;
+      }
+
+      const next = await resolveFailoverAccount(account.slug);
+      if (!next) {
+        console.error(
+          `[executor] run ${run.id}: ${account.slug} failed authentication and ` +
+            `no other usable account exists`,
+        );
+        await chain;
+        throw err;
+      }
+
+      console.warn(
+        `[executor] run ${run.id}: ${account.slug} failed authentication — ` +
+          `failing over to ${next.slug}`,
+      );
+      await appendThreadEntry(run.id, {
+        role: "system",
+        content: `Claude account "${account.slug}" failed to authenticate — retried on "${next.slug}".`,
+        ts: new Date().toISOString(),
+        kind: "text",
+        meta: { account_failover: true, from: account.slug, to: next.slug },
+      });
+
+      // A CC session lives INSIDE the account's config dir, so the new account
+      // cannot resume the old one's session. Start fresh and re-send the full
+      // transcript, exactly as the resume-miss path does.
+      const fullMessage = buildPromptFromThread(thread, {
+        assistantMarker: false,
+      });
+      account = next;
+      try {
+        result = await callEngine({
+          prompt: memoryBlock ? `${memoryBlock}${fullMessage}` : fullMessage,
+          sessionId: null,
+          configDir: next.configDir,
+        });
+      } catch (err2) {
+        // One hop only. Two auth failures in a row is a systemic fault, not a
+        // bad account, and walking the whole list would burn every credential.
+        await recordRunOutcome(next.slug, {
+          ok: false,
+          errorMessage: err2 instanceof Error ? err2.message : String(err2),
+        });
+        await chain;
+        throw err2;
+      }
     }
   }
 
   await chain; // all streamed entries persisted, in order
+
+  // Proof the account works. This is the ONLY thing that promotes an account
+  // out of `unknown` — a credential file cannot, since a dead account's file is
+  // structurally identical to a live one's.
+  await recordRunOutcome(account.slug, { ok: true }).catch((e) =>
+    console.warn(`[executor] account success write failed: ${e.message}`),
+  );
 
   // The final assistant message already arrived via assistant_text events;
   // only fall back to result.text if the stream somehow produced none.

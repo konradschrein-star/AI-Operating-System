@@ -15,6 +15,15 @@
  *
  * Auth: the VPS `claude` binary is OAuth-authenticated. ANTHROPIC_API_KEY
  * is explicitly stripped from the child env (see memory: OAuth only).
+ *
+ * Accounts (2026-08-02): the caller passes `configDir`, which becomes
+ * CLAUDE_CONFIG_DIR on the child — the ONLY mechanism that selects which
+ * Claude identity a run uses. One directory holds exactly one identity.
+ * Previously this was omitted entirely and every run silently inherited
+ * whatever /root/.claude happened to contain; when that credential was zeroed
+ * on 2026-08-02 the whole OS stopped with no diagnosis of which account had
+ * failed or why. See docs/superpowers/specs/2026-08-02-claude-account-health-
+ * failover-design.md.
  */
 
 import { spawn } from "node:child_process";
@@ -226,6 +235,11 @@ export async function runClaudeCode(opts: {
    *  plain Chat/Manager runs keep today's behavior. Ticker-spawned roles
    *  that don't need Konrad's whole knowledge base pass false. */
   vaultAccess?: boolean;
+  /** Claude account config dir → CLAUDE_CONFIG_DIR on the child. Selects the
+   *  identity this run authenticates as. When omitted the child inherits the
+   *  ambient config, which is the pre-2026-08-02 behaviour and should only
+   *  happen for callers that genuinely have no registry (e.g. one-off scripts). */
+  configDir?: string | null;
   onEvent: (e: CcEvent) => void;
   /** Polled every ~5s; return true to kill the child (cancel/pause). */
   isCancelled?: () => Promise<boolean>;
@@ -248,6 +262,7 @@ export async function runClaudeCode(opts: {
 
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY; // OAuth only — never bill the API key.
+  if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir;
 
   const t0 = Date.now();
   const child = spawn(CC_BIN, args, {

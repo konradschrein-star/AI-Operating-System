@@ -13,6 +13,13 @@ module.exports = {
           'postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge',
         HCP_DATABASE_URL:
           'postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp',
+        // The AI OS's OWN database (host postgres :5434), separate from
+        // Content Forge. Read from the host env — it carries a password, and
+        // this file is committed. Source /root/.ai_os_db_url before starting,
+        // then `pm2 restart <app> --update-env`. There is deliberately NO
+        // fallback in the code: a missing value throws rather than silently
+        // reconnecting to content_forge. See db/claude-accounts.ts.
+        AI_OS_DATABASE_URL: process.env.AI_OS_DATABASE_URL || '',
         // v1.6 phase 5: triple extraction routes call claude-pool too.
         // Read from the host env so the key survives cold pm2 starts
         // when launched via `CLAUDE_POOL_API_KEY=... pm2 start ecosystem.config.cjs`.
@@ -44,6 +51,13 @@ module.exports = {
           'postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge',
         HCP_DATABASE_URL:
           'postgresql://postgres:content_forge_prod@127.0.0.1:5432/hcp',
+        // The AI OS's OWN database (host postgres :5434), separate from
+        // Content Forge. Read from the host env — it carries a password, and
+        // this file is committed. Source /root/.ai_os_db_url before starting,
+        // then `pm2 restart <app> --update-env`. There is deliberately NO
+        // fallback in the code: a missing value throws rather than silently
+        // reconnecting to content_forge. See db/claude-accounts.ts.
+        AI_OS_DATABASE_URL: process.env.AI_OS_DATABASE_URL || '',
         CLAUDE_POOL_URL: 'http://127.0.0.1:8092',
         // CLAUDE_POOL_API_KEY is set from the host pm2 env at startup time
         // (see deploy notes) — never bake the key into version control.
