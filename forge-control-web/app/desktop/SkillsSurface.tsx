@@ -193,7 +193,7 @@ export function SkillsSurface() {
             disabled={auditMut.isPending}
             className="mono"
             style={{
-              background: auditMut.isPending ? tokens.bgGutter : "#101013",
+              background: auditMut.isPending ? tokens.bgGutter : tokens.selectedBg,
               border: `1px solid ${audit ? tokens.accent : tokens.borderEmphasis}`,
               borderRadius: 6,
               padding: "6px 12px",
@@ -808,7 +808,7 @@ function CatItem({
         padding: "7px 16px",
         cursor: "pointer",
         borderLeft: `2px solid ${active ? tokens.accent : "transparent"}`,
-        background: active ? "#101013" : "transparent",
+        background: active ? tokens.selectedBg : "transparent",
       }}
     >
       <span

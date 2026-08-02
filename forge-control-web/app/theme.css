@@ -1,0 +1,194 @@
+/**
+ * Runtime theming.
+ *
+ * Every design token is a CSS custom property so the whole UI can flip between
+ * dark and light at runtime without touching the ~1150 `tokens.*` call sites in
+ * the components (app/tokens.ts maps each token to `var(--fg-*)`).
+ *
+ * Dark is the default and lives on :root, so anything rendered before the theme
+ * script runs is already correct. Light is opt-in via [data-theme="light"] on
+ * <html> — set by ThemeToggle and pre-applied by the inline script in layout.tsx
+ * so there's no flash of dark on load.
+ *
+ * Light is NOT a naive inversion: pure-white on pure-black inverts to eye-searing
+ * white, and the dark palette's saturated status colours wash out on light
+ * backgrounds. Surfaces use a warm off-white ramp and the status hues are
+ * darkened to keep contrast legible in direct sunlight, which is the actual
+ * use case Konrad asked for.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --fg-bgBody: #000;
+  --fg-bgTabBar: #08080a;
+  --fg-bgCard: #0b0b0c;
+  --fg-bgGutter: #0c0c0e;
+
+  /* borders */
+  --fg-border: #1c1c1f;
+  --fg-borderSoft: #161617;
+  --fg-borderDivider: #141416;
+  --fg-borderEmphasis: #222226;
+
+  /* text */
+  --fg-text: #ededee;
+  --fg-textHi: #f4f4f5;
+  --fg-textSoft: #e4e4e6;
+  --fg-textLabel: #cacad0;
+  --fg-textBody: #b8b8be;
+  --fg-textSecondary: #9a9aa0;
+  --fg-textMuted: #8a8a90;
+  --fg-textMuted2: #6a6a70;
+  --fg-textFaint: #56565c;
+  --fg-textGhost: #48484e;
+
+  /* accent + status */
+  --fg-accent: #5b8def;
+  --fg-ok: #57a06b;
+  --fg-bleed: #cf6360;
+  --fg-stuck: #c07ad0;
+  --fg-warn: #d8c24a;
+  --fg-info: #4fb0c4;
+  --fg-decide: #9b8cf0;
+
+  /* tinted status surfaces */
+  --fg-freezeBgOk: #0a0f0b;
+  --fg-freezeBgWarn: #140e08;
+  --fg-freezeBorderOk: #1c2a20;
+  --fg-freezeBorderWarn: #3a2a1f;
+  --fg-primaryActionBg: #0e1320;
+  --fg-okActionBg: #0c130e;
+  --fg-okActionBorder: #2a3a2e;
+  --fg-dangerActionBg: #130c0c;
+  --fg-dangerActionBorder: #2a1f1f;
+  --fg-invariantBg: #0b0908;
+  --fg-invariantBorder: #2a1f1f;
+
+  /* shared, theme-aware chrome */
+  --fg-scrollbar: #2a2a2e;
+  --fg-overlay: rgba(0, 0, 0, 0.6);
+  --fg-inputBg: #0b0b0c;
+  /* Selected list row + tool-call block. These were hardcoded (#101013 /
+     #0a0a0c) at 8+ call sites, which is why selected chats and every tool
+     row stayed pitch black in light mode. */
+  --fg-selectedBg: #101013;
+  --fg-toolBg: #0a0a0c;
+}
+
+/* html[...] rather than a bare attribute selector: this must outrank v2.css's
+   :root defaults no matter what order the bundler emits the stylesheets in. */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* Warm off-white ramp — bright enough for sunlight, not a white-out. */
+  --fg-bgBody: #f7f7f5;
+  --fg-bgTabBar: #eeeeec;
+  --fg-bgCard: #ffffff;
+  --fg-bgGutter: #f1f1ef;
+
+  /* Borders must be visibly darker than surfaces or the layout dissolves. */
+  --fg-border: #d6d6d2;
+  --fg-borderSoft: #e2e2de;
+  --fg-borderDivider: #e7e7e3;
+  --fg-borderEmphasis: #c2c2bd;
+
+  /* Text ramp mirrors the dark one: high→ghost, just inverted in luminance. */
+  --fg-text: #17171a;
+  --fg-textHi: #0b0b0d;
+  --fg-textSoft: #232327;
+  --fg-textLabel: #3a3a40;
+  --fg-textBody: #4a4a52;
+  --fg-textSecondary: #5c5c64;
+  --fg-textMuted: #6c6c74;
+  --fg-textMuted2: #7e7e86;
+  --fg-textFaint: #90909a;
+  --fg-textGhost: #a6a6ae;
+
+  /* Darkened so they stay legible against white. */
+  --fg-accent: #2c62d4;
+  --fg-ok: #2f7a46;
+  --fg-bleed: #b23c39;
+  --fg-stuck: #8e46a0;
+  --fg-warn: #8a7513;
+  --fg-info: #1f7f93;
+  --fg-decide: #6152c8;
+
+  /* Tints become pale washes instead of near-black. */
+  --fg-freezeBgOk: #eef6f0;
+  --fg-freezeBgWarn: #fbf3e8;
+  --fg-freezeBorderOk: #c5ddcc;
+  --fg-freezeBorderWarn: #e6d2b4;
+  --fg-primaryActionBg: #e8effc;
+  --fg-okActionBg: #ecf5ee;
+  --fg-okActionBorder: #c2dccb;
+  --fg-dangerActionBg: #fbeceb;
+  --fg-dangerActionBorder: #e8c6c4;
+  --fg-invariantBg: #faf3f2;
+  --fg-invariantBorder: #e8c6c4;
+
+  --fg-scrollbar: #c9c9c4;
+  --fg-overlay: rgba(0, 0, 0, 0.35);
+  --fg-inputBg: #ffffff;
+  /* Light: a selected row reads as a soft tint, and a tool block as a faint
+     recessed panel — the dark values inverted rather than transplanted. */
+  --fg-selectedBg: #e8e8e3;
+  --fg-toolBg: #f2f2ee;
+
+  /* v2.css declares its own surface scale and calls it "not theme-dependent".
+     It is now. Same variable names, light values — otherwise every v2-styled
+     component stays black while the rest of the app turns white. Borders flip
+     from white-alpha to black-alpha or they vanish entirely on light. */
+  --v2-bg: #f7f7f5;
+  --v2-surface-1: #ffffff;
+  --v2-surface-2: #f2f2f0;
+  --v2-surface-3: #e9e9e6;
+  --v2-surface-4: #dededa;
+
+  --v2-border-0: rgba(0, 0, 0, 0.06);
+  --v2-border-1: rgba(0, 0, 0, 0.11);
+  --v2-border-2: rgba(0, 0, 0, 0.18);
+  --v2-border-3: rgba(0, 0, 0, 0.26);
+
+  --v2-text-1: #17171a;
+  --v2-text-2: #5f5870;
+  --v2-text-3: #8a8496;
+
+  --v2-accent: #2c62d4;
+  --v2-accent-rgb: 44, 98, 212;
+  --v2-accent-dim: #1e4bb0;
+  --v2-accent-secondary: #4d7ee0;
+
+  --v2-success: #0f9186;
+  --v2-success-rgb: 15, 145, 134;
+  --v2-warning: #b8560f;
+  --v2-warning-rgb: 184, 86, 15;
+  --v2-error-soft: #c2564d;
+  --v2-error: #c62f2f;
+  --v2-error-rgb: 198, 47, 47;
+  --v2-muted: #7a7488;
+}
+
+/* Body follows the theme rather than the hardcoded black in globals.css. */
+html,
+body {
+  background: var(--fg-bgBody);
+  color: var(--fg-text);
+}
+
+/* Native controls (select dropdowns, checkboxes, date pickers) inherit the
+   OS palette unless told otherwise — this is what made the Grid/List dropdown
+   render white-on-white in dark mode. color-scheme above fixes the popup
+   chrome; these rules fix the trigger itself. */
+select,
+input,
+textarea,
+button {
+  color-scheme: inherit;
+}
+
+select option {
+  background: var(--fg-bgCard);
+  color: var(--fg-text);
+}

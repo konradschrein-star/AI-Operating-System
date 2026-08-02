@@ -23,10 +23,33 @@ export interface CurrentActivity {
   ts: string;
 }
 
+/** System-A Claude-Code Task subagent — a role living inside ONE parent run's
+ *  process. The wire shape is deliberately different from AgentRow because
+ *  the backend has less to hand out for them (no run UUID, no spend row, no
+ *  heartbeat) — it's folded from thread events, not a database row. */
+export interface SubagentRow {
+  kind: "subagent";
+  /** Parent Task tool_use_id — stable within the run's turn, used as React key. */
+  tool_use_id: string;
+  role: string;
+  model: string | null;
+  started_at: string;
+  updated_at: string;
+  usage: AgentUsage;
+  event_count: number;
+  latest_activity: {
+    kind: string;
+    tool: string | null;
+    text: string | null;
+    ts: string;
+  } | null;
+  status: "running" | "done";
+}
+
 export interface AgentRow {
-  /** "run" = a forge-control task (its own `claude` process, survives session
-   *  cycles). "subagent" = a Task-tool agent living INSIDE one run. */
-  kind: "run" | "subagent";
+  /** System-B forge-control task — its own `claude` process, survives session
+   *  cycles. Top-level rows in the Live panel; System-A subagents nest under. */
+  kind: "run";
   id: string;
   title: string;
   status: string;
@@ -36,13 +59,15 @@ export interface AgentRow {
   engine: string | null;
   started_at: string | null;
   last_heartbeat_at: string | null;
-  elapsed_ms: number;
+  /** Server-derived wall clock. `null` when the run has not started yet
+   *  (queued) — the client tolerates it and renders "—". */
+  elapsed_ms: number | null;
   spent_usd: number;
   usage_total: AgentUsage;
   usage_running?: AgentUsage;
   current_activity: CurrentActivity | null;
   parent_run_id: string | null;
-  subagents?: AgentRow[];
+  subagents?: SubagentRow[];
 }
 
 export interface AgentsResponse {

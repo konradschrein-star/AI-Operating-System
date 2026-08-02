@@ -177,7 +177,7 @@ export function ProjectsSurface() {
               padding: "10px 14px",
               cursor: "pointer",
               borderLeft: `2px solid ${!projectFilter ? tokens.accent : "transparent"}`,
-              background: !projectFilter ? "#101013" : "transparent",
+              background: !projectFilter ? tokens.selectedBg : "transparent",
               fontSize: 12,
               color: !projectFilter ? tokens.text : tokens.textMuted,
             }}
@@ -335,7 +335,7 @@ function ProjectListItem({
         padding: "10px 14px",
         cursor: "pointer",
         borderLeft: `2px solid ${selected ? tokens.accent : "transparent"}`,
-        background: selected ? "#101013" : "transparent",
+        background: selected ? tokens.selectedBg : "transparent",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>

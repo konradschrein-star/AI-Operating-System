@@ -1,56 +1,110 @@
 /**
- * Design tokens extracted verbatim from design/Forge Mobile.dc.html.
- * Do not invent new colors here — if you need a new token, add it to the design first.
+ * Design tokens, originally extracted verbatim from design/Forge Mobile.dc.html.
+ *
+ * Each token is a reference to a CSS custom property rather than a literal hex
+ * value, so the whole UI switches between dark and light at runtime — Konrad
+ * uses this console outdoors, where the dark palette is unreadable. Both
+ * palettes live in app/theme.css. Nothing at the ~1150 call sites changes:
+ * `background: tokens.bgCard` still works, it just resolves through the
+ * cascade now.
+ *
+ * Caveat: these are strings like "var(--fg-bgCard)", NOT parseable colours.
+ * Anything needing a real hex — WebGL/three.js, <canvas> 2D, image export —
+ * must carry its own palette or call resolveToken(). MemoryGraph3D already
+ * carries its own colours, which is why converting these was safe.
+ *
+ * theme.css MUST be imported (see app/layout.tsx). Without it every var is
+ * undefined and the entire UI renders colourless — that regression has bitten
+ * this file once already.
+ *
+ * New token: add the variable to BOTH palettes in theme.css, then map it here.
  */
+const v = (name: string) => `var(--fg-${name})`;
+
 export const tokens = {
   // surfaces
-  bgBody: "#000",
-  bgTabBar: "#08080a",
-  bgCard: "#0b0b0c",
-  bgGutter: "#0c0c0e",
+  bgBody: v("bgBody"),
+  bgTabBar: v("bgTabBar"),
+  bgCard: v("bgCard"),
+  bgGutter: v("bgGutter"),
 
   // borders
-  border: "#1c1c1f",
-  borderSoft: "#161617",
-  borderDivider: "#141416",
-  borderEmphasis: "#222226",
+  border: v("border"),
+  borderSoft: v("borderSoft"),
+  borderDivider: v("borderDivider"),
+  borderEmphasis: v("borderEmphasis"),
 
   // text
-  text: "#ededee",
-  textHi: "#f4f4f5",
-  textSoft: "#e4e4e6",
-  textLabel: "#cacad0",
-  textBody: "#b8b8be",
-  textSecondary: "#9a9aa0",
-  textMuted: "#8a8a90",
-  textMuted2: "#6a6a70",
-  textFaint: "#56565c",
-  textGhost: "#48484e",
+  text: v("text"),
+  textHi: v("textHi"),
+  textSoft: v("textSoft"),
+  textLabel: v("textLabel"),
+  textBody: v("textBody"),
+  textSecondary: v("textSecondary"),
+  textMuted: v("textMuted"),
+  textMuted2: v("textMuted2"),
+  textFaint: v("textFaint"),
+  textGhost: v("textGhost"),
 
   // accent
-  accent: "#5b8def",
+  accent: v("accent"),
 
   // status
-  ok: "#57a06b",
-  bleed: "#cf6360",
-  stuck: "#c07ad0",
-  warn: "#d8c24a",
-  info: "#4fb0c4",
-  decide: "#9b8cf0",
+  ok: v("ok"),
+  bleed: v("bleed"),
+  stuck: v("stuck"),
+  warn: v("warn"),
+  info: v("info"),
+  decide: v("decide"),
 
-  // tinted status surfaces (used in control card / action chips)
-  freezeBgOk: "#0a0f0b",
-  freezeBgWarn: "#140e08",
-  freezeBorderOk: "#1c2a20",
-  freezeBorderWarn: "#3a2a1f",
-  primaryActionBg: "#0e1320",
-  okActionBg: "#0c130e",
-  okActionBorder: "#2a3a2e",
-  dangerActionBg: "#130c0c",
-  dangerActionBorder: "#2a1f1f",
-  invariantBg: "#0b0908",
-  invariantBorder: "#2a1f1f",
+  // tinted status surfaces (control card / action chips)
+  freezeBgOk: v("freezeBgOk"),
+  freezeBgWarn: v("freezeBgWarn"),
+  freezeBorderOk: v("freezeBorderOk"),
+  freezeBorderWarn: v("freezeBorderWarn"),
+  primaryActionBg: v("primaryActionBg"),
+  okActionBg: v("okActionBg"),
+  okActionBorder: v("okActionBorder"),
+  dangerActionBg: v("dangerActionBg"),
+  dangerActionBorder: v("dangerActionBorder"),
+  invariantBg: v("invariantBg"),
+  invariantBorder: v("invariantBorder"),
+
+  // chrome that must differ per theme but isn't in the original design
+  inputBg: v("inputBg"),
+  overlay: v("overlay"),
+  /** Selected list row / tool-call block — see theme.css. */
+  selectedBg: v("selectedBg"),
+  toolBg: v("toolBg"),
+  scrollbar: v("scrollbar"),
 } as const;
+
+/** Resolve a token to its computed hex/rgb — for the few consumers that can't
+ *  take a var() string (canvas 2D, WebGL, generated images). Browser-only. */
+export function resolveToken(token: string): string {
+  if (typeof window === "undefined") return "#000";
+  const name = token.replace(/^var\(|\)$/g, "").trim();
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue(name)
+    .trim();
+}
+
+export type ThemeMode = "dark" | "light";
+
+export const THEME_STORAGE_KEY = "forge.theme";
+
+/** Apply a theme and persist it. Kept here so the toggle, the pre-paint inline
+ *  script in layout.tsx, and any future per-user setting all agree on the same
+ *  contract (attribute name + storage key). */
+export function applyTheme(mode: ThemeMode) {
+  if (typeof document === "undefined") return;
+  document.documentElement.dataset.theme = mode;
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, mode);
+  } catch {
+    /* private mode — the theme just won't persist */
+  }
+}
 
 export type StatusColor =
   | typeof tokens.ok

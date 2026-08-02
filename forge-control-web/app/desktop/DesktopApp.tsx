@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { tokens, dot } from "../tokens";
+import { tokens, dot, applyTheme, type ThemeMode } from "../tokens";
 import {
   statusColor,
   tierColor,
@@ -17,6 +17,7 @@ import {
 } from "../data";
 import {
   fetchToday,
+  fetchQuota,
   fetchInbox,
   fetchInboxPreview,
   fetchLive,
@@ -573,7 +574,54 @@ function TopNav({
           ⌘K
         </span>
       </div>
+      <ThemeToggle />
     </div>
+  );
+}
+
+/** Dark/light switch, deliberately beside the search box: Konrad works
+ *  outdoors and in sunlight the dark palette is unreadable, so this has to be
+ *  reachable without digging through settings. Persists to localStorage and is
+ *  re-applied before first paint (see app/layout.tsx). */
+function ThemeToggle() {
+  const [mode, setMode] = useState<ThemeMode>("dark");
+
+  // Read what the pre-paint script already applied, so the icon matches
+  // reality on mount instead of assuming dark.
+  useEffect(() => {
+    setMode(document.documentElement.dataset.theme === "light" ? "light" : "dark");
+  }, []);
+
+  const flip = () => {
+    const next: ThemeMode = mode === "dark" ? "light" : "dark";
+    setMode(next);
+    applyTheme(next);
+  };
+
+  return (
+    <button
+      onClick={flip}
+      className="mono"
+      title={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label={mode === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        marginLeft: 8,
+        width: 34,
+        height: 34,
+        borderRadius: 7,
+        cursor: "pointer",
+        color: tokens.textMuted,
+        background: "transparent",
+        border: `1px solid ${tokens.borderEmphasis}`,
+      }}
+    >
+      <span className="ms" style={{ fontSize: 16 }}>
+        {mode === "dark" ? "light_mode" : "dark_mode"}
+      </span>
+    </button>
   );
 }
 
@@ -777,6 +825,8 @@ function StatusBar({
         hermes <span style={{ color: tokens.ok }}>●</span>
       </span>
       <span style={{ flex: 1 }} />
+      <QuotaBars />
+      <Sep />
       <span
         onClick={() => onNav("autonomy")}
         style={{
@@ -826,6 +876,117 @@ function StatusBar({
     </div>
   );
 }
+/** Subscription quota gauges — the 5-hour and 7-day windows, measured (not
+ *  guessed) from Anthropic's OAuth usage endpoint.
+ *
+ *  Deliberately NOT live: it polls slowly and shows how old the reading is,
+ *  with a manual refresh — Konrad's own framing ("it doesn't even have to be
+ *  live, just add a refresh button and say when it was last refreshed"). A
+ *  gauge that silently goes stale is worse than one that admits its age. */
+function QuotaBars() {
+  const q = useQuery({
+    queryKey: ["usage", "quota"],
+    queryFn: () => fetchQuota(false),
+    refetchInterval: 120_000,
+    staleTime: 60_000,
+  });
+  const [refreshing, setRefreshing] = useState(false);
+  const qc = useQueryClient();
+
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      const fresh = await fetchQuota(true);
+      qc.setQueryData(["usage", "quota"], fresh);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // Re-render each minute so "3m ago" stays truthful between polls.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const d = q.data;
+  if (!d) return null;
+
+  const age = (iso: string) => {
+    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+    if (s < 60) return "just now";
+    const m = Math.floor(s / 60);
+    return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
+  };
+  const resetIn = (iso: string | null) => {
+    if (!iso) return "";
+    const ms = new Date(iso).getTime() - Date.now();
+    if (ms <= 0) return "resetting";
+    const m = Math.round(ms / 60000);
+    return m < 60 ? `resets ${m}m` : `resets ${Math.round(m / 60)}h`;
+  };
+
+  const Bar = ({ label, w }: { label: string; w: { utilization: number | null; resets_at: string | null } }) => {
+    const pct = w.utilization ?? 0;
+    // Colour by pressure, not by brand — the point is to notice at a glance.
+    const color = pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : tokens.ok;
+    return (
+      <span
+        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+        title={`${label}: ${pct}% used${w.resets_at ? ` · ${resetIn(w.resets_at)}` : ""}`}
+      >
+        <span style={{ color: tokens.textFaint }}>{label}</span>
+        <span
+          style={{
+            width: 46,
+            height: 5,
+            borderRadius: 3,
+            background: tokens.borderEmphasis,
+            overflow: "hidden",
+            display: "inline-block",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              width: `${Math.min(100, Math.max(0, pct))}%`,
+              height: "100%",
+              background: color,
+            }}
+          />
+        </span>
+        <span style={{ color }}>{w.utilization == null ? "—" : `${Math.round(pct)}%`}</span>
+      </span>
+    );
+  };
+
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+      <Bar label="5h" w={d.five_hour} />
+      <Bar label="7d" w={d.seven_day} />
+      {/* The refresh control is ALWAYS rendered, including on error. It used
+          to be swallowed by the failure state, so a single 429 left the bars
+          stuck on "last refresh failed" with nothing to click. */}
+      <span
+        onClick={() => void refresh()}
+        title={
+          d.error
+            ? `${d.error} — click to try again`
+            : `quota updated ${age(d.fetched_at)} — click to refresh`
+        }
+        style={{
+          cursor: refreshing ? "wait" : "pointer",
+          color: d.error ? tokens.warn : tokens.textGhost,
+          opacity: refreshing ? 0.5 : 1,
+        }}
+      >
+        {refreshing ? "⟳ …" : d.error ? "⟳ retry" : `⟳ ${age(d.fetched_at)}`}
+      </span>
+    </span>
+  );
+}
+
 function Sep() {
   return (
     <span style={{ color: tokens.borderEmphasis, margin: "0 12px" }}>·</span>
@@ -1329,7 +1490,7 @@ function InboxSurface({
                     cursor: "pointer",
                     borderBottom: `1px solid ${tokens.borderDivider}`,
                     borderLeft: `2px solid ${seld ? color : "transparent"}`,
-                    background: seld ? "#101013" : "transparent",
+                    background: seld ? tokens.selectedBg : "transparent",
                   }}
                 >
                   <div

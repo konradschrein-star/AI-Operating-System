@@ -188,7 +188,7 @@ function ToolCallRow({
         border: `1px solid ${tokens.borderDivider}`,
         borderLeft: `2px solid ${color}`,
         borderRadius: 8,
-        background: "#0a0a0c",
+        background: tokens.toolBg,
         overflow: "hidden",
       }}
     >

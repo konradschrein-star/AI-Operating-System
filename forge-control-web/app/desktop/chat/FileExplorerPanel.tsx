@@ -19,7 +19,7 @@
  * short API root key ("vault") via the fetched roots list.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { FileManager } from "@cubone/react-file-manager";
 import "@cubone/react-file-manager/dist/style.css";
 import "./FileExplorerPanel.css";
@@ -140,7 +140,16 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
   );
 }
 
-export function FileExplorerPanel({
+/** Memoised on purpose — this is the fix for "opening Files makes everything
+ *  lag".
+ *
+ *  ChatSurface re-renders on every streamed chat event (many per second while
+ *  a run is talking). Without memo, each of those re-rendered this entire
+ *  third-party file tree — hundreds of rows, its own drag/keyboard wiring and
+ *  layout — even though none of its inputs had changed. The panel only takes
+ *  `onAttach`, which is a stable useCallback, so a plain memo is enough to cut
+ *  the tree out of the chat's render path entirely. */
+function FileExplorerPanelImpl({
   onAttach,
 }: {
   /** null when there's no active chat to attach into (e.g. composing a new
@@ -548,3 +557,5 @@ function SearchResultsList({
     </div>
   );
 }
+
+export const FileExplorerPanel = memo(FileExplorerPanelImpl);

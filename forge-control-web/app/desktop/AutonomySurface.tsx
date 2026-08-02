@@ -446,7 +446,7 @@ function CatItem({
         padding: "7px 16px",
         cursor: "pointer",
         borderLeft: `2px solid ${active ? (color ?? tokens.accent) : "transparent"}`,
-        background: active ? "#101013" : "transparent",
+        background: active ? tokens.selectedBg : "transparent",
       }}
     >
       <span

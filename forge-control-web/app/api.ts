@@ -57,6 +57,107 @@ async function deleteJson<T>(path: string): Promise<T> {
 }
 
 /* ----------------------------------------------------------------------------
+ * Excalidraw canvases — the visual brainstorming surface. Backed by the same
+ * .excalidraw.md files in the Obsidian vault, so a drawing edited here appears
+ * in the Obsidian app (via Syncthing) and can be read/written by the agent.
+ * -------------------------------------------------------------------------- */
+
+export interface CanvasListItem {
+  path: string;
+  name: string;
+  folder: string;
+  mtime: number;
+  size: number;
+}
+
+export interface CanvasFile {
+  path: string;
+  name: string;
+  mtime: number;
+  format: "compressed" | "parsed";
+  elements: Record<string, unknown>[];
+  appState: Record<string, unknown>;
+  files: Record<string, unknown>;
+}
+
+/** Raised when the file changed on disk since load (Obsidian, another tab, or
+ *  the agent wrote it). The vault syncs over Syncthing, which is
+ *  last-writer-wins and never merges — so the caller must offer a reload
+ *  rather than clobber whoever moved first. */
+export class CanvasConflictError extends Error {
+  mtime: number;
+  constructor(detail: string, mtime: number) {
+    super(detail);
+    this.name = "CanvasConflictError";
+    this.mtime = mtime;
+  }
+}
+
+export const listCanvases = (q?: string) =>
+  getJson<{ items: CanvasListItem[] }>(
+    q ? `/canvas/list?q=${encodeURIComponent(q)}` : "/canvas/list",
+  );
+
+export const getCanvas = (path: string) =>
+  getJson<CanvasFile>(`/canvas/file?path=${encodeURIComponent(path)}`);
+
+export const saveCanvas = async (input: {
+  path: string;
+  elements: Record<string, unknown>[];
+  appState?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+  baseMtime?: number;
+}) => {
+  const res = await fetch(`${ROOT}/canvas/file`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 409) {
+    const b = (await res.json().catch(() => ({}))) as {
+      detail?: string;
+      mtime?: number;
+    };
+    throw new CanvasConflictError(
+      b.detail ?? "This drawing changed on disk since you opened it.",
+      b.mtime ?? 0,
+    );
+  }
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} saving canvas`);
+  return (await res.json()) as { ok: true; path: string; mtime: number };
+};
+
+export const createCanvas = (input: { name: string; folder?: string }) =>
+  postJson<{ ok: true; path: string; name: string; mtime: number }>(
+    "/canvas/new",
+    input,
+  );
+
+/* ----------------------------------------------------------------------------
+ * Subscription quota — the real 5-hour / 7-day windows.
+ *
+ * Anthropic exposes actual utilisation at /api/oauth/usage using the same
+ * OAuth token the CLI holds, so this is measured, not inferred. (The older
+ * LimitHit comment below says no such API exists — it was wrong; limit-hits
+ * remain useful as a record of ceilings actually struck.)
+ * -------------------------------------------------------------------------- */
+export interface QuotaWindow {
+  utilization: number | null;
+  resets_at: string | null;
+}
+export interface QuotaSnapshot {
+  five_hour: QuotaWindow;
+  seven_day: QuotaWindow;
+  seven_day_opus: QuotaWindow | null;
+  fetched_at: string;
+  cached?: boolean;
+  error?: string;
+}
+/** `fresh` bypasses the server's 60s cache — wired to the refresh button. */
+export const fetchQuota = (fresh = false) =>
+  getJson<QuotaSnapshot>(`/usage/quota${fresh ? "?fresh=1" : ""}`);
+
+/* ----------------------------------------------------------------------------
  * Today
  * -------------------------------------------------------------------------- */
 export interface TodayResponse {
@@ -582,15 +683,20 @@ export const setChatModel = async (id: string, model: string) => {
  *  "cheap" Sonnet) needs an exact model id, not an alias that resolves to
  *  latest. Default is Opus 4.8. */
 export const ENGINE_MODEL_CHOICES = [
-  { value: "opus", label: "Opus 4.8" },
-  { value: "sonnet", label: "Sonnet 5" },
+  { value: "claude-opus-5", label: "Opus 5" },
+  { value: "claude-fable-5", label: "Fable 5" },
+  { value: "claude-opus-4-8", label: "Opus 4.8" },
+  { value: "claude-sonnet-5", label: "Sonnet 5" },
   { value: "claude-sonnet-4-6", label: "Sonnet 4.6 (cheap)" },
-  { value: "haiku", label: "Haiku 4.5" },
+  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
 ] as const;
 
-/** Effort choices offered in the web UI — capped at "high"; xhigh/max stay
- *  reachable via API/Telegram only, per design. */
-export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high"] as const;
+/** The model a new chat starts on when the picker isn't touched. */
+export const DEFAULT_ENGINE_MODEL = "claude-opus-5";
+
+/** Effort choices offered in the web UI. "xhigh" is exposed here (it was
+ *  API/Telegram-only); "max" still stays off the UI. */
+export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh"] as const;
 
 export const setChatEffort = async (id: string, effort: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/effort`, { effort });

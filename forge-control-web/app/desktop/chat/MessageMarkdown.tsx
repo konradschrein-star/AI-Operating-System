@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { tokens } from "../../tokens";
@@ -11,8 +12,18 @@ import { tokens } from "../../tokens";
  * Headings, lists, blockquotes, tables, inline code, and fenced code blocks
  * each get a small inline-style block. Syntax highlighting is deferred —
  * a future iteration can add prism/shiki when the bundle cost is worth it.
+ *
+ * MEMOISED: parsing markdown is the most expensive thing the chat does, and a
+ * long thread renders dozens of these. Without memo every parent re-render
+ * (a poll, a streamed token, opening a panel) re-parsed every message in the
+ * thread — the single largest source of click-to-response lag. `source` is a
+ * plain string, so reference equality is exactly the right cache key.
  */
-export function MessageMarkdown({ source }: { source: string }) {
+export const MessageMarkdown = memo(function MessageMarkdown({
+  source,
+}: {
+  source: string;
+}) {
   return (
     <div style={{ fontSize: 13, lineHeight: 1.6, color: tokens.text }}>
       <ReactMarkdown
@@ -194,4 +205,4 @@ export function MessageMarkdown({ source }: { source: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

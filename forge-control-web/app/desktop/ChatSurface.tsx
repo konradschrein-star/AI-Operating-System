@@ -22,6 +22,7 @@ import {
   setChatEffort,
   ENGINE_MODEL_CHOICES,
   ENGINE_EFFORT_CHOICES,
+  DEFAULT_ENGINE_MODEL,
   fetchAutonomy,
   updateRule,
   attachmentsBlock,
@@ -42,7 +43,9 @@ import {
   type SlashDirective,
   type SurfaceKey,
 } from "./chat/slash-registry";
+import { AgentActivity } from "./live/AgentActivity";
 import { AssistantThread } from "./chat/AssistantThread";
+import { CanvasPane } from "./CanvasPane";
 import { useRunEvents } from "./chat/useRunEvents";
 
 const STATUS_COLOR: Record<RunStatus, string> = {
@@ -350,7 +353,26 @@ function SidePanel({
       </div>
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "live" ? (
-          <LiveProjectsBody onOpenRun={onOpenRun} />
+          // Agent activity on top (who is working, for how long, tokens/cost,
+          // with in-process subagents nested under their parent run), the
+          // project/task board underneath. The board alone never showed
+          // subagents, which is why running work looked like nothing at all.
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <div
+              style={{
+                flex: "1 1 55%",
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                borderBottom: `1px solid ${tokens.border}`,
+              }}
+            >
+              <AgentActivity />
+            </div>
+            <div style={{ flex: "1 1 45%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+              <LiveProjectsBody onOpenRun={onOpenRun} />
+            </div>
+          </div>
         ) : (
           <FileExplorerPanel onAttach={fileAtt ? fileAtt.addExisting : null} />
         )}
@@ -373,8 +395,46 @@ export function ChatSurface({
     refetchInterval: 8000,
   });
   const [selId, setSelId] = useState<string | null>(null);
+  /** Chat we were on before drilling into an agent run from the Live panel. */
+  const [agentViewFrom, setAgentViewFrom] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+  // Split-screen canvas, remembered PER CHAT and across reloads. A brainstorm
+  // lives in a specific chat + a specific drawing, so switching away and back
+  // must restore the same split instead of silently closing it.
+  const [canvasByRun, setCanvasByRun] = useState<
+    Record<string, { open: boolean; path: string | null }>
+  >(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      return JSON.parse(localStorage.getItem("forge.canvasByRun") ?? "{}");
+    } catch {
+      return {};
+    }
+  });
+  const canvasKey = selId ?? "__new__";
+  const canvasOpen = canvasByRun[canvasKey]?.open ?? false;
+  const canvasPath = canvasByRun[canvasKey]?.path ?? null;
+  const patchCanvas = (patch: Partial<{ open: boolean; path: string | null }>) =>
+    setCanvasByRun((prev) => {
+      const cur = prev[canvasKey] ?? { open: false, path: null };
+      const next = { ...prev, [canvasKey]: { ...cur, ...patch } };
+      try {
+        localStorage.setItem("forge.canvasByRun", JSON.stringify(next));
+      } catch {
+        /* private mode — the split just won't survive a reload */
+      }
+      return next;
+    });
+  const setCanvasOpen = (v: boolean) => patchCanvas({ open: v });
+  const setCanvasPath = (p: string) => patchCanvas({ path: p, open: true });
+
+  // An "agent view" is any run that isn't in the chat rail — i.e. a project
+  // task or sub-run. Derived rather than stored so it stays true even after a
+  // reload or if the rail list changes underneath us.
+  const isAgentView =
+    !!selId && !(listQ.data?.runs ?? []).some((r) => r.id === selId);
+
   const [panelTab, setPanelTab] = useState<"live" | "files">("live");
   const [search, setSearch] = useState("");
   // Lifted out of ChatThread (rather than created per-mount) so the file
@@ -692,16 +752,46 @@ export function ChatSurface({
         </div>
       </div>
 
-      {/* Right pane — thread or composer */}
+      {/* Right pane — thread/composer, optionally split with the canvas */}
       <div
         style={{
-          flex: 1,
+          flex: canvasOpen ? "1 1 55%" : 1,
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          position: "relative",
         }}
       >
+        {/* Escape hatch from an agent run. Agent/task runs never appear in the
+            chat rail, so once you drill into one there's no selected row to
+            click back to — this is the only way out. */}
+        {isAgentView && (
+          <button
+            onClick={() => {
+              setSelId(agentViewFrom);
+              setAgentViewFrom(null);
+            }}
+            className="mono"
+            title="Back to your chats"
+            style={{
+              position: "absolute",
+              top: 8,
+              left: 10,
+              zIndex: 3,
+              fontSize: 10,
+              letterSpacing: "0.06em",
+              padding: "4px 9px",
+              borderRadius: 6,
+              cursor: "pointer",
+              color: tokens.accent,
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.accent}`,
+            }}
+          >
+            ← agent view · back
+          </button>
+        )}
         {composing ? (
           <NewChat
             isCreating={createM.isPending}
@@ -711,7 +801,12 @@ export function ChatSurface({
                 prompt,
                 title: title || undefined,
                 metadata: {
-                  ...(model !== "opus" ? { model } : {}),
+                  // Always send the exact model id. This used to strip a bare
+                  // "opus" sentinel and fall through to the executor's env
+                  // default — which meant the picker's own default silently
+                  // never applied. Every choice in ENGINE_MODEL_CHOICES is a
+                  // concrete id, so there's nothing to strip.
+                  model,
                   effort,
                 },
               })
@@ -730,6 +825,30 @@ export function ChatSurface({
             }
             onResume={() => resumeM.mutate(detailQ.data!.id)}
             onNavigate={onNavigate}
+            headerExtra={
+              <button
+                onClick={() => setCanvasOpen(!canvasOpen)}
+                className="mono"
+                title={
+                  canvasOpen
+                    ? "Close the canvas"
+                    : "Open Excalidraw beside the chat"
+                }
+                style={{
+                  flex: "none",
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  padding: "5px 10px",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  color: canvasOpen ? tokens.accent : tokens.textMuted,
+                  background: canvasOpen ? tokens.primaryActionBg : "transparent",
+                  border: `1px solid ${canvasOpen ? tokens.accent : tokens.border}`,
+                }}
+              >
+                CANVAS
+              </button>
+            }
             isSending={sendM.isPending}
             isResuming={resumeM.isPending}
             att={threadAtt}
@@ -751,6 +870,16 @@ export function ChatSurface({
         )}
       </div>
 
+      {canvasOpen && (
+        <div style={{ flex: "1 1 45%", minWidth: 320, display: "flex", minHeight: 0 }}>
+          <CanvasPane
+            path={canvasPath}
+            onPathChange={setCanvasPath}
+            onClose={() => setCanvasOpen(false)}
+          />
+        </div>
+      )}
+
       <SidePanel
         collapsed={panelCollapsed}
         onToggle={() => setPanelCollapsed((c) => !c)}
@@ -758,6 +887,10 @@ export function ChatSurface({
         onTab={setPanelTab}
         onOpenRun={(runId) => {
           setComposing(false);
+          // Remember where we came from. An agent/task run is NOT in the chat
+          // rail (the rail is conversations only), so without this there is
+          // literally nothing to click to get back out of it.
+          setAgentViewFrom(selId);
           setSelId(runId);
         }}
         fileAtt={composing ? null : threadAtt}
@@ -791,7 +924,7 @@ function ChatListItem({
         cursor: "pointer",
         borderBottom: `1px solid ${tokens.borderDivider}`,
         borderLeft: `2px solid ${selected ? color : "transparent"}`,
-        background: selected ? "#101013" : "transparent",
+        background: selected ? tokens.selectedBg : "transparent",
         opacity: closing ? 0.5 : 1,
         position: "relative",
       }}
@@ -938,7 +1071,7 @@ function CloseAllButton({
  *  object updates (e.g. after a page refresh or SSE-driven refetch). */
 function EngineControls({ run }: { run: RunDetail }) {
   const [open, setOpen] = useState(false);
-  const currentModel = String(run.metadata?.model ?? "opus");
+  const currentModel = String(run.metadata?.model ?? DEFAULT_ENGINE_MODEL);
   const currentEffort = String(run.metadata?.effort ?? "high");
   const [model, setModelLocal] = useState(currentModel);
   const [effort, setEffortLocal] = useState(currentEffort);
@@ -1076,6 +1209,7 @@ function ChatThread({
   isSending,
   isResuming,
   att,
+  headerExtra,
 }: {
   run: RunDetail;
   live: boolean;
@@ -1088,6 +1222,10 @@ function ChatThread({
   /** Lifted to ChatSurface so the file-explorer panel can attach into the
    *  currently open thread's composer without prop-drilling through state. */
   att: ReturnType<typeof useAttachments>;
+  /** Rendered in the header's action row. The canvas toggle lives here rather
+   *  than floating absolutely over the pane, where it sat on top of the
+   *  status/resume controls. */
+  headerExtra?: React.ReactNode;
 }) {
   const [draft, setDraft] = useState("");
   const [localSys, setLocalSys] = useState<
@@ -1152,7 +1290,7 @@ function ChatThread({
   };
   const color = STATUS_COLOR[run.status];
   const engine = String(run.metadata?.engine ?? "claude-code");
-  const model = String(run.metadata?.model ?? "sonnet");
+  const model = String(run.metadata?.model ?? DEFAULT_ENGINE_MODEL);
 
   return (
     <>
@@ -1190,6 +1328,7 @@ function ChatThread({
             </span>
           </div>
         </div>
+        {headerExtra}
         {run.status === "stuck" && (
           <button
             onClick={onResume}
@@ -1409,7 +1548,7 @@ function NewChat({
 }) {
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
-  const [model, setModel] = useState<string>("opus");
+  const [model, setModel] = useState<string>(DEFAULT_ENGINE_MODEL);
   const [effort, setEffort] = useState<string>("high");
   const att = useAttachments();
   const canCreate = prompt.trim().length > 0 || att.attachments.length > 0;

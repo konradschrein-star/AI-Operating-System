@@ -630,7 +630,7 @@ export function MemorySurface() {
                     cursor: "pointer",
                     borderBottom: `1px solid ${tokens.borderDivider}`,
                     borderLeft: `2px solid ${seld ? color : "transparent"}`,
-                    background: seld ? "#101013" : "transparent",
+                    background: seld ? tokens.selectedBg : "transparent",
                   }}
                 >
                   <div
