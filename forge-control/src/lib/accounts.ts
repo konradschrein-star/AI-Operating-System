@@ -25,6 +25,7 @@ import {
   markAuthFailure,
   type AccountRow,
 } from "../db/claude-accounts.ts";
+import { queueNotification } from "../db/notifications.ts";
 
 export { NoHealthyAccountError };
 
@@ -93,6 +94,7 @@ function toSelectable(a: AccountRow): SelectableAccount {
 export async function probeAccount(a: AccountRow): Promise<{
   slug: string;
   health: string;
+  previous: string;
   detail: string;
   changed: boolean;
 }> {
@@ -107,12 +109,81 @@ export async function probeAccount(a: AccountRow): Promise<{
     hasRefresh: snap.exists && snap.parseable ? snap.hasRefreshToken : null,
     accessExpiresAt: snap.expiresAt ? new Date(snap.expiresAt) : null,
   });
-  return {
+  const result = {
     slug: a.slug,
     health: verdict.health,
+    previous: a.health,
     detail: verdict.detail,
     changed: a.health !== verdict.health,
   };
+
+  // Alert HERE, where the transition is detected, rather than in the caller.
+  // An earlier version alerted only inside probeAll(), which meant a manual
+  // probe from the settings page could discover a broken account and say
+  // nothing — the same "detected but not surfaced" gap this whole feature
+  // exists to close.
+  await alertOnTransition({ ...result, configDir: a.configDir }).catch((e) =>
+    console.error("[accounts] alert failed:", e.message),
+  );
+
+  return result;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Alerting
+ * ------------------------------------------------------------------------- */
+
+const ALERT_DEBOUNCE_MS = 6 * 60 * 60_000;
+/** slug:state → last alert time. In-memory: a restart may re-alert, which is
+ *  the safe direction to be wrong in. */
+const lastAlerted = new Map<string, number>();
+
+function reauthCommand(configDir: string): string {
+  return configDir === "/root/.claude"
+    ? "claude auth login --claudeai"
+    : `CLAUDE_CONFIG_DIR=${configDir} claude auth login --claudeai`;
+}
+
+/**
+ * Alert on health TRANSITIONS only, debounced per account+state.
+ *
+ * There is deliberately no "token expires soon" alert: a Claude access token
+ * expires roughly every 8 hours by design and is renewed automatically, so
+ * such an alert would fire permanently and train the reader to ignore the
+ * channel. The alerts here fire on states that actually need a human.
+ */
+async function alertOnTransition(r: {
+  slug: string;
+  health: string;
+  previous: string;
+  detail: string;
+  configDir: string;
+  changed: boolean;
+}): Promise<void> {
+  if (!r.changed) return;
+  const key = `${r.slug}:${r.health}`;
+  const last = lastAlerted.get(key) ?? 0;
+  if (Date.now() - last < ALERT_DEBOUNCE_MS) return;
+
+  let text: string | null = null;
+  if (r.health === "broken") {
+    text =
+      `🔴 Claude account "${r.slug}" is BROKEN.\n${r.detail}\n\n` +
+      `The AI OS will skip it. Fix with:\n${reauthCommand(r.configDir)}`;
+  } else if (r.health === "unknown") {
+    // The alert that would have caught the account which died in June and sat
+    // unnoticed until August.
+    text =
+      `🟡 Claude account "${r.slug}" is unverified.\n${r.detail}\n\n` +
+      `Its credential file looks fine, but a dead account's file looks ` +
+      `identical to a live one's — only a successful run proves it works.`;
+  } else if (r.health === "healthy" && r.previous === "broken") {
+    text = `🟢 Claude account "${r.slug}" is working again.`;
+  }
+  if (!text) return;
+
+  lastAlerted.set(key, Date.now());
+  await queueNotification(text, "accounts");
 }
 
 /**
@@ -130,6 +201,7 @@ export async function probeAll(): Promise<
 > {
   const accounts = (await listAccounts()).filter((a) => a.enabled);
   const out = [];
+  // probeAccount alerts on its own transitions.
   for (const a of accounts) out.push(await probeAccount(a));
   return out;
 }
@@ -171,6 +243,18 @@ export async function recordRunOutcome(
   const cls = classifyError(outcome.errorMessage);
   if (cls === "auth") {
     await markAuthFailure(slug, outcome.errorMessage ?? "unknown auth failure");
+    // Page immediately — this is the live version of the 2026-08-02 failure,
+    // caught at the moment it happens rather than up to 10 minutes later at
+    // the next probe.
+    const acct = (await listAccounts()).find((a) => a.slug === slug);
+    await alertOnTransition({
+      slug,
+      health: "broken",
+      previous: "healthy",
+      detail: `authentication failed during a run: ${(outcome.errorMessage ?? "").slice(0, 300)}`,
+      configDir: acct?.configDir ?? "/root/.claude",
+      changed: true,
+    }).catch(() => {});
     return { failover: true, classification: cls };
   }
   return { failover: false, classification: cls };
