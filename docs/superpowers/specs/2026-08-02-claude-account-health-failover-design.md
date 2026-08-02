@@ -392,6 +392,10 @@ here because §4 depends on it; **it needs its own plan before implementation.**
 `guardrail_rules`, `guardrail_trips`, `connector_configs`. It was created and never wired up,
 so there are now two `runs` tables and the live one is in the wrong database.
 
+> **§12.2–12.5 were revised 2026-08-02 after a dedicated read-only investigation.**
+> Five of my original assumptions were wrong; each correction is marked inline. A separate
+> full implementation plan lives at `docs/superpowers/specs/2026-08-02-ai-os-db-split-plan.md`.
+
 ### 12.2 Scope — measured, not estimated
 
 AI-OS-owned tables currently in `content_forge`, with live row counts:
@@ -406,41 +410,96 @@ AI-OS-owned tables currently in `content_forge`, with live row counts:
 | decisions | 63 | | fleet_state | 1 |
 | inbox_items | 58 | | webhooks | 0 |
 
-**~2,400 rows across 15 tables.** The data volume is trivial; the risk is in the cutover and
-in finding every query, not in the migration itself.
+**CORRECTION — it is 18 tables, not 15.** Three were missed: `guardrail_trips` (6 rows),
+`mentor_metrics` (2), `tg_state` (1). Row total is still ~2,400. The data volume is trivial;
+the risk is in the cutover and in finding every query, not in the migration itself.
 
-### 12.3 The one real boundary
+**CORRECTION — a THIRD database is in play.** `hcp` (:5432, retained from the Hermes removal)
+is live and holds `knowledge_note` (466 rows) and `agent_message` (1,484 rows), read
+unguarded by `db/memory.ts`. The split is not two-way; any plan that ignores `hcp` leaves the
+knowledge system half-migrated.
 
-`content_jobs` (19 rows) is **Content Forge's** table, read by the AI OS pipeline surface.
-This is the only legitimate cross-system read, and after the split it cannot be a table read.
-It becomes an HTTP call to the Content Forge API — the same MCP-bridge idea recorded at the
-time of the repo split, finally forced by the database split.
+### 12.3 Cross-boundary reads
 
-Any other read of a CF-owned table found during implementation gets the same treatment: an
-API call or nothing. No dual connections into `content_forge` for convenience — that would
-rebuild the coupling under a different name.
+**CORRECTION — `content_jobs` is not the only one.** Three Content Forge tables are read from
+AI OS code, across seven call sites:
 
-### 12.4 Sequencing
+| CF table | read at |
+|---|---|
+| `content_jobs` | pipeline surface |
+| `channels` | `db/ai_os.ts:306`, `db/pipeline.ts:130` |
+| `content_templates` | `db/pipeline.ts:131` |
 
-1. `claude_accounts` created in `ai_os` (§4.1) — proves the second connection end to end.
-2. Move the leaf tables nobody joins across (`guardrail_rules`, `cron_schedules`, `webhooks`,
-   `fleet_state`, `notifications`, `reminders`).
-3. Move the knowledge cluster together (`knowledge_embeddings`, `knowledge_triples`) — these
-   join to each other and must move as one unit.
-4. Move the run/project cluster (`runs`, `project_tasks`, `projects`, `spend_log`,
-   `decisions`, `inbox_items`) — the largest blast radius, done last, with the app briefly
-   frozen via `/api/fleet/freeze`.
-5. Replace the `content_jobs` read with an API call.
-6. Drop the orphaned `ai_os.runs` stub before step 4 so it cannot be confused for the target.
-7. Remove `DATABASE_URL`'s content_forge value from `forge-control` entirely. As long as the
-   connection exists, something will quietly use it.
+All three become HTTP calls to the Content Forge API. **Blocker:** the existing
+`cf-api.listJobs` returns 8 of the 22 columns the UI needs, so this phase requires a Content
+Forge PR *before* it can start — it is not self-contained within this repo.
+
+No dual connections into `content_forge` for convenience — that rebuilds the coupling under a
+different name.
+
+### 12.3.1 Foreign keys — the sequencing correction
+
+**CORRECTION — the original "leaf tables" phase was wrong.** Verified against `pg_constraint`:
+
+```
+webhooks.last_run_id        -> runs            ← NOT a leaf
+cron_schedules.last_run_id  -> runs            ← NOT a leaf
+decisions.inbox_item_id     -> inbox_items     ← internal pair, must move together
+inbox_items.related_job_id  -> content_jobs    ← crosses the split boundary
+decisions.related_job_id    -> content_jobs    ← crosses the split boundary
+```
+
+`webhooks` and `cron_schedules` must move **with the runs cluster**, not before it. Moving
+them as "leaves" would have dropped or broken their FK to `runs`.
+
+The two FKs into `content_jobs` cross the split and cannot survive it. Both columns are
+**100% NULL** (0 of 63 decisions, 0 of 58 inbox_items), so dropping the constraints is
+lossless — but it must be an explicit, recorded decision rather than a silent casualty.
+
+### 12.3.2 Query sites and connection sprawl
+
+**CORRECTION — worse than the 10 pools I first counted.** There are **19 separate
+`new Pool(...)` constructions across 17 files**, and **142 query call sites across 16 files**.
+There is no shared client module. Every pool carries a hardcoded
+`postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge` fallback, so a stale
+pm2 env does not fail — it silently reconnects to the old database and appears to work.
+
+This makes "remove the connection" (step 8) the load-bearing step, not a cleanup step. A
+shared connection module is a **prerequisite**, not a nicety.
+
+`forge-control-web` opens no database connection at all — the entire split is backend-only.
+
+### 12.4 Sequencing (revised)
+
+0. **Prerequisites:** verified backups of both databases, a shared connection module
+   replacing the 19 ad-hoc pools, drop the orphaned `ai_os.runs` stub, resolve pgvector.
+1. `claude_accounts` in `ai_os` — the pilot. **DONE 2026-08-02.**
+2. Guardrail/mentor leaves (`guardrail_rules`, `guardrail_trips`, `mentor_metrics`).
+3. Notification/reminder/spend leaves (`notifications`, `reminders`, `spend_log`, `tg_state`,
+   `fleet_state`).
+4. Query-splitting prep — no data movement.
+5. Knowledge cluster (`knowledge_embeddings`, `knowledge_triples`, plus `hcp`'s
+   `knowledge_note` and `agent_message`). **Blocked — see 12.5.**
+6. Runs/projects cluster, fleet frozen: `runs`, `project_tasks`, `projects`, `decisions`,
+   `inbox_items`, **`webhooks`, `cron_schedules`**.
+7. Replace the three CF table reads with `/api/v1` calls (needs the CF PR first).
+8. Remove the `content_forge` connection and every hardcoded fallback.
 
 ### 12.5 Known hazards
 
-- **Two databases, two servers.** `content_forge` is docker on :5432; `ai_os` is host postgres
-  on :5434. They are not the same instance, so no cross-database joins, no transactions
-  spanning both, and `pg_dump | psql` between them is a network copy.
-- **The AI OS writes to these tables while running.** Any move must happen with the fleet
-  frozen, not live.
-- **Backups.** `ai_os` on the host postgres has no verified backup story; confirm one before
-  it holds the only copy of the knowledge graph.
+- **BLOCKER — pgvector is too old on the target.** `knowledge_embeddings.embedding` is
+  `halfvec(1024)` with a halfvec HNSW index. halfvec requires pgvector ≥ 0.7.0. Verified:
+  source (:5432) runs **0.7.4**; target (:5434) has the extension **not installed at all** and
+  its highest *available* version is **0.6.0**, with no PGDG repo configured. Phase 5 cannot
+  start until pgvector is upgraded on the host cluster — and whether that upgrade succeeds on
+  this host is unverified.
+- **A second writer outside the repo.** `/opt/knowledge-mcp/km-indexer.js` writes
+  `knowledge_embeddings` using its own hardcoded connection strings. It is **not** gated by
+  `/api/fleet/freeze`, so freezing the fleet does not make the knowledge tables quiet. It must
+  be stopped explicitly during phase 5 or it will write into the old database mid-migration.
+- **No automated backups exist for either database.** Not "unverified" — none found. This must
+  be fixed in phase 0, before anything holds the only copy of 1,452 knowledge triples.
+- **No migration runner exists.** Migrations are applied by hand with `psql`. Either accept
+  that explicitly or build one in phase 0.
+- **Two databases, two servers.** No cross-database joins, no spanning transactions;
+  `pg_dump | psql` between them is a network copy.
