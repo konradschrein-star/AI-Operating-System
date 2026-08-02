@@ -92,7 +92,20 @@ export interface RunListPage {
 
 /** Newest-first, archived runs excluded by default — that's the "closed"
  *  state (see archiveRun). Fetches limit+1 to derive hasMore without a
- *  separate COUNT query. */
+ *  separate COUNT query.
+ *
+ *  THE CHAT RAIL IS CONVERSATIONS ONLY. Two other kinds of row live in
+ *  `runs` and must never appear here:
+ *
+ *    • sub-runs (parent_run_id set) — an agent spawned by another agent.
+ *    • coding-project tasks (metadata.project_id set) — architect/planner/
+ *      builder/reviewer work items like "SkyLab Script Factory · Fix cycle 3".
+ *
+ *  Both belong in the Live panel, grouped under their project, where their
+ *  hierarchy is meaningful. Listing them flat in the rail buried Konrad's
+ *  actual conversations under 39 rows of machine chatter — the fleet doing
+ *  its job is not 30 new "chats". Filtering here (not in the UI) keeps every
+ *  consumer of listRuns honest. */
 export async function listRuns(
   limit = 80,
   offset = 0,
@@ -114,7 +127,9 @@ export async function listRuns(
     `SELECT id::text, title, status, worker, budget_usd::text, spent_usd::text,
             created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived
        FROM runs
-       WHERE archived = false OR $3::boolean
+       WHERE (archived = false OR $3::boolean)
+         AND parent_run_id IS NULL
+         AND NOT (metadata ? 'project_id')
        ORDER BY updated_at DESC
        LIMIT $1 OFFSET $2`,
     [limit + 1, offset, opts.includeArchived ?? false],
@@ -458,7 +473,14 @@ export async function recentLimitHits(days = 14, limit = 20): Promise<LimitHit[]
 
 export async function runCounts(): Promise<Record<RunStatus, number>> {
   const r = await pool.query<{ status: RunStatus; count: string }>(
-    `SELECT status, COUNT(*)::text AS count FROM runs WHERE archived = false GROUP BY status`,
+    // Same scope as listRuns — otherwise the rail header claims "28 completed"
+    // above a list showing five, because the fleet's task rows were counted.
+    `SELECT status, COUNT(*)::text AS count
+       FROM runs
+       WHERE archived = false
+         AND parent_run_id IS NULL
+         AND NOT (metadata ? 'project_id')
+       GROUP BY status`,
   );
   const out: Record<RunStatus, number> = {
     queued: 0,

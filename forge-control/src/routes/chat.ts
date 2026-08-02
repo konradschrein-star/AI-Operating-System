@@ -77,6 +77,25 @@ r.get("/:id/events", (c) => {
     stream.onAbort(() => {
       alive = false;
     });
+
+    /** Every write races the client disconnecting. `alive` is only updated by
+     *  onAbort, which can fire while we're awaiting the DB — so by the time we
+     *  write, the stream may already be closed and hono throws
+     *  ERR_INVALID_STATE ("ReadableStream is already closed"). That surfaced
+     *  as a steady drip of unhandled errors in the API log and could take the
+     *  request down. Closing is a normal, expected end to an SSE connection,
+     *  not an error: treat a failed write as "client left" and stop cleanly. */
+    const send = async (event: string, data: string): Promise<boolean> => {
+      if (!alive) return false;
+      try {
+        await stream.writeSSE({ event, data });
+        return true;
+      } catch {
+        alive = false;
+        return false;
+      }
+    };
+
     let lastKey = "";
     let lastPing = Date.now();
     while (alive) {
@@ -91,21 +110,19 @@ r.get("/:id/events", (c) => {
         await stream.sleep(2_000);
         continue;
       }
+      if (!alive) break; // disconnected while we were querying
       if (!run) {
-        await stream.writeSSE({ event: "gone", data: "{}" });
+        await send("gone", "{}");
         break;
       }
       const key = `${run.status}:${run.thread.length}:${run.updated_at}`;
       if (key !== lastKey) {
         lastKey = key;
         lastPing = Date.now();
-        await stream.writeSSE({
-          event: "snapshot",
-          data: JSON.stringify({ run }),
-        });
+        if (!(await send("snapshot", JSON.stringify({ run })))) break;
       } else if (Date.now() - lastPing > 15_000) {
         lastPing = Date.now();
-        await stream.writeSSE({ event: "ping", data: String(Date.now()) });
+        if (!(await send("ping", String(Date.now())))) break;
       }
       await stream.sleep(1_000);
     }

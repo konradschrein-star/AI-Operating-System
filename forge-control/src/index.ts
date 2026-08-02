@@ -8,6 +8,7 @@ import forge from "./routes/forge.ts";
 import system from "./routes/system.ts";
 import inbox from "./routes/inbox.ts";
 import fleet from "./routes/fleet.ts";
+import agents from "./routes/agents.ts";
 import decisions from "./routes/decisions.ts";
 import today from "./routes/today.ts";
 import live from "./routes/live.ts";
@@ -24,6 +25,8 @@ import webhookIn from "./routes/webhook-in.ts";
 import cron from "./routes/cron.ts";
 import spend from "./routes/spend.ts";
 import vault from "./routes/vault.ts";
+import canvas from "./routes/canvas.ts";
+import usage from "./routes/usage.ts";
 import reminders from "./routes/reminders.ts";
 import uploads from "./routes/uploads.ts";
 import files from "./routes/files.ts";
@@ -81,6 +84,8 @@ app.get("/", (c) =>
       "/api/fleet",
       "/api/fleet/freeze",
       "/api/fleet/resume",
+      "/api/agents",
+      "/api/agents/:id",
       "/api/decisions",
       "/api/memory",
       "/api/memory/search?q=...",
@@ -125,6 +130,7 @@ app.route("/api/inbox", inbox);
 app.route("/api/live", live);
 app.route("/api/control", control);
 app.route("/api/fleet", fleet);
+app.route("/api/agents", agents);
 app.route("/api/decisions", decisions);
 app.route("/api/memory", memory);
 app.route("/api/search", search);
@@ -144,6 +150,13 @@ app.route("/api/spend", spend);
 // v2.0: Obsidian write path + reminders (quick capture, life OS).
 app.route("/api/vault", vault);
 app.route("/api/reminders", reminders);
+
+// v2.6: Excalidraw canvases — visual brainstorming over the same
+// .excalidraw.md files Obsidian reads/writes.
+app.route("/api/canvas", canvas);
+
+// v2.7: subscription quota (5-hour + 7-day windows) for the status bar.
+app.route("/api/usage", usage);
 
 // v2.1: chat attachments (drag & drop / paste).
 app.route("/api/uploads", uploads);

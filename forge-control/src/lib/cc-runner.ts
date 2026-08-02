@@ -22,12 +22,19 @@ import { createInterface } from "node:readline";
 
 const CC_BIN = process.env.CC_BIN ?? "claude";
 const CC_WORKSPACE = process.env.CC_WORKSPACE ?? "/opt/ai-os/workspace";
-// Default model for runs. "opus" = latest Opus (Opus 4.8) — the workhorse
-// (v2.4: Sonnet 5 costs the same usage without being better, so it's not
-// used as a default anywhere). Per-run override via runs.metadata.model
+// Default model for runs: Opus 5, the workhorse (v2.6). Always an exact id,
+// never the 'opus' alias — the alias drifts with CLI releases. Opus 4.8 stays
+// selectable per-run. Per-run override via runs.metadata.model
 // ("haiku" for cheap/frequent heartbeats). Subagents (.claude/agents/*.md)
 // carry their own model in frontmatter, independent of this default.
-const CC_MODEL = process.env.CC_MODEL ?? "opus";
+const CC_MODEL = process.env.CC_MODEL ?? "claude-opus-5";
+/** The ONLY true wall-clock stop for a single engine run. `timeoutMs` is an
+ *  idle budget (see runClaudeCode), so this is what finally ends a genuinely
+ *  runaway loop — sized for long autonomous builds, not chat turns.
+ *  4h default; override with RUN_MAX_WALL_MS. */
+const MAX_WALL_MS = Number(
+  process.env.RUN_MAX_WALL_MS ?? String(4 * 60 * 60_000),
+);
 const VAULT_DIR = process.env.OBSIDIAN_VAULT_DIR ?? "/opt/obsidian-vault";
 // Extra --add-dir entries, comma-separated.
 const CC_ADD_DIRS = (process.env.CC_ADD_DIRS ?? "")
@@ -265,9 +272,9 @@ export async function runClaudeCode(opts: {
   let numTurns = 0;
   let assistantTextEvents = 0;
   let settled = false;
-  let killedBy: "timeout" | "cancelled" | null = null;
+  let killedBy: "timeout" | "cancelled" | "wall" | null = null;
 
-  const kill = (why: "timeout" | "cancelled") => {
+  const kill = (why: "timeout" | "cancelled" | "wall") => {
     if (settled) return;
     killedBy = why;
     child.kill("SIGTERM");
@@ -276,7 +283,23 @@ export async function runClaudeCode(opts: {
     }, 5_000).unref();
   };
 
-  const timeoutTimer = setTimeout(() => kill("timeout"), opts.timeoutMs);
+  // `timeoutMs` is an IDLE budget, NOT a wall-clock guillotine.
+  //
+  // It used to be one fixed timer: a turn that had been streaming tool calls
+  // for 599s was SIGTERM'd at 600s exactly like a hung one, and the user got
+  // "Timed out after 600s. Use Resume." Long productive turns are the normal
+  // case for an operator agent, so killing on total duration punished exactly
+  // the work we want. Now ANY stream event resets the clock (see bumpIdle in
+  // the line handler) and we only kill when the engine has genuinely gone
+  // silent for the full window — which is what "stuck" actually means.
+  // MAX_WALL_MS remains the one true wall-clock stop for a runaway loop.
+  let timeoutTimer = setTimeout(() => kill("timeout"), opts.timeoutMs);
+  const bumpIdle = () => {
+    if (settled || killedBy) return;
+    clearTimeout(timeoutTimer);
+    timeoutTimer = setTimeout(() => kill("timeout"), opts.timeoutMs);
+  };
+  const wallTimer = setTimeout(() => kill("wall"), MAX_WALL_MS);
   const cancelTimer = setInterval(() => {
     void opts.isCancelled?.().then((c) => {
       if (c) kill("cancelled");
@@ -287,6 +310,8 @@ export async function runClaudeCode(opts: {
   rl.on("line", (line) => {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) return;
+    // Proof of life: the engine is working, so the idle clock restarts.
+    bumpIdle();
     let evt: Record<string, unknown>;
     try {
       evt = JSON.parse(trimmed) as Record<string, unknown>;
@@ -343,17 +368,32 @@ export async function runClaudeCode(opts: {
     child.on("error", (e) => {
       settled = true;
       clearTimeout(timeoutTimer);
+      clearTimeout(wallTimer);
       clearInterval(cancelTimer);
       reject(new Error(`failed to spawn ${CC_BIN}: ${e.message}`));
     });
     child.on("close", (code) => {
       settled = true;
       clearTimeout(timeoutTimer);
+      clearTimeout(wallTimer);
       clearInterval(cancelTimer);
       const stderr = stderrTail.join("").trim().slice(-2_000);
 
       if (killedBy === "timeout") {
-        reject(new Error(`claude-code timed out after ${opts.timeoutMs}ms`));
+        reject(
+          new Error(
+            `claude-code went idle for ${Math.round(opts.timeoutMs / 1000)}s ` +
+              `(no output at all) after ${Math.round((Date.now() - t0) / 1000)}s of work`,
+          ),
+        );
+        return;
+      }
+      if (killedBy === "wall") {
+        reject(
+          new Error(
+            `claude-code hit the ${Math.round(MAX_WALL_MS / 60_000)}min absolute ceiling — raise RUN_MAX_WALL_MS if legitimate`,
+          ),
+        );
         return;
       }
       if (killedBy === "cancelled") {

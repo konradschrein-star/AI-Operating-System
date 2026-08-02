@@ -431,6 +431,33 @@ async function heartbeat(id: string): Promise<void> {
     .catch((e) => console.error("[executor heartbeat]", e.message));
 }
 
+/** Is a `claude` process already resuming this session? Reads /proc directly
+ *  rather than shelling out to ps — no subprocess per check, and it can't be
+ *  fooled by a pattern that accidentally matches our own command line (a
+ *  `pkill -f "next build"` once killed the operator's own shell that way). */
+async function sessionProcessAlive(sessionId: string): Promise<boolean> {
+  const { readdir, readFile } = await import("node:fs/promises");
+  let pids: string[];
+  try {
+    pids = await readdir("/proc");
+  } catch {
+    return false; // not Linux / no procfs — fail open rather than block work
+  }
+  for (const pid of pids) {
+    if (!/^\d+$/.test(pid)) continue;
+    if (pid === String(process.pid)) continue;
+    let cmd: string;
+    try {
+      cmd = await readFile(`/proc/${pid}/cmdline`, "utf8");
+    } catch {
+      continue; // process exited between readdir and read — normal
+    }
+    // cmdline is NUL-separated; `--resume <id>` therefore appears as two args.
+    if (cmd.includes(sessionId) && cmd.includes("claude")) return true;
+  }
+  return false;
+}
+
 async function processRun(run: ClaimedRun): Promise<void> {
   console.log(`[executor] claimed run ${run.id} (${run.title.slice(0, 60)})`);
 
@@ -686,6 +713,35 @@ async function processWithClaudeCode(
     typeof run.metadata?.vault_access === "boolean"
       ? (run.metadata.vault_access as boolean)
       : undefined;
+
+  // GUARD: never run two engine processes against one session.
+  //
+  // On 2026-07-30 three `claude -p --resume <same-session>` processes were
+  // live at once. They edited the same files from stale reads and reverted
+  // each other's work for hours, and two concurrent builds deleted each
+  // other's artifacts. The in-memory `inFlight` map below does not prevent
+  // this: it is lost whenever the executor restarts, while an orphaned child
+  // from a previously-killed turn keeps running (a timeout marked the run
+  // stuck but never reaped its process).
+  //
+  // So the check has to look at the OS, not at our own bookkeeping.
+  if (priorSession && (await sessionProcessAlive(priorSession))) {
+    console.warn(
+      `[executor] run ${run.id}: a live engine process already owns session ` +
+        `${priorSession} — refusing to start a second one`,
+    );
+    // Put it BACK on the queue rather than completing it. Completing would
+    // silently swallow whatever the user just sent; re-queuing means the turn
+    // runs as soon as the existing process finishes. The poll loop retries in
+    // ~1.5s, and each retry is one cheap /proc scan.
+    await pool
+      .query(
+        `UPDATE runs SET status = 'queued', updated_at = now() WHERE id = $1`,
+        [run.id],
+      )
+      .catch((e) => console.error("[executor] requeue failed:", e.message));
+    return;
+  }
 
   const baseMessage = priorSession
     ? trailingUserBlock(thread)
