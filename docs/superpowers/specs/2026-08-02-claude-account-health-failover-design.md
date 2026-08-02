@@ -81,36 +81,64 @@ secondary one.
 
 ## 4. Account registry
 
-**Corrected 2026-08-02 after inspecting the live system.** An earlier draft of this spec
-created a new `claude_accounts` table in a separate `ai_os` database, on the assumption that
-the AI OS and Content Forge used different databases and that reading
-`llm_pool_accounts` would be a cross-DB read.
+This section changed twice. The history matters, because the second change was made for a
+wrong reason and the third restores the first conclusion on a better one.
 
-That assumption was wrong. `forge-control` runs with
-`DATABASE_URL=postgresql://…@127.0.0.1:5432/content_forge` — the **same** database that holds
-`llm_pool_accounts`. The `runs` table and the account table are already neighbours.
+- **Draft 1:** a new `claude_accounts` table in a separate `ai_os` database, assuming the two
+  systems used different databases.
+- **Draft 2:** extend Content Forge's `llm_pool_accounts` instead — because inspection showed
+  `forge-control` runs with `DATABASE_URL=…@127.0.0.1:5432/content_forge`, the *same*
+  database, so a second table would just be a second source of truth drifting from the first.
+- **Draft 3 (current), decided by Konrad 2026-08-02:** back to a separate table in a separate
+  database. The shared database was never a constraint to design around — **it was itself the
+  defect.** Content Forge is one business unit; the AI OS runs across all of them. Coupling
+  them at the data layer is how the mess was made, and draft 2 would have cemented it.
 
-So there is no cross-DB boundary to respect, and creating a second table would mean two
-tables in one database describing the same three accounts, drifting apart. That is precisely
-the failure mode that produced this outage: `llm_pool_accounts` said one thing,
-`CLAUDE_POOL_ACCOUNTS` said another, `/root/.claude` said a third, and no one reconciled them.
+**Decision: the AI OS owns its own account registry in its own database** (`ai_os` on
+:5434). Content Forge's `claude-pool` keeps `llm_pool_accounts` for its own consumers. The
+two are separate systems with separate lifecycles and must not share a table.
 
-**Decision: one registry.** Extend the existing `llm_pool_accounts` with health columns.
-Both the AI OS executor and `claude-pool` read it.
+This is not the drift risk draft 2 feared. Drift comes from two tables describing *the same*
+thing with no owner. Here each table has exactly one owner and one consumer set. What must
+not happen is a *third* uncontrolled description of the same accounts — which is why
+`CLAUDE_POOL_ACCOUNTS` should be deleted rather than left as an unread env mirror (§11).
 
 ```sql
-ALTER TABLE llm_pool_accounts
-  ADD COLUMN priority       INTEGER NOT NULL DEFAULT 100,  -- lower wins
-  ADD COLUMN health         TEXT    NOT NULL DEFAULT 'unknown',  -- healthy|broken|unknown
-  ADD COLUMN health_detail  TEXT,
-  ADD COLUMN has_refresh    BOOLEAN,        -- from the credential file; the real liveness bit
-  ADD COLUMN last_probed_at TIMESTAMPTZ,
-  ADD COLUMN last_ok_at     TIMESTAMPTZ,    -- last CONFIRMED successful run
-  ADD COLUMN last_error     TEXT;
+-- in the ai_os database (:5434), NOT content_forge
+CREATE TABLE claude_accounts (
+  slug            TEXT PRIMARY KEY,       -- names the IDENTITY, not the directory
+  config_dir      TEXT NOT NULL,          -- CLAUDE_CONFIG_DIR for the child. Never a secret.
+  login_email     TEXT,                   -- from `claude auth status`, for operator sanity
+  plan_label      TEXT,
+  priority        INTEGER NOT NULL DEFAULT 100,  -- lower wins
+  enabled         BOOLEAN NOT NULL DEFAULT true,
+  health          TEXT NOT NULL DEFAULT 'unknown',  -- healthy|broken|unknown
+  health_detail   TEXT,
+  has_refresh     BOOLEAN,                -- the real liveness bit (§5.1)
+  last_probed_at  TIMESTAMPTZ,
+  last_ok_at      TIMESTAMPTZ,            -- last CONFIRMED successful run
+  last_error      TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 ```
 
-Existing rows keep their meaning. Both current rows are `enabled = false` and must be
-reconciled with reality as part of rollout:
+### 4.1 This table is the pilot for the database split
+
+`forge-control` today has one `DATABASE_URL`, pointing at `content_forge`. Isolating the AI OS
+(§12) means giving it a second connection and moving ~15 tables. Rather than build that
+wholesale first, **this table is created in `ai_os` from the start** and becomes the first
+consumer of the new connection — a small, new, self-contained table with no existing data to
+migrate. It proves the connection, the migration pattern, and the deployment path before
+anything with 1,452 rows moves.
+
+Consequence: accounts do **not** wait on the full split, and the split gains a working
+reference implementation.
+
+### 4.2 Seeding
+
+Current `llm_pool_accounts` rows are both `enabled = false` and must be reconciled with
+reality rather than copied:
 
 - `/root/.claude` — re-authenticated 2026-08-02, now holds the newly purchased **"Arved
   Account"** (`media.asphaltaction@gmail.com`, `max`). The `max_20x` identity previously in
@@ -344,7 +372,75 @@ clone, and GitHub is a prerequisite task, not part of this feature.
    table directly. It is currently unset on the VPS, so nothing depends on it today, and
    leaving a second unread configuration source in place invites exactly the drift §4
    describes. Recommendation: delete it.
-3. What becomes of the identity formerly in `/root/.claude`? It may have been revoked
-   server-side (§1). Re-authenticating it into a directory the OS actively uses risks
-   re-introducing whatever killed it. Recommendation: leave it out of the registry until the
-   new primary has survived a week, then decide with evidence.
+3. ~~What becomes of the identity formerly in `/root/.claude`?~~ **Decided 2026-08-02:** stays
+   out until the new primary has survived a few days. It may have been revoked server-side
+   (§1); re-authenticating it into a directory the OS actively uses would destroy the signal
+   that tells us whether credentials are still leaking.
+
+---
+
+## 12. Appendix — AI OS database isolation (separate project)
+
+Decided by Konrad 2026-08-02: the AI OS must not share a database with Content Forge. Scoped
+here because §4 depends on it; **it needs its own plan before implementation.**
+
+### 12.1 Current state
+
+`forge-control` has a single `DATABASE_URL` pointing at `content_forge` (:5432, docker). An
+`ai_os` database already exists on a *different* server — host postgres, :5434, renamed from
+`hcp` during the 2026-07-29 Hermes removal — holding `runs` (0 rows), `fleet_state` (1),
+`guardrail_rules`, `guardrail_trips`, `connector_configs`. It was created and never wired up,
+so there are now two `runs` tables and the live one is in the wrong database.
+
+### 12.2 Scope — measured, not estimated
+
+AI-OS-owned tables currently in `content_forge`, with live row counts:
+
+| table | rows | | table | rows |
+|---|---|---|---|---|
+| knowledge_triples | 1452 | | reminders | 48 |
+| knowledge_embeddings | 212 | | project_tasks | 37 |
+| runs | 196 | | guardrail_rules | 9 |
+| spend_log | 167 | | cron_schedules | 4 |
+| notifications | 154 | | projects | 4 |
+| decisions | 63 | | fleet_state | 1 |
+| inbox_items | 58 | | webhooks | 0 |
+
+**~2,400 rows across 15 tables.** The data volume is trivial; the risk is in the cutover and
+in finding every query, not in the migration itself.
+
+### 12.3 The one real boundary
+
+`content_jobs` (19 rows) is **Content Forge's** table, read by the AI OS pipeline surface.
+This is the only legitimate cross-system read, and after the split it cannot be a table read.
+It becomes an HTTP call to the Content Forge API — the same MCP-bridge idea recorded at the
+time of the repo split, finally forced by the database split.
+
+Any other read of a CF-owned table found during implementation gets the same treatment: an
+API call or nothing. No dual connections into `content_forge` for convenience — that would
+rebuild the coupling under a different name.
+
+### 12.4 Sequencing
+
+1. `claude_accounts` created in `ai_os` (§4.1) — proves the second connection end to end.
+2. Move the leaf tables nobody joins across (`guardrail_rules`, `cron_schedules`, `webhooks`,
+   `fleet_state`, `notifications`, `reminders`).
+3. Move the knowledge cluster together (`knowledge_embeddings`, `knowledge_triples`) — these
+   join to each other and must move as one unit.
+4. Move the run/project cluster (`runs`, `project_tasks`, `projects`, `spend_log`,
+   `decisions`, `inbox_items`) — the largest blast radius, done last, with the app briefly
+   frozen via `/api/fleet/freeze`.
+5. Replace the `content_jobs` read with an API call.
+6. Drop the orphaned `ai_os.runs` stub before step 4 so it cannot be confused for the target.
+7. Remove `DATABASE_URL`'s content_forge value from `forge-control` entirely. As long as the
+   connection exists, something will quietly use it.
+
+### 12.5 Known hazards
+
+- **Two databases, two servers.** `content_forge` is docker on :5432; `ai_os` is host postgres
+  on :5434. They are not the same instance, so no cross-database joins, no transactions
+  spanning both, and `pg_dump | psql` between them is a network copy.
+- **The AI OS writes to these tables while running.** Any move must happen with the fleet
+  frozen, not live.
+- **Backups.** `ai_os` on the host postgres has no verified backup story; confirm one before
+  it holds the only copy of the knowledge graph.
