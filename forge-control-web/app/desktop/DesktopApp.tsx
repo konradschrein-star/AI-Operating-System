@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot, applyTheme, type ThemeMode } from "../tokens";
@@ -202,16 +204,6 @@ const PLACEHOLDER_SURFACES: Record<
       { icon: "description", label: "vault hits" },
       { icon: "conveyor_belt", label: "live runs" },
       { icon: "bolt", label: "skills + workers + inbox items" },
-    ],
-  },
-  settings: {
-    tag: "SETTINGS",
-    title: "Appearance · Guardrails · Connectors",
-    desc: "Theme + accent, the no-go rulebook, and external service connections.",
-    items: [
-      { icon: "palette", label: "theme + accent + density" },
-      { icon: "shield", label: "guardrails (no-go rulebook)" },
-      { icon: "cable", label: "service connectors" },
     ],
   },
 };
@@ -731,14 +723,23 @@ function LeftRail({
             margin: "9px 16px",
           }}
         />
-        <div onClick={() => onNav("settings")} style={railStyle("settings")}>
+        {/* A real route, not a surface toggle: /settings is its own page.
+            Every other entry in this rail is still client-side tab state. */}
+        <Link
+          href="/settings"
+          style={{
+            ...railStyle("settings"),
+            textDecoration: "none",
+            color: "inherit",
+          }}
+        >
           <span className="ms" style={{ fontSize: 15, marginRight: 8 }}>
             settings
           </span>
           <span className="mono" style={{ fontSize: 11.5 }}>
             SETTINGS
           </span>
-        </div>
+        </Link>
       </div>
       <div
         style={{
