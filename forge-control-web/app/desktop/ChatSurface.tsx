@@ -482,8 +482,11 @@ export function ChatSurface({
   });
 
   const sendM = useMutation({
-    mutationFn: (input: { id: string; content: string }) =>
-      sendChatMessage(input.id, input.content),
+    mutationFn: (input: {
+      id: string;
+      content: string;
+      canvasPath?: string | null;
+    }) => sendChatMessage(input.id, input.content, input.canvasPath),
     onSuccess: (run) => {
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
@@ -818,7 +821,13 @@ export function ChatSurface({
             run={detailQ.data}
             live={live}
             onSend={(content) =>
-              sendM.mutate({ id: detailQ.data!.id, content })
+              sendM.mutate({
+                id: detailQ.data!.id,
+                content,
+                // Only when the canvas pane is actually open — a drawing the
+                // user closed is not what they're looking at.
+                canvasPath: canvasOpen ? canvasPath : null,
+              })
             }
             onStatus={(status) =>
               statusM.mutate({ id: detailQ.data!.id, status })

@@ -802,9 +802,17 @@ export function attachmentsBlock(files: UploadedFile[]): string {
   return `\n\n[attached-files]\n${lines.join("\n")}\n[/attached-files]`;
 }
 
-export const sendChatMessage = async (id: string, content: string) => {
+export const sendChatMessage = async (
+  id: string,
+  content: string,
+  /** Vault-relative path of the drawing open beside the chat, if any. The
+   *  server sends the board to the agent in full the first time and only the
+   *  changes thereafter, so passing this on every turn is cheap. */
+  canvasPath?: string | null,
+) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/message`, {
     content,
+    ...(canvasPath ? { canvas_path: canvasPath } : {}),
   });
   return r.run;
 };

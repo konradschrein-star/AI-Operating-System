@@ -1,1 +1,7 @@
 logs/
+
+# Ecosystem backups taken during credential rotation contain live DSNs with
+# passwords. They are untracked by intent — this stops `git add -A` publishing
+# one to GitHub. (Added 2026-08-03 after finding a .bak with 4 postgres URLs.)
+*.cjs.bak-*
+ecosystem.config.cjs.bak*

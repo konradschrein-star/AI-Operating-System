@@ -1,10 +1,16 @@
 import { Hono } from "hono";
+import {
+  loadCanvas,
+  renderDelta,
+  type CanvasSnapshot,
+} from "../lib/canvas-context.ts";
 import { streamSSE } from "hono/streaming";
 import {
   listRuns,
   getRun,
   createRun,
   appendMessage,
+  setRunCanvasSnapshot,
   setRunStatus,
   setRunModel,
   setRunEffort,
@@ -169,10 +175,42 @@ r.post("/:id/message", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     content?: string;
     role?: "user" | "system";
+    /** Vault-relative path of the drawing open beside the chat, if any. */
+    canvas_path?: string;
   };
   const content = (body.content ?? "").trim();
   if (!content) return c.json({ error: "content required" }, 400);
   const role = body.role === "system" ? "system" : "user";
+
+  // Canvas context. The board is sent in full the first time it appears in a
+  // conversation, and after that only what changed — an untouched canvas adds
+  // nothing to the thread, which is the whole point: these drawings are meant
+  // to get huge, and re-sending an unchanged one every turn would burn the
+  // context window on geometry nobody asked about.
+  const canvasPath = (body.canvas_path ?? "").trim();
+  if (canvasPath) {
+    const current = await getRun(id);
+    if (current) {
+      const drawing = await loadCanvas(canvasPath);
+      if (drawing) {
+        const prev =
+          (current.metadata?.canvas_snapshot as CanvasSnapshot | undefined) ??
+          null;
+        const delta = renderDelta(canvasPath, drawing, prev);
+        if (delta.changed) {
+          await appendMessage(id, {
+            role: "system",
+            content: delta.text,
+            ts: new Date().toISOString(),
+            kind: "text",
+          });
+        }
+        // Snapshot even when unchanged: cheap, and it keeps takenAt honest.
+        await setRunCanvasSnapshot(id, delta.snapshot);
+      }
+    }
+  }
+
   const updated = await appendMessage(
     id,
     {
