@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Live agent activity — what every agent is doing, for how long, and at what cost.
+ * Live agent activity — modelled on the Claude Code CLI's own task bar.
  *
- * The panel makes two DIFFERENT concurrency systems legible at once:
+ * Two concurrency systems, one dense monospace list:
  *
  *   System B — "workers" (kind: "run"). forge-control spawns a SEPARATE
  *   `claude` process per task, tracked in Postgres. These survive session
@@ -11,15 +11,24 @@
  *
  *   System A — "threads" (kind: "subagent"). A single `claude` process spawns
  *   Task-tool agents (architect/planner/builder/…) INSIDE itself. They share
- *   the parent's process and die with it. Rendered nested under their parent,
- *   with a tree rail, because that containment is the whole point: if the
- *   parent dies, everything indented under it dies too.
+ *   the parent's process and die with it. Rendered nested under their parent
+ *   with a filled/hollow dot: filled dot = running, hollow = done/queued.
  *
  * That distinction is not cosmetic — it explains why an in-process subagent
  * vanishes on a timeout while a fleet run keeps going.
+ *
+ * Row shape, deliberately imitating Claude Code's own task bar:
+ *
+ *   ● claude-fable-5   Rework Live agent panel        36m 52s · ↓ 204.7k
+ *     ○ architect      Isolation + orchestration       4m 12s · ↓ 12.3k
+ *
+ *   type name in muted colour · title primary truncated · right-aligned
+ *   live age + downloaded-token count. One shared 1-second tick drives
+ *   every visible row (the previous per-row setInterval scaled with row
+ *   count and was flagged by the UI audit §2.2a as a re-render source).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
 import {
@@ -40,7 +49,15 @@ const STATUS_COLOR: Record<string, string> = {
   cancelled: tokens.textFaint,
 };
 
-/** 1h 04m / 12m 30s / 45s — the readout you actually want while watching. */
+const ACTIVE_STATUSES: ReadonlySet<string> = new Set([
+  "running",
+  "queued",
+  "stuck",
+  "paused",
+]);
+
+/** 1h 04m / 12m 30s / 45s — Claude Code's own format, no clock glyph.
+ *  Length-bounded so the right column never wobbles as it counts. */
 function humanDuration(ms: number | null): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
   const s = Math.floor(ms / 1000);
@@ -51,32 +68,44 @@ function humanDuration(ms: number | null): string {
   return `${h}h ${String(m % 60).padStart(2, "0")}m`;
 }
 
+/** 204.7k / 1.2M / 987 — same rounding rules as the Claude Code bar. */
+function humanTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n < 1_000) return String(Math.round(n));
+  if (n < 1_000_000) {
+    const k = n / 1_000;
+    return `${k < 10 ? k.toFixed(1) : k.toFixed(k < 100 ? 1 : 0)}k`;
+  }
+  const M = n / 1_000_000;
+  return `${M < 10 ? M.toFixed(2) : M.toFixed(1)}M`;
+}
+
+/** "Downloaded" tokens = input + cache_read. That's what the CLI's own bar
+ *  reports: the total context the model consumed on this turn, which is
+ *  where the real spend signal lives (cache reads are ~10% the price of
+ *  fresh input but often 90% of the count). */
+function downloadedTokens(u: AgentUsage | undefined | null): number {
+  if (!u) return 0;
+  return (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+}
+
+/** Best short label for what the agent is doing right now — tool name for a
+ *  call, first slice of assistant text for a message, empty otherwise. */
 function activityLabel(act: CurrentActivity | null): string {
   if (!act) return "";
-  if (act.kind === "tool_call") return act.tool ?? act.kind;
-  if (act.kind === "tool_result") return "← result";
-  if ((act.kind === "text" || act.kind === "assistant_text") && act.text) return act.text.slice(0, 60);
-  return act.kind;
+  if (act.kind === "tool_call") return act.tool ?? "";
+  if (act.kind === "tool_result") return "";
+  if (act.text) return act.text.slice(0, 80);
+  return "";
 }
 
-function compactNum(n: number): string {
-  if (!n) return "0";
-  if (n < 1000) return String(n);
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
-  return `${(n / 1_000_000).toFixed(1)}M`;
-}
-
-/** Cache reads are the bulk of a long agent turn and are ~10% the price of
- *  fresh input — showing them separately stops the total looking alarming. */
-function tokenLine(u: AgentUsage | undefined): string {
-  if (!u) return "";
-  const cached = u.cache_read_input_tokens ?? 0;
-  const parts = [
-    `↓${compactNum(u.input_tokens ?? 0)}`,
-    `↑${compactNum(u.output_tokens ?? 0)}`,
-  ];
-  if (cached) parts.push(`⚡${compactNum(cached)}`);
-  return parts.join("  ");
+function subagentActivityLabel(s: SubagentRow): string {
+  const act = s.latest_activity;
+  if (!act) return "";
+  if (act.kind === "tool_call") return act.tool ?? "";
+  if (act.kind === "tool_result") return "";
+  if (act.text) return act.text.slice(0, 80);
+  return "";
 }
 
 /** Parse the two timestamp shapes the API hands out: Postgres
@@ -86,48 +115,73 @@ function parseTs(ts: string | null | undefined): number {
   return new Date(ts.replace(" ", "T").replace(/\+00$/, "Z")).getTime();
 }
 
-/** Tick every second while `live` — so elapsed counts up between 4s polls
- *  instead of freezing. Shared between both row components. */
-function useLiveTick(live: boolean): number {
+/** Single 1s tick shared across every visible row. This replaces the
+ *  per-row useLiveTick / setInterval pair — with ~10 running rows plus
+ *  subagents that was 20+ timers each firing setState every second. */
+function useSharedClock(enabled: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!live) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    if (!enabled) return;
+    const t = setInterval(() => setNow(Date.now()), 1_000);
     return () => clearInterval(t);
-  }, [live]);
+  }, [enabled]);
   return now;
 }
 
-function AgentRunLine({ a }: { a: AgentRow }) {
-  const live = a.status === "running";
-  const now = useLiveTick(live);
+interface RowProps {
+  a: AgentRow;
+  now: number;
+}
 
+function AgentRunLine({ a, now }: RowProps) {
+  const live = a.status === "running";
   const started = parseTs(a.started_at);
   const elapsed =
-    live && Number.isFinite(started)
-      ? now - started
-      : a.elapsed_ms; // may be null while queued — humanDuration handles it
+    live && Number.isFinite(started) ? now - started : a.elapsed_ms;
 
+  // Live usage during the current turn is more useful than the aggregated
+  // total, which resets on session restart and lags by a full assistant
+  // message. Fall back to total when we're not mid-turn.
   const usage = live && a.usage_running ? a.usage_running : a.usage_total;
-  const toks = tokenLine(usage);
+  const tokensIn = downloadedTokens(usage);
   const label = activityLabel(a.current_activity);
+  const statusColor = STATUS_COLOR[a.status] ?? tokens.textFaint;
+  const nameColor = live ? tokens.textMuted : tokens.textFaint;
 
   return (
-    <div style={{ position: "relative" }}>
+    <div>
       <div
         style={{
           display: "flex",
           alignItems: "baseline",
-          gap: 7,
-          padding: "5px 6px",
-          borderRadius: 6,
+          gap: 8,
+          padding: "3px 8px",
+          fontSize: 11,
         }}
       >
-        <span style={{ ...dot(STATUS_COLOR[a.status] ?? tokens.textFaint, live), alignSelf: "center" }} />
+        {/* Filled dot = live/running, hollow = anything else — this is the
+            one glyph difference from the Claude Code bar. */}
+        <span
+          style={{
+            ...dot(statusColor, live),
+            alignSelf: "center",
+            ...(live ? {} : { background: "transparent", border: `1px solid ${statusColor}` }),
+          }}
+        />
         <span
           className="mono"
           style={{
-            fontSize: 11,
+            color: nameColor,
+            flex: "none",
+            whiteSpace: "nowrap",
+          }}
+          title={a.worker ?? "run"}
+        >
+          {a.model ?? "run"}
+        </span>
+        <span
+          className="mono"
+          style={{
             color: tokens.text,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -139,159 +193,134 @@ function AgentRunLine({ a }: { a: AgentRow }) {
         >
           {a.title}
         </span>
-        {/* Clock glyph + tooltip: a bare "23m" in a corner is a riddle. */}
         <span
           className="mono"
-          style={{ fontSize: 9.5, color: tokens.textFaint, flex: "none" }}
+          style={{ color: tokens.textFaint, flex: "none" }}
           title={live ? "running for this long" : "total run time"}
         >
-          ⏱ {humanDuration(elapsed)}
+          {humanDuration(elapsed)}
+        </span>
+        <span style={{ color: tokens.textGhost, flex: "none" }}>·</span>
+        <span
+          className="mono"
+          style={{ color: tokens.textFaint, flex: "none" }}
+          title="downloaded tokens (input + cache read)"
+        >
+          ↓ {humanTokens(tokensIn)}
         </span>
       </div>
 
-      {/* Second line: spend + tokens + current tool activity — the numbers
-          Konrad asked for. */}
-      <div
-        className="mono"
-        style={{
-          display: "flex",
-          gap: 10,
-          fontSize: 9.5,
-          color: tokens.textFaint,
-          padding: "0 6px 5px 20px",
-        }}
-      >
-        {toks && <span>{toks}</span>}
-        {a.spent_usd > 0 && <span>${a.spent_usd.toFixed(2)}</span>}
-        {a.effort && <span>{a.effort}</span>}
-        {a.model && <span style={{ color: tokens.textMuted }}>{a.model}</span>}
-        {label && (
-          <span
-            style={{
-              color: tokens.textMuted2,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              flex: 1,
-              minWidth: 0,
-            }}
-            title={label}
-          >
-            {label}
-          </span>
-        )}
-      </div>
+      {/* Second line: only shown when there's real information to add —
+          spend, effort, or what the parent tool is doing this second. */}
+      {(a.spent_usd > 0 || a.effort || label) && (
+        <div
+          className="mono"
+          style={{
+            display: "flex",
+            gap: 10,
+            fontSize: 9.5,
+            color: tokens.textFaint,
+            padding: "0 8px 4px 24px",
+          }}
+        >
+          {a.spent_usd > 0 && <span>${a.spent_usd.toFixed(2)}</span>}
+          {a.effort && <span>{a.effort}</span>}
+          {label && (
+            <span
+              style={{
+                color: tokens.textMuted2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                flex: 1,
+                minWidth: 0,
+              }}
+              title={label}
+            >
+              {label}
+            </span>
+          )}
+        </div>
+      )}
 
       {a.subagents?.map((s) => (
-        <SubagentLine key={s.tool_use_id} s={s} depth={1} />
+        <SubagentLine key={s.tool_use_id} s={s} now={now} />
       ))}
     </div>
   );
 }
 
-function SubagentLine({ s, depth }: { s: SubagentRow; depth: number }) {
+function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
   const live = s.status === "running";
-  const now = useLiveTick(live);
-
   const started = parseTs(s.started_at);
   const updated = parseTs(s.updated_at);
   const elapsed = Number.isFinite(started)
     ? (live ? now : Number.isFinite(updated) ? updated : now) - started
     : NaN;
-
-  const toks = tokenLine(s.usage);
-  const act = s.latest_activity;
-  const label = act
-    ? act.kind === "tool_call"
-      ? act.tool ?? act.kind
-      : act.kind === "tool_result"
-        ? "← result"
-        : act.text
-          ? act.text.slice(0, 60)
-          : act.kind
-    : "";
   const statusColor = live ? tokens.accent : tokens.ok;
+  const tokensIn = downloadedTokens(s.usage);
+  const label = subagentActivityLabel(s);
+  const nameColor = live ? tokens.textMuted : tokens.textFaint;
+  const roleColor = live ? tokens.textHi : tokens.text;
 
   return (
-    <div style={{ position: "relative" }}>
+    <div>
       <div
         style={{
           display: "flex",
           alignItems: "baseline",
-          gap: 7,
-          padding: "5px 6px",
-          paddingLeft: 6 + depth * 14,
-          borderRadius: 6,
+          gap: 8,
+          padding: "2px 8px 2px 20px",
+          fontSize: 11,
         }}
       >
-        {/* Tree rail — makes containment visible: if the parent run dies,
-            every subagent nested under it dies with it. */}
         <span
-          aria-hidden
           style={{
-            position: "absolute",
-            left: depth * 14 - 6,
-            top: 0,
-            bottom: 0,
-            width: 1,
-            background: tokens.border,
+            ...dot(statusColor, live),
+            alignSelf: "center",
+            ...(live ? {} : { background: "transparent", border: `1px solid ${statusColor}` }),
           }}
         />
-        <span style={{ ...dot(statusColor, live), alignSelf: "center" }} />
         <span
           className="mono"
           style={{
-            fontSize: 11,
-            color: tokens.textMuted,
+            color: nameColor,
+            flex: "none",
+            whiteSpace: "nowrap",
+          }}
+          title={s.model ?? "task"}
+        >
+          {s.role}
+        </span>
+        <span
+          className="mono"
+          style={{
+            color: roleColor,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             flex: 1,
             minWidth: 0,
           }}
-          title={s.role}
+          title={label || s.role}
         >
-          <span style={{ color: tokens.decide, marginRight: 5 }}>
-            {s.model ?? "task"}
-          </span>
-          {s.role}
+          {label || s.role}
         </span>
         <span
           className="mono"
-          style={{ fontSize: 9.5, color: tokens.textFaint, flex: "none" }}
+          style={{ color: tokens.textFaint, flex: "none" }}
           title="how long this subagent has been running"
         >
-          ⏱ {humanDuration(elapsed)}
+          {humanDuration(elapsed)}
         </span>
-      </div>
-
-      <div
-        className="mono"
-        style={{
-          display: "flex",
-          gap: 10,
-          fontSize: 9.5,
-          color: tokens.textFaint,
-          padding: `0 6px 5px ${6 + depth * 14 + 14}px`,
-        }}
-      >
-        {toks && <span>{toks}</span>}
-        {s.event_count > 0 && <span>{s.event_count} evt</span>}
-        {label && (
-          <span
-            style={{
-              color: tokens.textMuted2,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              flex: 1,
-              minWidth: 0,
-            }}
-            title={label}
-          >
-            {label}
-          </span>
-        )}
+        <span style={{ color: tokens.textGhost, flex: "none" }}>·</span>
+        <span
+          className="mono"
+          style={{ color: tokens.textFaint, flex: "none" }}
+          title="downloaded tokens (input + cache read)"
+        >
+          ↓ {humanTokens(tokensIn)}
+        </span>
       </div>
     </div>
   );
@@ -304,11 +333,31 @@ export function AgentActivity() {
     refetchInterval: 4_000,
   });
 
-  const agents = q.data?.agents ?? [];
+  const agents = useMemo(() => q.data?.agents ?? [], [q.data]);
   const s = q.data?.summary;
-  const ACTIVE_STATUSES = new Set(["running", "queued", "stuck", "paused"]);
-  const active = agents.filter((a) => ACTIVE_STATUSES.has(a.status));
-  const recent = agents.filter((a) => !ACTIVE_STATUSES.has(a.status));
+
+  // Memoised partition — the audit flagged these as unmemoised filter+Set()
+  // allocations that fired on every one-second useLiveTick tick.
+  const { active, recent } = useMemo(() => {
+    const active: AgentRow[] = [];
+    const recent: AgentRow[] = [];
+    for (const a of agents) {
+      if (ACTIVE_STATUSES.has(a.status)) active.push(a);
+      else recent.push(a);
+    }
+    return { active, recent };
+  }, [agents]);
+
+  // Only tick the clock when SOMETHING can be counting up. Kills the timer
+  // entirely when the panel is idle (empty state / all recent).
+  const anyRunning = useMemo(() => {
+    if (active.some((a) => a.status === "running")) return true;
+    for (const a of active) {
+      if (a.subagents?.some((sa) => sa.status === "running")) return true;
+    }
+    return false;
+  }, [active]);
+  const now = useSharedClock(anyRunning);
 
   return (
     <>
@@ -322,6 +371,7 @@ export function AgentActivity() {
           fontSize: 10,
           color: tokens.textFaint,
           flexWrap: "wrap",
+          borderBottom: `1px solid ${tokens.border}`,
         }}
       >
         <span style={{ color: s?.running ? tokens.accent : tokens.textFaint }}>
@@ -329,19 +379,29 @@ export function AgentActivity() {
         </span>
         {!!s?.active_subagents && <span>{s.active_subagents} subagents</span>}
         {!!s?.queued && <span>{s.queued} queued</span>}
-        {!!s?.stuck && <span style={{ color: tokens.stuck }}>{s.stuck} stuck</span>}
+        {!!s?.stuck && (
+          <span style={{ color: tokens.stuck }}>{s.stuck} stuck</span>
+        )}
         <span style={{ flex: 1 }} />
-        {!!s?.spent_usd_last_hour && <span>${s.spent_usd_last_hour.toFixed(2)}/h</span>}
+        {!!s?.spent_usd_last_hour && (
+          <span>${s.spent_usd_last_hour.toFixed(2)}/h</span>
+        )}
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 4px 8px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 0 8px" }}>
         {q.isLoading && (
-          <div className="mono" style={{ padding: 16, fontSize: 10.5, color: tokens.textFaint }}>
+          <div
+            className="mono"
+            style={{ padding: 16, fontSize: 10.5, color: tokens.textFaint }}
+          >
             loading agents…
           </div>
         )}
         {q.isError && (
-          <div className="mono" style={{ padding: 16, fontSize: 10.5, color: tokens.bleed }}>
+          <div
+            className="mono"
+            style={{ padding: 16, fontSize: 10.5, color: tokens.bleed }}
+          >
             {(q.error as Error).message}
           </div>
         )}
@@ -361,7 +421,7 @@ export function AgentActivity() {
         )}
 
         {active.map((a) => (
-          <AgentRunLine key={a.id} a={a} />
+          <AgentRunLine key={a.id} a={a} now={now} />
         ))}
 
         {!!recent.length && (
@@ -372,13 +432,13 @@ export function AgentActivity() {
                 fontSize: 9,
                 color: tokens.textGhost,
                 letterSpacing: "0.08em",
-                padding: "10px 6px 4px",
+                padding: "10px 8px 4px",
               }}
             >
               RECENT
             </div>
             {recent.slice(0, 12).map((a) => (
-              <AgentRunLine key={a.id} a={a} />
+              <AgentRunLine key={a.id} a={a} now={now} />
             ))}
           </>
         )}
