@@ -100,7 +100,18 @@ r.get("/list", async (c) => {
   }
   const st = await fs.stat(abs).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
-  const dirents = await fs.readdir(abs, { withFileTypes: true }).catch(() => [] as Dirent[]);
+  // Bubble readdir failures (EPERM, ENOENT-during-race, EIO) as a real
+  // 500 instead of swallowing them into an empty entry list — a silent
+  // empty result was indistinguishable from a genuinely empty
+  // directory, made worse by the new `total` field which would also
+  // report 0. See BASELINE-FINDINGS.md.
+  let dirents: Dirent[];
+  try {
+    dirents = await fs.readdir(abs, { withFileTypes: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "could not read directory";
+    return c.json({ error: `could not read directory: ${msg}` }, 500);
+  }
   // Filter dotfiles, then sort dirents deterministically (dirs first, then name)
   // BEFORE truncating. Sorting after slicing would leave the truncated set at
   // the mercy of the OS's readdir order — `zebra.md` might vanish while
@@ -122,8 +133,13 @@ r.get("/list", async (c) => {
 
       if (dirent.isSymbolicLink()) {
         // stat (not lstat) follows the symlink so a symlinked directory
-        // still reports isDir:true. Symlink escape is already blocked
-        // upstream by resolveInRoot's realpath check.
+        // still reports isDir:true. Note: resolveInRoot's realpath check
+        // guards the REQUESTED parent path only — individual children
+        // are not re-checked here, so a symlink planted inside a root
+        // and pointing outside it will still show its target's size and
+        // mtime in this listing. Content access is safely blocked at
+        // /read (which routes back through resolveInRoot), so this only
+        // exposes stat metadata, not bytes.
         const st = await fs.stat(entryAbs).catch(() => null);
         if (!st) return null;
         return { name: dirent.name, isDir: st.isDirectory(), size: st.size, mtime: st.mtime.toISOString() };

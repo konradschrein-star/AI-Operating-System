@@ -213,6 +213,10 @@ function FileExplorerPanelImpl({
   const [searchResults, setSearchResults] = useState<FMFile[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTruncated, setSearchTruncated] = useState(false);
+  /** Records the last failed directory-load so the pane can render an
+   *  explicit error row with a retry, instead of the old silent empty
+   *  list on 500s / offline / permission errors. */
+  const [loadError, setLoadError] = useState<{ path: string; message: string } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const filesRef = useRef<FMFile[]>([]);
   const rootsRef = useRef<FileRoot[]>([]);
@@ -239,7 +243,30 @@ function FileExplorerPanelImpl({
   const loadDir = useCallback(async (virtualPath: string) => {
     const split = splitVirtualPath(virtualPath, rootsRef.current);
     if (!split) return; // the virtual "/" root — already seeded by loadRoots
-    const entries = await fetchFileList(split.root, split.rel).catch(() => []);
+    let entries: Awaited<ReturnType<typeof fetchFileList>>;
+    try {
+      entries = await fetchFileList(split.root, split.rel);
+    } catch (err) {
+      // Surface the failure instead of masking it as an empty directory —
+      // a silent .catch(() => []) here used to make network errors,
+      // 500s, and permission errors indistinguishable from a genuinely
+      // empty folder. See BASELINE-FINDINGS.md §Error handling defect.
+      setLoadError({
+        path: virtualPath,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      // Clear stale children under the failed directory so the UI does
+      // not keep showing whatever was there before the failed reload.
+      setFiles((prev) => {
+        const prefix = virtualPath.endsWith("/") ? virtualPath : `${virtualPath}/`;
+        return prev.filter((f) => {
+          if (!f.path.startsWith(prefix)) return true;
+          return f.path.slice(prefix.length).includes("/");
+        });
+      });
+      return;
+    }
+    setLoadError(null);
     setFiles((prev) => {
       const prefix = virtualPath.endsWith("/") ? virtualPath : `${virtualPath}/`;
       // Drop any stale entries directly under this dir, then re-add fresh ones.
@@ -477,6 +504,43 @@ function FileExplorerPanelImpl({
             : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""} — click to select`
           : `select a file, then copy path${onAttach ? " or attach" : ""} — or drag it onto the composer`}
       </div>
+      {loadError && !isSearching && (
+        <div
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "8px 10px",
+            fontSize: 11,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.dangerActionBorder}`,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            failed to load {loadError.path || "/"} — {loadError.message}
+          </span>
+          <button
+            onClick={() => {
+              if (loadError.path === "") void loadRoots();
+              else void loadDir(loadError.path);
+            }}
+            className="mono"
+            style={{
+              fontSize: 10.5,
+              color: tokens.text,
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.borderEmphasis}`,
+              borderRadius: 6,
+              padding: "3px 10px",
+              cursor: "pointer",
+            }}
+          >
+            retry
+          </button>
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflowY: isSearching ? "auto" : undefined }}>
         {isSearching ? (
           <SearchResultsList
@@ -566,7 +630,7 @@ function SearchResultsList({
               padding: "8px 12px",
               cursor: "pointer",
               borderBottom: `1px solid ${tokens.borderSoft}`,
-              background: seld ? "rgba(91, 141, 239, 0.12)" : "transparent",
+              background: seld ? tokens.selectedBg : "transparent",
             }}
           >
             <span className="ms" style={{ fontSize: 15, color: tokens.textMuted }}>
