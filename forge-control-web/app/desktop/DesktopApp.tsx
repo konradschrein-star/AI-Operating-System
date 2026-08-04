@@ -41,6 +41,7 @@ import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
 import { MoneySurface } from "./MoneySurface";
 import { ProjectsSurface } from "./ProjectsSurface";
+import { AgentActivity } from "./live/AgentActivity";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -267,6 +268,12 @@ export function DesktopApp() {
     queryKey: ["live"],
     queryFn: fetchLive,
     enabled: surface === "live" || surface === "today",
+    // The LIVE surface used to be a static snapshot — the audit (§2.3) called
+    // it out as fetch-once and never refresh. Now that AgentActivity is
+    // mounted at the top of it, poll while the surface is visible so the
+    // provider pulse and Hermes ledger update at the same cadence users
+    // already expect from the panel.
+    refetchInterval: surface === "live" ? 15_000 : false,
   });
   const controlQ = useQuery({ queryKey: ["control"], queryFn: fetchControl });
   const qc = useQueryClient();
@@ -1955,6 +1962,26 @@ function LiveSurface({ data }: { data: LiveResponse }) {
         }}
       >
         Live · The Machine
+      </div>
+
+      {/* AgentActivity is the answer to "what are my agents doing right now?".
+          It lived buried in the chat side panel; here it's promoted to the
+          top of the surface labelled LIVE, which for months showed only the
+          Hermes worker ledger. The Hermes/provider strip below stays — it's
+          the machine-level pulse this surface was originally designed for. */}
+      <div
+        style={{
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.border}`,
+          borderRadius: 8,
+          marginBottom: 16,
+          maxHeight: 380,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <AgentActivity />
       </div>
 
       <div style={{ display: "flex", gap: 9, marginBottom: 15 }}>
