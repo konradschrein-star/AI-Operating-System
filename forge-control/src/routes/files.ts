@@ -101,46 +101,58 @@ r.get("/list", async (c) => {
   const st = await fs.stat(abs).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
   const dirents = await fs.readdir(abs, { withFileTypes: true }).catch(() => [] as Dirent[]);
-  const entries = await Promise.all(
-    dirents
-      .filter((d) => !d.name.startsWith("."))
-      .map(async (dirent) => {
-        const entryAbs = path.join(abs, dirent.name);
-
-        if (dirent.isSymbolicLink()) {
-          // stat (not lstat) follows the symlink so a symlinked directory
-          // still reports isDir:true. Symlink escape is already blocked
-          // upstream by resolveInRoot's realpath check.
-          const st = await fs.stat(entryAbs).catch(() => null);
-          if (!st) return null;
-          return { name: dirent.name, isDir: st.isDirectory(), size: st.size, mtime: st.mtime.toISOString() };
-        }
-
-        if (dirent.isDirectory()) {
-          // Dirent confirms type — no stat needed for isDir.
-          // mtime/size omitted for directories (not meaningful in the list UI).
-          return { name: dirent.name, isDir: true as const, size: 0, mtime: "" };
-        }
-
-        if (dirent.isFile()) {
-          const st = await fs.stat(entryAbs).catch(() => null);
-          if (!st) return null;
-          return { name: dirent.name, isDir: false as const, size: st.size, mtime: st.mtime.toISOString() };
-        }
-
-        // Skip sockets, block devices, etc.
-        return null;
-      }),
-  );
-  const filtered = entries.filter((e): e is NonNullable<typeof e> => e !== null);
-  const total = filtered.length;
+  // Filter dotfiles, then sort dirents deterministically (dirs first, then name)
+  // BEFORE truncating. Sorting after slicing would leave the truncated set at
+  // the mercy of the OS's readdir order — `zebra.md` might vanish while
+  // `aardvark.md` in the discarded half stays visible. Symlinks are ordered
+  // as non-dirs here for stability; we don't stat before the cap because the
+  // whole point of capping first is to keep I/O at O(LIST_CAP), not O(total).
+  const visible = dirents.filter((d) => !d.name.startsWith("."));
+  visible.sort((a, b) => {
+    const aDir = a.isDirectory();
+    const bDir = b.isDirectory();
+    return aDir === bDir ? a.name.localeCompare(b.name) : aDir ? -1 : 1;
+  });
+  const total = visible.length;
   const truncated = total > LIST_CAP;
-  const capped = truncated ? filtered.slice(0, LIST_CAP) : filtered;
-  capped.sort((a, b) =>
+  const capped = truncated ? visible.slice(0, LIST_CAP) : visible;
+  const entries = await Promise.all(
+    capped.map(async (dirent) => {
+      const entryAbs = path.join(abs, dirent.name);
+
+      if (dirent.isSymbolicLink()) {
+        // stat (not lstat) follows the symlink so a symlinked directory
+        // still reports isDir:true. Symlink escape is already blocked
+        // upstream by resolveInRoot's realpath check.
+        const st = await fs.stat(entryAbs).catch(() => null);
+        if (!st) return null;
+        return { name: dirent.name, isDir: st.isDirectory(), size: st.size, mtime: st.mtime.toISOString() };
+      }
+
+      if (dirent.isDirectory()) {
+        // Dirent confirms type — no stat needed for isDir.
+        // mtime/size omitted for directories (not meaningful in the list UI).
+        return { name: dirent.name, isDir: true as const, size: 0, mtime: "" };
+      }
+
+      if (dirent.isFile()) {
+        const st = await fs.stat(entryAbs).catch(() => null);
+        if (!st) return null;
+        return { name: dirent.name, isDir: false as const, size: st.size, mtime: st.mtime.toISOString() };
+      }
+
+      // Skip sockets, block devices, etc.
+      return null;
+    }),
+  );
+  // Symlink resolution can flip isDir after the pre-sort — re-sort the final
+  // slice so directories-first ordering holds even for symlinked dirs.
+  const filtered = entries.filter((e): e is NonNullable<typeof e> => e !== null);
+  filtered.sort((a, b) =>
     a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1,
   );
   c.header("Cache-Control", "private, max-age=10");
-  return c.json({ root: rootKey, path: rel, entries: capped, truncated, total });
+  return c.json({ root: rootKey, path: rel, entries: filtered, truncated, total });
 });
 
 const SEARCH_RESULT_CAP = 200;
