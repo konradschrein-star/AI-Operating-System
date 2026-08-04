@@ -139,9 +139,10 @@ interface AgentsResponse {
 
 // A run is "active" for this view whenever the operator would care about
 // it — anything with a real running CLI attached (running/queued/paused/
-// stuck) plus anything that finished within the last 90s so a completion
-// briefly stays visible instead of vanishing mid-tick.
-const RECENT_COMPLETION_WINDOW_MS = 90_000;
+// stuck) plus anything that finished recently. 24h, not seconds: this panel
+// is Konrad's overview of what ran tonight, not only what runs this instant.
+// Completed rows never pull the thread fallback and LIMIT 60 bounds payload.
+const RECENT_COMPLETION_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function numOr0(v: unknown): number {
   const n = typeof v === "string" ? Number(v) : (v as number);

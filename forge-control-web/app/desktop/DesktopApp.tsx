@@ -41,6 +41,7 @@ import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
 import { MoneySurface } from "./MoneySurface";
 import { ProjectsSurface } from "./ProjectsSurface";
+import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
 
 /* ----------------------------------------------------------------------------
@@ -54,6 +55,7 @@ type Surface =
   | "pipeline"
   | "library"
   | "money"
+  | "businesses"
   | "skills"
   | "memory"
   | "live"
@@ -81,6 +83,7 @@ const NAV: NavItem[] = [
   { key: "pipeline", label: "PIPELINE", group: "work" },
   { key: "library", label: "LIBRARY", group: "work" },
   { key: "money", label: "MONEY", group: "work" },
+  { key: "businesses", label: "BUSINESSES", group: "work" },
   { key: "skills", label: "SKILLS", group: "ai" },
   { key: "memory", label: "MEMORY", group: "ai" },
   { key: "live", label: "LIVE", group: "ai" },
@@ -411,13 +414,15 @@ export function DesktopApp() {
           {surface === "autonomy" && <AutonomySurface />}
           {surface === "automation" && <AutomationSurface />}
           {surface === "money" && <MoneySurface />}
+          {surface === "businesses" && <BusinessesSurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
             surface !== "chat" &&
             surface !== "skills" &&
             surface !== "pipeline" &&
             surface !== "autonomy" &&
-            surface !== "automation" && (
+            surface !== "automation" &&
+            surface !== "businesses" && (
               <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
             )}
         </div>
@@ -747,6 +752,11 @@ function LeftRail({
             SETTINGS
           </span>
         </Link>
+        {/* Businesses used to be its own /businesses route with a Link here.
+            Konrad's 2026-08-04 feedback: unmounting the whole OS to reach
+            it was jarring. It's now a surface (WORK group in NAV), and this
+            standalone rail link is deliberately gone — the top nav + the
+            WORK section of this rail both already carry BUSINESSES. */}
       </div>
       <div
         style={{

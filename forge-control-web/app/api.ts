@@ -1317,23 +1317,33 @@ export const setProjectStatus = async (
  * captured in nightly backups. A password pasted into a message lives in all
  * three forever. These helpers post the value straight to the server; only the
  * NAME is ever shown or written into the conversation.
+ *
+ * The reveal helper is the ONLY call in this file that returns a raw secret
+ * value. Every other secrets call — list, store, dismiss — deliberately never
+ * touches the value. Keep it that way.
  * -------------------------------------------------------------------------- */
 export interface SecretMeta {
   name: string;
   bytes: number;
   updatedAt: string;
   note: string | null;
+  /** Operator-set marker: this credential was queued for Konrad to collect
+   *  and hasn't been revealed yet. UI floats these to the top of the list
+   *  with a distinct badge. Cleared on first reveal (or explicit dismiss). */
+  pending: boolean;
 }
 
 export const storeSecret = async (
   name: string,
   value: string,
   note?: string,
+  forKonrad?: boolean,
 ): Promise<SecretMeta> => {
   const r = await postJson<{ secret: SecretMeta }>("/secrets", {
     name,
     value,
     ...(note ? { note } : {}),
+    ...(forKonrad !== undefined ? { for_konrad: forKonrad } : {}),
   });
   return r.secret;
 };
@@ -1341,4 +1351,26 @@ export const storeSecret = async (
 export const fetchSecrets = async (): Promise<SecretMeta[]> => {
   const r = await getJson<{ secrets: SecretMeta[] }>("/secrets");
   return r.secrets;
+};
+
+/** Reveal a stored secret value. POST (not GET) so the name never ends up in
+ *  a URL, an access-log line, or a browser-history entry. Callers should
+ *  render the value inside an explicitly-triggered UI element and drop it
+ *  from memory as soon as it isn't visible. */
+export const revealSecret = async (
+  name: string,
+): Promise<{ name: string; value: string }> =>
+  postJson<{ name: string; value: string }>(
+    `/secrets/${encodeURIComponent(name)}/reveal`,
+  );
+
+/** Dismiss the "for Konrad" flag on a stored secret without revealing it. */
+export const clearSecretPending = async (name: string): Promise<void> => {
+  await postJson<{ ok: true }>(
+    `/secrets/${encodeURIComponent(name)}/clear-pending`,
+  );
+};
+
+export const deleteSecret = async (name: string): Promise<void> => {
+  await deleteJson<{ deleted: true }>(`/secrets/${encodeURIComponent(name)}`);
 };

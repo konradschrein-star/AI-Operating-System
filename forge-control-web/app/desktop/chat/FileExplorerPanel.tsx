@@ -65,21 +65,60 @@ function splitVirtualPath(virtualPath: string, roots: FileRoot[]): { root: strin
   return { root: rootEntry.key, rel: parts.slice(1).join("/") };
 }
 
+/** Hard cap on previewed text.
+ *
+ *  Why: this preview used to fetch a file whole and hand every byte to
+ *  MessageMarkdown, which parses and lays out synchronously on the main
+ *  thread. The vault routinely holds files far past the point where that is
+ *  free — "AI OS/Operator Log.md" is 65KB and grows every session,
+ *  contentforge_archive_report.md is 159KB — so clicking one in the file
+ *  explorer froze the whole app. A preview only has to be enough to recognise
+ *  the file; anything past a screen or two is cost with no benefit. */
+const PREVIEW_MAX_CHARS = 40_000;
+
 function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
+  // NOTE: every hook must run before any early return. This component used to
+  // `return null` on an unresolvable path BEFORE calling useState/useEffect,
+  // which changes hook order between renders — React's "rendered fewer hooks
+  // than expected" crash, and a source of stale/duplicated fetches.
   const split = splitVirtualPath(file.path, roots);
-  if (!split) return null;
-  const url = fileReadUrl(split.root, split.rel);
+  const url = split ? fileReadUrl(split.root, split.rel) : null;
   const e = ext(file.name);
 
   const [mdText, setMdText] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
+
   useEffect(() => {
-    if (!MD_EXT.has(e)) return;
+    if (!url || !MD_EXT.has(e)) return;
+    let cancelled = false;
     setMdText(null);
+    setTruncated(false);
     fetch(url)
       .then((r) => r.text())
-      .then(setMdText)
-      .catch(() => setMdText("(failed to load)"));
+      .then((t) => {
+        if (cancelled) return;
+        // Truncate on a line boundary so markdown isn't cut mid-construct
+        // (an unterminated code fence would swallow the rest of the render).
+        if (t.length > PREVIEW_MAX_CHARS) {
+          const cut = t.slice(0, PREVIEW_MAX_CHARS);
+          const lastNl = cut.lastIndexOf("\n");
+          setMdText(lastNl > 0 ? cut.slice(0, lastNl) : cut);
+          setTruncated(true);
+        } else {
+          setMdText(t);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setMdText("(failed to load)");
+      });
+    // Cancel on unmount / file change: clicking through a folder quickly used
+    // to leave earlier fetches racing to setState on a dead component.
+    return () => {
+      cancelled = true;
+    };
   }, [url, e]);
+
+  if (!split || !url) return null;
 
   if (MD_EXT.has(e)) {
     return (
@@ -99,6 +138,15 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
           >
             {mdText ?? "loading…"}
           </pre>
+        )}
+        {truncated && (
+          <div
+            className="mono"
+            style={{ fontSize: 10.5, color: tokens.textFaint, paddingTop: 12 }}
+          >
+            preview truncated at {(PREVIEW_MAX_CHARS / 1000) | 0}k characters — open the
+            file to read it in full
+          </div>
         )}
       </div>
     );

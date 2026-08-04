@@ -12,16 +12,19 @@
     "test": "tsx --test src/lib/*.test.ts"
   },
   "dependencies": {
-    "hono": "^4.6.0",
     "@hono/node-server": "^1.13.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "better-sqlite3": "^11.5.0",
+    "hono": "^4.6.0",
+    "jsonwebtoken": "^9.0.3",
+    "lz-string": "^1.5.0",
     "pg": "^8.13.0"
   },
   "devDependencies": {
-    "typescript": "^5.6.0",
-    "tsx": "^4.19.0",
-    "@types/node": "^22.0.0",
     "@types/better-sqlite3": "^7.6.11",
-    "@types/pg": "^8.11.10"
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
   }
 }

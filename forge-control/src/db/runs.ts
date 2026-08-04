@@ -379,6 +379,29 @@ export async function setRunCanvasSnapshot(
   );
 }
 
+/** Set (or clear with null) metadata.canvas — the vault-relative path of the
+ *  drawing that should be open beside this chat. Living in runs.metadata (not
+ *  browser localStorage) means the same chat opens the same drawing on any
+ *  device and survives a full page reload. */
+export async function setRunCanvas(
+  id: string,
+  canvasPath: string | null,
+): Promise<RunDetail | null> {
+  const r = await pool.query<{ id: string }>(
+    canvasPath === null
+      ? `UPDATE runs SET metadata = COALESCE(metadata, '{}'::jsonb) - 'canvas',
+                         updated_at = now()
+          WHERE id = $1 RETURNING id::text`
+      : `UPDATE runs SET metadata = COALESCE(metadata, '{}'::jsonb) ||
+                         jsonb_build_object('canvas', $2::text),
+                         updated_at = now()
+          WHERE id = $1 RETURNING id::text`,
+    canvasPath === null ? [id] : [id, canvasPath],
+  );
+  if (r.rowCount === 0) return null;
+  return getRun(id);
+}
+
 /** Set (or clear with null) metadata.effort — same pattern as setRunModel. */
 export async function setRunEffort(
   id: string,

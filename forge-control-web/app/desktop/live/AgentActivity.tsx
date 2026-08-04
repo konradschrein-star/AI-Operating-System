@@ -416,7 +416,7 @@ export function AgentActivity() {
               textAlign: "center",
             }}
           >
-            no agents have run yet
+            no agent activity in the last 24h
           </div>
         )}
 

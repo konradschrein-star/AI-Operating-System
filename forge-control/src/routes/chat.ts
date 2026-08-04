@@ -10,6 +10,7 @@ import {
   getRun,
   createRun,
   appendMessage,
+  setRunCanvas,
   setRunCanvasSnapshot,
   setRunStatus,
   setRunModel,
@@ -270,6 +271,37 @@ r.post("/:id/model", async (c) => {
     return c.json({ error: `invalid model: ${raw}` }, 400);
   }
   const updated = await setRunModel(id, model);
+  if (!updated) return c.json({ error: "run not found" }, 404);
+  return c.json({ run: updated });
+});
+
+/* PLAN.md F1: persist the vault-relative path of the drawing open beside this
+ * chat. Was in browser localStorage before, which meant a chat opened on the
+ * phone didn't know a canvas was pinned to it on the desktop. Empty string or
+ * null clears the pin. Path shape is validated the same way the canvas routes
+ * validate it — .excalidraw.md, no traversal — because it will be read from
+ * this row and passed straight to loadCanvas() next turn. */
+r.post("/:id/canvas", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { path?: string | null };
+  const raw = body.path;
+  let next: string | null;
+  if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) {
+    next = null;
+  } else if (typeof raw === "string") {
+    const p = raw.trim();
+    if (!p.endsWith(".excalidraw.md")) {
+      return c.json({ error: "path must end with .excalidraw.md" }, 400);
+    }
+    if (p.includes("..") || p.startsWith("/")) {
+      return c.json({ error: "path must be vault-relative" }, 400);
+    }
+    next = p;
+  } else {
+    return c.json({ error: "path must be a string or null" }, 400);
+  }
+  const updated = await setRunCanvas(id, next);
   if (!updated) return c.json({ error: "run not found" }, 404);
   return c.json({ run: updated });
 });

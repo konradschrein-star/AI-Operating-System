@@ -145,8 +145,33 @@ export default function SettingsPage() {
         <h1 style={{ fontSize: 26, margin: "14px 0 4px", fontWeight: 600 }}>
           Settings
         </h1>
-        <div style={{ color: tokens.textMuted, fontSize: 13.5, marginBottom: 26 }}>
+        <div style={{ color: tokens.textMuted, fontSize: 13.5, marginBottom: 14 }}>
           Claude accounts, health and failover policy.
+        </div>
+
+        {/* Sub-page rail. Every real /settings/* route lives here — reveal
+            secrets, etc. Kept as a plain link row rather than tabs so each
+            sub-page keeps its own URL (bookmarkable, backable). */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 26, flexWrap: "wrap" }}>
+          <Link
+            href="/settings/secrets"
+            className="mono"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 8,
+              padding: "8px 12px",
+              color: tokens.textLabel,
+              textDecoration: "none",
+              fontSize: 12.5,
+            }}
+          >
+            <span style={{ color: tokens.accent }}>›</span>
+            SECRETS — reveal stored credentials
+          </Link>
         </div>
 
         {error && (
