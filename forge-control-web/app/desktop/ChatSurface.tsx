@@ -46,6 +46,7 @@ import {
 import { AgentActivity } from "./live/AgentActivity";
 import { AssistantThread } from "./chat/AssistantThread";
 import { CanvasPane } from "./CanvasPane";
+import { SecretField } from "./chat/SecretField";
 import { useRunEvents } from "./chat/useRunEvents";
 
 const STATUS_COLOR: Record<RunStatus, string> = {
@@ -1241,6 +1242,7 @@ function ChatThread({
     Array<{ text: string; ts: string }>
   >([]);
   const popoverRef = useRef<SlashPopoverHandle | null>(null);
+  const [secretOpen, setSecretOpen] = useState(false);
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
@@ -1428,6 +1430,16 @@ function ChatThread({
           flexDirection: "column",
         }}
       >
+        {secretOpen && (
+          <SecretField
+            onClose={() => setSecretOpen(false)}
+            onStored={(name) => {
+              // Only the NAME enters the conversation. The value is on disk.
+              pushSys(`secret stored: ${name} (value not in this thread)`);
+              setDraft((d) => (d ? `${d} ` : "") + `[secret: ${name}]`);
+            }}
+          />
+        )}
         <AttachmentChips
           attachments={att.attachments}
           uploading={att.uploading}
@@ -1495,6 +1507,23 @@ function ChatThread({
             }}
           />
           <EngineControls run={run} />
+          <button
+            title="Store a credential without putting it in the chat"
+            onClick={() => setSecretOpen((v) => !v)}
+            className="mono"
+            style={{
+              background: "transparent",
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 6,
+              color: secretOpen ? tokens.accent : tokens.textMuted,
+              fontSize: 11,
+              padding: "6px 9px",
+              cursor: "pointer",
+              flex: "none",
+            }}
+          >
+            secret
+          </button>
           <button
             disabled={
               isSending ||

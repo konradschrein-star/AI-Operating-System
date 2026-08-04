@@ -1309,3 +1309,36 @@ export const setProjectStatus = async (
   });
   return r.project;
 };
+
+/* ----------------------------------------------------------------------------
+ * Secrets — credentials that must never enter the chat thread
+ *
+ * runs.thread is plain JSONB, replayed into the model's context every turn and
+ * captured in nightly backups. A password pasted into a message lives in all
+ * three forever. These helpers post the value straight to the server; only the
+ * NAME is ever shown or written into the conversation.
+ * -------------------------------------------------------------------------- */
+export interface SecretMeta {
+  name: string;
+  bytes: number;
+  updatedAt: string;
+  note: string | null;
+}
+
+export const storeSecret = async (
+  name: string,
+  value: string,
+  note?: string,
+): Promise<SecretMeta> => {
+  const r = await postJson<{ secret: SecretMeta }>("/secrets", {
+    name,
+    value,
+    ...(note ? { note } : {}),
+  });
+  return r.secret;
+};
+
+export const fetchSecrets = async (): Promise<SecretMeta[]> => {
+  const r = await getJson<{ secrets: SecretMeta[] }>("/secrets");
+  return r.secrets;
+};
