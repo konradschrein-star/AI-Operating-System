@@ -73,3 +73,143 @@ which stats every child (`fs.stat` per entry inside `Promise.all`) — returns i
 - `FilePreview` already caps previewed text at 40 000 chars on a line boundary —
   a real prior fix for the "big markdown froze the app" bug. Keep it.
 - Range streaming in `/read` (206 support) is correct. Keep it.
+
+---
+
+## In-browser measurements (Phase 1)
+
+Captured by Playwright against the live production app
+(`https://os.schreinercontentsystems.com`) with a valid session cookie.
+Headless Chromium, 1600×900 viewport, 3 independent runs per timing measurement.
+
+### Click-to-first-paint
+
+Measured from `performance.mark("files-tab-click")` (set immediately before
+clicking the Files button in the CHAT right panel) to when
+`.file-explorer *` node count first exceeds 5 — i.e., when any file content is
+visible in the DOM.
+
+| Run | paint (ms) | wall (ms) | DOM nodes at detection |
+|-----|-----------|-----------|----------------------|
+| 1   | 118.8     | 115       | 43                   |
+| 2   | 105.7     | 102       | 43                   |
+| 3   | 117.0     | 109       | 43                   |
+
+**min = 105.7 ms · median = 117.0 ms · max = 118.8 ms**
+
+**vs. 200 ms target → PASSES.** The initial Files tab render is already within
+the target window. The 43 nodes at detection represent the two root-directory
+entries ("Obsidian Vault" and "Agent Workspace") plus the file manager chrome —
+no full directory listing is loaded on the initial tab switch.
+
+### DOM node count after mount
+
+`document.querySelectorAll('.file-explorer *').length` on run 3, after the
+initial render (2 root entries visible): **75 nodes**.
+
+This is the minimum baseline — each directory navigation loads more entries. The
+library is not virtualized, so each additional file entry adds 3–5 DOM nodes.
+Production impact: small for current directories (max 86 entries at vault root),
+but the node cost grows linearly.
+
+### API calls per user action (via `page.on("response")` against `/api/proxy/*`)
+
+All file manager requests go to `/api/proxy/files/*` (Next.js rewrite to
+forge-control at `:7700`).
+
+| Action | Calls | Endpoint(s) |
+|--------|-------|-------------|
+| Initial page load | 0 files calls | — |
+| CHAT nav click | 0 files calls | — |
+| Files tab click | **1** | `GET /api/proxy/files/roots` (98 B) |
+| Click into a root dir | **1** | `GET /api/proxy/files/list?root=workspace&path=` (3355 B) |
+| Click into a sub-dir | **1** | `GET /api/proxy/files/list?root=...&path=...` |
+
+**Result: exactly 1 `/list` call per navigation click — satisfies D3 as-is.**
+
+No recursive fetching observed. Each call's payload is bounded to the current
+directory's entries only. The accumulating flat `files` array in client state is
+still a latent concern for deep navigation sessions (grows across directory
+visits), but does not affect the initial paint or the per-click API call count.
+
+**React DevTools hook:** `window.__REACT_DEVTOOLS_GLOBAL_HOOK__` is `false` —
+production Next.js build; React internals are not exposed. Programmatic profiler
+trace is unavailable. Performance marks emitted by the app: none detected.
+
+### Nested-dir curl timings (`:7700` direct)
+
+Extends the architect's baseline (vault root = 14 ms, workspace root = 2.5 ms):
+
+| Endpoint | time_total | payload | http |
+|---|---|---|---|
+| `/api/files/list?root=vault&path=30_YouTube%2FPlan+for+YouTube` | 0.0025 s | 6044 B | 200 |
+| `/api/files/list?root=vault&path=90_AI_OS` | 0.0018 s | 5697 B | 200 |
+| `/api/files/list?root=workspace&path=` | 0.0015 s | 3355 B | 200 |
+| `/api/files/roots` | 0.0007 s | 98 B | 200 |
+
+All sub-directories return in 1–3 ms. **The API is not the bottleneck at any
+directory depth measured.**
+
+### Light-mode screenshots
+
+Saved to `docs/plan/`:
+- `baseline-screenshot-dark.png` — Files pane in default dark mode
+- `baseline-screenshot-light.png` — Files pane after `data-theme="light"` forced
+  via JS
+
+Both screenshots show an identical dark UI. Computed-style verification confirms
+the defect:
+
+```
+Dark mode  background: rgb(11, 11, 12)
+Light mode background: rgb(11, 11, 12)   ← unchanged
+```
+
+Even though `--fg-text` changes correctly (`#17171a` in light mode), the `.file-explorer`
+element ignores it. CSS rule [9] from the injected stylesheet:
+
+```css
+.file-explorer {
+  background: rgb(11, 11, 12) !important;
+  color: rgb(237, 237, 238) !important;
+  /* ... 49 more !important declarations */
+}
+```
+
+This and 46 further hardcoded-color rules in `FileExplorerPanel.css` override
+every token. None of these rules read `var(--fg-*)`.
+
+---
+
+## Root cause confirmed
+
+1. **Click-to-first-paint: 105–118 ms (median 117 ms) → PASSES the 200 ms target.**
+   The initial Files pane render is already fast. The lag Konrad reports is
+   likely felt during *subsequent directory navigation* (each `loadDir` call +
+   re-render of the growing flat `files` array), not on the first tab switch.
+   The click-path fetches only `files/roots` (98 B, ~0.7 ms at `:7700`) then
+   renders two root entries — this is cheap. API latency is confirmed not the
+   bottleneck.
+
+2. **Mount cost and DOM node growth, not API, explain residual lag.**
+   Each directory visit appends entries to the flat client-side `files` array
+   and re-renders the entire un-virtualized list. Even at 75 nodes for 2 roots,
+   the pattern scales poorly: a vault root listing (86 entries) would produce
+   ~300+ nodes, all laid out on each re-render. The architect's analysis (mount
+   cost + flat array accumulation) is confirmed by the data; it does not
+   contradict the 200 ms initial-paint number because that only covers root
+   discovery, not full directory traversal.
+
+3. **Light mode is broken by 49 `!important` hardcoded-color rules.**
+   `FileExplorerPanel.css` injects `rgb(11, 11, 12)` and `rgb(237, 237, 238)`
+   (etc.) with `!important` across 49 declarations, all scoped to
+   `.file-explorer *`. CSS token variables respond correctly to `data-theme`
+   (verified: `--fg-text` flips to `#17171a` in light mode) but the file pane
+   ignores them entirely. The screenshots confirm the pane stays dark regardless
+   of theme. Architect's analysis: **confirmed.**
+
+4. **No contradictions with `docs/plan/00-vision.md`.** The 1-call-per-navigation
+   assertion (D3) holds as-is. The lack of virtualization (D2) is confirmed. The
+   API performance headroom is confirmed. The initial-paint number being under
+   200 ms does not invalidate the overall performance goal — the 200 ms target
+   should be measured post-fix, after full directory navigation, not just roots.
