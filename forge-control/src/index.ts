@@ -115,6 +115,7 @@ app.get("/", (c) =>
       "/api/reminders/:id/dismiss",
       "/api/projects",
       "/api/projects/board",
+      "/api/projects/managers",
       "/api/projects/:id",
       "/api/projects/:id/tasks",
       "/api/projects/:id/status",

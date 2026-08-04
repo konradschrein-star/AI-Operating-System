@@ -401,8 +401,22 @@ interface AgentRowRaw {
  * dropped from the in-memory rollup map. Completed rows never fall back:
  * their subagents finished by definition, so an empty subagent list is the
  * correct answer.
+ *
+ * When `projectId` is provided the result is scoped to runs belonging to that
+ * project (metadata.project_id = projectId). Child runs carry the same
+ * project_id, so workers + their System-B sub-agents are both included and
+ * the caller can nest them via parent_run_id as usual. Manager-role runs
+ * (metadata.role = 'manager') are excluded from the worker feed — there are
+ * none today but the guard is defensive.
  */
-async function fetchActiveRows(): Promise<AgentRowRaw[]> {
+async function fetchActiveRows(projectId?: string): Promise<AgentRowRaw[]> {
+  const params: string[] = [String(RECENT_COMPLETION_WINDOW_MS)];
+  let projectFilter = "";
+  if (projectId) {
+    params.push(projectId);
+    projectFilter = `AND metadata->>'project_id' = $${params.length}
+      AND metadata->>'role' IS DISTINCT FROM 'manager'`;
+  }
   const r = await pool.query<AgentRowRaw>(
     `SELECT id::text, title, status, worker, spent_usd::text,
             metadata,
@@ -414,9 +428,12 @@ async function fetchActiveRows(): Promise<AgentRowRaw[]> {
             parent_run_id::text AS parent_run_id,
             started_at::text, updated_at::text, last_heartbeat_at::text
        FROM runs
-      WHERE status IN ('running','queued','paused','stuck')
-         OR (status IN ('completed','failed','cancelled')
-             AND updated_at > now() - ($1 || ' milliseconds')::interval)
+      WHERE (
+              status IN ('running','queued','paused','stuck')
+              OR (status IN ('completed','failed','cancelled')
+                  AND updated_at > now() - ($1 || ' milliseconds')::interval)
+            )
+            ${projectFilter}
       ORDER BY
         CASE status
           WHEN 'running' THEN 0
@@ -428,7 +445,7 @@ async function fetchActiveRows(): Promise<AgentRowRaw[]> {
         started_at DESC NULLS LAST,
         updated_at DESC
       LIMIT 60`,
-    [String(RECENT_COMPLETION_WINDOW_MS)],
+    params,
   );
   return r.rows;
 }
@@ -569,14 +586,45 @@ function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
   };
 }
 
-/** GET /api/agents — one payload the Live panel polls every 1-2s. */
+/** GET /api/agents — one payload the Live panel polls every 1-2s.
+ *
+ * Optional ?project_id=<uuid> scopes the response to a single project's
+ * worker runs + their sub-agents. The summary block is also scoped to the
+ * filtered set in that case (derived from the rows, not a second DB query).
+ * Without the param the behaviour is identical to before. */
 r.get("/", async (c) => {
+  const projectId = c.req.query("project_id") || undefined;
+  const nowMs = Date.now();
+
+  if (projectId) {
+    const rows = await fetchActiveRows(projectId);
+    const agents = rows.map((row) => agentFromRow(row, nowMs));
+    const activeSubagents = agents.reduce(
+      (n, a) => n + a.subagents.filter((s) => s.status === "running").length,
+      0,
+    );
+    const body: AgentsResponse = {
+      now: new Date(nowMs).toISOString(),
+      summary: {
+        running: agents.filter((a) => a.status === "running").length,
+        queued: agents.filter((a) => a.status === "queued").length,
+        stuck: agents.filter((a) => a.status === "stuck").length,
+        paused: agents.filter((a) => a.status === "paused").length,
+        active_subagents: activeSubagents,
+        spent_usd_last_hour: agents.reduce((s, a) => s + a.spent_usd, 0),
+        tokens_in_last_hour: agents.reduce((s, a) => s + a.usage_total.input_tokens, 0),
+        tokens_out_last_hour: agents.reduce((s, a) => s + a.usage_total.output_tokens, 0),
+      },
+      agents,
+    };
+    return c.json(body);
+  }
+
   const [rows, rollup, hourly] = await Promise.all([
     fetchActiveRows(),
     fetchStatusRollup(),
     fetchHourlyTotals(),
   ]);
-  const nowMs = Date.now();
   const agents = rows.map((row) => agentFromRow(row, nowMs));
   const activeSubagents = agents.reduce(
     (n, a) => n + a.subagents.filter((s) => s.status === "running").length,

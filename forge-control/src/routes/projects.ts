@@ -7,6 +7,7 @@ import {
   setProjectStatus,
   listTasksForProject,
   listActiveTasks,
+  listManagerRollup,
   createTask,
   type ProjectRepo,
   type ProjectStatus,
@@ -42,6 +43,14 @@ const TIERS = new Set<TaskTier>(["fast", "standard", "flagship"]);
 r.get("/board", async (c) => {
   const tasks = await listActiveTasks();
   return c.json({ count: tasks.length, tasks });
+});
+
+/* Manager rollup — one card per active/blocked project with aggregate
+ * token/spend/task stats. Registered before /:id so "managers" is never
+ * matched as a project id by Hono's param router. */
+r.get("/managers", async (c) => {
+  const managers = await listManagerRollup();
+  return c.json({ managers });
 });
 
 r.get("/", async (c) => {
