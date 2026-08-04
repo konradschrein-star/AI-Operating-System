@@ -85,10 +85,36 @@ export interface AgentsResponse {
   agents: AgentRow[];
 }
 
-export const fetchAgents = async (): Promise<AgentsResponse> => {
-  const r = await fetch(`${ROOT}/agents`, {
+export interface Manager {
+  project_id: string;
+  name: string;
+  status: string;
+  mode: string | null;
+  tasks_done: number;
+  tasks_total: number;
+  tokens_in: number;
+  tokens_out: number;
+  spent_usd: number;
+  last_activity_at: string | null;
+}
+
+export interface ManagersResponse {
+  managers: Manager[];
+}
+
+export const fetchManagers = async (): Promise<ManagersResponse> => {
+  const r = await fetch(`${ROOT}/projects/managers`, {
     headers: { accept: "application/json" },
   });
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /projects/managers`);
+  return (await r.json()) as ManagersResponse;
+};
+
+export const fetchAgents = async (projectId?: string): Promise<AgentsResponse> => {
+  const url = projectId
+    ? `${ROOT}/agents?project_id=${encodeURIComponent(projectId)}`
+    : `${ROOT}/agents`;
+  const r = await fetch(url, { headers: { accept: "application/json" } });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /agents`);
   return (await r.json()) as AgentsResponse;
 };

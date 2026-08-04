@@ -44,6 +44,8 @@ import {
   type SurfaceKey,
 } from "./chat/slash-registry";
 import { AgentActivity } from "./live/AgentActivity";
+import { ManagersSection } from "./live/ManagersSection";
+import { fetchManagers } from "./live/agentsApi";
 import { AssistantThread } from "./chat/AssistantThread";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
@@ -236,6 +238,8 @@ function SidePanel({
   onTab,
   onOpenRun,
   fileAtt,
+  agentProjectId,
+  agentGroupName,
 }: {
   collapsed: boolean;
   onToggle: () => void;
@@ -243,6 +247,8 @@ function SidePanel({
   onTab: (t: "live" | "files") => void;
   onOpenRun: (runId: string) => void;
   fileAtt: ReturnType<typeof useAttachments> | null;
+  agentProjectId?: string;
+  agentGroupName?: string;
 }) {
   if (collapsed) {
     return (
@@ -368,7 +374,7 @@ function SidePanel({
                 borderBottom: `1px solid ${tokens.border}`,
               }}
             >
-              <AgentActivity />
+              <AgentActivity projectId={agentProjectId} groupName={agentGroupName} />
             </div>
             <div style={{ flex: "1 1 45%", minHeight: 0, display: "flex", flexDirection: "column" }}>
               <LiveProjectsBody onOpenRun={onOpenRun} />
@@ -532,6 +538,29 @@ export function ChatSurface({
 
   const counts = listQ.data?.counts ?? null;
 
+  // Manager selection — scopes the right Live panel to one project's workers.
+  // Separate from chat selId: clicking a manager card does NOT open a thread.
+  const managersQ = useQuery({
+    queryKey: ["projects", "managers"],
+    queryFn: fetchManagers,
+    refetchInterval: 8_000,
+  });
+  const managers = managersQ.data?.managers ?? [];
+
+  const [selectedManagerId, setSelectedManagerId] = useState<string | null>(null);
+
+  // Auto-select first manager on load; fall back if selected project disappears.
+  useEffect(() => {
+    if (managers.length === 0) return;
+    setSelectedManagerId((cur) => {
+      if (!cur) return managers[0].project_id;
+      if (!managers.find((m) => m.project_id === cur)) return managers[0].project_id;
+      return cur;
+    });
+  }, [managers]);
+
+  const selectedManager = managers.find((m) => m.project_id === selectedManagerId) ?? null;
+
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
       {/* Left rail — chat list */}
@@ -630,6 +659,10 @@ export function ChatSurface({
             )}
           </div>
         </div>
+        <ManagersSection
+          selectedId={selectedManagerId}
+          onSelect={setSelectedManagerId}
+        />
         {!searching && counts && (
           <div
             className="mono"
@@ -904,6 +937,8 @@ export function ChatSurface({
           setSelId(runId);
         }}
         fileAtt={composing ? null : threadAtt}
+        agentProjectId={selectedManagerId ?? undefined}
+        agentGroupName={selectedManager?.name}
       />
     </div>
   );
