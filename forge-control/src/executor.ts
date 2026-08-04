@@ -27,6 +27,7 @@ import {
   CcResumeError,
   type CcEvent,
 } from "./lib/cc-runner.ts";
+import { ingestEvent, finalizeRollup } from "./lib/run-rollup.ts";
 import {
   resolveAccount,
   resolveFailoverAccount,
@@ -634,6 +635,10 @@ async function processRun(run: ClaimedRun): Promise<void> {
     }
   } finally {
     clearInterval(hb);
+    // Drop the in-memory rollup regardless of outcome. finalizeRollup is
+    // idempotent and no-ops if the run was already flushed on the happy
+    // path (processWithClaudeCode calls it just before completeRun).
+    await finalizeRollup(run.id).catch(() => {});
   }
 }
 
@@ -665,6 +670,9 @@ function toolCallEntry(e: CcEvent): ThreadEntry {
       tool_use_id: e.toolUseId,
       tool: e.toolName,
       input: inputStr,
+      ...(e.parentToolUseId
+        ? { parent_tool_use_id: e.parentToolUseId }
+        : {}),
     },
   };
 }
@@ -679,7 +687,13 @@ function toolResultEntry(e: CcEvent): ThreadEntry {
     content: text,
     ts: new Date().toISOString(),
     kind: "tool_result",
-    meta: { tool_use_id: e.toolUseId, is_error: e.isError === true },
+    meta: {
+      tool_use_id: e.toolUseId,
+      is_error: e.isError === true,
+      ...(e.parentToolUseId
+        ? { parent_tool_use_id: e.parentToolUseId }
+        : {}),
+    },
   };
 }
 
@@ -771,6 +785,10 @@ async function processWithClaudeCode(
   };
 
   const onEvent = (e: CcEvent) => {
+    // Feed the per-run rollup FIRST — it's what backs GET /api/agents now,
+    // and unlike the thread append it batches its own writes (~2s), so we
+    // pay the DB cost once per burst instead of once per event.
+    ingestEvent(run.id, e);
     if (e.type === "init" && e.sessionId) {
       const sid = e.sessionId;
       enqueue(() => saveCcSession(run.id, sid));
@@ -780,7 +798,17 @@ async function processWithClaudeCode(
         content: e.text,
         ts: new Date().toISOString(),
         kind: "text",
-        meta: { provider: "claude-code" },
+        // Stamp parent_tool_use_id and usage into thread meta so the
+        // read-side fallback (foldSubagents on runs without rollup_v1)
+        // can still attribute events to their subagent.
+        meta: {
+          provider: "claude-code",
+          ...(e.parentToolUseId
+            ? { parent_tool_use_id: e.parentToolUseId }
+            : {}),
+          ...(e.usage ? { usage: e.usage } : {}),
+          ...(e.model ? { model: e.model } : {}),
+        },
       };
       enqueue(() => appendThreadEntry(run.id, entry));
     } else if (e.type === "tool_call") {
@@ -968,6 +996,10 @@ async function processWithClaudeCode(
     `[executor] run ${run.id} ok via claude-code in ${result.durationMs}ms ` +
       `(${result.numTurns} turns, $${result.costUsd.toFixed(4)})`,
   );
+  // Flush the rollup one last time BEFORE marking completed so the UI's
+  // "recent" section reflects the final subagent statuses instead of a
+  // stale mid-run snapshot.
+  await finalizeRollup(run.id);
   await completeRun(run.id, finalEntry, "completed");
   await notifyRunOutcome(
     run,

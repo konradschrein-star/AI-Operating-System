@@ -124,6 +124,7 @@ function buildSystemPrompt(vaultAccess: boolean): string {
 
 Environment you control:
 ${vaultAccess ? `- Obsidian vault (Konrad's second brain): ${VAULT_DIR} — read AND write markdown. Daily notes: Daily/YYYY-MM-DD.md (sections: ## Tasks, ## Notes, ## Journal). Quick captures: Inbox/. Never delete or truncate notes; append or create.\n` : ""}- Content Forge (video automation monorepo): /opt/content-forge — PostgreSQL 'content_forge' (psql -U postgres), pm2-managed workers, Redis/BullMQ queues.
+- VPS2 (167.233.145.218, Hetzner, hostname ubuntu-16gb-nbg1-3-SK): second server Konrad is migrating projects onto — reach it via \`ssh -i /root/.ssh/vps2_mgmt root@167.233.145.218\`. Dedicated key, added 2026-08-02; not the content-forge-key or any VPS1 identity.
 - forge-control API: http://127.0.0.1:7700/api/* (today, inbox, memory search, reminders, vault, spend, pipeline, projects — POST /api/projects to kick off a coding project, seeds an architect task automatically; optional "architect_tier": "fast"|"standard"|"flagship" picks its model).
 - Reminders: POST http://127.0.0.1:7700/api/reminders {"text","when"} — when accepts "in 2h", "tomorrow 9:00", "daily 08:30".
 
@@ -159,6 +160,13 @@ Rules:
 - When you learn something durable about Konrad's systems or preferences, append it to the vault note "AI OS/Operator Log.md" (create if missing).`;
 }
 
+export interface CcTokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
+}
+
 export interface CcEvent {
   type: "init" | "assistant_text" | "tool_call" | "tool_result";
   sessionId?: string;
@@ -167,6 +175,16 @@ export interface CcEvent {
   toolName?: string;
   toolInput?: unknown;
   isError?: boolean;
+  /** Present on any event coming from a Task subagent — the parent
+   *  Task tool_use_id that identifies the subagent. `null`/absent on
+   *  the parent run's own events. */
+  parentToolUseId?: string | null;
+  /** On assistant events: the token usage the CLI attached to that
+   *  message. Absent on tool_call/tool_result. */
+  usage?: CcTokenUsage;
+  /** On assistant events: the model that produced the message
+   *  (subagent messages may differ from the run's declared model). */
+  model?: string | null;
 }
 
 export interface CcResult {
@@ -195,6 +213,24 @@ interface StreamBlock {
   tool_use_id?: string;
   content?: unknown;
   is_error?: boolean;
+}
+
+function numOr0(v: unknown): number {
+  const n = typeof v === "string" ? Number(v) : (v as number);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Extract the four token fields from a raw Anthropic usage object.
+ *  Returned even when `src` is empty so callers can unconditionally sum. */
+function pickUsage(src: unknown): CcTokenUsage {
+  const s =
+    src && typeof src === "object" ? (src as Record<string, unknown>) : {};
+  return {
+    input_tokens: numOr0(s.input_tokens),
+    output_tokens: numOr0(s.output_tokens),
+    cache_read_input_tokens: numOr0(s.cache_read_input_tokens),
+    cache_creation_input_tokens: numOr0(s.cache_creation_input_tokens),
+  };
 }
 
 function blockContentToText(content: unknown): string {
@@ -334,21 +370,47 @@ export async function runClaudeCode(opts: {
       return;
     }
     try {
+      // Task subagent events are stamped by the CLI with a top-level
+      // parent_tool_use_id equal to the spawning Task tool_use_id. This
+      // is the ONLY reliable way to attribute a stream event back to the
+      // subagent that produced it (assistant blocks don't self-identify).
+      const parentToolUseId =
+        typeof evt.parent_tool_use_id === "string"
+          ? evt.parent_tool_use_id
+          : null;
       if (evt.type === "system" && evt.subtype === "init") {
         if (typeof evt.session_id === "string") sessionId = evt.session_id;
         opts.onEvent({ type: "init", sessionId: sessionId ?? undefined });
       } else if (evt.type === "assistant") {
-        const msg = evt.message as { content?: StreamBlock[] } | undefined;
+        const msg = evt.message as
+          | {
+              content?: StreamBlock[];
+              usage?: Record<string, unknown>;
+              model?: string;
+            }
+          | undefined;
+        const usage = pickUsage(msg?.usage);
+        const model =
+          typeof msg?.model === "string" && msg.model.trim() ? msg.model : null;
         for (const block of msg?.content ?? []) {
           if (block.type === "text" && block.text && block.text.trim()) {
             assistantTextEvents++;
-            opts.onEvent({ type: "assistant_text", text: block.text });
+            opts.onEvent({
+              type: "assistant_text",
+              text: block.text,
+              parentToolUseId,
+              usage,
+              model,
+            });
           } else if (block.type === "tool_use") {
             opts.onEvent({
               type: "tool_call",
               toolUseId: block.id,
               toolName: block.name,
               toolInput: block.input,
+              parentToolUseId,
+              usage,
+              model,
             });
           }
         }
@@ -361,6 +423,7 @@ export async function runClaudeCode(opts: {
               toolUseId: block.tool_use_id,
               text: blockContentToText(block.content),
               isError: block.is_error === true,
+              parentToolUseId,
             });
           }
         }
