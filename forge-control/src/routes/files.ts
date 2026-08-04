@@ -14,6 +14,7 @@ import { promises as fs, createReadStream, statSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
+import type { Dirent } from "node:fs";
 import type { UploadedFile } from "./uploads.ts";
 
 const r = new Hono();
@@ -86,6 +87,8 @@ r.get("/roots", (c) =>
   }),
 );
 
+const LIST_CAP = 1000;
+
 r.get("/list", async (c) => {
   const rootKey = c.req.query("root") ?? "";
   const rel = c.req.query("path") ?? "";
@@ -97,27 +100,47 @@ r.get("/list", async (c) => {
   }
   const st = await fs.stat(abs).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
-  const names = await fs.readdir(abs).catch(() => []);
+  const dirents = await fs.readdir(abs, { withFileTypes: true }).catch(() => [] as Dirent[]);
   const entries = await Promise.all(
-    names
-      .filter((n) => !n.startsWith("."))
-      .map(async (name) => {
-        const entryStat = await fs.stat(path.join(abs, name)).catch(() => null);
-        return entryStat
-          ? {
-              name,
-              isDir: entryStat.isDirectory(),
-              size: entryStat.size,
-              mtime: entryStat.mtime.toISOString(),
-            }
-          : null;
+    dirents
+      .filter((d) => !d.name.startsWith("."))
+      .map(async (dirent) => {
+        const entryAbs = path.join(abs, dirent.name);
+
+        if (dirent.isSymbolicLink()) {
+          // stat (not lstat) follows the symlink so a symlinked directory
+          // still reports isDir:true. Symlink escape is already blocked
+          // upstream by resolveInRoot's realpath check.
+          const st = await fs.stat(entryAbs).catch(() => null);
+          if (!st) return null;
+          return { name: dirent.name, isDir: st.isDirectory(), size: st.size, mtime: st.mtime.toISOString() };
+        }
+
+        if (dirent.isDirectory()) {
+          // Dirent confirms type — no stat needed for isDir.
+          // mtime/size omitted for directories (not meaningful in the list UI).
+          return { name: dirent.name, isDir: true as const, size: 0, mtime: "" };
+        }
+
+        if (dirent.isFile()) {
+          const st = await fs.stat(entryAbs).catch(() => null);
+          if (!st) return null;
+          return { name: dirent.name, isDir: false as const, size: st.size, mtime: st.mtime.toISOString() };
+        }
+
+        // Skip sockets, block devices, etc.
+        return null;
       }),
   );
   const filtered = entries.filter((e): e is NonNullable<typeof e> => e !== null);
-  filtered.sort((a, b) =>
+  const total = filtered.length;
+  const truncated = total > LIST_CAP;
+  const capped = truncated ? filtered.slice(0, LIST_CAP) : filtered;
+  capped.sort((a, b) =>
     a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1,
   );
-  return c.json({ root: rootKey, path: rel, entries: filtered });
+  c.header("Cache-Control", "private, max-age=10");
+  return c.json({ root: rootKey, path: rel, entries: capped, truncated, total });
 });
 
 const SEARCH_RESULT_CAP = 200;
