@@ -30,12 +30,17 @@ import {
   setTaskStatus,
   createTask,
   setProjectStatus,
+  setProjectWorkspace,
   closeFinishedProjects,
   getProject,
   type ProjectTask,
   type Project,
   type TaskRole,
   type TaskTier,
+} from "../db/projects.ts";
+import {
+  patchProjectMetadata,
+  listGoalProgress,
 } from "../db/projects.ts";
 import { provisionWorkspace } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
@@ -102,6 +107,27 @@ function roleConfig(role: TaskRole): RoleConfig {
   }
 }
 
+function isGoalMode(project: Project): boolean {
+  return (project.metadata as { mode?: string } | null)?.mode === "goal";
+}
+
+function taskCurl(projectId: string): string {
+  return (
+    `curl -sX POST http://127.0.0.1:7700/api/projects/${projectId}/tasks -H 'content-type: application/json' ` +
+    `-d '{"role":"builder","round":1,"title":"...","brief":"...","tier":"standard"}'`
+  );
+}
+
+const TIER_GUIDE =
+  `Each task's "tier" picks its model: "fast" (Haiku) for straightforward, well-specified work, ` +
+  `"standard" (Sonnet) for most tasks, "flagship" (Opus) only when a task genuinely needs the strongest ` +
+  `model. Omit tier to fall back to the default. Don't over-use flagship — it's the expensive one.`;
+
+const PARALLELISM_GUIDE =
+  `Tasks in the SAME round run in PARALLEL inside the SAME worktree — only put tasks in one round when they ` +
+  `touch disjoint files. Anything that could collide goes in consecutive rounds instead. Rounds only gate ` +
+  `ordering (round N+1 starts when everything <= N is done); gaps in round numbers are fine and cost nothing.`;
+
 function buildPrompt(task: ProjectTask, project: Project): string {
   const mission = roleConfig(task.role).mission;
   const header =
@@ -112,34 +138,84 @@ function buildPrompt(task: ProjectTask, project: Project): string {
     `Your task (round ${task.round}): ${task.title}\n${task.brief}\n`;
 
   if (task.role === "architect") {
+    if (isGoalMode(project)) {
+      return (
+        header +
+        `\nThis is a GOAL-MODE project: a long-horizon goal that may take many hours or days of autonomous ` +
+        `multi-agent work. You are the architect; your job tonight is the waterfall plan, done so thoroughly ` +
+        `that implementation never has to loop back to re-litigate scope.\n\n` +
+        `1) PLANNING CORPUS. Write an exhaustive set of planning documents under docs/plan/ in the worktree ` +
+        `and commit them:\n` +
+        `   - docs/plan/00-vision.md — the goal restated precisely, definition of done, measurable success criteria, explicit non-goals.\n` +
+        `   - docs/plan/01-requirements.md — every functional and non-functional requirement, numbered (R1, R2, ...), each testable.\n` +
+        `   - docs/plan/02-architecture.md — system design: components, data models, interfaces, technology choices with one-line rationale, failure modes, how progress/state is observable.\n` +
+        `   - docs/plan/03-quality.md — test strategy (unit, integration, end-to-end), QA gates per phase, what the reviewer must run and check.\n` +
+        `   - docs/plan/04-phases.md — the waterfall itself: numbered phases, each with scope, deliverables, acceptance criteria, and which requirement IDs it covers. Every requirement maps to exactly one phase.\n` +
+        `   Depth beats brevity here — thousands of lines across the corpus is normal for a real goal. ` +
+        `Research with your tools (codebase, vault, web) before deciding; never plan from guesswork.\n\n` +
+        `2) SEED THE PIPELINE. Create ONE planner task per phase via the API:\n${taskCurl(project.id)}\n` +
+        `   Phase k's planner goes at round k*100 (100, 200, 300, ...) — the gaps leave room for fix cycles ` +
+        `without colliding with the next phase. Each planner brief: "Plan phase k per docs/plan/04-phases.md" ` +
+        `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
+        `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
+        `reviewer briefed to attack, not just check).\n` +
+        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n\n` +
+        `3) GIT/GITHUB. If the repo has an origin remote you may push the work branch so progress is visible ` +
+        `on GitHub; never force-push, never open PRs unless the brief asks.\n\n` +
+        `Do not write implementation code or commit anything outside docs/plan/ — that's the builders' job.`
+      );
+    }
     return (
       header +
       `\nWhen you're done: write a short plan to PLAN.md in the repo root. Then create the next ` +
       `round(s) of work by calling forge-control directly, e.g.:\n` +
-      `curl -sX POST http://127.0.0.1:7700/api/projects/${project.id}/tasks -H 'content-type: application/json' ` +
-      `-d '{"role":"builder","round":1,"title":"...","brief":"...","tier":"standard"}'\n` +
+      `${taskCurl(project.id)}\n` +
       `Split implementation into focused, independently-completable builder tasks. Always end with exactly one ` +
       `"reviewer" task in the round right after your last builder round, briefed to review the whole diff. ` +
       `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
-      `Each builder task's "tier" picks its model: "fast" (Haiku) for straightforward, well-specified work, ` +
-      `"standard" (Sonnet) for most tasks, "flagship" (Opus) only when a task genuinely needs the strongest ` +
-      `model. Omit tier to fall back to the default. Don't over-use flagship — it's the expensive one.`
+      TIER_GUIDE
+    );
+  }
+  if (task.role === "planner") {
+    return (
+      header +
+      `\nRead the planning corpus under docs/plan/ (if present) and the current state of the worktree, then ` +
+      `break YOUR assigned scope into concrete builder tasks by calling forge-control:\n` +
+      `${taskCurl(project.id)}\n` +
+      `Your round is ${task.round}. Create builder tasks at round ${task.round + 1} (and ${task.round + 2}, ` +
+      `${task.round + 3}, ... if they must run sequentially), and ALWAYS finish with exactly one reviewer task ` +
+      `in the round after your last builder round, briefed with the phase's acceptance criteria and exactly ` +
+      `which tests/commands to run. Each builder brief must be self-contained: files to touch, the approach, ` +
+      `and how the builder verifies its own work (tests to write/run). Do not exceed round ${task.round + 20} — ` +
+      `the space beyond that belongs to fix cycles and the next phase.\n` +
+      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n` +
+      `Do not write implementation code yourself — plan, then fan out.`
+    );
+  }
+  if (task.role === "scout") {
+    return (
+      header +
+      `\nResearch only — no implementation, no task creation. Write your findings to ` +
+      `docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that one file. ` +
+      `Findings must be concrete enough that a planner can act on them without repeating the research.`
     );
   }
   if (task.role === "reviewer") {
     return (
       header +
       `\nReview the actual diff (git diff ${project.base_branch}...HEAD) and the code itself, not just the ` +
-      `plan or commit messages. End your final message with a line starting exactly with "VERDICT: PASS" if it's ` +
-      `genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete numbered list (file:line, the problem, ` +
-      `the fix) if not. Never skip the VERDICT line.`
+      `plan or commit messages. Run the tests and checks named in your brief (or docs/plan/03-quality.md if it ` +
+      `exists) — a review without executed checks is not a review. End your final message with a line starting ` +
+      `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
+      `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.`
     );
   }
   if (task.role === "builder") {
     return (
       header +
       `\nImplement this directly in the worktree (branch ${project.work_branch} is already checked out). ` +
-      `Commit your changes with a clear message when done. Verify your own work before reporting done.`
+      `Commit your changes with a clear message when done. Verify your own work before reporting done — run ` +
+      `the tests your brief names, and write the tests it asks for.`
     );
   }
   return header;
@@ -150,11 +226,14 @@ async function spawnTaskRuns(): Promise<void> {
   for (const task of claimed) {
     try {
       if (!task.project.workspace_dir || !task.project.work_branch) {
-        // Shouldn't normally happen (provisioning is synchronous at project
-        // creation) but don't strand the task silently if it does.
+        // Normally the API route provisions synchronously at project creation,
+        // but this tick can claim the round-0 architect task inside that
+        // window, so the fallback is a real path — and it must write the
+        // result back, or every later tick re-provisions from scratch.
         const ws = await provisionWorkspace(task.project);
         task.project.workspace_dir = ws.workspace_dir;
         task.project.work_branch = ws.work_branch;
+        await setProjectWorkspace(task.project_id, ws).catch(() => {});
       }
       const prompt = buildPrompt(task, task.project);
       const cfg = roleConfig(task.role);
@@ -181,6 +260,14 @@ async function spawnTaskRuns(): Promise<void> {
       );
       await setTaskStatus(task.id, "failed").catch(() => {});
       await setProjectStatus(task.project_id, "blocked").catch(() => {});
+      // A spawn failure used to be log-only. The first goal-mode run died two
+      // seconds after being seeded and Konrad had no signal until he asked.
+      // Every path that blocks a project now tells him.
+      await queueNotification(
+        `🚫 Project "${task.project.name}" blocked — could not start ${task.role} task ` +
+          `"${task.title}": ${e instanceof Error ? e.message : String(e)}`,
+        "project",
+      ).catch(() => {});
     }
   }
 }
@@ -247,6 +334,11 @@ async function reconcileSettledTasks(): Promise<void> {
       if (task.run_status !== "completed") {
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
+        const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+        await queueNotification(
+          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. Check its run.`,
+          "project",
+        ).catch(() => {});
         continue;
       }
       if (task.role === "reviewer") {
@@ -260,6 +352,34 @@ async function reconcileSettledTasks(): Promise<void> {
         e instanceof Error ? e.message : e,
       );
     }
+  }
+}
+
+const DEFAULT_CHECKIN_HOURS = 3;
+
+/** Periodic progress push for goal-mode projects — Konrad wakes up to a
+ *  trail of "where the overnight run is" messages instead of silence.
+ *  Time-gated per project via metadata.last_checkin_at; deterministic code,
+ *  no LLM in the loop. */
+async function goalHeartbeats(): Promise<void> {
+  const goals = await listGoalProgress();
+  const now = Date.now();
+  for (const g of goals) {
+    const meta = g.metadata as { checkin_hours?: number; last_checkin_at?: string };
+    const hours = Number(meta.checkin_hours) > 0 ? Number(meta.checkin_hours) : DEFAULT_CHECKIN_HOURS;
+    const last = Date.parse(meta.last_checkin_at ?? g.created_at);
+    if (Number.isFinite(last) && now - last < hours * 3_600_000) continue;
+    const active = g.running_titles.slice(0, 3).join("; ") || "none (between rounds)";
+    await queueNotification(
+      `📊 Goal "${g.name}": ${g.done}/${g.total} tasks done` +
+        (g.failed ? `, ${g.failed} failed` : "") +
+        `. Running: ${active}.` +
+        (g.last_done_title ? ` Last finished: ${g.last_done_title}.` : ""),
+      "goal",
+    ).catch(() => {});
+    await patchProjectMetadata(g.id, {
+      last_checkin_at: new Date(now).toISOString(),
+    }).catch(() => {});
   }
 }
 
@@ -286,7 +406,14 @@ export async function projectTick(): Promise<void> {
       await spawnTaskRuns();
     }
     await reconcileSettledTasks();
-    await closeFinishedProjects();
+    const finished = await closeFinishedProjects();
+    for (const p of finished) {
+      await queueNotification(
+        `✅ Project "${p.name}" is done — every task completed and the reviewer passed it.`,
+        "project",
+      ).catch(() => {});
+    }
+    await goalHeartbeats();
   } catch (e) {
     console.error("[project-tick] tick failed:", e instanceof Error ? e.message : e);
   }

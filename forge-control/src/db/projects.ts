@@ -26,7 +26,7 @@ const pool = new Pool({
 });
 pool.on("error", (e) => console.error("[projects pool]", e.message));
 
-export type ProjectRepo = "ai-os" | "content-forge";
+export type ProjectRepo = "ai-os" | "content-forge" | "scratch";
 export type ProjectStatus = "active" | "paused" | "done" | "blocked" | "cancelled";
 export type TaskRole = "architect" | "planner" | "scout" | "builder" | "reviewer";
 export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
@@ -97,15 +97,22 @@ export async function createProject(input: {
   repo: ProjectRepo;
   base_branch?: string;
   architect_tier?: TaskTier;
+  metadata?: Record<string, unknown>;
 }): Promise<{ project: Project; architectTask: ProjectTask }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     const pr = await client.query<Project>(
-      `INSERT INTO projects (name, brief, repo, base_branch)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO projects (name, brief, repo, base_branch, metadata)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING ${PROJECT_COLS}`,
-      [input.name.slice(0, 200), input.brief, input.repo, input.base_branch ?? "main"],
+      [
+        input.name.slice(0, 200),
+        input.brief,
+        input.repo,
+        input.base_branch ?? "main",
+        JSON.stringify(input.metadata ?? {}),
+      ],
     );
     const project = pr.rows[0];
     const tr = await client.query<ProjectTask>(
@@ -211,9 +218,12 @@ export async function createTask(input: {
 
 /** Mark 'active' projects 'done' once every one of their tasks has settled
  *  into 'done' (and none are failed/blocked). Run after each reconciliation
- *  pass — cheap, and the only place project completion is decided. */
-export async function closeFinishedProjects(): Promise<number> {
-  const r = await pool.query(
+ *  pass — cheap, and the only place project completion is decided. Returns
+ *  the finished projects so the tick can push a completion notification. */
+export async function closeFinishedProjects(): Promise<
+  Array<{ id: string; name: string }>
+> {
+  const r = await pool.query<{ id: string; name: string }>(
     `UPDATE projects p
         SET status = 'done', updated_at = now()
       WHERE p.status = 'active'
@@ -222,9 +232,62 @@ export async function closeFinishedProjects(): Promise<number> {
           SELECT 1 FROM project_tasks
            WHERE project_id = p.id AND status <> 'done'
         )
-      RETURNING p.id`,
+      RETURNING p.id::text, p.name`,
   );
-  return r.rowCount ?? 0;
+  return r.rows;
+}
+
+/** Shallow-merge a patch into projects.metadata. Used by goal-mode
+ *  bookkeeping (last_checkin_at) — deliberately does NOT bump updated_at so
+ *  heartbeats don't churn board ordering. */
+export async function patchProjectMetadata(
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await pool.query(
+    `UPDATE projects SET metadata = metadata || $2::jsonb WHERE id = $1`,
+    [id, JSON.stringify(patch)],
+  );
+}
+
+export interface GoalProgress {
+  id: string;
+  name: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  total: number;
+  done: number;
+  running: number;
+  ready: number;
+  pending: number;
+  failed: number;
+  running_titles: string[];
+  last_done_title: string | null;
+}
+
+/** Active goal-mode projects with task rollups — feeds the periodic
+ *  progress heartbeat. */
+export async function listGoalProgress(): Promise<GoalProgress[]> {
+  const r = await pool.query<GoalProgress>(
+    `SELECT p.id::text, p.name, p.metadata, p.created_at::text,
+            count(pt.id)::int                                        AS total,
+            count(pt.id) FILTER (WHERE pt.status = 'done')::int      AS done,
+            count(pt.id) FILTER (WHERE pt.status = 'running')::int   AS running,
+            count(pt.id) FILTER (WHERE pt.status = 'ready')::int     AS ready,
+            count(pt.id) FILTER (WHERE pt.status = 'pending')::int   AS pending,
+            count(pt.id) FILTER (WHERE pt.status = 'failed')::int    AS failed,
+            coalesce(array_agg(pt.title ORDER BY pt.updated_at DESC)
+              FILTER (WHERE pt.status = 'running'), '{}')            AS running_titles,
+            (SELECT title FROM project_tasks
+              WHERE project_id = p.id AND status = 'done'
+              ORDER BY updated_at DESC LIMIT 1)                      AS last_done_title
+       FROM projects p
+       LEFT JOIN project_tasks pt ON pt.project_id = p.id
+      WHERE p.status = 'active'
+        AND p.metadata->>'mode' = 'goal'
+      GROUP BY p.id`,
+  );
+  return r.rows;
 }
 
 /** Promote every 'pending' task whose project has no earlier-round task

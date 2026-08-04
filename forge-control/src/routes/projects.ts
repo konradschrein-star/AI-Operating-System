@@ -19,7 +19,7 @@ const r = new Hono();
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const REPOS = new Set<ProjectRepo>(["ai-os", "content-forge"]);
+const REPOS = new Set<ProjectRepo>(["ai-os", "content-forge", "scratch"]);
 const ROLES = new Set<TaskRole>([
   "architect",
   "planner",
@@ -56,6 +56,8 @@ r.post("/", async (c) => {
     repo?: string;
     base_branch?: string;
     architect_tier?: string;
+    mode?: string;
+    checkin_hours?: number;
   };
   const name = (body.name ?? "").trim();
   const brief = (body.brief ?? "").trim();
@@ -67,6 +69,9 @@ r.post("/", async (c) => {
   if (body.architect_tier && !TIERS.has(body.architect_tier as TaskTier)) {
     return c.json({ error: `architect_tier must be one of: ${[...TIERS].join(", ")}` }, 400);
   }
+  if (body.mode !== undefined && body.mode !== "goal") {
+    return c.json({ error: `mode must be "goal" or omitted` }, 400);
+  }
 
   const { project, architectTask } = await createProject({
     name,
@@ -74,6 +79,14 @@ r.post("/", async (c) => {
     repo: body.repo as ProjectRepo,
     base_branch: body.base_branch,
     architect_tier: body.architect_tier as TaskTier | undefined,
+    metadata: body.mode === "goal"
+      ? {
+          mode: "goal",
+          ...(Number(body.checkin_hours) > 0
+            ? { checkin_hours: Number(body.checkin_hours) }
+            : {}),
+        }
+      : {},
   });
 
   try {
