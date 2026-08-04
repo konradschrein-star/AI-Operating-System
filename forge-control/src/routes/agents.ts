@@ -372,17 +372,45 @@ interface AgentRowRaw {
   worker: string | null;
   spent_usd: string;
   metadata: Record<string, unknown>;
-  thread: ThreadEntry[];
+  /** Only populated on the fallback path (see query below): live rows that
+   *  don't yet carry `metadata.rollup_v1`. All other rows get NULL here so
+   *  the row payload stays small. */
+  thread: ThreadEntry[] | null;
   parent_run_id: string | null;
   started_at: string | null;
   updated_at: string;
   last_heartbeat_at: string | null;
 }
 
+/**
+ * Fetch the rows the Live panel needs.
+ *
+ * Cost story: this query used to `SELECT ... thread ...` unconditionally for
+ * up to 60 rows every 4 s, folding subagents out of the JSONB in JS. On a
+ * long conversation `runs.thread` can reach several MB (this session's parent
+ * run already has 682 entries), so that was megabytes of network + parse per
+ * poll and — per the UI audit §7 fix #1 — the strongest single candidate for
+ * the "the UI bogs down the whole machine" symptom.
+ *
+ * The rewrite: the executor now maintains a compact `metadata.rollup_v1`
+ * snapshot at write time (subagents, current activity, running usage), so
+ * we can select just `metadata`. Thread is only pulled as a FALLBACK, for
+ * live rows that don't yet carry the rollup — the current running run when
+ * this deploy first lands, and anything a restart-mid-run temporarily
+ * dropped from the in-memory rollup map. Completed rows never fall back:
+ * their subagents finished by definition, so an empty subagent list is the
+ * correct answer.
+ */
 async function fetchActiveRows(): Promise<AgentRowRaw[]> {
   const r = await pool.query<AgentRowRaw>(
     `SELECT id::text, title, status, worker, spent_usd::text,
-            metadata, thread, parent_run_id::text AS parent_run_id,
+            metadata,
+            CASE
+              WHEN metadata ? 'rollup_v1' THEN NULL::jsonb
+              WHEN status IN ('running','queued','paused','stuck') THEN thread
+              ELSE NULL::jsonb
+            END AS thread,
+            parent_run_id::text AS parent_run_id,
             started_at::text, updated_at::text, last_heartbeat_at::text
        FROM runs
       WHERE status IN ('running','queued','paused','stuck')
@@ -451,18 +479,68 @@ async function fetchHourlyTotals(): Promise<HourlyRow> {
   return r.rows[0] ?? { spent_usd: "0", input_tokens: "0", output_tokens: "0" };
 }
 
+/** Parse the persisted `metadata.subagents_v2` rollup into wire-shape
+ *  Subagent rows. Guards each field so a malformed record can't crash the
+ *  Live panel — anything unrecognised becomes an empty/default. */
+function subagentsFromRollup(src: unknown): Subagent[] {
+  if (!Array.isArray(src)) return [];
+  const out: Subagent[] = [];
+  for (const raw of src) {
+    if (!raw || typeof raw !== "object") continue;
+    const s = raw as Record<string, unknown>;
+    if (typeof s.tool_use_id !== "string") continue;
+    const la = s.latest_activity as Record<string, unknown> | null | undefined;
+    out.push({
+      kind: "subagent",
+      tool_use_id: s.tool_use_id,
+      role: typeof s.role === "string" ? s.role : "agent",
+      model: typeof s.model === "string" ? s.model : null,
+      started_at: typeof s.started_at === "string" ? s.started_at : "",
+      updated_at: typeof s.updated_at === "string" ? s.updated_at : "",
+      usage: pickUsage(s.usage),
+      event_count: numOr0(s.event_count),
+      latest_activity:
+        la && typeof la === "object"
+          ? {
+              kind: typeof la.kind === "string" ? la.kind : "text",
+              tool: typeof la.tool === "string" ? la.tool : null,
+              text: typeof la.text === "string" ? la.text : null,
+              ts: typeof la.ts === "string" ? la.ts : "",
+            }
+          : null,
+      status: s.status === "done" ? "done" : "running",
+    });
+  }
+  return out;
+}
+
 function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
   const meta = row.metadata ?? {};
   const startedMs = row.started_at ? Date.parse(row.started_at) : NaN;
   const elapsed = Number.isFinite(startedMs) ? Math.max(0, nowMs - startedMs) : null;
   const usageRunningRaw = (meta as Record<string, unknown>).usage_running;
+  const totalRunningRaw = (meta as Record<string, unknown>).usage_total_running;
+  // Prefer the persisted rollup; only crack the thread when a live row has
+  // no rollup marker yet (executor pre-deploy, or restarted mid-run).
+  const rolledSubagents =
+    (meta as Record<string, unknown>).subagents_v2 !== undefined
+      ? subagentsFromRollup((meta as Record<string, unknown>).subagents_v2)
+      : row.thread
+        ? foldSubagents(row.thread)
+        : [];
+  const modelResolved =
+    typeof (meta as Record<string, unknown>).model_resolved === "string"
+      ? ((meta as Record<string, unknown>).model_resolved as string)
+      : null;
   return {
     kind: "run",
     id: row.id,
     title: row.title,
     status: row.status,
     worker: row.worker,
-    model: typeof meta.model === "string" ? (meta.model as string) : null,
+    model:
+      modelResolved ??
+      (typeof meta.model === "string" ? (meta.model as string) : null),
     effort: typeof meta.effort === "string" ? (meta.effort as string) : null,
     engine: typeof meta.engine === "string" ? (meta.engine as string) : "claude-code",
     cwd: typeof meta.workspace_dir === "string" ? (meta.workspace_dir as string) : null,
@@ -471,7 +549,12 @@ function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
     last_heartbeat_at: row.last_heartbeat_at,
     elapsed_ms: elapsed,
     spent_usd: numOr0(row.spent_usd),
-    usage_total: pickTotal((meta as Record<string, unknown>).usage_total),
+    // usage_total_running (the rollup's aggregate for the current process)
+    // beats the older metadata.usage_total path — that field was never
+    // written by the executor, only ever the empty default from pickTotal.
+    usage_total: pickTotal(
+      totalRunningRaw ?? (meta as Record<string, unknown>).usage_total,
+    ),
     usage_last_turn: pickUsage((meta as Record<string, unknown>).usage_last_turn),
     usage_running: usageRunningRaw ? pickUsage(usageRunningRaw) : null,
     usage_by_model: pickModelBreakdown(
@@ -481,7 +564,7 @@ function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
       (meta as Record<string, unknown>).current_activity,
     ),
     parent_run_id: row.parent_run_id,
-    subagents: foldSubagents(row.thread ?? []),
+    subagents: rolledSubagents,
   };
 }
 
@@ -522,6 +605,10 @@ r.get("/:id", async (c) => {
   const UUID_RE =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  // Drill-down: always include `thread` here — the caller wants full
+  // detail and this is a single row, not the list path where thread pulls
+  // become expensive. Rollup is still preferred by agentFromRow when
+  // present; thread is the fallback.
   const r0 = await pool.query<AgentRowRaw>(
     `SELECT id::text, title, status, worker, spent_usd::text,
             metadata, thread, parent_run_id::text AS parent_run_id,
