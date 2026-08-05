@@ -1,0 +1,19 @@
+{
+  "label": "before",
+  "base": "http://127.0.0.1:7797",
+  "rows_on_screen": 7,
+  "window_ms": 10000,
+  "crossings": 76,
+  "idle": {
+    "commits": 12,
+    "mutations": 0
+  },
+  "hover": {
+    "commits": 89,
+    "mutations": 1057
+  },
+  "attributable_to_hover": {
+    "commits": 77,
+    "mutations": 1057
+  }
+}

@@ -91,6 +91,22 @@ body {
   }
 }
 
+/* v3 phase 400 (U9/NFU2): chat rail hover reveal, CSS-only. The close ✕ and
+ * the age stamp share one slot; hovering swaps their opacity. This replaces a
+ * React `useState(hover)` per row — the source of the sidebar lag. Opacity
+ * only: every colour still comes from app/tokens.ts (NFU1). */
+.chat-row .chat-row-x {
+  opacity: 0;
+}
+.chat-row:hover .chat-row-x,
+.chat-row:focus-within .chat-row-x {
+  opacity: 1;
+}
+.chat-row:hover .chat-row-age,
+.chat-row:focus-within .chat-row-age {
+  opacity: 0;
+}
+
 /* iOS safe-area padding for tab bar bottom. */
 .safe-bottom {
   padding-bottom: max(30px, env(safe-area-inset-bottom, 30px));

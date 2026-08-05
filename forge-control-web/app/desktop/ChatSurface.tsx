@@ -6,6 +6,7 @@ import { tokens, dot } from "../tokens";
 import {
   fetchChatList,
   fetchChat,
+  fetchChatLinkage,
   createChat,
   sendChatMessage,
   setChatStatus,
@@ -32,6 +33,7 @@ import {
   type RunDetail,
   type RunStatus,
   type RunSummary,
+  type ChatLinkage,
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
@@ -44,8 +46,6 @@ import {
   type SurfaceKey,
 } from "./chat/slash-registry";
 import { AgentActivity } from "./live/AgentActivity";
-import { ManagersSection } from "./live/ManagersSection";
-import { fetchManagers } from "./live/agentsApi";
 import { AssistantThread } from "./chat/AssistantThread";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
@@ -239,7 +239,6 @@ function SidePanel({
   onOpenRun,
   fileAtt,
   agentProjectId,
-  agentGroupName,
 }: {
   collapsed: boolean;
   onToggle: () => void;
@@ -247,8 +246,8 @@ function SidePanel({
   onTab: (t: "live" | "files") => void;
   onOpenRun: (runId: string) => void;
   fileAtt: ReturnType<typeof useAttachments> | null;
+  /** The open chat's linked project (U9). `undefined` = show the whole fleet. */
   agentProjectId?: string;
-  agentGroupName?: string;
 }) {
   if (collapsed) {
     return (
@@ -374,7 +373,7 @@ function SidePanel({
                 borderBottom: `1px solid ${tokens.border}`,
               }}
             >
-              <AgentActivity projectId={agentProjectId} groupName={agentGroupName} />
+              <AgentActivity projectId={agentProjectId} />
             </div>
             <div style={{ flex: "1 1 45%", minHeight: 0, display: "flex", flexDirection: "column" }}>
               <LiveProjectsBody onOpenRun={onOpenRun} />
@@ -538,28 +537,22 @@ export function ChatSurface({
 
   const counts = listQ.data?.counts ?? null;
 
-  // Manager selection — scopes the right Live panel to one project's workers.
-  // Separate from chat selId: clicking a manager card does NOT open a thread.
-  const managersQ = useQuery({
-    queryKey: ["projects", "managers"],
-    queryFn: fetchManagers,
-    refetchInterval: 8_000,
+  // phase 400 (U9): the right panel has no selector of its own any more — it
+  // is scoped to whatever chat is open, via the project that chat started.
+  // ONE request per chat opened, deliberately no refetchInterval: linkage does
+  // not change while a chat is open, and the poll budget must not grow (NFU3).
+  const linkQ = useQuery({
+    queryKey: ["chat", "linkage", selId],
+    queryFn: () => fetchChatLinkage(selId!),
+    enabled: !!selId,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   });
-  const managers = managersQ.data?.managers ?? [];
-
-  const [selectedManagerId, setSelectedManagerId] = useState<string | null>(null);
-
-  // Auto-select first manager on load; fall back if selected project disappears.
-  useEffect(() => {
-    if (managers.length === 0) return;
-    setSelectedManagerId((cur) => {
-      if (!cur) return managers[0].project_id;
-      if (!managers.find((m) => m.project_id === cur)) return managers[0].project_id;
-      return cur;
-    });
-  }, [managers]);
-
-  const selectedManager = managers.find((m) => m.project_id === selectedManagerId) ?? null;
+  // On error `linkQ.data` is undefined and the panel falls back to the global
+  // fleet view (no project filter). That is a deliberate stopgap, not a silent
+  // fallback pretending to be scoped: phase 500 replaces this panel with
+  // ChatTeamPanel, which renders an explicit inline error row (NFU6).
+  const linkage: ChatLinkage | undefined = linkQ.data;
 
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
@@ -659,10 +652,6 @@ export function ChatSurface({
             )}
           </div>
         </div>
-        <ManagersSection
-          selectedId={selectedManagerId}
-          onSelect={setSelectedManagerId}
-        />
         {!searching && counts && (
           <div
             className="mono"
@@ -895,6 +884,8 @@ export function ChatSurface({
             isSending={sendM.isPending}
             isResuming={resumeM.isPending}
             att={threadAtt}
+            linkSource={linkage?.link_source ?? undefined}
+            linkAmbiguous={linkage?.link_ambiguous}
           />
         ) : (
           <div
@@ -937,8 +928,7 @@ export function ChatSurface({
           setSelId(runId);
         }}
         fileAtt={composing ? null : threadAtt}
-        agentProjectId={selectedManagerId ?? undefined}
-        agentGroupName={selectedManager?.name}
+        agentProjectId={linkage?.project_id ?? undefined}
       />
     </div>
   );
@@ -958,12 +948,21 @@ function ChatListItem({
   closing: boolean;
 }) {
   const color = STATUS_COLOR[run.status];
-  const [hover, setHover] = useState(false);
+  // U10: present, not truthy. A linked project with no tasks yet is a real
+  // `0/0`; a chat that never started a project has no counter at all, because
+  // the server omits these fields rather than zeroing them.
+  const hasProgress = typeof run.tasks_total === "number";
+  const allDone =
+    hasProgress && run.tasks_done === run.tasks_total && run.tasks_total! > 0;
+  // NFU2: the ✕/age swap is CSS-only (`.chat-row` in globals.css). It used to
+  // be `useState(hover)`, which re-rendered every row the pointer crossed —
+  // the sidebar lag Konrad reported. Both children are always mounted and
+  // stacked in one slot, so revealing one costs an opacity change, not a
+  // re-render and not a reflow.
   return (
     <div
       onClick={onSelect}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
+      className="chat-row"
       style={{
         padding: "12px 14px",
         cursor: "pointer",
@@ -997,16 +996,53 @@ function ChatListItem({
             closed
           </span>
         )}
+        {hasProgress && (
+          <span
+            className="mono"
+            title={
+              run.project_status
+                ? `project ${run.project_id?.slice(0, 8)} — ${run.project_status}`
+                : undefined
+            }
+            style={{
+              fontSize: 9.5,
+              color: allDone ? tokens.ok : tokens.textMuted,
+              letterSpacing: "0.04em",
+            }}
+          >
+            {run.tasks_done}/{run.tasks_total} tasks
+          </span>
+        )}
         <span style={{ flex: 1 }} />
-        {hover ? (
+        {/* One slot, two children: the age sits in flow and sizes the slot, the
+            ✕ is absolutely positioned over it. Hover swaps their opacity — no
+            state, no reflow. */}
+        <span
+          style={{
+            position: "relative",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+          }}
+        >
+          <span
+            className="mono chat-row-age"
+            style={{ fontSize: 9.5, color: tokens.textFaint }}
+          >
+            {humanAge(run.updated_at)}
+          </span>
           <span
             onClick={(e) => {
               e.stopPropagation();
               if (!closing) onClose();
             }}
             title="Close this chat — stops the agent if it's still working, and hides it from the list. Nothing is deleted; it stays searchable."
-            className="mono"
+            className="mono chat-row-x"
             style={{
+              position: "absolute",
+              right: 0,
+              top: "50%",
+              transform: "translateY(-50%)",
               fontSize: 11,
               color: tokens.bleed,
               cursor: closing ? "wait" : "pointer",
@@ -1016,14 +1052,7 @@ function ChatListItem({
           >
             ✕
           </span>
-        ) : (
-          <span
-            className="mono"
-            style={{ fontSize: 9.5, color: tokens.textFaint }}
-          >
-            {humanAge(run.updated_at)}
-          </span>
-        )}
+        </span>
       </div>
       <div
         style={{
@@ -1255,6 +1284,8 @@ function ChatThread({
   isResuming,
   att,
   headerExtra,
+  linkSource,
+  linkAmbiguous,
 }: {
   run: RunDetail;
   live: boolean;
@@ -1271,6 +1302,12 @@ function ChatThread({
    *  than floating absolutely over the pane, where it sat on top of the
    *  status/resume controls. */
   headerExtra?: React.ReactNode;
+  /** How this chat's project link was established (U2). `"thread_scan"` means
+   *  it was inferred from the transcript — round 402 renders the "linked
+   *  heuristically" marker in the header from these two props (NFU6).
+   *  `undefined` = linkage not resolved yet, or the chat owns no project. */
+  linkSource?: ChatLinkage["link_source"];
+  linkAmbiguous?: boolean;
 }) {
   const [draft, setDraft] = useState("");
   const [localSys, setLocalSys] = useState<

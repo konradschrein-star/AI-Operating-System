@@ -1,0 +1,20 @@
+{
+  "pass": true,
+  "rows": [
+    {
+      "head": "completed",
+      "badge": "0/0 tasks",
+      "badge_color": "rgb(138, 138, 144)"
+    },
+    {
+      "head": "completed",
+      "badge": null,
+      "badge_color": null
+    },
+    {
+      "head": "completed",
+      "badge": null,
+      "badge_color": null
+    }
+  ]
+}

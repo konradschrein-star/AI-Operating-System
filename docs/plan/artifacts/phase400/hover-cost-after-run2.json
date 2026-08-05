@@ -1,0 +1,19 @@
+{
+  "label": "after-run2",
+  "base": "http://127.0.0.1:7796",
+  "rows_on_screen": 7,
+  "window_ms": 10000,
+  "crossings": 76,
+  "idle": {
+    "commits": 12,
+    "mutations": 0
+  },
+  "hover": {
+    "commits": 13,
+    "mutations": 0
+  },
+  "attributable_to_hover": {
+    "commits": 1,
+    "mutations": 0
+  }
+}

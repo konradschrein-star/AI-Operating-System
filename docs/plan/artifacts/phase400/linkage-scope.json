@@ -1,0 +1,10 @@
+{
+  "linkage_requests": 1,
+  "agents_requests": 7,
+  "agents_requests_scoped": 7,
+  "project_ids_seen": [
+    "4d3291c4-4eb3-483a-8d32-acc817a7b352"
+  ],
+  "managers_requests": 0,
+  "pass": true
+}

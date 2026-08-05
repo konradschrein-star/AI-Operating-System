@@ -608,6 +608,16 @@ export interface RunSummary {
   last_message_preview: string;
   last_role: string;
   archived: boolean;
+  /* ── phase 400 (U10): rail rollup ────────────────────────────────────────
+   * Present ONLY for chats that resolve to a project via
+   * `project.metadata.origin_chat_id` (GET /api/chat, rollupChatProjects).
+   * Absent — not zero — for every other chat: `0/0` on a chat that never
+   * started a project would render as a real, wrong progress badge. Consumers
+   * MUST test presence (`typeof run.tasks_total === "number"`), never truth. */
+  project_id?: string;
+  project_status?: string;
+  tasks_done?: number;
+  tasks_total?: number;
 }
 
 export interface RunDetail extends RunSummary {
@@ -661,6 +671,25 @@ export const fetchChat = async (id: string) => {
   const r = await getJson<{ run: RunDetail }>(`/chat/${id}`);
   return r.run;
 };
+
+/** Which project — if any — this chat started. Shape of
+ *  `GET /api/chat/:id/linkage` (forge-control routes/chat.ts, phase 300g).
+ *  An unlinked chat is a 200 with `project_id: null`, not an error: "no
+ *  project" is a fact about the chat. `link_source: "thread_scan"` means the
+ *  link was inferred from the transcript rather than read from metadata — the
+ *  UI marks that rather than presenting a guess as truth (NFU6). */
+export interface ChatLinkage {
+  chat_id: string;
+  project_id: string | null;
+  project_status: string | null;
+  link_source: "metadata" | "thread_scan" | null;
+  link_ambiguous: boolean;
+}
+
+/** One request per chat opened — no poll (NFU3: the poll budget does not grow;
+ *  linkage does not change while a chat is open). */
+export const fetchChatLinkage = (id: string) =>
+  getJson<ChatLinkage>(`/chat/${id}/linkage`);
 
 export const createChat = async (input: {
   prompt: string;

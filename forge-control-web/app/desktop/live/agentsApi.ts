@@ -331,30 +331,11 @@ export function roleTokenName(role: string | null | undefined): RoleTokenName {
   return ROLE_TOKEN[role] ?? "textMuted";
 }
 
-export interface Manager {
-  project_id: string;
-  name: string;
-  status: string;
-  mode: string | null;
-  tasks_done: number;
-  tasks_total: number;
-  tokens_in: number;
-  tokens_out: number;
-  spent_usd: number;
-  last_activity_at: string | null;
-}
-
-export interface ManagersResponse {
-  managers: Manager[];
-}
-
-export const fetchManagers = async (): Promise<ManagersResponse> => {
-  const r = await fetch(`${ROOT}/projects/managers`, {
-    headers: { accept: "application/json" },
-  });
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /projects/managers`);
-  return (await r.json()) as ManagersResponse;
-};
+/* phase 400 (U9): the manager row type and its fetcher were deleted here,
+ * along with the manager cards component in ./live. The right panel no longer
+ * has a selector of its own — it is scoped to the open chat's linked project
+ * (GET /api/chat/:id/linkage). The manager-rollup endpoint stays live on the
+ * server (NFU4, additive policy); the web app simply stops calling it. */
 
 export const fetchAgents = async (projectId?: string): Promise<AgentsResponse> => {
   const url = projectId
