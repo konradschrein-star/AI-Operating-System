@@ -69,7 +69,18 @@ function task(over: Partial<ProjectTask> = {}): ProjectTask {
   };
 }
 
-const ROLES = ["architect", "planner", "builder", "reviewer", "researcher", "scout"] as const;
+/** Every role the engine builds a prompt for. `tester` joined at R850, when it
+ *  started gating rounds like the reviewer — a gating role that silently lost
+ *  the worktree policy would be a build-phase agent loose in the live checkout. */
+const ROLES = [
+  "architect",
+  "planner",
+  "builder",
+  "reviewer",
+  "tester",
+  "researcher",
+  "scout",
+] as const;
 
 describe("T10 prompt policy", () => {
   test("worktree policy present for every role on repo 'ai-os'", () => {
@@ -136,6 +147,43 @@ describe("T10 prompt policy", () => {
     const plannerPrompt = buildPrompt(task({ role: "planner" }), proj);
     assert.ok(!builderPrompt.includes("status --porcelain"), "builder prompt leaked the live check");
     assert.ok(!plannerPrompt.includes("status --porcelain"), "planner prompt leaked the live check");
+  });
+
+  test("tester prompt states the VERDICT contract and its blocking consequence (R850)", () => {
+    // The tester's verdict is now parsed, consolidated and capped exactly like a
+    // reviewer's, so a tester that ends without a VERDICT line BLOCKS the
+    // project. That consequence has to be in the engine's own prompt, not left
+    // to agents/tester.md — which is also read by the interactive Task-tool
+    // tester, where no orchestrator is parsing anything.
+    const prompt = buildPrompt(task({ role: "tester" }), project({ repo: "ai-os" }));
+    assert.match(prompt, /VERDICT: PASS/);
+    assert.match(prompt, /VERDICT: NEEDS_FIXES/);
+    assert.match(
+      prompt,
+      /missing verdict blocks the whole project/,
+      "the tester must be told what silence costs",
+    );
+    assert.match(
+      prompt,
+      /never start, patch or restart a live service/,
+      "a tester needs a running surface — say plainly it may not create one itself",
+    );
+  });
+
+  test("the live-checkout cleanliness gate stays the reviewer's alone", () => {
+    // Deliberate asymmetry: the tester never judges code, so handing it the
+    // git-status gate would duplicate the reviewer's finding and produce two
+    // NEEDS_FIXES verdicts for one dirty file.
+    const proj = project({ repo: "ai-os" });
+    const testerPrompt = buildPrompt(task({ role: "tester" }), proj);
+    assert.ok(
+      !testerPrompt.includes("status --porcelain"),
+      "tester prompt leaked the reviewer's live-checkout check",
+    );
+    assert.ok(
+      testerPrompt.includes(WORKTREE_POLICY("/opt/forge-ai-os")),
+      "the tester still gets the worktree policy — it must not edit the live checkout either",
+    );
   });
 
   test("goal-mode architect prompt carries DEPLOY_GUIDE with the detached-restart contract", () => {

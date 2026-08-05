@@ -104,7 +104,7 @@ const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.ti
   pt.chain_key, pt.created_at::text, pt.updated_at::text`;
 /** Last assistant message of the joined run `r`, by thread timestamp — the
  *  text every verdict parse reads. Shared by listSettledRunningTasks() and
- *  listReviewerRound() so the two can never drift apart. */
+ *  listVerdictRound() so the two can never drift apart. */
 const LAST_ASSISTANT_TEXT = `(SELECT elem->>'content'
                FROM jsonb_array_elements(r.thread) elem
               WHERE elem->>'role' = 'assistant'
@@ -664,21 +664,30 @@ export async function listSettledRunningTasks(): Promise<
   return r.rows;
 }
 
-/** Every reviewer task of one project+round, with its run settlement — the
+/** Every gating task of one project+round, with its run settlement — the
  *  input to project-tick's group consolidation, which must decide on the
  *  ROUND as a whole rather than per settled task (two reviewers each firing
  *  their own fix chain was bug 1 of the first goal-mode night).
  *
- *  LEFT JOIN, not JOIN: a reviewer whose run has not been created yet has
+ *  `roles` is passed in rather than hardcoded so lib/project-reconcile.ts's
+ *  VERDICT_ROLES stays the single definition of "which roles end in a VERDICT
+ *  line" (R850 added 'tester' to it). A value import of that constant here
+ *  would close an import cycle around the pg pool, which the module's
+ *  type-only import of ProjectStatus deliberately avoids.
+ *
+ *  LEFT JOIN, not JOIN: a task whose run has not been created yet has
  *  `run_id IS NULL` and surfaces here as `run_status: null`, which the caller
  *  maps to `settled: false` — a group with any such member must wait, never
  *  decide. Task status is deliberately NOT filtered: a reviewer already marked
  *  'done' still belongs to the group's history and the caller decides what
  *  that means. ORDER BY created_at ASC is load-bearing — it is what makes the
- *  merged fix brief byte-identical across replays of the same round. */
-export async function listReviewerRound(
+ *  merged fix brief byte-identical across replays of the same round; the id
+ *  tiebreak covers the two-rows-same-timestamp case, which a single-statement
+ *  insert of a reviewer and a tester makes reachable. */
+export async function listVerdictRound(
   projectId: string,
   round: number,
+  roles: readonly TaskRole[],
 ): Promise<Array<ProjectTask & { run_status: RunStatus | null; last_text: string | null }>> {
   const r = await pool.query<
     ProjectTask & { run_status: RunStatus | null; last_text: string | null }
@@ -690,9 +699,9 @@ export async function listReviewerRound(
        LEFT JOIN runs r ON r.id = pt.run_id
       WHERE pt.project_id = $1
         AND pt.round = $2
-        AND pt.role = 'reviewer'
-      ORDER BY pt.created_at ASC`,
-    [projectId, round],
+        AND pt.role = ANY($3::text[])
+      ORDER BY pt.created_at ASC, pt.id ASC`,
+    [projectId, round, [...roles]],
   );
   return r.rows;
 }
@@ -785,12 +794,19 @@ async function insertChainRow(
   );
 }
 
-/** Insert a fix builder (round + 1) and its re-reviewer (round + 2) in ONE
- *  transaction, keyed by chain_key so the pair is idempotent (R7).
+/** Insert a fix builder (round + 1) and its re-checkers (round + 2) in ONE
+ *  transaction, keyed by chain_key so the whole chain is idempotent (R7).
  *
- *  `round` is the REVIEWER round R that produced the NEEDS_FIXES verdicts. A
- *  tick that crashes after COMMIT but before marking the reviewers 'done'
- *  replays harmlessly: the second attempt inserts nothing and both rows come
+ *  `checkers` is one row per DISSENTING ROLE (R850) — a re-reviewer, a
+ *  re-tester, or one of each when a reviewer and a tester both returned
+ *  NEEDS_FIXES in the same round. Never one per dissenting TASK: two unhappy
+ *  reviewers still produce exactly one re-review, which is the whole point of
+ *  consolidation. They all land in the same round+2 and are therefore
+ *  consolidated together in turn, exactly like the round that spawned them.
+ *
+ *  `round` is the gating round R that produced the NEEDS_FIXES verdicts. A
+ *  tick that crashes after COMMIT but before marking the group 'done'
+ *  replays harmlessly: the second attempt inserts nothing and every row comes
  *  back `replay`. The outcomes are returned rather than swallowed so the
  *  caller can log the replay instead of silently believing it created fresh
  *  work — and, for `occupied`, so it can refuse to drop a verdict on the floor.
@@ -827,11 +843,29 @@ export async function createFixChain(input: {
   builderTitle: string;
   builderBrief: string;
   builderChainKey: string;
-  reviewerTitle: string;
-  reviewerBrief: string;
-  reviewerChainKey: string;
+  checkers: Array<{
+    role: TaskRole;
+    title: string;
+    brief: string;
+    chainKey: string;
+  }>;
   tier?: TaskTier;
-}): Promise<{ builder: ChainRowOutcome; reviewer: ChainRowOutcome }> {
+}): Promise<{
+  builder: ChainRowOutcome;
+  /** Parallel to `input.checkers`, role carried through so the caller can name
+   *  the offending row in a collision without re-deriving it from the key. */
+  checkers: Array<ChainRowOutcome & { role: TaskRole }>;
+}> {
+  // A fix builder with nobody to check it would close the round on the next
+  // tick with the merged feedback unverified. Refuse loudly rather than write
+  // half a chain — the caller's decision type guarantees a non-empty list, so
+  // reaching this means the decision was built by hand or by a future caller.
+  if (input.checkers.length === 0) {
+    throw new Error(
+      `createFixChain: no re-checkers for project ${input.project_id} round ${input.round} ` +
+        `cycle ${input.cycle} — a fix cycle must be re-checked by at least one verdict role`,
+    );
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -845,18 +879,24 @@ export async function createFixChain(input: {
       tier: input.tier ?? null,
       chain_key: input.builderChainKey,
     });
-    const reviewer = await insertChainRow(client, {
-      project_id: input.project_id,
-      round: input.round + 2,
-      role: "reviewer",
-      title: input.reviewerTitle.slice(0, 200),
-      brief: input.reviewerBrief,
-      fix_cycle: input.cycle,
-      tier: null,
-      chain_key: input.reviewerChainKey,
-    });
+    const checkers: Array<ChainRowOutcome & { role: TaskRole }> = [];
+    // Sequential, not Promise.all: they share one client, and one transaction
+    // cannot have two statements in flight.
+    for (const c of input.checkers) {
+      const outcome = await insertChainRow(client, {
+        project_id: input.project_id,
+        round: input.round + 2,
+        role: c.role,
+        title: c.title.slice(0, 200),
+        brief: c.brief,
+        fix_cycle: input.cycle,
+        tier: null,
+        chain_key: c.chainKey,
+      });
+      checkers.push({ ...outcome, role: c.role });
+    }
     await client.query("COMMIT");
-    return { builder, reviewer };
+    return { builder, checkers };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;

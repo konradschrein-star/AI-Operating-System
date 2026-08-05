@@ -29,42 +29,65 @@ export type Verdict = "PASS" | "NEEDS_FIXES" | null;
 export function parseVerdict(text: string | null): Verdict;          // LAST occurrence wins
 export function projectAcceptsWork(status: ProjectStatus): boolean;  // status === 'active'
 
-export interface ReviewerInput {
-  taskId: string; title: string; fixCycle: number;
+// AMENDED R850: the unit is a VERDICT ROLE, not the reviewer role. agents/tester.md ends
+// with the identical VERDICT contract, so reviewer and tester of one round gate together.
+export const VERDICT_ROLES = ["reviewer", "tester"] as const;   // order = re-check order
+export type VerdictRole = (typeof VERDICT_ROLES)[number];
+export function isVerdictRole(role: TaskRole): role is VerdictRole;
+
+export interface VerdictInput {
+  taskId: string; role: VerdictRole; title: string; fixCycle: number;
   settled: boolean;               // run status is 'completed'
   lastText: string | null;
 }
+export interface CheckerChain { role: VerdictRole; chainKey: string }
 export type RoundDecision =
   | { action: "wait" }                                   // some sibling not settled
   | { action: "pass" }                                   // all settled, all PASS
   | { action: "block"; reason: "no_verdict" | "max_cycles"; detail: string }
-  | { action: "fix"; cycle: number; mergedBrief: string; // one builder + one re-reviewer
-      builderChainKey: string; reviewerChainKey: string };
-export function consolidateReviewerRound(
-  round: number, reviewers: ReviewerInput[], maxFixCycles: number,
+  | { action: "fix"; cycle: number; mergedBrief: string; // ONE builder, one re-check
+      builderChainKey: string; checkers: CheckerChain[] }//   per DISSENTING role
+export function consolidateVerdictRound(
+  round: number, checks: VerdictInput[], maxFixCycles: number,
 ): RoundDecision;
 export function chainKeys(round: number, cycle: number):
-  { builder: string; reviewer: string };                 // "fix:R:c" / "rereview:R:c"
+  Record<VerdictRole, string> & { builder: string };     // "fix:R:c" / "rereview:R:c" / "retest:R:c"
+export const RECHECK_TASK_TITLE: (role: VerdictRole, cycle: number) => string;
+export function recheckBrief(role: VerdictRole, mergedBrief: string): string;
 ```
 
 Decision rules (in order): any unsettled sibling → `wait`; any settled sibling with
 unparseable verdict → `block(no_verdict)`; any NEEDS_FIXES with
 `max(fixCycle) >= maxFixCycles` → `block(max_cycles)`; any NEEDS_FIXES →
-`fix(cycle = max(fixCycle)+1)` with `mergedBrief` = each NEEDS_FIXES reviewer's full text
-under a `## Feedback from: <task title>` heading; else → `pass`.
+`fix(cycle = max(fixCycle)+1)` with `mergedBrief` = each dissenter's full text under a
+`## Feedback from <role>: <task title>` heading; else → `pass`.
 
-**Orchestration change in `reconcileSettledTasks()`:** settled reviewer tasks are grouped
-by `(project_id, round)`; for each group the tick loads ALL reviewer tasks of that
-project+round (new query `listReviewerRound(projectId, round)` in db/projects.ts,
-returning task + run settlement + last_text), maps them to `ReviewerInput[]`, and applies
-the decision:
+`checkers` holds one entry per DISSENTING ROLE, in `VERDICT_ROLES` order — never one per
+dissenting task. Two unhappy reviewers still yield exactly one re-review; a reviewer and a
+tester both unhappy yield one re-review AND one re-test, because a reviewer settles a
+concern by citing a file and line while a tester settles it by walking the journey again,
+and neither can stand in for the other. The re-checks share round R+2 and are therefore
+consolidated as one group in turn (`retest:R:c` is the tester's key; `rereview:R:c` is
+frozen for the reviewer's, since rows written since 0039 carry it and a replay must find
+its own chain). Splitting the round into one group per role was rejected: it would put two
+fix builders into the same round and the same worktree, each holding half the feedback —
+bug 1 with extra steps.
+
+**Orchestration change in `reconcileSettledTasks()`:** settled tasks whose role passes
+`isVerdictRole()` are grouped by `(project_id, round)` — reviewer and tester of one round
+collapse onto the same key, which is what makes them one decision. For each group the tick
+loads ALL verdict tasks of that project+round (query `listVerdictRound(projectId, round,
+roles)` in db/projects.ts, returning task + run settlement + last_text; `roles` is passed
+in so `VERDICT_ROLES` stays the single definition and no import cycle forms around the pg
+pool), maps them to `VerdictInput[]`, and applies the decision:
 
 - `wait` → do nothing this tick (tasks stay `running`; the group re-evaluates next tick).
-- `pass` → mark all group reviewers `done`.
-- `block` → mark reviewers `done`, set project `blocked`, `queueNotification` with the
-  reason and the offending task title(s).
+- `pass` → mark every task in the group `done`.
+- `block` → mark the group `done`, set project `blocked`, `queueNotification` with the
+  reason and the offending role + task title(s).
 - `fix` → **one transaction**: insert builder (round+1, `fix_cycle = cycle`,
-  `chain_key = fix:R:c`) and re-reviewer (round+2, `chain_key = rereview:R:c`), both with a
+  `chain_key = fix:R:c`) and one re-checker per dissenting role (round+2,
+  `chain_key = rereview:R:c` / `retest:R:c`), all with a
   **bare `ON CONFLICT DO NOTHING`** — no conflict target (amended R308). A chain row is
   subject to TWO unique indexes, `project_tasks_chain_key_uniq` (ours, 0039) and
   `project_tasks_identity_idx` (`main`'s, 0035, already live); naming either one leaves
@@ -82,7 +105,13 @@ the decision:
   alternative drops a reviewer round's verdict in silence. Evidence:
   `docs/plan/evidence/0039-conflict-target.md` §B.
 
-Non-reviewer settled tasks keep the existing per-task path untouched.
+Settled tasks of every OTHER role keep the existing per-task path untouched: settled means
+done, no verdict is read. Adding a role to `VERDICT_ROLES` without giving its role file the
+VERDICT contract would block every round it sits in (`no_verdict`) — the safe direction to
+fail, and the reason `buildPrompt()` now states the contract itself for the tester rather
+than trusting `agents/tester.md` alone. R850 evidence (widened query, multi-checker chain,
+replay-safety, all against a throwaway database):
+`docs/plan/evidence/r850-tester-verdicts.md`.
 
 ### 1.3 Data model — migration `db/migrations/0039_reviewer_chain_key.sql`
 
