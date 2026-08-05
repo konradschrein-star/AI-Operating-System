@@ -602,8 +602,19 @@ headless. **Plain `curl` gets the same 403, so the block sits on the egress IP
    R776 made `api` the default. It costs money, which is exactly the constraint Konrad stated,
    so it stays his call and not the tool's.
 
-A reminder carrying this decision is queued: `1fc35eb9-e49e-4899-b3c8-4676dab32dfa`, due
-2026-08-06 07:00 UTC.
+**Reminder status, corrected 2026-08-06 (R779).** The reminder that used to carry this
+decision, `1fc35eb9-e49e-4899-b3c8-4676dab32dfa`, was **dismissed at 2026-08-05 22:06:01 UTC —
+superseded, not answered** (the R776 consolidation; before-state in
+`docs/plan/evidence/p8-research-lane-value.md` §3.1). Nothing on this list was decided or done.
+It was folded, together with the Gemini rows, into one decision reminder:
+`eff58681-bd02-4663-b447-dd7a74bda4f6`, due 2026-08-06 05:00 UTC (07:00 CEST), which puts
+option 4 above to Konrad as a costed choice (see `docs/tools/gemini-qa.md` §9.1 for the
+Gemini half of the same reminder).
+
+Do not try to confirm `1fc35eb9` through the API: `listReminders()` filters
+`WHERE status != 'dismissed'`, so `GET /api/reminders?contains=…` returns `{"count":0}` for it
+— an empty result there means *invisible*, never *resolved*. See
+`docs/plan/evidence/p8-research-lane-value.md` §3.4.
 
 ### 12.2 What is therefore still unproven
 

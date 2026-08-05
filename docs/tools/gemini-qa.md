@@ -652,8 +652,13 @@ As of **2026-08-05, no Gemini API key exists on this box** — neither `GEMINI_A
 `/opt/ai-os/.secrets/store/gemini-api-key` is present
 (`docs/plan/evidence/p4-gemini-errorpaths.md` §"Reminder protocol"). Since R702 this no longer
 blocks the tool's default path: `--backend api` is the optional, billed secondary, and Konrad
-has said he does not want to buy a key. Reminder `cacf9d2b-5f35-411c-a925-db5a795bcb48` records
-what to add if that ever changes — and warns, again, not to cross the two credentials (§4).
+has said he does not want to buy a key. What to add if that ever changes — and the warning not
+to cross the two credentials (§4) — is recorded here and in §9.1's table row, **not in a live
+reminder**: `cacf9d2b-5f35-411c-a925-db5a795bcb48` was **dismissed at 2026-08-05 22:06 UTC,
+superseded and not answered**, folded into option (b) of the single decision reminder
+`eff58681-bd02-4663-b447-dd7a74bda4f6` (due 2026-08-06 05:00 UTC / 07:00 CEST, §9.1). Querying
+`cacf9d2b` through `GET /api/reminders` returns nothing because `listReminders()` filters
+`WHERE status != 'dismissed'` — absence there is not an answer.
 
 Until that key lands, every `--backend api` invocation on this box exits 2 deterministically
 (§8.1) — by design, not a bug: no HTTP request is ever attempted without a key.

@@ -103,8 +103,13 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   every invocation, flag and exit code the prompt quotes on their behalf still exists in the
   shipped output (`open <profile>`, `--probe`, `ask "<question>"`, `--backend browser|api`,
   `--backend pool|api`, `4  LOGIN REQUIRED`, `4  NEEDS LOGIN`, `default: pool`,
-  `Default backend: browser`). Rounds 701/702 own those scripts; if a subcommand is renamed,
+  `Default backend: api`). Rounds 701/702 own those scripts; if a subcommand is renamed,
   this test is what notices instead of a confused researcher at 3am.
+  **T16's perplexity default AMENDED at R776** — see §1.2. The asserted literal was
+  `Default backend: browser` until R776 re-ranked the backends; the shipped assertions are now
+  `Default backend: api` (`perplexity-cli.test.ts:415`, `project-tick.test.ts:665`), and
+  `--help` no longer emits the old string at all. Do not "restore" it: that reads as a
+  regression against correct code.
 - **T17 the run id reaches the child process** (added in P7, R703), new file
   `forge-control/src/lib/cc-runner.test.ts`: `uploadsRunId()` maps a `runs.id` UUID to its
   first 12 hex characters (the only shape `GET /api/uploads/:id/:name` serves — it gates on
@@ -138,6 +143,30 @@ new mission — `/root/.claude/agents/researcher.md` (installed 2026-08-05 17:26
 to the pre-R703 file) would keep winning after the restart. The deploy must copy the merged file
 over it, or delete the installed copy so the repo fallback resolves. Konrad may have to do that
 one `cp` by hand if the harness refuses the path.
+
+### 1.2 T16's perplexity anti-drift literal, amended at R776
+
+R702 shipped `perplexity.mjs` browser-first, and T16 pinned that by asserting the literal
+`Default backend: browser` in the shipped `--help`. R776 re-ranked the backends on measured
+evidence — `POST api.perplexity.ai/search` answers **401** (reachable, no key) while
+`GET www.perplexity.ai/` answers **403** (Cloudflare edge block on this VPS's egress IP), so
+the API path is the reachable one and the browser path is a documented fallback. See
+`docs/tools/perplexity.md` §12.1.
+
+What T16 asserts now, and why each half is load-bearing:
+
+| Assertion | Where | What it protects |
+|---|---|---|
+| `Default backend: api` | `perplexity-cli.test.ts:415`, `project-tick.test.ts:665` | the re-rank actually reached the shipped `--help`, not only the docs |
+| `--backend browser\|api` in `--help` | `perplexity-cli.test.ts:418`, `project-tick.test.ts:631` (token list), `:671` | demoted is not deleted — a bare "api" would read as "the browser backend is gone" |
+| `--backend browser` parses, with `--allow-uncited`, `--keep-open`, `--label` | `perplexity-cli.test.ts:299-315` | the whole browser flag surface is still wired to the backend, not just the string |
+| `--backend browser` present in `RESEARCH_INSTRUMENTS` | `project-tick.test.ts:676` | the researcher prompt still names the fallback for logged-in work |
+| `research-browser and gemini-qa need no key on their default path, perplexity does` | `project-tick.test.ts:654` | R702's blanket "none of them needs a key" became false at R776; a researcher told otherwise would read exit 2 as a broken tool |
+| `FALLBACK` and `403` in `--help` | `perplexity-cli.test.ts:419-420` | the demotion states its own reason, so a future round can tell whether the reason still holds |
+
+The ranking is a property of **this host's egress**, not of Perplexity: on a box Cloudflare
+scores differently it could reasonably flip back. If it does, this table and the literals move
+together — a round that changes one without the other is the drift T16 exists to catch.
 
 ## 2. Integration checks (real DB, careful scope)
 

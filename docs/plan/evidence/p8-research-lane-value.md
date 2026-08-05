@@ -177,7 +177,8 @@ Two structural details worth recording, both verified in the diff:
 
 ### 2.4 The divergence risk — stated explicitly
 
-`cc-runner`'s `roleFilePaths()` tries `AGENTS_DIR` **first**, so a running researcher loads
+`roleFilePaths()` — defined in `forge-control/src/lib/project-tick.ts:185-186`, not in
+`cc-runner.ts` — tries `AGENTS_DIR` **first**, so a running researcher loads
 `/root/.claude/agents/researcher.md`, not this worktree's copy and not the repo fallback.
 That file is a human `cp` (R19 struck the automated install; R308/R703 left the copy to a human
 hand). Measured now:
