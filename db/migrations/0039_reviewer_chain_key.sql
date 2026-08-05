@@ -13,6 +13,9 @@
 --
 -- Purely additive: the currently-running (old) engine never writes this column,
 -- so the migration is safe to apply while the fleet is live.
-ALTER TABLE project_tasks ADD COLUMN chain_key text;
-CREATE UNIQUE INDEX project_tasks_chain_key_uniq
+-- Re-runnable, like 14 of the 19 migrations beside it: there is no ledger
+-- table and no runner, so re-application is a manual `psql -f` and must be a
+-- no-op rather than an error.
+ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS chain_key text;
+CREATE UNIQUE INDEX IF NOT EXISTS project_tasks_chain_key_uniq
   ON project_tasks (project_id, chain_key) WHERE chain_key IS NOT NULL;
