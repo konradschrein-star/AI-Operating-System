@@ -69,6 +69,9 @@ const HEARTBEAT_STUCK_THRESHOLD_MS = Number(
   process.env.HEARTBEAT_STUCK_THRESHOLD_MS ?? "90000",
 );
 const MAX_THREAD_CHARS = 24_000;
+// Ceiling for the exponential re-queue backoff applied when another engine
+// process still owns a run's session (migration 0036, failure mode E10).
+const SESSION_WAIT_MAX_BACKOFF_S = 60;
 
 // v1.6 Tier-2 phase 1: trajectory compression.
 // Ported from NousResearch/hermes-agent context_compressor.py — see
@@ -127,11 +130,15 @@ interface ClaimedRun {
 
 async function claimNextRun(): Promise<ClaimedRun | null> {
   // SKIP LOCKED so we never block on another executor's row.
+  // wake_after (migration 0036) parks a re-queued run for a backoff interval;
+  // until it passes, the run is queued but not claimable. Cleared on claim so
+  // it never delays a later turn of the same run.
   const r = await pool.query<ClaimedRun>(
     `WITH claimed AS (
        SELECT id
          FROM runs
          WHERE status = 'queued'
+           AND (wake_after IS NULL OR wake_after <= now())
          ORDER BY created_at ASC
          LIMIT 1
          FOR UPDATE SKIP LOCKED
@@ -140,6 +147,7 @@ async function claimNextRun(): Promise<ClaimedRun | null> {
         SET status = 'running',
             started_at = COALESCE(r.started_at, now()),
             last_heartbeat_at = now(),
+            wake_after = NULL,
             updated_at = now(),
             worker = COALESCE(r.worker, 'forge-executor')
        FROM claimed
@@ -745,21 +753,48 @@ async function processWithClaudeCode(
   //
   // So the check has to look at the OS, not at our own bookkeeping.
   if (priorSession && (await sessionProcessAlive(priorSession))) {
-    console.warn(
-      `[executor] run ${run.id}: a live engine process already owns session ` +
-        `${priorSession} — refusing to start a second one`,
-    );
     // Put it BACK on the queue rather than completing it. Completing would
     // silently swallow whatever the user just sent; re-queuing means the turn
-    // runs as soon as the existing process finishes. The poll loop retries in
-    // ~1.5s, and each retry is one cheap /proc scan.
+    // runs as soon as the existing process finishes.
+    //
+    // v2.6 (E10): re-queuing alone was a livelock. A re-queued run is instantly
+    // re-claimable, so run ece63bdb spun 1,219 times over six hours. wake_after
+    // parks it for 2^n seconds (capped at 60) instead — the retry still happens
+    // on its own, just not 3,300 times an hour.
+    const waited = Number(run.metadata?.session_wait_attempts ?? 0);
+    const attempts = Number.isFinite(waited) && waited > 0 ? waited : 0;
+    const delayMs = Math.min(2 ** attempts, SESSION_WAIT_MAX_BACKOFF_S) * 1000;
+    console.warn(
+      `[executor] run ${run.id}: a live engine process already owns session ` +
+        `${priorSession} — refusing to start a second one; re-queued for ` +
+        `${delayMs / 1000}s (attempt ${attempts + 1})`,
+    );
     await pool
       .query(
-        `UPDATE runs SET status = 'queued', updated_at = now() WHERE id = $1`,
-        [run.id],
+        `UPDATE runs
+            SET status = 'queued',
+                wake_after = now() + ($2::int * interval '1 millisecond'),
+                metadata = COALESCE(metadata, '{}'::jsonb) ||
+                           jsonb_build_object('session_wait_attempts', $3::int),
+                updated_at = now()
+          WHERE id = $1`,
+        [run.id, delayMs, attempts + 1],
       )
       .catch((e) => console.error("[executor] requeue failed:", e.message));
     return;
+  }
+
+  // Past the guard: this turn owns the session, so the next contention starts
+  // its backoff from zero again.
+  if (run.metadata?.session_wait_attempts !== undefined) {
+    await pool
+      .query(
+        `UPDATE runs SET metadata = metadata - 'session_wait_attempts' WHERE id = $1`,
+        [run.id],
+      )
+      .catch((e) =>
+        console.error("[executor] clearing session_wait_attempts failed:", e.message),
+      );
   }
 
   const baseMessage = priorSession
