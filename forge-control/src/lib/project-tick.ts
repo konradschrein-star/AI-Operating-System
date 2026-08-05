@@ -53,7 +53,7 @@ import {
   rereviewBrief,
   type ReviewerInput,
 } from "./project-reconcile.ts";
-import { provisionWorkspace } from "./workspace.ts";
+import { provisionWorkspace, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
 import { queueNotification } from "../db/notifications.ts";
@@ -154,8 +154,87 @@ const PARALLELISM_GUIDE =
   `touch disjoint files. Anything that could collide goes in consecutive rounds instead. Rounds only gate ` +
   `ordering (round N+1 starts when everything <= N is done); gaps in round numbers are fine and cost nothing.`;
 
-function buildPrompt(task: ProjectTask, project: Project): string {
+/** R12 — the worktree-only rule, appended to EVERY role prompt on a
+ *  repo-backed project. Bug 3 of the first night: fleet agents edited the live
+ *  checkout during build phases so reviewers could curl real endpoints, which
+ *  hot-applied half-finished code into the running services. The policy is
+ *  generated here rather than written into agents/<role>.md because those role
+ *  files are shared with the interactive Task-tool subagents, which legitimately
+ *  work on live checkouts when Konrad asks. */
+export function WORKTREE_POLICY(liveCheckout: string): string {
+  return (
+    `WORKTREE-ONLY POLICY (non-negotiable):\n` +
+    `- The live checkout for this repo is ${liveCheckout}. During build phases you work ONLY in this ` +
+    `worktree — the directory you are already in. ${liveCheckout} must NEVER be edited, patched, or ` +
+    `"just quickly fixed" during a build phase, no matter how convenient it would be for testing.\n` +
+    `- NEVER run \`pm2 restart forge-executor\`. That kills every run in flight, including your own. ` +
+    `Restarting the executor is the deploy phase's job and it has a detached procedure for it.\n` +
+    `- Verification against LIVE endpoints, live services, or the live database happens ONLY inside an ` +
+    `explicitly-briefed deploy/verify task — never ad hoc from a build task. If your brief does not say ` +
+    `"deploy" or "verify against live", you have no business touching ${liveCheckout}.\n` +
+    `- Need to prove something works? Run it out of the worktree (tsx, unit tests, a throwaway port). ` +
+    `If that is genuinely impossible, say so in your final message and let the deploy/verify task do it.`
+  );
+}
+
+/** R13 — reviewer-side enforcement of the above. A policy nobody checks is a
+ *  suggestion; the reviewer is the only role that reliably looks at the whole
+ *  round, so it owns the cleanliness gate. */
+export function REVIEWER_LIVE_CHECK(liveCheckout: string): string {
+  return (
+    `LIVE-CHECKOUT CLEANLINESS CHECK (mandatory, run it before you write your verdict):\n` +
+    `  git -C ${liveCheckout} status --porcelain\n` +
+    `ANY output at all means someone hot-applied work into the live checkout instead of keeping it in the ` +
+    `worktree. That is by itself a NEEDS_FIXES finding: name the dirty files verbatim in your numbered list ` +
+    `and require them to be reverted there and redone in the worktree. Empty output is the only pass. ` +
+    `Paste the command's output (or its emptiness) into your review — an unexecuted check is not a check.`
+  );
+}
+
+/** R14 + R17 — deploy guidance for the goal-mode architect's plan. Bug 4 of the
+ *  first night: this engine deploys itself, so a naive `pm2 restart
+ *  forge-executor` during deploy kills the very fleet that is deploying. */
+export const DEPLOY_GUIDE =
+  `DEPLOY GUIDANCE (put this verbatim into the final deploy phase's brief):\n` +
+  `- EXECUTOR-LOADED CODE. If the diff touches \`src/lib/project-tick.ts\`, \`src/lib/cc-runner.ts\`, ` +
+  `\`src/executor.ts\`, \`src/db/*\` or the \`agents/*.md\` role files, the executor is holding the old ` +
+  `code in memory and a plain restart would kill every run in flight — including the deploy task itself.\n` +
+  `- NEVER \`pm2 restart forge-executor\`. Not to deploy, not to test, not "just this once".\n` +
+  `- Instead, after merging, run exactly:\n` +
+  `    setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &\n` +
+  `  launch it DETACHED and END the task — never wait for it, never poll it, never tail the log until it ` +
+  `finishes. The script waits for the fleet to go idle and restarts then; your task must return immediately.\n` +
+  `- \`pm2 restart forge-control\` (the API side) remains allowed and is the right way to pick up route/API ` +
+  `changes, since nothing long-running lives in that process.\n` +
+  `- MERGE vs PR (R17): if the project brief says to open a PR instead of merging, run ` +
+  `\`scripts/git-sync-branch.sh <worktree-dir> --pr "<title>"\` and do NOT merge to main — the PR is the ` +
+  `deliverable. Otherwise merge per the brief (merge main into the work branch first if main moved, re-run ` +
+  `typecheck + tests in the worktree, then merge to main; on conflicts STOP and report the files).`;
+
+/** R16 — push-on-PASS guidance. Deliberately prompt guidance rather than engine
+ *  code: the engine has no opinion about which phases are worth publishing, and
+ *  a deterministic push would fire on rounds that are mid-fix-cycle. */
+export const GITHUB_PUSH_GUIDE =
+  `GITHUB PUSH (phase completion):\n` +
+  `- When a phase's gating reviewer issues VERDICT: PASS and the repo has an origin remote, run ` +
+  `\`scripts/git-sync-branch.sh <worktree-dir>\` to push the work branch so the progress is visible on ` +
+  `GitHub.\n` +
+  `- Plain push only. NEVER force-push, never \`--force\`, never \`--force-with-lease\` — this branch is ` +
+  `shared with whatever else is watching it.\n` +
+  `- If the push fails (no origin, gh not authenticated, rejected), report the failure verbatim in your ` +
+  `final message and move on. A push failure NEVER changes the verdict.`;
+
+export function buildPrompt(task: ProjectTask, project: Project): string {
   const mission = roleConfig(task.role).mission;
+  // null for scratch projects: no live checkout exists, so none of the
+  // live-checkout policy blocks apply (and interpolating "null" into a path
+  // would be worse than saying nothing).
+  const live = liveCheckoutPath(project.repo);
+  // Wrap EVERY return through this rather than pasting the block into eight
+  // branches — a new role branch that forgets the policy is exactly the kind
+  // of omission bug 3 was.
+  const withPolicy = (body: string): string =>
+    live ? `${body}\n\n${WORKTREE_POLICY(live)}` : body;
   const header =
     `${mission}\n\n---\n\n` +
     `Project: ${project.name}\n` +
@@ -165,7 +244,7 @@ function buildPrompt(task: ProjectTask, project: Project): string {
 
   if (task.role === "architect") {
     if (isGoalMode(project)) {
-      return (
+      return withPolicy(
         header +
         `\nThis is a GOAL-MODE project: a long-horizon goal that may take many hours or days of autonomous ` +
         `multi-agent work. You are the architect; your job tonight is the waterfall plan, done so thoroughly ` +
@@ -186,12 +265,19 @@ function buildPrompt(task: ProjectTask, project: Project): string {
         `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
         `reviewer briefed to attack, not just check).\n` +
         `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n\n` +
-        `3) GIT/GITHUB. If the repo has an origin remote you may push the work branch so progress is visible ` +
-        `on GitHub; never force-push, never open PRs unless the brief asks.\n\n` +
+        // R14/R16/R17. Gated on `live` like every other policy block: a scratch
+        // project has no live checkout to deploy to and no executor to restart,
+        // so this guidance would be noise at best and a wrong instruction at worst.
+        (live
+          ? `3) GIT/GITHUB + DEPLOY. Plan the final deploy phase around the two blocks below, and copy them ` +
+            `into the briefs of the tasks they govern — the deploy task and each phase's gating reviewer:\n\n` +
+            `${DEPLOY_GUIDE}\n\n` +
+            `${GITHUB_PUSH_GUIDE}\n\n`
+          : "") +
         `Do not write implementation code or commit anything outside docs/plan/ — that's the builders' job.`
       );
     }
-    return (
+    return withPolicy(
       header +
       `\nWhen you're done: write a short plan to PLAN.md in the repo root. Then create the next ` +
       `round(s) of work by calling forge-control directly, e.g.:\n` +
@@ -203,7 +289,7 @@ function buildPrompt(task: ProjectTask, project: Project): string {
     );
   }
   if (task.role === "planner") {
-    return (
+    return withPolicy(
       header +
       `\nRead the planning corpus under docs/plan/ (if present) and the current state of the worktree, then ` +
       `break YOUR assigned scope into concrete builder tasks by calling forge-control:\n` +
@@ -215,11 +301,14 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `and how the builder verifies its own work (tests to write/run). Do not exceed round ${task.round + 20} — ` +
       `the space beyond that belongs to fix cycles and the next phase.\n` +
       `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n` +
-      `Do not write implementation code yourself — plan, then fan out.`
+      `Do not write implementation code yourself — plan, then fan out.` +
+      // R16: the planner writes the reviewer briefs, so it needs the push rule
+      // in hand to put it into them.
+      (live ? `\n\n${GITHUB_PUSH_GUIDE}` : "")
     );
   }
   if (task.role === "researcher") {
-    return (
+    return withPolicy(
       header +
       `\nDeep research only — no implementation, no task creation. Use every research surface you have ` +
       `(web search/fetch, browser automation skills, external AI services named in your brief). Write your ` +
@@ -228,7 +317,7 @@ function buildPrompt(task: ProjectTask, project: Project): string {
     );
   }
   if (task.role === "scout") {
-    return (
+    return withPolicy(
       header +
       `\nResearch only — no implementation, no task creation. Write your findings to ` +
       `docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that one file. ` +
@@ -236,24 +325,27 @@ function buildPrompt(task: ProjectTask, project: Project): string {
     );
   }
   if (task.role === "reviewer") {
-    return (
+    return withPolicy(
       header +
       `\nReview the actual diff (git diff ${project.base_branch}...HEAD) and the code itself, not just the ` +
       `plan or commit messages. Run the tests and checks named in your brief (or docs/plan/03-quality.md if it ` +
       `exists) — a review without executed checks is not a review. End your final message with a line starting ` +
       `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
-      `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.`
+      `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.` +
+      // R13 + R16: the reviewer is the round's gate, so both the cleanliness
+      // check and the push-on-PASS rule land here.
+      (live ? `\n\n${REVIEWER_LIVE_CHECK(live)}\n\n${GITHUB_PUSH_GUIDE}` : "")
     );
   }
   if (task.role === "builder") {
-    return (
+    return withPolicy(
       header +
       `\nImplement this directly in the worktree (branch ${project.work_branch} is already checked out). ` +
       `Commit your changes with a clear message when done. Verify your own work before reporting done — run ` +
       `the tests your brief names, and write the tests it asks for.`
     );
   }
-  return header;
+  return withPolicy(header);
 }
 
 async function spawnTaskRuns(): Promise<void> {
