@@ -410,6 +410,10 @@ r.get("/events", (c) => {
           path: rel || null,
           mtime: baselineMtime,
           intentSeq: openIntent?.seq ?? 0,
+          // The live intent itself, not just its seq: a client that reconnects
+          // after a dropped stream would otherwise never learn about an intent
+          // parked during the outage, since intents only fan out on POST /open.
+          intent: openIntent,
         }),
       ))
     ) {
@@ -419,12 +423,20 @@ r.get("/events", (c) => {
     // Live fan-out: any change on our path, any intent, goes straight into the
     // stream. Deliberately not throttled — writes and intents are both very
     // low-frequency.
+    let lastSentMtime = baselineMtime;
     const queue: CanvasEvent[] = [];
     let notify: (() => void) | null = null;
     const sub: Subscriber = (ev) => {
       // Path-filter file changes but keep every intent (the intent may be
       // asking us to switch to a different file).
-      if (ev.kind === "changed" && ev.path !== rel) return;
+      if (ev.kind === "changed") {
+        if (ev.path !== rel) return;
+        // A single write reaches us twice: once from the route that made it
+        // (immediate) and once from fs.watch (300ms later). Same mtime, so
+        // collapse it — a second frame would make the pane reload twice.
+        if (Math.abs(ev.mtime - lastSentMtime) <= 1) return;
+        lastSentMtime = ev.mtime;
+      }
       queue.push(ev);
       notify?.();
     };

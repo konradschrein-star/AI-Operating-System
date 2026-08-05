@@ -33,7 +33,7 @@ import {
   CanvasConflictError,
   type CanvasListItem,
 } from "../api";
-import { statCanvas } from "./canvasLive";
+import { statCanvas, subscribeCanvas } from "./canvasLive";
 import "@excalidraw/excalidraw/index.css";
 
 const Excalidraw = dynamic(
@@ -76,9 +76,12 @@ function pickAppState(s: Record<string, unknown>): Record<string, unknown> {
 }
 
 const SAVE_DEBOUNCE_MS = 1200;
-/** Freshness poll. 2s is affordable now that a check is one stat() instead of
- *  a recursive vault walk. */
+/** Freshness poll while the event stream is down. 2s is affordable now that a
+ *  check is one stat() instead of a recursive vault walk. */
 const POLL_MS = 2000;
+/** Freshness poll while SSE is live — a backstop for the case where fs.watch
+ *  drops an event, not the primary mechanism. */
+const POLL_MS_LIVE = 20_000;
 /** Three consecutive stat failures means the pane has genuinely lost touch with
  *  the file — say so rather than letting Konrad draw on a stale scene. */
 const POLL_FAIL_LIMIT = 3;
@@ -235,36 +238,80 @@ export function CanvasPane({
     [path, api, conflict, load],
   );
 
-  // Freshness: one stat() every POLL_MS. The old version called /canvas/list —
-  // a recursive walk of the whole vault — every 4s for the same one number.
+  // Handlers the event stream calls. Held in refs so the subscription's only
+  // dependency is `path` — an EventSource that tears down and reconnects every
+  // time a parent re-renders is worse than the polling it replaced.
+  const adoptRef = useRef(adoptIfMoved);
+  adoptRef.current = adoptIfMoved;
+  const onPathChangeRef = useRef(onPathChange);
+  onPathChangeRef.current = onPathChange;
+
+  // Live push. An agent draw reaches the screen in ~1s: patch → fs.watch (300ms
+  // debounce) → SSE `changed` → this reload. The stat poll below stays as a
+  // backstop for filesystems where fs.watch drops events.
+  const [sseLive, setSseLive] = useState(false);
+  const lastIntentSeq = useRef(0);
+  useEffect(() => {
+    const applyIntent = (i: { seq: number; path: string }) => {
+      // Only newer sequence numbers act, so a still-live intent from before
+      // this connection can't yank the view, and a reconnect can't replay one.
+      if (i.seq <= lastIntentSeq.current) return;
+      lastIntentSeq.current = i.seq;
+      if (dirty.current) return; // never interrupt unsaved drawing
+      if (i.path !== path) onPathChangeRef.current(i.path);
+    };
+
+    const sub = subscribeCanvas(path, {
+      onHello: (h) => {
+        // First connection adopts the current seq without acting; later hellos
+        // (reconnects) act, so an intent parked during an outage still lands.
+        if (lastIntentSeq.current === 0) lastIntentSeq.current = h.intentSeq;
+        else if (h.intent) applyIntent(h.intent);
+      },
+      onChanged: (c) => {
+        if (c.path !== path) return;
+        void adoptRef.current(c.mtime);
+      },
+      onIntent: applyIntent,
+      onLive: setSseLive,
+    });
+    return () => sub.close();
+  }, [path]);
+
+  // Freshness fallback: one stat(). Fast while the stream is down, slow while
+  // it is up. The old version called /canvas/list — a recursive walk of the
+  // whole vault — every 4s, for the same one number.
   useEffect(() => {
     if (!path) return;
     let stopped = false;
     let failures = 0;
-    const t = setInterval(async () => {
-      if (stopped) return;
-      if (dirty.current || conflict) return;
-      try {
-        const s = await statCanvas(path);
-        failures = 0;
-        setWatchErr(null);
-        await adoptIfMoved(s.mtime);
-      } catch (e) {
-        // A poller that swallows every error stops noticing external writes and
-        // says nothing — that is how you lose a drawing. Speak up at 3.
-        failures++;
-        if (failures >= POLL_FAIL_LIMIT) {
-          setWatchErr(
-            `not tracking changes to this drawing (${String((e as Error).message ?? e)}) — reload before trusting what you see`,
-          );
+    const t = setInterval(
+      async () => {
+        if (stopped) return;
+        if (dirty.current || conflict) return;
+        try {
+          const s = await statCanvas(path);
+          failures = 0;
+          setWatchErr(null);
+          await adoptRef.current(s.mtime);
+        } catch (e) {
+          // A poller that swallows every error stops noticing external writes
+          // and says nothing — that is how you lose a drawing. Speak up at 3.
+          failures++;
+          if (failures >= POLL_FAIL_LIMIT) {
+            setWatchErr(
+              `not tracking changes to this drawing (${String((e as Error).message ?? e)}) — reload before trusting what you see`,
+            );
+          }
         }
-      }
-    }, POLL_MS);
+      },
+      sseLive ? POLL_MS_LIVE : POLL_MS,
+    );
     return () => {
       stopped = true;
       clearInterval(t);
     };
-  }, [path, conflict, adoptIfMoved]);
+  }, [path, conflict, sseLive]);
 
   // Persist on unmount so closing the pane never drops the last stroke.
   useEffect(
@@ -411,6 +458,24 @@ export function CanvasPane({
               }}
             >
               {statusLabel}
+            </span>
+          )}
+          {path && (
+            <span
+              className="mono"
+              title={
+                sseLive
+                  ? "live: agent draws appear here as they happen"
+                  : "event stream down — falling back to a 2s poll"
+              }
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.1em",
+                color: sseLive ? tokens.accent : tokens.textMuted,
+                opacity: sseLive ? 0.9 : 0.5,
+              }}
+            >
+              {sseLive ? "● LIVE" : "○ POLL"}
             </span>
           )}
           <span style={{ flex: 1 }} />
