@@ -1,24 +1,32 @@
 /**
  * Tests for scripts/perplexity.mjs — the researcher lane's Perplexity helper.
  *
- * Run: pnpm test   (node --test via tsx, no test framework dependency)
+ * Run: pnpm test   (node:test via tsx, no test framework dependency)
  *
- * The script is a standalone zero-dependency CLI (02-architecture §6.1 forbids factoring its
- * internals into an importable module), so it is tested the only honest way: spawned as a real
- * process, exactly as the researcher lane invokes it. No network is touched — a `--import`
- * preload replaces `globalThis.fetch` with a canned response before the script's first line
- * runs, which also means these tests cost nothing and need no key.
+ * NO NETWORK, NO BROWSER, NO X DISPLAY is ever a precondition of this suite, and that is
+ * enforced structurally rather than by discipline:
  *
- * The blocks below are direct regression guards for the review findings that produced them:
+ *  - The pure logic (argv/backend parsing, the answer+citation parser, the bot-wall classifier,
+ *    the streaming-settled rule, screenshot path/URL construction, the needs-login payload) is
+ *    imported straight from the .mjs. Since R702 the script runs main() only behind an isMain()
+ *    inode check, so importing it parses no argv, resolves no key and launches nothing.
+ *  - The API backend's CLI contract is exercised by spawning the real script with a `--import`
+ *    preload that replaces globalThis.fetch before the script's first line runs.
+ *  - The BROWSER backend is never spawned. Its DOM harvest is represented by a committed capture
+ *    fixture (fixtures/perplexity-answer-capture.json); everything downstream of the harvest is
+ *    pure and tested against that fixture. Its provenance is stated inside the file.
+ *
+ * The blocks below are direct regression guards for the findings that produced them:
  *   R404-1 — a search_results item whose `results` is not an array used to yield `citations: []`
  *            and exit 0, filing an uncited answer as a successful cited one.
  *   R404-2 — a paid answer used to be discarded when the --out write failed, because the file
  *            was written before stdout and there was no pre-flight.
  *   R405-2 — process.exit() after process.stdout.write() truncates at the 64 KiB pipe buffer,
  *            so both guarantees above silently evaporated on any payload big enough to matter.
- *            spawnSync captures through pipes, which is exactly the failing configuration.
  *   R405-3 — accessSync(dir, W_OK) succeeds on a directory, so `--out /tmp` used to reach the
  *            (billed) request and fail at writeFileSync with EISDIR.
+ *   R702   — the browser backend became the default, so every API-backend case below must now
+ *            say `--backend api` explicitly. A test that forgot to would launch Chrome.
  */
 
 import { test, describe, before, after } from "node:test";
@@ -31,7 +39,140 @@ import { pathToFileURL } from "node:url";
 
 const REPO_ROOT = new URL("../../../", import.meta.url).pathname;
 const SCRIPT = `${REPO_ROOT}scripts/perplexity.mjs`;
+const SCRIPT_URL = new URL("../../../scripts/perplexity.mjs", import.meta.url).href;
+const HARNESS_URL = new URL("../../../scripts/research-browser.mjs", import.meta.url).href;
+const FIXTURE_URL = new URL("./fixtures/perplexity-answer-capture.json", import.meta.url);
 const SECRET_FILE = "/opt/ai-os/.secrets/store/perplexity-api-key";
+
+/* -------------------------------------------------------------------------- *
+ * The shape of what the scripts export for testing
+ * -------------------------------------------------------------------------- */
+
+interface CaptureLink {
+  href: string;
+  text?: string;
+  title?: string;
+  region?: string;
+  order?: number;
+  citation_index?: number | null;
+}
+
+interface Capture {
+  url?: string;
+  title?: string;
+  answer: { selector: string; text: string } | null;
+  answer_candidates_tried?: { selector: string; result: string }[];
+  sources_region_selector?: string | null;
+  streaming?: boolean;
+  links: CaptureLink[];
+  page_text_excerpt?: string;
+}
+
+interface ParsedSource {
+  url: string;
+  title: string;
+  citation_index: number | null;
+  region: string;
+}
+
+interface ParsedCapture {
+  answer: string;
+  sources: ParsedSource[];
+  sources_strategy: string;
+  answer_selector: string | null;
+  dropped: { internal: number; non_http: number; duplicate: number };
+}
+
+interface ParsedArgs {
+  help?: boolean;
+  mode?: string;
+  subject?: string;
+  backend?: string;
+  backendExplicit?: boolean;
+  profile?: string;
+  runId?: string;
+  label?: string;
+  answerTimeoutMs?: number;
+  challengeTimeoutMs?: number;
+  allowUncited?: boolean;
+  dumpCapture?: string;
+  keepOpen?: boolean;
+  model?: string;
+  maxResults?: number;
+  out?: string;
+}
+
+interface ScreenshotRecord {
+  label: string;
+  path: string;
+  url: string;
+  url_servable: boolean;
+}
+
+interface NeedsLoginPayload {
+  backend: string;
+  needs_login: boolean;
+  question: string;
+  answer: null;
+  citations: string[];
+  sources: unknown[];
+  search_results: unknown[];
+  reason: string;
+  screenshots: ScreenshotRecord[];
+  reminder: unknown;
+  login: unknown;
+  takeover: unknown;
+  next_steps: string[];
+  profile: { name: string; dir: string };
+  run_id: string;
+  lock_actions: unknown[];
+}
+
+interface PerplexityCli {
+  EXIT: Readonly<Record<string, number>>;
+  BACKENDS: string[];
+  DEFAULT_PROFILE: string;
+  DEFAULT_ANSWER_TIMEOUT_MS: number;
+  BOT_CHALLENGE_TIMEOUT_MS: number;
+  SELECTORS: Record<string, unknown>;
+  STABLE_SAMPLES: number;
+  parseArgs(argv: string[]): ParsedArgs;
+  parseAnswerCapture(capture: unknown, opts?: { allowUncited?: boolean }): ParsedCapture;
+  normaliseSourceUrl(raw: string): string | null;
+  isPerplexityInternal(raw: string): boolean;
+  detectBotWall(input: { title?: string; text?: string }): string | null;
+  isSettled(samples: { length: number; streaming: boolean }[], stable?: number): boolean;
+  searchUrl(question: string): string;
+  screenshotFor(runId: string, label: string, date?: Date): ScreenshotRecord;
+  needsLoginPayload(input: Record<string, unknown>): NeedsLoginPayload;
+}
+
+interface Harness {
+  EXIT: Readonly<Record<string, number>>;
+}
+
+// Importing must launch nothing — that is itself part of the contract being tested.
+const px = (await import(SCRIPT_URL)) as PerplexityCli;
+const rb = (await import(HARNESS_URL)) as Harness;
+const FIXTURE = JSON.parse(readFileSync(FIXTURE_URL, "utf8")) as Capture;
+
+/** A fresh, independent copy of the fixture — every mutation test gets its own. */
+const fixture = (): Capture => structuredClone(FIXTURE);
+
+/** Assert that a call throws, and hand the message back for content assertions. */
+function throwsWith(fn: () => unknown): { code: number; message: string } {
+  try {
+    fn();
+  } catch (err) {
+    const e = err as { code?: number; message: string };
+    return { code: e.code ?? -1, message: e.message };
+  }
+  assert.fail("expected a throw, got a value");
+}
+
+/* ========================================================================== *
+ * Spawn harness for the API backend (unchanged in spirit since R404)
+ * ========================================================================== */
 
 /**
  * Preload module: swaps in a fake `fetch` and records that it was called. Written to a temp
@@ -70,11 +211,17 @@ after(() => {
 
 type Run = { status: number; stdout: string; stderr: string; requested: boolean };
 
-/** Spawn the CLI with a stubbed fetch. `body` is what the fake API returns. */
+/**
+ * Spawn the CLI with a stubbed fetch. `body` is what the fake API returns.
+ *
+ * R702: `--backend api` is injected for every `ask` case. The default backend is now the
+ * browser, and an ask case that reached it would try to launch Chrome instead of calling the
+ * stub — a spawned test must never be one forgotten flag away from starting a browser.
+ */
 function run(
   args: string[],
   body: unknown,
-  opts: { key?: string | null; status?: number; sabotage?: string } = {},
+  opts: { key?: string | null; status?: number; sabotage?: string; raw?: boolean } = {},
 ): Run {
   const touch = join(dir, `touch-${Math.random().toString(36).slice(2)}`);
   const env: NodeJS.ProcessEnv = {
@@ -87,7 +234,12 @@ function run(
   if (opts.key === null) delete env.PERPLEXITY_API_KEY;
   if (opts.sabotage !== undefined) env.__STUB_SABOTAGE = opts.sabotage;
 
-  const res = spawnSync(process.execPath, ["--import", stubUrl, SCRIPT, ...args], {
+  const full =
+    opts.raw === true || args[0] !== "ask"
+      ? args
+      : [args[0], args[1], "--backend", "api", ...args.slice(2)];
+
+  const res = spawnSync(process.execPath, ["--import", stubUrl, SCRIPT, ...full], {
     encoding: "utf8",
     env,
     maxBuffer: 16 * 1024 * 1024, // the R405-2 payloads are deliberately larger than a pipe buffer
@@ -112,6 +264,474 @@ const MESSAGE_ITEM = {
 };
 
 /* ========================================================================== *
+ * R702-A — backend selection and defaulting
+ *
+ * This is the behavioural centre of R702: Konrad has no Perplexity API key and will not buy
+ * one, so `ask` must reach the browser without anyone typing a flag, and the API path must
+ * still be reachable, unchanged, for whoever does have a key.
+ * ========================================================================== */
+
+describe("R702-A backend selection", () => {
+  test("ask defaults to the browser backend", () => {
+    const opts = px.parseArgs(["ask", "what changed in node 22"]);
+    assert.equal(opts.backend, "browser");
+    assert.equal(opts.backendExplicit, false);
+    assert.equal(opts.profile, px.DEFAULT_PROFILE, "the shared research profile from R701");
+  });
+
+  test("--backend api selects the API path and is recorded as explicit", () => {
+    const opts = px.parseArgs(["ask", "q", "--backend", "api"]);
+    assert.equal(opts.backend, "api");
+    assert.equal(opts.backendExplicit, true);
+  });
+
+  test("--backend browser is accepted explicitly (same as the default)", () => {
+    assert.equal(px.parseArgs(["ask", "q", "--backend", "browser"]).backend, "browser");
+  });
+
+  test("an unknown backend is a usage error naming the valid ones", () => {
+    const err = throwsWith(() => px.parseArgs(["ask", "q", "--backend", "curl"]));
+    assert.equal(err.code, px.EXIT.USAGE);
+    assert.match(err.message, /--backend must be one of browser \| api/);
+  });
+
+  test("search stays on the API backend and refuses a browser one", () => {
+    assert.equal(px.parseArgs(["search", "q"]).backend, "api");
+    const err = throwsWith(() => px.parseArgs(["search", "q", "--backend", "browser"]));
+    assert.equal(err.code, px.EXIT.USAGE);
+    assert.match(err.message, /no browser backend/);
+  });
+
+  test("api-only flags are rejected on the browser backend instead of silently ignored", () => {
+    // The danger this guards: a caller passes --model, believes they chose a model, and gets a
+    // browser answer from whatever Perplexity's web UI felt like using.
+    const err = throwsWith(() => px.parseArgs(["ask", "q", "--model", "perplexity/sonar"]));
+    assert.equal(err.code, px.EXIT.USAGE);
+    assert.match(err.message, /--model only appl/);
+    assert.match(err.message, /--backend api/);
+  });
+
+  test("browser-only flags are rejected on the api backend", () => {
+    const err = throwsWith(() =>
+      px.parseArgs(["ask", "q", "--backend", "api", "--allow-uncited"]),
+    );
+    assert.equal(err.code, px.EXIT.USAGE);
+    assert.match(err.message, /--allow-uncited only appl/);
+  });
+
+  test("--profile is validated against the harness's profile grammar", () => {
+    assert.equal(px.parseArgs(["ask", "q", "--profile", "research-2"]).profile, "research-2");
+    const err = throwsWith(() => px.parseArgs(["ask", "q", "--profile", "../escape"]));
+    assert.equal(err.code, px.EXIT.USAGE);
+    assert.match(err.message, /invalid --profile/);
+  });
+
+  test("--answer-timeout is bounded, not silently clamped", () => {
+    assert.equal(px.parseArgs(["ask", "q", "--answer-timeout", "30000"]).answerTimeoutMs, 30_000);
+    assert.match(
+      throwsWith(() => px.parseArgs(["ask", "q", "--answer-timeout", "1"])).message,
+      /must be between 5000 and 900000/,
+    );
+    assert.match(
+      throwsWith(() => px.parseArgs(["ask", "q", "--answer-timeout", "10s"])).message,
+      /non-negative integer/,
+    );
+  });
+
+  test("--challenge-timeout is a browser-only flag, bounded the same way", () => {
+    // Added after the first real run (2026-08-05) found perplexity.ai edge-blocking this host:
+    // the interstitial wait had to become an operator lever rather than a constant. It is still
+    // browser-only — on --backend api there is no page to be challenged.
+    assert.equal(
+      px.parseArgs(["ask", "q"]).challengeTimeoutMs,
+      px.BOT_CHALLENGE_TIMEOUT_MS,
+      "the default must come from the exported constant, not a second literal",
+    );
+    assert.equal(px.parseArgs(["ask", "q", "--challenge-timeout", "20000"]).challengeTimeoutMs, 20_000);
+    assert.match(
+      throwsWith(() => px.parseArgs(["ask", "q", "--challenge-timeout", "600001"])).message,
+      /must be between 5000 and 600000/,
+    );
+    const onApi = throwsWith(() =>
+      px.parseArgs(["ask", "q", "--backend", "api", "--challenge-timeout", "20000"]),
+    );
+    assert.equal(onApi.code, px.EXIT.USAGE);
+    assert.match(onApi.message, /--challenge-timeout only appl/);
+  });
+});
+
+/* ========================================================================== *
+ * R702-B — argv / usage / exit-code contract
+ * ========================================================================== */
+
+describe("R702-B argv and exit-code contract", () => {
+  test("the needs-login code is the SAME number the harness uses", () => {
+    // If these ever diverge, a caller that learned "4 means a human must log in" from
+    // research-browser.mjs would read a perplexity.mjs wall as an API error. The script asserts
+    // this at import time too; this test is the visible statement of the contract.
+    assert.equal(px.EXIT.NEEDS_LOGIN, rb.EXIT.LOGIN_REQUIRED);
+    assert.equal(px.EXIT.NEEDS_LOGIN, 4);
+  });
+
+  test("the documented codes are exactly 0/1/2/3/4", () => {
+    assert.deepEqual(px.EXIT, { OK: 0, API: 1, PREREQ: 2, USAGE: 3, NEEDS_LOGIN: 4 });
+  });
+
+  test("--help exits 0 and documents the browser-first default and the needs-login code", () => {
+    const r = run(["--help"], {}, { raw: true });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /Default backend: browser/);
+    assert.match(r.stdout, /4\s+NEEDS LOGIN/);
+    assert.match(r.stdout, /No password is stored anywhere/);
+    assert.equal(r.requested, false, "--help must not send anything");
+  });
+
+  test("no mode, unknown mode and a missing subject are usage errors that cost nothing", () => {
+    for (const argv of [[], ["explain"], ["ask"], ["ask", "   "]]) {
+      const r = run(argv, {}, { raw: true });
+      assert.equal(r.status, 3, `argv ${JSON.stringify(argv)} should be a usage error`);
+      assert.equal(r.requested, false);
+      assert.match(r.stderr, /usage error:/);
+    }
+  });
+
+  test("an unknown option is a usage error, never ignored", () => {
+    const r = run(["ask", "q", "--turbo"], {}, { raw: true });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /unknown option "--turbo"/);
+    assert.equal(r.requested, false);
+  });
+
+  test("a browser-backend run never reaches the API even with a key present", () => {
+    // `--dump-capture` into an unwritable directory fails the pre-flight, which happens after
+    // the key gate and before any launch. If the browser path were secretly calling fetch, the
+    // stub touch file would exist.
+    const r = run(["ask", "q", "--dump-capture", join(dir, "no-such-dir", "cap.json")], {}, { raw: true });
+    assert.equal(r.status, 3);
+    assert.equal(r.requested, false, "the browser backend must not call the Perplexity API");
+    assert.match(r.stderr, /--dump-capture directory is not usable/);
+  });
+});
+
+/* ========================================================================== *
+ * R702-C — answer + citation parsing, against the committed fixture
+ * ========================================================================== */
+
+describe("R702-C parseAnswerCapture against the saved fixture", () => {
+  test("the fixture yields the answer and its de-duplicated sources", () => {
+    const parsed = px.parseAnswerCapture(fixture());
+    assert.match(parsed.answer, /^Node\.js 22 ships the require\(esm\) interop/);
+    assert.equal(parsed.answer_selector, '[data-testid="answer"]');
+    assert.equal(parsed.sources_strategy, "sources-region");
+    assert.deepEqual(
+      parsed.sources.map((s) => s.url),
+      [
+        "https://nodejs.org/en/blog/announcements/v22-release-announce",
+        "https://v8.dev/blog/maglev",
+        "https://github.com/nodejs/release#release-schedule",
+      ],
+    );
+    assert.equal(parsed.dropped.duplicate, 1, "the trailing-slash twin must collapse into one");
+    assert.equal(parsed.sources[0].title, "nodejs.org");
+    assert.equal(parsed.sources[1].title, "Maglev - V8's Fastest Optimizing JIT");
+  });
+
+  test("perplexity.ai's own links are never filed as sources", () => {
+    const urls = px.parseAnswerCapture(fixture()).sources.map((s) => s.url);
+    assert.ok(!urls.some((u) => u.includes("perplexity.ai")), urls.join(" "));
+  });
+
+  test("with the sources strip gone it falls to numbered citations, in citation order", () => {
+    // The realistic rot: the wrapper div's test id disappears in a redesign, but the inline
+    // [1][2][3] anchors survive because they are what the answer text points at.
+    const cap = fixture();
+    cap.sources_region_selector = null;
+    for (const link of cap.links) if (link.region === "sources") link.region = "content";
+    const parsed = px.parseAnswerCapture(cap);
+    assert.equal(parsed.sources_strategy, "numbered-citations");
+    assert.deepEqual(
+      parsed.sources.map((s) => s.citation_index),
+      [1, 2, 3],
+    );
+    assert.equal(parsed.sources[0].url, "https://nodejs.org/en/blog/announcements/v22-release-announce");
+  });
+
+  test("with neither hook it falls to external anchors under the content root", () => {
+    const cap = fixture();
+    cap.sources_region_selector = null;
+    for (const link of cap.links) {
+      link.region = "content";
+      link.citation_index = null;
+    }
+    const parsed = px.parseAnswerCapture(cap);
+    assert.equal(parsed.sources_strategy, "content-external-anchors");
+    assert.equal(parsed.sources.length, 3);
+    assert.equal(parsed.dropped.internal, 2, "both perplexity.ai links");
+    assert.equal(parsed.dropped.non_http, 2, "mailto: and the relative /library href");
+  });
+
+  test("a rotted answer selector is a hard error naming every candidate tried", () => {
+    const cap = fixture();
+    cap.answer = null;
+    cap.answer_candidates_tried = [
+      { selector: '[data-testid="answer"]', result: "no element matched" },
+      { selector: "main article", result: "matched an element with no text" },
+    ];
+    const err = throwsWith(() => px.parseAnswerCapture(cap));
+    assert.equal(err.code, px.EXIT.API);
+    assert.match(err.message, /no answer could be extracted/);
+    assert.match(err.message, /THE SELECTOR TABLE HAS ROTTED/);
+    assert.match(err.message, /\[data-testid="answer"\] — no element matched/);
+    assert.match(err.message, /main article — matched an element with no text/);
+    // The page excerpt is what tells a human whether the page was an answer at all.
+    assert.match(err.message, /What changed in Node 22/);
+  });
+
+  test("an answer that is only whitespace is treated as no answer", () => {
+    const cap = fixture();
+    cap.answer = { selector: '[data-testid="answer"]', text: "   \n\t " };
+    assert.match(throwsWith(() => px.parseAnswerCapture(cap)).message, /no answer could be extracted/);
+  });
+
+  test("zero extractable sources is an error, NOT an uncited answer", () => {
+    const cap = fixture();
+    cap.links = cap.links.filter((l) => !/^https?:/.test(l.href) || l.href.includes("perplexity.ai"));
+    const err = throwsWith(() => px.parseAnswerCapture(cap));
+    assert.equal(err.code, px.EXIT.API);
+    assert.match(err.message, /ZERO sources/);
+    assert.match(err.message, /--allow-uncited/);
+  });
+
+  test("--allow-uncited accepts it explicitly, and says which strategy found nothing", () => {
+    const cap = fixture();
+    cap.links = [];
+    const parsed = px.parseAnswerCapture(cap, { allowUncited: true });
+    assert.deepEqual(parsed.sources, []);
+    assert.equal(parsed.sources_strategy, "none");
+    assert.ok(parsed.answer.length > 0, "the answer itself is still returned");
+  });
+
+  test("a capture that is not an object is refused rather than coerced", () => {
+    assert.match(throwsWith(() => px.parseAnswerCapture(null)).message, /not an object/);
+    assert.match(throwsWith(() => px.parseAnswerCapture("{}")).message, /not an object/);
+  });
+});
+
+describe("R702-C url helpers", () => {
+  test("normaliseSourceUrl collapses trailing slashes and fragments, keeps the query", () => {
+    assert.equal(px.normaliseSourceUrl("https://a.example/x/"), "https://a.example/x");
+    assert.equal(px.normaliseSourceUrl("https://A.Example/x#frag"), "https://a.example/x");
+    assert.equal(px.normaliseSourceUrl("https://a.example/s?q=1"), "https://a.example/s?q=1");
+  });
+
+  test("non-absolute and non-http hrefs are not sources", () => {
+    for (const href of ["/library", "mailto:x@y.z", "javascript:void(0)", "#top", ""]) {
+      assert.equal(px.normaliseSourceUrl(href), null, href);
+    }
+  });
+
+  test("isPerplexityInternal matches the apex and its subdomains only", () => {
+    assert.equal(px.isPerplexityInternal("https://www.perplexity.ai/x"), true);
+    assert.equal(px.isPerplexityInternal("https://perplexity.ai/"), true);
+    assert.equal(px.isPerplexityInternal("https://notperplexity.ai/"), false);
+    assert.equal(px.isPerplexityInternal("https://perplexity.ai.evil.example/"), false);
+  });
+
+  test("searchUrl encodes the question rather than concatenating it", () => {
+    assert.equal(
+      px.searchUrl('node 22 & "esm"'),
+      "https://www.perplexity.ai/search?q=node%2022%20%26%20%22esm%22",
+    );
+  });
+});
+
+/* ========================================================================== *
+ * R702-D — the needs-login exit path
+ *
+ * The expected FIRST-RUN outcome, and therefore the one that must never look like a crash.
+ * ========================================================================== */
+
+describe("R702-D needs-login", () => {
+  const harnessStatus = {
+    takeover: {
+      novnc_port: 6937,
+      novnc_url: "http://127.0.0.1:6937/vnc.html?autoconnect=1&resize=scale",
+      ssh_tunnel: "ssh -N -L 6937:127.0.0.1:6937 root@65.108.6.149",
+    },
+    reminder: { queued: true, id: "rem_1", when: "in 5m" },
+    login: { needs_login: true, decision: "logged-out-selector", reasons: ["a[href*=\"/sign-in\"]"] },
+    screenshots: [
+      {
+        label: "perplexity-login-wall",
+        path: "/opt/ai-os/uploads/148ae1fd8f65/20260805T101530Z-perplexity-login-wall.png",
+        url: "/api/uploads/148ae1fd8f65/20260805T101530Z-perplexity-login-wall.png",
+        url_servable: true,
+      },
+    ],
+  };
+
+  const payload = (): NeedsLoginPayload =>
+    px.needsLoginPayload({
+      opts: { subject: "what changed in node 22", profile: "perplexity" },
+      runInfo: { runId: "148ae1fd8f65", source: "flag" },
+      screenshots: [
+        {
+          label: "perplexity-login-wall-seen",
+          path: "/opt/ai-os/uploads/148ae1fd8f65/20260805T101529Z-perplexity-login-wall-seen.png",
+          url: "/api/uploads/148ae1fd8f65/20260805T101529Z-perplexity-login-wall-seen.png",
+          url_servable: true,
+        },
+      ],
+      reason: "logged-out-selector: a[href*=\"/sign-in\"]",
+      harnessStatus,
+      harnessAuth: null,
+    });
+
+  test("no answer is presented, in any field, when a login is needed", () => {
+    const p = payload();
+    assert.equal(p.needs_login, true);
+    assert.equal(p.answer, null, "explicitly null, never omitted and never an empty-string answer");
+    assert.deepEqual(p.citations, []);
+    assert.deepEqual(p.sources, []);
+    assert.deepEqual(p.search_results, []);
+  });
+
+  test("the harness's reminder and takeover details are surfaced, not re-derived", () => {
+    const p = payload();
+    assert.deepEqual(p.reminder, harnessStatus.reminder);
+    assert.deepEqual(p.takeover, harnessStatus.takeover);
+    assert.deepEqual(p.login, harnessStatus.login);
+  });
+
+  test("both this tool's screenshot and the harness's wall shot are listed", () => {
+    const p = payload();
+    assert.equal(p.screenshots.length, 2);
+    assert.deepEqual(
+      p.screenshots.map((s) => s.label),
+      ["perplexity-login-wall-seen", "perplexity-login-wall"],
+    );
+    for (const shot of p.screenshots) {
+      assert.match(shot.path, /^\/opt\/ai-os\/uploads\/148ae1fd8f65\//);
+      assert.match(shot.url, /^\/api\/uploads\/148ae1fd8f65\//);
+    }
+  });
+
+  test("the next steps are the tunnel, the noVNC URL, a manual login, and a re-run", () => {
+    const steps = payload().next_steps;
+    assert.equal(steps.length, 4);
+    assert.match(steps[0], /ssh -N -L 6937:127\.0\.0\.1:6937/);
+    assert.match(steps[1], /http:\/\/127\.0\.0\.1:6937\/vnc\.html/);
+    assert.match(steps[2], /BY HAND/);
+    assert.match(steps[3], /No password is stored anywhere/);
+    assert.match(steps[3], /\/opt\/ai-os\/browser-profiles\/perplexity/);
+  });
+
+  test("a harness that reported no noVNC port still yields usable instructions", () => {
+    // Degraded input must not produce `undefined` in a message a human is meant to follow.
+    const p = px.needsLoginPayload({
+      opts: { subject: "q", profile: "perplexity" },
+      runInfo: { runId: "148ae1fd8f65", source: "env:FORGE_RUN_ID" },
+      screenshots: [],
+      reason: "a login handshake is already in flight for this profile",
+      harnessStatus: null,
+      harnessAuth: { needs_login: true, decision: "logged-out-selector" },
+    });
+    assert.equal(p.reminder, null);
+    assert.deepEqual(p.login, { needs_login: true, decision: "logged-out-selector" });
+    for (const step of p.next_steps) assert.ok(!step.includes("undefined"), step);
+    assert.match(p.next_steps[0], /reminder/i);
+  });
+});
+
+/* ========================================================================== *
+ * R702-E — screenshot path and URL construction
+ * ========================================================================== */
+
+describe("R702-E screenshot paths", () => {
+  const AT = new Date("2026-08-05T10:15:30.123Z");
+
+  test("path and URL follow the harness's uploads convention", () => {
+    const shot = px.screenshotFor("148ae1fd8f65", "perplexity-answer", AT);
+    assert.equal(shot.path, "/opt/ai-os/uploads/148ae1fd8f65/20260805T101530Z-perplexity-answer.png");
+    assert.equal(shot.url, "/api/uploads/148ae1fd8f65/20260805T101530Z-perplexity-answer.png");
+    assert.equal(shot.url_servable, true);
+    assert.equal(shot.label, "perplexity-answer");
+  });
+
+  test("labels are sanitised so the URL is always valid", () => {
+    const shot = px.screenshotFor("148ae1fd8f65", "Perplexity — Answer #1!", AT);
+    assert.equal(shot.label, "perplexity-answer-1");
+    assert.equal(shot.url, "/api/uploads/148ae1fd8f65/20260805T101530Z-perplexity-answer-1.png");
+  });
+
+  test("a run id the uploads route would reject still gets the documented path, and says so", () => {
+    // forge-control/src/routes/uploads.ts gates on /^[a-f0-9]{12}$/. Mangling the id to force a
+    // 200 would produce a URL pointing at a file that is not there.
+    const shot = px.screenshotFor("run-702", "perplexity-answer", AT);
+    assert.equal(shot.path, "/opt/ai-os/uploads/run-702/20260805T101530Z-perplexity-answer.png");
+    assert.equal(shot.url, "/api/uploads/run-702/20260805T101530Z-perplexity-answer.png");
+    assert.equal(shot.url_servable, false);
+  });
+});
+
+/* ========================================================================== *
+ * R702-F — page classification and streaming completion
+ * ========================================================================== */
+
+describe("R702-F bot wall and streaming", () => {
+  test("a Cloudflare challenge is classified as a bot wall, not a login wall", () => {
+    assert.equal(px.detectBotWall({ title: "Just a moment...", text: "" }), "Just a moment");
+    assert.equal(
+      px.detectBotWall({ title: "perplexity.ai", text: "Verify you are human by completing the action below." }),
+      "Verify you are human",
+    );
+  });
+
+  test("an ordinary answer page is not a bot wall", () => {
+    assert.equal(
+      px.detectBotWall({ title: "What changed in Node 22 | Perplexity", text: FIXTURE.page_text_excerpt }),
+      null,
+    );
+  });
+
+  test("a still-growing answer is never settled", () => {
+    const growing = [10, 200, 900, 1500].map((length) => ({ length, streaming: true }));
+    assert.equal(px.isSettled(growing), false);
+  });
+
+  test("stable length AND no streaming indicator settles it", () => {
+    const samples = [
+      { length: 900, streaming: true },
+      { length: 1500, streaming: false },
+      { length: 1500, streaming: false },
+      { length: 1500, streaming: false },
+    ];
+    assert.equal(px.isSettled(samples), true);
+    assert.equal(px.STABLE_SAMPLES, 3);
+  });
+
+  test("a visible stop button vetoes a stable length", () => {
+    // Perplexity pauses between the answer and the follow-up block; length alone would call
+    // that finished and cut the answer off.
+    const samples = [
+      { length: 1500, streaming: true },
+      { length: 1500, streaming: true },
+      { length: 1500, streaming: true },
+    ];
+    assert.equal(px.isSettled(samples), false);
+  });
+
+  test("an empty answer never counts as settled, however stable", () => {
+    const samples = [0, 0, 0, 0].map((length) => ({ length, streaming: false }));
+    assert.equal(px.isSettled(samples), false);
+  });
+
+  test("fewer samples than the stability window is not settled", () => {
+    assert.equal(px.isSettled([{ length: 1500, streaming: false }]), false);
+  });
+});
+
+/* ========================================================================== *
  * R404-1 — the citation path must not swallow an unreadable sources payload
  * ========================================================================== */
 
@@ -126,6 +746,7 @@ describe("R404-1 extractSearchResults", () => {
     );
     assert.equal(r.status, 0, r.stderr);
     const out = JSON.parse(r.stdout);
+    assert.equal(out.backend, "api", "R702: the envelope now names the backend that served it");
     assert.equal(out.answer, "The answer.");
     assert.deepEqual(out.citations, ["https://a.example", "https://b.example"]);
     assert.equal(out.search_results.length, 2);
@@ -211,6 +832,8 @@ describe("R404-2 --out handling", () => {
     assert.equal(r.status, 2);
     assert.equal(r.requested, false);
     assert.match(r.stderr, /No Perplexity API key found/);
+    // R702: the keyless message must point at the backend that needs no key at all.
+    assert.match(r.stderr, /Drop --backend api/);
   });
 
   test("usage errors still precede everything (exit 3, no request)", () => {
@@ -283,9 +906,10 @@ function runThroughPipe(
 
   // fd 2: stderr onto the pipe, stdout discarded, so only the diagnostic is measured.
   const redirect = fd === 1 ? "" : "2>&1 >/dev/null";
+  const full = [args[0], args[1], "--backend", "api", ...args.slice(2)];
   const cmd =
     `${shq(process.execPath)} --import ${shq(stubUrl)} ${shq(SCRIPT)} ` +
-    `${args.map(shq).join(" ")} ${redirect} | cat > ${shq(capture)}; exit \${PIPESTATUS[0]}`;
+    `${full.map(shq).join(" ")} ${redirect} | cat > ${shq(capture)}; exit \${PIPESTATUS[0]}`;
 
   const res = spawnSync("/bin/bash", ["-c", cmd], { encoding: "utf8", env });
   if (res.error) throw res.error;

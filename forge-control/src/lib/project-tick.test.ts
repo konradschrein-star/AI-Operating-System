@@ -14,7 +14,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import {
   buildPrompt,
@@ -22,11 +23,13 @@ import {
   REVIEWER_LIVE_CHECK,
   DEPLOY_GUIDE,
   GITHUB_PUSH_GUIDE,
+  RESEARCH_INSTRUMENTS,
   parseRoleFile,
   roleFilePaths,
   readRoleFile,
   REPO_AGENTS_DIR,
 } from "./project-tick.ts";
+import { liveCheckoutPath } from "./workspace.ts";
 import type { Project, ProjectTask, TaskRole } from "../db/projects.ts";
 
 function project(over: Partial<Project> = {}): Project {
@@ -309,7 +312,23 @@ describe("T13 role file resolution + install parity", () => {
     assert.ok(cfg.mission.includes("docs/research"), `mission body from ${found.path}`);
   });
 
-  test("install parity: AGENTS_DIR copy, if present, is byte-identical to the committed one", (t) => {
+  /** AMENDED at R703. The original assertion was `installed === worktree copy`,
+   *  which is unsatisfiable from inside a build phase that legitimately EDITS
+   *  the role file: the worktree is ahead of the deployed engine by design, and
+   *  no task of this project may write into AGENTS_DIR (/root/.claude is a
+   *  guarded path — the reason R19 was struck) or hot-install a mission that
+   *  names scripts the live checkout does not have yet.
+   *
+   *  The invariant that actually protects the engine is narrower and now stated
+   *  exactly: the installed copy must match the DEPLOYED definition
+   *  (`<live checkout>/agents/researcher.md`). If it does, the running engine
+   *  is loading what was last deployed and nothing is stale. A worktree that is
+   *  ahead of both is a pending DEPLOY OBLIGATION, reported as a diagnostic
+   *  naming the copy the deploy phase must refresh — because AGENTS_DIR still
+   *  wins over the repo fallback, merging alone does NOT land a role-file
+   *  change. Genuine rot (installed ≠ deployed) still fails, and so does a case
+   *  we cannot classify because the deployed copy is unreadable. */
+  test("install parity: AGENTS_DIR copy tracks the DEPLOYED definition; worktree drift is a deploy obligation", (t) => {
     const installed = roleFilePaths("researcher")[0];
     let installedRaw: string;
     try {
@@ -328,11 +347,36 @@ describe("T13 role file resolution + install parity", () => {
       );
       return;
     }
+
+    const worktreeRaw = readFileSync(worktreeCopy, "utf8");
+    if (installedRaw === worktreeRaw) return; // fully in sync — nothing pending.
+
+    // Out of sync. Which of the two cases is it? The deployed checkout answers.
+    const live = liveCheckoutPath("ai-os");
+    assert.ok(live, "repo 'ai-os' must have a live checkout path");
+    const deployedCopy = `${live}/agents/researcher.md`;
+    let deployedRaw: string;
+    try {
+      deployedRaw = readFileSync(deployedCopy, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      assert.fail(
+        `${installed} differs from the committed agents/researcher.md and ${deployedCopy} is ` +
+          `unreadable (${code}), so the drift cannot be classified. Refusing to pass: the engine ` +
+          `loads ${installed}, since AGENTS_DIR wins over the repo fallback.`,
+      );
+    }
     assert.equal(
       installedRaw,
-      readFileSync(worktreeCopy, "utf8"),
-      `${installed} has drifted from the committed agents/researcher.md — the engine would ` +
-        `load the stale installed copy, since AGENTS_DIR wins over the repo fallback`,
+      deployedRaw,
+      `${installed} has drifted from the DEPLOYED ${deployedCopy} — the engine is running a ` +
+        `role definition that matches neither checkout`,
+    );
+    t.diagnostic(
+      `DEPLOY OBLIGATION: agents/researcher.md in this worktree is ahead of both ${installed} ` +
+        `and ${deployedCopy}. Merging is not enough — AGENTS_DIR wins over the repo fallback, so ` +
+        `the deploy phase must also refresh ${installed} from the merged file before the detached ` +
+        `executor restart, or the engine keeps loading the old mission.`,
     );
   });
 
@@ -456,5 +500,166 @@ describe("T14 parseRoleFile robustness — BOM, CRLF, malformed header", () => {
       assert.ok(cfg.mission.length > 0, `${role}.md must have a mission body`);
       assert.ok(!cfg.mission.startsWith("---"), `${role}.md frontmatter must be stripped`);
     }
+  });
+});
+
+/**
+ * T16 — the researcher's browser lane (R703).
+ *
+ * The researcher prompt used to say only "use every research surface you have",
+ * which in practice meant WebFetch: an agent does not discover three CLIs by
+ * hoping. RESEARCH_INSTRUMENTS names them, states the screenshot convention and
+ * the login-wall protocol.
+ *
+ * The interesting half of this suite is the anti-drift half. A prompt that
+ * quotes invented invocations is worse than one that quotes none, so every
+ * instrument named here is executed with `--help` and the quoted subcommands
+ * and flags must appear in its SHIPPED output. Rounds 701/702 own those
+ * scripts; if they rename a subcommand, this test — not a confused researcher
+ * at 3am — is what notices.
+ */
+describe("T16 researcher browser lane", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const SCRIPTS = {
+    browser: "scripts/research-browser.mjs",
+    perplexity: "scripts/perplexity.mjs",
+    geminiQa: "scripts/gemini-qa.mjs",
+  } as const;
+
+  /** The shipped `--help` of a script, as the researcher would see it. */
+  function help(rel: string): string {
+    return execFileSync(process.execPath, [`${repoRoot}${rel}`, "--help"], {
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+  }
+
+  test("researcher prompt carries RESEARCH_INSTRUMENTS; no other role does", () => {
+    for (const repo of ["ai-os", "scratch"] as const) {
+      const proj = project({ repo });
+      const researcherPrompt = buildPrompt(task({ role: "researcher" }), proj);
+      assert.ok(
+        researcherPrompt.includes(RESEARCH_INSTRUMENTS),
+        `researcher prompt on repo '${repo}' missing RESEARCH_INSTRUMENTS`,
+      );
+      for (const role of ROLES.filter((r) => r !== "researcher")) {
+        const prompt = buildPrompt(task({ role }), proj);
+        assert.ok(
+          !prompt.includes(RESEARCH_INSTRUMENTS),
+          `role ${role} on repo '${repo}' must not carry RESEARCH_INSTRUMENTS — it is prepended ` +
+            `to every run of its role and belongs only to the researcher`,
+        );
+      }
+    }
+  });
+
+  test("all three instruments are named with a runnable path", () => {
+    const prompt = buildPrompt(task({ role: "researcher" }), project({ repo: "ai-os" }));
+    for (const rel of Object.values(SCRIPTS)) {
+      assert.ok(prompt.includes(rel), `researcher prompt does not name ${rel}`);
+      assert.ok(
+        existsSync(`${repoRoot}${rel}`),
+        `${rel} is named in the researcher prompt but does not exist in this checkout`,
+      );
+    }
+    assert.ok(
+      RESEARCH_INSTRUMENTS.includes("/opt/forge-ai-os/scripts/"),
+      "the prompt must say where the instruments live outside an ai-os worktree",
+    );
+  });
+
+  test("screenshot convention: uploads path, FORGE_RUN_ID, and the servable URL form", () => {
+    assert.ok(
+      RESEARCH_INSTRUMENTS.includes("/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png"),
+      "the on-disk screenshot convention must be stated literally",
+    );
+    assert.ok(
+      RESEARCH_INSTRUMENTS.includes("/api/uploads/$FORGE_RUN_ID/<name>"),
+      "the URL form is what the Console renders — a bare path is invisible to every reader",
+    );
+    // The tools' own contract, quoted from the shipped help rather than trusted.
+    const browserHelp = help(SCRIPTS.browser);
+    assert.ok(
+      browserHelp.includes("/opt/ai-os/uploads/<run_id>/"),
+      "research-browser --help no longer documents the uploads directory the prompt promises",
+    );
+    assert.ok(
+      browserHelp.includes("FORGE_RUN_ID"),
+      "research-browser --help no longer resolves its run id from FORGE_RUN_ID",
+    );
+    assert.ok(
+      browserHelp.includes("/api/uploads/"),
+      "research-browser --help no longer documents the servable URL form",
+    );
+  });
+
+  test("login-wall protocol: stop, report, never a credential", () => {
+    assert.match(
+      RESEARCH_INSTRUMENTS,
+      /LOGIN WALL = STOP/,
+      "the login-wall rule must be unmissable, not a clause in a paragraph",
+    );
+    assert.match(
+      RESEARCH_INSTRUMENTS,
+      /NEVER attempt credentials/,
+      "the prompt must forbid attempting credentials in as many words",
+    );
+    assert.ok(
+      RESEARCH_INSTRUMENTS.includes("noVNC"),
+      "the prompt must say how Konrad resolves the wall, or 'stop' reads as 'give up'",
+    );
+    // Exit 4 means "needs Konrad" in both browser-facing tools — the claim the
+    // prompt makes on their behalf.
+    assert.ok(
+      help(SCRIPTS.browser).includes("4  LOGIN REQUIRED"),
+      "research-browser exit 4 is no longer LOGIN REQUIRED",
+    );
+    assert.ok(
+      help(SCRIPTS.perplexity).includes("4  NEEDS LOGIN"),
+      "perplexity exit 4 is no longer NEEDS LOGIN",
+    );
+  });
+
+  test("anti-drift: every invocation the prompt quotes exists in the shipped --help", () => {
+    const quoted: Array<[string, string[]]> = [
+      [
+        SCRIPTS.browser,
+        ["open <profile>", "status <profile>", "close <profile>", "--url", "--label", "--probe"],
+      ],
+      [
+        SCRIPTS.perplexity,
+        ['ask "<question>"', 'search "<query>"', "--backend browser|api", "--allow-uncited", "PERPLEXITY_API_KEY"],
+      ],
+      [SCRIPTS.geminiQa, ["--backend pool|api", "GEMINI_API_KEY", "gemini-omni-flash"]],
+    ];
+    for (const [rel, tokens] of quoted) {
+      const text = help(rel);
+      for (const token of tokens) {
+        assert.ok(
+          text.includes(token),
+          `${rel} --help no longer contains ${JSON.stringify(token)}, which the researcher role ` +
+            `file and/or RESEARCH_INSTRUMENTS quote as a real invocation`,
+        );
+      }
+    }
+  });
+
+  test("the pool/browser default is stated as key-free — the whole point of R702", () => {
+    assert.match(
+      RESEARCH_INSTRUMENTS,
+      /none of them needs a key by default/,
+      "a researcher that believes it needs keys will not try the instruments at all",
+    );
+    // gemini-qa's default backend really is the free pool.
+    assert.ok(
+      help(SCRIPTS.geminiQa).includes("default: pool"),
+      "gemini-qa's default backend is no longer the pool",
+    );
+    // perplexity's ask really does default to the browser.
+    assert.match(
+      help(SCRIPTS.perplexity),
+      /Default backend: browser/,
+      "perplexity ask no longer defaults to the browser backend",
+    );
   });
 });

@@ -89,6 +89,55 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   carries a stray `\r`, that an unclosed frontmatter block THROWS `RoleFileParseError`
   rather than degrading, that a plain no-frontmatter file is still legal, and that every
   committed `agents/*.md` parses. Mutation-tested against the pre-R308 parser: 5 of 9 red.
+  **T13's parity case AMENDED at R703** — see §1.1.
+- **T16 researcher browser lane** (added in P7, R703),
+  `forge-control/src/lib/project-tick.test.ts`: the exported `RESEARCH_INSTRUMENTS` constant
+  appears in the researcher's built prompt on both a repo and a scratch project, and in **no
+  other role's** prompt (it is prepended to every run of its role, so scope is the contract);
+  all three instruments are named with a path that exists in the checkout; the screenshot
+  convention is stated literally (`/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png`
+  **and** the `/api/uploads/$FORGE_RUN_ID/<name>` URL form); the login-wall rule is present
+  verbatim (`LOGIN WALL = STOP`, `NEVER attempt credentials`, noVNC named so "stop" cannot read
+  as "give up"). The anti-drift half **executes** `--help` on each of
+  `scripts/research-browser.mjs`, `scripts/perplexity.mjs`, `scripts/gemini-qa.mjs` and asserts
+  every invocation, flag and exit code the prompt quotes on their behalf still exists in the
+  shipped output (`open <profile>`, `--probe`, `ask "<question>"`, `--backend browser|api`,
+  `--backend pool|api`, `4  LOGIN REQUIRED`, `4  NEEDS LOGIN`, `default: pool`,
+  `Default backend: browser`). Rounds 701/702 own those scripts; if a subcommand is renamed,
+  this test is what notices instead of a confused researcher at 3am.
+- **T17 the run id reaches the child process** (added in P7, R703), new file
+  `forge-control/src/lib/cc-runner.test.ts`: `uploadsRunId()` maps a `runs.id` UUID to its
+  first 12 hex characters (the only shape `GET /api/uploads/:id/:name` serves — it gates on
+  `/^[a-f0-9]{12}$/`), throws with diagnostics rather than substituting a sentinel when an id
+  cannot yield 12, and `runClaudeCode()` really does put `FORGE_RUN_ID` / `FORGE_RUN_UUID` on
+  the child's environment. Not mocked: `CC_BIN` is pointed at a stub that writes its own env to
+  a file and emits one stream-json result line, then the module is imported dynamically — the
+  assertion is about a real child process, which is the only thing that was ever in doubt.
+  Also asserts the negative (no `runId` ⇒ both variables *deleted*, never inherited from the
+  parent) and that `executor.ts` passes `runId: run.id`.
+
+### 1.1 T13's install-parity case, amended at R703
+
+The original assertion was `AGENTS_DIR copy === the committed agents/researcher.md`. It is
+unsatisfiable from inside any build phase that legitimately EDITS a role file — as R703 does —
+because the worktree is ahead of the deployed engine by design and **no task of this project
+may write into `AGENTS_DIR`**: `/root/.claude` is the guarded path that got R19 struck, and
+hot-installing a mission that names scripts the live checkout does not have yet would be worse
+than the drift.
+
+The invariant that actually protects the engine is narrower, and is now stated exactly: the
+installed copy must match the **deployed** definition (`/opt/forge-ai-os/agents/researcher.md`).
+If it does, the running engine is loading what was last deployed and nothing is stale. A
+worktree ahead of both is a pending **deploy obligation** and is reported as a `t.diagnostic`
+naming the file to refresh. Genuine rot (installed ≠ deployed) still fails, and so does the
+case where the deployed copy is unreadable and the drift therefore cannot be classified.
+
+**The obligation itself is real and belongs to P7's deploy round (R715):** `roleFilePaths()`
+tries `AGENTS_DIR` *first*, so merging `agents/researcher.md` to `main` does **not** land the
+new mission — `/root/.claude/agents/researcher.md` (installed 2026-08-05 17:26, byte-identical
+to the pre-R703 file) would keep winning after the restart. The deploy must copy the merged file
+over it, or delete the installed copy so the repo fallback resolves. Konrad may have to do that
+one `cp` by hand if the harness refuses the path.
 
 ## 2. Integration checks (real DB, careful scope)
 
@@ -136,6 +185,7 @@ project encodes, applied to itself from phase 1 onward), plus the phase-specific
 | P4 external tools | I4 re-run by reviewer; docs match `--help`; reminders exist via `GET /api/reminders` (R24); zero new deps (`git diff main...HEAD -- '**/package.json' 'pnpm-lock.yaml'` is empty) |
 | P5 integration | full-diff review `git diff main...HEAD`; N2 verified (`git diff --name-only main...HEAD` touches no `forge-control-web/` path and not `src/routes/agents.ts`); vault notes appended not truncated |
 | P6 deploy | brief's protocol followed verbatim; post-deploy `pm2 ls`; migration applied; detached restart launched, NOT awaited; **plus the R20 smoke carried over from P3 (§3.1)** |
+| P7 browser lane | T16 + T17 green; the RENDERED researcher prompt pasted into the review (not the source string); `agents/researcher.md`'s Instruments section matches the three scripts' shipped `--help` — reviewer re-runs `--help` on each and diffs the claims; the `AGENTS_DIR` deploy obligation (§1.1) is carried into R715's protocol; zero new deps; `forge-control-web/**` and `src/routes/agents.ts` untouched |
 
 A review without executed checks is not a review — VERDICT must cite command outputs.
 

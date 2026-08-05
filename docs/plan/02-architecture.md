@@ -184,6 +184,77 @@ whatever it loaded first, which is why R20's smoke run is gated behind P6's rest
 ### 5.2 The `researcher` prompt branch (already live, project-tick.ts:201) stays as-is
 this project only supplies the role file it reads.
 
+**AMENDED at R703 (2026-08-05) — the branch no longer stays as-is.** As written it said only
+"use every research surface you have (web search/fetch, browser automation skills, external AI
+services named in your brief)", which is a surface an agent cannot act on: nothing in it names
+a command. It now appends the exported constant `RESEARCH_INSTRUMENTS`
+(`forge-control/src/lib/project-tick.ts`) — the three CLIs with real invocations, the screenshot
+convention, and the login-wall protocol (§5.3). It is deliberately terse: this text is prepended
+to *every* researcher run. The constant is exported so `project-tick.test.ts` (T16) asserts
+against the engine's own output rather than a hand-copied substring, and T16 additionally
+executes each named script's `--help` so a quoted invocation cannot drift from what shipped.
+
+### 5.3 The browser research lane (R701–R703)
+
+Built in phase 7 after Konrad's constraint "no API keys": the way to reach a logged-in service
+is a real browser he has logged into once, by hand. Full reference:
+`docs/tools/research-browser.md` (and `docs/tools/perplexity.md` §browser backend). The design
+facts the rest of the corpus depends on:
+
+- **Profiles.** `/opt/ai-os/browser-profiles/<profile>/` is a Chrome `user-data-dir`, mode
+  0700, holding session cookies and Chrome's own profile state and **nothing else** — no
+  credential of any kind is written there or anywhere else. This tool's own bookkeeping (pids,
+  logs, the pinned display, the last login evaluation, the request/response queue) lives
+  *outside* the profile, in `/opt/ai-os/browser-profiles/.state/<profile>/`, so that sentence
+  stays literally true. Profile names match `/^[a-z0-9][a-z0-9-]{0,38}$/`; the dot is excluded
+  so a profile can never collide with `.state`. Profiles are SHARED and long-lived — one per
+  service (`perplexity`), plus `scratch` for one-off pages. A per-run profile would be a
+  per-run login wall.
+- **Takeover stack.** `Xvfb` → optional `openbox` → `x11vnc` → `websockify` serving
+  `/usr/share/novnc/vnc.html`, one display pinned per profile. **`x11vnc` binds `-localhost`
+  and `websockify` binds `127.0.0.1` explicitly; the VNC surface is NEVER exposed on a public
+  interface.** Konrad reaches it through an SSH tunnel the tool prints for him
+  (`ssh -N -L <port>:127.0.0.1:<port> root@65.108.6.149`). Rebinding it to `0.0.0.0` would put
+  an unauthenticated desktop that owns his logged-in sessions on the open internet; there is no
+  configuration flag for it and there must never be one.
+- **Login handshake.** A wall is detected from the `SERVICES` signal table, not guessed. On one,
+  the tool screenshots the wall, brings the takeover stack up, queues Konrad a reminder (deduped
+  — `docs/tools/research-browser.md` §9.1), leaves the browser running and exits **4**. Exit 4
+  means "needs Konrad", not "broke". The agent's contract is: report it, continue with what it
+  can still reach, and **never attempt credentials** — no password, no email code, no signup.
+  Konrad logs in ONCE per service; the cookie jar in the profile carries every later run.
+- **Screenshot convention (a contract with the operator-visibility project).**
+  `/opt/ai-os/uploads/<run_id>/<compact-ISO8601>-<label>.png`, served by forge-control at
+  `/api/uploads/<run_id>/<name>`, and referenced in `docs/research/*.md` by that URL so the
+  Console renders it inline. `<run_id>` resolves as `--run-id`, else `$FORGE_RUN_ID`, else the
+  12-hex sentinel `deadbeefcafe`. This project builds **no UI** for it — that repo is the
+  operator-visibility project's (`forge-control-web/**` is untouched here).
+- **The linchpin, fixed at R703: `FORGE_RUN_ID` did not exist.** Every screenshot path above
+  hangs off one environment variable, and `cc-runner.ts` never set it — verified by reading the
+  env of a live run's own child process, which had no `FORGE_*` at all. Every screenshot the
+  lane took would have landed in the shared `deadbeefcafe` bucket, untraceable to the run that
+  took it. `runClaudeCode()` now takes `runId` (passed by `executor.ts` from the claimed run)
+  and exports **`FORGE_RUN_ID`** = the run UUID's first 12 hex characters, plus
+  **`FORGE_RUN_UUID`** = the id verbatim. The truncation is not cosmetic: `GET /api/uploads/:id`
+  gates the id on `/^[a-f0-9]{12}$/` and 400s anything else, so exporting the raw UUID would
+  produce screenshots on disk whose URLs never resolve (`docs/tools/research-browser.md` §5.1
+  calls a UUID-shaped run id "the realistic case" and flags it `url_servable: false`). The
+  prefix is also what executor log lines already print (`run ece63bdb…`), so a directory stays
+  greppable back to its run. When a caller has no run, both variables are *deleted* from the
+  child env rather than inherited — a stale id would file one run's screenshots under another's.
+  Covered by T17 (`forge-control/src/lib/cc-runner.test.ts`), which spawns a stub `CC_BIN` and
+  reads what the child actually received.
+- **The `auto-browser` MCP controller does not exist on this host — settled, do not
+  re-litigate.** The `auto-browser` SKILL.md documents a controller on `http://127.0.0.1:8000`
+  with noVNC on `:6081`; that file lives inside a Hermes docker volume and describes a
+  *different machine*. Verified independently at R701 and again at R703 (2026-08-05): both
+  ports return connect-failure (`http_code 000`), there is no `/opt/auto-browser`, and
+  `mcpServers` in `/root/.claude.json` is `{}` — an empty object, i.e. no MCP server is
+  configured for this account at all. Anything that needs a browser here goes through
+  `scripts/research-browser.mjs`, which reimplements the skill's *semantics* (named profile,
+  save and reuse, takeover URL) on what is actually installed. One-line check before trusting
+  this paragraph: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/docs`.
+
 ## 6. External service helpers (zero-dependency node ≥ 22, built-in fetch)
 
 ### 6.1 Key resolution (shared pattern, ~15 lines duplicated per script — no shared lib,
@@ -194,8 +265,54 @@ these must stay standalone-copyable): env var → `/opt/ai-os/.secrets/store/<na
 
 ### 6.2 `scripts/gemini-qa.mjs`
 
-Flow (facts researched 2026-08-05 against ai.google.dev docs; re-verified by the phase
-scout at build time):
+**AMENDED at R702 (2026-08-05) — the Gemini Pool is now the PRIMARY backend; the official
+API below is retained as an optional SECONDARY.** Konrad has no personal Gemini key and does
+not want to buy one, so the default path must ride pool-account entitlements. The flow
+described in 1–3 below is unchanged but now sits behind `--backend api`; the new default is
+`--backend pool`:
+
+- **Pool path:** `POST http://127.0.0.1:8090/v1/analyze`, `multipart/form-data` with fields
+  `prompt` (string) + `file` (binary), header `x-api-key` → `{"text": string,
+  "account": string}`. Internal address only — the public route caps bodies at 200 MB and
+  reads at 120 s, and answers 413 with nginx **HTML**, which a real video analysis would hit.
+- **Credential, and the trap:** the pool token resolves env `GEMINI_POOL_API_KEY` →
+  `/opt/ai-os/.secrets/store/gemini-pool-api-key` → the `GEMINI_API_KEY=` line inside
+  `/opt/gemini-pool-api/.env`; exit 2 names all three. ⚠ That third location calls the pool's
+  own caller token `GEMINI_API_KEY` — **the same name §6.1's api path uses for a Google AI
+  Studio key, for an unrelated credential.** They are kept strictly apart: the pool is never
+  read from `process.env.GEMINI_API_KEY`.
+- **No structured output on the pool.** It returns free text, so the frozen rubric below is
+  requested in words and then *extracted* (fence-stripping, then a string-aware
+  brace-balanced scan) and validated. Unparseable, non-object, or missing a required key ⇒
+  exit 1 printing the model's raw text verbatim. **Extraction only — never repair.**
+- **No automatic fallback between backends, not even opt-in.** R702's brief permits one only
+  if pool failures are cleanly distinguishable; `docs/research/round-701-33d8cba3.md` §6
+  proves they are not (dead account, bad file and transient fault all return the same opaque
+  500 / code 1100). A fallback on an undiagnosable error would quietly ship a video to a
+  billed endpoint.
+- **Model is unselectable on the pool** (the wrapper never passes `model=`), so `--model` is
+  rejected there with exit 3 rather than accepted and ignored. QA verdicts consequently ride
+  whatever the pool account's web-UI default is — a stated property of the free path.
+- **New exit code 4** for pool 503 (no session inside the wrapper's own 60 s acquire window)
+  and 429 (~300 s account cooldown) — the only failures worth retrying later. No retry loop
+  in the tool. Timeout is `--timeout`, default 900 s.
+- **URL inputs are a usage error on the pool** (exit 3): `/v1/analyze` takes an upload, not a
+  URI, and a YouTube watch URL is an HTML page. Documented in `--help` and
+  `docs/tools/gemini-qa.md` §3.1; `--backend api` remains the URL path.
+
+**Status at amendment time — the pool cannot yet serve this tool.** Measured 2026-08-05
+between 19:00 and 20:44 CEST: `POST /v1/chat` (text) returned 200 at 19:00 but 500/code 1096
+about a quarter of an hour later, and again at 20:39 — the pool flaps on text — while
+`POST /v1/analyze` with a file returned 500/code 1100 on all three attempts (1.3 MB
+`video/mp4` twice, 1.5 h apart, and a 40-byte `text/plain` control) — so the
+**file-attachment path fails for every file type**, which is narrower than R701's "the
+account cannot generate at all" and independent of video. Six generation attempts this round,
+one success, text-only. `GET /health` reported `sessions_ready: 4` throughout. The backend is implemented and correct
+against the documented wire contract; what it needs is pool-side re-auth (see
+`docs/tools/gemini-qa.md` §1.2 and §9).
+
+Flow of the **api** backend (facts researched 2026-08-05 against ai.google.dev docs;
+re-verified by the phase scout at build time):
 
 1. Input local path → Files API resumable upload
    (`POST https://generativelanguage.googleapis.com/upload/v1beta/files`,
@@ -228,9 +345,58 @@ scout at build time):
 ```
 
 Timestamped findings are the point — a human (or later, a repair agent) must be able to
-jump to `at_s`.
+jump to `at_s`. **This schema is unchanged at R702 and is identical on both backends** — the
+rubric is a frozen contract, not a per-backend shape, and it does not get looser because the
+free path produced it.
 
 ### 6.3 `scripts/perplexity.mjs`
+
+**AMENDED at R702 (2026-08-05) — browser-first, no API key. The `ask` default backend is now
+the authenticated browser profile; the API path below is retained unchanged as an optional
+`--backend api`.** Konrad has no Perplexity API key and will not buy one (stated 2026-08-05
+~09:30): Perplexity is a browser service for him. So `ask` defaults to `--backend browser`,
+which drives `perplexity.ai` inside the shared `perplexity` profile owned by R701's
+`scripts/research-browser.mjs` — navigate, submit, wait for streaming to settle, extract the
+answer **and its numbered citations**. `search` stays API-only; there is no browser surface for
+it that this tool is willing to scrape.
+
+- **This overrules §10's "Building Perplexity browser scraping — fragile, bot-defended,
+  unmaintainable" and the last sentence of the original §6.3 text below.** The judgement was
+  correct and is **not** withdrawn; a constraint overrides it. The response is to MITIGATE, and
+  the mitigations are load-bearing, not decorative: EVERY DOM selector lives in ONE marked
+  table at the top of the script (nothing else in the file, and nothing in
+  `research-browser.mjs`, knows Perplexity's markup); selection prefers `data-testid` /
+  `aria-label` / element semantics over class-name soup; citation harvest is anchor-based, not
+  layout-based; and a missed selector, an unsettled stream or zero extracted citations are
+  **hard errors with a screenshot and a page-text excerpt**. No partial answer is ever emitted
+  as if it were complete. `--dump-capture` re-cuts the parser fixture in one command.
+- **No credential is stored anywhere.** The browser path reads no key, types no password and
+  prompts for nothing. Session cookies live **only** inside Chrome's `user-data-dir` at
+  `/opt/ai-os/browser-profiles/perplexity/` (mode 0700). Konrad logs in ONCE, by hand, in a
+  real Chrome window over a loopback-only noVNC session reached through an SSH tunnel.
+- **New exit code 4 = NEEDS LOGIN**, deliberately the same number as
+  `research-browser.mjs`'s `LOGIN_REQUIRED` (asserted at import time). On a wall the tool
+  screenshots what it saw, hands the handshake to the harness — which queues the reminder,
+  brings up noVNC and leaves the browser running — prints what Konrad must do, and exits 4.
+  It never attempts a login. This is the expected first-run outcome, not a failure.
+- **Bot wall ≠ login wall.** A Cloudflare interstitial is waited out (`--challenge-timeout`,
+  default 90 s) and then, if it persists, is a hard exit 1 with a screenshot and **no
+  reminder** — logging in cannot fix a challenge page. Before exiting it parks a headed browser
+  on the page via the harness so a human can look at it over noVNC.
+- **Screenshots** follow R701's contract verbatim: `/opt/ai-os/uploads/<run_id>/<stamp>-<label>.png`,
+  with both the absolute path and the `/api/uploads/<run_id>/<name>` URL in stdout JSON.
+- **Output contract:** the R502 keys (`answer`, `citations`, `search_results`, `model`,
+  `usage`) are preserved on both backends; the browser adds `backend`, `needs_login`,
+  `sources`, `screenshots`, `extraction`, `bot_challenge`, `stream`, `takeover`, `profile`,
+  `run_id*`, `lock_actions`. On the browser path `model` and `usage` are `null` — the web UI
+  discloses neither — and `search_results` entries carry `{url,title}` only. Documented in
+  `docs/tools/perplexity.md` §4.
+- **Status at amendment time: not yet usable, for a reason the mitigations predicted.** Nobody
+  has logged into the automation browser, so the acceptance target was the exit-4 login wall —
+  but on this box Perplexity's Cloudflare managed challenge does not clear at all (HTTP 403,
+  "Performing security verification", verified 2026-08-05 through both this tool and the R701
+  harness), so runs stop one step earlier at the documented exit-1 bot wall. Details and the
+  open question in `docs/tools/perplexity.md` §12.
 
 **AMENDED at R502 — this whole subsection is superseded by `docs/research/perplexity-api.md`
 (commit d870320); see 01-requirements R22's amendment for the binding text.** Sonar Chat
@@ -308,4 +474,7 @@ executor logs; the helpers are CLIs whose stdout/stderr land in run threads.
 - **npm SDKs (@google/genai etc.) for the helpers** — dependency + lockfile churn for two
   HTTP calls; raw fetch is smaller than the SDK's README.
 - **Building Perplexity browser scraping** — fragile, bot-defended, unmaintainable;
-  documented manual fallback only.
+  documented manual fallback only. **AMENDED at R702 (2026-08-05): overruled by Konrad's
+  constraint — no API key, ever — so it is now the DEFAULT `ask` path. The three risks named
+  here stand and are mitigated explicitly (one selector table, semantic-first locators, loud
+  failure with a screenshot, never a partial answer); see §6.3's R702 amendment.**
