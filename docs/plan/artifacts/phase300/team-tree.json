@@ -1,0 +1,774 @@
+{
+  "chat_id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+  "now": "2026-08-05T14:41:27.725Z",
+  "project": {
+    "id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+    "status": "active"
+  },
+  "link_source": "metadata",
+  "link_ambiguous": false,
+  "manager": {
+    "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "kind": "operator",
+    "role": null,
+    "model": "claude-fable-5",
+    "status": "completed",
+    "tokens": {
+      "input": 2,
+      "output": 3,
+      "cache_read": 314570,
+      "cache_creation": 1604,
+      "total": 316179
+    },
+    "working_ms": 2876900,
+    "working_ms_source": "thread",
+    "started_at": "2026-08-04 22:40:19.839346+00",
+    "settled": true,
+    "description": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov",
+    "parent_id": null,
+    "subagents": [],
+    "task": null
+  },
+  "workers": [
+    {
+      "id": "3853c154-e07b-4378-9313-2b34f4a33342",
+      "kind": "worker",
+      "role": "architect",
+      "model": "claude-fable-5",
+      "status": "completed",
+      "tokens": {
+        "input": 14,
+        "output": 30,
+        "cache_read": 821249,
+        "cache_creation": 45133,
+        "total": 866426
+      },
+      "working_ms": 949813,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 06:46:36.994632+00",
+      "settled": true,
+      "description": "Plan: operator-visibility",
+      "parent_id": null,
+      "subagents": [
+        {
+          "id": "toolu_014raMUrJcAiXV61BerokrjN",
+          "kind": "subagent",
+          "role": "Explore",
+          "model": "claude-opus-5",
+          "status": "done",
+          "tokens": {
+            "input": 4,
+            "output": 2,
+            "cache_read": 130260,
+            "cache_creation": 18986,
+            "total": 149252
+          },
+          "working_ms": 355509,
+          "working_ms_source": "thread",
+          "started_at": "2026-08-05T06:47:12.533Z",
+          "settled": true,
+          "description": "Recon chat Bash block rendering",
+          "parent_id": "3853c154-e07b-4378-9313-2b34f4a33342",
+          "subagents": [],
+          "task": null
+        },
+        {
+          "id": "toolu_012sWh2xagb6t8J11pTV5oMT",
+          "kind": "subagent",
+          "role": "Explore",
+          "model": "claude-opus-5",
+          "status": "done",
+          "tokens": {
+            "input": 4,
+            "output": 4,
+            "cache_read": 86168,
+            "cache_creation": 13724,
+            "total": 99900
+          },
+          "working_ms": 273774,
+          "working_ms_source": "thread",
+          "started_at": "2026-08-05T06:47:23.666Z",
+          "settled": true,
+          "description": "Recon agents API and runs schema",
+          "parent_id": "3853c154-e07b-4378-9313-2b34f4a33342",
+          "subagents": [],
+          "task": null
+        }
+      ],
+      "task": {
+        "id": "4a896cc1-d461-42f8-a6b9-3a0c26e4c5c6",
+        "round": 0,
+        "role": "architect",
+        "title": "Plan: operator-visibility",
+        "status": "done"
+      }
+    },
+    {
+      "id": "6eeec7bf-1ccd-49fa-b8dd-b95eefc70f63",
+      "kind": "worker",
+      "role": "planner",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 8,
+        "output": 8,
+        "cache_read": 326865,
+        "cache_creation": 27670,
+        "total": 354551
+      },
+      "working_ms": 505878,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 07:02:39.832502+00",
+      "settled": true,
+      "description": "Plan phase 1: time truth (frozen settled durations)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "62f5a8ea-2bee-4cdb-b787-0f81be7e2d26",
+        "round": 100,
+        "role": "planner",
+        "title": "Plan phase 1: time truth (frozen settled durations)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "51694164-8697-4134-9b22-fc2859825bde",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 16,
+        "output": 31,
+        "cache_read": 636344,
+        "cache_creation": 29370,
+        "total": 665761
+      },
+      "working_ms": 491867,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 07:11:22.530536+00",
+      "settled": true,
+      "description": "Phase 1a — server: settled-aware elapsed_ms, settled/settled_at, sub-agent ended_at+description",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "3943ac51-b0a1-49da-9f73-1eb83c8d263b",
+        "round": 101,
+        "role": "builder",
+        "title": "Phase 1a — server: settled-aware elapsed_ms, settled/settled_at, sub-agent ended_at+description",
+        "status": "done"
+      }
+    },
+    {
+      "id": "b4d241ea-7bd2-4bd2-834d-db0b930cb938",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 25,
+        "output": 34,
+        "cache_read": 1431067,
+        "cache_creation": 42628,
+        "total": 1473754
+      },
+      "working_ms": 1377843,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 07:19:54.762955+00",
+      "settled": true,
+      "description": "Phase 1b — client: one duration-helper pair; settled rows and done sub-agents never derive from now",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "0506528d-e285-4366-99c4-226e8a754a3d",
+        "round": 102,
+        "role": "builder",
+        "title": "Phase 1b — client: one duration-helper pair; settled rows and done sub-agents never derive from now",
+        "status": "done"
+      }
+    },
+    {
+      "id": "3d26461f-8e89-4928-9dda-9df62ad50e3b",
+      "kind": "worker",
+      "role": "reviewer",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 4,
+        "output": 2,
+        "cache_read": 174223,
+        "cache_creation": 28115,
+        "total": 202344
+      },
+      "working_ms": 876916,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 07:43:05.485652+00",
+      "settled": true,
+      "description": "Phase 1 review — adversarial time-truth gate (R1-R6): hunt every still-ticking settled number",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "503189ab-7a4c-4ee3-8938-abbc70d2e92b",
+        "round": 103,
+        "role": "reviewer",
+        "title": "Phase 1 review — adversarial time-truth gate (R1-R6): hunt every still-ticking settled number",
+        "status": "done"
+      }
+    },
+    {
+      "id": "20bb47eb-e2ce-4d6a-a451-700d871de90a",
+      "kind": "worker",
+      "role": "planner",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 6,
+        "output": 11,
+        "cache_read": 234982,
+        "cache_creation": 26559,
+        "total": 261558
+      },
+      "working_ms": 345906,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 07:57:59.976986+00",
+      "settled": true,
+      "description": "Plan phase 2: kind truth (row classification, model, lineage)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "23d9852b-c78e-401f-ab63-4ecd8ad8463c",
+        "round": 200,
+        "role": "planner",
+        "title": "Plan phase 2: kind truth (row classification, model, lineage)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "fdc1eacf-4257-44a7-a5ba-c6198b7db688",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 25,
+        "output": 40,
+        "cache_read": 1053041,
+        "cache_creation": 34461,
+        "total": 1087567
+      },
+      "working_ms": 271649,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 08:04:00.466911+00",
+      "settled": true,
+      "description": "Phase 2a — server: agent_kind classification + role/project_id/cron_name on the wire (R7)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "e4acd605-249d-4251-8eee-b4f62a511962",
+        "round": 201,
+        "role": "builder",
+        "title": "Phase 2a — server: agent_kind classification + role/project_id/cron_name on the wire (R7)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "9a937009-4beb-48c0-983c-36dd43e56c9d",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 16,
+        "output": 30,
+        "cache_read": 1037778,
+        "cache_creation": 42350,
+        "total": 1080174
+      },
+      "working_ms": 1193619,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 08:08:51.970115+00",
+      "settled": true,
+      "description": "Phase 2b — Live panel: kind badge, role, model display, sub-agent description, lineage titles (R8-R11)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "88f48056-4cf4-4cdd-98d6-593c0cc8a174",
+        "round": 202,
+        "role": "builder",
+        "title": "Phase 2b — Live panel: kind badge, role, model display, sub-agent description, lineage titles (R8-R11)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "1110e146-1de3-4d92-bc07-d05c60ebdcdc",
+      "kind": "worker",
+      "role": "reviewer",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 4,
+        "output": 4,
+        "cache_read": 184406,
+        "cache_creation": 28799,
+        "total": 213213
+      },
+      "working_ms": 794368,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 08:31:07.334201+00",
+      "settled": true,
+      "description": "Phase 2 review — kind truth (R7-R11): gate, stranger test, title dumps",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "94aacf9f-435e-4ccc-97af-4c1dbe469875",
+        "round": 203,
+        "role": "reviewer",
+        "title": "Phase 2 review — kind truth (R7-R11): gate, stranger test, title dumps",
+        "status": "done"
+      }
+    },
+    {
+      "id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+      "kind": "worker",
+      "role": "architect",
+      "model": "claude-fable-5",
+      "status": "completed",
+      "tokens": {
+        "input": 19,
+        "output": 35,
+        "cache_read": 735062,
+        "cache_creation": 59486,
+        "total": 794602
+      },
+      "working_ms": 662324,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 08:44:39.909275+00",
+      "settled": true,
+      "description": "Chat-Manager UI v3 — full rework per Konrad spec",
+      "parent_id": null,
+      "subagents": [
+        {
+          "id": "toolu_01AeuQskZPyHpsYrHayvrqrT",
+          "kind": "subagent",
+          "role": "scout",
+          "model": "claude-haiku-4-5-20251001",
+          "status": "done",
+          "tokens": {
+            "input": 16,
+            "output": 3,
+            "cache_read": 168922,
+            "cache_creation": 812,
+            "total": 169753
+          },
+          "working_ms": 143021,
+          "working_ms_source": "thread",
+          "started_at": "2026-08-05T08:45:31.627Z",
+          "settled": true,
+          "description": "Recon forge-control-web UI",
+          "parent_id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+          "subagents": [],
+          "task": null
+        },
+        {
+          "id": "toolu_01CaVhCxZ9ysaCrPVKWv7YuX",
+          "kind": "subagent",
+          "role": "scout",
+          "model": "claude-haiku-4-5-20251001",
+          "status": "done",
+          "tokens": {
+            "input": 58,
+            "output": 9,
+            "cache_read": 285576,
+            "cache_creation": 12799,
+            "total": 298442
+          },
+          "working_ms": 138353,
+          "working_ms_source": "thread",
+          "started_at": "2026-08-05T08:45:44.396Z",
+          "settled": true,
+          "description": "Recon forge-control API/data",
+          "parent_id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+          "subagents": [],
+          "task": null
+        },
+        {
+          "id": "toolu_01U21ApZZJS2ykMCnDZ9tXM6",
+          "kind": "subagent",
+          "role": "scout",
+          "model": "claude-haiku-4-5-20251001",
+          "status": "done",
+          "tokens": {
+            "input": 42,
+            "output": 9,
+            "cache_read": 160289,
+            "cache_creation": 10172,
+            "total": 170512
+          },
+          "working_ms": 137327,
+          "working_ms_source": "thread",
+          "started_at": "2026-08-05T08:45:50.665Z",
+          "settled": true,
+          "description": "Summarize existing plan corpus",
+          "parent_id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+          "subagents": [],
+          "task": null
+        },
+        {
+          "id": "toolu_014exr6WECYL3iKbP7Wh83bW",
+          "kind": "subagent",
+          "role": "scout",
+          "model": "claude-haiku-4-5-20251001",
+          "status": "done",
+          "tokens": {
+            "input": 18,
+            "output": 2,
+            "cache_read": 26372,
+            "cache_creation": 4297,
+            "total": 30689
+          },
+          "working_ms": 95163,
+          "working_ms_source": "thread",
+          "started_at": "2026-08-05T08:45:58.381Z",
+          "settled": true,
+          "description": "Research agent task-graph UIs",
+          "parent_id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+          "subagents": [],
+          "task": null
+        }
+      ],
+      "task": {
+        "id": "bd9eff2e-4f63-4d01-825f-7a5feb1dd212",
+        "round": 250,
+        "role": "architect",
+        "title": "Chat-Manager UI v3 — full rework per Konrad spec",
+        "status": "done"
+      }
+    },
+    {
+      "id": "0ed80848-2cad-4047-94dd-1544cfc08214",
+      "kind": "worker",
+      "role": "scout",
+      "model": "claude-haiku-4-5-20251001",
+      "status": "completed",
+      "tokens": {
+        "input": 25,
+        "output": 5,
+        "cache_read": 165985,
+        "cache_creation": 16105,
+        "total": 182120
+      },
+      "working_ms": 200336,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 08:58:33.457901+00",
+      "settled": true,
+      "description": "Recon: chat-thread evidence for project linkage scan",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "0814edf2-2137-46f1-b5dc-c04fea889831",
+        "round": 299,
+        "role": "scout",
+        "title": "Recon: chat-thread evidence for project linkage scan",
+        "status": "done"
+      }
+    },
+    {
+      "id": "2c535643-6632-42ec-9743-0fc58327017e",
+      "kind": "worker",
+      "role": "planner",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 6,
+        "output": 9,
+        "cache_read": 262330,
+        "cache_creation": 26652,
+        "total": 288997
+      },
+      "working_ms": 612979,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 09:02:14.266152+00",
+      "settled": true,
+      "description": "Plan phase 300: read-side API (linkage, team, plan, capabilities)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "9fc6f24e-fc7d-4239-b65a-03d2d3722d14",
+        "round": 300,
+        "role": "planner",
+        "title": "Plan phase 300: read-side API (linkage, team, plan, capabilities)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "a59d2cf8-e28d-4f01-a906-b460ecc1863f",
+      "kind": "worker",
+      "role": "builder",
+      "model": "<synthetic>",
+      "status": "failed",
+      "tokens": {
+        "input": 4,
+        "output": 8,
+        "cache_read": 72460,
+        "cache_creation": 27589,
+        "total": 100061
+      },
+      "working_ms": 92530,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 09:12:46.615331+00",
+      "settled": true,
+      "description": "operator-visibility · Phase 300a — additive-API baseline transcript + generalized :7798 harness (no route logic)",
+      "parent_id": null,
+      "subagents": [],
+      "task": null
+    },
+    {
+      "id": "5f359463-2df7-4645-93e4-f371dd899c6c",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 62,
+        "output": 99,
+        "cache_read": 3162799,
+        "cache_creation": 65392,
+        "total": 3228352
+      },
+      "working_ms": 822057,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 13:02:16.047944+00",
+      "settled": true,
+      "description": "Phase 300a — additive-API baseline transcript + generalized :7798 harness (no route logic)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "d5024345-3a51-4b58-bf9b-ddaf946f8b27",
+        "round": 301,
+        "role": "builder",
+        "title": "Phase 300a — additive-API baseline transcript + generalized :7798 harness (no route logic)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "03e54ad6-bbab-4bc5-bf26-5a431973d7c0",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "failed",
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_creation": 0,
+        "total": 0
+      },
+      "working_ms": 1457,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 13:16:09.635812+00",
+      "settled": true,
+      "description": "operator-visibility · Phase 300b — extract shared run-shaping helpers to routes/agents-shared.ts (byte-stable /api/agents)",
+      "parent_id": null,
+      "subagents": [],
+      "task": null
+    },
+    {
+      "id": "0faca9b9-0357-439e-bd29-4f465771ee3c",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 31,
+        "output": 41,
+        "cache_read": 1715574,
+        "cache_creation": 52000,
+        "total": 1767646
+      },
+      "working_ms": 593747,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 13:54:07.764837+00",
+      "settled": true,
+      "description": "Phase 300b — extract shared run-shaping helpers to routes/agents-shared.ts (byte-stable /api/agents)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "b66cc1bd-b754-49be-9d78-b12373aa6fff",
+        "round": 302,
+        "role": "builder",
+        "title": "Phase 300b — extract shared run-shaping helpers to routes/agents-shared.ts (byte-stable /api/agents)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "8e036e52-8346-4822-8ff8-68629e2b7af2",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-sonnet-5",
+      "status": "completed",
+      "tokens": {
+        "input": 40,
+        "output": 71,
+        "cache_read": 1493452,
+        "cache_creation": 57317,
+        "total": 1550880
+      },
+      "working_ms": 233554,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 14:04:19.315812+00",
+      "settled": true,
+      "description": "Phase 300c — GET /api/capabilities (U8) + mount in index.ts and the :7798 harness",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "5bda2ae6-3c61-4ba6-bab0-3f9102ae090f",
+        "round": 303,
+        "role": "builder",
+        "title": "Phase 300c — GET /api/capabilities (U8) + mount in index.ts and the :7798 harness",
+        "status": "done"
+      }
+    },
+    {
+      "id": "2598ec14-541d-4149-b128-2490cb5db16c",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 19,
+        "output": 25,
+        "cache_read": 827661,
+        "cache_creation": 39733,
+        "total": 867438
+      },
+      "working_ms": 545370,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 14:04:19.329422+00",
+      "settled": true,
+      "description": "Phase 300d — working-time module (U5) + scripts/checks/check-working-time.ts",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "6bed98a8-0468-4d63-b684-ea95eb697320",
+        "round": 303,
+        "role": "builder",
+        "title": "Phase 300d — working-time module (U5) + scripts/checks/check-working-time.ts",
+        "status": "done"
+      }
+    },
+    {
+      "id": "9d6c0782-1a2c-431f-bdcb-5a3ca7c88304",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-sonnet-5",
+      "status": "completed",
+      "tokens": {
+        "input": 44,
+        "output": 56,
+        "cache_read": 2139981,
+        "cache_creation": 31715,
+        "total": 2171796
+      },
+      "working_ms": 299928,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 14:04:19.336441+00",
+      "settled": true,
+      "description": "Phase 300e — additive requested_by_run_id on secrets mark-pending (U7)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "9bdbc2b4-04ea-47d1-89e0-903bc563e13d",
+        "round": 303,
+        "role": "builder",
+        "title": "Phase 300e — additive requested_by_run_id on secrets mark-pending (U7)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "01b820d1-9d46-4c6f-94da-525c5994dfd9",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 26,
+        "output": 39,
+        "cache_read": 1237799,
+        "cache_creation": 44046,
+        "total": 1281910
+      },
+      "working_ms": 568436,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 14:04:19.346924+00",
+      "settled": true,
+      "description": "Phase 300f — origin_chat_id accepted at POST /api/projects, route layer only (U1)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "2a274501-dc89-47f5-af03-ff644bad13f4",
+        "round": 303,
+        "role": "builder",
+        "title": "Phase 300f — origin_chat_id accepted at POST /api/projects, route layer only (U1)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "5dccbcf1-e571-42ab-9ba5-70620dd2317a",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "completed",
+      "tokens": {
+        "input": 17,
+        "output": 27,
+        "cache_read": 1167063,
+        "cache_creation": 43971,
+        "total": 1211078
+      },
+      "working_ms": 1011161,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 14:14:02.109019+00",
+      "settled": true,
+      "description": "Phase 300g — chat→project linkage resolver + /api/chat rail rollup + one-time backfill (U2, U3)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "04872671-5225-4876-a906-eaa3cbb8664d",
+        "round": 304,
+        "role": "builder",
+        "title": "Phase 300g — chat→project linkage resolver + /api/chat rail rollup + one-time backfill (U2, U3)",
+        "status": "done"
+      }
+    },
+    {
+      "id": "453410f8-d235-4af5-8c02-82555dc67df3",
+      "kind": "worker",
+      "role": "builder",
+      "model": "claude-opus-5",
+      "status": "running",
+      "tokens": {
+        "input": 8,
+        "output": 10,
+        "cache_read": 464992,
+        "cache_creation": 31787,
+        "total": 496797
+      },
+      "working_ms": 622685,
+      "working_ms_source": "thread",
+      "started_at": "2026-08-05 14:31:06.503502+00",
+      "settled": false,
+      "description": "Phase 300h — GET /api/chat/:id/team: the scoped org tree with frozen truth and working_ms (U4, U5)",
+      "parent_id": null,
+      "subagents": [],
+      "task": {
+        "id": "79f6bd8d-792b-4d24-b7f8-3a898c81bda2",
+        "round": 305,
+        "role": "builder",
+        "title": "Phase 300h — GET /api/chat/:id/team: the scoped org tree with frozen truth and working_ms (U4, U5)",
+        "status": "running"
+      }
+    }
+  ],
+  "complete": true,
+  "errors": []
+}

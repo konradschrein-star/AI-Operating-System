@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import pg from "pg";
 import {
   loadCanvas,
   renderDelta,
@@ -29,6 +30,27 @@ import {
   resolveChatProject,
   rollupChatProjects,
 } from "./chat-linkage.ts";
+/* phase 300h (U4) — the team tree reuses the SHAPING that /api/agents already
+ * ships (frozen elapsed, agent_kind, sub-agent rollup + thread fallback). Only
+ * the query is new; a second implementation of `agentFromRow` would drift the
+ * first time one side is fixed. See agents-shared.ts's header. */
+import {
+  agentFromRow,
+  numOr0,
+  type AgentRowRaw,
+  type AgentRun,
+  type Subagent,
+  type Usage,
+} from "./agents-shared.ts";
+/* phase 300h (U5) — the ONE definition of working time. `workingMsSql` is the
+ * Postgres half of it, used here so multi-MB threads never leave the database
+ * (measured: 70 ms for all 23 runs of this project + the chat itself). */
+import {
+  workingMsRunningExtension,
+  workingMsSql,
+  workingTimeFromRollup,
+  type WorkingMsSource,
+} from "./working-time.ts";
 
 const r = new Hono();
 
@@ -99,6 +121,491 @@ r.get("/:id/linkage", async (c) => {
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
   const link = await resolveChatProject(id);
   return c.json({ chat_id: id, ...link });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * phase 300h (U4, U5) — GET /api/chat/:id/team
+ *
+ * The org chart of ONE chat: the manager (this chat's own run), its workers
+ * (every run of the project this chat started), and each worker's in-process
+ * sub-agents. This is the endpoint the right sidebar reads; a stranger looking
+ * at its output must be able to name who is managing whom, on which model, and
+ * how much work each of them actually did.
+ *
+ * Three rules this endpoint exists to keep:
+ *
+ *  1. FROZEN TRUTH. A settled node's numbers are history. Nothing about a
+ *     settled run, or a sub-agent whose parent process is gone, is derived
+ *     from `now` — poll it twice a minute apart and those nodes are
+ *     byte-identical. Only live nodes tick.
+ *  2. REUSE, NOT REIMPLEMENTATION. Every node is shaped by `agentFromRow`
+ *     (agents-shared.ts) and every millisecond of working time by
+ *     `workingMsSql` / `workingTimeFromRollup` (working-time.ts). This file
+ *     contributes queries and nesting — no second definition of any number.
+ *  3. NO PARTIAL TREE PRESENTED AS COMPLETE (NFU6). The manager row, the
+ *     linkage and the worker query are load-bearing: if any of them fails the
+ *     answer is a 500 naming the step. The two ENRICHMENTS — working time and
+ *     task titles — degrade instead: their fields go null, `complete` goes
+ *     false, and `errors[]` says which one failed and why. A zero would be a
+ *     lie; a null with a reason is a fact.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+const { Pool } = pg;
+
+/* Route-local pool, exactly as agents.ts and chat-linkage.ts keep theirs: the
+ * `db/` helpers are owned by the engine lane this cycle and must not grow a
+ * team query. chat-linkage.ts's pool is module-private and this round may not
+ * edit that file, so the team endpoint opens its own — two connections, which
+ * is what a 5 s poll of one panel needs. */
+const teamPool = new Pool({
+  connectionString:
+    process.env.DATABASE_URL ??
+    "postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge",
+  max: 2,
+  idleTimeoutMillis: 10_000,
+  connectionTimeoutMillis: 5_000,
+});
+teamPool.on("error", (e) => console.error("[chat team pool]", e.message));
+
+/**
+ * The column set `AgentRowRaw` documents, verbatim — see agents-shared.ts's
+ * comment on that interface, which is the contract for callers with their own
+ * SQL. The `::text` casts are load-bearing: without them pg hands back a JS
+ * number for `spent_usd` and Date objects for the five timestamps, and the
+ * wire shape stops matching what /api/agents has always carried.
+ *
+ * `thread` is pulled ONLY for rows that have no `subagents_v2` rollup, because
+ * that is the exact condition under which `agentFromRow` falls back to folding
+ * sub-agents out of the raw thread. Every other row gets NULL and stays small.
+ * (agents.ts keys its own CASE on `rollup_v1` and additionally on liveness —
+ * that is right for a 4 s poll over 60 rows of the global fleet; here a
+ * finished worker's sub-agents must still appear months later, so the only
+ * question is whether the fallback is needed at all.)
+ */
+const TEAM_RUN_COLUMNS = `id::text, title, status, worker, spent_usd::text,
+       metadata,
+       CASE WHEN metadata ? 'subagents_v2' THEN NULL::jsonb ELSE thread END AS thread,
+       parent_run_id::text AS parent_run_id,
+       started_at::text, updated_at::text, completed_at::text,
+       last_heartbeat_at::text`;
+
+/**
+ * The worker query. Deliberately NOT `fetchActiveRows()` from agents.ts: that
+ * one carries a 24 h recency window and LIMIT 60 because it feeds the global
+ * Live panel, and a chat opened next week must still show its finished team.
+ * Scope here is the project and nothing else.
+ *
+ * Two exclusions:
+ *   • `metadata.role = 'manager'` — the same guard agents.ts applies to its
+ *     project-scoped path. There are no such rows today; the guard is what
+ *     keeps an engine-side manager run out of the worker list if one appears.
+ *   • the chat's own id — the chat run IS the manager node. A chat that also
+ *     carried `metadata.project_id` would otherwise appear twice in its own
+ *     org chart.
+ *
+ * Ordered by `created_at`: the order the project spawned them, which is the
+ * order the plan reads in. Not by status — this is an org chart, not a queue.
+ */
+const TEAM_WORKERS_SQL = `SELECT ${TEAM_RUN_COLUMNS}
+  FROM runs
+ WHERE metadata->>'project_id' = $1
+   AND metadata->>'role' IS DISTINCT FROM 'manager'
+   AND id <> $2
+ ORDER BY created_at`;
+
+const TEAM_MANAGER_SQL = `SELECT ${TEAM_RUN_COLUMNS} FROM runs WHERE id = $1 LIMIT 1`;
+
+/**
+ * Working time for every node of the tree, in one query, computed inside
+ * Postgres (13 §4 / U5).
+ *
+ * Per run: the entry-gap sum from `workingMsSql`, plus the last thread entry's
+ * timestamp so the caller can add the open trailing interval for a RUNNING
+ * node — and only for a running node. `thread -> -1` is the last element of
+ * the array; thread order is append order, so that is the last event. If it
+ * carries no parseable `ts` the running extension is 0 (visible as a node
+ * whose working time stops advancing), never a guess.
+ *
+ * Per sub-agent: the SAME fragment over that sub-agent's own slice of the
+ * thread — the entries stamped with its `parent_tool_use_id`, re-assembled
+ * with `jsonb_agg` in thread order and handed to `workingMsSql` unchanged.
+ * Passing the slice to the shared fragment rather than rewriting the gap rule
+ * with a PARTITION BY is the whole point: the sub-agent path cannot drift from
+ * the run path, because it is the same SQL text.
+ *
+ * A sub-agent with no tagged entries produces no key here; the node falls back
+ * to `workingTimeFromRollup` and is flagged `working_ms_source: "rollup"`.
+ * Both cases exist in this very project (verified: run 3853c154… and ab331865…
+ * carry slices, every other sub-agent falls back).
+ */
+const TEAM_TIMING_SQL = `SELECT r.id::text AS id,
+       ${workingMsSql("r.thread")} AS working_ms,
+       r.thread -> -1 ->> 'ts' AS last_ts,
+       (
+         SELECT coalesce(jsonb_object_agg(s.pid, jsonb_build_object(
+                  'working_ms', ${workingMsSql("s.slice")},
+                  'last_ts', s.slice -> -1 ->> 'ts')), '{}'::jsonb)
+           FROM (
+             SELECT p.pid, jsonb_agg(p.val ORDER BY p.ord) AS slice
+               FROM (
+                 SELECT e.val->'meta'->>'parent_tool_use_id' AS pid,
+                        e.val, e.ord
+                   FROM jsonb_array_elements(r.thread) WITH ORDINALITY AS e(val, ord)
+                  WHERE e.val->'meta'->>'parent_tool_use_id' IS NOT NULL
+               ) p
+              GROUP BY p.pid
+           ) s
+       ) AS subagent_working
+  FROM runs r
+ WHERE r.id = ANY($1::uuid[])`;
+
+/** Task titles for the workers of a project, in ONE grouped query — never one
+ *  per row. `project_tasks.run_id` is the FK from a task to the run that
+ *  executed it, so this is how a worker row learns which round it is doing. */
+const TEAM_TASKS_SQL = `SELECT run_id::text AS run_id, id::text, round, role, title, status
+  FROM project_tasks
+ WHERE project_id = $1 AND run_id IS NOT NULL`;
+
+interface TimingSlice {
+  working_ms: number | string;
+  last_ts: string | null;
+}
+
+interface TimingRow {
+  id: string;
+  /** bigint — node-postgres hands bigints back as strings. */
+  working_ms: string;
+  last_ts: string | null;
+  subagent_working: Record<string, TimingSlice>;
+}
+
+interface TaskRow {
+  run_id: string;
+  id: string;
+  round: number;
+  role: string;
+  title: string;
+  status: string;
+}
+
+/** The task a worker run was spawned for, as the tree carries it. */
+interface TeamTask {
+  id: string;
+  round: number;
+  role: string;
+  title: string;
+  status: string;
+}
+
+/** U4's token block. `total` is the sum of the four counters that were already
+ *  on the wire — no new token math, no cost, no dollars (10-ui-v3-spec.md:
+ *  tokens are the currency this UI shows). */
+interface TeamTokens {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_creation: number;
+  total: number;
+}
+
+/**
+ * One row of the org chart (U4).
+ *
+ * `kind` is the KIND TRUTH the Live panel already renders, extended by one
+ * value: a run node carries its `agent_kind` (`operator` for the chat itself,
+ * `worker` for a project worker, `cron`/`unknown` for anything that does not
+ * classify), and an in-process sub-agent carries `subagent`. That single field
+ * is what tells a reader whether a row is a whole Claude Code session or a
+ * Task-tool child living inside one.
+ */
+interface TeamNode {
+  /** Run uuid for a session; the spawn's `tool_use_id` for a sub-agent. */
+  id: string;
+  kind: AgentRun["agent_kind"] | "subagent";
+  role: string | null;
+  model: string | null;
+  status: string;
+  tokens: TeamTokens;
+  /** Milliseconds of attributed work, or null when the working-time query
+   *  failed — see `errors[]`. Never 0-as-unknown. */
+  working_ms: number | null;
+  working_ms_source: WorkingMsSource | null;
+  started_at: string | null;
+  /** True when nothing about this node can change any more. For a run: a
+   *  terminal status. For a sub-agent: its own completion OR its parent
+   *  process having exited — a sub-agent cannot outlive the session it runs
+   *  inside, so a "running" sub-agent under a settled parent is frozen too. */
+  settled: boolean;
+  /** The human one-liner: a worker's task title, a sub-agent's spawn
+   *  description, otherwise the run title. Null only if none of those exist. */
+  description: string | null;
+  /** Lineage: the run this node hangs under. Null for the manager. */
+  parent_id: string | null;
+  /** Present on run nodes; empty on sub-agents (they do not nest further). */
+  subagents: TeamNode[];
+  /** The project task this run executed, when resolvable. Null for the
+   *  manager, and for a worker whose task row was deleted. */
+  task: TeamTask | null;
+}
+
+/** A named failure of an enrichment step. The tree still renders; the panel
+ *  shows this text instead of pretending the missing numbers are zero. */
+interface TeamError {
+  /** Which step failed: "working_time" | "tasks". */
+  scope: string;
+  message: string;
+}
+
+interface TeamResponse {
+  chat_id: string;
+  now: string;
+  project: { id: string; status: string | null } | null;
+  link_source: "metadata" | "thread_scan" | null;
+  link_ambiguous: boolean;
+  manager: TeamNode;
+  workers: TeamNode[];
+  /** False when any enrichment failed. A client that shows numbers must check
+   *  this before claiming the tree is the whole truth (NFU6). */
+  complete: boolean;
+  errors: TeamError[];
+}
+
+function teamTokens(u: Usage): TeamTokens {
+  return {
+    input: u.input_tokens,
+    output: u.output_tokens,
+    cache_read: u.cache_read_input_tokens,
+    cache_creation: u.cache_creation_input_tokens,
+    total:
+      u.input_tokens +
+      u.output_tokens +
+      u.cache_read_input_tokens +
+      u.cache_creation_input_tokens,
+  };
+}
+
+/**
+ * Working time for a sub-agent.
+ *
+ * Preferred path: its own thread slice, already summed by `TEAM_TIMING_SQL`
+ * with the shared fragment → `"thread"`.
+ *
+ * Fallback (13 §4): the wall-clock span from the `subagents_v2` rollup,
+ * flagged `"rollup"` so the imprecision is VISIBLE rather than blended into
+ * the precise numbers. The span is measured `started_at → updated_at`, which
+ * is what 13 §4 specifies, and not `ended_at`: `ended_at` is the settle stamp
+ * from the parent's tool_result and is routinely earlier than the sub-agent's
+ * own last observed event (live example in this project: the `Explore`
+ * sub-agent of run 3853c154… has started 06:47:12.533, ended 06:47:12.565 —
+ * 32 ms — and a last activity at 06:53:09). Using it would report six minutes
+ * of work as a rounding error.
+ */
+function subagentWorkingTime(
+  sub: Subagent,
+  slice: TimingSlice | undefined,
+  live: boolean,
+  nowMs: number,
+): { working_ms: number; working_ms_source: WorkingMsSource } {
+  if (slice) {
+    const base = numOr0(slice.working_ms);
+    return {
+      working_ms: live
+        ? base + workingMsRunningExtension(slice.last_ts, nowMs)
+        : base,
+      working_ms_source: "thread",
+    };
+  }
+  const wt = live
+    ? workingTimeFromRollup(sub.started_at, null, { runningNowMs: nowMs })
+    : workingTimeFromRollup(sub.started_at, sub.updated_at);
+  return { working_ms: wt.working_ms, working_ms_source: wt.working_ms_source };
+}
+
+/** Shape one already-shaped `AgentRun` (plus its sub-agents) into a tree node.
+ *  `timing` is undefined when the working-time query failed — then every
+ *  working number in this subtree is null, and errors[] carries the reason. */
+function teamNodeFromRun(
+  run: AgentRun,
+  timing: TimingRow | undefined,
+  task: TeamTask | null,
+  nowMs: number,
+): TeamNode {
+  // Frozen truth: a settled run never sees `now`. Its thread cannot grow
+  // again, so the entry-gap sum IS its final working time.
+  const runWorking = timing
+    ? run.settled
+      ? numOr0(timing.working_ms)
+      : numOr0(timing.working_ms) +
+        workingMsRunningExtension(timing.last_ts, nowMs)
+    : null;
+
+  const subagents = run.subagents.map((sub) => {
+    const live = !run.settled && sub.status === "running";
+    const wt = timing
+      ? subagentWorkingTime(sub, timing.subagent_working?.[sub.tool_use_id], live, nowMs)
+      : null;
+    const node: TeamNode = {
+      id: sub.tool_use_id,
+      kind: "subagent",
+      role: sub.role,
+      model: sub.model,
+      status: sub.status,
+      tokens: teamTokens(sub.usage),
+      working_ms: wt ? wt.working_ms : null,
+      working_ms_source: wt ? wt.working_ms_source : null,
+      started_at: sub.started_at || null,
+      settled: !live,
+      description: sub.description,
+      parent_id: run.id,
+      subagents: [],
+      task: null,
+    };
+    return node;
+  });
+
+  return {
+    id: run.id,
+    kind: run.agent_kind,
+    role: run.role,
+    model: run.model,
+    status: run.status,
+    tokens: teamTokens(run.usage_total),
+    working_ms: runWorking,
+    working_ms_source: timing ? "thread" : null,
+    started_at: run.started_at,
+    settled: run.settled,
+    description: task ? task.title : (run.title ?? null),
+    parent_id: run.parent_run_id,
+    subagents,
+    task,
+  };
+}
+
+/** A load-bearing step failed: 500, naming the step and the database's own
+ *  message. Never a tree with holes in it pretending to be an answer. */
+function teamFailure(step: string, e: unknown): { error: string; step: string; message: string } {
+  const message = e instanceof Error ? e.message : String(e);
+  console.error(`[chat team] ${step} failed:`, message);
+  return { error: `team: ${step} failed`, step, message };
+}
+
+/**
+ * GET /api/chat/:id/team → the scoped org tree.
+ *
+ * Status codes: 400 malformed id, 404 no such chat run, 200 for a real chat
+ * whether or not it owns a project (an unlinked chat answers with its manager
+ * node, `workers: []` and `project: null` — a chat with no project still shows
+ * itself), 500 when a load-bearing query fails.
+ *
+ * Cost: 1 manager row + 1–3 linkage queries (chat-linkage.ts) + 1 worker query
+ * + 1 task query + 1 timing query. Measured end-to-end against this project's
+ * 22 workers: see docs/plan/artifacts/phase300/verification-305.md.
+ */
+r.get("/:id/team", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const nowMs = Date.now();
+  const errors: TeamError[] = [];
+
+  // ── 1. The manager: this chat's own run row. Its absence is a 404 — the
+  //       only 404 this endpoint has. An unlinked chat is not one.
+  let managerRow: AgentRowRaw | undefined;
+  try {
+    const res = await teamPool.query<AgentRowRaw>(TEAM_MANAGER_SQL, [id]);
+    managerRow = res.rows[0];
+  } catch (e) {
+    return c.json(teamFailure("manager query", e), 500);
+  }
+  if (!managerRow) return c.json({ error: "run not found" }, 404);
+
+  // ── 2. Linkage (U2). Round 304 owns the rule; this route only asks.
+  let link;
+  try {
+    link = await resolveChatProject(id);
+  } catch (e) {
+    return c.json(teamFailure("linkage resolution", e), 500);
+  }
+
+  // ── 3. The workers. Empty by definition when the chat owns no project.
+  let workerRows: AgentRowRaw[] = [];
+  if (link.project_id) {
+    try {
+      const res = await teamPool.query<AgentRowRaw>(TEAM_WORKERS_SQL, [
+        link.project_id,
+        id,
+      ]);
+      workerRows = res.rows;
+    } catch (e) {
+      return c.json(teamFailure("worker query", e), 500);
+    }
+  }
+
+  // ── 4. Enrichment A: task titles. One grouped query, never per row. A
+  //       failure here costs titles, not the tree.
+  const taskByRun = new Map<string, TeamTask>();
+  if (link.project_id) {
+    try {
+      const res = await teamPool.query<TaskRow>(TEAM_TASKS_SQL, [link.project_id]);
+      for (const row of res.rows) {
+        // A run can only execute one task; if the data ever says otherwise the
+        // first row wins and the duplicate is not silently merged into it.
+        if (!taskByRun.has(row.run_id)) {
+          taskByRun.set(row.run_id, {
+            id: row.id,
+            round: row.round,
+            role: row.role,
+            title: row.title,
+            status: row.status,
+          });
+        }
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[chat team] task query failed:", message);
+      errors.push({ scope: "tasks", message });
+    }
+  }
+
+  // ── 5. Enrichment B: working time, for the manager and every worker in one
+  //       query. On failure every `working_ms` in the response is null and
+  //       `complete` is false — a zero here would read as "did no work".
+  const allRows = [managerRow, ...workerRows];
+  const timingById = new Map<string, TimingRow>();
+  let timingOk = true;
+  try {
+    const res = await teamPool.query<TimingRow>(TEAM_TIMING_SQL, [
+      allRows.map((row) => row.id),
+    ]);
+    for (const row of res.rows) timingById.set(row.id, row);
+  } catch (e) {
+    timingOk = false;
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[chat team] working-time query failed:", message);
+    errors.push({ scope: "working_time", message });
+  }
+
+  const shape = (row: AgentRowRaw): TeamNode =>
+    teamNodeFromRun(
+      agentFromRow(row, nowMs),
+      timingOk ? timingById.get(row.id) : undefined,
+      taskByRun.get(row.id) ?? null,
+      nowMs,
+    );
+
+  const body: TeamResponse = {
+    chat_id: id,
+    now: new Date(nowMs).toISOString(),
+    project: link.project_id
+      ? { id: link.project_id, status: link.project_status }
+      : null,
+    link_source: link.link_source,
+    link_ambiguous: link.link_ambiguous,
+    manager: shape(managerRow),
+    workers: workerRows.map(shape),
+    complete: errors.length === 0,
+    errors,
+  };
+  return c.json(body);
 });
 
 /* Search past chats — title, prompt, and every message in the thread, so a
