@@ -132,3 +132,48 @@ No smoke project workspace exists; no `docs/research/` directory to check.
 3. R20 watch can then poll the project's architect + researcher tasks
 
 **Recommendation:** R304 should include an interactive or out-of-band install of the researcher.md file before re-attempting the smoke project launch.
+
+---
+
+### Collection (R304) — NOT PERFORMED, blocker persists
+
+**Timestamp:** 2026-08-05T18:47:00Z (UTC)
+
+R304's brief was "harvest smoke artifacts, close the scratch project" — this presumes R19 (install) and
+R20 (launch) already ran and produced a project id (SID). They did not. There is no SID anywhere in this
+file; no `/api/projects` POST was ever issued for `p3-smoke-researcher`. Steps 1-5 of the R304 brief
+(poll, harvest research doc, record git proof, close project) are therefore inapplicable — there is
+nothing to poll, no workspace to harvest from, and no project to close.
+
+**Reconfirmed this round:**
+
+1. `/root/.claude/agents/researcher.md` — still absent:
+   ```
+   ls: cannot access '/root/.claude/agents/researcher.md': No such file or directory
+   ```
+2. One fresh install attempt this round (not a retry of a prior round's identical call — a new round's
+   first attempt), via `cp` through Bash:
+   ```
+   cp /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/researcher.md /root/.claude/agents/researcher.md
+   ```
+   Denied by the harness: "Claude requested permissions to edit /root/.claude/agents/researcher.md which
+   is a sensitive file." Identical failure mode to R302's two attempts. Per standing rule (no identical
+   retry within a round), not retried again this round.
+3. Baseline grep re-run, all files still 0 (no researcher-role errors logged, consistent with the role
+   never having been invoked):
+   ```
+   grep -c "no agent definition for role researcher" /root/.pm2/logs/forge-executor-*.log
+   ```
+   → every matched file: 0.
+
+**No project was closed this round** — there is no SID to close, and status:'done' cannot be posted
+against a project that was never created.
+
+**STATUS: BLOCKED (unchanged).** The blocker is a one-time interactive approval this agent cannot grant
+itself: either Konrad approves the harness's sensitive-file prompt for a write to
+`/root/.claude/agents/researcher.md`, or Konrad runs the `cp` himself:
+```
+cp /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/researcher.md /root/.claude/agents/researcher.md
+```
+Once that file exists, R19/R20 (install confirm → launch `p3-smoke-researcher` → poll → harvest → close)
+can run for the first time — none of that work has happened yet in any round to date.
