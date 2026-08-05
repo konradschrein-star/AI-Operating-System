@@ -199,17 +199,34 @@ check(
   125_000,
 );
 check(
-  "done with ended_at uses ended − started",
+  "done with a TRUE completion ended_at (updated_at precedes it) uses ended − started",
   subagentElapsedMs(
     sub({
       status: "done",
       started_at: "2026-08-05T11:58:00.000Z",
       ended_at: "2026-08-05T11:58:47.000Z",
-      updated_at: "2026-08-05T11:59:30.000Z",
+      updated_at: "2026-08-05T11:58:30.000Z",
     }),
     LATER,
   ),
   47_000,
+);
+check(
+  // The shape every real row has today: ended_at is the async LAUNCH ACK,
+  // 32ms after the spawn, while the sub-agent worked for another 5m 57s.
+  // Verbatim timings from run 3853c154's thread — see
+  // docs/plan/artifacts/phase1/ended-at-is-a-launch-ack.md.
+  "done with a launch-ack ended_at ignores it in favour of the later updated_at",
+  subagentElapsedMs(
+    sub({
+      status: "done",
+      started_at: "2026-08-05T06:47:12.533Z",
+      ended_at: "2026-08-05T06:47:12.565Z",
+      updated_at: "2026-08-05T06:53:09.635Z",
+    }),
+    LATER,
+  ),
+  357_102,
 );
 check(
   "done with ended_at null falls back to updated_at (rows predating rollup v2)",
@@ -252,6 +269,7 @@ check(
     status: "done",
     started_at: "2026-08-05T11:58:00.000Z",
     ended_at: "2026-08-05T11:58:47.000Z",
+    updated_at: "2026-08-05T11:58:30.000Z",
   });
   check(
     "done+ended_at is identical across two different `now` values",
@@ -279,36 +297,52 @@ check(
   );
 }
 check(
-  "Postgres timestamp format parses (started + ended)",
+  "Postgres timestamp format parses (started + ended + updated)",
   subagentElapsedMs(
     sub({
       status: "done",
       started_at: "2026-07-30 16:21:19.674825+00",
       ended_at: "2026-07-30 16:23:19.674825+00",
+      updated_at: "2026-07-30 16:22:00.000000+00",
     }),
     NOW,
   ),
   120_000,
 );
 check(
-  "ISO timestamp format parses (started + ended)",
+  "ISO timestamp format parses (started + ended + updated)",
   subagentElapsedMs(
     sub({
       status: "done",
       started_at: "2026-08-05T06:47:23.678Z",
       ended_at: "2026-08-05T06:49:23.678Z",
+      updated_at: "2026-08-05T06:48:00.000Z",
     }),
     NOW,
   ),
   120_000,
 );
 check(
-  "ended_at before started_at clamps to 0, never negative",
+  "unparsable ended_at with a good updated_at still measures",
+  subagentElapsedMs(
+    sub({
+      status: "done",
+      started_at: "2026-08-05T11:58:00.000Z",
+      ended_at: "sometime tuesday",
+      updated_at: "2026-08-05T11:59:30.000Z",
+    }),
+    LATER,
+  ),
+  90_000,
+);
+check(
+  "both stamps before started_at clamps to 0, never negative",
   subagentElapsedMs(
     sub({
       status: "done",
       started_at: "2026-08-05T11:58:00.000Z",
       ended_at: "2026-08-05T11:57:00.000Z",
+      updated_at: "2026-08-05T11:57:30.000Z",
     }),
     NOW,
   ),

@@ -142,19 +142,40 @@ export function runElapsedMs(a: AgentRow, now: number): number | null {
 
 /** Wall-clock for a nested sub-agent line.
  *
- *  Running ticks; done measures against `ended_at`, falling back to
- *  `updated_at` for rows recorded before rollup v2 carried a settle stamp.
- *  A done sub-agent never sees `now` — that fallback is what made finished
- *  sub-agents grow forever. */
+ *  Running ticks against `now`. A DONE sub-agent measures against the LATER
+ *  of `ended_at` and `updated_at`, and never against `now` — that `now`
+ *  fallback is what made finished sub-agents grow forever.
+ *
+ *  Why the later of the two, rather than `ended_at` first:
+ *  `run-rollup.ts:226-229` stamps `ended_at` when the spawn's `tool_result`
+ *  arrives. For an ASYNC agent spawn that result is the launch
+ *  acknowledgement, which lands ~10–40 ms after the call — verified in run
+ *  3853c154's thread: spawn `toolu_014raMUrJc` called 06:47:12.533,
+ *  tool_result 06:47:12.565, and the sub-agent kept emitting events under
+ *  that parent until 06:53:09.636. Trusting `ended_at` first renders every
+ *  real sub-agent as "0s". `updated_at` — the last event seen under the
+ *  sub-agent — is the honest end of its work, and it freezes as soon as the
+ *  sub-agent stops emitting.
+ *
+ *  When `ended_at` IS a true completion stamp (a synchronous spawn, where
+ *  the result arrives after the work), `updated_at` precedes it and the max
+ *  picks `ended_at` — the originally specified behaviour, preserved.
+ *
+ *  The underlying defect is engine-side (a background sub-agent is marked
+ *  `done` at launch): see docs/plan/artifacts/phase1/ended-at-is-a-launch-ack.md.
+ *  This function cannot fix that; it declines to repeat it. */
 export function subagentElapsedMs(s: SubagentRow, now: number): number | null {
   const started = parseTs(s.started_at);
   if (!Number.isFinite(started)) return null;
   if (s.status === "running") return Math.max(0, now - started);
   const ended = parseTs(s.ended_at);
-  if (Number.isFinite(ended)) return Math.max(0, ended - started);
   const updated = parseTs(s.updated_at);
-  if (Number.isFinite(updated)) return Math.max(0, updated - started);
-  return null;
+  const settledAt = Math.max(
+    Number.isFinite(ended) ? ended : -Infinity,
+    Number.isFinite(updated) ? updated : -Infinity,
+  );
+  if (!Number.isFinite(settledAt)) return null;
+  return Math.max(0, settledAt - started);
 }
 
 export interface Manager {
