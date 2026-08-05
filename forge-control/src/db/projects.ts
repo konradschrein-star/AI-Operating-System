@@ -110,6 +110,24 @@ const LAST_ASSISTANT_TEXT = `(SELECT elem->>'content'
               WHERE elem->>'role' = 'assistant'
               ORDER BY (elem->>'ts')::timestamptz DESC
               LIMIT 1)`;
+/** Last failure entry of the joined run `r` — what the executor's catch block
+ *  wrote when the run died ("Executor failed: claude-code exit 1: You've hit
+ *  your session limit · resets 1:10pm (Europe/Berlin)").
+ *
+ *  Separate from LAST_ASSISTANT_TEXT because they are different messages with
+ *  different authors: the verdict is the AGENT's last word, this is the
+ *  EXECUTOR's. Reusing the assistant text for failure classification would have
+ *  read whatever the agent happened to say before it was killed — on 2026-08-05
+ *  a half-finished tool narration — and never seen the wall at all.
+ *
+ *  'stuck_notice' is included alongside 'error' so a timeout's text is
+ *  available to the same classifier; matching on it is the classifier's
+ *  business, not this query's. */
+const LAST_ERROR_TEXT = `(SELECT elem->>'content'
+               FROM jsonb_array_elements(r.thread) elem
+              WHERE elem->>'kind' IN ('error','stuck_notice')
+              ORDER BY (elem->>'ts')::timestamptz DESC
+              LIMIT 1)`;
 
 export async function listProjects(): Promise<Project[]> {
   const r = await pool.query<Project>(
@@ -647,15 +665,24 @@ export async function roundIsComplete(
  *  after 90s without a heartbeat, i.e. the engine process is gone or hung.
  *  Before this, such a task sat 'running' forever with no owner and the
  *  project could never close or wedge — it just went quiet (E4). */
-export async function listSettledRunningTasks(): Promise<
-  Array<ProjectTask & { run_status: RunStatus; last_text: string | null }>
-> {
-  const r = await pool.query<
-    ProjectTask & { run_status: RunStatus; last_text: string | null }
-  >(
+export interface SettledRunningTask extends ProjectTask {
+  run_status: RunStatus;
+  /** Last ASSISTANT message — the verdict text. */
+  last_text: string | null;
+  /** Last EXECUTOR failure entry — what the run died of (R860). */
+  last_error: string | null;
+  /** Times this run has already been parked behind a usage wall. 0 for every
+   *  run that never was, which is almost all of them. */
+  usage_wall_attempts: number;
+}
+
+export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
+  const r = await pool.query<SettledRunningTask>(
     `SELECT ${TASK_COLS_PT},
             r.status AS run_status,
-            ${LAST_ASSISTANT_TEXT} AS last_text
+            ${LAST_ASSISTANT_TEXT} AS last_text,
+            ${LAST_ERROR_TEXT} AS last_error,
+            COALESCE((r.metadata->>'usage_wall_attempts')::int, 0) AS usage_wall_attempts
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'

@@ -510,6 +510,60 @@ export async function recentLimitHits(days = 14, limit = 20): Promise<LimitHit[]
   }));
 }
 
+/**
+ * Park a run that died on the Claude subscription's usage wall: put it BACK on
+ * the queue behind `wake_after` instead of leaving it as a corpse (R860).
+ *
+ * This resurrects the SAME row rather than creating a replacement, which is
+ * what makes the recovery free: `runs.wake_after` (migration 0036) already
+ * hides a queued run from claimNextRun() until its wake time passes, and the
+ * executor's resume path already rebuilds the prompt from the thread — with a
+ * live CC session it sends trailingUserBlock(), i.e. everything appended after
+ * the last engine turn, which is exactly the `note` this writes. So the agent
+ * wakes up holding its own transcript and a sentence explaining the gap. A new
+ * run would have thrown that context away and paid for it again.
+ *
+ * `status = 'failed'` in the WHERE is the safety catch, not decoration. It is
+ * the only status this may ever un-terminate: a 'cancelled' run was killed by
+ * Konrad on purpose and must stay dead, a 'completed' one has already been
+ * reconciled, and a 'stuck' one is resumable by hand and owns its own path.
+ * Returns whether the row actually moved so the caller can fall back to the
+ * ordinary failure path instead of assuming a park that never happened.
+ */
+export async function requeueRunAfterUsageWall(input: {
+  runId: string;
+  wakeAt: Date;
+  /** 1-based; persisted as metadata.usage_wall_attempts and read back by the
+   *  next reconcile to advance the backoff ladder. */
+  attempt: number;
+  /** Appended to the thread so the pause is visible in the run's transcript —
+   *  and, on resume, is the text the engine is handed. */
+  note: string;
+}): Promise<boolean> {
+  const entry: ThreadEntry = {
+    role: "system",
+    content: input.note,
+    ts: new Date().toISOString(),
+    kind: "text",
+    meta: { usage_wall: true, usage_wall_attempt: input.attempt },
+  };
+  const r = await pool.query(
+    `UPDATE runs
+        SET status = 'queued',
+            wake_after = $2,
+            completed_at = NULL,
+            stuck_signal = NULL,
+            thread = thread || $3::jsonb,
+            metadata = COALESCE(metadata, '{}'::jsonb) ||
+                       jsonb_build_object('usage_wall_attempts', $4::int),
+            updated_at = now()
+      WHERE id = $1
+        AND status = 'failed'`,
+    [input.runId, input.wakeAt.toISOString(), JSON.stringify([entry]), input.attempt],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
 export async function runCounts(): Promise<Record<RunStatus, number>> {
   const r = await pool.query<{ status: RunStatus; count: string }>(
     // Same scope as listRuns — otherwise the rail header claims "28 completed"

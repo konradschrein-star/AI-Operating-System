@@ -38,6 +38,7 @@ import {
   getProject,
   type ProjectTask,
   type Project,
+  type SettledRunningTask,
   type TaskRole,
   type TaskTier,
 } from "../db/projects.ts";
@@ -58,10 +59,20 @@ import {
   type VerdictInput,
   type VerdictRole,
 } from "./project-reconcile.ts";
+import {
+  classifyUsageWall,
+  parseResetAt,
+  planUsageWallRetry,
+  shouldAnnounceOutage,
+  outageMessage,
+  formatDelay,
+  USAGE_WALL_NOTIFICATION_SOURCE,
+} from "./usage-wall.ts";
 import { provisionWorkspace, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
-import { queueNotification } from "../db/notifications.ts";
+import { requeueRunAfterUsageWall } from "../db/runs.ts";
+import { queueNotification, lastNotificationAt } from "../db/notifications.ts";
 
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
 
@@ -900,6 +911,141 @@ async function notifyTaskProgress(
   }
 }
 
+/** Konrad's clock, same convention as the reminder and telegram paths. */
+const DISPLAY_TZ = process.env.REMINDER_TZ ?? "Europe/Berlin";
+
+function localLabel(at: Date): string {
+  return at.toLocaleString("de-DE", {
+    timeZone: DISPLAY_TZ,
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * Tell Konrad about a usage-wall outage AT MOST ONCE, however many tasks it
+ * felled (R860, requirement 3).
+ *
+ * The window lives in lib/usage-wall.ts; the only thing decided here is what an
+ * unreadable notification history means. It means "announce": the whole point
+ * of the push is that the fleet has gone quiet on its own, and a swallowed
+ * message reproduces the five hours of silence this round exists to end. A
+ * duplicate costs one line on his phone.
+ */
+async function announceUsageWallOutage(
+  sig: { kind: "session" | "weekly" | "unspecified"; resetHint: string | null },
+  plan: { delayMs: number; wakeAtMs: number },
+): Promise<void> {
+  const now = Date.now();
+  const lastAt = await lastNotificationAt(USAGE_WALL_NOTIFICATION_SOURCE).catch((e) => {
+    console.warn(
+      `[project-tick] could not read the last usage-wall push (${
+        e instanceof Error ? e.message : e
+      }) — announcing rather than risking silence`,
+    );
+    return null;
+  });
+  if (!shouldAnnounceOutage(lastAt, now)) return;
+  await queueNotification(
+    outageMessage({
+      kind: sig.kind,
+      resetHint: sig.resetHint,
+      delayMs: plan.delayMs,
+      wakeAtLabel: localLabel(new Date(plan.wakeAtMs)),
+    }),
+    USAGE_WALL_NOTIFICATION_SOURCE,
+  );
+}
+
+/**
+ * R860 — survive the Claude subscription's usage wall without a human.
+ *
+ * Incident 2026-08-05: the 5-hour window filled at ~10:00 Berlin. Eleven runs
+ * across both active projects died with `claude-code exit 1: You've hit your
+ * session limit · resets 1:10pm`, the loop below marked every one of their
+ * tasks `failed` and blocked both projects, and the fleet stayed dead until
+ * Konrad ran /unwedge at ~15:00. Nothing was broken; the engine simply had no
+ * way to tell "this task is wrong" from "the account is full".
+ *
+ * So: classify first, and on the wall's signature park the RUN instead of
+ * killing the TASK. Returns true when the caller must skip its failure path.
+ *
+ * Returning false is always safe — every false lands on the old behaviour
+ * (task failed, project blocked, Konrad told), which is the right destination
+ * for a real failure and an acceptable one for a wall we could not park.
+ *
+ * The four refusals, in order, each for its own reason:
+ *  - not 'failed' — a cancellation is Konrad's decision and a timeout ('stuck')
+ *    has its own resume path; neither is ours to reopen.
+ *  - no run row — nothing to re-queue.
+ *  - not the wall's signature — the overwhelmingly common case: a real failure.
+ *  - project not active — a queued run is invisible to project status (the
+ *    executor's claim loop knows about runs, not projects), so parking one on a
+ *    blocked or paused project would smuggle billable work past the gate that
+ *    bug 2 exists to enforce. Fail it visibly instead.
+ */
+export async function deferForUsageWall(
+  task: SettledRunningTask,
+  project: Project | null,
+): Promise<boolean> {
+  if (task.run_status !== "failed" || !task.run_id) return false;
+  const sig = classifyUsageWall(task.last_error);
+  if (!sig) return false;
+  if (!project || !projectAcceptsWork(project.status)) {
+    console.warn(
+      `[project-tick] task ${task.id} hit the ${sig.kind} usage wall but its project is ` +
+        `${project?.status ?? "unreadable"} — failing it rather than parking work on a ` +
+        `project that is not accepting any`,
+    );
+    return false;
+  }
+
+  const now = Date.now();
+  const plan = planUsageWallRetry({
+    priorAttempts: task.usage_wall_attempts,
+    nowMs: now,
+    resetAtMs: parseResetAt(sig.resetHint, now),
+  });
+  if (plan.action === "give_up") {
+    console.warn(
+      `[project-tick] task ${task.id} (${task.role} · ${task.title}) hit the ${sig.kind} ` +
+        `usage wall again — ${plan.reason}; falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  const wakeAt = new Date(plan.wakeAtMs);
+  const parked = await requeueRunAfterUsageWall({
+    runId: task.run_id,
+    wakeAt,
+    attempt: plan.attempt,
+    note:
+      `[Fleet notice] This run was interrupted by the Claude subscription's ${sig.kind} usage ` +
+      `limit${sig.resetHint ? ` (resets ${sig.resetHint})` : ""}, not by anything you did. It was ` +
+      `parked automatically and resumed at ${localLabel(wakeAt)}. Nothing has changed in the ` +
+      `worktree since. Pick your task up where you left off and finish it.`,
+  });
+  if (!parked) {
+    // The row was not 'failed' any more — Konrad cancelled it, or another path
+    // moved it, between listSettledRunningTasks() and here. Do NOT pretend the
+    // park happened: that would leave the task 'running' forever behind a run
+    // that is never coming back.
+    console.warn(
+      `[project-tick] task ${task.id}: run ${task.run_id} was no longer 'failed' when the ` +
+        `usage-wall park went to write — falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  console.warn(
+    `[project-tick] ${sig.kind} usage wall — parked ${task.role} task ${task.id} ` +
+      `(round ${task.round}) for ${formatDelay(plan.delayMs)} until ${localLabel(wakeAt)} ` +
+      `(attempt ${plan.attempt}, basis ${plan.basis}) — task NOT failed, project NOT blocked`,
+  );
+  await announceUsageWallOutage(sig, plan);
+  return true;
+}
+
 async function reconcileSettledTasks(): Promise<void> {
   const settled = await listSettledRunningTasks();
   /** Gating rounds touched this tick, keyed `${project_id}:${round}` so a
@@ -916,6 +1062,10 @@ async function reconcileSettledTasks(): Promise<void> {
       const project = await getProject(task.project_id).catch(() => null);
       const name = project?.name ?? task.project_id;
       if (task.run_status !== "completed") {
+        // R860: a run killed by the subscription's usage wall is parked behind
+        // runs.wake_after and retried on its own — the task stays 'running' and
+        // the project stays 'active'. Everything else falls through unchanged.
+        if (await deferForUsageWall(task, project)) continue;
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
         console.warn(
