@@ -99,3 +99,36 @@ was created; no `/api/projects` POST was issued this round.
 ## Timestamp
 
 Evidence gathered: 2026-08-05T08:10:07Z (UTC).
+
+---
+
+### Watch #1 (R303)
+
+**Timestamp:** 2026-08-05T15:32:00Z (UTC)
+
+**Preconditions checked:**
+1. `/root/.claude/agents/researcher.md` exists: **NO**
+2. Smoke project (SID) available in evidence: **NO** (R20 launch was skipped)
+3. Smoke project workspace directory: **NO**
+
+**Poll results:**
+No polling performed because the precondition failed: the researcher.md role file was not installed to `/root/.claude/agents/` between R302 and R303. This prevented R20's smoke project launch.
+
+**Grep check:**
+Command:
+```
+grep -c "no agent definition for role researcher" /root/.pm2/logs/forge-executor-*.log
+```
+Result: All log files returned 0 (no researcher role errors in executor logs, expected since the smoke project was never launched).
+
+**Artifact check:**
+No smoke project workspace exists; no `docs/research/` directory to check.
+
+**STATUS:** BLOCKED — cannot proceed with R20 watch because R19 install blocker persists. Smoke project was never created.
+
+**Blockers for round 304:**
+1. `/root/.claude/agents/researcher.md` must be installed (interactively approved by Konrad or harness permissions adjusted)
+2. Smoke project `p3-smoke-researcher` must be launched via POST /api/projects
+3. R20 watch can then poll the project's architect + researcher tasks
+
+**Recommendation:** R304 should include an interactive or out-of-band install of the researcher.md file before re-attempting the smoke project launch.
