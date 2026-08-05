@@ -110,7 +110,7 @@ const PLACEHOLDER_SURFACES: Record<
     desc: "Run-aware threads. Each conversation can dispatch runs, call tools, invoke skills, and watch state — with inter-agent messages rendered inline.",
     items: [
       { icon: "forum", label: "thread list, per-run pinning" },
-      { icon: "token", label: "live token / spend panel" },
+      { icon: "token", label: "live token panel" },
       { icon: "extension", label: "tools + skills registry sidebar" },
       { icon: "arrow_outward", label: "inter-agent message blocks" },
     ],
@@ -121,7 +121,7 @@ const PLACEHOLDER_SURFACES: Record<
     desc: "The state machine collapsed into Backlog → Scripting → Production → QMS → Approval → Published with WIP caps.",
     items: [
       { icon: "view_kanban", label: "6 columns with WIP guards" },
-      { icon: "movie", label: "cards show progress + cost + ETA" },
+      { icon: "movie", label: "cards show progress + ETA" },
       { icon: "open_in_new", label: "click → run detail in Tasks" },
     ],
   },

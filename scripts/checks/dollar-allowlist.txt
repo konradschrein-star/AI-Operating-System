@@ -1,0 +1,25 @@
+# dollar-allowlist.txt — sibling data file for scripts/checks/dollar-sweep.sh
+#
+# Format: FILE<TAB>EXTENDED-REGEX-PATTERN<TAB>ONE-LINE REASON
+#   FILE     path relative to the repo root
+#   PATTERN  an ERE (grep -E syntax) matched against the CONTENT of every
+#            primary-gate hit line in FILE. If a hit's content matches, it is
+#            allowlisted; if not, it fails the gate even though the file is
+#            listed here (a new, different dollar hit in an already-listed
+#            file is NOT silently waived). The pattern itself may use `|`
+#            for alternation — TAB, not `|`, separates the three columns.
+#   REASON   printed by the sweep script next to every hit it excuses.
+#
+# Blank lines and lines starting with # are ignored.
+#
+# See docs/plan/artifacts/phase400/dollar-allowlist.md for the full per-line
+# table (file, line, snippet, reason) this file encodes as regexes.
+
+forge-control-web/app/Providers.tsx	spend	react-query key list in a comment enumerating cached domains ("chat list, file tree, memory, skills, projects, spend"); not a rendered value.
+forge-control-web/app/api.ts	Spend|spend|budget_usd|spent_usd	Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+forge-control-web/app/desktop/live/agentsApi.ts	spent_usd|cost_usd|spend row	Wire types (spent_usd, cost_usd, spent_usd_last_hour) — types stay (NFU4 additive API); AgentActivity.tsx no longer renders any of them after this round.
+forge-control-web/app/desktop/MoneySurface.tsx	.*	The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+forge-control-web/app/desktop/MemorySurface.tsx	h\.score\.toFixed\(2\)	toFixed(2) here formats a relevance SCORE, not currency.
+forge-control-web/app/desktop/live/AgentActivity.tsx	M < 10 \? M\.toFixed\(2\)	toFixed(2) inside humanTokens()'s "M" suffix (e.g. "1.23M" tokens) — a token-magnitude formatter, not currency; a false positive of the naive toFixed(2) pattern.
+forge-control-web/app/desktop/chat/slash-registry.ts	spend	/rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+forge-control-web/app/desktop/ChatSurface.tsx	spent_usd|budget_usd|spent \$	Chat header's "spent $X / cap $Y" line (lines ~1407-1408). OUT OF SCOPE for round 401b — ChatSurface.tsx is owned by a parallel task this round, and per this task's brief "the chat header's dollars are round 402's job." This is a DOCUMENTED OPEN ITEM, not a resolved allowlist: round 402 must remove it.

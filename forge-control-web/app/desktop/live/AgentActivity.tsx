@@ -21,15 +21,15 @@
  * WHAT it is doing on top, WHAT IT IS underneath.
  *
  *   ● operator  Rework Live agent panel              36m 52s · ↓ 204.7k
- *       chat  fable-5  $4.10  Bash
+ *       chat  fable-5  Bash
  *   ● worker    Phase 2b: kind badge + role           4m 12s · ↓ 88.1k
- *       builder  opus-5  $1.02  Edit
+ *       builder  opus-5  Edit
  *     ○ ↳ sub   Recon chat Bash block rendering       1m 47s · ↓ 132.1k
  *         Explore  opus-5  Grep
  *
  *   kind badge in its role's colour · title primary truncated ·
  *   right-aligned live age + downloaded-token count; role/schedule, model,
- *   spend and current tool on the faint second line. One shared 1-second
+ *   effort and current tool on the faint second line. One shared 1-second
  *   tick drives every visible row (the previous per-row setInterval scaled
  *   with row count and was flagged by the UI audit §2.2a as a re-render
  *   source). Lineage is a native `title` on each row container — no hover
@@ -99,7 +99,7 @@ function humanTokens(n: number): string {
 
 /** "Downloaded" tokens = input + cache_read. That's what the CLI's own bar
  *  reports: the total context the model consumed on this turn, which is
- *  where the real spend signal lives (cache reads are ~10% the price of
+ *  where the real magnitude lives (cache reads are ~10% the price of
  *  fresh input but often 90% of the count). */
 function downloadedTokens(u: AgentUsage | undefined | null): number {
   if (!u) return 0;
@@ -349,7 +349,7 @@ function AgentRunLine({ a, now }: RowProps) {
 
       {/* Second line, now unconditional: role/schedule and model are facts
           about every row, not extras. It used to appear only when there was
-          spend, effort or activity to report, which is exactly when a quiet
+          effort or activity to report, which is exactly when a quiet
           row is hardest to identify. */}
       <div
         className="mono"
@@ -373,7 +373,6 @@ function AgentRunLine({ a, now }: RowProps) {
         <span style={{ color: modelColor(a.model), flex: "none", whiteSpace: "nowrap" }}>
           {model}
         </span>
-        {a.spent_usd > 0 && <span>${a.spent_usd.toFixed(2)}</span>}
         {a.effort && <span>{a.effort}</span>}
         {label && (
           <span
@@ -618,8 +617,11 @@ export function AgentActivity({
           <span style={{ color: tokens.stuck }}>{s.stuck} stuck</span>
         )}
         <span style={{ flex: 1 }} />
-        {!!s?.spent_usd_last_hour && (
-          <span>${s.spent_usd_last_hour.toFixed(2)}/h</span>
+        {!!(s?.tokens_out_last_hour || s?.tokens_in_last_hour) && (
+          <span title="tokens generated / read in the last hour">
+            ↑ {humanTokens(s.tokens_out_last_hour)} ↓{" "}
+            {humanTokens(s.tokens_in_last_hour)} /h
+          </span>
         )}
       </div>
 

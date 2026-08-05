@@ -486,18 +486,14 @@ function TodayScreen({
       )}
 
       <div style={{ display: "flex", gap: 9, marginTop: 14 }}>
-        <StatCard
-          label="SPEND TODAY"
-          value={data.spend.value}
-          sub={data.spend.cap}
-          color={tokens.info}
-        />
-        <StatCard
-          label="SHIPPED"
-          value={data.shipped.value}
-          sub={data.shipped.pipeline}
-          color={tokens.ok}
-        />
+        <div style={{ flex: "0 1 50%" }}>
+          <StatCard
+            label="SHIPPED"
+            value={data.shipped.value}
+            sub={data.shipped.pipeline}
+            color={tokens.ok}
+          />
+        </div>
       </div>
     </div>
   );
