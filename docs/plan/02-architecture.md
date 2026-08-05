@@ -64,13 +64,23 @@ the decision:
 - `block` → mark reviewers `done`, set project `blocked`, `queueNotification` with the
   reason and the offending task title(s).
 - `fix` → **one transaction**: insert builder (round+1, `fix_cycle = cycle`,
-  `chain_key = fix:R:c`) and re-reviewer (round+2, `chain_key = rereview:R:c`), both
-  `ON CONFLICT (project_id, chain_key) DO NOTHING`; commit; THEN mark all group reviewers
-  `done`. Crash after commit but before mark-done ⇒ next tick recomputes `fix`, the
-  conflict guard absorbs the duplicate inserts, mark-done proceeds. Order matters:
-  creating tasks before marking reviewers done means `promoteReadyTasks` can never see a
-  fully-done round R with the fix round missing (which would wrongly promote round-R+100
-  phase planners past an unfinished fix cycle).
+  `chain_key = fix:R:c`) and re-reviewer (round+2, `chain_key = rereview:R:c`), both with a
+  **bare `ON CONFLICT DO NOTHING`** — no conflict target (amended R308). A chain row is
+  subject to TWO unique indexes, `project_tasks_chain_key_uniq` (ours, 0039) and
+  `project_tasks_identity_idx` (`main`'s, 0035, already live); naming either one leaves
+  the other as an unhandled `unique_violation` that aborts the transaction and freezes the
+  round. Commit; THEN mark all group reviewers `done`. Crash after commit but before
+  mark-done ⇒ next tick recomputes `fix`, the conflict guard absorbs the duplicate
+  inserts, mark-done proceeds. Order matters: creating tasks before marking reviewers done
+  means `promoteReadyTasks` can never see a fully-done round R with the fix round missing
+  (which would wrongly promote round-R+100 phase planners past an unfinished fix cycle).
+- Because `DO NOTHING` reports zero rows whichever index fired, `insertChainRow()` then
+  looks the row up and CLASSIFIES the conflict: `replay` (the existing row carries our
+  chain_key — our own chain, safe) vs `occupied` (a stranger holds our identity tuple, so
+  its brief is not the feedback we merged). On `occupied` the `fix` branch blocks the
+  project and names the offending task instead of reporting an absorbed replay — the
+  alternative drops a reviewer round's verdict in silence. Evidence:
+  `docs/plan/evidence/0039-conflict-target.md` §B.
 
 Non-reviewer settled tasks keep the existing per-task path untouched.
 
@@ -84,9 +94,11 @@ CREATE UNIQUE INDEX project_tasks_chain_key_uniq
 
 Additive-only; the running (old) engine never writes `chain_key`, so applying it live at
 deploy time is safe, and historical duplicate rows from the first night (all in
-terminal projects) are untouched because NULLs are excluded from the index. `createTask()`
-gains an optional `chain_key`; the API route does NOT expose it (only the reconciler sets
-it — agents cannot forge chain keys).
+terminal projects) are untouched because NULLs are excluded from the index. `chain_key` is
+written by `createFixChain()` and by NOTHING else — `createTask()` deliberately does not
+accept it (amended R308: a second writer arbitrating on identity alone would raise
+`unique_violation` on exactly the replay it was meant to absorb), and the API route does
+not expose it, so agents cannot forge chain keys.
 
 ## 2. Project-status gating (bug 2)
 

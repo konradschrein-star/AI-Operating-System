@@ -15,6 +15,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   parseVerdict,
@@ -446,5 +447,141 @@ describe("T12 group-failure escalation", () => {
   test("threshold 1 notifies on the first failure", () => {
     const counters = new Map<string, number>();
     assert.deepEqual(noteGroupFailure(counters, KEY, 1), { count: 1, notify: true });
+  });
+});
+
+/* ========================================================================== *
+ * T15 — createFixChain must arbitrate on EVERY unique index, not just ours
+ *
+ * Finding 3 of the round-307 review. `main` shipped `project_tasks_identity_idx
+ * UNIQUE (project_id, round, role, title)` while this branch was out, and it is
+ * live. createFixChain named only the chain_key index as its conflict target,
+ * so an identity collision was an unhandled `unique_violation` that aborted the
+ * whole transaction — and the collision is reachable, not theoretical: every
+ * fix chain the PRE-0039 engine wrote has chain_key NULL and a generated title
+ * of the same shape. This project's own `(4120f785, 306, 'builder',
+ * 'Fix cycle 1')` is one of them.
+ *
+ * These assertions are on SQL TEXT because the property is a property of the
+ * SQL, and this suite has no database. That is not the whole proof — the fix
+ * was also exercised against a throwaway Postgres carrying BOTH live indexes,
+ * with the real createFixChain, both before and after:
+ *
+ *   old form → error: duplicate key value violates unique constraint
+ *              "project_tasks_identity_idx"
+ *   new form → {builderCreated:false, reviewerCreated:false}   (replay absorbed)
+ *   new form, fresh cycle → {builderCreated:true, reviewerCreated:true}
+ *
+ * Full transcript: docs/plan/evidence/0039-conflict-target.md. This test is the
+ * cheap guard that stops the targeted form from coming back between dry runs.
+ * ========================================================================== */
+
+describe("T15 createFixChain conflict arbitration", () => {
+  const projectsSrc = readFileSync(new URL("../db/projects.ts", import.meta.url), "utf8");
+  const fixChainSrc = (() => {
+    const start = projectsSrc.indexOf("export async function createFixChain(");
+    assert.ok(start > 0, "createFixChain not found in db/projects.ts — this test has gone stale");
+    const end = projectsSrc.indexOf("\n/**", start);
+    return projectsSrc.slice(start, end === -1 ? undefined : end);
+  })();
+
+  const insertRowSrc = (() => {
+    const start = projectsSrc.indexOf("async function insertChainRow(");
+    assert.ok(start > 0, "insertChainRow not found in db/projects.ts — this test has gone stale");
+    return projectsSrc.slice(start, projectsSrc.indexOf("\n/**", start));
+  })();
+
+  test("the chain INSERT uses a bare ON CONFLICT DO NOTHING", () => {
+    assert.equal(
+      (insertRowSrc.match(/INSERT INTO project_tasks/g) ?? []).length,
+      1,
+      "one parameterised insert, called twice — builder and re-reviewer",
+    );
+    assert.equal((insertRowSrc.match(/ON CONFLICT DO NOTHING/g) ?? []).length, 1);
+    assert.equal(
+      (fixChainSrc.match(/await insertChainRow\(/g) ?? []).length,
+      2,
+      "createFixChain must still write exactly the builder and the re-reviewer",
+    );
+  });
+
+  test("no conflict target is named — a target ignores the other unique index", () => {
+    for (const [label, src] of [["insertChainRow", insertRowSrc], ["createFixChain", fixChainSrc]] as const) {
+      assert.ok(
+        !/ON CONFLICT\s*\(/.test(src),
+        `${label}: a parenthesised conflict target only arbitrates ONE index; the row is subject ` +
+          "to project_tasks_chain_key_uniq AND project_tasks_identity_idx, and an unhandled " +
+          "violation on the other one aborts the transaction and freezes the round",
+      );
+      assert.ok(
+        !/ON CONFLICT ON CONSTRAINT/.test(src),
+        `${label}: the constraint form is doubly wrong — a partial unique index is not a constraint`,
+      );
+    }
+  });
+
+  test("a swallowed conflict is CLASSIFIED, never reduced to a boolean", () => {
+    // `replay` (our own chain, re-created after a crash) and `occupied` (a
+    // stranger holds our identity tuple, so the merged feedback would reach
+    // nobody) are the same rowCount and completely different situations.
+    // Collapsing them — which a `rowCount > 0` flag does — drops a reviewer
+    // round's verdict in silence. Reachable in the deploy window: the live
+    // pre-0039 engine writes ("Fix cycle 1", round R+1, chain_key NULL) for
+    // the first reviewer of a round, and the second lands on the new engine.
+    assert.match(insertRowSrc, /kind: "created"/);
+    assert.match(insertRowSrc, /kind: "replay"/);
+    assert.match(insertRowSrc, /kind: "occupied"/);
+    assert.ok(
+      !/rowCount/.test(insertRowSrc),
+      "rowCount cannot distinguish which unique index fired — look the row up instead",
+    );
+    assert.match(
+      insertRowSrc,
+      /WHERE project_id = \$1 AND chain_key = \$2/,
+      "chain_key must be checked FIRST: a row with our chain_key is our own chain",
+    );
+    assert.match(
+      insertRowSrc,
+      /WHERE project_id = \$1 AND round = \$2 AND role = \$3 AND title = \$4/,
+      "then the identity tuple, which tells a stranger apart from a replay",
+    );
+    assert.match(
+      insertRowSrc,
+      /throw new Error\(/,
+      "a conflict neither lookup explains means the indexes are not what this code believes",
+    );
+  });
+
+  test("the caller refuses to mark a round done on an unexplained collision", () => {
+    const tickSrc = readFileSync(new URL("./project-tick.ts", import.meta.url), "utf8");
+    const start = tickSrc.indexOf('case "fix": {');
+    assert.ok(start > 0, "the fix branch moved — this test has gone stale");
+    const fixBranch = tickSrc.slice(start, tickSrc.indexOf("\n    }", start));
+    assert.match(fixBranch, /kind === "occupied"/, "the occupied case must be handled explicitly");
+    assert.match(
+      fixBranch,
+      /setProjectStatus\(projectId, "blocked"\)/,
+      "an undeliverable verdict must stop the project, not be logged as an absorbed replay",
+    );
+    assert.ok(
+      fixBranch.indexOf("occupied") < fixBranch.indexOf("🔁"),
+      "the collision check must run BEFORE the fix-cycle push, or a lost verdict is announced as progress",
+    );
+  });
+
+  test("createTask does NOT write chain_key — one writer for chain rows", () => {
+    const start = projectsSrc.indexOf("export async function createTask(");
+    const end = projectsSrc.indexOf("\n/**", start);
+    const createTaskSrc = projectsSrc.slice(start, end === -1 ? undefined : end);
+    assert.ok(
+      !createTaskSrc.includes("chain_key"),
+      "a second entry point writing chain_key while arbitrating on identity alone would " +
+        "raise unique_violation on exactly the replay it was meant to absorb",
+    );
+    assert.match(
+      createTaskSrc,
+      /ON CONFLICT \(project_id, round, role, title\) DO NOTHING/,
+      "createTask keeps main's identity arbitration — it is the fan-out path, not a chain path",
+    );
   });
 });

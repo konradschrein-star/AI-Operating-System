@@ -59,18 +59,13 @@ hard errors, no silent fallbacks; commit per task with clear messages.
 ## Phase 3 — Researcher role + smoke (round 300)
 
 - **Goal:** the researcher lane exists and demonstrably works end-to-end.
-- **Scope (files):** `agents/researcher.md` (new, in-repo); install copy to
-  `/root/.claude/agents/researcher.md` (explicit briefed step, additive live-config
-  write allowed by N5); T11 frontmatter-parse test; smoke scratch project via API.
-- **Deliverables:** role file (R18) + install (R19); smoke run (R20): scratch project
-  whose brief tells its round-0 architect (tier `fast`) to create exactly ONE researcher
-  task (suggested smoke topic: "current Perplexity API surface + pricing, cited" — the
-  output doubles as fresh input for P4) and stop; researcher run completes and commits a
-  cited `docs/research/*.md`; scratch project closed afterwards.
-- **Acceptance / gates:** T11 green; no `no agent definition for role researcher` warning
-  in executor logs during the smoke; reviewer inspects the research doc and spot-checks
-  ≥ 2 citations; scratch project closed; tsc + suite green.
-- **Requirements covered:** R18 R19 R20.
+- **Scope (files):** `agents/researcher.md` (new, in-repo); `roleFilePaths()` repo
+  fallback + T13; T11 frontmatter-parse test; T14 allowlist robustness. No live-system
+  write at all — R308 struck the `/root/.claude/agents/` install step (R19).
+- **Deliverables:** role file (R18); the file resolves through the ENGINE's own path
+  order, proven by T13 against `REPO_AGENTS_DIR` rather than a hand-installed copy.
+- **Acceptance / gates:** T11 + T13 + T14 green; tsc + suite green.
+- **Requirements covered:** R18. (R19 struck, R20 moved to P6 — 03-quality §3.1.)
 
 ## Phase 4 — External service tools: gemini-qa + perplexity (round 400)
 
@@ -117,10 +112,20 @@ hard errors, no silent fallbacks; commit per task with clear messages.
   3. `pm2 restart forge-control` (API side — allowed).
   4. `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`
      — launch DETACHED and END; never wait, never `pm2 restart forge-executor`.
-  5. Final message: what changed, test results, which keys/reminders Konrad owes the
+  5. **R20 smoke, carried over from P3 (03-quality §3.1).** Only AFTER step 4's restart
+     has landed — the pre-restart engine has no repo fallback and would cache a bare
+     mission. Create a scratch-repo project whose brief tells its round-0 architect
+     (tier `fast`) to create exactly ONE researcher task (suggested topic: "current
+     Perplexity API surface + pricing, cited" — the output doubles as fresh input for P4)
+     and stop. The researcher run must complete and commit a `docs/research/*.md` with
+     ≥ 3 cited sources; the reviewer spot-checks ≥ 2 URLs against the claims made; the
+     scratch project is then closed. Executor logs must show no
+     `no agent definition for role researcher` warning.
+  6. Final message: what changed, test results, which keys/reminders Konrad owes the
      system (expected: `gemini-api-key`, `perplexity-api-key` unless added meanwhile).
-- **Acceptance / gates:** 03-quality §3 P6 row; the deploy task's transcript is the evidence.
-- **Requirements covered:** R28.
+- **Acceptance / gates:** 03-quality §3 P6 row (which now includes the R20 carry-over);
+  the deploy task's transcript is the evidence.
+- **Requirements covered:** R28, R20 (carried from P3).
 
 ---
 
@@ -130,10 +135,10 @@ hard errors, no silent fallbacks; commit per task with clear messages.
 |---|---|
 | P1 | R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 |
 | P2 | R12 R13 R14 R15 R16 R17 |
-| P3 | R18 R19 R20 |
+| P3 | R18 (R19 struck at R308; R20 moved to P6) |
 | P4 | R21 R22 R23 R24 R25 |
 | P5 | R26 R27 |
-| P6 | R28 |
+| P6 | R28 + R20 (carried from P3 at R308) |
 
 (N1–N5 are standing constraints enforced by every phase's gates, not owned by one phase.)
 

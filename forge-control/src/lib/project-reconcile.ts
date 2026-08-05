@@ -3,12 +3,14 @@
  * fix cycles.
  *
  * Context: on the goal engine's first night (2026-08-04) a single round with
- * two reviewers produced two of everything. `reconcileReviewer()` fires once
- * per settled reviewer task with no awareness of its siblings, so two
- * NEEDS_FIXES verdicts each inserted their own `Fix cycle 1` builder and their
- * own re-reviewer, and those chains later forked again into duplicate deploy
- * builders. A PASS was a bare `return`, so whether a PASS or a sibling's
- * NEEDS_FIXES won was tick-arrival luck. See docs/plan/02-architecture.md §1.
+ * two reviewers produced two of everything. The engine's `reconcileReviewer()`
+ * — replaced by this module and `consolidateReviewerGroup()`, and gone from
+ * the tree since R308 — fired once per settled reviewer task with no awareness
+ * of its siblings, so two NEEDS_FIXES verdicts each inserted their own
+ * `Fix cycle 1` builder and their own re-reviewer, and those chains later
+ * forked again into duplicate deploy builders. A PASS was a bare `return`, so
+ * whether a PASS or a sibling's NEEDS_FIXES won was tick-arrival luck. See
+ * docs/plan/02-architecture.md §1.
  *
  * The cure is to decide once per ROUND instead of once per TASK: wait until
  * every reviewer in the round has settled, then fold their verdicts into a
@@ -33,8 +35,9 @@ export type Verdict = "PASS" | "NEEDS_FIXES" | null;
 /**
  * Matched globally so the LAST declaration wins.
  *
- * This is load-bearing. The engine's original expression (project-tick.ts:295)
- * was the same pattern without `/g`, taking the FIRST match — and reviewers
+ * This is load-bearing. The engine's original expression (the `/VERDICT:\s*
+ * (PASS|NEEDS_FIXES)/i` in the deleted `reconcileReviewer()`) was the same
+ * pattern without `/g`, taking the FIRST match — and reviewers
  * routinely quote the required format while reasoning ("I will answer with
  * VERDICT: NEEDS_FIXES if ...") before declaring at the end. First-match
  * parsing therefore read the rehearsal instead of the verdict. The declaration

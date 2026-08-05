@@ -177,3 +177,40 @@ cp /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/res
 ```
 Once that file exists, R19/R20 (install confirm → launch `p3-smoke-researcher` → poll → harvest → close)
 can run for the first time — none of that work has happened yet in any round to date.
+
+---
+
+## Resolution — R308 (appended, nothing above altered)
+
+The blocker described above is closed, and it was closed by removing the requirement
+rather than by satisfying it.
+
+**R19 is struck.** R306 added the `roleFilePaths()` fallback: a role file committed to
+`agents/` resolves from `REPO_AGENTS_DIR` when `AGENTS_DIR` has none. The P6 merge puts
+`researcher.md` into `/opt/forge-ai-os/agents/`, and P6's own detached
+`safe-restart.sh forge-executor` picks it up. The `cp` this document spent three rounds
+waiting for is no longer needed by anything.
+
+State at R308, for the record:
+
+```
+$ ls -la /root/.claude/agents/researcher.md
+ls: cannot access '/root/.claude/agents/researcher.md': No such file or directory
+$ ls /opt/forge-ai-os/agents/
+architect.md  builder.md  planner.md  reviewer.md  scout.md
+```
+
+Neither path has it yet, and that is now the expected state before deploy — not a blocker.
+
+**Reminder `79e6cb27` was cancelled** (`POST /api/reminders/79e6cb27-.../dismiss` → 200)
+and replaced by `d342ac3b`, which tells Konrad the `cp` request is withdrawn and names
+what is actually still owed (`GEMINI_API_KEY`, `PERPLEXITY_API_KEY` in
+`/opt/ai-os/.secrets/`, for Phase 4).
+
+**R20 moved to P6**, acceptance unchanged. Running it on the live pre-restart engine
+would have resolved nothing, cached the bare `researcher` mission for the executor's
+lifetime, and forced the one restart this project is forbidden to perform — so the two
+rounds that declined to launch it were right to. It is now a P6 exit criterion, where it
+tests the deployed engine instead of the worktree.
+
+Rationale and the amended gate: `docs/plan/03-quality.md` §3.1.

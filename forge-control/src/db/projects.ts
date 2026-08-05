@@ -697,14 +697,103 @@ export async function listReviewerRound(
   return r.rows;
 }
 
+/** What became of one chain row.
+ *
+ *  `replay` and `occupied` BOTH mean "the INSERT wrote nothing", and they must
+ *  never be collapsed into one boolean:
+ *
+ *  - `replay` — the existing row carries OUR chain_key. It is the same chain,
+ *    re-created after a crash. Safe, expected, nothing is lost.
+ *  - `occupied` — a DIFFERENT row already holds our identity tuple
+ *    (project, round, role, title) with someone else's chain_key or none.
+ *    Its brief is not ours, so the feedback this consolidation merged would
+ *    go nowhere. That is a silent dropped verdict, and the caller has to stop
+ *    rather than mark the round done. */
+export type ChainRowOutcome =
+  | { kind: "created"; id: string }
+  | { kind: "replay"; id: string }
+  | { kind: "occupied"; id: string; title: string; chain_key: string | null };
+
+/** One chain INSERT, with the conflict CLASSIFIED rather than assumed.
+ *
+ *  `DO NOTHING` reports zero rows whichever index fired, so the row has to be
+ *  looked up afterwards to learn which one did. Order matters: chain_key is
+ *  checked FIRST, because a row matching our chain_key is our own chain even
+ *  if its round or title has since been edited, whereas a row matching only
+ *  the identity tuple is a stranger.
+ *
+ *  Throws when neither lookup explains the conflict — same contract as
+ *  createTask(): a `DO NOTHING` that nothing accounts for means the indexes
+ *  are not what this code believes, and guessing would corrupt a round. */
+async function insertChainRow(
+  client: pg.PoolClient,
+  row: {
+    project_id: string;
+    round: number;
+    role: TaskRole;
+    title: string;
+    brief: string;
+    fix_cycle: number;
+    tier: TaskTier | null;
+    chain_key: string;
+  },
+): Promise<ChainRowOutcome> {
+  const ins = await client.query<{ id: string }>(
+    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT DO NOTHING
+     RETURNING id::text`,
+    [
+      row.project_id,
+      row.round,
+      row.role,
+      row.title,
+      row.brief,
+      row.fix_cycle,
+      row.tier,
+      row.chain_key,
+    ],
+  );
+  if (ins.rows[0]) return { kind: "created", id: ins.rows[0].id };
+
+  const mine = await client.query<{ id: string }>(
+    `SELECT id::text FROM project_tasks
+      WHERE project_id = $1 AND chain_key = $2 LIMIT 1`,
+    [row.project_id, row.chain_key],
+  );
+  if (mine.rows[0]) return { kind: "replay", id: mine.rows[0].id };
+
+  const theirs = await client.query<{ id: string; title: string; chain_key: string | null }>(
+    `SELECT id::text, title, chain_key FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND role = $3 AND title = $4 LIMIT 1`,
+    [row.project_id, row.round, row.role, row.title],
+  );
+  if (theirs.rows[0]) {
+    return {
+      kind: "occupied",
+      id: theirs.rows[0].id,
+      title: theirs.rows[0].title,
+      chain_key: theirs.rows[0].chain_key,
+    };
+  }
+
+  throw new Error(
+    `createFixChain: insert for (${row.project_id}, round ${row.round}, ${row.role}, ` +
+      `"${row.title}", chain_key ${row.chain_key}) conflicted but neither ` +
+      `project_tasks_chain_key_uniq (migration 0039) nor project_tasks_identity_idx ` +
+      `(migration 0035) has a matching row — the unique indexes are not what this code expects`,
+  );
+}
+
 /** Insert a fix builder (round + 1) and its re-reviewer (round + 2) in ONE
  *  transaction, keyed by chain_key so the pair is idempotent (R7).
  *
  *  `round` is the REVIEWER round R that produced the NEEDS_FIXES verdicts. A
  *  tick that crashes after COMMIT but before marking the reviewers 'done'
- *  replays harmlessly: the second attempt inserts nothing and both flags come
- *  back false. The flags are returned rather than swallowed so the caller can
- *  log the replay instead of silently believing it created fresh work.
+ *  replays harmlessly: the second attempt inserts nothing and both rows come
+ *  back `replay`. The outcomes are returned rather than swallowed so the
+ *  caller can log the replay instead of silently believing it created fresh
+ *  work — and, for `occupied`, so it can refuse to drop a verdict on the floor.
  *
  *  BARE `ON CONFLICT DO NOTHING`, with no conflict target, is deliberate.
  *  There are now TWO unique indexes a chain row can hit:
@@ -720,8 +809,10 @@ export async function listReviewerRound(
  *  transaction. That is reachable, not theoretical: every fix chain the
  *  PRE-0039 engine wrote has chain_key NULL and a title of the same generated
  *  shape ("Fix cycle N"), so re-surfacing one of those reviewer groups after
- *  this ships collides on identity, not on chain_key. The bare form treats
- *  BOTH as "the row already exists", which is the truth in either case.
+ *  this ships collides on identity, not on chain_key. The bare form lets the
+ *  INSERT survive either, and insertChainRow() then works out WHICH one fired
+ *  — because "my own chain, replayed" and "a stranger holds my identity" are
+ *  the same rowCount and completely different situations.
  *
  *  A targeted form would also have been fragile for a second reason: the
  *  target must be the index-inference form carrying the index's own WHERE
@@ -740,44 +831,32 @@ export async function createFixChain(input: {
   reviewerBrief: string;
   reviewerChainKey: string;
   tier?: TaskTier;
-}): Promise<{ builderCreated: boolean; reviewerCreated: boolean }> {
+}): Promise<{ builder: ChainRowOutcome; reviewer: ChainRowOutcome }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const b = await client.query<{ id: string }>(
-      `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key)
-       VALUES ($1, $2, 'builder', $3, $4, $5, $6, $7)
-       ON CONFLICT DO NOTHING
-       RETURNING id::text`,
-      [
-        input.project_id,
-        input.round + 1,
-        input.builderTitle.slice(0, 200),
-        input.builderBrief,
-        input.cycle,
-        input.tier ?? null,
-        input.builderChainKey,
-      ],
-    );
-    const rv = await client.query<{ id: string }>(
-      `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key)
-       VALUES ($1, $2, 'reviewer', $3, $4, $5, NULL, $6)
-       ON CONFLICT DO NOTHING
-       RETURNING id::text`,
-      [
-        input.project_id,
-        input.round + 2,
-        input.reviewerTitle.slice(0, 200),
-        input.reviewerBrief,
-        input.cycle,
-        input.reviewerChainKey,
-      ],
-    );
+    const builder = await insertChainRow(client, {
+      project_id: input.project_id,
+      round: input.round + 1,
+      role: "builder",
+      title: input.builderTitle.slice(0, 200),
+      brief: input.builderBrief,
+      fix_cycle: input.cycle,
+      tier: input.tier ?? null,
+      chain_key: input.builderChainKey,
+    });
+    const reviewer = await insertChainRow(client, {
+      project_id: input.project_id,
+      round: input.round + 2,
+      role: "reviewer",
+      title: input.reviewerTitle.slice(0, 200),
+      brief: input.reviewerBrief,
+      fix_cycle: input.cycle,
+      tier: null,
+      chain_key: input.reviewerChainKey,
+    });
     await client.query("COMMIT");
-    return {
-      builderCreated: (b.rowCount ?? 0) > 0,
-      reviewerCreated: (rv.rowCount ?? 0) > 0,
-    };
+    return { builder, reviewer };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;

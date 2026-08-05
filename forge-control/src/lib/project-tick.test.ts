@@ -340,3 +340,121 @@ describe("T13 role file resolution + install parity", () => {
     assert.equal(readRoleFile("no-such-role" as TaskRole), null);
   });
 });
+
+/**
+ * T14 — parseRoleFile must not lose the tool allowlist to an invisible byte.
+ *
+ * This is a SECURITY test, not a parsing nicety. `tools: null` is not "no
+ * tools"; cc-runner.ts:285-288 reads it as "fall back to CC_ALLOWED_TOOLS",
+ * which includes Write, Edit, MultiEdit, Task and Skill. agents/reviewer.md
+ * deliberately omits Write/Edit so a reviewer can only report findings, never
+ * silently fix the diff it is judging. Before R308 a UTF-8 BOM or CRLF line
+ * endings — either of which an editor can introduce with no visible change —
+ * made the frontmatter regex miss, handed the reviewer the full toolset, and
+ * pasted the raw frontmatter into its mission. Cached for the process's life.
+ *
+ * Every case below mutates the REAL agents/reviewer.md bytes rather than a
+ * fixture string, so the test cannot drift away from the file it protects.
+ */
+describe("T14 parseRoleFile robustness — BOM, CRLF, malformed header", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const reviewerRaw = readFileSync(`${repoRoot}agents/reviewer.md`, "utf8");
+  const REVIEWER_TOOLS = ["Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch"];
+
+  test("the premise: agents/reviewer.md grants no write tool at all", () => {
+    const cfg = parseRoleFile(reviewerRaw);
+    assert.deepEqual(cfg.tools, REVIEWER_TOOLS);
+    for (const forbidden of ["Write", "Edit", "MultiEdit", "Task", "Skill"]) {
+      assert.ok(
+        !cfg.tools?.includes(forbidden),
+        `agents/reviewer.md must not grant ${forbidden} — if this fails, the rest of ` +
+          `T14 is guarding a property the file no longer has`,
+      );
+    }
+  });
+
+  test("a UTF-8 BOM does not change the parse", () => {
+    const cfg = parseRoleFile(`﻿${reviewerRaw}`);
+    assert.deepEqual(cfg.tools, REVIEWER_TOOLS, "BOM must not collapse tools to null");
+    assert.equal(cfg.model, parseRoleFile(reviewerRaw).model);
+    assert.ok(!cfg.mission.startsWith("---"), "frontmatter must still be stripped");
+    assert.ok(!cfg.mission.startsWith("﻿"), "BOM must not survive into the mission body");
+  });
+
+  test("CRLF line endings do not change the parse", () => {
+    const crlf = reviewerRaw.replace(/\n/g, "\r\n");
+    const cfg = parseRoleFile(crlf);
+    assert.deepEqual(cfg.tools, REVIEWER_TOOLS, "CRLF must not collapse tools to null");
+    assert.equal(
+      cfg.model,
+      parseRoleFile(reviewerRaw).model,
+      "a trailing \\r must not leak into model: and get rejected by sanitizeModel",
+    );
+    assert.equal(cfg.effort, parseRoleFile(reviewerRaw).effort);
+    assert.ok(!cfg.mission.startsWith("---"), "frontmatter must still be stripped");
+  });
+
+  test("BOM + CRLF together — the realistic Windows-editor round-trip", () => {
+    const cfg = parseRoleFile(`﻿${reviewerRaw.replace(/\n/g, "\r\n")}`);
+    assert.deepEqual(cfg.tools, REVIEWER_TOOLS);
+  });
+
+  test("no tool name carries stray whitespace after a CRLF round-trip", () => {
+    const cfg = parseRoleFile(reviewerRaw.replace(/\n/g, "\r\n"));
+    // Asserted before the loop, or a tools:null regression makes this test
+    // pass vacuously on an empty iteration — which is what it did against the
+    // pre-R308 parser when the whole point was that tools went null.
+    assert.ok(cfg.tools, "tools must not be null — a null here fails open to CC_ALLOWED_TOOLS");
+    assert.equal(cfg.tools.length, REVIEWER_TOOLS.length);
+    for (const t of cfg.tools) {
+      assert.equal(t, t.trim(), `tool "${JSON.stringify(t)}" carries stray whitespace`);
+      assert.ok(!/[\r\n]/.test(t), `tool ${JSON.stringify(t)} contains a line break`);
+    }
+  });
+
+  test("an unclosed frontmatter block THROWS instead of degrading to tools:null", () => {
+    // The closing '---' deleted: the header opens and never closes. Silently
+    // returning tools:null here is exactly the privilege escalation.
+    const truncated = reviewerRaw.split("\n---\n")[0] + "\n";
+    assert.throws(
+      () => parseRoleFile(truncated),
+      (err: unknown) => {
+        assert.ok(err instanceof Error, "must throw an Error");
+        assert.equal((err as Error).name, "RoleFileParseError");
+        assert.match((err as Error).message, /never closed/);
+        return true;
+      },
+      "an unparseable header is a misconfiguration, like the unreadable file readRoleFile throws on",
+    );
+  });
+
+  test("a header opened with CRLF and never closed also throws", () => {
+    const truncated = (reviewerRaw.split("\n---\n")[0] + "\n").replace(/\n/g, "\r\n");
+    assert.throws(() => parseRoleFile(truncated), { name: "RoleFileParseError" });
+  });
+
+  test("no frontmatter at all is still legal and still yields tools:null", () => {
+    // The negative control that keeps the throw narrow: only a file that
+    // CLAIMS frontmatter and fails to close it is an error. A plain mission
+    // file is a valid definition with no allowlist of its own.
+    const cfg = parseRoleFile("You are the reviewer.\n\nFind what is wrong.\n");
+    assert.equal(cfg.tools, null);
+    assert.equal(cfg.mission, "You are the reviewer.\n\nFind what is wrong.");
+  });
+
+  test("a BOM in front of a plain mission file does not make it look like frontmatter", () => {
+    const cfg = parseRoleFile("﻿You are the reviewer.");
+    assert.equal(cfg.tools, null);
+    assert.equal(cfg.mission, "You are the reviewer.");
+  });
+
+  test("every committed agents/*.md still parses — no role file regresses", () => {
+    for (const role of ["architect", "planner", "builder", "reviewer", "scout", "researcher"]) {
+      const raw = readFileSync(`${REPO_AGENTS_DIR}/${role}.md`, "utf8");
+      const cfg = parseRoleFile(raw);
+      assert.ok(cfg.tools && cfg.tools.length > 0, `${role}.md must declare a tools allowlist`);
+      assert.ok(cfg.mission.length > 0, `${role}.md must have a mission body`);
+      assert.ok(!cfg.mission.startsWith("---"), `${role}.md frontmatter must be stripped`);
+    }
+  });
+});

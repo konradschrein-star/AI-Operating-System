@@ -38,6 +38,15 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   `paused|blocked|done|cancelled`.
 - **T9 chainKeys determinism:** same (round, cycle) ⇒ identical keys (idempotency
   contract the DB index relies on).
+- **T15 `createFixChain` conflict arbitration** (added in P3 fix cycle 2, R308): both chain
+  INSERTs use a BARE `ON CONFLICT DO NOTHING` — a chain row is subject to two unique
+  indexes (`project_tasks_chain_key_uniq`, and `main`'s live `project_tasks_identity_idx`)
+  and naming either leaves the other as an unhandled `unique_violation`. Then, because
+  `DO NOTHING` reports zero rows whichever index fired, the conflict must be CLASSIFIED
+  (`created` / `replay` / `occupied`) by looking the row up — chain_key first, identity
+  second, throw if neither explains it — and the caller must block the project on
+  `occupied` rather than announce an absorbed replay, or a reviewer round's merged verdict
+  is dropped in silence. Live proof: `docs/plan/evidence/0039-conflict-target.md`.
 - **T10 prompt policy:** `WORKTREE_POLICY`, `REVIEWER_LIVE_CHECK`, `DEPLOY_GUIDE`
   exported constants: worktree policy text present in built prompts for every role on a
   repo project, absent for scratch; reviewer prompt contains the
@@ -66,6 +75,17 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   since AGENTS_DIR wins. When `AGENTS_DIR` has no copy the parity check does not silently
   pass: it emits a `t.diagnostic` naming the file that will be used and asserts the repo
   fallback is what resolves. Unknown role ⇒ `null`.
+- **T14 `parseRoleFile` robustness** (added in P3 fix cycle 2, R308): a SECURITY test, not
+  a parsing nicety. `tools: null` is not "no tools" — `cc-runner.ts` reads it as "fall back
+  to `CC_ALLOWED_TOOLS`", the full set including `Write`/`Edit`/`MultiEdit`/`Task`/`Skill`,
+  and `agents/reviewer.md` omits the write tools on purpose so a reviewer can only report
+  findings. A UTF-8 BOM or CRLF line endings — either introduced by an editor with no
+  visible change — used to make the frontmatter regex miss and hand the reviewer the full
+  toolset, cached for the process's life. T14 mutates the REAL `agents/reviewer.md` bytes
+  (BOM, CRLF, both, header truncated) and asserts the allowlist survives, that no tool name
+  carries a stray `\r`, that an unclosed frontmatter block THROWS `RoleFileParseError`
+  rather than degrading, that a plain no-frontmatter file is still legal, and that every
+  committed `agents/*.md` parses. Mutation-tested against the pre-R308 parser: 5 of 9 red.
 
 ## 2. Integration checks (real DB, careful scope)
 
@@ -76,11 +96,17 @@ confidence comes from:
 - **I1 SQL review as a first-class review item:** the phase reviewer reads the exact
   promote/claim SQL and the consolidation transaction and walks the red-team scenarios
   (§4) against them line by line.
-- **I2 Migration dry-run:** apply 0035 to a scratch database (`createdb` a temp DB, apply
-  0030→0035 chain, or minimally 0035 against a cloned `project_tasks` DDL) to prove it
-  runs; drop it after. Never applied to the live DB before the deploy phase.
+- **I2 Migration dry-run:** apply **`db/migrations/0039_reviewer_chain_key.sql`** — this
+  project's migration, renumbered from 0035 at R308 because `main` shipped its own 0035 —
+  to a scratch database (`createdb` a temp DB, apply the 0030→0039 chain, or minimally
+  0039 against a cloned `project_tasks` DDL that also carries `main`'s
+  `project_tasks_identity_idx`) to prove it runs; drop it after. Never applied to the live
+  DB before the deploy phase. Transcripts: `docs/plan/evidence/0035-dryrun.md` (the DDL
+  itself) and `docs/plan/evidence/0039-conflict-target.md` (both indexes together).
 - **I3 Scratch-project smoke (R20):** the researcher end-to-end run doubles as the live
-  integration test of task→run→role-file→commit for a NEW role, on the CURRENT engine.
+  integration test of task→run→role-file→commit for a NEW role. Runs in P6 against the
+  POST-restart engine, not the current one — see §3.1 for why the current one cannot
+  host it.
 - **I4 Helper error-path runs (R23):** executed by builder AND re-executed by reviewer:
   no key ⇒ exit 2 + both locations named; `GEMINI_API_KEY=definitely-invalid` ⇒ API error
   surfaced verbatim, exit 1; same for Perplexity.
@@ -103,12 +129,42 @@ project encodes, applied to itself from phase 1 onward), plus the phase-specific
 |---|---|
 | P1 engine logic | T1–T9 + T12 green; I1 red-team walk (§4) with findings addressed; I2 migration dry-run output in the review |
 | P2 policy/prompts + GitHub | T10 green; helper pushed THIS branch to origin (S6); grep proves no `--force` in helper; no-origin + no-auth exits proven in a scratch dir |
-| P3 researcher | T11 green; R19 install verified; R20 smoke artifacts inspected (citations real — reviewer spot-checks ≥ 2 URLs actually contain the cited claims); scratch project closed |
+| P3 researcher | T11 + T13 + T14 green; **R19 struck** (see §3.1); **R20 moved to P6** (see §3.1) |
 | P4 external tools | I4 re-run by reviewer; docs match `--help`; reminders exist via `GET /api/reminders` (R24); zero new deps (`git diff main...HEAD -- '**/package.json' 'pnpm-lock.yaml'` is empty) |
 | P5 integration | full-diff review `git diff main...HEAD`; N2 verified (`git diff --name-only main...HEAD` touches no `forge-control-web/` path and not `src/routes/agents.ts`); vault notes appended not truncated |
-| P6 deploy | brief's protocol followed verbatim; post-deploy `pm2 ls`; migration applied; detached restart launched, NOT awaited |
+| P6 deploy | brief's protocol followed verbatim; post-deploy `pm2 ls`; migration applied; detached restart launched, NOT awaited; **plus the R20 smoke carried over from P3 (§3.1)** |
 
 A review without executed checks is not a review — VERDICT must cite command outputs.
+
+### 3.1 P3's gate, amended at R308
+
+The P3 row originally read *"T11 green; R19 install verified; R20 smoke artifacts
+inspected …; scratch project closed"*. As specified it could never go green in P3, and
+three rounds (R302–R304, `docs/plan/evidence/p3-smoke.md`) were spent discovering why.
+Both halves are now resolved rather than retried:
+
+**R19 is struck, not deferred.** It required a human `cp` of `agents/researcher.md` into
+`/root/.claude/agents/`, because the agent harness guards `/root/.claude` as a sensitive
+path and the engine's own agents structurally cannot write there. R306's `roleFilePaths()`
+fallback removed the need: a role file committed to `agents/` resolves from
+`REPO_AGENTS_DIR` on the next executor restart. The P6 merge puts `researcher.md` in
+`/opt/forge-ai-os/agents/`, and the detached `safe-restart.sh` in the same phase picks it
+up. Nothing is owed by Konrad. The reminder asking him for the `cp` was cancelled at R308
+and replaced with an accurate one.
+
+**R20 moves to P6 and stays a hard gate.** It cannot honestly run before the deploy: the
+LIVE engine predates the fallback, so launching a researcher on it would resolve nothing,
+cache the bare mission for the executor's lifetime, and force exactly the restart this
+project is forbidden to perform. Running it AFTER the P6 restart is not a weaker test —
+it is the stronger one, because it exercises the deployed engine rather than the worktree.
+Its acceptance is unchanged and is now a P6 exit criterion: scratch project created, the
+researcher run completes, a `docs/research/*.md` with ≥ 3 cited sources is committed, the
+reviewer spot-checks ≥ 2 URLs against the claims made, scratch project closed.
+
+**What P3 keeps.** T11 (frontmatter parses), T13 (the engine's own resolution order finds
+a real definition, plus install-drift parity) and T14 (the allowlist survives a BOM/CRLF
+and an unclosed header throws). These are the checkable half of the phase, and they run in
+the worktree with no live-system write at all.
 
 ## 4. Red-team review (P1, mandatory — the quality bar's named requirement)
 

@@ -609,13 +609,23 @@ async function consolidateReviewerGroup(
       console.log(
         `[project-tick] round ${round} reviewers → pass (${inputs.length} reviewer(s))`,
       );
-      // E4's round-complete push, moved from the per-task path to here. The
-      // reviewers were only just marked 'done', so roundIsComplete() has to be
-      // asked AFTER markGroupDone or it always answers false. Checked rather
-      // than assumed: a reviewer round can share its round number with other
-      // roles, and only the last task of the round should announce it.
+      // E4's two pushes, moved from the per-task path to here. Both halves:
+      // the per-task ✅ (non-goal projects only — a goal project can carry
+      // hundreds of tasks and has goalHeartbeats() instead) and the 🏁 round
+      // boundary. The round-complete check has to run AFTER markGroupDone or
+      // it always answers false, and it is checked rather than assumed because
+      // a reviewer round can share its number with other roles.
+      const project = await getProject(projectId).catch(() => null);
+      const name = project?.name ?? projectId;
+      if (project && !isGoalMode(project)) {
+        for (const r of inputs) {
+          await queueNotification(
+            `✅ ${name} · reviewer task "${r.title}" done (round ${round}).`,
+            "project",
+          ).catch(() => {});
+        }
+      }
       if (await roundIsComplete(projectId, round).catch(() => false)) {
-        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
         await queueNotification(`🏁 ${name} · round ${round} complete.`, "project").catch(
           () => {},
         );
@@ -636,7 +646,8 @@ async function consolidateReviewerGroup(
       //
       // Reversed, a crash is harmless: the reviewers stay 'running' with
       // settled runs, listSettledRunningTasks() has NO project-status filter
-      // (db/projects.ts:501-516 — reconciliation is bookkeeping and must run
+      // (see listSettledRunningTasks in db/projects.ts — reconciliation is
+      // bookkeeping and must run
       // for paused/blocked projects too), so it re-surfaces them next tick,
       // consolidation re-decides `block` identically (the inputs did not move),
       // and meanwhile the already-blocked project promotes and claims nothing.
@@ -668,7 +679,7 @@ async function consolidateReviewerGroup(
       // a window where round R is fully 'done' with no fix round in the table,
       // and promoteReadyTasks() would promote the next phase's planner straight
       // past an unfinished fix cycle.
-      const created = await createFixChain({
+      const chain = await createFixChain({
         project_id: projectId,
         round,
         cycle: decision.cycle,
@@ -679,20 +690,60 @@ async function consolidateReviewerGroup(
         reviewerBrief: rereviewBrief(decision.mergedBrief),
         reviewerChainKey: decision.reviewerChainKey,
       });
+
+      // A STRANGER holds one of our chain's identity tuples. Its brief is not
+      // the brief this consolidation just merged, so the round's feedback would
+      // reach nobody. Treating that as an absorbed replay — which the flags
+      // did until R308 — marks the reviewers done, sends no push, and loses the
+      // verdict in silence. The reachable case is the deploy window: the LIVE
+      // pre-0039 engine reconciles per task, so reviewer A settling before the
+      // restart writes ("Fix cycle 1", round R+1, chain_key NULL), and reviewer
+      // B settling after it lands here. B's findings are the ones that vanish.
+      //
+      // So: block, and say which row is in the way. The verdicts are not lost —
+      // they are in the reviewer runs, and the message names the round. Marking
+      // the group done anyway is deliberate: a blocked project promotes and
+      // claims nothing, and leaving the reviewers 'running' would re-decide and
+      // re-notify this same round every 10s.
+      const occupied = [chain.builder, chain.reviewer].filter(
+        (o): o is Extract<typeof o, { kind: "occupied" }> => o.kind === "occupied",
+      );
+      if (occupied.length > 0) {
+        const detail = occupied
+          .map((o) => `task ${o.id} ("${o.title}", chain_key ${o.chain_key ?? "NULL"})`)
+          .join(" and ");
+        await setProjectStatus(projectId, "blocked");
+        console.error(
+          `[project-tick] round ${round} reviewers → fix cycle ${decision.cycle} COLLIDED: ` +
+            `${detail} already holds this chain's identity — merged feedback NOT delivered`,
+        );
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(
+          `🚫 Project "${name}" blocked — round ${round}'s fix cycle ${decision.cycle} could not be ` +
+            `created: ${detail} already occupies it, written by an earlier engine. The reviewers' ` +
+            `findings are in their run threads. Re-title or delete that task, then ` +
+            `POST /api/projects/${projectId}/unwedge.`,
+          "project",
+        ).catch(() => {});
+        await markGroupDone(inputs);
+        return;
+      }
+
       await markGroupDone(inputs);
       const line =
         `[project-tick] round ${round} reviewers → fix cycle ${decision.cycle} ` +
-        `(builderCreated=${created.builderCreated}, reviewerCreated=${created.reviewerCreated})`;
-      if (created.builderCreated && created.reviewerCreated) {
+        `(builder ${chain.builder.kind} ${chain.builder.id}, ` +
+        `reviewer ${chain.reviewer.kind} ${chain.reviewer.id})`;
+      if (chain.builder.kind === "created" && chain.reviewer.kind === "created") {
         console.log(line);
       } else {
         // Not an error: this is the replay guard doing exactly its job.
-        console.log(`${line} — replay absorbed by the ON CONFLICT guard, no duplicate chain`);
+        console.log(`${line} — replay absorbed by the chain_key guard, no duplicate chain`);
       }
       // E4's fix-cycle push. Sent only for a chain this tick actually created:
       // announcing a replay would tell Konrad the same fix cycle opened twice,
       // which is the exact confusion bug 1 produced in the first place.
-      if (created.builderCreated) {
+      if (chain.builder.kind === "created") {
         const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
         await queueNotification(
           `🔁 ${name} · reviewers want fixes — fix cycle ${decision.cycle} opened at round ${round + 1}.`,
@@ -766,16 +817,25 @@ async function reconcileSettledTasks(): Promise<void> {
         ).catch(() => {});
         continue;
       }
-      console.log(
-        `[project-tick] reconciled ${task.role} task ${task.id} (round ${task.round}) ` +
-          `→ done — ${name} · ${task.title}`,
-      );
       if (task.role === "reviewer") {
+        // NOT marked done here, and deliberately not logged as done either: a
+        // reviewer's fate belongs to its whole round. consolidateReviewerGroup
+        // may well return `wait` for this group, leaving the task 'running' for
+        // another tick — main's per-task "→ done" line would have claimed
+        // otherwise every time, in the log Konrad reads to follow a project.
+        console.log(
+          `[project-tick] reviewer task ${task.id} (round ${task.round}) settled — ` +
+            `deferring to round consolidation — ${name} · ${task.title}`,
+        );
         reviewerRounds.set(`${task.project_id}:${task.round}`, {
           projectId: task.project_id,
           round: task.round,
         });
       } else {
+        console.log(
+          `[project-tick] reconciled ${task.role} task ${task.id} (round ${task.round}) ` +
+            `→ done — ${name} · ${task.title}`,
+        );
         await setTaskStatus(task.id, "done");
         await notifyTaskProgress(task, project);
       }
