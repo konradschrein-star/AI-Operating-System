@@ -133,6 +133,20 @@ interface AgentRun {
   usage_by_model: ModelBreakdown[];
   current_activity: CurrentActivity | null;
   parent_run_id: string | null;
+  /** What KIND of thing this row is — see `classifyAgentKind`. The panel
+   *  renders it verbatim: a stranger must be able to tell an operator chat
+   *  from a project worker from a cron tick without reading the title. */
+  agent_kind: AgentKind;
+  /** Project worker role (architect/planner/builder/reviewer/scout/
+   *  researcher) from `metadata.role`. Null on anything that isn't a worker
+   *  — and on a worker whose metadata is incomplete, which is exactly why
+   *  such a row does not classify as `worker`. */
+  role: string | null;
+  /** `metadata.project_id` — the project this run belongs to. */
+  project_id: string | null;
+  /** `metadata.cron_name` — the schedule's human name ("weekly-review").
+   *  Present independently of `agent_kind`; `cron_id` is what classifies. */
+  cron_name: string | null;
   /** System A sub-agents currently active within this run's process. */
   subagents: Subagent[];
 }
@@ -568,6 +582,49 @@ function subagentsFromRollup(src: unknown): Subagent[] {
   return out;
 }
 
+export type AgentKind = "operator" | "worker" | "cron" | "unknown";
+
+/** Read a metadata field as a non-empty string, or nothing.
+ *
+ *  ABSENT means: missing key, null, empty string, or any non-string value.
+ *  `metadata` is untyped JSONB — a number, an object or a stray `""` must
+ *  never be mistaken for a project id, or a cron tick reads as a worker. */
+function metaStr(meta: Record<string, unknown>, key: string): string | null {
+  const v = meta[key];
+  return typeof v === "string" && v ? v : null;
+}
+
+/**
+ * Classify a run row into one of four kinds (R7, 02-architecture §4.1).
+ *
+ * Ordered precedence — FIRST MATCH WINS:
+ *   1. `metadata.cron_id` present            → "cron"
+ *   2. `metadata.project_id` AND `.role`     → "worker"
+ *   3. `worker === "forge-executor"`         → "operator"
+ *   4. anything else                         → "unknown"
+ *
+ * Why cron outranks the rest: a cron tick can carry ANY worker identity.
+ * Verified live — run e0f6f39e-10a3-4b9a-8124-3f0989205453 is a cron with
+ * `worker='forge-executor'` (would read as an operator chat at rule 3), and
+ * faa0fd8a… is a cron with `worker='skylab-producer'`. The schedule is the
+ * truth about why the run exists; the worker is only who executed it.
+ *
+ * Why a partial worker signature falls through: `project_id` without `role`
+ * (or the reverse) cannot name a role in the org chart, so it drops to the
+ * worker-identity rule and, failing that, to "unknown". "unknown" is a real,
+ * honest answer that shows up in the panel as signal — never guess a kind,
+ * never fall back to "operator".
+ */
+export function classifyAgentKind(
+  worker: string | null,
+  meta: Record<string, unknown>,
+): AgentKind {
+  if (metaStr(meta, "cron_id")) return "cron";
+  if (metaStr(meta, "project_id") && metaStr(meta, "role")) return "worker";
+  if (worker === "forge-executor") return "operator";
+  return "unknown";
+}
+
 function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
   const meta = row.metadata ?? {};
   const startedMs = row.started_at ? Date.parse(row.started_at) : NaN;
@@ -634,6 +691,15 @@ function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
       (meta as Record<string, unknown>).current_activity,
     ),
     parent_run_id: row.parent_run_id,
+    // Kind truth. The three metadata fields go over the wire through the
+    // SAME guard the classifier uses (`metaStr`), so a row can never render
+    // a role the classification didn't see — no join, no extra column: both
+    // `worker` and `metadata` are already selected by every query here, and
+    // a 4-second poll must not grow a projects-table join for a name.
+    agent_kind: classifyAgentKind(row.worker, meta),
+    role: metaStr(meta, "role"),
+    project_id: metaStr(meta, "project_id"),
+    cron_name: metaStr(meta, "cron_name"),
     subagents: rolledSubagents,
   };
 }
