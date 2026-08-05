@@ -10,8 +10,12 @@
  *
  * Three writers means real concurrency, so this pane is deliberately paranoid:
  *   - saves are debounced and carry the mtime they loaded from (409 on clash)
- *   - a poller notices external writes; clean panes hot-reload, dirty panes
+ *   - a watcher notices external writes; clean panes hot-reload, dirty panes
  *     surface a banner instead of silently losing either side
+ *
+ * Freshness is a single O(1) `GET /canvas/stat` — the previous version called
+ * /canvas/list every 4s, which walks the entire 145 MB vault and stats every
+ * drawing in it, purely to read one file's mtime.
  *
  * Excalidraw is imported dynamically with ssr:false — it touches window at
  * module scope and would break Next's server render.
@@ -29,6 +33,7 @@ import {
   CanvasConflictError,
   type CanvasListItem,
 } from "../api";
+import { statCanvas } from "./canvasLive";
 import "@excalidraw/excalidraw/index.css";
 
 const Excalidraw = dynamic(
@@ -71,7 +76,12 @@ function pickAppState(s: Record<string, unknown>): Record<string, unknown> {
 }
 
 const SAVE_DEBOUNCE_MS = 1200;
-const POLL_MS = 4000;
+/** Freshness poll. 2s is affordable now that a check is one stat() instead of
+ *  a recursive vault walk. */
+const POLL_MS = 2000;
+/** Three consecutive stat failures means the pane has genuinely lost touch with
+ *  the file — say so rather than letting Konrad draw on a stale scene. */
+const POLL_FAIL_LIMIT = 3;
 
 function relTime(ms: number): string {
   const diff = Date.now() - ms;
@@ -113,6 +123,9 @@ export function CanvasPane({
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [conflict, setConflict] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Set when the freshness watcher has failed repeatedly — a silent watcher is
+  // worse than no watcher, because the pane looks live while it is blind.
+  const [watchErr, setWatchErr] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
 
@@ -208,56 +221,50 @@ export function CanvasPane({
     saveTimer.current = setTimeout(() => void flush(), SAVE_DEBOUNCE_MS);
   }, [path, api, flush]);
 
-  // Watch for writes from Obsidian / the agent / another tab.
+  // Adopt an external write (Obsidian / the agent / another tab). Only ever
+  // called on a clean pane — a dirty pane must reach the 409 banner instead, so
+  // neither side's work disappears.
+  const adoptIfMoved = useCallback(
+    async (mtime: number) => {
+      if (!path) return;
+      if (dirty.current || conflict) return; // never stomp unsaved work
+      if (!baseMtime.current) return; // nothing loaded yet
+      if (Math.abs(mtime - baseMtime.current) <= 1) return;
+      await load(path, api);
+    },
+    [path, api, conflict, load],
+  );
+
+  // Freshness: one stat() every POLL_MS. The old version called /canvas/list —
+  // a recursive walk of the whole vault — every 4s for the same one number.
   useEffect(() => {
     if (!path) return;
+    let stopped = false;
+    let failures = 0;
     const t = setInterval(async () => {
-      if (dirty.current || conflict) return; // never stomp unsaved work
+      if (stopped) return;
+      if (dirty.current || conflict) return;
       try {
-        const r = await listCanvases();
-        const hit = r.items.find((i) => i.path === path);
-        if (hit && baseMtime.current && Math.abs(hit.mtime - baseMtime.current) > 1) {
-          await load(path, api); // clean pane → adopt their version silently
+        const s = await statCanvas(path);
+        failures = 0;
+        setWatchErr(null);
+        await adoptIfMoved(s.mtime);
+      } catch (e) {
+        // A poller that swallows every error stops noticing external writes and
+        // says nothing — that is how you lose a drawing. Speak up at 3.
+        failures++;
+        if (failures >= POLL_FAIL_LIMIT) {
+          setWatchErr(
+            `not tracking changes to this drawing (${String((e as Error).message ?? e)}) — reload before trusting what you see`,
+          );
         }
-      } catch {
-        /* transient — the next tick retries */
       }
     }, POLL_MS);
-    return () => clearInterval(t);
-  }, [path, api, conflict, load]);
-
-  // "Open the scraper map" — the agent parks an intent server-side and the
-  // pane acts on it, so Konrad never has to go find the file himself. Only
-  // newer sequence numbers act, so re-polling the same intent doesn't yank the
-  // view; unsaved work is never interrupted.
-  const lastIntentSeq = useRef<number>(0);
-  useEffect(() => {
-    const t = setInterval(async () => {
-      try {
-        const r = await fetch("/api/proxy/canvas/intent", {
-          headers: { accept: "application/json" },
-        });
-        if (!r.ok) return;
-        const { intent } = (await r.json()) as {
-          intent: { seq: number; path: string } | null;
-        };
-        if (!intent) return;
-        // First poll of a session adopts the current seq without acting, so a
-        // still-live intent from earlier doesn't hijack the pane on mount.
-        if (lastIntentSeq.current === 0) {
-          lastIntentSeq.current = intent.seq;
-          return;
-        }
-        if (intent.seq <= lastIntentSeq.current) return;
-        lastIntentSeq.current = intent.seq;
-        if (dirty.current) return; // don't interrupt unsaved drawing
-        if (intent.path !== path) onPathChange(intent.path);
-      } catch {
-        /* transient */
-      }
-    }, 3000);
-    return () => clearInterval(t);
-  }, [path, onPathChange]);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [path, conflict, adoptIfMoved]);
 
   // Persist on unmount so closing the pane never drops the last stroke.
   useEffect(
@@ -621,6 +628,21 @@ export function CanvasPane({
           }}
         >
           {err}
+        </div>
+      )}
+
+      {watchErr && (
+        <div
+          className="mono"
+          style={{
+            padding: "6px 12px",
+            fontSize: 10.5,
+            color: "#ffd8a8",
+            background: "#5c3a0033",
+            flexShrink: 0,
+          }}
+        >
+          {watchErr}
         </div>
       )}
 
