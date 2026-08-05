@@ -19,18 +19,21 @@
  * about this changes if round 503 widens the panel — every column is
  * `flex: none` with a min width and the description flexes.
  *
- * ── The one design choice the brief asked to be stated (U15) ──────────────
- * "A FINISHED row shows tokens + model and NO time at all … render an em dash
- * in the time slot for settled rows unless the row is the manager."
+ * ── Settled rows show a FROZEN number, not a blank (U15 as amended) ───────
+ * Two documents disagreed here and round 505 caught the code splitting the
+ * difference, which satisfied neither. U15 read "finished rows show tokens +
+ * model, NO time"; the project brief's Definition of Done #1 reads "a settled
+ * run shows a FROZEN duration (settled_at - started_at) … no exceptions
+ * anywhere in the panel". The previous code showed time on a settled MANAGER
+ * and "—" on every other settled row — an exception no round had ratified.
  *
- * The choice made here: **settled worker and sub-agent rows show "—"; the
- * manager row always shows its working time, frozen once it settles.** The
- * manager is the operator chat — its working time is the one number that
- * describes the whole session rather than a finished fragment of it, and a
- * panel whose top row goes blank the moment the chat completes reads as
- * broken. The honest number is never destroyed: a settled worker's real
- * working time is in the row's native `title`, one hover away. This is the
- * behaviour the round-504 screenshots must show.
+ * Resolved in favour of the brief, and ratified in the requirements corpus as
+ * U15a (docs/plan/12-ui-v3-requirements.md): **every settled row shows its
+ * working time, frozen, and no settled row ticks.** Konrad's complaint was
+ * that finished agents kept COUNTING UP, not that they showed a number — and
+ * "how long did the builder take" is exactly the question a finished row is
+ * there to answer. Hiding the number is information loss dressed as tidiness.
+ * The freeze is structural, one paragraph down.
  *
  * ── Time truth, structurally (U15/U16) ────────────────────────────────────
  * Two leaves, and the difference is not a branch inside one component:
@@ -46,6 +49,14 @@
  * the point. The controls are mounted in every row, always, and revealed by the
  * `.team-row` rules in app/globals.css. They sit in a fixed-width slot, so the
  * reveal changes opacity and nothing else — no reflow, no re-render.
+ *
+ * ARMING moves no pixels either, which is a separate claim and was false until
+ * round 506: the armed ✕ grew a 1px border, which grew line 1, which pushed
+ * every row below it down 2px mid-gesture — and a pointer that had been over
+ * the button ended up over the ROW, so the trailing click drilled into a run
+ * instead. The idle ✕ now carries the same transparent border, the same
+ * padding and a box wide enough for "sure?", so arming is a colour and a label
+ * and nothing else (round 505 finding #4).
  */
 
 import { memo, type CSSProperties } from "react";
@@ -57,7 +68,7 @@ import {
   roleTokenName,
   type RoleTokenName,
 } from "../live/agentsApi";
-import { capabilityTitle } from "./confirm";
+import { capabilityTitle, isSpuriousActivation } from "./confirm";
 import { fmtTokens, fmtWorkingTime, type TeamNode } from "./teamApi";
 import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
 import { useTick } from "./tickStore";
@@ -279,7 +290,11 @@ const TOKENS_COL = 42;
 const TIME_COL = 50;
 /** Fixed at all times, occupied by the always-mounted controls. Reserving it
  *  is what makes the CSS reveal free of reflow. */
-const CONTROLS_COL = 46;
+const CONTROLS_COL = 52;
+/** Wide enough for "sure?", worn by the ✕ in BOTH states. The idle glyph is
+ *  ~14px; letting the button size to its content is what made arming a layout
+ *  change (round 505 finding #4). */
+const X_COL = 32;
 
 const TIME_STYLE: CSSProperties = {
   color: tokens.textSecondary,
@@ -298,6 +313,21 @@ const BTN_STYLE: CSSProperties = {
   lineHeight: 1.6,
   borderRadius: 3,
   fontFamily: "inherit",
+};
+
+/** The ✕, idle and armed alike. Every box-affecting property is here and none
+ *  of them is conditional: the transparent border reserves the armed border's
+ *  1px on all four sides, `X_COL` + `border-box` reserves "sure?"'s width, and
+ *  the armed style below may therefore change only `background` and
+ *  `borderColor`. Measure this button in either state and you get the same
+ *  rectangle — which is the whole of finding #4. */
+const X_STYLE: CSSProperties = {
+  ...BTN_STYLE,
+  border: "1px solid transparent",
+  padding: "0 2px",
+  minWidth: X_COL,
+  boxSizing: "border-box",
+  textAlign: "center",
 };
 
 /* ── The row ─────────────────────────────────────────────────────────────── */
@@ -350,22 +380,20 @@ function TeamRowViewImpl({
 
   const sourceNote = workingSourceNote(n);
 
-  /* The U15 suppression, stated once. `showTime` is false for a settled
-   * non-manager row: it renders "—" and says why on hover. */
-  const isManager = row.depth === 0;
-  const showTime = !settled || isManager;
-  const timeMs = degradedTime || !showTime ? null : n.working_ms;
+  /* U15a / DoD #1, stated once and with no exception: every row shows its
+   * working time. The only thing that suppresses the number is the server
+   * telling us it could not measure it — never the row's status, never its
+   * depth. What settling changes is which COMPONENT renders it, below. */
+  const timeMs = degradedTime ? null : n.working_ms;
   /* The `~` marks an approximate NUMBER (13 §9). A cell with no number to
    * qualify — "—" — never wears it. */
   const prefix = timeMs !== null && n.working_ms_source === "rollup" ? "~" : "";
   const timeTitle = degradedTime
     ? "working time unavailable — the server reported an error for this enrichment step"
-    : !showTime
-      ? `finished after ${fmtWorkingTime(n.working_ms)} — finished rows show ` +
-        `tokens and model, not a clock (U15); the number is history, not a stopwatch`
-      : settled
-        ? `frozen at settle: ${fmtWorkingTime(n.working_ms)}${sourceNote ? ` (${sourceNote})` : ""}`
-        : `working time, still running${sourceNote ? ` (${sourceNote})` : ""}`;
+    : settled
+      ? `frozen at settle: ${fmtWorkingTime(n.working_ms)} — this row finished, so ` +
+        `the number is history and will not move again${sourceNote ? ` (${sourceNote})` : ""}`
+      : `working time, still running${sourceNote ? ` (${sourceNote})` : ""}`;
 
   const description = n.description ?? (degradedTasks ? EM_DASH : "(no description)");
 
@@ -487,20 +515,33 @@ function TeamRowViewImpl({
                   ? "Terminate this agent — click again to confirm"
                   : capabilityTitle("terminate")
             }
+            onKeyDown={(e) => {
+              // A held Enter on a focused button delivers an activation per
+              // autorepeat — round 505 got four terminates out of one key
+              // press. `preventDefault` on the repeat keydown is what stops
+              // the browser synthesising the click at all.
+              if (isSpuriousActivation({ detail: 0, repeat: e.repeat })) {
+                e.preventDefault();
+              }
+            }}
             onClick={(e) => {
               e.stopPropagation();
+              // The trailing half of a double-click (detail 2, 3, …) is the
+              // browser telling us this was one gesture, not two decisions.
+              // Keyboard activation reports detail 0 and passes through.
+              if (isSpuriousActivation({ detail: e.detail, repeat: false })) return;
               onX(n.id, settled);
             }}
             className="mono"
             style={{
-              ...BTN_STYLE,
+              ...X_STYLE,
               color: !settled && !canTerminate ? tokens.textGhost : tokens.bleed,
               cursor: !settled && !canTerminate ? "not-allowed" : "pointer",
+              /* Colour only — every box property is already in X_STYLE. */
               ...(armed
                 ? {
                     background: tokens.dangerActionBg,
-                    border: `1px solid ${tokens.dangerActionBorder}`,
-                    padding: "0 2px",
+                    borderColor: tokens.dangerActionBorder,
                   }
                 : {}),
             }}

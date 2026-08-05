@@ -1,0 +1,82 @@
+=== round 506 gates — 2026-08-05T21:40:36Z ===
+
+$ (cd forge-control && npx tsc --noEmit)
+exit=0
+
+$ (cd forge-control-web && npx tsc --noEmit)
+exit=0
+
+$ (cd forge-control-web && NODE_ENV=production pnpm build)
+
+ƒ Middleware                             83.2 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+exit=0
+
+$ bash scripts/checks/dollar-sweep.sh
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+exit=0
+
+$ tsx scripts/checks/check-team-rows.ts
+
+ALL PASS — team row model
+exit=0
+
+$ tsx scripts/checks/check-team-confirm.ts
+
+ALL PASS — team confirm machine
+exit=0
+
+$ tsx docs/plan/artifacts/phase500/confirm-stream-506.ts
+
+ALL PASS — sub-floor streams fire nothing; deliberate double-clicks still fire once
+exit=0
+
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(' forge-control-web/app/desktop/team/
+(empty above = token purity clean)
+
+$ git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|FileExplorerPanel|VaultFileList|routes/files'
+(empty above = no forbidden file touched)
+
+$ git status --porcelain (worktree)
+ M docs/plan/12-ui-v3-requirements.md
+ M docs/plan/artifacts/phase300/backfill.log
+ M docs/plan/artifacts/phase500/README.md
+ M docs/plan/artifacts/phase500/capture-team.json
+ M docs/plan/artifacts/phase500/control-inert.json
+ M docs/plan/artifacts/phase500/dismiss-persist.json
+ M docs/plan/artifacts/phase500/phase500-ambiguous-dark.png
+ M docs/plan/artifacts/phase500/phase500-ambiguous-light.png
+ M docs/plan/artifacts/phase500/phase500-armed-dark.png
+ M docs/plan/artifacts/phase500/phase500-armed-light.png
+ M docs/plan/artifacts/phase500/phase500-empty-dark.png
+ M docs/plan/artifacts/phase500/phase500-empty-light.png
+ M docs/plan/artifacts/phase500/phase500-hover-dark.png
+ M docs/plan/artifacts/phase500/phase500-hover-light.png
+ M docs/plan/artifacts/phase500/phase500-live-dark.png
+ M docs/plan/artifacts/phase500/phase500-live-light.png
+ M docs/plan/artifacts/phase500/phase500-ready-dark.png
+ M docs/plan/artifacts/phase500/phase500-ready-light.png
+ M docs/plan/artifacts/phase500/phase500-unlinked-dark.png
+ M docs/plan/artifacts/phase500/phase500-unlinked-light.png
+ M docs/plan/artifacts/phase500/team-frozen.json
+ M docs/plan/artifacts/phase500/team-hover-after.json
+ M docs/plan/artifacts/phase500/team-network-after.json
+ M forge-control-web/app/desktop/team/ChatTeamPanel.tsx
+ M forge-control-web/app/desktop/team/TeamRow.tsx
+ M forge-control-web/app/desktop/team/confirm.ts
+ M forge-control-web/app/desktop/team/dismissals.ts
+ M forge-control-web/app/desktop/team/teamRows.ts
+ M scripts/checks/check-team-confirm.ts
+ M scripts/checks/check-team-rows.ts
+?? docs/plan/artifacts/phase500/confirm-stream-506.ts
+?? docs/plan/artifacts/phase500/fixes-506.cjs
+?? docs/plan/artifacts/phase500/fixes-506.json
+?? docs/plan/artifacts/phase500/gates-506.txt
+
+$ git -C /opt/forge-ai-os status --porcelain (live checkout — must be empty)
+(empty above = live checkout untouched)

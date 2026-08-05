@@ -1,16 +1,16 @@
 {
   "protocol": "U16 frozen-time truth (14 §Frozen-time truth)",
-  "base": "http://127.0.0.1:7787",
+  "base": "http://127.0.0.1:7785",
   "api": "http://127.0.0.1:7798",
   "gap_ms": 12000,
   "live_runs_at_start": [
     {
-      "id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "id": "7b9933ef-b35b-4d07-b2c9-62b53756b3ef",
       "model": "claude-opus-5",
       "status": "running"
     },
     {
-      "id": "406ef179-3183-4af0-9d41-888e7620e66c",
+      "id": "9c620d6a-5269-4113-8c8f-889338f31aa5",
       "model": "claude-opus-5",
       "status": "running"
     }
@@ -115,7 +115,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "5m 31s",
           "workingFrozen": "true",
           "tokensText": "665k",
           "hasWorkingCell": true
@@ -125,7 +125,7 @@
           "kind": "subagent",
           "settled": true,
           "status": "done",
-          "workingText": "—",
+          "workingText": "34s",
           "workingFrozen": "true",
           "tokensText": "0",
           "hasWorkingCell": true
@@ -135,7 +135,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "6m 43s",
           "workingFrozen": "true",
           "tokensText": "3.68M",
           "hasWorkingCell": true
@@ -145,7 +145,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "10m 23s",
           "workingFrozen": "true",
           "tokensText": "5.05M",
           "hasWorkingCell": true
@@ -155,7 +155,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "14m 13s",
           "workingFrozen": "true",
           "tokensText": "3.25M",
           "hasWorkingCell": true
@@ -165,7 +165,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "8m 59s",
           "workingFrozen": "true",
           "tokensText": "4.60M",
           "hasWorkingCell": true
@@ -175,7 +175,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "12m 50s",
           "workingFrozen": "true",
           "tokensText": "5.89M",
           "hasWorkingCell": true
@@ -185,7 +185,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "12m 40s",
           "workingFrozen": "true",
           "tokensText": "4.70M",
           "hasWorkingCell": true
@@ -195,7 +195,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "10m 10s",
           "workingFrozen": "true",
           "tokensText": "2.29M",
           "hasWorkingCell": true
@@ -205,7 +205,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "12m 17s",
           "workingFrozen": "true",
           "tokensText": "3.25M",
           "hasWorkingCell": true
@@ -215,7 +215,7 @@
           "kind": "worker",
           "settled": true,
           "status": "cancelled",
-          "workingText": "—",
+          "workingText": "3m 18s",
           "workingFrozen": "true",
           "tokensText": "0",
           "hasWorkingCell": true
@@ -225,7 +225,7 @@
           "kind": "worker",
           "settled": true,
           "status": "cancelled",
-          "workingText": "—",
+          "workingText": "3m 16s",
           "workingFrozen": "true",
           "tokensText": "0",
           "hasWorkingCell": true
@@ -317,7 +317,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "5m 31s",
           "workingFrozen": "true",
           "tokensText": "665k",
           "hasWorkingCell": true
@@ -327,7 +327,7 @@
           "kind": "subagent",
           "settled": true,
           "status": "done",
-          "workingText": "—",
+          "workingText": "34s",
           "workingFrozen": "true",
           "tokensText": "0",
           "hasWorkingCell": true
@@ -337,7 +337,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "6m 43s",
           "workingFrozen": "true",
           "tokensText": "3.68M",
           "hasWorkingCell": true
@@ -347,7 +347,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "10m 23s",
           "workingFrozen": "true",
           "tokensText": "5.05M",
           "hasWorkingCell": true
@@ -357,7 +357,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "14m 13s",
           "workingFrozen": "true",
           "tokensText": "3.25M",
           "hasWorkingCell": true
@@ -367,7 +367,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "8m 59s",
           "workingFrozen": "true",
           "tokensText": "4.60M",
           "hasWorkingCell": true
@@ -377,7 +377,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "12m 50s",
           "workingFrozen": "true",
           "tokensText": "5.89M",
           "hasWorkingCell": true
@@ -387,7 +387,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "12m 40s",
           "workingFrozen": "true",
           "tokensText": "4.70M",
           "hasWorkingCell": true
@@ -397,7 +397,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "10m 10s",
           "workingFrozen": "true",
           "tokensText": "2.29M",
           "hasWorkingCell": true
@@ -407,7 +407,7 @@
           "kind": "worker",
           "settled": true,
           "status": "completed",
-          "workingText": "—",
+          "workingText": "12m 17s",
           "workingFrozen": "true",
           "tokensText": "3.25M",
           "hasWorkingCell": true
@@ -417,7 +417,7 @@
           "kind": "worker",
           "settled": true,
           "status": "cancelled",
-          "workingText": "—",
+          "workingText": "3m 18s",
           "workingFrozen": "true",
           "tokensText": "0",
           "hasWorkingCell": true
@@ -427,7 +427,7 @@
           "kind": "worker",
           "settled": true,
           "status": "cancelled",
-          "workingText": "—",
+          "workingText": "3m 16s",
           "workingFrozen": "true",
           "tokensText": "0",
           "hasWorkingCell": true
@@ -440,7 +440,7 @@
       "part": "B-live",
       "navigation": "injected-rail-row",
       "navigation_note": "one row spliced into GET /api/proxy/chat (the rail LIST) so a project worker can be clicked; the /team response measured below is the real server's, unmodified",
-      "live_run_id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "live_run_id": "7b9933ef-b35b-4d07-b2c9-62b53756b3ef",
       "ready": {
         "ok": true,
         "state": "unlinked",
@@ -451,32 +451,32 @@
       "running_rows_that_changed": 1,
       "changes": [
         {
-          "nodeId": "e5cc35d7-9855-4380-abdc-dd723f14af52",
-          "from": "8m 29s",
-          "to": "8m 40s"
+          "nodeId": "7b9933ef-b35b-4d07-b2c9-62b53756b3ef",
+          "from": "6m 48s",
+          "to": "6m 59s"
         }
       ],
       "sample1": [
         {
-          "nodeId": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "nodeId": "7b9933ef-b35b-4d07-b2c9-62b53756b3ef",
           "kind": "worker",
           "settled": false,
           "status": "running",
-          "workingText": "8m 29s",
+          "workingText": "6m 48s",
           "workingFrozen": "false",
-          "tokensText": "500k",
+          "tokensText": "124k",
           "hasWorkingCell": true
         }
       ],
       "sample2": [
         {
-          "nodeId": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "nodeId": "7b9933ef-b35b-4d07-b2c9-62b53756b3ef",
           "kind": "worker",
           "settled": false,
           "status": "running",
-          "workingText": "8m 40s",
+          "workingText": "6m 59s",
           "workingFrozen": "false",
-          "tokensText": "500k",
+          "tokensText": "124k",
           "hasWorkingCell": true
         }
       ],

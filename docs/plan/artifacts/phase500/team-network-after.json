@@ -1,6 +1,6 @@
 {
   "label": "after",
-  "base": "http://127.0.0.1:7787",
+  "base": "http://127.0.0.1:7785",
   "chat": "phase300 round-304 linkage fixture",
   "sse": "aborted",
   "caps": {
@@ -10,7 +10,7 @@
   "baseline_file": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase400/managers-network-after.json",
   "baseline_error": null,
   "panel_visible": {
-    "window_ms": 75001,
+    "window_ms": 75002,
     "total_requests": 50,
     "total_per_minute": 40,
     "counts": {
@@ -25,7 +25,7 @@
     }
   },
   "panel_collapsed": {
-    "window_ms": 75003,
+    "window_ms": 75001,
     "total_requests": 35,
     "total_per_minute": 28,
     "counts": {
@@ -44,513 +44,513 @@
   "verdict": "PASS",
   "raw_visible": [
     {
-      "ms": 11616,
+      "ms": 11676,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 11652,
+      "ms": 11699,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 12617,
+      "ms": 12674,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 15626,
+      "ms": 15684,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 16629,
+      "ms": 16690,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 18636,
+      "ms": 18697,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 19797,
+      "ms": 19831,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 21643,
+      "ms": 21705,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 21647,
+      "ms": 21710,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 24678,
+      "ms": 24725,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 26684,
+      "ms": 26725,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 27693,
+      "ms": 27734,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 27943,
+      "ms": 27972,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 30703,
+      "ms": 30746,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 31702,
+      "ms": 31745,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 33713,
+      "ms": 33766,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 36086,
+      "ms": 36109,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 36717,
+      "ms": 36768,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 36722,
+      "ms": 36782,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 39735,
+      "ms": 39790,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 41731,
+      "ms": 41782,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 42746,
+      "ms": 42799,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 44216,
+      "ms": 44268,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 45764,
+      "ms": 45808,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 46744,
+      "ms": 46800,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 48783,
+      "ms": 48816,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 51760,
+      "ms": 51813,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 51794,
+      "ms": 51824,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 52338,
+      "ms": 52404,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 54803,
+      "ms": 54833,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 56793,
+      "ms": 56825,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 57813,
+      "ms": 57841,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 60481,
+      "ms": 60533,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 60823,
+      "ms": 60854,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 61807,
+      "ms": 61837,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 63832,
+      "ms": 63873,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 66827,
+      "ms": 66853,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 66841,
+      "ms": 66885,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 68620,
+      "ms": 68682,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 69860,
+      "ms": 69896,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 71841,
+      "ms": 71876,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 72882,
+      "ms": 72909,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 75894,
+      "ms": 75918,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 76750,
+      "ms": 76872,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 76856,
+      "ms": 76888,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 78906,
+      "ms": 78928,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 81904,
+      "ms": 81902,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
       "endpoint": "/chat/:id/team"
     },
     {
-      "ms": 81915,
+      "ms": 81936,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 84891,
+      "ms": 84946,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 85000,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
-    },
-    {
-      "ms": 84923,
-      "method": "GET",
-      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
-      "endpoint": "/chat/:id"
     }
   ],
   "raw_collapsed": [
     {
-      "ms": 87934,
+      "ms": 87967,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 90944,
+      "ms": 90986,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 93038,
+      "ms": 93130,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 93954,
+      "ms": 93995,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 96977,
+      "ms": 97005,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 99990,
+      "ms": 100016,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 101205,
+      "ms": 101273,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 103003,
+      "ms": 103024,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 106019,
+      "ms": 106035,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 109028,
+      "ms": 109045,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 109343,
+      "ms": 109415,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 112040,
+      "ms": 112066,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 115050,
+      "ms": 115084,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 117495,
+      "ms": 117545,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 118074,
+      "ms": 118093,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 120526,
+      "ms": 120927,
       "method": "GET",
       "url": "/usage/quota",
       "endpoint": "/usage/quota"
     },
     {
-      "ms": 121088,
+      "ms": 121104,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 124099,
+      "ms": 124131,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 125645,
+      "ms": 125676,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 127109,
+      "ms": 127140,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 130118,
+      "ms": 130148,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 133129,
+      "ms": 133169,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 133784,
+      "ms": 133818,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 136139,
+      "ms": 136181,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 139152,
+      "ms": 139192,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 141917,
+      "ms": 141963,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 142174,
+      "ms": 142202,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 145188,
+      "ms": 145212,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 148197,
+      "ms": 148229,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 150046,
+      "ms": 150106,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 151211,
+      "ms": 151240,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 154220,
+      "ms": 154254,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 157229,
+      "ms": 157275,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"
     },
     {
-      "ms": 158191,
+      "ms": 158229,
       "method": "GET",
       "url": "/chat?limit=30",
       "endpoint": "/chat"
     },
     {
-      "ms": 160237,
+      "ms": 160286,
       "method": "GET",
       "url": "/chat/c0de0304-0000-4000-8000-000000000304",
       "endpoint": "/chat/:id"

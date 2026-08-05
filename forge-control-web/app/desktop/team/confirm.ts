@@ -21,6 +21,22 @@
  *       the request does not exist. The engine lane (engine-v2-research-lane)
  *       ships the contract; see the endpoint note in ChatTeamPanel.tsx.
  *
+ *  ── Why the confirm floor RESETS the window (round 505 finding #1) ───────
+ *  The floor used to be a delay rather than a gate: a swallowed click left
+ *  `armed.at` untouched, so a sustained stream of activations kept growing
+ *  `sinceArm` until it crossed the floor on its own and fired. Twenty clicks
+ *  30ms apart produced three terminates; one held Enter key produced four.
+ *  An under-floor click now returns `rearm`, which RE-STAMPS `armed.at` to the
+ *  click's own clock — so a continuous stream can never accumulate a floor's
+ *  worth of separation, no matter how long it runs. The floor is only crossed
+ *  by a genuine pause.
+ *
+ *  Two more halves live in the row, expressed as `isSpuriousActivation` below
+ *  so they are values this file's check script can assert rather than inline
+ *  lambdas nobody tests: the second half of a double-click (`detail > 1`) and
+ *  every auto-repeat keydown (`repeat`) are dropped before they reach the
+ *  machine at all.
+ *
  *  ── What counts as destructive ────────────────────────────────────────────
  *  X on a RUNNING row is terminate: it would kill work in flight, and it gets
  *  the two-click confirm. X on a SETTLED row is a local dismissal — hidden,
@@ -37,12 +53,20 @@
  *  timers) — a stale arming re-arms rather than firing. */
 export const ARM_WINDOW_MS = 3_000;
 
-/** The floor between arming and firing. A physical double-click, a synthetic
- *  `dblclick`, and two `click` events dispatched in the same tick all deliver
- *  their second click with a delta far under this; none of them may fire a
- *  terminate. 150ms is longer than any double-click interval a browser
- *  reports and far shorter than a deliberate second click. */
-export const MIN_CONFIRM_MS = 150;
+/** The floor between arming and firing.
+ *
+ *  It was 150ms, on the reasoning that this is "longer than any double-click
+ *  interval a browser reports". That reasoning was wrong: platform multi-click
+ *  intervals are ~500ms, which is why round 506's browser protocol could still
+ *  land a terminate with four discrete clicks 350ms apart — each one reported
+ *  `detail: 1`, so the double-click guard never saw them, and 350 > 150 read
+ *  as a deliberate confirmation. Rage-clicking a button is not a decision.
+ *
+ *  500ms is the platform's own answer to "was that one gesture or two", and it
+ *  is still only a fifth of the 3s arm window, so a person who reads "sure?"
+ *  and clicks has 2.5 full seconds to do it. Nothing a hand does inside half a
+ *  second is a considered second act. */
+export const MIN_CONFIRM_MS = 500;
 
 /** Which row is armed, and when it was armed. One instance for the whole
  *  panel — arming a second row replaces this, which is what disarms the
@@ -55,15 +79,22 @@ export interface ArmedState {
 
 /** What the panel should do about one click on `[data-team-x]`.
  *
- *  `blocked` is a first-class outcome rather than a silent `return`: the
- *  component logs nothing, but the check script asserts the REASON, so
- *  "capability gate held" and "double-click was swallowed" cannot be confused
- *  with each other in a test the way two `undefined`s would be. */
+ *  Every outcome is a first-class value rather than a silent `return`: the
+ *  component logs nothing, but the check script asserts which one came back,
+ *  so "capability gate held" and "the click was too fast" cannot be confused
+ *  with each other in a test the way two `undefined`s would be.
+ *
+ *  `arm` and `rearm` ask the component for the same state write —
+ *  `{ id, at: nowMs }` — and are two actions rather than one because they mean
+ *  different things: `arm` is a user starting a confirm, `rearm` is a
+ *  too-fast click being swallowed AND pushing the window back so a stream
+ *  cannot accumulate its way past the floor. */
 export type XDecision =
   | { action: "dismiss"; id: string }
   | { action: "arm"; id: string }
+  | { action: "rearm"; id: string }
   | { action: "terminate"; id: string }
-  | { action: "blocked"; reason: "capability" | "too-fast" };
+  | { action: "blocked"; reason: "capability" };
 
 export interface XClickInput {
   nodeId: string;
@@ -110,7 +141,13 @@ export function decideXClick(i: XClickInput): XDecision {
   // 4. Too fast to be a decision. Covers double-click, synthetic dblclick, and
   //    two clicks dispatched in one tick (sinceArm === 0). A clock that ran
   //    backwards lands here too, which is the safe side.
-  if (sinceArm < MIN_CONFIRM_MS) return { action: "blocked", reason: "too-fast" };
+  //
+  //    It returns `rearm`, not a bare block: the window restarts at THIS
+  //    click. That is what makes the floor a gate instead of a delay — a
+  //    sustained stream of activations keeps resetting its own separation and
+  //    can never reach MIN_CONFIRM_MS, so no amount of clicking fast is a
+  //    substitute for clicking twice deliberately (round 505 finding #1).
+  if (sinceArm < MIN_CONFIRM_MS) return { action: "rearm", id: i.nodeId };
 
   // 5. The capability gate — the guard the reviewer will try to walk around by
   //    deleting the `disabled` attribute. It lives in the decision, not in the
@@ -118,6 +155,35 @@ export function decideXClick(i: XClickInput): XDecision {
   if (!i.canTerminate) return { action: "blocked", reason: "capability" };
 
   return { action: "terminate", id: i.nodeId };
+}
+
+/** One raw activation of a button, reduced to the two fields that decide
+ *  whether it is a human decision or a machine repeating itself. */
+export interface Activation {
+  /** `MouseEvent.detail`: 1 for a single click, 2 for the second click of a
+   *  double-click, 3+ for the third and beyond, 0 for keyboard activation. */
+  detail: number;
+  /** `KeyboardEvent.repeat`: true for every keydown after the first while the
+   *  key is held down. A held Enter on a focused button delivers one
+   *  activation per repeat — up to 30 a second. */
+  repeat: boolean;
+}
+
+/**
+ * Whether an activation should be DROPPED before the machine ever sees it.
+ *
+ * The floor in `decideXClick` already refuses to fire on these, but dropping
+ * them here means a double-click's trailing half and an auto-repeat storm do
+ * not even churn the armed window — and, more importantly, it means the two
+ * guards are values with a test rather than two inline lambdas in JSX that no
+ * check script can reach. Round 505 mounted both attacks (15 real mouse clicks
+ * 20ms apart; 25 trusted autorepeat keydowns at 33ms) and both got through the
+ * old code.
+ *
+ * Keyboard activation reports `detail: 0`, so the `> 1` test never touches it.
+ */
+export function isSpuriousActivation(a: Activation): boolean {
+  return a.detail > 1 || a.repeat;
 }
 
 /** Whether `[data-team-x]` on this row should render `data-confirm="armed"`.

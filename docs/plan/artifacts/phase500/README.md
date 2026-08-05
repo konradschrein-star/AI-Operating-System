@@ -460,3 +460,174 @@ scripts are known to fail loudly when the thing they measure is absent.
 
 Round 501a built the data layer, 502 the panel, 503 mounted it in the chat
 SidePanel and retired `LiveProjectsBody`.
+
+---
+
+## 8. Round 506 — fix cycle 1 (answering round 505's five findings)
+
+Round 505 (adversarial red team) returned **NEEDS_FIXES** with five findings.
+This section is the evidence that each one is closed, measured the same way the
+reviewer measured it. Two new files carry it:
+
+| File | Kind | Proves |
+|---|---|---|
+| `confirm-stream-506.ts` → `/tmp` stdout | tsx, no browser | finding #1 before/after: the pre-506 rules and the shipped rules replayed side by side over the same click streams |
+| `fixes-506.cjs` → `fixes-506.json` | Playwright | findings #1–#5 in a real browser, 17 assertions, **PASS** |
+
+Harness: worktree API on `:7798` (already up), an isolated build of this
+worktree in `/tmp/r506-web` served on **:7785** — `:7787/7788/7789` belong to
+other rounds and were not touched. `git status --porcelain` in the worktree
+touches only the files this round changed; `/opt/forge-ai-os` was never opened.
+
+### 8.1 Finding #1 (HIGH, blocking) — the confirm floor was a delay, not a gate
+
+Two defects, one shipped and one found while proving the fix:
+
+1. A swallowed click left `armed.at` untouched, so `sinceArm` grew *through* a
+   click stream and crossed the floor by itself. **Fix:** an under-floor click
+   now returns `rearm`, which re-stamps `armed.at` to that click
+   (`confirm.ts:decideXClick` rule 4). A stream can never accumulate a floor's
+   worth of separation.
+2. The floor was 150ms, justified as "longer than any double-click interval a
+   browser reports". That is wrong — platform multi-click windows are ~500ms —
+   and round 506's own browser protocol landed a terminate with **four discrete
+   clicks 350ms apart**, each reporting `detail: 1` so the double-click guard
+   never saw them. **Fix:** `MIN_CONFIRM_MS` is now **500**, the platform's own
+   answer to "one gesture or two". The 3s arm window is unchanged, so a person
+   who reads "sure?" has 2.5s to act.
+
+Plus the two DOM guards the reviewer asked for, as a tested value
+(`isSpuriousActivation`) rather than inline lambdas: `detail > 1` drops the
+trailing half of a double-click, `repeat` drops every autorepeat keydown.
+
+`confirm-stream-506.ts` — same reducer, both rule sets, capabilities ON:
+
+| stream | pre-506 | post-506 |
+|---|---|---|
+| reviewer's repro: 20 clicks @30ms | **3** terminates (t+150, +330, +510ms) | **0** |
+| 3 clicks @149ms | 1 | 0 |
+| held-key cadence: 30 clicks @33ms | **5** | 0 |
+| click spam: 200 clicks @10ms | **12** | 0 |
+| ragged sub-floor stream, 14 clicks | 3 | 0 |
+| rage-click: 8 clicks @350ms | **4** | 0 |
+| 6 clicks @499ms | 3 | 0 |
+| two deliberate clicks, 1s apart | 1 | **1** ← the gate still opens |
+
+`check-team-confirm.ts` grew the regression cases the reviewer required (a
+≥3-click stream and a repeat case): a `replayStream` of the panel's reducer over
+bursts of 3–200 activations, the `isSpuriousActivation` table, and the
+positive control. 49 assertions, ALL PASS.
+
+In the browser (`fixes-506.json`, MutationObserver on `data-confirm`, the
+reviewer's own detector), with `terminate: true` declared:
+
+| attack | round 505 | round 506 |
+|---|---|---|
+| 15 real mouse clicks @20ms | 2 terminates | **0** |
+| 15 raw clicks @25ms | 2 | **0** |
+| 4 discrete clicks @350ms | 1 | **0** |
+| 6 discrete clicks @450ms | — | **0** |
+| held Enter, 25 trusted autorepeats @33ms (CDP) | **4** | **0** |
+| positive control: 2 clicks 1.2s apart | — | **1** (must be) |
+| non-GET requests across every attack | 0 | **0** |
+
+### 8.2 Finding #2 (MEDIUM) — a dead API showed a fresh tree for ~8s
+
+`retry: 0` on the team query only. The app-wide default is `retry: 2` with
+exponential backoff, which on a 5s poll means the last good tree stays on screen,
+unmarked, for longer than the poll it is covering for.
+
+Aborting every `/api/proxy/chat/:id/team` request, sampled once a second:
+
+| | round 505 | round 506 |
+|---|---|---|
+| +2s | `ready`, 20 rows | `ready`, 20 rows (poll not yet due) |
+| +4s | `ready`, 20 rows | **`error`, 0 rows** |
+| +6s | `ready`, 20 rows | `error`, 0 rows |
+| +8s | `error`, 0 rows | `error`, 0 rows |
+| samples showing rows beside an error | 0 | **0** |
+
+The panel now fails on the first failed poll instead of the third.
+
+### 8.3 Finding #3 (LOW) — "N hidden · show" counted ids, not rows
+
+`flattenTeam` returns `{ rows, hiddenCount }`; `hiddenCount` is the number of
+nodes the walk actually skipped, sub-agents of a dismissed parent included.
+`useDismissals` no longer exposes a `count` at all — the wrong number is gone,
+not merely unused.
+
+| case | round 505 | round 506 |
+|---|---|---|
+| 2 junk ids in localStorage, all 20 rows rendered | "**2** hidden · show" | **no label at all**, 20/20 rows |
+| dismiss a worker owning 1 sub-agent (2 rows go) | "**1** hidden" | "**2** hidden · show", rows 20 → 18 |
+| 60 000 junk ids | "60000 hidden · show" | 0 (same code path as the 2-id case) |
+
+`check-team-rows.ts` asserts the count directly: subtree arithmetic, phantom
+ids, nested dismissals (no double-count), and `hiddenCount === rowsBefore -
+rowsAfter`.
+
+### 8.4 Finding #4 (LOW) — arming changed the row's box
+
+The idle ✕ now carries the armed one's 1px border (transparent), its padding,
+and a `border-box` width wide enough for "sure?" — so arming may change only
+`background` and `borderColor`. Measured in the browser:
+
+| | round 505 | round 506 |
+|---|---|---|
+| ✕ idle → armed | 14x16 → **32x18** | 32x18 → **32x18** |
+| row idle → armed | 259x41 → **259x43** | 259x43 → **259x43** |
+| next row's y | jumped 2px | 524 → **524** |
+| after auto-disarm | — | identical to the idle measurement |
+
+The knock-on the reviewer found — the label reverting mid-gesture, the button
+shrinking out from under the pointer, and the trailing click landing on the ROW
+and firing `onOpenRun` — cannot happen against a box that never changes.
+
+### 8.5 Finding #5 (LOW) — settled manager rows showed a duration, against U15
+
+Ratified, in the direction the project brief requires, and written into the
+requirements corpus as **U15a** (`docs/plan/12-ui-v3-requirements.md`). U15 said
+"finished rows show tokens + model, NO time"; the phase-500 brief's Definition
+of Done #1 says "a settled run shows a FROZEN duration … **no exceptions
+anywhere in the panel**". The brief governs, and it is also the better answer:
+Konrad's complaint was that finished clocks kept *growing*, not that they
+existed, and "how long did the builder take" is what a finished row is for.
+
+The unratified middle case is gone — `TeamRow.tsx` has no `isManager` branch in
+its time path. Every settled row shows its frozen number; the only thing that
+suppresses one is the server not having measured it.
+
+`team-frozen.cjs` against the same chat, gap 12 000ms — **PASS**:
+
+- 20 settled rows, byte-identical at t and t+12s, every one `data-frozen="true"`
+- **13** of them now show a real frozen duration (`2h 37m`, `14m 13s`, `3m 18s`,
+  …). Before this round only the manager did; the other 12 showed "—"
+- the remaining **7** show "—" because the API returns `working_ms: null` for
+  them (all sub-agents) — the pre-existing data gap round 505 flagged as "not a
+  defect in this diff", untouched here and still visible as a gap
+- 1/1 running row ticked, `data-frozen="false"`
+
+### 8.6 Non-regression
+
+Every round-504 protocol re-run against this build:
+
+| protocol | result |
+|---|---|
+| `team-frozen.cjs` | PASS — 20/20 settled frozen, 1/1 running ticks |
+| `team-hover.cjs` | PASS — 75 crossings / 20 rows: idle 2 commits, hover 2 commits, **0 attributable to hover**, 0 mutations, no layout shift |
+| `team-network.cjs` | PASS — 40.0/min vs 52.0 baseline; `/chat/:id/team` 12.0 (cap 12); `/agents` and `/projects/board` still 0 |
+| `control-inert.cjs` | PASS — 6 attacks under **real** all-false capabilities, 0 non-GET, confirm never arms |
+| `dismiss-persist.cjs` | PASS — 9/9 including reload survival and restore |
+| `capture-team.cjs` | PASS 8/8, 16 PNGs re-shot; dark and light both eyeballed (armed pill and the frozen durations render correctly in both) |
+
+`control-inert.cjs` and `capture-team.cjs` each needed a second run: both
+discover a live run from `/api/agents` and the first attempt's run settled
+between discovery and render. That is the scripts' own named diagnostic, not a
+defect — see §6.3.
+
+### 8.7 Gates
+
+`gates-506.txt` holds the verbatim output. `tsc --noEmit` clean in both repos,
+`NODE_ENV=production pnpm build` exit 0, `dollar-sweep.sh` PASS,
+`check-team-rows.ts` and `check-team-confirm.ts` exit 0, token purity in
+`team/` empty, and the forbidden-file grep over `main...HEAD` empty.

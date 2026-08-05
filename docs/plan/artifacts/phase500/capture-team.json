@@ -1,5 +1,5 @@
 {
-  "base": "http://127.0.0.1:7787",
+  "base": "http://127.0.0.1:7785",
   "chats": {
     "ready": "phase300 round-304 linkage fixture",
     "ambiguous": "Okay this session is very important",
@@ -73,18 +73,18 @@
     },
     {
       "case": "live",
-      "chat": "ROUND504 LIVE-RUN PROBE (injected rail row) → run e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "chat": "ROUND504 LIVE-RUN PROBE (injected rail row) → run 1e863678-1af8-43c0-af16-ab70647b2822",
       "files": [
         "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-live-dark.png",
         "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-live-light.png"
       ],
       "data": "real /team response; navigation via injected rail row",
-      "live_run_id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "live_run_id": "1e863678-1af8-43c0-af16-ab70647b2822",
       "ok": true
     },
     {
       "case": "armed",
-      "chat": "ROUND504 LIVE-RUN PROBE (injected rail row) → run e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "chat": "ROUND504 LIVE-RUN PROBE (injected rail row) → run 1e863678-1af8-43c0-af16-ab70647b2822",
       "files": [
         "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-armed-dark.png",
         "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-armed-light.png"

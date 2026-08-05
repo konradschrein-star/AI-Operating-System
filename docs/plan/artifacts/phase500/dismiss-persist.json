@@ -1,6 +1,6 @@
 {
   "protocol": "14 §500 — dismissal persistence across reloads + restore",
-  "base": "http://127.0.0.1:7787",
+  "base": "http://127.0.0.1:7785",
   "chat": "Okay this session is very important",
   "storage_key": "forge.teamDismissed",
   "interception": "none — every response in this run is the real server's",

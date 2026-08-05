@@ -81,9 +81,16 @@ export interface Dismissals {
   dismiss(id: string): void;
   restore(id: string): void;
   restoreAll(): void;
-  /** How many rows this chat is hiding — the "N hidden · show" affordance. */
-  count: number;
 }
+
+/* This hook deliberately exposes NO count. `dismissed.size` counts ids, and
+ * the panel's "N hidden · show" label needs rows — two different numbers, in
+ * both directions (round 505 finding #3): a dismissed worker takes its
+ * sub-agents with it, so one id can hide three rows, while an id left over
+ * from another project (or typed into localStorage by hand) hides none at all
+ * and would still have been counted. `flattenTeam` returns `hiddenCount`
+ * because it is the code that does the hiding; a `count` here would just be
+ * the wrong number sitting within easy reach of the next caller. */
 
 /**
  * Dismissals for one chat.
@@ -131,5 +138,5 @@ export function useDismissals(chatId: string | null): Dismissals {
 
   const restoreAll = useCallback(() => update(() => []), [update]);
 
-  return { dismissed, dismiss, restore, restoreAll, count: dismissed.size };
+  return { dismissed, dismiss, restore, restoreAll };
 }

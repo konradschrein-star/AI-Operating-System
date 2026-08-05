@@ -152,7 +152,7 @@ const TREE = response({ manager, workers: [workerA, workerB] });
 
 console.log("── flattenTeam: ordering + depth ─────────────────────────────");
 {
-  const rows = flattenTeam(TREE, NONE);
+  const { rows } = flattenTeam(TREE, NONE);
   check("row count = 1 manager + 2 workers + 2 sub-agents", rows.length, 5);
   check(
     "order is manager, worker-a, its two sub-agents, worker-b",
@@ -190,7 +190,7 @@ console.log("── flattenTeam: ordering + depth ──────────
     parent_id: "manager",
     description: "operator's own scout",
   });
-  const rows = flattenTeam(
+  const { rows } = flattenTeam(
     response({
       manager: { ...manager, subagents: [opSub] },
       workers: [workerB],
@@ -204,14 +204,14 @@ console.log("── flattenTeam: ordering + depth ──────────
   );
 }
 {
-  const rows = flattenTeam(response({ manager }), NONE);
+  const { rows } = flattenTeam(response({ manager }), NONE);
   check("a chat with no project still renders its manager", rows.length, 1);
   check("…at depth 0", rows[0].depth, 0);
 }
 
 console.log("\n── flattenTeam: dismissal ────────────────────────────────────");
 {
-  const rows = flattenTeam(TREE, new Set(["worker-a"]));
+  const { rows } = flattenTeam(TREE, new Set(["worker-a"]));
   check(
     "dismissing a worker takes its sub-agents with it",
     rows.map((r) => r.node.id).join(","),
@@ -219,7 +219,7 @@ console.log("\n── flattenTeam: dismissal ───────────�
   );
 }
 {
-  const rows = flattenTeam(TREE, new Set(["sub-a1"]));
+  const { rows } = flattenTeam(TREE, new Set(["sub-a1"]));
   check(
     "dismissing one sub-agent leaves its sibling and its parent",
     rows.map((r) => r.node.id).join(","),
@@ -227,7 +227,7 @@ console.log("\n── flattenTeam: dismissal ───────────�
   );
 }
 {
-  const rows = flattenTeam(TREE, new Set(["manager"]));
+  const { rows } = flattenTeam(TREE, new Set(["manager"]));
   check(
     "dismissing the manager hides only the manager's subtree, not the workers",
     rows.map((r) => r.node.id).join(","),
@@ -235,12 +235,54 @@ console.log("\n── flattenTeam: dismissal ───────────�
   );
 }
 {
-  const rows = flattenTeam(TREE, new Set(["worker-a", "worker-b", "manager"]));
+  const { rows } = flattenTeam(TREE, new Set(["worker-a", "worker-b", "manager"]));
   check("dismissing everything yields an empty array", rows.length, 0);
 }
 {
-  const rows = flattenTeam(TREE, new Set(["nobody-by-that-id"]));
+  const { rows } = flattenTeam(TREE, new Set(["nobody-by-that-id"]));
   check("an unknown dismissed id changes nothing", rows.length, 5);
+}
+
+console.log("\n── flattenTeam: hiddenCount is ROWS, not ids (round 505 #3) ──");
+{
+  // The label used to count `dismissed.size`, which is wrong in BOTH
+  // directions. Each case below is one of the reviewer's reproductions.
+  check("nothing dismissed → 0", flattenTeam(TREE, NONE).hiddenCount, 0);
+  {
+    // Undercount: one id, three rows gone (worker-a owns sub-a1 + sub-a2).
+    const flat = flattenTeam(TREE, new Set(["worker-a"]));
+    check("dismissing a parent counts its whole subtree", flat.hiddenCount, 3);
+    check("…and it equals the rows actually withheld", flat.hiddenCount, 5 - flat.rows.length);
+  }
+  {
+    // Phantom: ids that match nothing hide nothing and must count nothing —
+    // the "60000 hidden · show" bug on a panel showing every row.
+    const junk = new Set(["nonexistent-a", "nonexistent-b", "nonexistent-c"]);
+    const flat = flattenTeam(TREE, junk);
+    check("ids matching nothing count 0", flat.hiddenCount, 0);
+    check("…and every row still renders", flat.rows.length, 5);
+  }
+  {
+    const flat = flattenTeam(TREE, new Set(["sub-a1"]));
+    check("a leaf dismissal counts 1", flat.hiddenCount, 1);
+  }
+  {
+    // A dismissed id nested under an already-dismissed parent is never
+    // reached, so it cannot be counted twice.
+    const flat = flattenTeam(TREE, new Set(["worker-a", "sub-a1", "sub-a2"]));
+    check("nested dismissals do not double-count", flat.hiddenCount, 3);
+    check("…rows left = manager + worker-b", flat.rows.length, 2);
+  }
+  {
+    const flat = flattenTeam(TREE, new Set(["manager", "worker-a", "worker-b"]));
+    check("dismissing everything counts every node", flat.hiddenCount, 5);
+    check("…and renders nothing", flat.rows.length, 0);
+  }
+  {
+    // Mixed real + junk: only the real one may be counted.
+    const flat = flattenTeam(TREE, new Set(["worker-b", "ghost-1", "ghost-2"]));
+    check("junk beside a real dismissal does not inflate the count", flat.hiddenCount, 1);
+  }
 }
 
 console.log("\n── interpolatedWorkingMs ─────────────────────────────────────");

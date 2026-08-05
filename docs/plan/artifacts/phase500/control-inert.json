@@ -1,8 +1,8 @@
 {
   "protocol": "14 §500 RED-TEAM (destructive controls) — inertness under all-false capabilities",
-  "base": "http://127.0.0.1:7787",
+  "base": "http://127.0.0.1:7785",
   "api": "http://127.0.0.1:7798",
-  "live_run_id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+  "live_run_id": "ce597511-9313-4d6f-beeb-d681feb01e26",
   "capabilities": {
     "message_into_session": false,
     "resume_finished": false,
@@ -43,7 +43,7 @@
   "attacks": [
     {
       "attack": "baseline",
-      "window_ms": 4058,
+      "window_ms": 4008,
       "action_error": null,
       "dom_click_observed": 0,
       "dom_clicks": [],
@@ -56,21 +56,21 @@
       "non_get_requests": [],
       "raw": [
         {
-          "at": 1785960908160,
+          "at": 1785965466071,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         },
         {
-          "at": 1785960909891,
+          "at": 1785965468004,
           "method": "GET",
           "url": "/chat?limit=30",
           "endpoint": "/chat"
         },
         {
-          "at": 1785960911231,
+          "at": 1785965469090,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         }
       ],
@@ -78,7 +78,7 @@
     },
     {
       "attack": "stop-click",
-      "window_ms": 4023,
+      "window_ms": 4030,
       "action_error": null,
       "dom_click_observed": 0,
       "dom_clicks": [],
@@ -91,15 +91,15 @@
       "non_get_requests": [],
       "raw": [
         {
-          "at": 1785960912408,
+          "at": 1785965470143,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26/team",
           "endpoint": "/chat/:id/team"
         },
         {
-          "at": 1785960914288,
+          "at": 1785965472105,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         }
       ],
@@ -107,7 +107,7 @@
     },
     {
       "attack": "x-click",
-      "window_ms": 4037,
+      "window_ms": 4010,
       "action_error": null,
       "dom_click_observed": 0,
       "dom_clicks": [],
@@ -121,19 +121,19 @@
       "non_get_requests": [],
       "raw": [
         {
-          "at": 1785960917384,
+          "at": 1785965475132,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         },
         {
-          "at": 1785960917512,
+          "at": 1785965475160,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26/team",
           "endpoint": "/chat/:id/team"
         },
         {
-          "at": 1785960918168,
+          "at": 1785965476201,
           "method": "GET",
           "url": "/chat?limit=30",
           "endpoint": "/chat"
@@ -143,7 +143,7 @@
     },
     {
       "attack": "stop-stripped",
-      "window_ms": 4159,
+      "window_ms": 4032,
       "action_error": null,
       "dom_click_observed": 1,
       "dom_clicks": [
@@ -163,21 +163,21 @@
       "non_get_requests": [],
       "raw": [
         {
-          "at": 1785960920451,
+          "at": 1785965478146,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         },
         {
-          "at": 1785960922562,
+          "at": 1785965480173,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26/team",
           "endpoint": "/chat/:id/team"
         },
         {
-          "at": 1785960923566,
+          "at": 1785965481162,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         }
       ],
@@ -185,7 +185,7 @@
     },
     {
       "attack": "x-stripped",
-      "window_ms": 4403,
+      "window_ms": 4111,
       "action_error": null,
       "dom_click_observed": 2,
       "dom_clicks": [
@@ -204,29 +204,29 @@
       ],
       "confirm_state": "idle",
       "allowed_requests": {
-        "/chat": 1,
         "/chat/:id": 1,
+        "/chat": 1,
         "/chat/:id/team": 1
       },
       "disallowed_requests": [],
       "non_get_requests": [],
       "raw": [
         {
-          "at": 1785960926426,
+          "at": 1785965484174,
+          "method": "GET",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
+          "endpoint": "/chat/:id"
+        },
+        {
+          "at": 1785965484372,
           "method": "GET",
           "url": "/chat?limit=30",
           "endpoint": "/chat"
         },
         {
-          "at": 1785960926639,
+          "at": 1785965485187,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
-          "endpoint": "/chat/:id"
-        },
-        {
-          "at": 1785960927677,
-          "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26/team",
           "endpoint": "/chat/:id/team"
         }
       ],
@@ -234,7 +234,7 @@
     },
     {
       "attack": "x-raw-dom",
-      "window_ms": 4033,
+      "window_ms": 4005,
       "action_error": null,
       "dom_click_observed": 2,
       "dom_clicks": [
@@ -259,9 +259,9 @@
       "non_get_requests": [],
       "raw": [
         {
-          "at": 1785960929708,
+          "at": 1785965487186,
           "method": "GET",
-          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "url": "/chat/ce597511-9313-4d6f-beeb-d681feb01e26",
           "endpoint": "/chat/:id"
         }
       ],

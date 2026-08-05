@@ -33,6 +33,32 @@ export interface TeamRow {
   displayWorkingMs: number | null;
 }
 
+/** What `flattenTeam` produces: the rows to render, and how many nodes did not
+ *  make it into them because a dismissal covered them.
+ *
+ *  `hiddenCount` exists because the panel's "N hidden · show" label used to
+ *  count DISMISSED IDS, which is a different number in both directions (round
+ *  505 finding #3): dismissing a worker that owns two sub-agents hides three
+ *  rows and counted 1, while a localStorage key holding ids that match nothing
+ *  in this tree hid nothing and counted all of them. The only honest source
+ *  for "how many rows is this panel currently hiding" is the walk that did the
+ *  hiding, so it reports it. */
+export interface FlatTeam {
+  rows: TeamRow[];
+  /** Nodes skipped by `dismissed`, INCLUDING the sub-agents that went down
+   *  with a dismissed parent. Zero when nothing in `dismissed` matches this
+   *  tree, no matter how many ids it holds. */
+  hiddenCount: number;
+}
+
+/** Every node in this subtree, the node itself included — what a dismissal at
+ *  this node actually removes from the panel. */
+function subtreeSize(node: TeamNode): number {
+  let n = 1;
+  for (const sub of node.subagents) n += subtreeSize(sub);
+  return n;
+}
+
 /**
  * The whole tree as ONE ordered array.
  *
@@ -60,15 +86,22 @@ export interface TeamRow {
 export function flattenTeam(
   res: TeamResponse,
   dismissed: ReadonlySet<string>,
-): TeamRow[] {
+): FlatTeam {
   const rows: TeamRow[] = [];
+  let hiddenCount = 0;
 
   const pushSubtree = (
     node: TeamNode,
     depth: number,
     parentDescription: string | null,
   ): void => {
-    if (dismissed.has(node.id)) return;
+    if (dismissed.has(node.id)) {
+      // The whole subtree goes, so the whole subtree counts. A dismissed id
+      // nested under an already-dismissed one is never reached and therefore
+      // never counted twice.
+      hiddenCount += subtreeSize(node);
+      return;
+    }
     rows.push({
       node,
       depth,
@@ -84,7 +117,7 @@ export function flattenTeam(
   for (const worker of res.workers) {
     pushSubtree(worker, 1, res.manager.description);
   }
-  return rows;
+  return { rows, hiddenCount };
 }
 
 /** Ceiling on client-side interpolation, in ms.

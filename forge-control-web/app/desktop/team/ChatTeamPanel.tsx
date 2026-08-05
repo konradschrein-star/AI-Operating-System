@@ -66,7 +66,7 @@ import {
   type CapabilitiesResponse,
   type TeamResponse,
 } from "./teamApi";
-import { flattenTeam, responseNowMs, type TeamRow } from "./teamRows";
+import { flattenTeam, responseNowMs, type FlatTeam } from "./teamRows";
 import { TeamRowView } from "./TeamRow";
 
 /** NFU3: one poll, 5s, paused whenever the panel is not visible. */
@@ -86,7 +86,9 @@ const ALL_FALSE: CapabilitiesResponse["control_plane"] = {
   terminate: false,
 };
 
-const NO_ROWS: readonly TeamRow[] = [];
+/** The "no response yet" tree. One frozen object so the `rows` memo returns a
+ *  stable identity while loading and the row list never re-renders for it. */
+const NO_TEAM: FlatTeam = { rows: [], hiddenCount: 0 };
 
 /** The five states of the panel, on `data-team-state` at the root. Every one
  *  of them is a deliberate render — there is no sixth "blank" case where the
@@ -131,6 +133,15 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
     refetchInterval: TEAM_POLL_MS,
     enabled,
     refetchOnWindowFocus: false,
+    // NFU6, and round 505 finding #2. The app-wide default is `retry: 2` with
+    // exponential backoff (app/Providers.tsx) — on this query that means a
+    // dead API keeps the LAST GOOD TREE on screen, unmarked, for ~8s while
+    // react-query retries behind it, with a running row interpolating through
+    // the whole window as if the data were current. A tree presented as fresh
+    // when the server has stopped answering is precisely the failure this
+    // project exists to remove, and 8s is longer than the 5s poll it is
+    // covering for. One failure, one honest error state, next poll in 5s.
+    retry: 0,
   });
 
   const capabilities = useQuery<CapabilitiesResponse, Error>({
@@ -144,8 +155,10 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
 
   const caps = capabilities.data?.control_plane ?? ALL_FALSE;
 
-  const { dismissed, dismiss, restoreAll, count: dismissedCount } =
-    useDismissals(chatId || null);
+  /* No count comes out of this hook on purpose: the number of dismissed IDS is
+   * not the number of hidden ROWS. `flattenTeam` reports the one the label
+   * needs (see FlatTeam.hiddenCount). */
+  const { dismissed, dismiss, restoreAll } = useDismissals(chatId || null);
 
   /* ── Armed state ───────────────────────────────────────────────────────
    * `armedId` renders (as a boolean prop per row); `armedRef` is what the
@@ -216,12 +229,19 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
         dismissRef.current(decision.id);
         return;
       case "arm":
+      case "rearm":
+        // Same write for both. `rearm` is a too-fast click PUSHING THE WINDOW
+        // BACK to its own clock, which is what stops a click stream from
+        // accumulating 150ms of separation and firing on its own (round 505
+        // finding #1). `setArmedId` with an unchanged id is a React bail-out,
+        // so the visual disarm timer keeps running from the FIRST arm — it
+        // disarms earlier than the ref would, which is the safe direction.
         armedRef.current = { id: decision.id, at: nowMs };
         setArmedId(decision.id);
         return;
       case "blocked":
-        // too-fast keeps the arming (the user may still click deliberately);
-        // capability is the dead end. Neither says anything to the network.
+        // The capability dead end. Says nothing to the network, and leaves the
+        // arming alone — the user may still be mid-confirm.
         return;
       case "terminate":
         // GUARD (redundant, deliberate — see handleStop).
@@ -238,8 +258,8 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
 
   const data = team.data;
 
-  const rows = useMemo(
-    () => (data ? flattenTeam(data, dismissed) : NO_ROWS),
+  const { rows, hiddenCount } = useMemo(
+    () => (data ? flattenTeam(data, dismissed) : NO_TEAM),
     [data, dismissed],
   );
   const responseNow = useMemo(() => (data ? responseNowMs(data) : Number.NaN), [data]);
@@ -362,7 +382,10 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
             {state === "empty" && <Note>no agents yet</Note>}
           </div>
 
-          {dismissedCount > 0 && (
+          {/* Driven by rows actually withheld from THIS tree, so the label
+              cannot claim hidden rows that do not exist (junk in localStorage)
+              nor undercount a dismissed parent's sub-agents. */}
+          {hiddenCount > 0 && (
             <div style={{ padding: "4px 10px", borderTop: `1px solid ${tokens.borderDivider}` }}>
               <button
                 data-team-restore
@@ -380,7 +403,7 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
                   cursor: "pointer",
                 }}
               >
-                {dismissedCount} hidden · show
+                {hiddenCount} hidden · show
               </button>
             </div>
           )}

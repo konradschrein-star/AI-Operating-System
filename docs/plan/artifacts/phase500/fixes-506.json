@@ -1,0 +1,249 @@
+{
+  "protocol": "round 506 — browser evidence for round 505 findings #1..#5",
+  "base": "http://127.0.0.1:7785",
+  "chat": "Okay this session is very important",
+  "interception": {
+    "A,B,C": "DECLARED: capabilities.terminate → true; one settled worker → running. Nothing else.",
+    "D": "none — real responses",
+    "E": "every /api/proxy/chat/:id/team request aborted, on purpose"
+  },
+  "running_node_id": "58096061-803e-43c5-827a-e618d2a9c33e",
+  "non_get_total_abc": 0,
+  "rows_total": 20,
+  "storage_chat_key": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+  "chat_id_in_url": null,
+  "stale_seconds": 3,
+  "rows_before_abort": 20,
+  "steps": [
+    {
+      "step": "A0-terminate-enabled",
+      "ok": true,
+      "detail": "with the declared terminate:true the running row's ✕ is enabled=true (today's real response leaves it disabled — see control-inert.cjs)"
+    },
+    {
+      "step": "A1-armed-state-reached",
+      "ok": true,
+      "detail": "data-confirm=armed label=\"sure?\""
+    },
+    {
+      "step": "A2-x-box-identical",
+      "ok": true,
+      "detail": "✕ idle 32x18 → armed 32x18 (round 505: 14x16 → 32x18)",
+      "idle": {
+        "w": 32,
+        "h": 18,
+        "y": 485
+      },
+      "armed": {
+        "w": 32,
+        "h": 18,
+        "y": 485
+      }
+    },
+    {
+      "step": "A3-row-box-identical",
+      "ok": true,
+      "detail": "row idle 259x43 → armed 259x43 (round 505: 259x41 → 259x43)",
+      "idle": {
+        "w": 259,
+        "h": 43,
+        "y": 481
+      },
+      "armed": {
+        "w": 259,
+        "h": 43,
+        "y": 481
+      }
+    },
+    {
+      "step": "A4-rows-below-do-not-move",
+      "ok": true,
+      "detail": "next row y 524 → 524 (round 505: every row below jumped 2px)"
+    },
+    {
+      "step": "A5-disarms-back-to-identical-box",
+      "ok": true,
+      "detail": "after auto-disarm: confirm=idle, ✕ 32x18, row 259x43"
+    },
+    {
+      "step": "B1-15-real-mouse-clicks-20ms",
+      "ok": true,
+      "detail": "15 clicks 20ms apart (real) → 0 terminate-shaped transitions, 0 non-GET requests",
+      "transitions": [
+        {
+          "from": "idle",
+          "to": "armed",
+          "at": 12
+        }
+      ],
+      "non_get": []
+    },
+    {
+      "step": "B2-15-raw-clicks-25ms",
+      "ok": true,
+      "detail": "15 clicks 25ms apart (raw) → 0 terminate-shaped transitions, 0 non-GET requests",
+      "transitions": [
+        {
+          "from": "idle",
+          "to": "armed",
+          "at": 3
+        }
+      ],
+      "non_get": []
+    },
+    {
+      "step": "B3-4-discrete-clicks-350ms-rage",
+      "ok": true,
+      "detail": "4 clicks 350ms apart (real) → 0 terminate-shaped transitions, 0 non-GET requests",
+      "transitions": [
+        {
+          "from": "idle",
+          "to": "armed",
+          "at": 11
+        }
+      ],
+      "non_get": []
+    },
+    {
+      "step": "B4-6-discrete-clicks-450ms",
+      "ok": true,
+      "detail": "6 clicks 450ms apart (real) → 0 terminate-shaped transitions, 0 non-GET requests",
+      "transitions": [
+        {
+          "from": "idle",
+          "to": "armed",
+          "at": 9
+        }
+      ],
+      "non_get": []
+    },
+    {
+      "step": "B5-positive-control-two-clicks-1.2s",
+      "ok": true,
+      "detail": "two deliberate clicks 1.2s apart → 1 terminate-shaped transition (must be exactly 1: the confirm step has to still work)",
+      "transitions": [
+        {
+          "from": "idle",
+          "to": "armed",
+          "at": 26
+        },
+        {
+          "from": "armed",
+          "to": "idle",
+          "at": 1233
+        }
+      ],
+      "non_get": []
+    },
+    {
+      "step": "C1-held-enter-25-autorepeats-33ms",
+      "ok": true,
+      "detail": "one held Enter (25 keydowns, 24 with autoRepeat) → 0 terminate-shaped transitions, 0 non-GET requests (round 505: 4 terminates)",
+      "transitions": [],
+      "non_get": []
+    },
+    {
+      "step": "ABC-nothing-left-the-page",
+      "ok": true,
+      "detail": "0 non-GET requests across every attack in sections A–C"
+    },
+    {
+      "step": "D1-phantom-ids-claim-nothing",
+      "ok": true,
+      "detail": "2 junk ids in localStorage → label null, 20/20 rows (round 505: \"2 hidden · show\" with every row rendered)"
+    },
+    {
+      "step": "D2-count-equals-rows-removed",
+      "ok": true,
+      "detail": "dismissing a worker with 1 sub-agent(s): rows 20 → 18 (2 gone), label \"2 hidden · show\" (round 505: \"1 hidden\" for a 2-row dismissal)",
+      "parent_id": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "subagents": 1,
+      "rows_before": 20,
+      "rows_after": 18
+    },
+    {
+      "step": "E1-error-within-one-poll",
+      "ok": true,
+      "detail": "panel reached \"error\" at +4s after the API went dead (round 505: ready/20 rows at +2s, +4s, +6s; error only at +8s)",
+      "samples": [
+        {
+          "t": "+1s",
+          "state": "ready",
+          "rows": 20
+        },
+        {
+          "t": "+2s",
+          "state": "ready",
+          "rows": 20
+        },
+        {
+          "t": "+3s",
+          "state": "ready",
+          "rows": 20
+        },
+        {
+          "t": "+4s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+5s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+6s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+7s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+8s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+9s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+10s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+11s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+12s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+13s",
+          "state": "error",
+          "rows": 0
+        },
+        {
+          "t": "+14s",
+          "state": "error",
+          "rows": 0
+        }
+      ]
+    },
+    {
+      "step": "E2-no-rows-beside-an-error",
+      "ok": true,
+      "detail": "0 sample(s) showed rows while in the error state"
+    }
+  ],
+  "failures": [],
+  "verdict": "PASS"
+}
