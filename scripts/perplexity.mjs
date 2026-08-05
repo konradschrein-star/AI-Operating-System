@@ -20,7 +20,8 @@
 // is deliberately NO runtime fallback between endpoints. Probe output is in
 // docs/plan/evidence/p4-perplexity-errorpaths.md.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, accessSync, constants } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 const AGENT_URL = 'https://api.perplexity.ai/v1/agent';
 const SEARCH_URL = 'https://api.perplexity.ai/search';
@@ -65,12 +66,15 @@ OPTIONS FOR ask
                           0 disables all tool calls and requires --no-force-search.
   --no-force-search       Relax tool_choice from {"type":"web_search"} to "auto".
                           The model may then answer without searching (uncited).
-  --out <file>            Also write the JSON result to <file>. stdout is unaffected.
+  --out <file>            Also write the JSON result to <file>. stdout is unaffected and is
+                          always written FIRST, so a billed answer survives a write failure.
+                          Writability is pre-flighted before the request (exit 3, nothing sent).
 
 OPTIONS FOR search
   --max-results <n>       1-${MAX_RESULTS_CAP}. Default: ${DEFAULT_MAX_RESULTS}
                           Above ${MAX_RESULTS_CAP} is a usage error, not a silent clamp.
-  --out <file>            Also write the JSON result to <file>.
+  --out <file>            Also write the JSON result to <file>. Same pre-flight and same
+                          stdout-first ordering as in ask mode.
 
 COST
   Tool invocations dominate the bill, not tokens: web_search is billed per invocation
@@ -87,9 +91,12 @@ API KEY
 
 EXIT CODES
   0  success
-  1  API or response error (invalid key, non-2xx, status failed/cancelled, unparseable body)
+  1  API or response error (invalid key, non-2xx, status failed/cancelled, unparseable body,
+     or a response whose search_results item does not carry a "results" array)
   2  missing API key (neither location above yielded a key; no request was sent)
-  3  usage error (bad or missing arguments; no request was sent)
+  3  usage error (bad or missing arguments; no request was sent), or an unwritable --out
+     target. The --out target is pre-flighted before the request, so this normally also means
+     nothing was sent; if the target only breaks mid-run the result is still on stdout.
 `;
 
 /** Usage error: no request has been sent and none will be. */
@@ -102,6 +109,15 @@ function usageError(message) {
 function apiError(message) {
   process.stderr.write(`${message}\n`);
   process.exit(EXIT_API);
+}
+
+/**
+ * Local output error (an unwritable --out target). Exit 3, not 1: nothing about the API went
+ * wrong, and callers that retry on 1 must not retry — and re-pay for — a filesystem fault.
+ */
+function outputError(message) {
+  process.stderr.write(`output error: ${message}\n`);
+  process.exit(EXIT_USAGE);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -254,6 +270,31 @@ function parseArgs(argv) {
 }
 
 /**
+ * Pre-flight the --out target BEFORE any request. An Agent run is billed per web_search
+ * invocation, so discovering ENOENT/EACCES after the answer arrives means paying for a result
+ * we then have to re-buy. Mirrors assertOutWritable() in gemini-qa.mjs.
+ */
+function assertOutWritable(outPath) {
+  if (outPath === undefined) return;
+  const path = resolve(outPath);
+  try {
+    // Existing file: it must be writable (it will be overwritten).
+    accessSync(path, constants.W_OK);
+    return;
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      outputError(`--out target is not writable: ${path}: ${err.code ?? 'unknown'} ${err.message}`);
+    }
+  }
+  // Not there yet: the directory has to accept a new file.
+  try {
+    accessSync(dirname(path), constants.W_OK);
+  } catch (err) {
+    outputError(`--out directory is not writable: ${dirname(path)}: ${err.code ?? 'unknown'} ${err.message}`);
+  }
+}
+
+/**
  * Whitelist body for POST /v1/agent. The Agent API rejects ANY unknown field with a hard 400,
  * so this is built field by field — never spread from user input.
  */
@@ -300,11 +341,28 @@ async function post(url, apiKey, body) {
   }
 }
 
-/** Sources live in the output[] item with type "search_results", under key "results". */
+/**
+ * Sources live in the output[] item with type "search_results", under key "results".
+ *
+ * The two "no sources" shapes are deliberately NOT merged. No search_results item at all is a
+ * legal run that cited nothing. An item that IS present but whose "results" is not an array
+ * means the vendor moved the payload (this shape has never been round-tripped against a live
+ * key — see docs/tools/perplexity.md "Open discrepancies"), and emitting [] there would file an
+ * uncited answer in the researcher lane as a successful cited one, exit 0 and all. That is a
+ * hard error with the body verbatim, exactly as runSearch() treats the same ambiguity.
+ */
 function extractSearchResults(response) {
   if (!Array.isArray(response.output)) return [];
   const item = response.output.find((o) => o !== null && typeof o === 'object' && o.type === 'search_results');
-  if (item === undefined || !Array.isArray(item.results)) return [];
+  if (item === undefined) return [];
+  if (!Array.isArray(item.results)) {
+    apiError(
+      `Agent response carries a "search_results" output item whose "results" is not an array ` +
+        `(got ${item.results === null ? 'null' : typeof item.results}) — the sources cannot be read, ` +
+        `so no answer is emitted rather than one that looks uncited. Body verbatim:\n` +
+        `${JSON.stringify(response, null, 2)}`,
+    );
+  }
   return item.results;
 }
 
@@ -337,16 +395,25 @@ function extractCitations(searchResults) {
   return urls;
 }
 
+/**
+ * stdout FIRST, then the file. The request is already paid for by the time this runs, so the
+ * durable copy has to leave the process before anything that can fail. assertOutWritable()
+ * pre-flights the target before the request; reaching the catch below means the target changed
+ * under us mid-run, and by then the answer is safely on stdout.
+ */
 function emit(payload, outPath) {
   const json = `${JSON.stringify(payload, null, 2)}\n`;
-  if (outPath !== undefined) {
-    try {
-      writeFileSync(outPath, json);
-    } catch (err) {
-      apiError(`Could not write --out file ${outPath}: ${err.code ?? 'unknown'} ${err.message}`);
-    }
-  }
   process.stdout.write(json);
+  if (outPath === undefined) return;
+  const path = resolve(outPath);
+  try {
+    writeFileSync(path, json);
+  } catch (err) {
+    outputError(
+      `could not write --out file ${path}: ${err.code ?? 'unknown'} ${err.message}\n` +
+        `The result is NOT lost — it was already written to stdout in full.`,
+    );
+  }
 }
 
 async function runAsk(opts, apiKey) {
@@ -403,7 +470,10 @@ async function runSearch(opts, apiKey) {
   emit({ search_results: results }, opts.out);
 }
 
+// Gate order: arguments, then the key, then the filesystem — same order as gemini-qa.mjs.
+// The key check stays ahead of the --out pre-flight so a keyless caller always gets exit 2.
 const opts = parseArgs(process.argv.slice(2));
 const apiKey = resolveApiKey();
+assertOutWritable(opts.out);
 if (opts.mode === 'ask') await runAsk(opts, apiKey);
 else await runSearch(opts, apiKey);

@@ -139,7 +139,20 @@ consumer can treat them interchangeably as seek targets.
 
 - Default model: `gemini-omni-flash`.
 - Text: **$1.50 / $9.00 per 1M tokens** (input/output).
-- Video input: **~5,792 tokens/sec at 720p**, roughly **$0.10/sec** of video at that rate.
+- Video input: **~5,792 tokens/sec at 720p**. At the input price above that is
+  **~$0.0087 per second of video** (5,792 × $1.50 ÷ 1,000,000), i.e. **~$0.52/min**, so a
+  10-minute QA pass costs **~$5** in video tokens. The QA JSON itself is the only output —
+  a few thousand tokens, well under $0.05.
+
+**Do not use the $0.10/sec figure.** `docs/research/round-399-41e8757d.md` §1–2 quotes
+"≈ $0.10/sec at standard pricing **if consumed as token stream**", but that is arithmetically
+inconsistent with the token rate it cites in the same sentence: 5,792 tok/s at $1.50/1M is
+$0.0087/s, ~11.5× lower (even at the $9.00 *output* price it would be $0.052/s). The two
+numbers cannot both describe token billing. One of them is a per-second media-billing rate
+carried over from the Veo rows ($0.40–$0.60/sec) rather than from Omni Flash's token math.
+Until a real invoice settles it, budget from the token rate above — it is the one derivable
+from published unit prices — and treat $0.10/sec as an unverified worst case. Neither figure
+has been checked against an actual bill: no key exists on this box (§9).
 
 **Warning:** `docs/plan/02-architecture.md` §6.2 names `gemini-3.6-flash` as the default and
 cites `$1.50/$7.50 per 1M; video ≈ 300 tok/s` — both are wrong. `gemini-3.6-flash` does not
@@ -256,6 +269,14 @@ Until that key lands, every invocation of `gemini-qa.mjs` on this box exits 2 de
 
 ## Open discrepancies
 
-None found. `--help` output, the four exit codes, both key locations, the frozen rubric
-schema, and the `gemini-omni-flash` default all match the shipped script exactly as
-cross-checked in the Verify section below.
+- **Video cost per second is unsettled (§7).** The token-derived figure (~$0.0087/sec) and the
+  research doc's "≈ $0.10/sec" cannot both be right; this file budgets from the token math and
+  flags the other as an unverified worst case. Settles on the first real invoice.
+- **No successful run has ever been observed.** No Gemini key exists on this box (§9), so
+  every success-path claim — the rubric JSON the model returns, the upload/poll timings, the
+  cost figures — is derived from the shipped code and the vendor's published material, not
+  from a captured round-trip. Only the error paths in §8 are live transcripts.
+
+Everything else matched when this file was written: `--help` output, the four exit codes, both
+key locations, the frozen rubric schema (checked field by field against the script's
+`responseSchema`), and the `gemini-omni-flash` default all agree with the shipped script.

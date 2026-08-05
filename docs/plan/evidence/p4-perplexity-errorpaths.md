@@ -407,3 +407,73 @@ project forbids.
   validation, so the whitelist in `buildAskBody` has not been round-tripped. It sends only
   `input`, `model` XOR `preset`, `tools`, `tool_choice`, `max_steps`, `max_tool_calls`, and
   `instructions` when given — exactly the whitelist the task specified.
+
+---
+
+## Round 404 — the two review findings, proven
+
+Both defects the round-403 gate raised in `scripts/perplexity.mjs` are fixed and guarded by
+`forge-control/src/lib/perplexity-cli.test.ts`. That test spawns the real script as a real
+process and replaces `globalThis.fetch` with a canned response through a `node --import`
+preload written to a temp dir — so the success-path shapes below are exercised end to end
+with **no network, no key and no spend**. What it does not prove is the vendor's actual
+response shape; that stays in "What is NOT proven here" above.
+
+**The tests fail against the pre-fix script.** Checked out `HEAD:scripts/perplexity.mjs`
+(pre-fix) with the new test file in place:
+
+```
+$ git show HEAD:scripts/perplexity.mjs > scripts/perplexity.mjs
+$ npx tsx --test src/lib/perplexity-cli.test.ts
+    not ok 3 - search_results item present but `results` is not an array is a hard error, body verbatim
+    not ok 4 - search_results.results = null is an error, not an empty citation list
+    not ok 1 - unwritable --out directory is caught BEFORE the request (exit 3, nothing sent)
+    not ok 2 - a write failure after the request still leaves the result on stdout
+# tests 10 # pass 6 # fail 4
+```
+
+Exactly the four behaviours the findings named — and the six pre-existing behaviours (legal
+zero-source runs, citation extraction, `search`'s hard error, the key gate, usage gating) pass
+on both versions, so the fix is additive rather than a rewrite of the surrounding semantics.
+With the fix in place: `# tests 10 # pass 10 # fail 0`.
+
+**Finding 1 — the citation path no longer swallows an unreadable sources payload.**
+`extractSearchResults` now splits the two cases: no `search_results` item in `output[]` → `[]`
+and exit 0 (legal zero-source run, unchanged); item present but `results` not an array →
+exit 1 with the body verbatim, mirroring `runSearch`. stdout is empty in that case — the
+researcher lane can no longer record an uncited answer as a cited one.
+
+**Finding 2 — a paid answer survives an `--out` failure.** `assertOutWritable()` pre-flights
+the target before the request (mirroring `gemini-qa.mjs`), and `emit()` writes stdout before
+the file. Live transcript, key present and invalid, so a 401 was the only thing standing
+between this command and a bill:
+
+```
+$ PERPLEXITY_API_KEY=definitely-invalid node scripts/perplexity.mjs ask "test" --out /tmp/no-such-dir-404/out.json; echo "exit=$?"
+output error: --out directory is not writable: /tmp/no-such-dir-404: ENOENT ENOENT: no such file or directory, access '/tmp/no-such-dir-404'
+exit=3
+```
+
+The pre-flight fired before the request — the 401 never happened. A *writable* target passes
+the gate and the request proceeds as before:
+
+```
+$ PERPLEXITY_API_KEY=definitely-invalid node scripts/perplexity.mjs search "x" --out /etc/hostname
+HTTP 401 Unauthorized from https://api.perplexity.ai/search
+{"error":{"message":"Invalid API key provided. Ensure your API key is correct and active.","type":"invalid_api_key","code":401}}
+```
+
+The mid-run write failure (target passes the pre-flight, then breaks) is covered by the test
+that points `--out` at an existing directory: `accessSync` W_OK succeeds, `writeFileSync`
+fails EISDIR, and the assertion is that the full answer is on stdout anyway.
+
+Exit code for both `--out` faults is **3**, not 1 — a local filesystem fault is not an API
+error, and a caller that retries on 1 would re-pay for a perfectly good Agent run. This
+matches `gemini-qa.mjs`, whose exit 3 already covers "an unwritable `--out` target".
+
+**Regression check on everything the round-403 gate verified** (all re-run after the fix):
+missing key `ask`/`search` → 2; invalid key `ask`/`search` → 1 with status and body verbatim;
+no args / `--max-results 21` / unknown flag / `--model` with `--preset` → 3; gemini missing
+key → 2; `grep -n "require(\|from '[^n]" scripts/*.mjs` → no hits (zero deps intact);
+`git ls-files -s scripts/perplexity.mjs` → `100755`. `npx tsc --noEmit` → 0.
+`pnpm test` → `# tests 153 # pass 153 # fail 0` across 31 suites (143/29 before this round).

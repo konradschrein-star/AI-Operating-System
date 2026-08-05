@@ -46,7 +46,7 @@ Web search is attached and, by default, **forced** — this helper is citation-c
 | `--max-steps <n>` | `8` | Research loop steps, integer `1`–`100`. |
 | `--max-tool-calls <n>` | `5` | Tool-call ceiling, integer `0`–`100`. `0` disables all tool calls, which requires pairing with `--no-force-search` (see below) or the tool refuses to run. |
 | `--no-force-search` | off | Relaxes `tool_choice` from `{"type":"web_search"}` to `"auto"`. The model may then answer without searching at all — and without citations. |
-| `--out <file>` | — | Also writes the JSON result to `<file>`. stdout is unaffected either way. |
+| `--out <file>` | — | Also writes the JSON result to `<file>`. stdout is unaffected either way, and is always written **first** so a billed answer survives a write failure. The path is pre-flighted before the request — see §5. |
 
 Examples:
 
@@ -64,7 +64,7 @@ scripts/perplexity.mjs ask "Explain the MMLU benchmark" \
 | Flag | Default | Notes |
 |---|---|---|
 | `--max-results <n>` | `10` | Integer `1`–`20`. Requesting more than `20` is a **usage error** (exit `3`, no request sent) — not a silent clamp down to the cap. |
-| `--out <file>` | — | Also writes the JSON result to `<file>`. |
+| `--out <file>` | — | Also writes the JSON result to `<file>`. Same pre-flight and same stdout-first ordering as in `ask` mode (§5). |
 
 Examples:
 
@@ -95,9 +95,26 @@ before any network call. It does not fall back to any other key name or path.
 | Code | Meaning |
 |---|---|
 | `0` | Success. |
-| `1` | API or response error — invalid key, non-2xx HTTP status, an Agent run with `status: failed` or `cancelled`, or a response body that fails to parse as JSON. |
+| `1` | API or response error — invalid key, non-2xx HTTP status, an Agent run with `status: failed` or `cancelled`, a response body that fails to parse as JSON, or a `search_results` output item whose `results` is not an array (§6). |
 | `2` | Missing API key — neither `PERPLEXITY_API_KEY` nor the secret-store file yielded a key. No request was sent. |
-| `3` | Usage error — bad or missing arguments (unknown flag, missing subject, out-of-range value, mutually exclusive flags together, etc.). No request was sent. |
+| `3` | Usage error — bad or missing arguments (unknown flag, missing subject, out-of-range value, mutually exclusive flags together, etc.), **or an unwritable `--out` target**. Usage errors and the `--out` pre-flight both run before the request, so no request was sent. The one exception is an `--out` target that breaks *between* the pre-flight and the write; that also exits `3`, and the result is on stdout regardless (see below). |
+
+A local filesystem fault is deliberately **not** exit `1`: a caller that retries on `1` would
+re-run — and re-pay for — an Agent call that the API handled perfectly well.
+
+### `--out` and the paid-answer rule
+
+An Agent run is billed per `web_search` invocation, so the tool never lets a local write fault
+destroy a result that has already been paid for:
+
+1. **Pre-flight.** `--out` is checked for writability *before* the request (existing file must
+   be `W_OK`; otherwise its directory must be). A bad path costs nothing — exit `3`, no HTTP.
+2. **stdout first.** `emit()` writes the full JSON to stdout *before* touching the file. If the
+   target is destroyed mid-run (the pre-flight cannot cover that window), the tool still exits
+   `3`, but the answer has already left the process and stderr says so explicitly.
+
+Gate order overall: arguments → key → `--out` filesystem. A caller with no key gets exit `2`
+whether or not the `--out` path is valid.
 
 ## 6. Response fields
 
@@ -123,6 +140,15 @@ Two things about this shape that are easy to get wrong downstream: `snippet` is 
 an **empty string** in real responses (confirmed in the vendor's own captured sample), and a
 run that returns **zero sources is legal, not an error** — `citations` and `search_results`
 can both legitimately be `[]` on a `status: "completed"` run.
+
+**`[]` means "the run cited nothing", never "the sources were unreadable".** Those two cases
+are kept apart on purpose. No `search_results` item in `output[]` → empty arrays, exit `0`.
+An item that *is* present but whose `results` is not an array → **exit `1`** with the response
+body printed verbatim, because that shape means the vendor moved the payload somewhere this
+tool does not know about, and emitting `citations: []` with exit `0` would file an uncited
+answer in the researcher lane as a successfully cited one. `search` mode treats the same
+ambiguity the same way. Regression-guarded in
+`forge-control/src/lib/perplexity-cli.test.ts` (§R404-1).
 
 ### `search` stdout
 
@@ -232,6 +258,20 @@ usage error: --model and --preset are mutually exclusive — send one or the oth
 exit=3
 ```
 
+**Unwritable `--out` (exit `3`, caught before the request — round 404):**
+
+```
+$ PERPLEXITY_API_KEY=definitely-invalid node scripts/perplexity.mjs ask "test" --out /tmp/no-such-dir-404/out.json; echo "exit=$?"
+output error: --out directory is not writable: /tmp/no-such-dir-404: ENOENT ENOENT: no such file or directory, access '/tmp/no-such-dir-404'
+exit=3
+```
+
+Note the key here is present (and invalid): the run stops at the pre-flight, *before* the
+`401` it would otherwise have earned. A writable target passes the pre-flight and the request
+proceeds normally — `--out /etc/hostname` with the same invalid key reaches
+`HTTP 401 Unauthorized from https://api.perplexity.ai/search`, i.e. the gate blocks bad paths
+and nothing else.
+
 ## 11. Browser-steering fallback — documented only, deliberately not built
 
 If a research task needs Perplexity's web answer engine specifically (not just the API — for
@@ -283,3 +323,13 @@ unlocks (reminder id `4c4532af-24ed-4642-a7ef-15ae291391e7`, per
   `results` or `search_results` and hard-errors (body printed verbatim) if neither is present,
   precisely because which one the vendor actually sends has not been observed on the wire —
   see `docs/plan/evidence/p4-perplexity-errorpaths.md`, "What is NOT proven here" section.
+- **The `ask` sources key (`output[].results`) is unconfirmed on the wire for the same reason.**
+  Unlike the Search API case above, there is no second spelling to accept here: the tool reads
+  `results` and hard-errors on anything else (§6). If the first keyed run turns out to carry
+  the sources under another key, the symptom will be a loud exit `1` with the body verbatim —
+  which is the intended failure mode, not a bug. Fix it by teaching `extractSearchResults()`
+  the real key; do not soften it back into an empty array.
+- **The success path of `--out` has never run against a live 200.** The pre-flight, the
+  stdout-first ordering and the mid-run write failure are proven by
+  `forge-control/src/lib/perplexity-cli.test.ts`, which stubs `globalThis.fetch` via a
+  `--import` preload — a faithful exercise of this script's own code, but not of the vendor's.
