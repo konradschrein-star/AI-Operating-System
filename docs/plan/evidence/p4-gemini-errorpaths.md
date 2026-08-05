@@ -283,6 +283,19 @@ The only other GEMINI-mentioning row is `d342ac3b-32b2-4b62-8d40-59fad08b61bd`, 
 earlier round (status `delivered`, 2026-08-05 08:47Z) by a different task. This task created
 one reminder and one only.
 
+## Known wart: commit `baf6d93` also contains `scripts/perplexity.mjs`
+
+I committed the whole index rather than an explicit pathspec, and the parallel Perplexity
+builder (same worktree, same round) had `scripts/perplexity.mjs` staged at that moment. It
+therefore rode along in `baf6d93` under this task's message.
+
+Nothing was lost: the file's content is exactly what that builder had staged, and it remains
+in the tree untouched by me. I deliberately did **not** `git reset --soft` to unpick it — that
+rewrites the branch pointer, and doing so while a concurrent builder may be mid-`git commit`
+risks discarding *their* commit. A cosmetic attribution error is the cheaper failure.
+
+Correct incantation, used for every commit after this one: `git commit -- <explicit paths>`.
+
 ## Not done here (owned by other tasks)
 
 - `docs/tools/gemini-qa.md` — round-402 junior task, transcribed from the `--help` output above.
