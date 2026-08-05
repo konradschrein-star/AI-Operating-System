@@ -12,6 +12,7 @@
 
 import { Hono } from "hono";
 import { promises as fs, createReadStream } from "node:fs";
+import { Readable } from "node:stream";
 import path from "node:path";
 import crypto from "node:crypto";
 
@@ -104,8 +105,17 @@ r.get("/:id/:name", async (c) => {
   if (!st || !st.isFile()) return c.json({ error: "not found" }, 404);
   const mime =
     MIME_BY_EXT[path.extname(name).toLowerCase()] ?? "application/octet-stream";
-  const stream = createReadStream(abs);
-  return new Response(stream as unknown as ReadableStream, {
+  // R704: a Node Readable is NOT a web ReadableStream, and the `as unknown as`
+  // cast that used to sit here killed the whole process. undici's Response body
+  // machinery eventually calls close() on the stream controller; with a Node
+  // stream underneath it finds an already-closed controller and throws
+  // `ERR_INVALID_STATE: Invalid state: ReadableStream is already closed` from a
+  // microtask — outside any request scope, so it is an UNCAUGHT exception and pm2
+  // restarts forge-control. Reproduced on a throwaway port: the third GET of a
+  // screenshot took the server down (docs/plan/evidence/p7-browser-lane.md §6).
+  // Readable.toWeb() hands over a real web stream, so the bookkeeping is correct.
+  const stream = Readable.toWeb(createReadStream(abs)) as ReadableStream;
+  return new Response(stream, {
     headers: {
       "content-type": mime,
       "content-length": String(st.size),
