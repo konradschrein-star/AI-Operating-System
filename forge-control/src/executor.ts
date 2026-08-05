@@ -39,10 +39,7 @@ import {
   readCompressorState,
   type CompressorOptions,
 } from "./lib/thread-compressor.ts";
-import {
-  prefetchMemoryForUserTurn,
-  lastUserText,
-} from "./lib/memory-prefetch.ts";
+import { prefetchMemoryForUserTurn } from "./lib/memory-prefetch.ts";
 import { queueNotification } from "./db/notifications.ts";
 import { projectTick } from "./lib/project-tick.ts";
 
@@ -537,19 +534,18 @@ async function processRun(run: ClaimedRun): Promise<void> {
 
   // v1.6 Tier-2 phase 3: prefetch memory hits relevant to the latest user
   // turn and prepend a [MEMORY] block to the prompt. No-op if disabled, the
-  // query is too short, the search errors, or no hits land.
-  const userText = lastUserText(run.thread ?? []);
-  const memory = userText
-    ? await prefetchMemoryForUserTurn(userText)
-    : { hits: [], block: null };
-  if (memory.hits.length > 0) {
-    const vector = memory.hits.filter((h) => h.via === "vector").length;
-    const graph = memory.hits.length - vector;
-    console.log(
-      `[executor] run ${run.id}: memory prefetch ${memory.hits.length} hits ` +
-        `(${vector} vector + ${graph} graph)`,
-    );
-  }
+  // turn carries no topical content, the search errors, or nothing lands above
+  // the score floor.
+  //
+  // 2026-08-05 (audit §4.E): the whole thread is passed, not just the last
+  // message — a thin turn ("do it") is augmented with the thread's running
+  // topic instead of being embedded verbatim. `memory.reason` is logged either
+  // way so an absent [MEMORY] block is explicable from the log alone.
+  const memory = await prefetchMemoryForUserTurn(run.thread ?? []);
+  console.log(
+    `[executor] run ${run.id}: memory prefetch — ${memory.reason}` +
+      (memory.block ? ` (${memory.block.length}ch block)` : ""),
+  );
 
   const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
   const timeoutMs = getTimeoutFor(run.metadata);
