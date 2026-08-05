@@ -1,21 +1,81 @@
-# `gemini-qa` — video QA through the Gemini API
+# `gemini-qa` — video QA through Gemini (pool-first)
 
 Transcribed from `scripts/gemini-qa.mjs --help` and the shipped script (R25; re-synced in R406
-after the round-405 review changed `--out` semantics — §5.1). Evidence for every claim below:
+after the round-405 review changed `--out` semantics — §5.1; **rewritten at R702** when the
+Gemini Pool became the primary backend — §1.1). Evidence for every claim below:
 `docs/plan/evidence/p4-gemini-errorpaths.md` (real command transcripts, 2026-08-05),
-`docs/research/round-399-41e8757d.md` (API/cost facts), and
-`forge-control/src/lib/gemini-qa-cli.test.ts` (the output-path behaviour, stubbed `fetch`).
+`docs/research/round-399-41e8757d.md` (API/cost facts),
+`docs/research/round-701-33d8cba3.md` (the pool's wire contract, limits and error shapes),
+and `forge-control/src/lib/gemini-qa-cli.test.ts` (61 tests, stubbed `fetch` and `fs`).
 
 ## 1. What it is / when to use it
 
-`scripts/gemini-qa.mjs` sends a video — local file or public URL, including YouTube — to the
-Gemini API and gets back structured QA findings as JSON: hook strength, pacing, audio
-integrity, visual integrity, and factual red flags, each with a timestamp. It is the QA
-backbone Konrad wants sitting in front of the video pipeline: the JSON shape (§6 below) is
-the contract a human or a later repair agent consumes, not prose a human has to parse.
+`scripts/gemini-qa.mjs` sends a video to Gemini and gets back structured QA findings as JSON:
+hook strength, pacing, audio integrity, visual integrity, and factual red flags, each with a
+timestamp. It is the QA backbone Konrad wants sitting in front of the video pipeline: the
+JSON shape (§6 below) is the contract a human or a later repair agent consumes, not prose a
+human has to parse.
 
 Use it whenever a rendered video needs a structured, timestamped pass before it ships —
 either as a standalone CLI call, or later wired into the pipeline as an automated gate.
+
+### 1.1 Two backends — `pool` (default) and `api`
+
+| | `--backend pool` **(default)** | `--backend api` |
+|---|---|---|
+| Service | `POST http://127.0.0.1:8090/v1/analyze` — the local Gemini Pool, a private wrapper around the Gemini **web UI** | `https://generativelanguage.googleapis.com` — the official Gemini API |
+| Cost | **free** — rides pool-account entitlements | **billed** to a Google AI Studio key (~$5 per 10-min pass, §7) |
+| Credential | `GEMINI_POOL_API_KEY` (§4.1) | `GEMINI_API_KEY` (§4.2) |
+| Input | local video file **only** (§3.1) | local file **or** URL, YouTube included |
+| Output shape | **free text** → rubric JSON is extracted, then validated (§6.1) | machine-enforced `responseSchema` |
+| Model choice | **none** — `--model` is rejected (§3) | `--model`, default `gemini-omni-flash` |
+| Timeout | `--timeout`, default 900 s | fixed 10-min Files API poll deadline |
+
+Pool is the default because Konrad has no personal Gemini key and does not want to buy one.
+
+**There is no automatic fallback between them — not even opt-in.** R702's brief allows an
+opt-in fallback only if pool failures are cleanly distinguishable, and
+`docs/research/round-701-33d8cba3.md` §6 proves they are not: a dead pool account, an
+unsupported file, and a transient Google fault all return the same opaque
+`HTTP 500 … Unknown API error code: 1100`. A fallback keyed on an undiagnosable error would
+quietly move a video onto a billed endpoint. Choose the backend explicitly.
+
+### 1.2 ⚠ Known limitation: the pool's file path is broken (measured 2026-08-05, 19:00–20:44 CEST)
+
+Measured this round, against the live pool:
+
+| Request | Result |
+|---|---|
+| `POST /v1/chat` (text only, no file) — 19:00 | **200** `{"text":"OK","account":"cdp-9400"}` in 46 s |
+| `POST /v1/chat` (text only, no file) — ~15 min later | **500** `Unknown API error code: 1096` |
+| `POST /v1/analyze` + 1.3 MB `video/mp4` | **500** `Unknown API error code: 1100` in 87.9 s |
+| `POST /v1/analyze` + 40-byte `text/plain` | **500** `Unknown API error code: 1100` in 88.4 s |
+| `POST /v1/chat` (text only, no file) — 20:39, re-check | **500** `Unknown API error code: 1096` in 133.9 s |
+| `POST /v1/analyze` + the same 1.3 MB `video/mp4` — 20:43, re-check | **500** `Unknown API error code: 1100` in 96.1 s |
+
+The last two rows are an independent re-verification ~1.5 h after the first four, run through
+the shipped CLI rather than raw `curl`. Same outcome, so this is a standing condition and not
+a momentary blip: **six generation attempts, one success, and that success was text-only.**
+
+Text generation **flaps** — it worked once and has failed at every later attempt, which is
+consistent with the wrapper retiring and respawning sessions around one shared cookie jar.
+**Any file attachment fails, for every file type, at every time tried.** This is narrower
+than round 701's finding — R701 measured text failing too, so it could only conclude "the
+account cannot generate at all". The one text success isolates the failure to the
+file-attachment path specifically. It is therefore *not* a video-capability limit and *not*
+something this tool can work around: the pool's upload leg reaches
+`content-push.googleapis.com` fine, and generation rejects the attachment afterwards.
+
+`avg_response_s` on `GET /v1/status` is a useful side-channel the health endpoint lacks: it
+is computed over successful generations only, so a non-null value means *something* once
+worked. It read `46.18` throughout this round — the single 19:00 text success, never updated
+since.
+
+Consequence: **`--backend pool` is fully implemented and correct against the documented wire
+contract, but cannot produce a QA result until the pool side is fixed.** What Konrad owes the
+system is in §9. Until then the tool exits 1 with the diagnostic in §8.
+
+`GET /health` will not tell you any of this — it reported `sessions_ready: 4` throughout.
 
 ## 2. Requirements
 
@@ -29,46 +89,120 @@ either as a standalone CLI call, or later wired into the pipeline as an automate
 ## 3. Usage
 
 ```
-gemini-qa.mjs <video-path-or-url> [--model M] [--out FILE] [--prompt-extra "..."] [--help]
+gemini-qa.mjs <video-path-or-url> [--backend pool|api] [--model M] [--out FILE]
+              [--prompt-extra "..."] [--timeout S] [--preflight] [--help]
 ```
 
 **Argument**
 
 | Argument | Meaning |
 |---|---|
-| `<video-path-or-url>` | Local video file path, or an `http(s)://` URL (YouTube supported) |
+| `<video-path-or-url>` | Local video file path (both backends), or an `http(s)://` URL (**`api` backend only** — see §3.1) |
 
 **Flags**
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--model M` | `gemini-omni-flash` | Gemini model to use |
+| `--backend pool\|api` | `pool` | Which service answers. No fallback between them (§1.1) |
+| `--model M` | `gemini-omni-flash` | Gemini model. **`api` only** — exit 3 on `pool` |
 | `--out FILE` | stdout only | **Also** write the QA JSON to FILE. stdout always gets it first — see §5.1 |
 | `--prompt-extra "..."` | none | Extra caller context appended to the QA prompt, e.g. `"this is a 60s YouTube Short about sky photography"` |
+| `--timeout S` | `900` | Pool request timeout, whole seconds. **`pool` only** — exit 3 on `api` |
+| `--preflight` | off | Pool liveness probe before uploading. **`pool` only** — exit 3 on `api` |
 | `--help`, `-h` | — | Print usage and exit 0 |
 
 Flags accept either `--model M` or `--model=M` form. Unknown flags, a missing argument value,
 or an empty flag value are all usage errors (exit 3).
 
+**A flag the chosen backend cannot honour is rejected, never ignored.** `--model` on the pool
+is exit 3 rather than a silently dropped value, because the pool wrapper never passes a model
+at all — accepting it would report a choice that was not made. Same for `--timeout` and
+`--preflight` on the `api` backend.
+
+### 3.1 URL inputs and the pool backend — the decision
+
+`gemini-qa <url>` on the **pool** backend is a **usage error (exit 3)**, not a download:
+
+```
+$ scripts/gemini-qa.mjs 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+gemini-qa.mjs: URL input is not supported on the pool backend: https://www.youtube.com/watch?v=dQw4w9WgXcQ
+  http://127.0.0.1:8090/v1/analyze takes an uploaded file, not a URI, and this tool does not download.
+  Either save the video locally and pass the file path, or use --backend api (billed), which accepts URLs including YouTube.
+exit=3
+```
+
+Rejecting was chosen over downloading-to-a-bounded-temp-file because a YouTube watch URL is
+an HTML page, not a video file — honouring it would mean owning a downloader (yt-dlp and its
+breakage cadence), and the `api` backend already passes URLs through natively as
+`file_data.file_uri`. Two ways out, both in the error message: download it yourself, or
+`--backend api`.
+
 **Examples**
 
 ```bash
-# Local render, JSON to stdout
+# Local render through the free pool, JSON to stdout   (default backend)
 scripts/gemini-qa.mjs ./render/final.mp4
 
-# YouTube URL, write result to a file
-scripts/gemini-qa.mjs 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' --out qa.json
+# Probe the pool before spending 90s on an upload      (recommended after any outage)
+scripts/gemini-qa.mjs ./render/final.mp4 --preflight
 
-# Local file, explicit model, extra context for the reviewer
-scripts/gemini-qa.mjs clip.mp4 --model gemini-omni-flash --prompt-extra "60s Short, target audience: beginners"
+# A long feature render needs a longer ceiling
+scripts/gemini-qa.mjs ./render/final.mp4 --timeout 1800
+
+# Official API instead: billed, structured output, model selectable
+scripts/gemini-qa.mjs ./clip.mp4 --backend api --out qa.json
+
+# YouTube URL — api backend only
+scripts/gemini-qa.mjs 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' --backend api
 ```
 
 Supported local video extensions: `.mp4 .mpeg .mpg .mov .avi .flv .webm .wmv .3gp .3gpp .mkv`.
-A URL input (`^https?://`) is passed straight to the model as `file_data.file_uri` — no
-upload step. A local file goes through the Gemini Files API (resumable upload, then polled
-until `ACTIVE`) before generation.
+
+On the **pool** backend the extension is load-bearing beyond validation: the wrapper derives
+the upload's MIME type from the filename alone (`mimetypes.guess_type`), with no content
+sniffing anywhere in the chain — so the file is uploaded under its real basename.
+
+On the **api** backend, a URL input is passed straight to the model as `file_data.file_uri`
+(no upload step); a local file goes through the Gemini Files API (resumable upload, then
+polled until `ACTIVE`) before generation.
 
 ## 4. Key setup
+
+> ## ⚠️ READ THIS TWICE: two different secrets share the name `GEMINI_API_KEY`
+>
+> | | What it is | Where this tool reads it |
+> |---|---|---|
+> | **`GEMINI_API_KEY`** (env) | A **Google AI Studio key**. Billed by Google. | `api` backend only |
+> | **`GEMINI_API_KEY`** (inside `/opt/gemini-pool-api/.env`) | The **pool wrapper's own caller token**, sent as the `x-api-key` header. Nothing to do with Google. | `pool` backend only, and **only from that file** |
+>
+> The pool service names its caller token `GEMINI_API_KEY` *in its own `.env`* — the same
+> string as the Google key's env-var name, for a completely unrelated credential. To keep
+> them apart, this tool exposes the pool token under a **different** env-var name,
+> `GEMINI_POOL_API_KEY`, and **never** reads `process.env.GEMINI_API_KEY` for the pool.
+>
+> Get this wrong in either direction and you send a pool token to Google (401 from Google) or
+> a Google key to the pool (401 from the pool). Regression test:
+> `gemini-qa-cli.test.ts` → *"THE NAMING TRAP: a Google GEMINI_API_KEY in the env is never
+> used as the pool key"*.
+
+### 4.1 Pool backend (default) — `GEMINI_POOL_API_KEY`
+
+Resolution order, first non-empty wins:
+
+1. Environment variable: `export GEMINI_POOL_API_KEY=...`
+2. Secret-store file: `/opt/ai-os/.secrets/store/gemini-pool-api-key`
+3. The `GEMINI_API_KEY=` line inside `/opt/gemini-pool-api/.env` — the pool service's own
+   config. Parsed with an anchored per-line match, surrounding quotes stripped; a
+   commented-out line is not mistaken for the token, and an empty value counts as absent.
+
+Location 3 is why the pool backend works out of the box on this VPS with nothing configured.
+Locations 1 and 2 exist so the token can be supplied without the pool's config being readable
+(another box, a container, a narrower permission set).
+
+If none of the three has a value, the script exits 2 **naming all three**, without making any
+HTTP request. The key is never printed — not on success, not in any error path.
+
+### 4.2 API backend — `GEMINI_API_KEY`
 
 Resolution order, first non-empty wins:
 
@@ -90,9 +224,15 @@ the same deterministic failure whether or not the video argument is valid.
 | Code | Meaning |
 |---|---|
 | 0 | Success — QA JSON on stdout, plus a copy in `--out FILE` if one was given |
-| 1 | API or processing error: invalid key, upload failure, file processing `FAILED`, poll timeout (10 min), non-2xx response, unparseable or incomplete model output. HTTP status and response body are printed verbatim. |
-| 2 | Missing key: neither `GEMINI_API_KEY` nor `/opt/ai-os/.secrets/store/gemini-api-key` |
-| 3 | Usage error: no argument, unknown flag, unreadable input file, unsupported extension, or an unusable `--out` target (a directory, an unwritable file, or a missing/non-directory parent). A write that fails *after* the request is also exit 3 — and the QA JSON is on stdout in full regardless (§5.1). |
+| 1 | API or processing error: invalid key, upload failure, file processing `FAILED`, poll timeout (10 min), request timeout (`--timeout`), non-2xx response, unparseable or incomplete model output. HTTP status and response body are printed verbatim; on the pool backend that includes the model's raw text between `--- BEGIN RAW MODEL TEXT ---` markers. |
+| 2 | Missing key. Pool: none of the three locations in §4.1. API: neither `GEMINI_API_KEY` nor `/opt/ai-os/.secrets/store/gemini-api-key`. The message names every location checked. |
+| 3 | Usage error: no argument, unknown flag, unreadable input file, unsupported extension, **a URL on the pool backend** (§3.1), **`--model` on the pool backend**, `--timeout`/`--preflight` on the api backend, a non-positive `--timeout`, or an unusable `--out` target (a directory, an unwritable file, or a missing/non-directory parent). A write that fails *after* the request is also exit 3 — and the QA JSON is on stdout in full regardless (§5.1). |
+| 4 | **Pool busy or rate-limited** (pool backend only): HTTP 503 (no session came free inside the wrapper's own 60 s acquire window) or HTTP 429 (the pool account is on a ~300 s cooldown). Separate from 1 because it is the one failure worth retrying *later*. **This tool never retries by itself** — no loop, no backoff. stderr carries the `Retry-After` header when the service sends one, and cadence guidance when it does not. |
+
+Why 429/503 get their own code: they are the only pool failures known to be transient. An
+opaque 500 is *not* — round 701 traced identical 500s to a pool account that stayed dead for
+7.5 days while calling itself "a temporary Google service issue". Retrying that burns pool
+sessions that four other production workloads are competing for.
 
 ### 5.1 `--out` and the paid-result rule
 
@@ -125,9 +265,12 @@ a real `pipe(2)`.
 depend on it as-is; changing a field name, adding one, or dropping one is a breaking change,
 not a routine edit.
 
-The script requests this exact shape from Gemini via `generationConfig.responseSchema`
-(structured output), then validates on return that every required top-level key is present
-before printing. Field by field, as the script sends it:
+**The rubric is identical on both backends** — it does not get looser because the free path
+produced it. How each backend gets there differs (§6.1), but the validation does not: every
+required top-level key must be present, or exit 1.
+
+On the **api** backend the script requests this exact shape via
+`generationConfig.responseSchema` (structured output). Field by field, as the script sends it:
 
 - **`verdict`** — `"pass" | "needs_work" | "reject"`. `pass` ships as is, `needs_work` is
   fixable with the listed `top_fixes`, `reject` means re-produce the video.
@@ -162,6 +305,37 @@ problem. Every `*_s` value across the schema (`start_s`, `end_s`, `at_s`) is sec
 start of the video — that convention is uniform across all four finding categories so a
 consumer can treat them interchangeably as seek targets.
 
+### 6.1 How the pool backend reaches the same shape — extraction, not repair
+
+The pool has **no structured-output parameter of any kind**: its wrapper returns
+`{"text": <the web UI's prose reply>, "account": <email>}` and never even selects a model.
+So on the pool path the rubric is asked for in words (a JSON skeleton appended to the QA
+prompt) and then **extracted** from the reply:
+
+1. **Fenced block first.** The contents of a ` ```json ` or bare ` ``` ` fence, wherever it
+   sits in the reply — so "Sure! Here is my report:" in front of it costs nothing, and
+   "Let me know if you need more!" after it costs nothing.
+2. **Otherwise the first brace-balanced `{...}`** in the raw text. The scanner is
+   string-aware: braces and escaped quotes *inside* JSON string values do not move the depth
+   counter, so a `note` field containing `"} end {"` does not truncate the object.
+3. **Parse, then validate** every required rubric key.
+
+**It extracts; it never repairs.** A truncated object, an unclosed fence, a refusal, an
+array instead of an object, or a missing rubric key is **exit 1 with the model's raw text
+printed verbatim** between `--- BEGIN RAW MODEL TEXT ---` / `--- END RAW MODEL TEXT ---`
+markers — no second request, no patching, nothing on stdout. A silently repaired QA verdict
+is worse than no verdict: it looks authoritative and is not.
+
+The raw text survives at any size — the >64 KiB pipe case is a regression test
+(`gemini-qa-cli.test.ts`, block R405-2), because a diagnostic cut at the pipe buffer is
+undiagnosable.
+
+One hazard inherited from the pool wrapper, worth knowing before it surprises someone: the
+wrapper strips any `http://googleusercontent.com/<kind>/<digits>` substring from the reply
+(round 701 §5). Harmless for prose; it would silently corrupt a JSON string field that
+happened to contain such a URL. Nothing this tool can detect — noted so a bizarre parse
+failure has a suspect.
+
 ## 7. Cost notes
 
 - Default model: `gemini-omni-flash`.
@@ -190,6 +364,97 @@ finding 1 for the source verification (checked against `ai.google.dev/models` an
 `ai.google.dev/pricing`, 2026-08-05).
 
 ## 8. Error paths
+
+### 8.0 Pool backend — live transcripts (R702, this worktree, 2026-08-05)
+
+**Wrong pool key (exit 1)** — the pool's real 401, status and body surfaced:
+
+```
+$ GEMINI_POOL_API_KEY=definitely-not-the-pool-key scripts/gemini-qa.mjs /tmp/r702-probe-12s.mp4
+gemini-qa.mjs: pool analyse — r702-probe-12s.mp4 (1297548 bytes, video/mp4), timeout 900s
+gemini-qa.mjs: pool analyse failed
+HTTP 401 Unauthorized
+Unauthorized
+raw body:
+{"detail":"Unauthorized"}
+exit=1
+```
+
+**`--preflight` aborting before the upload (exit 1)** — the probe found the pool unable to
+generate even text, so the 1.3 MB video was never sent and no pool session was tied up for
+90 s. This is exactly the failure round 701 said to design for:
+
+```
+$ scripts/gemini-qa.mjs /tmp/r702-probe-12s.mp4 --preflight
+gemini-qa.mjs: pool preflight — POST http://127.0.0.1:8090/v1/chat (this takes ~45s)
+gemini-qa.mjs: pool preflight failed
+HTTP 500 Internal Server Error
+Failed to generate contents (stream). Unknown API error code: 1096. This might be a temporary Google service issue.
+  A 500 here is opaque by construction: the wrapper reports Google's error code and
+  nothing else, and the same code covers a dead pool account, an unsupported file and
+  a transient Google fault. Do NOT read it as "temporary" just because it says so.
+  Check, in this order:
+    1. gemini-qa.mjs --preflight ...        (or: POST http://127.0.0.1:8090/v1/chat {"prompt":"Reply with OK"})
+       If text generation ALSO fails, the pool account is dead — re-auth it.
+       If text succeeds and only file requests fail, the file-attachment path is
+       broken for every file type; that is a pool-side problem, not a video problem.
+    2. docker logs gemini-pool-api-gemini-api-1 | tail   (look for AuthError /
+       "Account status: UNAUTHENTICATED")
+  GET http://127.0.0.1:8090/health cannot tell you any of this — it reports sessions as ready
+  without ever observing a generation outcome (docs/research/round-701-33d8cba3.md §2a).
+raw body:
+{"detail":"Failed to generate contents (stream). Unknown API error code: 1096. This might be a temporary Google service issue."}
+exit=1
+```
+
+**A real video through the real pool (exit 1)** — 19:14:37 → 19:16:05, i.e. 88 s, a 12-second
+1080p excerpt of an actual pipeline render. This is the failure described in §1.2, reached
+through the shipped tool rather than curl:
+
+```
+$ scripts/gemini-qa.mjs /tmp/r702-probe-12s.mp4 --prompt-extra "12-second excerpt of a tutorial render, 1080p h264 + 48kHz aac narration"
+gemini-qa.mjs: pool analyse — r702-probe-12s.mp4 (1297548 bytes, video/mp4), timeout 900s
+gemini-qa.mjs: pool analyse failed
+HTTP 500 Internal Server Error
+Failed to generate contents (stream). Unknown API error code: 1100. This might be a temporary Google service issue.
+  [ ... the same diagnostic block as above ... ]
+raw body:
+{"detail":"Failed to generate contents (stream). Unknown API error code: 1100. This might be a temporary Google service issue."}
+exit=1
+```
+
+Note the code differs from the preflight's: **1096 for text-only, 1100 for file-bearing
+requests** — the same split round 701 observed. Neither is in `gemini_webapi` 2.0.0's
+`ErrorCode` enum, hence "Unknown API error code".
+
+**Missing pool key (exit 2)** — all three locations named, no HTTP request made:
+
+```
+gemini-qa.mjs: no Gemini Pool key found. All three locations were checked:
+  1. environment variable  GEMINI_POOL_API_KEY
+  2. secret-store file     /opt/ai-os/.secrets/store/gemini-pool-api-key
+  3. GEMINI_API_KEY= line in /opt/gemini-pool-api/.env
+  This is the POOL's caller token (sent as the x-api-key header), NOT a Google AI
+  Studio key. Location 3 names it GEMINI_API_KEY, which is confusingly the same
+  name the --backend api path uses for an unrelated Google key; do not copy one into
+  the other's slot.
+  No request was made.
+exit=2
+```
+
+**The five body shapes.** Round 701 §6 catalogued five distinct non-2xx bodies on this
+endpoint, and a client that assumes `detail` is a string crashes on two of them. All five are
+handled and covered by tests:
+
+| Status | Body shape | This tool |
+|---|---|---|
+| 401 / 500 / 503 | `{"detail": "<string>"}` | message surfaced |
+| 422 (missing header) | `{"detail": [ {...} ]}` — an **array** | described, not crashed on |
+| 413 (public route) | raw **nginx HTML** | described, printed verbatim |
+| 503 | session-acquire timeout | **exit 4** + retry guidance |
+| 429 | account cooldown | **exit 4** + ~300 s guidance |
+
+### 8.1 API backend
 
 Transcripts below are pasted verbatim from `docs/plan/evidence/p4-gemini-errorpaths.md`
 (real commands run in this worktree, node v22.22.2, 2026-08-05).
@@ -280,19 +545,42 @@ somewhere to stream the file.
 minutes pass without reaching `ACTIVE` (`FAILED` or not), it's exit 1 with the last known
 state reported — no retry, no silent continuation past the deadline.
 
-## 9. Key status
+## 9. Key status — what Konrad owes the system
+
+### 9.1 Pool backend (the default) — a key is NOT what is missing
+
+The pool token resolves fine on this box, from location 3 (`/opt/gemini-pool-api/.env`), so
+`gemini-qa` reaches the pool without any configuration. **What is broken is the pool's own
+Google authentication**, which no amount of work in this tool can fix (§1.2).
+
+Three reminders queued 2026-08-05, all `pending` at time of writing:
+
+| Reminder id | Due (local) | What it asks for |
+|---|---|---|
+| `a2224386-845a-4e27-a109-f766eb4f9104` | 2026-08-06 09:00 | Fresh `__Secure-1PSID` / `__Secure-1PSIDTS` for account `cdp-9400` in `/opt/gemini-pool-api/fresh_accounts.json` — the current pair is from Jun 30 |
+| `0a1176d1-975c-4f0e-ad81-5ea959038526` | 2026-08-06 09:05 | `VEOPARKING_JWT` at `/opt/gemini-pool-api/src/pool.py:10` **expired 2026-06-26**, so the account-assign fallback is dead too; and `session_pool.py:128` should reject `AccountStatus.UNAUTHENTICATED` (1016), not only `TOS_PENDING` (1040) — that is why `/health` reports dead sessions as ready |
+| `cacf9d2b-5f35-411c-a925-db5a795bcb48` | 2026-08-06 09:10 | *Optional*: the billed backend, §9.2 |
+
+Verification command once the pool is re-authed, in this order:
+
+```bash
+scripts/gemini-qa.mjs /path/to/clip.mp4 --preflight
+```
+
+If the preflight passes but the analysis still returns 500/1100, the file-attachment path is
+still broken and the cookies were not the whole story.
+
+### 9.2 API backend — still keyless, and that is now optional
 
 As of **2026-08-05, no Gemini API key exists on this box** — neither `GEMINI_API_KEY` nor
-`/opt/ai-os/.secrets/store/gemini-api-key` is present (`docs/plan/evidence/p4-gemini-errorpaths.md`
-§"Reminder protocol"). A reminder was queued to unblock this:
+`/opt/ai-os/.secrets/store/gemini-api-key` is present
+(`docs/plan/evidence/p4-gemini-errorpaths.md` §"Reminder protocol"). Since R702 this no longer
+blocks the tool's default path: `--backend api` is the optional, billed secondary, and Konrad
+has said he does not want to buy a key. Reminder `cacf9d2b-5f35-411c-a925-db5a795bcb48` records
+what to add if that ever changes — and warns, again, not to cross the two credentials (§4).
 
-- Reminder id **`c88f6e19-0b41-4d43-92af-48ba5eb4f476`**, due 2026-08-06 09:00 local
-  (07:00Z), status `pending` as of writing.
-- It names exactly what to add: env var `GEMINI_API_KEY`, or the secret-store file
-  `/opt/ai-os/.secrets/store/gemini-api-key` (secret name `gemini-api-key`).
-
-Until that key lands, every invocation of `gemini-qa.mjs` on this box exits 2 deterministically
-(§8) — that is by design, not a bug: no HTTP request is ever attempted without a key.
+Until that key lands, every `--backend api` invocation on this box exits 2 deterministically
+(§8.1) — by design, not a bug: no HTTP request is ever attempted without a key.
 
 ## Open discrepancies
 
@@ -300,14 +588,32 @@ Until that key lands, every invocation of `gemini-qa.mjs` on this box exits 2 de
   research doc's "≈ $0.10/sec" cannot both be right; this file budgets from the token math and
   flags the other as an unverified worst case. Settles on the first real invoice.
 - **No successful run against the live API has ever been observed.** No Gemini key exists on
-  this box (§9), so every success-path claim about the *vendor* — the rubric JSON the model
+  this box (§9.2), so every success-path claim about the *vendor* — the rubric JSON the model
   actually returns, the upload/poll timings, the cost figures — is derived from the shipped
   code and published material, not from a captured round-trip. Only the error paths in §8 are
   live transcripts. What *is* exercised end to end is this script's own output handling:
-  `forge-control/src/lib/gemini-qa-cli.test.ts` stubs `globalThis.fetch` through a `--import`
-  preload and drives the §5.1 contract (stdout-first, the pre-flight, the >64 KiB pipe cases)
-  against the real script, with no key and no spend.
+  `forge-control/src/lib/gemini-qa-cli.test.ts` stubs `globalThis.fetch` (and, for key
+  resolution, `fs`) through `--import` preloads and drives the §5.1 contract, the §6.1
+  extraction cases and the §8.0 error shapes against the real script, with no key, no spend
+  and no pool traffic.
+- **No successful run against the live POOL has been observed either, for the same class of
+  reason** — the pool's file path is down (§1.2). The pool backend's *failure* handling is
+  proved live (§8.0: real 401, real 500/1096 preflight abort, real 500/1100 video analysis);
+  its *success* handling — fenced-JSON extraction, rubric validation, `--out` duplication — is
+  proved only against stubbed replies. The first thing to re-run once the pool is re-authed is
+  a real video, to learn two things this round could not measure: **how long Gemini actually
+  takes to watch a minute of video**, and **how much chatter surrounds the JSON** (which is
+  what sizes the extraction in §6.1).
+- **The `audio` rubric dimension is unproven on the pool path.** Round 701 §4 flagged this and
+  it remains open: the upstream `gemini_webapi` library documents no video or audio input at
+  all (the PR that would have added explicit multimedia MIME handling was closed unmerged), so
+  whether the web-UI path decodes the audio track is unobservable from here. When the pool
+  comes back, probe it with a question answerable *only* from the audio track — the tutorial
+  job scripts in the `content_forge` Postgres DB are the ground truth — before trusting
+  `audio.glitches` on this backend. On the api backend the dimension is documented by Google
+  (~32 tokens/sec of audio, processed at 1 Kbps single channel) and is safe.
 
-Everything else matched when this file was written: `--help` output, the four exit codes, both
-key locations, the frozen rubric schema (checked field by field against the script's
-`responseSchema`), and the `gemini-omni-flash` default all agree with the shipped script.
+Everything else matched when this file was written: `--help` output, all five exit codes, all
+five key locations across the two backends, the frozen rubric schema (checked field by field
+against the script's `responseSchema` and its pool-prompt skeleton), and the
+`gemini-omni-flash` api default all agree with the shipped script.

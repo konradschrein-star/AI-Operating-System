@@ -194,8 +194,54 @@ these must stay standalone-copyable): env var → `/opt/ai-os/.secrets/store/<na
 
 ### 6.2 `scripts/gemini-qa.mjs`
 
-Flow (facts researched 2026-08-05 against ai.google.dev docs; re-verified by the phase
-scout at build time):
+**AMENDED at R702 (2026-08-05) — the Gemini Pool is now the PRIMARY backend; the official
+API below is retained as an optional SECONDARY.** Konrad has no personal Gemini key and does
+not want to buy one, so the default path must ride pool-account entitlements. The flow
+described in 1–3 below is unchanged but now sits behind `--backend api`; the new default is
+`--backend pool`:
+
+- **Pool path:** `POST http://127.0.0.1:8090/v1/analyze`, `multipart/form-data` with fields
+  `prompt` (string) + `file` (binary), header `x-api-key` → `{"text": string,
+  "account": string}`. Internal address only — the public route caps bodies at 200 MB and
+  reads at 120 s, and answers 413 with nginx **HTML**, which a real video analysis would hit.
+- **Credential, and the trap:** the pool token resolves env `GEMINI_POOL_API_KEY` →
+  `/opt/ai-os/.secrets/store/gemini-pool-api-key` → the `GEMINI_API_KEY=` line inside
+  `/opt/gemini-pool-api/.env`; exit 2 names all three. ⚠ That third location calls the pool's
+  own caller token `GEMINI_API_KEY` — **the same name §6.1's api path uses for a Google AI
+  Studio key, for an unrelated credential.** They are kept strictly apart: the pool is never
+  read from `process.env.GEMINI_API_KEY`.
+- **No structured output on the pool.** It returns free text, so the frozen rubric below is
+  requested in words and then *extracted* (fence-stripping, then a string-aware
+  brace-balanced scan) and validated. Unparseable, non-object, or missing a required key ⇒
+  exit 1 printing the model's raw text verbatim. **Extraction only — never repair.**
+- **No automatic fallback between backends, not even opt-in.** R702's brief permits one only
+  if pool failures are cleanly distinguishable; `docs/research/round-701-33d8cba3.md` §6
+  proves they are not (dead account, bad file and transient fault all return the same opaque
+  500 / code 1100). A fallback on an undiagnosable error would quietly ship a video to a
+  billed endpoint.
+- **Model is unselectable on the pool** (the wrapper never passes `model=`), so `--model` is
+  rejected there with exit 3 rather than accepted and ignored. QA verdicts consequently ride
+  whatever the pool account's web-UI default is — a stated property of the free path.
+- **New exit code 4** for pool 503 (no session inside the wrapper's own 60 s acquire window)
+  and 429 (~300 s account cooldown) — the only failures worth retrying later. No retry loop
+  in the tool. Timeout is `--timeout`, default 900 s.
+- **URL inputs are a usage error on the pool** (exit 3): `/v1/analyze` takes an upload, not a
+  URI, and a YouTube watch URL is an HTML page. Documented in `--help` and
+  `docs/tools/gemini-qa.md` §3.1; `--backend api` remains the URL path.
+
+**Status at amendment time — the pool cannot yet serve this tool.** Measured 2026-08-05
+between 19:00 and 20:44 CEST: `POST /v1/chat` (text) returned 200 at 19:00 but 500/code 1096
+about a quarter of an hour later, and again at 20:39 — the pool flaps on text — while
+`POST /v1/analyze` with a file returned 500/code 1100 on all three attempts (1.3 MB
+`video/mp4` twice, 1.5 h apart, and a 40-byte `text/plain` control) — so the
+**file-attachment path fails for every file type**, which is narrower than R701's "the
+account cannot generate at all" and independent of video. Six generation attempts this round,
+one success, text-only. `GET /health` reported `sessions_ready: 4` throughout. The backend is implemented and correct
+against the documented wire contract; what it needs is pool-side re-auth (see
+`docs/tools/gemini-qa.md` §1.2 and §9).
+
+Flow of the **api** backend (facts researched 2026-08-05 against ai.google.dev docs;
+re-verified by the phase scout at build time):
 
 1. Input local path → Files API resumable upload
    (`POST https://generativelanguage.googleapis.com/upload/v1beta/files`,
@@ -228,7 +274,9 @@ scout at build time):
 ```
 
 Timestamped findings are the point — a human (or later, a repair agent) must be able to
-jump to `at_s`.
+jump to `at_s`. **This schema is unchanged at R702 and is identical on both backends** — the
+rubric is a frozen contract, not a per-backend shape, and it does not get looser because the
+free path produced it.
 
 ### 6.3 `scripts/perplexity.mjs`
 
