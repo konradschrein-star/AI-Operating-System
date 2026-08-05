@@ -704,7 +704,7 @@ visible and an `AMENDED at R502` note carries the reason and the new binding tex
 | 1 | N4 names migration 0035 | **FIXED** — `docs/plan/01-requirements.md` N4, commit `1ff492d`. Original line kept; `AMENDED at R502` block names `db/migrations/0039_reviewer_chain_key.sql` and records the R308 renumber and why (`main` shipped its own `0035_task_idempotency.sql`; `db/migrations/` has no ledger to disambiguate two `0035_*` files). |
 | 2 | R22 describes Sonar chat completions | **FIXED** — `docs/plan/01-requirements.md` R22, commit `1ff492d`. `AMENDED at R502 — superseded by docs/research/perplexity-api.md (commit d870320)`: Agent API `POST /v1/agent`, default `perplexity/sonar`, search at `POST /search`, output `{answer, citations[], search_results[], model, usage}`, strict-whitelist request body, browser fallback documented in `docs/tools/perplexity.md` §11 not built. |
 | 3 | R21 pins `gemini-3.6-flash`; rubric cross-ref | **FIXED** — `docs/plan/01-requirements.md` R21, commit `1ff492d`. `AMENDED at R502 — superseded by docs/research/round-399-41e8757d.md`: default is `gemini-omni-flash` because `gemini-3.6-flash` does not accept video input; rubric cross-reference corrected from "02-architecture §5" to "§6.2". |
-| 4 | Push the branch | **FIXED** — `scripts/git-sync-branch.sh` run against this worktree, plain push, no `--force`. Transcript in §R502.1 below. |
+| 4 | Push the branch | **FIXED** — `scripts/git-sync-branch.sh` run against this worktree, plain push, no `--force`. Transcript in §R502.3 below. |
 | 5 | `AI OS/Goal Mode Design.md` not appended (R27) | **FIXED** — appended, never truncated. Verification in §R502.2 below: the original 29 lines are byte-identical after the append (`head -29 | diff` against a pre-append copy = no output). New section `## Engine v2 — hardening + the research lane (2026-08-05, project engine-v2-research-lane)` covers all five required topics: consolidation semantics (group-settle, NEEDS_FIXES beats PASS, one fix chain, block-before-mark-done, `chain_key` idempotency, 3-cycle cap), status gating (`AND p.status = 'active'` on both paths, in-flight runs not killed), the worktree-only policy + `REVIEWER_LIVE_CHECK`, the detached `safe-restart.sh` deploy pattern with the exact command, and the researcher lane (`agents/researcher.md`, `roleFilePaths()` repo fallback, both helpers with their key protocol, `git-sync-branch.sh`). |
 | 6 | `02-architecture.md:196,262` model + pricing | **FIXED** — commit `1ff492d`. §6.2 step 2 and §9 both annotated `AMENDED at R502`: `gemini-omni-flash`, $1.50/$9.00 per 1M, video 5,792 tok/sec, citing `docs/research/round-399-41e8757d.md`. |
 | 7 | `02-architecture.md` §5.1 role-file install | **FIXED** — commit `1ff492d`. The `cp` into `/root/.claude/agents/` sentence is quoted as the original and superseded: the shipped resolution order is `${AGENTS_DIR}/<role>.md` then `${REPO_AGENTS_DIR}/<role>.md` (`project-tick.ts:185-187`), so a role file committed to `agents/` self-installs at the first post-deploy executor restart. The note also keeps the true half of the old claim — `roleConfig()`'s per-role cache is why R20's smoke is gated behind P6's restart. |
@@ -776,3 +776,34 @@ ORIGINAL 29 LINES INTACT      (diff produced no output)
 R27's first named deliverable is now done. The `Operator Log.md` entry and
 `docs/tools/deploy-playbook.md` were already in place per §1, so R27 moves DEFECT →
 SATISFIED.
+
+### §R502.3 — branch push (must-fix 4)
+
+Run after every round-502 commit was in place, so what origin carries is the finished
+round and not a midpoint:
+
+```
+$ git rev-parse HEAD
+676f3898efbdf36e271cb9c7e747c88b66a0ec7a
+$ git ls-remote origin refs/heads/project/4120f785     # before
+17a30aa91ac8074d11f0533f6f4e36e8e0a23c3b	refs/heads/project/4120f785
+
+$ scripts/git-sync-branch.sh /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365
+git-sync-branch.sh: pushing project/4120f785 to git@github.com:konradschrein-star/AI-Operating-System.git
+To github.com:konradschrein-star/AI-Operating-System.git
+   17a30aa..676f389  HEAD -> project/4120f785
+pushed-branch: project/4120f785
+origin-url: git@github.com:konradschrein-star/AI-Operating-System.git
+SYNC_EXIT=0
+
+$ git ls-remote origin refs/heads/project/4120f785     # after
+676f3898efbdf36e271cb9c7e747c88b66a0ec7a	refs/heads/project/4120f785
+```
+
+`17a30aa..676f389` — two dots, a fast-forward. No `+`, no forced update, no rewritten
+remote history; exit 0. The 11-commit lag §1 recorded is closed, and R15's push path is
+now proven on the real branch rather than only on a throwaway repo.
+
+*(This one commit — the appended section you are reading — necessarily lands after the
+push above. It is documentation of the push itself; the next `git-sync-branch.sh` run
+carries it, and the P6 deploy task pushes again before merging.)*
