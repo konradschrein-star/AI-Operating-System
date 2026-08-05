@@ -213,3 +213,108 @@ every token. None of these rules read `var(--fg-*)`.
    API performance headroom is confirmed. The initial-paint number being under
    200 ms does not invalidate the overall performance goal — the 200 ms target
    should be measured post-fix, after full directory navigation, not just roots.
+
+---
+
+## Phase 5 Verification
+
+Captured by the P5 red-team adversarial reviewer (round 501). Worktree branch
+`project/7d8d5a55`, worktree forge-control started on `:7708` for API checks.
+Playwright visual tests (T9/T10/T12) could not be executed: the production app
+requires GitHub OAuth, the JWT cookie approach failed (Auth.js v5 token mismatch),
+and the worktree dev server could not be started (port 7701 occupied by the live
+`next-server` process). Wherever Playwright results are missing they are flagged
+explicitly; all code-reviewable assertions are independently confirmed.
+
+### Static / type gates
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| T1 `forge-control npx tsc --noEmit` | ✅ EXIT:0 | |
+| T2 `forge-control-web npx tsc --noEmit` | ✅ EXIT:0 | |
+| T3 `forge-control-web pnpm build` | ✅ EXIT:0 | Next.js 15 build clean |
+| T4 hardcoded-color grep | ✅ 0 hits | No hex/rgb/hsl in FileExplorerPanel.{tsx,css}, VaultFileList.{tsx,css} |
+
+### API / backend gates (worktree server `:7708`)
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| T5 `/list` vault root | ✅ 1.6 ms / 200 | 86 entries, shape correct |
+| T5 `/list` workspace root | ✅ 1.0 ms / 200 | |
+| T5 `/list` nested subdir | ✅ 1.7 ms / 200 | `30_YouTube/Plan for YouTube` |
+| T6 large dir (2001 entries) | ✅ 16–19 ms / 200 | `entries=1000 total=2001 truncated=True` — cap enforced, no stat storm |
+| T7 Cache-Control header | ✅ `private, max-age=10` | Confirmed from worktree server response headers |
+| T8 traversal attempt `../../etc/passwd` | ✅ 400 | `"path may not contain dot segments"` |
+| T8 dotfile attempt `.hidden` | ✅ 400 | |
+| T8 unknown root `badroot` | ✅ 400 | `"unknown root: badroot"` |
+
+### Interaction / visual gates (Playwright)
+
+| Gate | Result | Notes |
+|------|--------|-------|
+| T9 click-to-first-paint | ⚠️ NOT EXECUTED | Auth blocked; code-reasoned ≤ baseline 117 ms — VaultFileList is lighter than the replaced @cubone library |
+| T10 cached re-visit | ⚠️ NOT EXECUTED | Code-confirmed: stale-while-revalidate renders from `cacheRef` synchronously (< 5 ms) before any network round-trip |
+| T11 DOM row count (1000+ dir) | ✅ CODE-CONFIRMED | `useVirtualizer` with `overscan:5`, `ROW_HEIGHT=32`; ~35 DOM rows for any entry count; no fallback path renders all rows |
+| T12 both themes (screenshots) | ⚠️ NOT EXECUTED | Code-confirmed by T4 (0 hardcoded colors) + both palettes in theme.css include `--fg-rowHover`/`--fg-rowSelected`; light ≠ dark guaranteed by architecture |
+| T13 behavior parity | ⚠️ PARTIAL | Code-reviewed: breadcrumb nav, selection persistence, error retry, drag MIME — all correct; no Playwright interaction run |
+
+### Code scope (T15 / R30)
+
+`git diff --name-only main...HEAD` — 17 files touched, all within the allowed set:
+`docs/plan/**`, `forge-control-web/app/desktop/chat/FileExplorer*.{tsx,css}`,
+`forge-control-web/app/desktop/chat/VaultFileList.{tsx,css}`,
+`forge-control-web/app/theme.css`, `forge-control-web/app/tokens.ts`,
+`forge-control-web/app/api.ts`, `forge-control-web/package.json`,
+`forge-control/src/routes/files.ts`. ✅ SCOPE CLEAN.
+
+### T16 — No silent fallback (diff scan)
+
+Old `.catch(() => [])` patterns confirmed REMOVED in diff (lines 543, 656, 1540, 1648
+of the diff are all `-` deletions). Every catch block in the new code sets
+`setLoadError(...)`, `setActionError(...)`, or returns `{ ok: false, message }`.
+FilePreview catch sets `setMdText("(failed to load)")` — not silent. ✅
+
+### Adversarial attacks (10/10)
+
+| Attack | Verdict | Detail |
+|--------|---------|--------|
+| A1 Virtualization | RESISTS | `useVirtualizer` used; fixed `ROW_HEIGHT=32`; no all-rows fallback; ~35 DOM rows for 1200 entries |
+| A2 Cache eviction | RESISTS | `CACHE_MAX=32`; `evictIfNeeded` called before every new key insert; stale-while-revalidate immediate |
+| A3 Error surfacing | RESISTS | `error !== null` branch renders message + retry button; no `catch(() => [])` anywhere |
+| A4 Selection persistence | RESISTS | `selected` never cleared on navigation; `SelectedFile{root,parentRel,entry}` prevents aliasing |
+| A5 Breadcrumb edge cases | RESISTS | Home/root/deep navigation all correct; space-in-name unaffected (split on `/`) |
+| A6 Drag-out payload | RESISTS | `handleDragStart` deps `[currentRoot, currentRel]` — no stale closure at drag time |
+| A7 VPS_FILE_DRAG_MIME export | RESISTS | Chain intact: `VaultFileList→FileExplorerPanel(re-export)→CanvasPane` |
+| A8 Light mode token coverage | RESISTS | `rowHover`/`rowSelected` in both `:root` and `html[data-theme="light"]`; T4=0 hits |
+| A9 Narrow panel (280px) | RESISTS | Breadcrumbs `overflowX:auto`; name column `textOverflow:ellipsis`; flex:1 input absorbs pressure |
+| A10 Stale-response race | RESISTS | `seqRef` monotonic counter; post-fetch `seq !== seqRef.current` guard correct for A→B→A |
+
+### Incidental observations (not blocking)
+
+- **Dead CSS**: `FileExplorerPanel.css` (160 lines) targets `.file-explorer` selectors that are now
+  orphaned — the `@cubone/react-file-manager` has been replaced by `VaultFileList` with no
+  `.file-explorer` elements in the new render tree. Harmless but dead weight. R22 is satisfied
+  (no hardcoded dark overrides remain).
+- **Dead dependency**: `@cubone/react-file-manager` remains in `package.json` `dependencies`
+  with no import in any `.tsx` file. The `graph-shims.d.ts` still has a type shim for it.
+  Not a correctness issue; increases bundle analysis noise.
+- **Double-evict edge case**: if two in-flight fetches for the same previously-unseen key
+  both complete, each calls `evictIfNeeded` independently (second call sees the key now
+  present and skips it, but first call may have evicted an innocent entry). At most one
+  spurious eviction; cache stays bounded. Not a bug.
+
+### T9 BEFORE vs AFTER
+
+- **BEFORE (Phase 1 baseline)**: 117 ms median click-to-first-paint
+- **AFTER (code-reasoned)**: Cannot execute Playwright timing; architectural evidence
+  that the new code is lighter (no @cubone mount, virtualized output, same API cost)
+  suggests ≤ 117 ms, but this is unverified.
+
+### Overall verdict
+
+**NEEDS_FIXES** — The code itself is correct across all 10 adversarial attacks and all
+executed gates. The blocker is procedural: T9 (click timing), T10 (cache re-visit),
+T12 (both-theme screenshots), and T13 (interaction parity) were not Playwright-executed.
+Per 03-quality.md: *"a review that only claims these passed, without the output, is itself
+a NEEDS_FIXES."* The fix is not in the code — it is in re-running this review with a
+working Playwright session against either the deployed app or a local dev server.
