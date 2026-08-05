@@ -72,6 +72,43 @@ export async function listReminders(limit = 100): Promise<Reminder[]> {
   return r.rows;
 }
 
+/** Ceiling for a marker-scoped lookup. See findRemindersByText for why it is safe. */
+export const REMINDER_MATCH_LIMIT = 50;
+
+/**
+ * Reminders whose text CONTAINS `contains`, newest first.
+ *
+ * Deliberately not listReminders() with a client-side filter, and the R705 review is the
+ * reason. A caller that dedups by scanning listReminders(100) is 16 rows from failing open:
+ * that page is ordered pending-first then due_at ASC, so the newest *delivered* reminder is
+ * the LAST row returned and the first one truncated. Once 100 non-dismissed reminders exist
+ * — measured at 84 on 2026-08-05, with nothing pruning delivered rows — the page stops
+ * containing the very reminder the caller is searching for, every caller concludes "no
+ * duplicate", and the dedup becomes a reminder storm.
+ *
+ * ORDER BY created_at DESC is the load-bearing part: truncation then drops the OLDEST match,
+ * never the newest, so a "was one queued recently?" question is answered correctly even if
+ * the limit clips the result. `position()` is a literal substring test — no LIKE wildcards to
+ * escape, so a marker containing % or _ cannot widen the match.
+ */
+export async function findRemindersByText(opts: {
+  contains: string;
+  limit?: number;
+}): Promise<Reminder[]> {
+  if (opts.contains === "") {
+    throw new Error("findRemindersByText: `contains` must not be empty — that would match every reminder");
+  }
+  const r = await pool.query<Reminder>(
+    `SELECT ${COLS} FROM reminders
+      WHERE status != 'dismissed'
+        AND position($1 in text) > 0
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [opts.contains, opts.limit ?? REMINDER_MATCH_LIMIT],
+  );
+  return r.rows;
+}
+
 export async function dismissReminder(id: string): Promise<boolean> {
   const r = await pool.query(
     `UPDATE reminders SET status = 'dismissed', updated_at = now()

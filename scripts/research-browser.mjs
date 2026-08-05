@@ -535,6 +535,31 @@ export function findRecentLoginReminder(reminders, { profile, service, nowMs, wi
   return { match: null, ageMs: null, skipped };
 }
 
+/**
+ * The matching reminders that are OLDER than the dedup window — i.e. the ones that are no
+ * longer suppressing anything and never will again.
+ *
+ * Nothing in the reminders table prunes delivered rows (R705 measured 71 of them), and this
+ * tool is a steady producer of them. Dismissing the spent ones after queueing a fresh one
+ * keeps the marker-scoped result set permanently small, which is what stops the newest match
+ * from ever being pushed off the end of a page. Rows INSIDE the window are never touched:
+ * one of them is why this run deduped, or is the one just created.
+ */
+export function selectStaleLoginReminders(reminders, { profile, service, nowMs, windowMs, exceptId = null }) {
+  const marker = reminderMarker(profile, service);
+  const stale = [];
+  for (const rem of reminders ?? []) {
+    if (typeof rem?.text !== 'string' || !rem.text.includes(marker)) continue;
+    if (rem.status === 'dismissed') continue;
+    if (typeof rem.id !== 'string' || rem.id === '') continue; // nothing to dismiss it by
+    if (exceptId !== null && rem.id === exceptId) continue;
+    const createdMs = parsePgTimestamp(rem.created_at);
+    if (createdMs === null) continue; // unreadable: leave it alone rather than guess
+    if (nowMs - createdMs > windowMs) stale.push(rem.id);
+  }
+  return stale;
+}
+
 // ---------------------------------------------------------------------------
 // Prerequisite resolution — playwright, then Chrome. Both exit 2 naming every path tried.
 // ---------------------------------------------------------------------------
@@ -919,8 +944,12 @@ function readTakeover(profile) {
  * SECURITY: x11vnc binds -localhost (127.0.0.1) and websockify binds 127.0.0.1 explicitly.
  * The VNC surface is NEVER on a public interface. -nopw is safe ONLY because of that: the
  * access control is the loopback bind plus SSH, not a VNC password.
+ *
+ * `supervisorPid` records WHO the stack belongs to, and is what makes reaping possible (see
+ * reapOrphanedTakeover). A stack raised by the `takeover` subcommand has no owner — a human
+ * asked for it deliberately — and is therefore never reaped.
  */
-async function ensureTakeover(profile, ports) {
+async function ensureTakeover(profile, ports, { supervisorPid = null } = {}) {
   assertTakeoverPrereqs();
   ensureDir(stateDir(profile), 0o700);
   const existing = readTakeover(profile);
@@ -934,6 +963,9 @@ async function ensureTakeover(profile, ports) {
     x11vnc: existing?.x11vnc ?? null,
     websockify: existing?.websockify ?? null,
     started_at: existing?.started_at ?? new Date().toISOString(),
+    // A supervisor adopting a stack takes ownership of it; `takeover` (null) never disowns
+    // one that a supervisor is already responsible for.
+    supervisor_pid: supervisorPid ?? existing?.supervisor_pid ?? null,
   };
   const started = [];
 
@@ -1057,6 +1089,63 @@ function teardownTakeover(profile) {
   return actions;
 }
 
+/**
+ * Pure ownership verdict for a recorded takeover stack, so the reap decision is testable
+ * without spawning an X server.
+ */
+export function classifyTakeoverOwner({ supervisorPid, ownerAlive, anyProcessLive }) {
+  if (!Number.isInteger(supervisorPid) || supervisorPid <= 0) {
+    return { reap: false, reason: 'no supervisor owns this stack — `takeover` raised it deliberately' };
+  }
+  if (ownerAlive) return { reap: false, reason: `supervisor pid ${supervisorPid} is alive` };
+  if (!anyProcessLive) {
+    return { reap: false, stateOnly: true, reason: `supervisor pid ${supervisorPid} and its whole stack are gone` };
+  }
+  return { reap: true, reason: `supervisor pid ${supervisorPid} is dead but its stack is still up` };
+}
+
+/**
+ * Tear down a takeover stack whose supervisor died without running shutdown().
+ *
+ * R705: Xvfb, x11vnc and websockify are spawned `detached` + `unref()`, so they live in their
+ * own process groups and survive anything that kills the supervisor. teardownTakeover() was
+ * only ever reached from the supervisor's own loop, which means a SIGKILL, an OOM kill or a
+ * watchdog left the entire X/VNC stack running FOREVER — no reaper existed anywhere. The
+ * signal handlers in supervise() close the ordinary cases; this closes the ones no handler
+ * can (SIGKILL, power loss), by making the next `open` or `status` responsible for it.
+ *
+ * Killing Xvfb also disposes of the orphaned Chrome: it loses the display it was launched on
+ * and exits. That is a consequence worth stating, not a guarantee to lean on — a Chrome that
+ * somehow outlives its X server would still hold the profile's SingletonLock, and the next
+ * launch would fail loudly rather than silently share a profile.
+ */
+function reapOrphanedTakeover(profile) {
+  const state = readTakeover(profile);
+  if (state === null) return null;
+  const supervisorPid = state.supervisor_pid;
+  const verdict = classifyTakeoverOwner({
+    supervisorPid,
+    ownerAlive:
+      Number.isInteger(supervisorPid) &&
+      supervisorPid > 0 &&
+      isPidAlive(supervisorPid) &&
+      pidCmdlineMatches(supervisorPid, SUPERVISOR_TOKEN),
+    anyProcessLive: state.live.xvfb || state.live.x11vnc || state.live.websockify || state.live.wm,
+  });
+  if (verdict.stateOnly === true) {
+    removeIfPresent(takeoverStatePath(profile));
+    return { reaped: false, supervisor_pid: supervisorPid, reason: verdict.reason, actions: [] };
+  }
+  if (!verdict.reap) return null;
+  writeErr(`${SELF}: reaping an orphaned takeover stack for "${profile}" — ${verdict.reason}\n`);
+  return {
+    reaped: true,
+    supervisor_pid: supervisorPid,
+    reason: verdict.reason,
+    actions: teardownTakeover(profile),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The supervisor and its file-queue IPC.
 //
@@ -1088,6 +1177,100 @@ export const IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 h of no requests → shut do
 export const LOGIN_IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000; // a human has to get to it
 export const HARD_MAX_SESSION_MS = 8 * 60 * 60 * 1000;
 const POLL_MS = 250;
+
+/**
+ * How long a start.lock may exist without a readable pid file before it counts as stale.
+ *
+ * mkdir and the pid write cannot be one atomic step, so there is a real window in which the
+ * winner holds a lock that names nobody. This grace is what tells that window apart from a
+ * process that died inside it.
+ */
+export const LOCK_PID_GRACE_MS = 5_000;
+const startLockPidPath = (profile) => join(startLock(profile), 'pid');
+
+/**
+ * Pure staleness verdict for a start.lock, kept separate from the filesystem so every branch
+ * is testable without racing real processes.
+ *
+ * R705: the lock had no staleness check at all. A winner that died between mkdir and writing
+ * session.json left a lock that burned the full 90 s startup timeout for the next invocation,
+ * and — worse — that timeout path deleted the lock unconditionally, so a healthy-but-slow
+ * launch could have its lock removed by a waiter and admit a THIRD invocation to open a
+ * second persistentContext on the same user-data-dir.
+ */
+export function classifyStartLock({ pid, dirAgeMs, holderAlive, graceMs = LOCK_PID_GRACE_MS }) {
+  if (pid === null) {
+    return dirAgeMs > graceMs
+      ? { stale: true, reason: `no pid file after ${Math.round(dirAgeMs / 1000)}s — the holder died creating it` }
+      : { stale: false, reason: 'no pid file yet, but the lock is younger than the write grace' };
+  }
+  if (!holderAlive) return { stale: true, reason: `holder pid ${pid} is gone` };
+  return { stale: false, reason: `holder pid ${pid} is alive` };
+}
+
+/** The lock's recorded holder and age. pid is null when unwritten or unreadable. */
+function readStartLockHolder(profile) {
+  let dirAgeMs;
+  try {
+    dirAgeMs = Date.now() - statSync(startLock(profile)).mtimeMs;
+  } catch (err) {
+    if (err.code === 'ENOENT') return null; // released between the EEXIST and this read
+    die(EXIT.RUNTIME, `cannot stat ${startLock(profile)}: ${err.message}`);
+  }
+  let pid = null;
+  try {
+    const parsed = Number.parseInt(readFileSync(startLockPidPath(profile), 'utf8').trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) pid = parsed;
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      writeErr(`${SELF}: cannot read ${startLockPidPath(profile)}: ${err.message} — treating it as unwritten\n`);
+    }
+  }
+  // The token guards pid reuse: a recycled pid running something else is not our holder.
+  const holderAlive = pid !== null && isPidAlive(pid) && pidCmdlineMatches(pid, SELF);
+  return { pid, dirAgeMs, holderAlive };
+}
+
+/**
+ * Take the start mutex, breaking it once if its holder is provably gone. Returns whether we
+ * hold it. Exactly one retry: a lock that is re-taken between our rmSync and our mkdirSync
+ * belongs to a live competitor, and waiting for it is the correct outcome, not a fight.
+ */
+function acquireStartLock(profile) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      mkdirSync(startLock(profile), { mode: 0o700 }); // atomic mutex
+      writeFileSync(startLockPidPath(profile), `${process.pid}\n`, { mode: 0o600 });
+      return { acquired: true, broke: attempt > 0 };
+    } catch (err) {
+      if (err.code !== 'EEXIST') {
+        return die(EXIT.RUNTIME, `cannot create ${startLock(profile)}: ${err.message}`);
+      }
+    }
+    const holder = readStartLockHolder(profile);
+    if (holder === null) continue; // vanished; try to take it
+    const verdict = classifyStartLock(holder);
+    if (!verdict.stale) return { acquired: false, holder, reason: verdict.reason };
+    writeErr(`${SELF}: breaking a stale start.lock for "${profile}": ${verdict.reason}\n`);
+    rmSync(startLock(profile), { recursive: true, force: true });
+  }
+  return { acquired: false, holder: readStartLockHolder(profile), reason: 'a live competitor re-took the lock' };
+}
+
+/**
+ * Release the lock only if it is ours or its holder is dead. A waiter that times out must
+ * never delete a live winner's lock — that is what would admit a second supervisor onto one
+ * user-data-dir.
+ */
+function releaseStartLockIfOurs(profile) {
+  const holder = readStartLockHolder(profile);
+  if (holder === null) return { released: false, reason: 'no lock present' };
+  if (holder.pid !== process.pid && holder.holderAlive) {
+    return { released: false, reason: `lock is held by live pid ${holder.pid}; leaving it alone` };
+  }
+  rmSync(startLock(profile), { recursive: true, force: true });
+  return { released: true, reason: holder.pid === process.pid ? 'ours' : `holder pid ${holder.pid} is gone` };
+}
 
 function readSession(profile) {
   const session = readJson(sessionPath(profile));
@@ -1132,15 +1315,11 @@ async function ensureSupervisor(profile, ports) {
   ensureDir(resDir(profile), 0o700);
   removeIfPresent(stopPath(profile));
 
-  let weStarted = false;
-  try {
-    mkdirSync(startLock(profile), { mode: 0o700 }); // atomic mutex
-    weStarted = true;
-  } catch (err) {
-    if (err.code !== 'EEXIST') {
-      die(EXIT.RUNTIME, `cannot create ${startLock(profile)}: ${err.message}`);
-    }
+  const lock = acquireStartLock(profile);
+  const weStarted = lock.acquired;
+  if (!weStarted) {
     // Another invocation is mid-launch. Wait for ITS session rather than racing it.
+    writeErr(`${SELF}: another invocation is starting profile "${profile}" (${lock.reason}); waiting for it\n`);
   }
 
   if (weStarted) {
@@ -1151,7 +1330,7 @@ async function ensureSupervisor(profile, ports) {
     try {
       fd = openSync(logPath, 'a', 0o600);
     } catch (e) {
-      rmSync(startLock(profile), { recursive: true, force: true });
+      releaseStartLockIfOurs(profile);
       return die(EXIT.RUNTIME, `cannot open ${logPath}: ${e.message}`);
     }
     writeFd(fd, `\n=== ${new Date().toISOString()} supervising ${profile} on ${ports.display} ===\n`);
@@ -1163,7 +1342,7 @@ async function ensureSupervisor(profile, ports) {
     child.unref();
     closeSync(fd);
     if (child.pid === undefined) {
-      rmSync(startLock(profile), { recursive: true, force: true });
+      releaseStartLockIfOurs(profile);
       die(EXIT.RUNTIME, `spawning the supervisor produced no pid; see ${logPath}`);
     }
   }
@@ -1175,11 +1354,14 @@ async function ensureSupervisor(profile, ports) {
     },
     STARTUP_TIMEOUT_MS,
     () => {
-      rmSync(startLock(profile), { recursive: true, force: true });
+      // Conditional on purpose: a WAITER that times out has no claim on the lock, and a slow
+      // but healthy winner must keep it. Deleting it here is how a third invocation used to
+      // get in and open a second browser on the same user-data-dir.
+      const released = releaseStartLockIfOurs(profile);
       return die(
         EXIT.RUNTIME,
         `the browser supervisor for profile "${profile}" did not come up within ` +
-          `${STARTUP_TIMEOUT_MS / 1000}s. Its log tail:\n` +
+          `${STARTUP_TIMEOUT_MS / 1000}s (start.lock: ${released.reason}). Its log tail:\n` +
           `${tailFile(join(stateDir(profile), 'supervisor.log'))}`,
       );
     },
@@ -1229,17 +1411,80 @@ async function fetchJson(step, url, init) {
 }
 
 /**
+ * Read a `GET /api/reminders?contains=` reply, and decide how much to trust it. Pure, so
+ * both the good scope and the degraded one are testable without a forge-control.
+ *
+ * R705: the previous implementation read `GET /api/reminders` — a 100-row, pending-first
+ * page — and scanned it. A login reminder is `pending` for 5 minutes and `delivered` for the
+ * remaining 55 of its dedup window, and delivered rows sort after every pending one, so the
+ * row this check exists to find is the first thing that page truncates. At 100 non-dismissed
+ * reminders the dedup silently fails open and every wall-hitting run re-queues.
+ *
+ * The `filter` echo is the version handshake. An older forge-control ignores `?contains=` and
+ * returns the unfiltered page; that is reported, loudly, as a degraded scope rather than
+ * accepted as an answer — the caller records it in its JSON output.
+ */
+export function interpretReminderPage(listed, marker) {
+  if (listed?.filter?.contains === marker) {
+    return {
+      reminders: Array.isArray(listed.reminders) ? listed.reminders : [],
+      scope: 'marker-filtered',
+      truncated: listed.filter.truncated === true,
+      warning: null,
+    };
+  }
+  return {
+    reminders: Array.isArray(listed?.reminders) ? listed.reminders : [],
+    scope: 'unfiltered-page-fallback',
+    truncated: null,
+    warning:
+      `${REMINDERS_URL} did not echo the contains filter (got ` +
+      `${JSON.stringify(listed?.filter ?? null)}), so this forge-control predates the R705 ` +
+      `marker query and answered with an unfiltered, truncated page. Deduping against that ` +
+      `page anyway — it can fail OPEN and queue a duplicate reminder, which is noise rather ` +
+      `than a lost notification. Deploy this branch's forge-control to fix the scope.`,
+  };
+}
+
+async function fetchMarkedReminders(marker) {
+  const url = `${REMINDERS_URL}?contains=${encodeURIComponent(marker)}`;
+  const listed = await fetchJson('GET /api/reminders?contains=', url, {
+    headers: { accept: 'application/json' },
+  });
+  const page = interpretReminderPage(listed, marker);
+  if (page.warning !== null) writeErr(`${SELF}: ${page.warning}\n`);
+  return page;
+}
+
+/** Best-effort dismissal of spent reminders. Never throws: pruning must not fail a login. */
+async function dismissReminders(ids) {
+  const results = [];
+  for (const id of ids) {
+    try {
+      await fetchJson(`POST /api/reminders/${id}/dismiss`, `${REMINDERS_URL}/${id}/dismiss`, {
+        method: 'POST',
+        headers: { accept: 'application/json' },
+      });
+      results.push({ id, result: 'dismissed' });
+    } catch (err) {
+      results.push({ id, result: 'dismiss-failed', detail: err.message.split('\n')[0] });
+    }
+  }
+  return results;
+}
+
+/**
  * Queue the one-time-login reminder, unless an identical one for this profile+service was
  * queued in the last hour. The GET runs first — the dedup window is why.
  */
 async function queueLoginReminder({ profile, service, serviceTitle, novncPort }) {
-  const listed = await fetchJson('GET /api/reminders', REMINDERS_URL, {
-    headers: { accept: 'application/json' },
-  });
-  const { match, ageMs, skipped } = findRecentLoginReminder(listed?.reminders, {
+  const marker = reminderMarker(profile, service);
+  const nowMs = Date.now();
+  const listed = await fetchMarkedReminders(marker);
+  const { match, ageMs, skipped } = findRecentLoginReminder(listed.reminders, {
     profile,
     service,
-    nowMs: Date.now(),
+    nowMs,
     windowMs: REMINDER_DEDUP_WINDOW_MS,
   });
   for (const s of skipped) {
@@ -1255,6 +1500,7 @@ async function queueLoginReminder({ profile, service, serviceTitle, novncPort })
       existing_id: match.id ?? null,
       age_s: Math.round(ageMs / 1000),
       window_s: REMINDER_DEDUP_WINDOW_MS / 1000,
+      dedup_scope: listed.scope,
     };
   }
 
@@ -1270,13 +1516,29 @@ async function queueLoginReminder({ profile, service, serviceTitle, novncPort })
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ text, when: REMINDER_WHEN, source: `research-browser:${profile}` }),
   });
+  const createdId = created?.reminder?.id ?? null;
+
+  // Prune AFTER the POST, never before: a dismissal that failed must not be able to leave
+  // Konrad with neither the old reminder nor a new one.
+  const pruned = await dismissReminders(
+    selectStaleLoginReminders(listed.reminders, {
+      profile,
+      service,
+      nowMs,
+      windowMs: REMINDER_DEDUP_WINDOW_MS,
+      exceptId: createdId,
+    }),
+  );
+
   return {
     queued: true,
     reason: 'no identical reminder within the dedup window',
-    id: created?.reminder?.id ?? null,
+    id: createdId,
     due_at: created?.reminder?.due_at ?? null,
     when: REMINDER_WHEN,
     text_length: text.length,
+    dedup_scope: listed.scope,
+    pruned,
   };
 }
 
@@ -1324,7 +1586,7 @@ async function supervise(profile, displayNum) {
 
   // The X display must exist before a HEADED Chrome can start. Headed is required, not
   // cosmetic: a headless browser has nothing for a human to take over.
-  await ensureTakeover(profile, ports);
+  await ensureTakeover(profile, ports, { supervisorPid: process.pid });
   const { mod: playwright, path: playwrightPath } = resolvePlaywright();
   const chromePath = resolveChrome();
   ensureDir(profileDir(profile), 0o700);
@@ -1382,16 +1644,52 @@ async function supervise(profile, displayNum) {
   writeSessionFile();
   rmSync(startLock(profile), { recursive: true, force: true }); // the session file is the proof now
 
-  const shutdown = async (reason) => {
+  let shuttingDown = false;
+  const shutdown = async (reason, exitCode = EXIT.OK) => {
+    // A second signal during teardown must not run context.close() twice or race the exit.
+    if (shuttingDown) return;
+    shuttingDown = true;
     writeErr(`${SELF}[supervisor]: shutting down (${reason})\n`);
     await context.close().catch((err) => writeErr(`${SELF}[supervisor]: context.close: ${err.message}\n`));
     removeIfPresent(sessionPath(profile));
     removeIfPresent(stopPath(profile));
     teardownTakeover(profile);
-    process.exit(EXIT.OK);
+    process.exit(exitCode);
   };
 
+  /**
+   * R705: there were no handlers at all. Xvfb, x11vnc and websockify are detached and
+   * unref'd, so they survive this process; teardownTakeover() was reachable only from the
+   * loop below, which meant any death that was not a stop file or a deadline — a SIGTERM
+   * from an operator, a Ctrl-C, a systemd stop, a crash — leaked the whole X/VNC stack with
+   * nothing anywhere to reap it. These handlers cover every death signal that CAN be caught.
+   * SIGKILL and OOM cannot be, by construction; reapOrphanedTakeover() covers those, on the
+   * next `open` or `status`.
+   */
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT']) {
+    process.on(signal, () => {
+      void shutdown(`signal ${signal}`, EXIT.RUNTIME);
+    });
+  }
+  // A crash is a death like any other, and leaks exactly the same three processes. The stack
+  // trace is printed BEFORE teardown so a diagnosis is never traded for a clean exit.
+  process.on('uncaughtException', (err) => {
+    writeErr(`${SELF}[supervisor]: uncaught exception: ${err?.stack ?? err}\n`);
+    void shutdown('uncaught exception', EXIT.RUNTIME);
+  });
+  process.on('unhandledRejection', (err) => {
+    writeErr(`${SELF}[supervisor]: unhandled rejection: ${err?.stack ?? err}\n`);
+    void shutdown('unhandled rejection', EXIT.RUNTIME);
+  });
+
   for (;;) {
+    // A signal handler can begin teardown between two iterations. Serving a request against a
+    // context that is already closing would answer with a confusing playwright error instead
+    // of the honest "we are shutting down"; idle until the exit lands.
+    if (shuttingDown) {
+      await sleep(POLL_MS);
+      continue;
+    }
     if (existsSync(stopPath(profile))) await shutdown('stop file');
     if (Date.now() > hardDeadline) await shutdown(`hard session cap ${HARD_MAX_SESSION_MS / 3600000}h`);
     if (Date.now() > idleDeadline) await shutdown(`idle for ${IDLE_TIMEOUT_MS / 60000} min`);
@@ -1473,7 +1771,7 @@ async function handleRequest({ profile, page, ports, request }) {
     );
   }
 
-  const takeover = await ensureTakeover(profile, ports);
+  const takeover = await ensureTakeover(profile, ports, { supervisorPid: process.pid });
   let reminder = null;
   if (verdict.needsLogin && request.queue_reminder !== false) {
     reminder = await queueLoginReminder({
@@ -1724,6 +2022,12 @@ async function cmdOpen(opts) {
   const url = resolveTargetUrl(opts, service);
   const ports = assignDisplay(opts.profile);
 
+  // Before anything is started: clear a stack whose supervisor died without cleaning up.
+  // Reaping rather than adopting is the deliberate choice — an orphaned stack still carries
+  // the dead supervisor's Chrome, and a fresh 2 s launch is cheaper than reasoning about
+  // what state that window is in.
+  const reaped = reapOrphanedTakeover(opts.profile);
+
   await ensureSupervisor(opts.profile, ports);
   const response = await callSupervisor(opts.profile, {
     action: 'navigate',
@@ -1745,7 +2049,8 @@ async function cmdOpen(opts) {
   const session = readSession(opts.profile);
   return {
     status: { ...baseStatus(opts.profile, 'open', ports, runInfo), ...response.payload,
-      session: { live: session?.live === true, pid: session?.pid ?? null, started_at: session?.started_at ?? null } },
+      session: { live: session?.live === true, pid: session?.pid ?? null, started_at: session?.started_at ?? null },
+      reaped_orphan: reaped },
     exitCode: response.exit_code,
   };
 }
@@ -1753,6 +2058,9 @@ async function cmdOpen(opts) {
 async function cmdStatus(opts) {
   const runInfo = resolveRunId(opts.runId);
   const ports = assignDisplay(opts.profile);
+  // `status` is the only command a bystander runs on a box nobody is actively driving, which
+  // makes it the last line of defence against an X/VNC stack outliving its dead supervisor.
+  const reaped = reapOrphanedTakeover(opts.profile);
   const session = readSession(opts.profile);
   const takeover = readTakeover(opts.profile);
   const service = resolveService({ service: opts.service, url: opts.url, profile: opts.profile });
@@ -1781,6 +2089,7 @@ async function cmdStatus(opts) {
         probe: 'live — navigated and re-evaluated just now',
         ...response.payload,
         session: { live: after?.live === true, pid: after?.pid ?? null, started_at: after?.started_at ?? null },
+        reaped_orphan: reaped,
       },
       exitCode: response.exit_code,
     };
@@ -1806,6 +2115,7 @@ async function cmdStatus(opts) {
             decision: auth.decision, reasons: auth.reasons, checked_at: auth.checked_at,
             url: auth.url },
       profile_exists: existsSync(profileDir(opts.profile)),
+      reaped_orphan: reaped,
       takeover: {
         up: takeover?.up === true,
         processes: takeover?.live ?? null,

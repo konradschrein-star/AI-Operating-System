@@ -99,6 +99,13 @@ const writeErr = (text) => writeFd(2, text);
 // default, but that model does NOT accept video input — the tool's primary use case would
 // fail on every invocation. `gemini-omni-flash` is the video-capable model as of
 // 2026-08-05 (docs/research/round-399-41e8757d.md). The doc is wrong; this line is right.
+//
+// R705: "right" here still means UNVERIFIED against the vendor. round-701-33d8cba3.md:331
+// says verbatim "treat `gemini-omni-flash` as unconfirmed; validate against
+// GET /v1beta/models before trusting it", and no Gemini key has ever existed on this box, so
+// nobody could. That caveat is now enforced rather than remembered: assertModelAvailable()
+// below checks the model against the live model list before the first billed call. The name
+// is a documented default, not a proven one, until that check passes on a real key.
 const DEFAULT_MODEL = 'gemini-omni-flash';
 
 const API_ROOT = 'https://generativelanguage.googleapis.com';
@@ -107,6 +114,10 @@ const ENV_VAR = 'GEMINI_API_KEY';
 
 const POLL_INTERVAL_MS = 5_000;
 const POLL_TIMEOUT_MS = 10 * 60 * 1000;
+
+// The whole Gemini catalogue fits in one page of this size. If it ever does not, the
+// "unknown model" message says so rather than asserting absence from a partial list.
+const MODEL_LIST_PAGE_SIZE = 200;
 
 // ---------------------------------------------------------------------------
 // Pool backend (R702). Wire contract measured in docs/research/round-701-33d8cba3.md:
@@ -339,7 +350,8 @@ const POOL_JSON_INSTRUCTION = [
 ].join('\n');
 
 const USAGE = `usage: gemini-qa.mjs <video-path-or-url> [--backend pool|api] [--model M] [--out FILE]
-                    [--prompt-extra "..."] [--timeout S] [--preflight] [--help]
+                    [--prompt-extra "..."] [--timeout S] [--preflight] [--no-model-check]
+                    [--help]
 
 Video quality assurance through Gemini. Output is the frozen QA rubric as JSON on stdout.
 
@@ -379,6 +391,11 @@ flags:
                           model at all: whatever the pool account's web-UI default is
                           answers, so QA verdicts may drift with it. That is a known
                           property of the free path, stated rather than hidden.
+                          THE DEFAULT IS UNVERIFIED: no Gemini key has ever existed on this
+                          box, so ${DEFAULT_MODEL} comes from research
+                          (docs/research/round-701-33d8cba3.md), which itself said to
+                          validate it before trusting it. That validation now happens on
+                          every api run — see --no-model-check.
   --out FILE              ALSO write the QA JSON to FILE       (default: stdout only)
                           stdout always gets the JSON first, so a result survives a write
                           failure. FILE must not be a directory and must be writable;
@@ -396,6 +413,13 @@ flags:
                           one of only four pool sessions. Round 701 recommends it after any
                           suspected outage: GET /health reports sessions as ready even when
                           every one of them is incapable of generating.
+  --no-model-check        api backend only: skip the ListModels validation below.
+                          By default every api run first issues GET /v1beta/models (free,
+                          one round trip) and refuses to upload anything unless the chosen
+                          model is listed AND advertises generateContent. That gate exists
+                          because ${DEFAULT_MODEL} was never confirmed against
+                          the vendor by anyone — it is research, not observation. Skipping
+                          it is exit 3 on the pool backend, which selects no model.
   --help, -h              print this help and exit 0
   Flags accept either "--model M" or "--model=M".
 
@@ -433,11 +457,12 @@ exit codes:
      unparseable or incomplete model output. HTTP status and response body are printed
      verbatim; on the pool backend that includes the model's raw text.
   2  missing key: the message names every location checked for the chosen backend
-  3  usage error: no argument, unknown flag, unreadable input file, unsupported
-     extension, a URL on the pool backend, --model on the pool backend, a bad --timeout,
-     or an unusable --out target (a directory, unwritable, or a missing parent
-     directory). If --out fails AFTER the request, the exit is still 3 and the QA JSON
-     is already on stdout in full.
+  3  usage or configuration error: no argument, unknown flag, unreadable input file,
+     unsupported extension, a URL on the pool backend, --model on the pool backend, a bad
+     --timeout, a --model that GET /v1beta/models does not list or that cannot do
+     generateContent (nothing uploaded, nothing billed), or an unusable --out target (a
+     directory, unwritable, or a missing parent directory). If --out fails AFTER the
+     request, the exit is still 3 and the QA JSON is already on stdout in full.
   4  pool busy or rate-limited: HTTP 503 (no session free within the wrapper's own 60 s
      acquire window) or HTTP 429 (the account is cooling down, ~300 s). Distinct from 1
      because it is the one failure worth retrying later. This tool never retries itself.
@@ -488,9 +513,10 @@ function parseArgs(argv) {
     timeoutS: POOL_TIMEOUT_S,
     timeoutGiven: false,
     preflight: false,
+    modelCheck: true,
   };
   const takesValue = new Set(['--backend', '--model', '--out', '--prompt-extra', '--timeout']);
-  const boolFlags = new Set(['--preflight']);
+  const boolFlags = new Set(['--preflight', '--no-model-check']);
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -506,7 +532,8 @@ function parseArgs(argv) {
 
       if (boolFlags.has(name)) {
         if (eq !== -1) die(3, `flag ${name} takes no value`);
-        opts.preflight = true;
+        if (name === '--preflight') opts.preflight = true;
+        else opts.modelCheck = false; // --no-model-check
         continue;
       }
       if (!takesValue.has(name)) die(3, `unknown flag: ${arg}\n\n${USAGE}`);
@@ -561,6 +588,11 @@ function parseArgs(argv) {
   }
   if (opts.backend === 'api' && opts.preflight) {
     die(3, '--preflight applies to the pool backend only');
+  }
+  // And the mirror of that rule: the pool backend never selects a model, so there is no
+  // model for --no-model-check to skip validating.
+  if (opts.backend === 'pool' && !opts.modelCheck) {
+    die(3, '--no-model-check applies to the api backend only; the pool backend selects no model');
   }
 
   if (opts.model === null) opts.model = DEFAULT_MODEL;
@@ -1160,6 +1192,108 @@ async function waitUntilActive(apiKey, uploaded) {
 }
 
 // ---------------------------------------------------------------------------
+// Model validation — the cheapest possible call, made before the expensive one
+// ---------------------------------------------------------------------------
+
+/**
+ * Verdict on a model name against a ListModels page. Not exported — this file runs its main
+ * at import time by design (02-architecture §6.1), so it is driven through the CLI by
+ * gemini-qa-cli.test.ts rather than imported.
+ *
+ * Gemini reports models as `models/<id>`; both forms are accepted and normalised here.
+ */
+function classifyModelSupport(models, model) {
+  const wanted = `models/${model}`;
+  const entry = (models ?? []).find((m) => m?.name === wanted || m?.name === model);
+  if (entry === undefined) {
+    return { ok: false, kind: 'unknown-model' };
+  }
+  const methods = entry.supportedGenerationMethods ?? entry.supportedActions ?? null;
+  // A model list that does not report its methods is not evidence of absence. The model
+  // exists; that is what this check was asked to prove.
+  if (!Array.isArray(methods)) return { ok: true, kind: 'exists-methods-unreported' };
+  if (!methods.includes('generateContent')) {
+    return { ok: false, kind: 'no-generate-content', methods };
+  }
+  return { ok: true, kind: 'supported' };
+}
+
+/**
+ * Refuse to spend money on a model nobody has confirmed exists.
+ *
+ * R705 finding 3: DEFAULT_MODEL shipped straight from a research doc that itself said not to
+ * trust it without this exact call, and the api backend has never once run against a real
+ * key — so the guess was never going to be caught by use. One GET, free, before the upload.
+ * A wrong model name would otherwise be discovered only after the Files API upload and the
+ * poll-to-ACTIVE, which is the slow and confusing way to learn it.
+ *
+ * Failures here are exit 3 (a configuration error, like any other bad flag value), never a
+ * silent skip — an unreachable ListModels means the same credentials cannot reach Gemini at
+ * all, so proceeding would just fail later and more expensively. --no-model-check is the
+ * deliberate override.
+ */
+async function assertModelAvailable(apiKey, model) {
+  const res = await request(
+    'GET /v1beta/models',
+    `${API_ROOT}/v1beta/models?pageSize=${MODEL_LIST_PAGE_SIZE}`,
+    { headers: { 'x-goog-api-key': apiKey } },
+  );
+  if (!res.ok) await dieHttp('GET /v1beta/models (model validation)', res);
+
+  const raw = await res.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return die(1, `GET /v1beta/models returned non-JSON: ${err.message}\n${raw}`);
+  }
+  if (!Array.isArray(parsed?.models)) {
+    return die(1, `GET /v1beta/models has no models array; raw body:\n${raw}`);
+  }
+
+  const verdict = classifyModelSupport(parsed.models, model);
+  if (verdict.ok) {
+    writeErr(`${SELF}: model "${model}" validated against GET /v1beta/models (${verdict.kind})\n`);
+    return;
+  }
+
+  const usable = parsed.models
+    .filter((m) => (m?.supportedGenerationMethods ?? []).includes('generateContent'))
+    .map((m) => String(m.name).replace(/^models\//, ''));
+  const listing =
+    usable.length === 0
+      ? '  (this key sees NO model advertising generateContent)\n'
+      : usable.map((n) => `    ${n}\n`).join('');
+
+  if (verdict.kind === 'no-generate-content') {
+    return die(
+      3,
+      `model "${model}" exists but does not advertise generateContent ` +
+        `(it reports: ${verdict.methods.join(', ') || 'nothing'}).\n` +
+        `  Models this key can call generateContent on:\n${listing}` +
+        `  Nothing was uploaded and nothing was billed.`,
+    );
+  }
+  // Absence from a TRUNCATED list is not absence. Say which of the two this is.
+  const partial =
+    typeof parsed.nextPageToken === 'string' && parsed.nextPageToken !== ''
+      ? `  NOTE: the list was truncated at ${MODEL_LIST_PAGE_SIZE} entries (nextPageToken present), ` +
+        `so this is "not on the first page", not proof of non-existence.\n`
+      : '';
+  return die(
+    3,
+    `model "${model}" does not exist for this key — GET /v1beta/models does not list it.\n` +
+      partial +
+      `  ${model === DEFAULT_MODEL ? 'This is the tool\'s DEFAULT, carried unverified from ' +
+        'docs/research/round-701-33d8cba3.md, which explicitly flagged it as unconfirmed. ' +
+        'Pick a working model below and change DEFAULT_MODEL.\n  ' : ''}` +
+      `Models this key can call generateContent on:\n${listing}` +
+      `  Nothing was uploaded and nothing was billed.\n` +
+      `  Override with --no-model-check only if you know the list endpoint is lying.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Generation
 // ---------------------------------------------------------------------------
 async function generateQa(apiKey, opts, media) {
@@ -1235,6 +1369,11 @@ if (opts.backend === 'pool') {
   if (opts.preflight) await poolPreflight(key, POOL_PREFLIGHT_TIMEOUT_S);
   qa = await poolAnalyze(key, opts, input);
 } else {
+  // Before the upload, not after: a bad model name discovered at generateContent has already
+  // cost a Files API upload and a poll-to-ACTIVE. This GET is free and takes one round trip.
+  if (opts.modelCheck) await assertModelAvailable(key, opts.model);
+  else writeErr(`${SELF}: --no-model-check — "${opts.model}" is NOT validated against GET /v1beta/models\n`);
+
   let media;
   if (input.kind === 'url') {
     // URLs (including YouTube) go straight to the model — no upload, no MIME type.

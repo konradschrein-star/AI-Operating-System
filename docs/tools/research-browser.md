@@ -345,10 +345,39 @@ absolute), and `close <profile>` ends it immediately.
 
 ### 9.1 Reminder de-duplication
 
-Before queueing, the tool `GET`s `/api/reminders` and looks for a reminder carrying the marker
-`[research-browser login profile=<p> service=<s>]` created within the **last hour**. A match
-suppresses the new reminder and reports `{"queued": false, "reason": "deduplicated"}` with the
-existing id and its age.
+Before queueing, the tool asks forge-control for the reminders carrying the marker
+`[research-browser login profile=<p> service=<s>]`, and looks for one created within the
+**last hour**. A match suppresses the new reminder and reports
+`{"queued": false, "reason": "deduplicated"}` with the existing id and its age.
+
+**The query is marker-scoped, and that is not a nicety (R705).** The original implementation
+read the plain `GET /api/reminders` — `listReminders(100)`, ordered pending-first then
+`due_at ASC` — and scanned the page. The login reminder is queued `in 5m`, so it is `pending`
+for five minutes and `delivered` for the remaining fifty-five of its own dedup window; and a
+delivered row sorts *after* every pending one. The newest delivered reminder was therefore
+the **last row on the page and the first casualty of `LIMIT 100`**. Measured on 2026-08-05:
+84 non-dismissed reminders (13 pending, 71 delivered), the newest delivered confirmed to be
+the final element, and nothing anywhere pruning delivered rows. Sixteen more and the dedup
+would have stopped seeing the very row it exists to find — every wall-hitting run re-queueing,
+a reminder storm on Konrad's phone.
+
+Three things now prevent that:
+
+1. **`GET /api/reminders?contains=<marker>`** (`db/reminders.ts` → `findRemindersByText`)
+   filters in Postgres and orders **`created_at DESC`**. Truncation can only drop the *oldest*
+   match, never the newest, so the recency question is answerable even from a clipped page.
+2. **The response echoes its `filter`.** Without the echo, "this server is too old to
+   understand `contains`" and "there are no matching reminders" are the same reply. When the
+   echo is missing the tool says so on stderr, records
+   `"dedup_scope": "unfiltered-page-fallback"` in its JSON, and dedups against the page
+   anyway — that degradation can only ever queue a *duplicate*, never suppress a real one.
+3. **Spent matches are pruned.** After a reminder is successfully queued, matching
+   non-dismissed reminders **older than the dedup window** are dismissed (reported under
+   `"pruned"`). Rows *inside* the window are never touched — one of them is either why this
+   run deduped or the one just created — and a row whose `created_at` will not parse is left
+   alone, because the destructive action is the one that needs certainty. This is what keeps
+   the marker-scoped result set permanently small instead of re-creating the same truncation
+   problem one query further down.
 
 An **unreadable `created_at` counts as not-a-duplicate**, on purpose. The failure modes are not
 symmetric: a duplicate reminder is noise on a phone, while a suppressed one means Konrad is
@@ -384,10 +413,36 @@ directory pair under `.state/<profile>/`. Consequences worth knowing:
   screenshot. Verified in §12: identical supervisor pid across two `open` calls.
 - Two concurrent `open`s cannot launch two browsers on one `user-data-dir`: the starter holds an
   atomic `mkdir` lock (`start.lock/`), and the loser waits for the winner's session file.
+- **The lock is stale-checkable (R705).** The winner writes its pid into `start.lock/pid`
+  immediately after the `mkdir`. A lock whose holder is dead is broken and retaken once,
+  instead of costing the next invocation the full 90 s `STARTUP_TIMEOUT_MS`; a lock with no
+  pid file yet is respected for a 5 s grace, because `mkdir` and the pid write cannot be one
+  atomic step. Release is conditional for the same reason: a **waiter** that times out must
+  not delete a slow-but-healthy winner's lock, which is how a third invocation could
+  previously get in and open a second browser on one profile.
 - A stale `session.json` (dead pid) is detected by checking the pid *and* that its cmdline still
   looks like a supervisor, so pid reuse cannot make the tool talk to an unrelated process. The
   same guard protects every `SIGTERM` in `close`, which reports `skipped-pid-reuse` rather than
   signalling a process it merely remembers.
+
+### 11.1 Nothing outlives the supervisor (R705)
+
+Xvfb, x11vnc and websockify are spawned `detached: true` + `unref()`, so they live in their
+own process groups and survive anything that kills the supervisor. `teardownTakeover()` used
+to be reachable **only** from the supervisor's own loop, which meant a SIGTERM, a Ctrl-C, an
+OOM kill or a crash left the entire X/VNC stack running with no reaper anywhere on the box.
+Two mechanisms close it:
+
+- **Signal and crash handlers.** `SIGTERM`, `SIGINT`, `SIGHUP`, `SIGQUIT`, `uncaughtException`
+  and `unhandledRejection` all route into the same idempotent `shutdown()`, which closes the
+  browser context, removes the session file and tears the stack down. A crash prints its
+  stack trace *before* teardown — a diagnosis is never traded for a clean exit.
+- **A reaper, for the deaths no handler can catch.** `takeover.json` records the
+  `supervisor_pid` that owns the stack. `open` and `status` both check it first: a stack whose
+  recorded supervisor is gone while its processes are still up is torn down, and reported as
+  `"reaped_orphan"` in the JSON. Killing Xvfb also disposes of the orphaned Chrome, which
+  loses the display it was launched on. A stack raised by the `takeover` subcommand has **no**
+  owner and is never reaped — a human asked for that one deliberately.
 
 ## 12. Live transcripts
 

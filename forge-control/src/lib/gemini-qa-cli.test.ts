@@ -63,6 +63,27 @@ const POOL_DOTENV_FILE = "/opt/gemini-pool-api/.env";
  */
 const STUB_SOURCE = `
 import { writeFileSync, mkdirSync } from "node:fs";
+
+// R705: the api backend now validates its model against GET /v1beta/models before it
+// uploads anything, so that endpoint needs its own reply — every other request would
+// otherwise be answered with a model list, or the list with a QA envelope. The listing is
+// matched on the PATH so it can never be confused with
+// /v1beta/models/<id>:generateContent, which shares the prefix.
+const DEFAULT_MODELS = JSON.stringify({
+  models: [
+    { name: "models/gemini-omni-flash", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/gemini-3.6-flash", supportedGenerationMethods: ["generateContent"] },
+    { name: "models/text-embedding-004", supportedGenerationMethods: ["embedContent"] },
+  ],
+});
+const isModelList = (url) => {
+  try {
+    return new URL(url).pathname === "/v1beta/models";
+  } catch {
+    return false;
+  }
+};
+
 globalThis.fetch = async (url, init) => {
   writeFileSync(process.env.__STUB_TOUCH, "called");
   if (process.env.__STUB_RECORD) {
@@ -72,6 +93,13 @@ globalThis.fetch = async (url, init) => {
     );
   }
   if (process.env.__STUB_SABOTAGE) mkdirSync(process.env.__STUB_SABOTAGE, { recursive: true });
+  if (isModelList(String(url))) {
+    return new Response(process.env.__STUB_MODELS ?? DEFAULT_MODELS, {
+      status: Number(process.env.__STUB_MODELS_STATUS ?? "200"),
+      statusText: process.env.__STUB_MODELS_STATUS_TEXT ?? "",
+      headers: { "content-type": "application/json" },
+    });
+  }
   return new Response(process.env.__STUB_BODY ?? "{}", {
     status: Number(process.env.__STUB_STATUS ?? "200"),
     statusText: process.env.__STUB_STATUS_TEXT ?? "",
@@ -176,6 +204,10 @@ type RunOpts = {
   sabotage?: string;
   fsMissing?: string[];
   fsFiles?: Record<string, string>;
+  /** Override the GET /v1beta/models reply (R705 model validation). */
+  models?: unknown;
+  modelsStatus?: number;
+  modelsStatusText?: string;
 };
 
 /** A rubric payload that satisfies every required key the script validates on return. */
@@ -231,6 +263,11 @@ function run(args: string[], body: unknown, opts: RunOpts = {}): Run {
   if (opts.sabotage !== undefined) env.__STUB_SABOTAGE = opts.sabotage;
   if (opts.fsMissing !== undefined) env.__STUB_FS_MISSING = JSON.stringify(opts.fsMissing);
   if (opts.fsFiles !== undefined) env.__STUB_FS_FILES = JSON.stringify(opts.fsFiles);
+  if (opts.models !== undefined) {
+    env.__STUB_MODELS = typeof opts.models === "string" ? opts.models : JSON.stringify(opts.models);
+  }
+  if (opts.modelsStatus !== undefined) env.__STUB_MODELS_STATUS = String(opts.modelsStatus);
+  if (opts.modelsStatusText !== undefined) env.__STUB_MODELS_STATUS_TEXT = opts.modelsStatusText;
 
   const preloads = ["--import", stubUrl];
   if (opts.fsMissing !== undefined || opts.fsFiles !== undefined) {
@@ -285,6 +322,136 @@ describe("R702 backend selection", () => {
     const r = run([videoPath, "--backend=pool"], poolEnvelope(JSON.stringify(qaPayload())));
     assert.equal(r.status, 0, r.stderr);
     assert.equal(r.record?.url, "http://127.0.0.1:8090/v1/analyze");
+  });
+});
+
+/* ========================================================================== *
+ * R705 finding 3 — the default model is validated, not assumed
+ *
+ * `gemini-omni-flash` was shipped as DEFAULT_MODEL straight out of
+ * docs/research/round-701-33d8cba3.md, which said in as many words: "treat
+ * gemini-omni-flash as unconfirmed; validate against GET /v1beta/models before
+ * trusting it." No key has ever existed on this box, so use could never catch
+ * it. These tests pin the gate that catches it instead.
+ * ========================================================================== */
+
+describe("R705 model validation", () => {
+  test("the api backend calls GET /v1beta/models BEFORE it uploads anything", () => {
+    const r = run([VIDEO_URL, ...API], envelope(qaPayload()));
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /model "gemini-omni-flash" validated against GET \/v1beta\/models/);
+  });
+
+  test("a model the list does not carry is exit 3 — nothing uploaded, nothing billed", () => {
+    const r = run([videoPath, ...API], envelope(qaPayload()), {
+      models: { models: [{ name: "models/gemini-3.6-flash", supportedGenerationMethods: ["generateContent"] }] },
+    });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /model "gemini-omni-flash" does not exist for this key/);
+    assert.match(r.stderr, /Nothing was uploaded and nothing was billed/);
+    // The default being wrong is a different problem from a typo'd --model, and the message
+    // has to say which one this is — that is the whole point of the finding.
+    assert.match(r.stderr, /carried unverified from docs\/research\/round-701-33d8cba3\.md/);
+    assert.match(r.stderr, /gemini-3\.6-flash/, "the usable alternatives must be listed");
+    // A LOCAL file was passed, so the Files API upload is the very next step it did not take.
+    assert.doesNotMatch(r.stderr, /files upload/i);
+  });
+
+  test("a wrong --model gets the alternatives but NOT the DEFAULT_MODEL lecture", () => {
+    const r = run([videoPath, ...API, "--model", "gemini-does-not-exist"], envelope(qaPayload()));
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /model "gemini-does-not-exist" does not exist for this key/);
+    assert.doesNotMatch(r.stderr, /carried unverified/);
+  });
+
+  test("a model that exists but cannot generateContent is rejected with its real methods", () => {
+    const r = run([videoPath, ...API, "--model", "text-embedding-004"], envelope(qaPayload()));
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /does not advertise generateContent/);
+    assert.match(r.stderr, /it reports: embedContent/);
+  });
+
+  test("a model listed without supportedGenerationMethods is accepted, not guessed against", () => {
+    // Absence of the field is not evidence the model cannot generate. It exists; that is
+    // what the check was asked to prove.
+    const r = run([VIDEO_URL, ...API, "--model", "gemini-quiet"], envelope(qaPayload()), {
+      models: { models: [{ name: "models/gemini-quiet" }] },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /validated against GET \/v1beta\/models \(exists-methods-unreported\)/);
+  });
+
+  test("a bare model id (no models/ prefix) in the list still matches", () => {
+    const r = run([VIDEO_URL, ...API, "--model", "gemini-bare"], envelope(qaPayload()), {
+      models: { models: [{ name: "gemini-bare", supportedGenerationMethods: ["generateContent"] }] },
+    });
+    assert.equal(r.status, 0, r.stderr);
+  });
+
+  test("a truncated model list says so instead of asserting non-existence", () => {
+    const r = run([videoPath, ...API], envelope(qaPayload()), {
+      models: { models: [{ name: "models/other", supportedGenerationMethods: ["generateContent"] }], nextPageToken: "abc" },
+    });
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /the list was truncated at 200 entries/);
+  });
+
+  test("a non-2xx from ListModels aborts — it is never treated as 'unknown, carry on'", () => {
+    const r = run([videoPath, ...API], envelope(qaPayload()), {
+      models: { error: { message: "API key not valid" } },
+      modelsStatus: 403,
+      modelsStatusText: "Forbidden",
+    });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /GET \/v1beta\/models \(model validation\) failed/);
+    assert.match(r.stderr, /HTTP 403 Forbidden/);
+    assert.match(r.stderr, /API key not valid/);
+  });
+
+  test("a ListModels body with no models array is an error, not an empty catalogue", () => {
+    const r = run([videoPath, ...API], envelope(qaPayload()), { models: { nothing: true } });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /has no models array/);
+  });
+
+  test("--no-model-check skips the gate and SAYS it skipped it", () => {
+    const r = run([VIDEO_URL, ...API, "--no-model-check"], envelope(qaPayload()), {
+      models: { models: [] }, // would fail the gate outright
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /--no-model-check — "gemini-omni-flash" is NOT validated/);
+  });
+
+  test("--no-model-check on the pool backend is a usage error, not a no-op", () => {
+    const r = run([videoPath, "--no-model-check"], poolEnvelope("{}"));
+    assert.equal(r.status, 3);
+    assert.equal(r.requested, false);
+    assert.match(r.stderr, /--no-model-check applies to the api backend only/);
+  });
+
+  test("--no-model-check=true is rejected: it takes no value", () => {
+    const r = run([videoPath, ...API, "--no-model-check=true"], envelope(qaPayload()));
+    assert.equal(r.status, 3);
+    assert.match(r.stderr, /flag --no-model-check takes no value/);
+  });
+
+  test("the model check uses x-goog-api-key, never the pool's x-api-key", () => {
+    // Key confusion is the failure R705 verified was impossible; a new endpoint is exactly
+    // where it would sneak back in.
+    const r = run([videoPath, ...API], envelope(qaPayload()), {
+      models: { models: [] }, // stop at the model call so the record is the model call
+    });
+    assert.equal(r.status, 3);
+    assert.equal(r.record?.headers["x-goog-api-key"], "test-key-not-real");
+    assert.equal(r.record?.headers["x-api-key"], undefined);
+    assert.match(r.record?.url ?? "", /\/v1beta\/models\?pageSize=200$/);
+  });
+
+  test("the pool backend never touches ListModels", () => {
+    const r = run([videoPath], poolEnvelope(JSON.stringify(qaPayload())));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.record?.url, "http://127.0.0.1:8090/v1/analyze");
+    assert.doesNotMatch(r.stderr, /v1beta\/models/);
   });
 });
 

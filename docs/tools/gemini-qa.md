@@ -28,7 +28,7 @@ either as a standalone CLI call, or later wired into the pipeline as an automate
 | Credential | `GEMINI_POOL_API_KEY` (§4.1) | `GEMINI_API_KEY` (§4.2) |
 | Input | local video file **only** (§3.1) | local file **or** URL, YouTube included |
 | Output shape | **free text** → rubric JSON is extracted, then validated (§6.1) | machine-enforced `responseSchema` |
-| Model choice | **none** — `--model` is rejected (§3) | `--model`, default `gemini-omni-flash` |
+| Model choice | **none** — `--model` is rejected (§3) | `--model`, default `gemini-omni-flash` (unverified — validated at run time, §3.2) |
 | Timeout | `--timeout`, default 900 s | fixed 10-min Files API poll deadline |
 
 Pool is the default because Konrad has no personal Gemini key and does not want to buy one.
@@ -104,11 +104,12 @@ gemini-qa.mjs <video-path-or-url> [--backend pool|api] [--model M] [--out FILE]
 | Flag | Default | Meaning |
 |---|---|---|
 | `--backend pool\|api` | `pool` | Which service answers. No fallback between them (§1.1) |
-| `--model M` | `gemini-omni-flash` | Gemini model. **`api` only** — exit 3 on `pool` |
+| `--model M` | `gemini-omni-flash` | Gemini model. **`api` only** — exit 3 on `pool`. The default is **unverified against the vendor** (§3.2) and is validated on every `api` run |
 | `--out FILE` | stdout only | **Also** write the QA JSON to FILE. stdout always gets it first — see §5.1 |
 | `--prompt-extra "..."` | none | Extra caller context appended to the QA prompt, e.g. `"this is a 60s YouTube Short about sky photography"` |
 | `--timeout S` | `900` | Pool request timeout, whole seconds. **`pool` only** — exit 3 on `api` |
 | `--preflight` | off | Pool liveness probe before uploading. **`pool` only** — exit 3 on `api` |
+| `--no-model-check` | off (the check runs) | Skip the `GET /v1beta/models` validation of `--model`. **`api` only** — exit 3 on `pool`, which selects no model. See §3.2 |
 | `--help`, `-h` | — | Print usage and exit 0 |
 
 Flags accept either `--model M` or `--model=M` form. Unknown flags, a missing argument value,
@@ -118,6 +119,44 @@ or an empty flag value are all usage errors (exit 3).
 is exit 3 rather than a silently dropped value, because the pool wrapper never passes a model
 at all — accepting it would report a choice that was not made. Same for `--timeout` and
 `--preflight` on the `api` backend.
+
+### 3.2 The model is validated before anything is billed (R705)
+
+`gemini-omni-flash` was never confirmed against Google. It comes from
+`docs/research/round-701-33d8cba3.md:331`, which said in as many words:
+
+> Treat `gemini-omni-flash` as unconfirmed; validate against `GET /v1beta/models` before
+> trusting it.
+
+It shipped without that validation, and no key has ever existed on this box (§9.2), so no run
+could catch it either. Nothing before this section's change tested the *name*; the
+consistency check at the foot of this file compares the doc against the code, which agree
+with each other and with nobody else.
+
+So the caveat is now enforced rather than remembered. Every `api` run begins with one free
+`GET /v1beta/models?pageSize=200` and refuses to go further unless the chosen model is listed
+**and** advertises `generateContent`:
+
+| Outcome | Behaviour |
+|---|---|
+| Listed, advertises `generateContent` | Proceeds. stderr: `model "..." validated against GET /v1beta/models (supported)` |
+| Listed, no `supportedGenerationMethods` field | Proceeds (`exists-methods-unreported`). Absence of the field is not evidence the model cannot generate |
+| Listed, but no `generateContent` | **Exit 3**, naming the methods it *does* advertise and every model this key can generate with |
+| Not listed | **Exit 3**. If the model is the tool's default, the message says so and points here. If the list was truncated (`nextPageToken`), the message says "not on the first page" rather than claiming non-existence |
+| `GET /v1beta/models` non-2xx or unparseable | **Exit 1**, status and body verbatim. Never treated as "unknown, carry on" — a key that cannot reach ListModels cannot reach `generateContent` either |
+
+The check runs **before** the Files API upload, so a wrong model name costs one round trip
+rather than an upload plus a poll-to-`ACTIVE`. Nothing is uploaded and nothing is billed on
+any of the exit-3 paths.
+
+`--no-model-check` skips it, prints a stderr line saying the model is unvalidated, and exists
+for the case where the list endpoint is wrong rather than the model. It is exit 3 on the pool
+backend, which selects no model at all.
+
+**Still open:** this gate has never run against a real key. It is proved against a stubbed
+`fetch` in `forge-control/src/lib/gemini-qa-cli.test.ts` (`R705 model validation`, 13 cases).
+The first real `api` invocation is what will settle whether `gemini-omni-flash` exists —
+which is precisely why it must not be the same invocation that uploads a video.
 
 ### 3.1 URL inputs and the pool backend — the decision
 
@@ -226,7 +265,7 @@ the same deterministic failure whether or not the video argument is valid.
 | 0 | Success — QA JSON on stdout, plus a copy in `--out FILE` if one was given |
 | 1 | API or processing error: invalid key, upload failure, file processing `FAILED`, poll timeout (10 min), request timeout (`--timeout`), non-2xx response, unparseable or incomplete model output. HTTP status and response body are printed verbatim; on the pool backend that includes the model's raw text between `--- BEGIN RAW MODEL TEXT ---` markers. |
 | 2 | Missing key. Pool: none of the three locations in §4.1. API: neither `GEMINI_API_KEY` nor `/opt/ai-os/.secrets/store/gemini-api-key`. The message names every location checked. |
-| 3 | Usage error: no argument, unknown flag, unreadable input file, unsupported extension, **a URL on the pool backend** (§3.1), **`--model` on the pool backend**, `--timeout`/`--preflight` on the api backend, a non-positive `--timeout`, or an unusable `--out` target (a directory, an unwritable file, or a missing/non-directory parent). A write that fails *after* the request is also exit 3 — and the QA JSON is on stdout in full regardless (§5.1). |
+| 3 | Usage or configuration error: no argument, unknown flag, unreadable input file, unsupported extension, **a URL on the pool backend** (§3.1), **`--model` on the pool backend**, `--timeout`/`--preflight` on the api backend, **`--no-model-check` on the pool backend**, a non-positive `--timeout`, **a `--model` that `GET /v1beta/models` does not list or that cannot do `generateContent`** (§3.2 — nothing uploaded, nothing billed), or an unusable `--out` target (a directory, an unwritable file, or a missing/non-directory parent). A write that fails *after* the request is also exit 3 — and the QA JSON is on stdout in full regardless (§5.1). |
 | 4 | **Pool busy or rate-limited** (pool backend only): HTTP 503 (no session came free inside the wrapper's own 60 s acquire window) or HTTP 429 (the pool account is on a ~300 s cooldown). Separate from 1 because it is the one failure worth retrying *later*. **This tool never retries by itself** — no loop, no backoff. stderr carries the `Retry-After` header when the service sends one, and cadence guidance when it does not. |
 
 Why 429/503 get their own code: they are the only pool failures known to be transient. An
@@ -338,7 +377,8 @@ failure has a suspect.
 
 ## 7. Cost notes
 
-- Default model: `gemini-omni-flash`.
+- Default model: `gemini-omni-flash` — **unverified against the vendor**; validated on every
+  `api` run before anything is billed (§3.2).
 - Text: **$1.50 / $9.00 per 1M tokens** (input/output).
 - Video input: **~5,792 tokens/sec at 720p**. At the input price above that is
   **~$0.0087 per second of video** (5,792 × $1.50 ÷ 1,000,000), i.e. **~$0.52/min**, so a
@@ -604,6 +644,16 @@ Until that key lands, every `--backend api` invocation on this box exits 2 deter
   a real video, to learn two things this round could not measure: **how long Gemini actually
   takes to watch a minute of video**, and **how much chatter surrounds the JSON** (which is
   what sizes the extraction in §6.1).
+- **`gemini-omni-flash` — the api default — has never been confirmed to exist.** R701 flagged
+  it (`docs/research/round-701-33d8cba3.md:331`: "treat `gemini-omni-flash` as unconfirmed;
+  validate against `GET /v1beta/models` before trusting it") and it shipped anyway. It is
+  latent rather than live only because `--backend api` exits 2 before any HTTP call on this
+  box — but R701's own verdict is "POOL CAN CARRY VIDEO QA: **NO**" (0/7 generations), so
+  `api` is the only path that can ever work, and its default model is research rather than
+  observation. Since R705 the name is validated against `GET /v1beta/models` before the first
+  billed run (§3.2), which converts an unverified guess into a loud exit 3 — but the
+  *validation itself* is still unexercised against a real key. Settles on the first real
+  `api` invocation, which is now guaranteed to be a free GET rather than a paid upload.
 - **The `audio` rubric dimension is unproven on the pool path.** Round 701 §4 flagged this and
   it remains open: the upstream `gemini_webapi` library documents no video or audio input at
   all (the PR that would have added explicit multimedia MIME handling was closed unmerged), so
@@ -614,6 +664,13 @@ Until that key lands, every `--backend api` invocation on this box exits 2 deter
   (~32 tokens/sec of audio, processed at 1 Kbps single channel) and is safe.
 
 Everything else matched when this file was written: `--help` output, all five exit codes, all
-five key locations across the two backends, the frozen rubric schema (checked field by field
-against the script's `responseSchema` and its pool-prompt skeleton), and the
-`gemini-omni-flash` api default all agree with the shipped script.
+five key locations across the two backends, and the frozen rubric schema (checked field by
+field against the script's `responseSchema` and its pool-prompt skeleton) all agree with the
+shipped script.
+
+**Read that sentence for exactly what it claims.** It is a doc-vs-code consistency check, and
+nothing more. R705 caught this paragraph reading as though it validated the
+`gemini-omni-flash` default; it never did — it only established that the doc and the script
+name the same model. Whether Google serves a model by that name is a question no artefact in
+this repository can answer, and the only thing that will is `GET /v1beta/models` with a real
+key (§3.2).

@@ -148,6 +148,29 @@ interface ResearchBrowser {
     reminders: Reminder[] | undefined,
     opts: { profile: string; service: string; nowMs: number; windowMs: number },
   ): DedupResult;
+  selectStaleLoginReminders(
+    reminders: Reminder[] | undefined,
+    opts: {
+      profile: string;
+      service: string;
+      nowMs: number;
+      windowMs: number;
+      exceptId?: string | null;
+    },
+  ): string[];
+  LOCK_PID_GRACE_MS: number;
+  STARTUP_TIMEOUT_MS: number;
+  classifyStartLock(input: {
+    pid: number | null;
+    dirAgeMs: number;
+    holderAlive: boolean;
+    graceMs?: number;
+  }): { stale: boolean; reason: string };
+  classifyTakeoverOwner(input: {
+    supervisorPid: number | null | undefined;
+    ownerAlive: boolean;
+    anyProcessLive: boolean;
+  }): { reap: boolean; stateOnly?: boolean; reason: string };
   PLAYWRIGHT_CANDIDATE_PATHS: string[];
   CHROME_CANDIDATE_PATHS: string[];
   WM_CANDIDATE_PATHS: string[];
@@ -967,6 +990,180 @@ describe("findRecentLoginReminder — the dedup window", () => {
       opts,
     );
     assert.equal(r.match?.id, "recent");
+  });
+});
+
+/* ========================================================================== *
+ * R705 finding 1 — pruning the reminders this tool produces
+ *
+ * The dedup itself was 16 rows from failing open because it scanned a
+ * 100-row, pending-first page in which the newest DELIVERED login reminder is
+ * the first casualty of truncation. Scoping the query by marker (newest first)
+ * is the fix; this is the other half — nothing ever pruned delivered rows, so
+ * the matching set grew without bound and would eventually re-create the same
+ * truncation problem inside the filtered query.
+ * ========================================================================== */
+
+describe("selectStaleLoginReminders — pruning spent reminders", () => {
+  const nowMs = Date.parse("2026-08-05T12:00:00Z");
+  const windowMs = rb.REMINDER_DEDUP_WINDOW_MS;
+  const opts = { profile: "perplexity", service: "perplexity", nowMs, windowMs };
+  const marker = rb.reminderMarker("perplexity", "perplexity");
+  const pg = (iso: string) => iso.replace("T", " ").replace("Z", "+00");
+  const rem = (id: string, iso: string, over: Partial<Reminder> = {}): Reminder => ({
+    id,
+    text: `Research browser needs a login ${marker}`,
+    status: "delivered",
+    created_at: pg(iso),
+    ...over,
+  });
+
+  test("a match older than the window is stale", () => {
+    assert.deepEqual(rb.selectStaleLoginReminders([rem("old", "2026-08-05T09:00:00.000Z")], opts), ["old"]);
+  });
+
+  test("a match INSIDE the window is never pruned — it is why this run deduped", () => {
+    assert.deepEqual(rb.selectStaleLoginReminders([rem("fresh", "2026-08-05T11:30:00.000Z")], opts), []);
+  });
+
+  test("the boundary matches findRecentLoginReminder exactly — no row falls between them", () => {
+    // A row that suppresses must never also be dismissed, and vice versa. Sweeping the
+    // boundary in both functions is the only way to know the two agree.
+    for (const iso of [
+      "2026-08-05T12:00:00.000Z",
+      "2026-08-05T11:00:00.001Z",
+      "2026-08-05T11:00:00.000Z", // exactly one hour: a duplicate, inclusive
+      "2026-08-05T10:59:59.999Z", // one ms past: no longer a duplicate
+      "2026-08-05T09:00:00.000Z",
+    ]) {
+      const list = [rem("r", iso, { status: "pending" })];
+      const suppresses = rb.findRecentLoginReminder(list, opts).match !== null;
+      const pruned = rb.selectStaleLoginReminders(list, opts).length > 0;
+      assert.notEqual(suppresses, pruned, `${iso}: a row must be exactly one of suppressing or spent`);
+    }
+  });
+
+  test("the reminder just created is excluded by id, whatever its timestamp says", () => {
+    // Clock skew between this box and Postgres must not let a run dismiss its own reminder.
+    const list = [rem("new", "2026-08-05T09:00:00.000Z")];
+    assert.deepEqual(rb.selectStaleLoginReminders(list, { ...opts, exceptId: "new" }), []);
+  });
+
+  test("another profile or service is never pruned", () => {
+    const others = [
+      { id: "a", text: rb.reminderMarker("gsc", "perplexity"), status: "delivered", created_at: pg("2026-08-05T09:00:00.000Z") },
+      { id: "b", text: rb.reminderMarker("perplexity", "gemini"), status: "delivered", created_at: pg("2026-08-05T09:00:00.000Z") },
+      { id: "c", text: "P6 R20 smoke — check #1a of 2", status: "delivered", created_at: pg("2026-08-05T09:00:00.000Z") },
+    ];
+    assert.deepEqual(rb.selectStaleLoginReminders(others, opts), []);
+  });
+
+  test("an already-dismissed row is not dismissed again", () => {
+    assert.deepEqual(
+      rb.selectStaleLoginReminders([rem("d", "2026-08-05T09:00:00.000Z", { status: "dismissed" })], opts),
+      [],
+    );
+  });
+
+  test("an unreadable created_at is LEFT ALONE rather than guessed at", () => {
+    // Symmetrical to the dedup's rule and for the same reason: the destructive action is the
+    // one that needs certainty. Dismissing on a timestamp nobody could parse is a guess.
+    assert.deepEqual(rb.selectStaleLoginReminders([rem("weird", "1970", { created_at: "who knows" })], opts), []);
+  });
+
+  test("a row with no usable id is skipped — there is nothing to dismiss it by", () => {
+    const list = [{ text: marker, status: "delivered", created_at: pg("2026-08-05T09:00:00.000Z") }];
+    assert.deepEqual(rb.selectStaleLoginReminders(list, opts), []);
+  });
+
+  test("an empty, missing or malformed list is handled, not crashed on", () => {
+    assert.deepEqual(rb.selectStaleLoginReminders([], opts), []);
+    assert.deepEqual(rb.selectStaleLoginReminders(undefined, opts), []);
+    const junk = [{}, { text: 123 }, { text: null }] as unknown as Reminder[];
+    assert.deepEqual(rb.selectStaleLoginReminders(junk, opts), []);
+  });
+
+  test("every spent row is returned, not just the first", () => {
+    const list = [
+      rem("s1", "2026-08-05T09:00:00.000Z"),
+      rem("keep", "2026-08-05T11:59:00.000Z"),
+      rem("s2", "2026-08-05T08:00:00.000Z"),
+    ];
+    assert.deepEqual(rb.selectStaleLoginReminders(list, opts), ["s1", "s2"]);
+  });
+});
+
+/* ========================================================================== *
+ * R705 finding 4 — start.lock staleness
+ * ========================================================================== */
+
+describe("classifyStartLock", () => {
+  const grace = rb.LOCK_PID_GRACE_MS;
+
+  test("a lock whose holder is alive is never broken", () => {
+    const v = rb.classifyStartLock({ pid: 4242, dirAgeMs: 60_000, holderAlive: true });
+    assert.equal(v.stale, false);
+    assert.match(v.reason, /4242 is alive/);
+  });
+
+  test("a lock whose holder is gone IS broken — this is the 90s-burn bug", () => {
+    // The winner dying between mkdirSync and writing session.json used to cost the next
+    // invocation the full STARTUP_TIMEOUT_MS before it could even try.
+    const v = rb.classifyStartLock({ pid: 4242, dirAgeMs: 1_000, holderAlive: false });
+    assert.equal(v.stale, true);
+    assert.match(v.reason, /4242 is gone/);
+  });
+
+  test("a pid-less lock inside the write grace is respected — mkdir and the pid write race", () => {
+    const v = rb.classifyStartLock({ pid: null, dirAgeMs: grace - 1, holderAlive: false });
+    assert.equal(v.stale, false, "the holder may be one syscall away from writing its pid");
+  });
+
+  test("a pid-less lock past the grace is stale — the holder died mid-creation", () => {
+    const v = rb.classifyStartLock({ pid: null, dirAgeMs: grace + 1, holderAlive: false });
+    assert.equal(v.stale, true);
+    assert.match(v.reason, /no pid file after/);
+  });
+
+  test("the grace boundary is exclusive, and overridable for testing", () => {
+    assert.equal(rb.classifyStartLock({ pid: null, dirAgeMs: grace, holderAlive: false }).stale, false);
+    assert.equal(rb.classifyStartLock({ pid: null, dirAgeMs: 11, holderAlive: false, graceMs: 10 }).stale, true);
+  });
+
+  test("the grace is short enough to be cheap and long enough to be safe", () => {
+    assert.ok(grace >= 1_000 && grace < rb.STARTUP_TIMEOUT_MS, `grace ${grace}ms`);
+  });
+});
+
+/* ========================================================================== *
+ * R705 finding 2 — the orphaned X/VNC stack
+ * ========================================================================== */
+
+describe("classifyTakeoverOwner", () => {
+  test("a stack whose supervisor is dead but whose processes live IS reaped", () => {
+    // The leak itself: Xvfb/x11vnc/websockify are detached + unref'd, so a SIGKILLed
+    // supervisor left all three running with nothing anywhere able to reap them.
+    const v = rb.classifyTakeoverOwner({ supervisorPid: 7, ownerAlive: false, anyProcessLive: true });
+    assert.equal(v.reap, true);
+    assert.match(v.reason, /pid 7 is dead but its stack is still up/);
+  });
+
+  test("a stack with a live supervisor is left alone", () => {
+    assert.equal(rb.classifyTakeoverOwner({ supervisorPid: 7, ownerAlive: true, anyProcessLive: true }).reap, false);
+  });
+
+  test("a stack nobody owns is left alone — `takeover` raised it on purpose", () => {
+    for (const supervisorPid of [null, undefined, 0, -1]) {
+      const v = rb.classifyTakeoverOwner({ supervisorPid, ownerAlive: false, anyProcessLive: true });
+      assert.equal(v.reap, false, `supervisorPid ${String(supervisorPid)}`);
+      assert.match(v.reason, /raised it deliberately/);
+    }
+  });
+
+  test("a dead supervisor with a dead stack clears the state file without signalling anything", () => {
+    const v = rb.classifyTakeoverOwner({ supervisorPid: 7, ownerAlive: false, anyProcessLive: false });
+    assert.equal(v.reap, false, "there is nothing left to kill");
+    assert.equal(v.stateOnly, true, "but the stale record must not linger");
   });
 });
 
