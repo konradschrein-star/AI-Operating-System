@@ -11,6 +11,11 @@
  */
 
 import pg from "pg";
+// Value import of the two eligibility matrices only — run-control-rules.ts is
+// pure and imports nothing, so this cannot pull pg/fs/network into a module
+// that a unit test might load. The route (round 903) imports the SAME arrays,
+// which is what stops db and route from drifting (C5).
+import { STOP_ELIGIBLE, TERMINATE_ELIGIBLE } from "../lib/run-control-rules.ts";
 
 const { Pool } = pg;
 
@@ -40,7 +45,11 @@ export interface ThreadEntry {
   role: "user" | "assistant" | "system" | "tool" | "agent";
   content: string;
   ts: string;
-  kind?: "text" | "tool_call" | "tool_result" | "heartbeat" | "error";
+  // "comms" is the manager control plane's entry kind (07 §3): a message that
+  // crossed between Konrad, a manager run and a worker run. It rides the
+  // existing jsonb column — no migration (C21) — and is the query key for
+  // GET /api/runs/:id/comms (C14, see listComms below).
+  kind?: "text" | "tool_call" | "tool_result" | "heartbeat" | "error" | "comms";
   meta?: Record<string, unknown>;
 }
 
@@ -586,4 +595,209 @@ export async function runCounts(): Promise<Record<RunStatus, number>> {
   };
   for (const row of r.rows) out[row.status] = Number(row.count);
   return out;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Manager control plane — row primitives (CP1).
+ *
+ * Everything below is ADDITIVE: no existing helper changed behaviour for it.
+ * Three rules govern this whole section and none of them is decoration:
+ *
+ *  1. NEVER READ-THEN-WRITE. The caller's precondition (the eligible-status
+ *     list from run-control-rules.ts) travels INTO the UPDATE's WHERE clause,
+ *     so two operators clicking stop and terminate at the same moment resolve
+ *     to one applied write and one honest 409 — never a mixed state
+ *     (07 §4, last paragraph).
+ *  2. ROWCOUNT 0 IS A QUESTION, NOT AN ANSWER. It means either "no such run"
+ *     or "the precondition did not hold", and the route owes the UI different
+ *     codes for those (404 vs 409 + the CURRENT status). So every miss
+ *     re-reads the status once and reports what it found.
+ *  3. NO SWALLOWED ERRORS (C20). There is not a single try/catch here: a pg
+ *     failure propagates to the route and becomes a visible 5xx rather than a
+ *     202 that did nothing.
+ *
+ * All state is in the `runs` row — no side tables, no process-local delivery
+ * state, so an executor restart can never strand a message (C23).
+ * ------------------------------------------------------------------------- */
+
+/** The rowcount-0 re-read (rule 2 above). null = the row does not exist. */
+async function readRunStatus(id: string): Promise<RunStatus | null> {
+  const r = await pool.query<{ status: RunStatus }>(
+    `SELECT status FROM runs WHERE id = $1`,
+    [id],
+  );
+  return r.rows[0]?.status ?? null;
+}
+
+/**
+ * The outcome of a guarded single-row write.
+ *
+ * `applied:false` carries the status the row ACTUALLY holds right now, so the
+ * route can answer 409 with a reason naming it ("run is already paused"), or
+ * 404 when `status` is null. A caller must never treat `applied:false` as a
+ * no-op success — that is exactly the 200-that-did-nothing C20 forbids.
+ */
+export interface RunWriteResult {
+  applied: boolean;
+  status: RunStatus | null;
+}
+
+/**
+ * Append a comms entry (07 §3) and, in the SAME statement, optionally move the
+ * status and/or raise `metadata.pending_input`.
+ *
+ * One UPDATE does all of it on purpose. The plan's separate `markPendingInput`
+ * helper is deliberately NOT built: 07 §5 specifies the flag write as a
+ * "single stmt with T1", because a second statement would open a window in
+ * which the entry is in the thread but the flag is not — the executor's
+ * completion write (E1) could read `pending_input` as absent, complete the run,
+ * and strand the message until something else requeued it. Fusing them makes
+ * the handshake's "append lands before E1" case atomic. (Sanctioned deviation
+ * from the phase plan's helper list; the CP1 gating reviewer has been briefed.)
+ *
+ * `opts.eligible` is the precondition, carried into SQL. Passing an EMPTY array
+ * means nothing is eligible and the write is refused — it is not silently
+ * treated as "no precondition"; omit the key for that.
+ */
+export async function appendCommsEntry(
+  id: string,
+  entry: ThreadEntry,
+  opts: {
+    eligible?: readonly RunStatus[];
+    setStatus?: RunStatus;
+    setPendingInput?: boolean;
+  } = {},
+): Promise<RunWriteResult> {
+  const params: unknown[] = [id, JSON.stringify([entry])];
+  const sets = ["thread = thread || $2::jsonb"];
+
+  if (opts.setStatus) {
+    params.push(opts.setStatus);
+    sets.push(`status = $${params.length}`);
+  }
+  if (opts.setPendingInput) {
+    sets.push(
+      `metadata = COALESCE(metadata, '{}'::jsonb) || '{"pending_input":true}'::jsonb`,
+    );
+  }
+  sets.push("updated_at = now()");
+
+  let where = "id = $1";
+  if (opts.eligible) {
+    params.push(opts.eligible);
+    where += ` AND status = ANY($${params.length}::text[])`;
+  }
+
+  const r = await pool.query<{ status: RunStatus }>(
+    `UPDATE runs SET ${sets.join(", ")} WHERE ${where} RETURNING status`,
+    params,
+  );
+  // id is the primary key, so a hit is exactly one row; RETURNING gives the
+  // POST-update status, which is what the route echoes back to the UI.
+  const row = r.rows[0];
+  if (r.rowCount === 1 && row) return { applied: true, status: row.status };
+  return { applied: false, status: await readRunStatus(id) };
+}
+
+/**
+ * Stop (C11): status → `paused`, eligible `queued|running|stuck`.
+ *
+ * No `completed_at` write — a paused run is not finished, it is interrupted,
+ * and it stays resumable via /resume-chat. No kill machinery either: the
+ * executor's existing 5s status poll (executor.ts ~line 857) reads `paused`
+ * and SIGTERMs the child by itself.
+ */
+export async function stopRun(id: string): Promise<RunWriteResult> {
+  const r = await pool.query<{ status: RunStatus }>(
+    `UPDATE runs
+        SET status = 'paused',
+            updated_at = now()
+      WHERE id = $1
+        AND status = ANY($2::text[])
+      RETURNING status`,
+    [id, STOP_ELIGIBLE],
+  );
+  const row = r.rows[0];
+  if (r.rowCount === 1 && row) return { applied: true, status: row.status };
+  return { applied: false, status: await readRunStatus(id) };
+}
+
+/**
+ * Terminate (C12): status → `cancelled` AND `completed_at = now()`, eligible
+ * `queued|running|paused|stuck`.
+ *
+ * Both writes are in ONE statement — the contract §4 consistency fix (today's
+ * cancel path leaves completed_at NULL and durations fall back to updated_at).
+ * Because the precondition excludes `cancelled`, a double-terminate's second
+ * call is refused rather than re-stamping, so there is no ordering in which a
+ * row ends up `cancelled` with a NULL completed_at.
+ */
+export async function terminateRun(id: string): Promise<RunWriteResult> {
+  const r = await pool.query<{ status: RunStatus }>(
+    `UPDATE runs
+        SET status = 'cancelled',
+            completed_at = now(),
+            updated_at = now()
+      WHERE id = $1
+        AND status = ANY($2::text[])
+      RETURNING status`,
+    [id, TERMINATE_ELIGIBLE],
+  );
+  const row = r.rows[0];
+  if (r.rowCount === 1 && row) return { applied: true, status: row.status };
+  return { applied: false, status: await readRunStatus(id) };
+}
+
+/** One comms entry as GET /api/runs/:id/comms serves it (C14). */
+export interface CommsEntry {
+  role: string;
+  content: string;
+  ts: string;
+  kind: string;
+  meta: Record<string, unknown> | null;
+}
+
+/**
+ * The run's comms traffic, oldest first (C14).
+ *
+ * Filtering happens in Postgres, not in Node: a long-running worker's thread is
+ * megabytes of tool calls and shipping all of it to filter out a dozen entries
+ * would make the UI's cheapest panel the most expensive query in the system.
+ * WITH ORDINALITY + ORDER BY ord preserves thread order — jsonb_agg over a set
+ * has no inherent ordering guarantee, so the ORDER BY is load-bearing.
+ *
+ * Each entry is rebuilt with jsonb_build_object rather than passed through
+ * verbatim so that every key in CommsEntry is present in the JSON: an entry
+ * written without `meta` comes back as `meta: null`, matching the declared
+ * type, instead of an absent key the UI would have to guess about.
+ *
+ * Unknown run → null (the route answers 404). A known run with no comms →
+ * `{run_id, comms: []}` — never null, because "no traffic yet" is a normal
+ * state and must not read as "no such run".
+ */
+export async function listComms(
+  id: string,
+): Promise<{ run_id: string; comms: CommsEntry[] } | null> {
+  const r = await pool.query<{ run_id: string; comms: CommsEntry[] }>(
+    `SELECT r.id::text AS run_id,
+            COALESCE(
+              (SELECT jsonb_agg(
+                        jsonb_build_object(
+                          'role', e->>'role',
+                          'content', e->>'content',
+                          'ts', e->>'ts',
+                          'kind', e->>'kind',
+                          'meta', CASE WHEN jsonb_typeof(e->'meta') = 'object'
+                                       THEN e->'meta' ELSE 'null'::jsonb END
+                        ) ORDER BY ord)
+                 FROM jsonb_array_elements(r.thread) WITH ORDINALITY AS t(e, ord)
+                WHERE e->>'kind' = 'comms'),
+              '[]'::jsonb) AS comms
+       FROM runs r
+      WHERE r.id = $1`,
+    [id],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  return { run_id: row.run_id, comms: row.comms ?? [] };
 }
