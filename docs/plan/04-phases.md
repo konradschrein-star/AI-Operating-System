@@ -1,207 +1,156 @@
 # 04 — Phases (the waterfall)
 
-Six phases. Each is seeded as **one planner task** at round `k*100`
-(100, 200, …, 600); the gaps leave room for fix cycles without colliding with the
-next phase. Rounds gate ordering: round `N+1` starts only when everything `≤ N` is
-done. Phases are sequenced so that no two phases edit the same file concurrently —
-in particular **P3 and P4 both touch `FileExplorerPanel.tsx`, so they are in
-consecutive rounds, never the same one.**
+Round scheduling per goal-mode convention: phase k's planner sits at round k·100; the
+99-round gap absorbs fix cycles (each costs rounds +1/+2 from its reviewer) without ever
+colliding with the next phase. Rounds only gate ordering; gaps are free. Tasks in the
+same round run in parallel in the SAME worktree — same-round tasks must touch disjoint
+files; anything that could collide goes in consecutive rounds.
 
-Each phase planner reads this file plus `01-requirements.md`, `02-architecture.md`,
-and `03-quality.md`, then breaks its phase into builder/reviewer tasks. **Tasks a
-planner creates in the SAME round must touch disjoint files;** anything that could
-collide goes in consecutive rounds.
+**File-collision note across phases:** P1 and P2 both edit
+`forge-control/src/lib/project-tick.ts`. That is safe because phases are strictly
+sequential (P2's planner cannot promote until P1's rounds — including its fix cycles —
+are all done). Within each phase, planners must keep same-round builders off shared files.
 
----
-
-## Phase 1 — Profile & baseline  (round 100)
-
-**Goal:** Prove where the lag is before changing anything, and record numbers the
-final phase will be measured against.
-
-**Scope:** Read-only + temporary instrumentation. No production source changes.
-
-**Deliverables:**
-- Extend `docs/plan/BASELINE-FINDINGS.md` (or a new `docs/plan/baseline-render.md`)
-  with **in-browser** measurements: click-to-first-paint of the Files tab on the
-  vault root (typical dir), a React Profiler or `performance.mark` trace of the
-  mount, and confirmation that the accumulating `files` array grows as you
-  navigate. Use the `playwright-skill` to drive the live web app.
-- Confirm the API timings already captured (curl) and add a nested-dir timing.
-- A one-paragraph "root cause confirmed" statement: mount cost + array growth
-  (client), light mode = `!important` CSS. If the data contradicts the architect's
-  read, say so explicitly and flag it — do not proceed on a false premise.
-
-**Acceptance:** Numbers written into the corpus and committed; root-cause
-statement present. No gate on code (nothing changed).
-
-**Requirements covered:** measurement basis for R11/R12/R13 (owned/verified later).
+**Standing constraints for every phase (planners: copy these into builder briefs):**
+worktree-only (never edit `/opt/forge-ai-os`; never `pm2 restart forge-executor` — not
+even "just to test"); no `forge-control-web/app/desktop/**`, no `src/routes/agents.ts`;
+pnpm only, `pnpm install --prod=false` first (worktree has no `node_modules`, and a bare
+install skips `tsx`/`typescript` under the executor's `NODE_ENV=production`); no new npm deps;
+hard errors, no silent fallbacks; commit per task with clear messages.
 
 ---
 
-## Phase 2 — Backend `/list` hardening  (round 200)
+## Phase 1 — Engine hardening: reviewer consolidation + status gating (round 100)
 
-**Goal:** Make `/api/files/list` bounded and cache-friendly for large directories
-without changing containment or the entry shape.
+- **Goal:** kill bugs 1 and 2 at the reconciler/DB layer, with the pure logic extracted
+  and unit-tested.
+- **Scope (files):** `forge-control/src/lib/project-reconcile.ts` (new),
+  `forge-control/src/lib/project-reconcile.test.ts` (new),
+  `forge-control/src/lib/project-tick.ts` (reconcile + spawn paths),
+  `forge-control/src/db/projects.ts` (promote/claim SQL, `listReviewerRound`,
+  fix-chain transaction), `db/migrations/0039_reviewer_chain_key.sql` (new).
+- **Deliverables:** pure module + tests T1–T9; group consolidation wired into
+  `reconcileSettledTasks()`; gated promote/claim; migration 0039 (NOT applied to live DB —
+  dry-run only per 03-quality I2).
+- **Acceptance / gates:** T1–T9 green; `tsc --noEmit` clean; existing tests still green;
+  red-team review per 03-quality §4 (all 12 scenarios walked, three named failure-mode
+  paragraphs); I2 migration dry-run evidence.
+- **Requirements covered:** R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11.
+- **Risk: HIGH (this is the engine running us) → planner MUST add a red-team reviewer**
+  (attack brief, 03-quality §4) alongside the standard gating reviewer, same round —
+  which also live-exercises the new dedupe the moment both report.
 
-**Scope (files):** `forge-control/src/routes/files.ts` only.
+## Phase 2 — Policy encoding + GitHub lane (round 200)
 
-**Deliverables:**
-- Switch the dir/file distinction to `fs.readdir(abs, { withFileTypes: true })`;
-  `stat` only what still needs size/mtime, and `stat` symlink entries explicitly so
-  a symlinked directory still reports `isDir` correctly (document this caveat in a
-  comment).
-- Cap large listings at `LIST_CAP` (default ~1000) with a `truncated` flag + total
-  count, mirroring `/search`'s `SEARCH_RESULT_CAP` pattern. (Optional upgrade:
-  `limit`/`offset` pagination — allowed if the reviewer prefers it.)
-- Add `Cache-Control: private, max-age=<small>` to `/list`.
-- Preserve `resolveInRoot` and all traversal/dotfile/symlink guards byte-for-byte.
+- **Goal:** kill bugs 3 and 4 where behavior is generated (prompts), and ship the boring
+  GitHub helper + guidance.
+- **Scope (files):** `forge-control/src/lib/project-tick.ts` (exported
+  `WORKTREE_POLICY` / `REVIEWER_LIVE_CHECK` / `DEPLOY_GUIDE` constants wired into
+  `buildPrompt()`, incl. push/PR guidance in planner/reviewer/architect branches),
+  prompt tests (T10) in `project-reconcile.test.ts` or a sibling test file,
+  `scripts/git-sync-branch.sh` (new), `docs/tools/deploy-playbook.md` (new).
+- **Deliverables:** policy constants + tests; helper script (push + `--pr`, force-free by
+  construction); deploy playbook doc; guidance text landed in all role branches.
+- **Acceptance / gates:** T10 green; helper pushes THIS work branch to origin (S6 proven);
+  `grep -c force scripts/git-sync-branch.sh` = 0; no-origin/no-auth exit codes proven in
+  a scratch dir; tsc + suite green.
+- **Requirements covered:** R12 R13 R14 R15 R16 R17.
 
-**Acceptance / gates:** T1 (`forge-control` tsc clean), T5/T6 (`/list` timings incl.
-a synthetic ≥2000-entry temp dir, cleaned up after), T7 (`Cache-Control` present),
-T8 (containment attempts still blocked). Containment diff reviewed.
+## Phase 3 — Researcher role + smoke (round 300)
 
-**Requirements covered:** R16, R17, R24, R26.
+- **Goal:** the researcher lane exists and demonstrably works end-to-end.
+- **Scope (files):** `agents/researcher.md` (new, in-repo); `roleFilePaths()` repo
+  fallback + T13; T11 frontmatter-parse test; T14 allowlist robustness. No live-system
+  write at all — R308 struck the `/root/.claude/agents/` install step (R19).
+- **Deliverables:** role file (R18); the file resolves through the ENGINE's own path
+  order, proven by T13 against `REPO_AGENTS_DIR` rather than a hand-installed copy.
+- **Acceptance / gates:** T11 + T13 + T14 green; tsc + suite green.
+- **Requirements covered:** R18. (R19 struck, R20 moved to P6 — 03-quality §3.1.)
 
----
+## Phase 4 — External service tools: gemini-qa + perplexity (round 400)
 
-## Phase 3 — `VaultFileList`: virtualized, token-native list  (round 300)
+- **Round 399 scout (seeded by this corpus):** re-verify BOTH API surfaces against
+  official docs on build day (endpoints, model names, upload flow, response fields,
+  pricing) → `docs/research/` note; the 02-architecture §6 facts are from 2026-08-05 and
+  drift is expected. Planner folds any deltas into builder briefs.
+- **Goal:** both helpers exist, correct with AND without keys, documented, reminders queued.
+- **Scope (files):** `scripts/gemini-qa.mjs` (new), `scripts/perplexity.mjs` (new),
+  `docs/tools/gemini-qa.md` (new), `docs/tools/perplexity.md` (new). Disjoint pairs —
+  gemini and perplexity builders may share a round.
+- **Deliverables:** CLIs per 02-architecture §6 (rubric schema verbatim = the pipeline
+  contract); docs; one reminder per still-missing key via `POST /api/reminders`
+  (recon 2026-08-05: both `gemini-api-key` and `perplexity-api-key` missing from
+  `/opt/ai-os/.secrets/store/` — expect two reminders).
+- **Acceptance / gates:** I4 error-path proofs re-run by reviewer (exit 2 no-key naming
+  both locations; invalid-key surfaces API error, exit 1); live smoke IF a key appeared;
+  docs match `--help`; zero dependency changes; reminders visible via GET; tsc + suite green.
+- **Requirements covered:** R21 R22 R23 R24 R25.
 
-**Goal:** Replace the `@cubone/react-file-manager` list/nav/breadcrumb surface with
-our own windowed component; move the panel to a bounded per-directory data model +
-client cache; surface errors. **HIGH-RISK — planner adds a red-team reviewer.**
+## Phase 5 — Integration sweep + knowledge capture (round 500)
 
-**Scope (files):**
-- New `forge-control-web/app/desktop/chat/VaultFileList.tsx` (+ optional `.css`).
-- `forge-control-web/app/desktop/chat/FileExplorerPanel.tsx` (swap `<FileManager>`
-  for `<VaultFileList>`; introduce `(root, rel)` state + bounded cache; remove the
-  `.catch(() => [])` silent swallow).
-- `forge-control-web/app/api.ts` only if `fetchFileList` needs optional pagination
-  args (additive; don't break callers).
-- `package.json` + lockfile only if `@tanstack/react-virtual` is added
-  (`NODE_ENV=development pnpm add @tanstack/react-virtual --prod=false`).
-- **Do not** finalize theming/tokens here beyond using tokens for any color you
-  write — the dedicated token audit is Phase 4. (Write tokens from the start; P4
-  verifies and fills gaps.)
+- **Goal:** the whole diff coheres; the system's own documentation knows what changed.
+- **Scope (files):** fixes surfaced by the sweep (any file already in scope above);
+  vault appends (`AI OS/Goal Mode Design.md`, `AI OS/Operator Log.md`); final branch push.
+- **Deliverables:** requirements matrix walked with evidence per R (checklist in the
+  reviewer brief); vault notes appended; branch pushed via the P2 helper.
+- **Acceptance / gates:** full-diff review of `git diff main...HEAD`; N2 boundary check
+  (`git diff --name-only` clean of forbidden paths); `pnpm install --prod=false && npx tsc
+  --noEmit && pnpm test` green from a clean state; vault notes appended, nothing truncated.
+- **Requirements covered:** R26 R27.
 
-**Deliverables:**
-- Windowed list (row count ≪ entry count) over fixed-height rows; folder-descend;
-  clickable breadcrumb; selection toggle with count; drag-out preserving
-  `VPS_FILE_DRAG_MIME` + `{root, rel}` payload; explicit error row + empty row;
-  truncation banner when `/list` reports `truncated`.
-- Bounded cache (`Map`, ≤~32 dirs, stale-while-revalidate); `refresh` forces
-  refetch; roots seed unchanged.
-- Preserve: `FilePreview` (untouched), `SearchResultsList` (kept; may reuse), the
-  `onAttach` prop, the `memo`, and the `VPS_FILE_DRAG_MIME` export from the panel
-  module.
+## Phase 6 — Deploy (round 600, only after P5 PASS)
 
-**Acceptance / gates:** T2 (web tsc clean), T13 (behavior parity: R1–R10), T11
-(virtualization smoke on synthetic large dir), T14 (error surfacing). Red-team
-reviewer attempts to break drag-out, selection persistence, breadcrumb edges, the
-error path, and large-dir scroll — and signs off only when it can't.
-
-**Requirements covered:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R13, R14, R15,
-R23, R25, R27, R29.
-
----
-
-## Phase 4 — Theme correctness & token audit  (round 400)
-
-**Goal:** Zero hardcoded colors across the Files pane; verified legible and
-consistent in BOTH themes; the old `!important` dark-override CSS gone.
-
-**Scope (files):**
-- `forge-control-web/app/desktop/chat/FileExplorerPanel.css` — delete the 49-line
-  `!important` hardcoded block (or reduce to token-only rules).
-- `forge-control-web/app/desktop/chat/FileExplorerPanel.tsx` — replace the inline
-  `rgba(91,141,239,0.12)` (line ~569) and any remaining literals with tokens.
-- `forge-control-web/app/desktop/chat/VaultFileList.tsx` — audit; any literal → token.
-- `forge-control-web/app/theme.css` — add accent-alpha tint tokens (e.g.
-  `--fg-rowHover`, `--fg-rowSelected`) to **BOTH** `:root` and
-  `html[data-theme="light"]`.
-- `forge-control-web/app/tokens.ts` — map the new tokens.
-
-**Deliverables:**
-- New tint tokens defined in both palettes and consumed via `tokens.*` / `var()`.
-- The hardcoded-color grep (T4) over all touched Files components returns **0**.
-- Playwright screenshots of the pane in dark AND light, attached to the task.
-
-**Acceptance / gates:** T4 (0 hardcoded colors), T12 (both-theme screenshots),
-T17 (token discipline; new tokens in both palettes), T22/R22 (`!important` block
-removed). T2 (web tsc still clean).
-
-**Requirements covered:** R18, R19, R20, R21, R22.
-
----
-
-## Phase 5 — Perf verification & final adversarial review  (round 500)
-
-**Goal:** Prove the DoD numerically and adversarially before deploy.
-**HIGH-RISK — planner adds a red-team reviewer.**
-
-**Scope:** Verification + any small fixes the review demands (no new scope).
-
-**Deliverables / gates (all executed, output pasted into the task):**
-- T1 + T2 (`tsc` clean both repos), T3 (`pnpm build` green).
-- T9 click-to-render ≤ 200 ms on a typical dir; **before/after vs Phase 1 baseline**
-  written into the corpus.
-- T10 cached re-visit < ~30 ms; T11 synthetic ≥1000-entry dir stays responsive
-  (no long task > 200 ms, windowed DOM).
-- T15 scope diff (touched paths ⊆ allowed set, R30); T16 no silent fallback.
-- Final adversarial pass over the whole Files experience in both themes at narrow
-  and wide panel widths.
-- A written **PASS/NEEDS_FIXES** verdict. PASS is required before Phase 6.
-
-**Requirements covered:** R11, R12, R28 (and re-verifies R13, R26, R27, R30).
+- **Goal:** land it, restart safely, report.
+- **Scope:** `/opt/forge-ai-os` (the ONE phase allowed to touch it), live DB (migration
+  0039), pm2 (forge-control only), detached safe-restart for the executor.
+- **Deliverables / protocol (verbatim from the brief + R28):**
+  1. In `/opt/forge-ai-os`: `git merge main` into `project/4120f785` first if main moved;
+     re-run `pnpm install --prod=false && npx tsc --noEmit && pnpm test` in the WORKTREE; then merge
+     the branch to main. Conflicts ⇒ STOP, report the files, do not improvise.
+  2. Apply `db/migrations/0039_reviewer_chain_key.sql` (additive; safe under the running
+     old engine).
+  3. `pm2 restart forge-control` (API side — allowed).
+  4. `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`
+     — launch DETACHED and END; never wait, never `pm2 restart forge-executor`.
+  5. **R20 smoke, carried over from P3 (03-quality §3.1).** Only AFTER step 4's restart
+     has landed — the pre-restart engine has no repo fallback and would cache a bare
+     mission. Create a scratch-repo project whose brief tells its round-0 architect
+     (tier `fast`) to create exactly ONE researcher task (suggested topic: "current
+     Perplexity API surface + pricing, cited" — the output doubles as fresh input for P4)
+     and stop. The researcher run must complete and commit a `docs/research/*.md` with
+     ≥ 3 cited sources; the reviewer spot-checks ≥ 2 URLs against the claims made; the
+     scratch project is then closed. Executor logs must show no
+     `no agent definition for role researcher` warning.
+  6. Final message: what changed, test results, which keys/reminders Konrad owes the
+     system (expected: `gemini-api-key`, `perplexity-api-key` unless added meanwhile).
+- **Acceptance / gates:** 03-quality §3 P6 row (which now includes the R20 carry-over);
+  the deploy task's transcript is the evidence.
+- **Requirements covered:** R28, R20 (carried from P3).
 
 ---
 
-## Phase 6 — Merge & deploy  (round 600)
-
-**Goal:** Ship it to the live checkout. Only runs after Phase 5 PASS.
-
-**Scope:** Deployment only. Follows the brief's deployment section exactly.
-
-**Steps:**
-1. In `/opt/forge-ai-os` (the **live** checkout, NOT this worktree):
-   `git merge` the project work branch into `main`. **If it conflicts, STOP** —
-   leave the branch, force nothing, report the conflict in the final message.
-2. Rebuild `forge-control-web` (`pnpm install` only if deps changed, then
-   `pnpm build`); `pm2 restart forge-control-web`. Restart `forge-control` **only
-   if its files changed** (Phase 2 did change `files.ts`, so a `forge-control`
-   restart is expected). **NEVER** touch `forge-executor`.
-3. Verify: `pm2` shows both processes online; `GET http://127.0.0.1:7700/api/health`
-   → 200; the web app serves HTTP 200 on its port (find the port via pm2 env /
-   ecosystem config).
-4. Final task message: what changed + before/after timings.
-
-**Requirements covered:** deployment / S7. Enforces R30 one last time.
-
----
-
-## Requirement → phase coverage matrix (every R assigned to exactly one phase)
+## Requirement → phase coverage matrix
 
 | Phase | Requirements owned |
 |---|---|
-| P1 Profile | (measurement basis; owns no unique R) |
-| P2 Backend | R16, R17, R24, R26 |
-| P3 List | R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R13, R14, R15, R23, R25, R27, R29 |
-| P4 Theme | R18, R19, R20, R21, R22 |
-| P5 Perf/Final | R11, R12, R28 |
-| P6 Deploy | S7 (deployment) |
-| Cross-cutting | R30 (enforced every phase, finally at P5/P6) |
+| P1 | R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 |
+| P2 | R12 R13 R14 R15 R16 R17 |
+| P3 | R18 (R19 struck at R308; R20 moved to P6) |
+| P4 | R21 R22 R23 R24 R25 |
+| P5 | R26 R27 |
+| P6 | R28 + R20 (carried from P3 at R308) |
 
-All of R1–R29 are owned by exactly one phase; R30 is the cross-cutting scope
-guardrail; deployment (S7) is P6.
+(N1–N5 are standing constraints enforced by every phase's gates, not owned by one phase.)
 
 ## Round map
 
-| Round | Task |
-|---|---|
-| 0 | Architect (this plan) — done |
-| 100 | Planner: Phase 1 — Profile & baseline |
-| 200 | Planner: Phase 2 — Backend `/list` hardening |
-| 300 | Planner: Phase 3 — `VaultFileList` (adds red-team reviewer) |
-| 400 | Planner: Phase 4 — Theme & token audit |
-| 500 | Planner: Phase 5 — Perf verification & final review (adds red-team reviewer) |
-| 600 | Planner: Phase 6 — Merge & deploy |
+| Round | Task | Tier |
+|---|---|---|
+| 0 | Architect: this corpus + seeding | flagship (done) |
+| 100 | Planner: Phase 1 (engine hardening; MUST add red-team reviewer) | standard |
+| 200 | Planner: Phase 2 (policy + GitHub) | standard |
+| 300 | Planner: Phase 3 (researcher) | standard |
+| 399 | Scout: re-verify Gemini + Perplexity API surfaces | (role default) |
+| 400 | Planner: Phase 4 (external tools) | standard |
+| 500 | Planner: Phase 5 (integration sweep) | standard |
+| 600 | Planner: Phase 6 (deploy) | standard |

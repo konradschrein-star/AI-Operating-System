@@ -71,6 +71,17 @@ export interface ProjectTask {
   /** Manual/automatic retries spent on this task (migration 0037). Capped by
    *  MAX_TASK_ATTEMPTS unless an operator forces it. */
   attempt: number;
+  /** Deterministic idempotency key for reconciler-created chains
+   *  ("fix:<round>:<cycle>" / "rereview:<round>:<cycle>"), unique per project
+   *  — see migration 0039. NULL for every task that is not part of a fix
+   *  chain, which is why the unique index is partial. Only the reconciler
+   *  writes it; the task-creation API route does not expose the field.
+   *
+   *  It is a SECOND idempotency key, layered on top of migration 0035's
+   *  identity index (project, round, role, title): identity dedupes the
+   *  architect's fan-out curls, chain_key dedupes reconciler replays whose
+   *  titles are generated and could legitimately repeat across cycles. */
+  chain_key: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -82,7 +93,23 @@ export interface ProjectTaskWithProject extends ProjectTask {
 const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, work_branch,
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
-  run_id::text, fix_cycle, tier, attempt, created_at::text, updated_at::text`;
+  run_id::text, fix_cycle, tier, attempt, chain_key, created_at::text, updated_at::text`;
+/** TASK_COLS qualified for queries that join `project_tasks pt` to another
+ *  table — `projects` and `runs` both carry id/status/created_at, so an
+ *  unqualified list is ambiguous there. Kept as one list so a new column can
+ *  never again be added to TASK_COLS and silently forgotten in a hand-written
+ *  joined SELECT (every ProjectTask row this module returns must be whole). */
+const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
+  pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier, pt.attempt,
+  pt.chain_key, pt.created_at::text, pt.updated_at::text`;
+/** Last assistant message of the joined run `r`, by thread timestamp — the
+ *  text every verdict parse reads. Shared by listSettledRunningTasks() and
+ *  listReviewerRound() so the two can never drift apart. */
+const LAST_ASSISTANT_TEXT = `(SELECT elem->>'content'
+               FROM jsonb_array_elements(r.thread) elem
+              WHERE elem->>'role' = 'assistant'
+              ORDER BY (elem->>'ts')::timestamptz DESC
+              LIMIT 1)`;
 
 export async function listProjects(): Promise<Project[]> {
   const r = await pool.query<Project>(
@@ -182,10 +209,7 @@ export async function listTasksForProject(
  *  board doesn't accumulate stale cards forever. */
 export async function listActiveTasks(): Promise<ProjectTaskWithProject[]> {
   const r = await pool.query<ProjectTaskWithProject>(
-    `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-            pt.attempt, pt.created_at::text, pt.updated_at::text,
-            p.name AS project_name
+    `SELECT ${TASK_COLS_PT}, p.name AS project_name
        FROM project_tasks pt
        JOIN projects p ON p.id = pt.project_id
       WHERE p.status IN ('active','blocked')
@@ -209,7 +233,13 @@ export async function getTask(id: string): Promise<ProjectTask | null> {
  *  twice (2026-07-30, canvas-ux) gets the SAME task back the second time
  *  instead of a duplicate that then races the original inside one worktree.
  *  `created` tells the caller which happened: the API route turns
- *  created=false into a 409, the fix-cycle path treats it as a no-op. */
+ *  created=false into a 409, the fix-cycle path treats it as a no-op.
+ *
+ *  This function deliberately does NOT accept `chain_key`: every chain row is
+ *  written by createFixChain(), which is the only path that has to survive a
+ *  replay against BOTH unique indexes. A second entry point that writes
+ *  chain_key while arbitrating on identity alone would raise unique_violation
+ *  on exactly the replay it was meant to absorb. */
 export async function createTask(input: {
   project_id: string;
   round: number;
@@ -393,11 +423,18 @@ export async function listGoalProgress(): Promise<GoalProgress[]> {
  *  still outstanding to 'ready'. Single set-based query across all
  *  projects — this is the "manager" for stage sequencing, run every tick.
  *
- *  Only 'active' projects advance. Neither this query nor claimReadyTasks
- *  used to look at the project row at all, so `paused` was decoration: the
- *  two projects Konrad paused on 2026-07-30 would have resumed the moment
- *  anyone unwedged them (E7). Pause, blocked and cancelled all now mean what
- *  they say — a project has to be explicitly returned to 'active' to move. */
+ *  Only 'active' projects advance (E7 on main, R8 in this project's plan —
+ *  the same bug, found twice). Neither this query nor claimReadyTasks used to
+ *  look at the project row at all, so `paused` was decoration: the two
+ *  projects Konrad paused on 2026-07-30 would have resumed the moment anyone
+ *  unwedged them. Pause, blocked and cancelled all now mean what they say — a
+ *  project has to be explicitly returned to 'active' to move.
+ *
+ *  The gate is a filter, not a state change: when the project flips back to
+ *  'active' the same rows are still 'pending' and the round resumes exactly
+ *  where it stopped. The reconciler is therefore free to create fix-chain
+ *  tasks for a non-active project — they sit inert under this gate instead of
+ *  the verdict being dropped on the floor. */
 export async function promoteReadyTasks(): Promise<number> {
   const r = await pool.query(
     `UPDATE project_tasks pt
@@ -422,9 +459,15 @@ export async function promoteReadyTasks(): Promise<number> {
  *  row per task and then calls attachRun().
  *
  *  Joined to projects and filtered to 'active' for the same reason as
- *  promoteReadyTasks (E7): pausing a project must actually stop it spending
- *  money. `FOR UPDATE OF pt` locks only the task rows — locking the project
- *  row too would let one claimed task hide the rest of its project's work. */
+ *  promoteReadyTasks (E7 / R9): pausing a project must actually stop it
+ *  spending money. `FOR UPDATE OF pt` locks only the task rows — a bare
+ *  FOR UPDATE would also lock the joined `projects` row, so every claim would
+ *  contend with any concurrent status flip or metadata write on that project,
+ *  and one claimed task could hide the rest of its project's work.
+ *
+ *  Pausing a project stops NEW claims only — runs already in flight are NOT
+ *  killed. They finish and reconcile normally; bookkeeping is not billable
+ *  work, and killing mid-run would lose the agent's output. */
 export async function claimReadyTasks(): Promise<
   Array<ProjectTask & { project: Project }>
 > {
@@ -432,9 +475,7 @@ export async function claimReadyTasks(): Promise<
   try {
     await client.query("BEGIN");
     const r = await client.query<ProjectTask>(
-      `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-              pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-              pt.attempt, pt.created_at::text, pt.updated_at::text
+      `SELECT ${TASK_COLS_PT}
          FROM project_tasks pt
          JOIN projects p ON p.id = pt.project_id
         WHERE pt.status = 'ready'
@@ -612,21 +653,216 @@ export async function listSettledRunningTasks(): Promise<
   const r = await pool.query<
     ProjectTask & { run_status: RunStatus; last_text: string | null }
   >(
-    `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-            pt.attempt, pt.created_at::text, pt.updated_at::text,
+    `SELECT ${TASK_COLS_PT},
             r.status AS run_status,
-            (SELECT elem->>'content'
-               FROM jsonb_array_elements(r.thread) elem
-              WHERE elem->>'role' = 'assistant'
-              ORDER BY (elem->>'ts')::timestamptz DESC
-              LIMIT 1) AS last_text
+            ${LAST_ASSISTANT_TEXT} AS last_text
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'
         AND r.status IN ('completed','failed','cancelled','stuck')`,
   );
   return r.rows;
+}
+
+/** Every reviewer task of one project+round, with its run settlement — the
+ *  input to project-tick's group consolidation, which must decide on the
+ *  ROUND as a whole rather than per settled task (two reviewers each firing
+ *  their own fix chain was bug 1 of the first goal-mode night).
+ *
+ *  LEFT JOIN, not JOIN: a reviewer whose run has not been created yet has
+ *  `run_id IS NULL` and surfaces here as `run_status: null`, which the caller
+ *  maps to `settled: false` — a group with any such member must wait, never
+ *  decide. Task status is deliberately NOT filtered: a reviewer already marked
+ *  'done' still belongs to the group's history and the caller decides what
+ *  that means. ORDER BY created_at ASC is load-bearing — it is what makes the
+ *  merged fix brief byte-identical across replays of the same round. */
+export async function listReviewerRound(
+  projectId: string,
+  round: number,
+): Promise<Array<ProjectTask & { run_status: RunStatus | null; last_text: string | null }>> {
+  const r = await pool.query<
+    ProjectTask & { run_status: RunStatus | null; last_text: string | null }
+  >(
+    `SELECT ${TASK_COLS_PT},
+            r.status AS run_status,
+            ${LAST_ASSISTANT_TEXT} AS last_text
+       FROM project_tasks pt
+       LEFT JOIN runs r ON r.id = pt.run_id
+      WHERE pt.project_id = $1
+        AND pt.round = $2
+        AND pt.role = 'reviewer'
+      ORDER BY pt.created_at ASC`,
+    [projectId, round],
+  );
+  return r.rows;
+}
+
+/** What became of one chain row.
+ *
+ *  `replay` and `occupied` BOTH mean "the INSERT wrote nothing", and they must
+ *  never be collapsed into one boolean:
+ *
+ *  - `replay` — the existing row carries OUR chain_key. It is the same chain,
+ *    re-created after a crash. Safe, expected, nothing is lost.
+ *  - `occupied` — a DIFFERENT row already holds our identity tuple
+ *    (project, round, role, title) with someone else's chain_key or none.
+ *    Its brief is not ours, so the feedback this consolidation merged would
+ *    go nowhere. That is a silent dropped verdict, and the caller has to stop
+ *    rather than mark the round done. */
+export type ChainRowOutcome =
+  | { kind: "created"; id: string }
+  | { kind: "replay"; id: string }
+  | { kind: "occupied"; id: string; title: string; chain_key: string | null };
+
+/** One chain INSERT, with the conflict CLASSIFIED rather than assumed.
+ *
+ *  `DO NOTHING` reports zero rows whichever index fired, so the row has to be
+ *  looked up afterwards to learn which one did. Order matters: chain_key is
+ *  checked FIRST, because a row matching our chain_key is our own chain even
+ *  if its round or title has since been edited, whereas a row matching only
+ *  the identity tuple is a stranger.
+ *
+ *  Throws when neither lookup explains the conflict — same contract as
+ *  createTask(): a `DO NOTHING` that nothing accounts for means the indexes
+ *  are not what this code believes, and guessing would corrupt a round. */
+async function insertChainRow(
+  client: pg.PoolClient,
+  row: {
+    project_id: string;
+    round: number;
+    role: TaskRole;
+    title: string;
+    brief: string;
+    fix_cycle: number;
+    tier: TaskTier | null;
+    chain_key: string;
+  },
+): Promise<ChainRowOutcome> {
+  const ins = await client.query<{ id: string }>(
+    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT DO NOTHING
+     RETURNING id::text`,
+    [
+      row.project_id,
+      row.round,
+      row.role,
+      row.title,
+      row.brief,
+      row.fix_cycle,
+      row.tier,
+      row.chain_key,
+    ],
+  );
+  if (ins.rows[0]) return { kind: "created", id: ins.rows[0].id };
+
+  const mine = await client.query<{ id: string }>(
+    `SELECT id::text FROM project_tasks
+      WHERE project_id = $1 AND chain_key = $2 LIMIT 1`,
+    [row.project_id, row.chain_key],
+  );
+  if (mine.rows[0]) return { kind: "replay", id: mine.rows[0].id };
+
+  const theirs = await client.query<{ id: string; title: string; chain_key: string | null }>(
+    `SELECT id::text, title, chain_key FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND role = $3 AND title = $4 LIMIT 1`,
+    [row.project_id, row.round, row.role, row.title],
+  );
+  if (theirs.rows[0]) {
+    return {
+      kind: "occupied",
+      id: theirs.rows[0].id,
+      title: theirs.rows[0].title,
+      chain_key: theirs.rows[0].chain_key,
+    };
+  }
+
+  throw new Error(
+    `createFixChain: insert for (${row.project_id}, round ${row.round}, ${row.role}, ` +
+      `"${row.title}", chain_key ${row.chain_key}) conflicted but neither ` +
+      `project_tasks_chain_key_uniq (migration 0039) nor project_tasks_identity_idx ` +
+      `(migration 0035) has a matching row — the unique indexes are not what this code expects`,
+  );
+}
+
+/** Insert a fix builder (round + 1) and its re-reviewer (round + 2) in ONE
+ *  transaction, keyed by chain_key so the pair is idempotent (R7).
+ *
+ *  `round` is the REVIEWER round R that produced the NEEDS_FIXES verdicts. A
+ *  tick that crashes after COMMIT but before marking the reviewers 'done'
+ *  replays harmlessly: the second attempt inserts nothing and both rows come
+ *  back `replay`. The outcomes are returned rather than swallowed so the
+ *  caller can log the replay instead of silently believing it created fresh
+ *  work — and, for `occupied`, so it can refuse to drop a verdict on the floor.
+ *
+ *  BARE `ON CONFLICT DO NOTHING`, with no conflict target, is deliberate.
+ *  There are now TWO unique indexes a chain row can hit:
+ *
+ *    - `project_tasks_chain_key_uniq` — partial, (project_id, chain_key)
+ *      WHERE chain_key IS NOT NULL (migration 0039). The replay guard.
+ *    - `project_tasks_identity_idx` — (project_id, round, role, title)
+ *      (migration 0035, already live). Not ours, but chain rows have a round,
+ *      a role and a title too, so they are subject to it.
+ *
+ *  Naming only the first — which is what this function did until R308 — makes
+ *  an identity collision an unhandled unique_violation that aborts the whole
+ *  transaction. That is reachable, not theoretical: every fix chain the
+ *  PRE-0039 engine wrote has chain_key NULL and a title of the same generated
+ *  shape ("Fix cycle N"), so re-surfacing one of those reviewer groups after
+ *  this ships collides on identity, not on chain_key. The bare form lets the
+ *  INSERT survive either, and insertChainRow() then works out WHICH one fired
+ *  — because "my own chain, replayed" and "a stranger holds my identity" are
+ *  the same rowCount and completely different situations.
+ *
+ *  A targeted form would also have been fragile for a second reason: the
+ *  target must be the index-inference form carrying the index's own WHERE
+ *  predicate. `ON CONFLICT ON CONSTRAINT project_tasks_chain_key_uniq` is NOT
+ *  a usable fallback, because a partial unique index is an index and not a
+ *  constraint — Postgres rejects it ("constraint ... does not exist").
+ *  Proven in docs/plan/evidence/0035-dryrun.md (T4/T6). */
+export async function createFixChain(input: {
+  project_id: string;
+  round: number;
+  cycle: number;
+  builderTitle: string;
+  builderBrief: string;
+  builderChainKey: string;
+  reviewerTitle: string;
+  reviewerBrief: string;
+  reviewerChainKey: string;
+  tier?: TaskTier;
+}): Promise<{ builder: ChainRowOutcome; reviewer: ChainRowOutcome }> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const builder = await insertChainRow(client, {
+      project_id: input.project_id,
+      round: input.round + 1,
+      role: "builder",
+      title: input.builderTitle.slice(0, 200),
+      brief: input.builderBrief,
+      fix_cycle: input.cycle,
+      tier: input.tier ?? null,
+      chain_key: input.builderChainKey,
+    });
+    const reviewer = await insertChainRow(client, {
+      project_id: input.project_id,
+      round: input.round + 2,
+      role: "reviewer",
+      title: input.reviewerTitle.slice(0, 200),
+      brief: input.reviewerBrief,
+      fix_cycle: input.cycle,
+      tier: null,
+      chain_key: input.reviewerChainKey,
+    });
+    await client.query("COMMIT");
+    return { builder, reviewer };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 /** Convenience wrapper so project-tick doesn't import db/runs.ts directly
