@@ -332,8 +332,10 @@ interface TeamNode {
   model: string | null;
   status: string;
   tokens: TeamTokens;
-  /** Milliseconds of attributed work, or null when the working-time query
-   *  failed — see `errors[]`. Never 0-as-unknown. */
+  /** Milliseconds of attributed work, or null when it is not measurable:
+   *  the working-time query failed (see `errors[]`), or this is a sub-agent
+   *  whose rollup has no independent end stamp (`subagentWorkingTime`).
+   *  Never 0-as-unknown — 0 means measured, and it was zero. */
   working_ms: number | null;
   working_ms_source: WorkingMsSource | null;
   started_at: string | null;
@@ -405,13 +407,22 @@ function teamTokens(u: Usage): TeamTokens {
  * sub-agent of run 3853c154… has started 06:47:12.533, ended 06:47:12.565 —
  * 32 ms — and a last activity at 06:53:09). Using it would report six minutes
  * of work as a rounding error.
+ *
+ * The rollup may answer `null` (round 308, review finding 1). A run without
+ * `metadata.subagents_v2` has its sub-agents synthesised from the spawn call
+ * alone, so `started_at === updated_at` and the span is 0 BY CONSTRUCTION, not
+ * by measurement — seven sub-agents of chat `11dd264b…` reported `working_ms:
+ * 0` for work that visibly took over a minute each. `workingTimeFromRollup()`
+ * returns null for that shape and this function passes it through unchanged,
+ * which is the same doctrine step 5 of the route already applies to its own
+ * failure path: a zero here would read as "did no work".
  */
 function subagentWorkingTime(
   sub: Subagent,
   slice: TimingSlice | undefined,
   live: boolean,
   nowMs: number,
-): { working_ms: number; working_ms_source: WorkingMsSource } {
+): { working_ms: number | null; working_ms_source: WorkingMsSource } {
   if (slice) {
     const base = numOr0(slice.working_ms);
     return {

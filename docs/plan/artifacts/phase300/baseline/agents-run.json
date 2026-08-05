@@ -1,7 +1,5 @@
 {
   "agent": {
-    "agent_kind": "worker",
-    "cron_name": null,
     "current_activity": {
       "kind": "assistant_text",
       "model": null,
@@ -12,24 +10,18 @@
     },
     "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
     "effort": "high",
-    "elapsed_ms": 949322,
+    "elapsed_ms": 31821774,
     "engine": "claude-code",
     "id": "3853c154-e07b-4378-9313-2b34f4a33342",
     "kind": "run",
     "last_heartbeat_at": "2026-08-05 07:02:26.316605+00",
     "model": "claude-fable-5",
     "parent_run_id": null,
-    "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
-    "role": "architect",
-    "settled": true,
-    "settled_at": "2026-08-05 07:02:26.316605+00",
     "spent_usd": 12.93,
     "started_at": "2026-08-05 06:46:36.994632+00",
     "status": "completed",
     "subagents": [
       {
-        "description": "Recon chat Bash block rendering",
-        "ended_at": "2026-08-05T06:47:12.565Z",
         "event_count": 118,
         "kind": "subagent",
         "latest_activity": {
@@ -52,8 +44,6 @@
         }
       },
       {
-        "description": "Recon agents API and runs schema",
-        "ended_at": "2026-08-05T06:47:23.678Z",
         "event_count": 78,
         "kind": "subagent",
         "latest_activity": {

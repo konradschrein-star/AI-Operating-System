@@ -3,6 +3,35 @@ Captured 2026-08-05T16:55:15+02:00 against the worktree harness on :7798.
 Chat: bfd1283a-b71b-4f35-b577-7d09aad803f2  →  project 8ea0cc08 (operator-visibility)
 Plan dir under test: /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan
 
+!! REQUIRED FIXTURE — read this before pasting any command below (added in
+!! round 308, review finding 3: the transcript could not be reproduced from its
+!! own text, and the fixture was disclosed only in verification-306.md:46-52).
+!!
+!! `bfd1283a…` does NOT resolve to project 8ea0cc08 on its own — its linkage is
+!! null (round 304's scan finds no candidate; see linkage-fixture-finding.md).
+!! The link above exists only while this temporary row edit is in place, which
+!! is what makes a real plan directory reachable through the endpoint:
+!!
+!!   -- set the fixture
+!!   psql "$DATABASE_URL" -c "UPDATE projects
+!!     SET metadata = metadata || '{\"origin_chat_id\":\"bfd1283a-b71b-4f35-b577-7d09aad803f2\"}'::jsonb
+!!     WHERE id = '8ea0cc08-28d9-4301-9f28-c98e1c5d6838'"
+!!
+!!   -- revert it (the key was ABSENT before, so remove it; do not set null)
+!!   psql "$DATABASE_URL" -c "UPDATE projects
+!!     SET metadata = metadata - 'origin_chat_id'
+!!     WHERE id = '8ea0cc08-28d9-4301-9f28-c98e1c5d6838'"
+!!
+!!   -- confirm the revert
+!!   psql "$DATABASE_URL" -At -c "SELECT metadata ? 'origin_chat_id' FROM projects
+!!     WHERE id = '8ea0cc08-28d9-4301-9f28-c98e1c5d6838'"   →  f
+!!
+!! Round 308 did NOT re-apply it: project 8ea0cc08 is active, and so is the only
+!! other project holding runs with the shapes this transcript needs
+!! (4120f785, engine-v2-research-lane, which this cycle's constraints put out of
+!! bounds). Section 11 at the end of this file is a fixture-free re-run of every
+!! case that does not require a plan directory on disk.
+
 === 1. ATTACKS (14 §'Path traversal') ===
 --------------------------------------------------------------------------
 $ curl -sS -G --data-urlencode 'name=../../../../etc/passwd' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
@@ -194,3 +223,87 @@ protocol was re-run against the final bytes to prove the tightening changed no b
   2.2 MB file                       → HTTP 413
 
   fixtures gone: 0 symlinks, 12 md files in docs/plan/
+
+=== 11. ROUND 308 — SELF-REPRODUCIBLE RE-CAPTURE (review finding 3) ===
+The transcript above is real but not reproducible from its own text: it was
+captured against `bfd1283a…`, which only resolves to project 8ea0cc08 while the
+round-306 fixture is in place (now disclosed in this file's header). Every
+command above returns 404 today.
+
+This section re-runs the protocol against a chat that is linked WITHOUT any
+fixture — `c0de0304-0000-4000-8000-000000000304` → project
+`4d3291c4-4eb3-483a-8d32-acc817a7b352` via `projects.metadata->>'origin_chat_id'`,
+`link_source: "metadata"`, `link_ambiguous: false`. Paste any line below and it
+answers the same way.
+
+Scope, stated honestly: that project is a round-303 probe with no `docs/plan`
+directory on disk, so it exercises every REJECTION (the security-relevant half,
+all of which is decided before the filesystem is touched) plus the
+missing-directory path. The 200/413 cases and the symlink fixtures still need a
+project with a real plan dir — see the header for the fixture that produces one.
+
+Linkage, no fixture involved:
+$ curl -sS '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/linkage'
+{"chat_id":"c0de0304-0000-4000-8000-000000000304","project_id":"4d3291c4-4eb3-483a-8d32-acc817a7b352","project_status":"done","link_source":"metadata","link_ambiguous":false}
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=../../../../etc/passwd' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: ../../../../etc/passwd","name":"../../../../etc/passwd"}
+<< HTTP 400   [dot-dot-escape]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=/etc/passwd' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: /etc/passwd","name":"/etc/passwd"}
+<< HTTP 400   [absolute path]
+--------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc?name=..%2f..%2fsecrets'   (raw, NOT re-encoded)
+{"error":"rejected: name must be a bare file name, got a path: ../../secrets","name":"../../secrets"}
+<< HTTP 400   [encoded slashes]
+--------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc?name=..%252f..%252fetc%252fpasswd'   (raw, NOT re-encoded)
+{"error":"rejected: only .md documents are served, got: ..%2f..%2fetc%2fpasswd","name":"..%2f..%2fetc%2fpasswd"}
+<< HTTP 400   [double-encoded]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=....//....//etc/passwd' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: ....//....//etc/passwd","name":"....//....//etc/passwd"}
+<< HTTP 400   [doubled dots]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=..' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: name is a directory reference: ..","name":".."}
+<< HTTP 400   [bare ..]
+--------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc?name=evil%00.md'   (raw, NOT re-encoded)
+{"error":"rejected: name contains a NUL byte","name":"evil\u0000.md"}
+<< HTTP 400   [NUL byte]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=notes.txt' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: only .md documents are served, got: notes.txt","name":"notes.txt"}
+<< HTTP 400   [non-md extension]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=evil' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: only .md documents are served, got: evil","name":"evil"}
+<< HTTP 400   [no extension]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=../14-ui-v3-quality.md' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: ../14-ui-v3-quality.md","name":"../14-ui-v3-quality.md"}
+<< HTTP 400   [parent-relative md]
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=10-ui-v3-spec.md' '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc'
+{"error":"plan directory unavailable at /opt/ai-os/workspace/projects/4d3291c4-4eb3-483a-8d32-acc817a7b352/docs/plan: ENOENT: no such file or directory, realpath '/opt/ai-os/workspace/projects/4d3291c4-4eb3-483a-8d32-acc817a7b352/docs/plan'","name":"10-ui-v3-spec.md"}
+<< HTTP 404   [valid name, no plan dir]
+-------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/plan/doc?name='
+{"error":"missing ?name=","name":""}
+<< HTTP 400   [empty name]
+-------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/not-a-uuid/plan/doc?name=x.md'
+{"error":"invalid run id"}
+<< HTTP 400   [malformed run id]
+-------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/05187ada-069c-479f-9236-e8a58b0fde68/plan/doc?name=10-ui-v3-spec.md'   (UNLINKED chat)
+{"error":"chat is not linked to a project — no plan documents"}
+<< HTTP 404   [unlinked chat]
+
+No fixture was created, moved or removed to produce section 11. Verified after
+the run:
+$ git status --porcelain docs/plan | grep -v artifacts/phase300 | wc -l  →  0
+$ find docs/plan -maxdepth 1 -type l | wc -l  →  0

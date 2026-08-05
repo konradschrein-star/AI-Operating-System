@@ -3,10 +3,34 @@
  *
  * Generalization of the phase-1 harness `serve-agents-7798.ts` (which stays
  * untouched as the phase-1 artifact). Where that one mounted a single router,
- * this one serves THIS WORKTREE's `agents`, `chat` and `projects` routers on
- * 127.0.0.1:7798 and passes every other path through to production :7700 — so
- * phase-300 builders and reviewers can curl the routes under test without
- * touching pm2, production, or the live checkout at /opt/forge-ai-os.
+ * this one serves THIS WORKTREE's `agents`, `chat`, `projects`, `capabilities`
+ * and `secrets` routers on 127.0.0.1:7798 and passes every other path through
+ * to production :7700 — so phase-300 builders and reviewers can curl the routes
+ * under test without touching pm2, production, or the live checkout at
+ * /opt/forge-ai-os.
+ *
+ * ── /api/secrets is LOCAL, and that has a consequence (round 308) ────────
+ * It was deliberately left off this table until round 308, so that one entry
+ * of the capture set would prove the pass-through worked. That made round
+ * 303's U7 change (`requested_by_run_id` on mark-pending) UNREACHABLE through
+ * the harness: `curl :7798/api/secrets` silently proxied to production, which
+ * runs main, so following the brief literally tested main and returned the
+ * baseline key set (review finding 2). The router is mounted now; the
+ * pass-through proof moved to `/api/health` in baseline/capture.sh, which no
+ * mount claims.
+ *
+ * Because it is local, `POST /api/secrets/...` on :7798 writes to whatever
+ * `SECRET_STORE_DIR` this process was started with — by default
+ * `/opt/ai-os/.secrets/store`, Konrad's real one. GETs are harmless; a
+ * mark-pending against the real store would raise a real "for Konrad" flag in
+ * the UI. Point it somewhere else when exercising the write paths:
+ *
+ *   set -a; . /opt/ai-os/.secrets/forge-control.env; set +a
+ *   export SECRET_STORE_DIR=/tmp/u7-store          # ← isolate before writing
+ *   cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/serve-v3-7798.ts
+ *
+ * The read-side capture (baseline/capture.sh) only GETs, so it is safe either
+ * way — but note the listing then reflects whichever store was configured.
  *
  * ── Why this is not `pnpm dev` on another port ──────────────────────────
  * NEVER import or boot `forge-control/src/index.ts` on :7798. index.ts:193-206
@@ -14,12 +38,15 @@
  * startProbeLoop() against the SAME database and the SAME Telegram bot token:
  * a second instance would double-fire cron schedules (spawning real runs),
  * steal Konrad's Telegram long-poll, and write to the vault. This harness
- * mounts ROUTERS ONLY. Each of the three is read-mostly SQL on the shared pool
- * (the write paths — POST /api/chat/:id/message, POST /api/projects — are the
- * same handlers production runs, so they are exactly as safe as calling :7700,
- * no more and no less), and none of the imported modules has a top-level side
- * effect (verified: no top-level timers/loops in db/runs.ts, db/projects.ts,
- * lib/cc-runner.ts, lib/workspace.ts, lib/canvas-context.ts).
+ * mounts ROUTERS ONLY. Each is read-mostly SQL on the shared pool (the write
+ * paths — POST /api/chat/:id/message, POST /api/projects, and now the
+ * /api/secrets mutations — are the same handlers production runs, so they are
+ * exactly as safe as calling :7700, no more and no less), and none of the
+ * imported modules has a top-level side effect (verified: no top-level
+ * timers/loops in db/runs.ts, db/projects.ts, lib/cc-runner.ts,
+ * lib/workspace.ts, lib/canvas-context.ts, lib/secret-store.ts — the last
+ * reads `SECRET_STORE_DIR` at import time into a const and touches the disk
+ * only inside its functions).
  *
  * ── Why node:http and not a Hono app ────────────────────────────────────
  * This file lives in the repo-root `scripts/` tree, which has no
@@ -56,6 +83,7 @@ import agents from "../../forge-control/src/routes/agents.ts";
 import chat from "../../forge-control/src/routes/chat.ts";
 import projects from "../../forge-control/src/routes/projects.ts";
 import capabilities from "../../forge-control/src/routes/capabilities.ts";
+import secrets from "../../forge-control/src/routes/secrets.ts";
 
 const PORT = 7798;
 const HOST = "127.0.0.1";
@@ -73,6 +101,7 @@ const MOUNTS: ReadonlyArray<{ prefix: string; router: FetchRouter }> = [
   { prefix: "/api/chat", router: chat },
   { prefix: "/api/projects", router: projects },
   { prefix: "/api/capabilities", router: capabilities },
+  { prefix: "/api/secrets", router: secrets },
 ];
 
 /**

@@ -259,14 +259,55 @@ console.log("\n── rollup fallback shape (13 §4) ─────────
     workingTimeFromRollup(s(0), s(300), { runningNowMs: MUCH_LATER }).working_ms,
     300_000,
   );
-  // End before start (clock skew) → 0, never negative.
-  check("rollup with end before start → 0", workingTimeFromRollup(s(300), s(0)).working_ms, 0);
-  // Unparseable start → 0 and the bad stamp is counted.
+
+  // ── NULL, NOT ZERO (round 308, review finding 1) ───────────────────────
+  // Every shape below has no independent end stamp, so the subtraction is 0
+  // by construction rather than by measurement. `null` is the only honest
+  // answer; a 0 renders as "did no work" for a sub-agent that demonstrably
+  // worked. Source stays "rollup" in every one of them — the provenance flag
+  // does not disappear just because the number is unknown.
+  const synthesised = workingTimeFromRollup(s(0), s(0));
+  check(
+    "rollup with updated_at === started_at → null, NOT 0 (the synthesised sub-agent)",
+    synthesised.working_ms,
+    null,
+  );
+  check("  …still flagged \"rollup\"", synthesised.working_ms_source, "rollup");
+  check("  …and counts no skipped stamp (both parsed fine)", synthesised.skipped_ts, 0);
+
+  // End before start (clock skew): not a measurement either.
+  check("rollup with end before start → null", workingTimeFromRollup(s(300), s(0)).working_ms, null);
+  // Start with no end and no clock: nothing to measure against.
+  check("rollup settled with a missing end stamp → null", workingTimeFromRollup(s(0), null).working_ms, null);
+  check(
+    "  …source survives the null",
+    workingTimeFromRollup(s(0), null).working_ms_source,
+    "rollup",
+  );
+  // Unparseable start → null and the bad stamp is counted.
   const bad = workingTimeFromRollup("last tuesday", s(300));
-  check("rollup with unparseable start → 0", bad.working_ms, 0);
+  check("rollup with unparseable start → null", bad.working_ms, null);
   check("rollup counts the unparseable stamp", bad.skipped_ts, 1);
+  const badEnd = workingTimeFromRollup(s(0), "last tuesday");
+  check("rollup with unparseable end → null", badEnd.working_ms, null);
+  check("rollup counts the unparseable end stamp", badEnd.skipped_ts, 1);
   // Missing (null) stamps are absence, not malformation — nothing to count.
+  check("rollup with null stamps → null working_ms", workingTimeFromRollup(null, null).working_ms, null);
   check("rollup with null stamps → 0 skipped (absent ≠ malformed)", workingTimeFromRollup(null, null).skipped_ts, 0);
+
+  // A RUNNING rollup keeps zero, because `now` IS a second observation: a
+  // sub-agent spawned this millisecond has really done 0 ms of work so far,
+  // and the number ticks up on the next poll.
+  check(
+    "rollup running, spawned this instant → 0 (measured), not null",
+    workingTimeFromRollup(s(0), null, { runningNowMs: BASE }).working_ms,
+    0,
+  );
+  check(
+    "rollup running with a clock behind the spawn → 0, never negative",
+    workingTimeFromRollup(s(60), null, { runningNowMs: BASE }).working_ms,
+    0,
+  );
 }
 
 console.log("\n── parseWorkingTs ───────────────────────────────────────────");
@@ -293,6 +334,24 @@ check(
 check("SQL fragment gates on both bounds (>= 0 AND <= CAP)", /gap_ms >= 0 AND g\.gap_ms <= /.test(WORKING_MS_SQL), true);
 check("SQL fragment orders by WITH ORDINALITY, not a bare row_number()", WORKING_MS_SQL.includes("WITH ORDINALITY"), true);
 check("SQL fragment filters malformed ts before the cast", WORKING_MS_SQL.includes("->>'ts' ~ '"), true);
+// Round 308, review finding 6: each stamp is truncated to whole milliseconds
+// BEFORE the subtraction, which is what Date.parse does on the JS side.
+// Truncating the gap instead would be a different function.
+check(
+  "SQL fragment truncates each stamp to whole ms before lag()",
+  WORKING_MS_SQL.includes("trunc(extract(epoch FROM q.ts) * 1000) AS ms"),
+  true,
+);
+check(
+  "SQL fragment differences the TRUNCATED stamps, not the raw timestamps",
+  /p\.ms - lag\(p\.ms\) OVER \(ORDER BY p\.ord\)/.test(WORKING_MS_SQL),
+  true,
+);
+check(
+  "SQL fragment no longer subtracts timestamptz values directly",
+  /p\.ts - lag\(p\.ts\)/.test(WORKING_MS_SQL),
+  false,
+);
 check("SQL fragment defaults to the `runs r` alias", WORKING_MS_SQL.includes("jsonb_array_elements(r.thread)"), true);
 check("workingMsSql() takes a caller alias", workingMsSql("x.thread").includes("jsonb_array_elements(x.thread)"), true);
 check("SQL fragment is a balanced parenthesised scalar expression", (() => {

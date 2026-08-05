@@ -34,29 +34,45 @@ OUT="${1:-$HERE}"
 # RUN_ID:     its architect run, status=completed since 07:02Z. A SETTLED run,
 #             so every field of it is frozen history: it is the strongest
 #             byte-equality evidence in the whole transcript.
-# CHAT_ID:    the operator chat that created both 8ea0cc08… and 4120f785…
-#             (plan-300.md: the deliberately ambiguous linkage fixture).
+# CHAT_ID:    the chat-thread fixture. REPINNED in round 308 (review finding 4)
+#             from `bfd1283a…` — Konrad's own live operator chat, which he keeps
+#             talking to, so its message_count and spent_usd drifted between
+#             every capture and the values layer of this gate was permanently
+#             red — to `da286217…`: a chat that has been `completed` since
+#             2026-07-29 15:32Z, 183 entries, nobody's live conversation. A
+#             settled run is frozen history, which is the only thing a
+#             byte-equality gate can honestly pin.
 PROJECT_ID="8ea0cc08-28d9-4301-9f28-c98e1c5d6838"
 RUN_ID="3853c154-e07b-4378-9313-2b34f4a33342"
-CHAT_ID="bfd1283a-b71b-4f35-b577-7d09aad803f2"
+CHAT_ID="da286217-340c-4c11-bee3-5304fa346df4"
 
 # ── Endpoint table ─────────────────────────────────────────────────────────
 # name<TAB>path. api-diff.sh does NOT duplicate this list; it globs the
-# baseline directory for *.json, so adding a line here is enough.
+# baseline directory for *.json, so adding a line here is enough — but it does
+# need a normalization spec in api-diff.sh's spec_for(), which refuses to diff
+# an endpoint nobody described.
 #
-# /api/secrets is mounted nowhere in serve-v3-7798.ts — it is in the set on
-# purpose: it proves the harness's pass-through to :7700 is alive in the same
-# capture that exercises the three local routers.
+# /api/health is the PASS-THROUGH PROOF: no mount in serve-v3-7798.ts claims
+# it, so a 200 here means the harness's proxy to :7700 is alive in the same
+# capture that exercises the local routers. It took that job from /api/secrets
+# in round 308, when secrets became a local mount (review finding 2).
+#
+# chat-list is captured at limit=50 rather than limit=5 (review finding 5).
+# There are 7 chats in total, so the window now holds every one of them —
+# including `c0de0304…`, the only chat that resolves to a project. At limit=5
+# it fell outside the page, the row-alignment window dropped it, and the four
+# additive fields U3 adds to a LINKED row were never compared by this gate.
 ENDPOINTS=$(
   cat <<EOF
 agents	/api/agents
 agents-project	/api/agents?project_id=$PROJECT_ID
 agents-run	/api/agents/$RUN_ID
-chat-list	/api/chat?limit=5
+chat-list	/api/chat?limit=50
 chat-thread	/api/chat/$CHAT_ID
 projects-managers	/api/projects/managers
 projects	/api/projects
 secrets	/api/secrets
+health	/api/health
 EOF
 )
 

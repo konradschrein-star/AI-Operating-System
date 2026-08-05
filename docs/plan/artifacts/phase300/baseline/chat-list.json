@@ -1,29 +1,44 @@
 {
-  "count": 5,
+  "count": 7,
   "counts": {
     "cancelled": 0,
-    "completed": 6,
+    "completed": 7,
     "failed": 0,
     "paused": 0,
     "queued": 0,
     "running": 0,
     "stuck": 0
   },
-  "hasMore": true,
+  "hasMore": false,
   "runs": [
     {
       "archived": false,
       "budget_usd": "0.00",
       "created_at": "2026-08-04 22:40:19.793779+00",
       "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
-      "last_heartbeat_at": "2026-08-05 13:03:04.037042+00",
-      "last_message_preview": "Done — task `abd02030` injected into engine-v2 (round 860): the engine will learn to recognize a usage-wall death, park the affected tasks with staged backoff i",
+      "last_heartbeat_at": "2026-08-05 14:27:43.69151+00",
+      "last_message_preview": "Yes — steady progress, and the watchdog has already earned its keep. Snapshot as of now: - **operator-visibility: 19 tasks done**, deep in the rework's API laye",
       "last_role": "assistant",
-      "message_count": 314,
-      "spent_usd": "49.92",
+      "message_count": 358,
+      "spent_usd": "56.29",
       "status": "completed",
       "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov",
-      "updated_at": "2026-08-05 13:03:04.037042+00",
+      "updated_at": "2026-08-05 14:27:43.69151+00",
+      "worker": "forge-executor"
+    },
+    {
+      "archived": false,
+      "budget_usd": "0.00",
+      "created_at": "2026-08-05 14:00:00+00",
+      "id": "c0de0304-0000-4000-8000-000000000304",
+      "last_heartbeat_at": null,
+      "last_message_preview": "Project is on the board.",
+      "last_role": "assistant",
+      "message_count": 9,
+      "spent_usd": "0.00",
+      "status": "completed",
+      "title": "phase300 round-304 linkage fixture (synthetic)",
+      "updated_at": "2026-08-05 14:00:08+00",
       "worker": "forge-executor"
     },
     {
@@ -84,6 +99,21 @@
       "status": "completed",
       "title": "Really quick, where are all the videos from reel forge stored? I can't find them. (we made like 13 l",
       "updated_at": "2026-07-29 15:32:49.807403+00",
+      "worker": "forge-executor"
+    },
+    {
+      "archived": false,
+      "budget_usd": "0.00",
+      "created_at": "2026-07-19 15:24:26.643182+00",
+      "id": "05187ada-069c-479f-9236-e8a58b0fde68",
+      "last_heartbeat_at": "2026-07-19 15:50:43.57891+00",
+      "last_message_preview": "Setup done and reconciled. Here's where things stand. **Keys — both live, stored the right way.** Firecrawl (1,136 credits) and Apify (your account, residential",
+      "last_role": "assistant",
+      "message_count": 77,
+      "spent_usd": "2.23",
+      "status": "completed",
+      "title": "Directory",
+      "updated_at": "2026-07-19 15:50:43.57891+00",
       "worker": "forge-executor"
     }
   ]

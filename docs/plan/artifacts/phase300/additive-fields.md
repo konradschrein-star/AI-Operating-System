@@ -85,3 +85,57 @@ baseline. The key-set table above is the direct measurement instead.
 
 `chat-list` also reports two DRIFT rows: `da286217…` aged out of the top-5 page, and
 `c0de0304…` (the fixture) appeared. Drift is data, not code.
+
+---
+
+## Round 308 — the list became executable
+
+Review finding 5: *"The four additive chat-list fields are never exercised by the additive
+gate."* They are now, and so is every other addition of this phase. `api-diff.sh`'s
+`additive_for()` holds the same list as a data table, and `--control` mode asserts it
+rather than tolerating it:
+
+| assertion | failure mode it catches |
+|---|---|
+| every listed path is PRESENT in the `:7798` capture | the fixture stopped reaching the field — the gate was proving nothing |
+| every listed path is ABSENT from the `:7700` control | it was never an addition of this phase |
+| no OTHER key is added | an unannounced API change |
+| no key is removed, anywhere | a client-breaking change |
+
+Keep this file and `additive_for()` in step. This file is the prose and the reasoning;
+that function is the copy the gate executes.
+
+### The complete list, as declared
+
+| endpoint | added paths | phase / requirement |
+|---|---|---|
+| `/api/agents`, `/api/agents?project_id=` | `agents[].agent_kind`, `.cron_name`, `.project_id`, `.role`, `.settled`, `.settled_at`, `agents[].subagents[].description`, `.ended_at` | phases 1–2 — KIND TRUTH (DoD 2) and the settle stamps TIME TRUTH (DoD 1) is computed from |
+| `/api/agents/:id` | the same eight, in the single-run shape (`agent.*`) | as above |
+| `/api/chat` (list) | `runs[].project_id`, `.project_status`, `.tasks_done`, `.tasks_total` | U3, round 304 — only on a chat that resolves to a project |
+| `/api/secrets` | `secrets[].requestedByRunId` | U7, round 303 |
+
+Nothing is removed or renamed anywhere in this phase, which is why "any removal fails"
+is an unconditional rule rather than a list.
+
+### One declared VALUE change
+
+`elapsed_ms` is not an addition — it exists on main, and this phase changes what it
+says. That is the deliverable, not a regression: main recomputes it against `now` for
+every row, so the pinned settled architect run `3853c154` (completed 07:02Z) read
+**31 977 125 ms** on `:7700` and **949 322 ms** — its real 15m 49s span — on `:7798`
+in the same capture. Konrad's report was *"elapsed times are still growing even though
+they are done."*
+
+It is declared in `changed_for()`, which waives worktree-only value differences on
+declared paths. In practice the waiver rarely fires for this one: main's value drifts
+against any baseline too (it is a function of `now`), so the gate attributes it as
+ordinary drift. The declaration is there for the case where main is stable and the
+difference is genuinely worktree-only.
+
+### Round 308's own additions
+
+None to any endpoint. `/api/chat/:id/team` gains no field; `working_ms` on a sub-agent
+node changes VALUE from `0` to `null` when the rollup has no independent end stamp
+(review finding 1) — a new value in an existing nullable field, on a route that does
+not exist on main at all, so no baseline compares it. `docs/plan/artifacts/phase300/verification-308.md`
+records the before/after directly against the endpoint.

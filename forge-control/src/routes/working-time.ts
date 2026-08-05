@@ -74,7 +74,7 @@ export type WorkingMsSource = "thread" | "rollup";
 /** The two legal `working_ms_source` values, for validation at the wire edge. */
 export const WORKING_MS_SOURCES: readonly WorkingMsSource[] = ["thread", "rollup"];
 
-/** Full result of a working-time computation. */
+/** Full result of a working-time computation over real thread entries. */
 export interface WorkingTime {
   /** Milliseconds of attributed work. Integer, never negative. */
   working_ms: number;
@@ -174,6 +174,22 @@ export function workingMsFromTimestamps(
 }
 
 /**
+ * Result of the rollup fallback. Its `working_ms` is nullable where
+ * `WorkingTime`'s is not — see `workingTimeFromRollup()` for the one reason.
+ */
+export interface RollupWorkingTime {
+  /**
+   * Milliseconds of attributed work, or `null` when the rollup had no
+   * independent end stamp to measure against. NEVER 0-as-unknown.
+   */
+  working_ms: number | null;
+  /** Always `"rollup"`: this path is the flagged, imprecise one by construction. */
+  working_ms_source: "rollup";
+  /** Malformed (present but unparseable) stamps. Absence is not malformation. */
+  skipped_ts: number;
+}
+
+/**
  * Fallback for a sub-agent whose thread slice is unavailable (13 §4): the
  * wall-clock span between its `subagents_v2` started and updated/ended
  * stamps, flagged `"rollup"`.
@@ -185,28 +201,59 @@ export function workingMsFromTimestamps(
  * carried by `working_ms_source: "rollup"` instead, which is what the flag
  * exists for.
  *
- * A running rollup passes `runningNowMs` and no end stamp. Missing or
- * unparseable stamps yield 0 (still flagged `"rollup"`, with the count).
+ * ── Why a settled rollup can return null (round 308, review finding 1) ────
+ *
+ * A rollup is a SUBTRACTION, and it is only a measurement when its two stamps
+ * are independent observations. When a run carries no `metadata.subagents_v2`,
+ * `agents-shared.ts` synthesises each sub-agent from its spawn call alone and
+ * sets `started_at === updated_at === the spawn timestamp` — there is no
+ * second observation, so the subtraction is 0 by construction, not because the
+ * sub-agent did nothing. Live example before this fix: seven sub-agents of run
+ * `11dd264b…`, which demonstrably ran for over a minute each, all reported
+ * `working_ms: 0`.
+ *
+ * Zero is the one value this must not return there. `GET /api/chat/:id/team`
+ * already states the doctrine for its own failure path — *"a zero here would
+ * read as 'did no work'"* — and answers `null`; this function now agrees.
+ * `null` means "not measurable", `0` means "measured, and it was zero".
+ *
+ * So a SETTLED rollup yields a number only when both stamps parse and the end
+ * stamp is strictly after the start; a missing stamp, an unparseable one, a
+ * stamp equal to the start, or a backwards pair all yield `null`.
+ *
+ * A RUNNING rollup passes `runningNowMs` and no end stamp: `now` IS an
+ * independent observation, so the span is a real measurement and a freshly
+ * spawned sub-agent legitimately reads 0 and ticks up from there. Without a
+ * clock (a caller that forgot `runningNowMs`) there is nothing to measure
+ * against and the answer is `null` again.
  */
 export function workingTimeFromRollup(
   startedAt: unknown,
   endedAt: unknown,
   opts: WorkingTimeOpts = {},
-): WorkingTime {
+): RollupWorkingTime {
   const startMs = parseWorkingTs(startedAt);
   const endMs = parseWorkingTs(endedAt);
   let skipped = 0;
   if (startMs === null && startedAt !== null && startedAt !== undefined) skipped += 1;
   if (endMs === null && endedAt !== null && endedAt !== undefined) skipped += 1;
 
-  const stopMs = endMs ?? (startMs !== null ? opts.runningNowMs : undefined);
-  const span = startMs !== null && stopMs !== undefined ? stopMs - startMs : 0;
-
-  return {
-    working_ms: span > 0 ? span : 0,
+  const flag = (working_ms: number | null): RollupWorkingTime => ({
+    working_ms,
     working_ms_source: "rollup",
     skipped_ts: skipped,
-  };
+  });
+
+  if (startMs === null) return flag(null);
+
+  // Settled: the end stamp must be a second, later observation to be a span.
+  if (endMs !== null) return flag(endMs > startMs ? endMs - startMs : null);
+
+  // Running: `now` closes the span. A non-positive one means "just spawned",
+  // which is a measurement (it ticks on the next poll), not an unknown.
+  if (opts.runningNowMs === undefined) return flag(null);
+  const open = opts.runningNowMs - startMs;
+  return flag(open > 0 ? open : 0);
 }
 
 /**
@@ -255,6 +302,20 @@ const SQL_TS_SHAPE = "^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}"
  *     /live decision is already made: add
  *     `workingMsRunningExtension(lastTs, nowMs)` to the SQL result for
  *     running rows.
+ *  5. **Sub-millisecond stamps — eliminated, not tolerated (round 308).**
+ *     Postgres stores `timestamptz` to the microsecond and renders it that way
+ *     (`…:19.674825+00`), while `Date.parse` keeps three fractional digits and
+ *     TRUNCATES the rest (measured: `.674825`, `.674999` and `.6745` all parse
+ *     to `…674`). Differencing the raw timestamps therefore produced fractional
+ *     gaps where the core produced integers — measured divergence 1000.5 vs
+ *     1000 on a synthetic pair. The fix is in the fragment below: each stamp is
+ *     `trunc()`ed to whole milliseconds BEFORE the `lag()` subtraction, which
+ *     is exactly what `Date.parse` does to each stamp before the JS core
+ *     subtracts them. Truncating the gap instead would not be the same
+ *     function (0.6 + 0.6 truncates to 1.2 → 1, two truncated stamps give
+ *     0 + 1). No live thread stamp in the database carries more than three
+ *     fractional digits today, so this closes a latent divergence rather than
+ *     a live one.
  */
 export function workingMsSql(threadExpr = "r.thread"): string {
   return `(
@@ -262,11 +323,14 @@ export function workingMsSql(threadExpr = "r.thread"): string {
              CASE WHEN g.gap_ms >= 0 AND g.gap_ms <= ${WORKING_TIME_CAP_MS}
                   THEN g.gap_ms ELSE 0 END), 0)::bigint
       FROM (
-        SELECT extract(epoch FROM (p.ts - lag(p.ts) OVER (ORDER BY p.ord))) * 1000 AS gap_ms
+        SELECT p.ms - lag(p.ms) OVER (ORDER BY p.ord) AS gap_ms
           FROM (
-            SELECT (e.val->>'ts')::timestamptz AS ts, e.ord
-              FROM jsonb_array_elements(${threadExpr}) WITH ORDINALITY AS e(val, ord)
-             WHERE e.val->>'ts' ~ '${SQL_TS_SHAPE}'
+            SELECT trunc(extract(epoch FROM q.ts) * 1000) AS ms, q.ord
+              FROM (
+                SELECT (e.val->>'ts')::timestamptz AS ts, e.ord
+                  FROM jsonb_array_elements(${threadExpr}) WITH ORDINALITY AS e(val, ord)
+                 WHERE e.val->>'ts' ~ '${SQL_TS_SHAPE}'
+              ) q
           ) p
       ) g
   )`;
