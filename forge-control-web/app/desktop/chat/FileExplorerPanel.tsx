@@ -271,7 +271,12 @@ function FileExplorerPanelImpl({
     } catch (err) {
       if (seq !== seqRef.current) return;
       setLoading(false);
-      setLoadError(err instanceof Error ? err.message : String(err));
+      // Preserve the SWR contract: if we already rendered cached entries above,
+      // keep them visible on revalidation failure instead of replacing them
+      // with an error row. Only surface the error when we have nothing to show.
+      if (!cached) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
       return;
     }
     // Cache the result regardless — it's still a valid snapshot of `key`
@@ -758,7 +763,7 @@ function SearchResultsList({
               padding: "8px 12px",
               cursor: "pointer",
               borderBottom: `1px solid ${tokens.borderSoft}`,
-              background: seld ? tokens.selectedBg : "transparent",
+              background: seld ? tokens.rowSelected : "transparent",
             }}
           >
             <span className="ms" style={{ fontSize: 15, color: tokens.textMuted }}>
