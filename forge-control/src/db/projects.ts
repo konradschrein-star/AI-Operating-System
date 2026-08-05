@@ -250,6 +250,66 @@ export async function patchProjectMetadata(
   );
 }
 
+export interface ManagerRollupRow {
+  project_id: string;
+  name: string;
+  status: string;
+  mode: string | null;
+  tasks_done: number;
+  tasks_total: number;
+  /** Aggregate input tokens over all top-level worker runs (float8 so
+   *  node-postgres returns a JS number, not a bigint string). */
+  tokens_in: number;
+  tokens_out: number;
+  spent_usd: number;
+  last_activity_at: string | null;
+}
+
+/** One row per active/blocked project with task + token rollup in a single
+ *  CTE — no N+1.  Only top-level worker runs are summed (parent_run_id IS
+ *  NULL) to avoid double-counting sub-agent spend. */
+export async function listManagerRollup(): Promise<ManagerRollupRow[]> {
+  const r = await pool.query<ManagerRollupRow>(`
+    WITH worker_agg AS (
+      SELECT
+        (metadata->>'project_id')::uuid                                               AS project_id,
+        SUM(COALESCE((metadata->'usage_total_running'->>'input_tokens')::bigint, 0))  AS tokens_in,
+        SUM(COALESCE((metadata->'usage_total_running'->>'output_tokens')::bigint, 0)) AS tokens_out,
+        SUM(COALESCE(spent_usd, 0))                                                   AS spent_usd,
+        MAX(updated_at)                                                                AS last_activity_at
+      FROM runs
+      WHERE metadata ? 'project_id'
+        AND parent_run_id IS NULL
+      GROUP BY (metadata->>'project_id')::uuid
+    ),
+    task_agg AS (
+      SELECT
+        project_id,
+        COUNT(*)::int                                AS tasks_total,
+        COUNT(*) FILTER (WHERE status = 'done')::int AS tasks_done
+      FROM project_tasks
+      GROUP BY project_id
+    )
+    SELECT
+      p.id::text                           AS project_id,
+      p.name,
+      p.status,
+      p.metadata->>'mode'                  AS mode,
+      COALESCE(ta.tasks_done, 0)::int      AS tasks_done,
+      COALESCE(ta.tasks_total, 0)::int     AS tasks_total,
+      COALESCE(wa.tokens_in,  0)::float8   AS tokens_in,
+      COALESCE(wa.tokens_out, 0)::float8   AS tokens_out,
+      COALESCE(wa.spent_usd,  0)::float8   AS spent_usd,
+      wa.last_activity_at::text            AS last_activity_at
+    FROM projects p
+    LEFT JOIN worker_agg wa ON wa.project_id = p.id
+    LEFT JOIN task_agg   ta ON ta.project_id = p.id
+    WHERE p.status IN ('active', 'blocked')
+    ORDER BY wa.last_activity_at DESC NULLS LAST
+  `);
+  return r.rows;
+}
+
 export interface GoalProgress {
   id: string;
   name: string;
