@@ -1,0 +1,46 @@
+# phase-400 round-403 gate run — 2026-08-05T18:59:47+02:00
+# commit under test: 879a40a (project/8ea0cc08)
+
+$ cd forge-control && npx tsc --noEmit
+exit 0 — clean
+
+$ cd forge-control-web && npx tsc --noEmit
+exit 0 — clean
+
+$ cd forge-control-web && NODE_ENV=production pnpm build
+
+Route (app)                              Size     First Load JS
+┌ ƒ /                                    7.1 kB          302 kB
+├ ○ /_not-found                          987 B           109 kB
+├ ƒ /api/auth/[...nextauth]              149 B           108 kB
+├ ƒ /api/events/[id]                     149 B           108 kB
+├ ○ /canvas                              519 B           171 kB
+├ ○ /desktop                             205 B           296 kB
+├ ○ /settings                            3.12 kB         115 kB
+├ ○ /settings/secrets                    2.35 kB         118 kB
+└ ƒ /signin                              149 B           108 kB
++ First Load JS shared by all            108 kB
+  ├ chunks/2459-a3dce4e15287c848.js      50.7 kB
+  ├ chunks/91de8857-abcaef63123b6515.js  53 kB
+  └ other shared chunks (total)          4.32 kB
+
+
+ƒ Middleware                             83.2 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+
+$ bash scripts/checks/dollar-sweep.sh   (tail)
+ALLOWLISTED  forge-control-web/app/desktop/MoneySurface.tsx
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+
+$ git diff --name-only 35cd0d3..HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|FileExplorerPanel|VaultFileList|routes/files'   # NFU5, must be EMPTY
+(empty — exit 1 from grep, which is the pass)
+
+$ grep -rn playwright forge-control/package.json forge-control-web/package.json   # NFU8, must be EMPTY
+(empty — playwright is not a dependency of either repo)

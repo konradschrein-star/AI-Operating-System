@@ -1,0 +1,525 @@
+{
+  "label": "after",
+  "base": "http://127.0.0.1:7789",
+  "chat": "phase300 round-304 linkage fixture",
+  "sse": "aborted (detail query on its 3s fallback)",
+  "window_ms": 75003,
+  "window_starts_at_ms": 11614,
+  "window_starts_at_raw_index": 16,
+  "total_requests_in_window": 65,
+  "total_per_minute": 52,
+  "counts": {
+    "/chat": 10,
+    "/chat/:id": 25,
+    "/agents": 18,
+    "/projects/board": 12
+  },
+  "per_minute": {
+    "/chat": 8,
+    "/chat/:id": 20,
+    "/agents": 14.4,
+    "/projects/board": 9.6
+  },
+  "managers_requests": 0,
+  "managers_requests_including_startup": 0,
+  "before_window": {
+    "/usage/quota": 1,
+    "/today": 1,
+    "/inbox": 1,
+    "/live": 1,
+    "/control": 1,
+    "/agents": 3,
+    "/projects/board": 2,
+    "/chat": 1,
+    "/chat/:id": 3,
+    "/chat/:id/linkage": 2
+  },
+  "raw": [
+    {
+      "ms": 482,
+      "method": "GET",
+      "url": "/usage/quota",
+      "endpoint": "/usage/quota"
+    },
+    {
+      "ms": 483,
+      "method": "GET",
+      "url": "/today",
+      "endpoint": "/today"
+    },
+    {
+      "ms": 487,
+      "method": "GET",
+      "url": "/inbox",
+      "endpoint": "/inbox"
+    },
+    {
+      "ms": 487,
+      "method": "GET",
+      "url": "/live",
+      "endpoint": "/live"
+    },
+    {
+      "ms": 490,
+      "method": "GET",
+      "url": "/control",
+      "endpoint": "/control"
+    },
+    {
+      "ms": 3500,
+      "method": "GET",
+      "url": "/agents",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 3501,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 3501,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 3691,
+      "method": "GET",
+      "url": "/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 3692,
+      "method": "GET",
+      "url": "/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/linkage",
+      "endpoint": "/chat/:id/linkage"
+    },
+    {
+      "ms": 6607,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 6607,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/linkage",
+      "endpoint": "/chat/:id/linkage"
+    },
+    {
+      "ms": 6623,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 9562,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 9623,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 10634,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 11683,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 12635,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 14648,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 15602,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 15645,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 18655,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 18658,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 19808,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 21643,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 21670,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 22672,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 24683,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 26685,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 27692,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 27696,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 27961,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 30698,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 30711,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 33725,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 33751,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 34710,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 36098,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 36740,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 38722,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 39751,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 39800,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 42734,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 42763,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 44234,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 45773,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 45852,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 46744,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 48784,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 50757,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 51796,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 51896,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 52391,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 54772,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 54811,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 57822,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 57947,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 58784,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 60534,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 60834,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 62797,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 63844,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 63993,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 66810,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 66857,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 68664,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 69866,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 70044,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 70821,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 72877,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 74832,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 75887,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 76098,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 76790,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 78846,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 78897,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 81910,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 82147,
+      "method": "GET",
+      "url": "/projects/board",
+      "endpoint": "/projects/board"
+    },
+    {
+      "ms": 82859,
+      "method": "GET",
+      "url": "/agents?project_id=4d3291c4-4eb3-483a-8d32-acc817a7b352",
+      "endpoint": "/agents"
+    },
+    {
+      "ms": 84923,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 84957,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    }
+  ]
+}

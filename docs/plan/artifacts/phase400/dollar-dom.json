@@ -1,0 +1,127 @@
+{
+  "regex": "\\$\\s*\\d|\\d\\s*\\$|€|\\bUSD\\b|\\bEUR\\b|\\beur\\b",
+  "note": "innerText of exactly the elements screenshotted, same page state",
+  "total_hits": 2,
+  "unlisted_hits": 0,
+  "content_allowlist": [
+    {
+      "file": "^pipeline-",
+      "pattern": "Best Speakers 2026 below 100\\$",
+      "reason": "pipeline item TITLE, straight from the pipeline table (verified: GET /api/pipeline → phases[].items[].title). User-authored content, not a cost the UI rendered."
+    }
+  ],
+  "captures": [
+    {
+      "file": "rail-dark.png",
+      "chars": 1789,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "rail-light.png",
+      "chars": 1789,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "statusbar-dark.png",
+      "chars": 86,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "statusbar-light.png",
+      "chars": 86,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "panel-live-dark.png",
+      "chars": 8887,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "panel-live-light.png",
+      "chars": 8887,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "livedest-dark.png",
+      "chars": 3532,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "livedest-light.png",
+      "chars": 3532,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "pipeline-dark.png",
+      "chars": 1683,
+      "currency_hits": 1,
+      "unlisted_hits": 0,
+      "hits": [
+        {
+          "match": "0$",
+          "context": "AITING_QC ⏎ 1d ⏎ Best Speakers 2026 below 100$ ⏎ RANKING ⏎ · ⏎ Your VirtualFD ⏎ AWAITING_VA_",
+          "allowed": true,
+          "reason": "pipeline item TITLE, straight from the pipeline table (verified: GET /api/pipeline → phases[].items[].title). User-authored content, not a cost the UI rendered."
+        }
+      ]
+    },
+    {
+      "file": "pipeline-light.png",
+      "chars": 1683,
+      "currency_hits": 1,
+      "unlisted_hits": 0,
+      "hits": [
+        {
+          "match": "0$",
+          "context": "AITING_QC ⏎ 1d ⏎ Best Speakers 2026 below 100$ ⏎ RANKING ⏎ · ⏎ Your VirtualFD ⏎ AWAITING_VA_",
+          "allowed": true,
+          "reason": "pipeline item TITLE, straight from the pipeline table (verified: GET /api/pipeline → phases[].items[].title). User-authored content, not a cost the UI rendered."
+        }
+      ]
+    },
+    {
+      "file": "header-live-dark.png",
+      "chars": 26,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "header-live-light.png",
+      "chars": 26,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "header-polling-dark.png",
+      "chars": 29,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    },
+    {
+      "file": "header-polling-light.png",
+      "chars": 29,
+      "currency_hits": 0,
+      "unlisted_hits": 0,
+      "hits": []
+    }
+  ]
+}

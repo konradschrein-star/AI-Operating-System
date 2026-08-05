@@ -1,0 +1,31 @@
+# phase-300 linkage scan, dry run — 2026-08-05T19:00:54+02:00
+# Which of today's rail chats could the detail resolver backfill?
+
+--- bfd1283a-b71b-4f35-b577-7d09aad803f2  |  Okay when I click the file section, things s
+thread entries: 375
+scan candidates: []
+--- c0de0304-0000-4000-8000-000000000304  |  phase300 round-304 linkage fixture (syntheti
+thread entries: 9
+scan candidates: [ '4d3291c4-4eb3-483a-8d32-acc817a7b352' ]
+--- a86cf7b3-9283-4315-a389-ab60bd2ea4df  |  let's make the AI operating system into a mo
+thread entries: 1991
+scan candidates: [ '61d1935f-0407-40c3-8ae4-a3d68ce41302' ]
+--- ece63bdb-884c-4d2c-9680-deca13cf2dda  |  Execute AI OS/Specs/CRM Integration Plan (Tw
+thread entries: 1911
+scan candidates: []
+--- 11dd264b-f173-44d7-ada4-f1eb39fb4abd  |  Okay this session is very important as I wan
+thread entries: 2477
+scan candidates: [
+  '9632f076-9c26-4856-af9c-3be6023a9b35',
+  '1d574922-b407-4b1b-9351-142d7e5956ed'
+]
+--- da286217-340c-4c11-bee3-5304fa346df4  |  Really quick, where are all the videos from 
+thread entries: 183
+scan candidates: []
+--- 05187ada-069c-479f-9236-e8a58b0fde68  |  Directory
+thread entries: 77
+scan candidates: []
+
+# are the candidates real projects rows? (bound 4)
+9632f076-9c26-4856-af9c-3be6023a9b35|live-agent-panel|paused
+1d574922-b407-4b1b-9351-142d7e5956ed|canvas-ux|paused
