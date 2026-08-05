@@ -55,6 +55,17 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
 - **T11 researcher frontmatter parse:** run `roleConfig()`'s parsing logic (or its
   extracted equivalent) against the literal content of `agents/researcher.md` — tools
   list parses to exactly the 8 tools of R18.
+- **T13 role file resolution + install parity** (added in P3 fix cycle 1, R306): T11 on
+  its own is a trap — it parses the worktree's `agents/researcher.md`, which the engine
+  did not read before `roleFilePaths()` existed, so it could stay green while a live
+  researcher ran on the bare fallback mission. T13 asserts the engine's OWN resolution:
+  candidate order is `${AGENTS_DIR}/<role>.md` then `${REPO_AGENTS_DIR}/<role>.md`;
+  `readRoleFile("researcher")` resolves to a real definition (8 tools, opus/high, mission
+  mentions `docs/research`); if a copy exists under `AGENTS_DIR` it must be byte-identical
+  to the committed one — drift means the engine silently loads the stale installed copy,
+  since AGENTS_DIR wins. When `AGENTS_DIR` has no copy the parity check does not silently
+  pass: it emits a `t.diagnostic` naming the file that will be used and asserts the repo
+  fallback is what resolves. Unknown role ⇒ `null`.
 
 ## 2. Integration checks (real DB, careful scope)
 

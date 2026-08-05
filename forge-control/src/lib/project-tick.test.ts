@@ -23,8 +23,11 @@ import {
   DEPLOY_GUIDE,
   GITHUB_PUSH_GUIDE,
   parseRoleFile,
+  roleFilePaths,
+  readRoleFile,
+  REPO_AGENTS_DIR,
 } from "./project-tick.ts";
-import type { Project, ProjectTask } from "../db/projects.ts";
+import type { Project, ProjectTask, TaskRole } from "../db/projects.ts";
 
 function project(over: Partial<Project> = {}): Project {
   return {
@@ -261,5 +264,78 @@ describe("T11 researcher frontmatter parse", () => {
     assert.equal(cfg.tools, null);
     assert.equal(cfg.model, null);
     assert.equal(cfg.effort, null);
+  });
+});
+
+/**
+ * T13 — the file T11 parses must be the file the ENGINE loads.
+ *
+ * T11 alone is a trap: it reads the worktree's agents/researcher.md, which
+ * roleConfig() never consulted before the roleFilePaths() fallback existed. It
+ * could stay green while a live researcher task took the catch branch and ran
+ * on the bare "You are the researcher" mission — no citation discipline, no
+ * tool allowlist, no refusals. These tests assert against the engine's own
+ * resolution order instead.
+ */
+describe("T13 role file resolution + install parity", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const worktreeCopy = `${repoRoot}agents/researcher.md`;
+  const RESEARCHER_TOOLS = ["Read", "Write", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill"];
+
+  test("roleFilePaths prefers AGENTS_DIR, then the repo's committed agents/", () => {
+    const paths = roleFilePaths("researcher");
+    assert.equal(paths.length, 2, "exactly two candidates: fleet dir, then repo copy");
+    assert.equal(
+      paths[0],
+      `${process.env.AGENTS_DIR ?? "/root/.claude/agents"}/researcher.md`,
+      "a hand-installed definition must keep overriding the committed one",
+    );
+    assert.equal(paths[1], `${REPO_AGENTS_DIR}/researcher.md`);
+    assert.equal(
+      readFileSync(paths[1], "utf8"),
+      readFileSync(worktreeCopy, "utf8"),
+      "REPO_AGENTS_DIR must resolve to this checkout's agents/ directory",
+    );
+  });
+
+  test("the engine resolves a real researcher definition, never the bare fallback", () => {
+    const found = readRoleFile("researcher");
+    assert.ok(found, `no researcher definition on any of [${roleFilePaths("researcher").join(", ")}]`);
+    const cfg = parseRoleFile(found.raw);
+    assert.deepEqual(cfg.tools, RESEARCHER_TOOLS, `tools allowlist from ${found.path}`);
+    assert.equal(cfg.model, "claude-opus-5");
+    assert.equal(cfg.effort, "high");
+    assert.ok(cfg.mission.includes("docs/research"), `mission body from ${found.path}`);
+  });
+
+  test("install parity: AGENTS_DIR copy, if present, is byte-identical to the committed one", (t) => {
+    const installed = roleFilePaths("researcher")[0];
+    let installedRaw: string;
+    try {
+      installedRaw = readFileSync(installed, "utf8");
+    } catch (err) {
+      // Never a silent pass: say out loud which copy the engine will use.
+      const code = (err as NodeJS.ErrnoException).code;
+      t.diagnostic(
+        `${installed} unreadable (${code}) — parity unchecked; the engine falls back to ` +
+          `${REPO_AGENTS_DIR}/researcher.md, which the previous test asserts is a real definition.`,
+      );
+      assert.equal(
+        readRoleFile("researcher")?.path,
+        `${REPO_AGENTS_DIR}/researcher.md`,
+        "with no installed copy the repo fallback must be what resolves",
+      );
+      return;
+    }
+    assert.equal(
+      installedRaw,
+      readFileSync(worktreeCopy, "utf8"),
+      `${installed} has drifted from the committed agents/researcher.md — the engine would ` +
+        `load the stale installed copy, since AGENTS_DIR wins over the repo fallback`,
+    );
+  });
+
+  test("readRoleFile returns null for a role with no definition anywhere", () => {
+    assert.equal(readRoleFile("no-such-role" as TaskRole), null);
   });
 });

@@ -104,15 +104,34 @@ rest of the diff is otherwise ready.
 **Executor-loaded paths.** The forge-executor process reads these into memory and holds
 them for the life of the process; a plain restart while any of them differ from what's
 live drops every in-flight run. Role files specifically are cached in-process by
-`roleConfig()` (`forge-control/src/lib/project-tick.ts:104-121`) the first time each role
-is used — its own comment says it plainly: "Cached — restart forge-executor after editing
-one of these files." Executor-loaded paths:
+`roleConfig()` (`forge-control/src/lib/project-tick.ts`) the first time each role is
+resolved — its own comment says it plainly: "restart forge-executor after editing one of
+these files." Executor-loaded paths:
 
 - `forge-control/src/lib/project-tick.ts`
 - `forge-control/src/lib/cc-runner.ts`
 - `forge-control/src/executor.ts`
 - `forge-control/src/db/*`
-- `agents/*.md` (role files, loaded from `AGENTS_DIR`, default `/root/.claude/agents`)
+- `agents/*.md` (role files — see resolution order below)
+
+**Where role files come from (R306).** `roleFilePaths(role)` tries two paths in order:
+`${AGENTS_DIR}/<role>.md` (default `/root/.claude/agents`, shared with the Task-tool
+subagent system), then `<repo>/agents/<role>.md` — the copy committed in the checkout the
+executor is running from. The second candidate exists because `/root/.claude/**` is a
+harness-guarded sensitive path: fleet agents structurally cannot install a role file
+there, so before the fallback every new role needed a human `cp` (P3 burnt three rounds on
+exactly that — `docs/plan/evidence/p3-smoke.md`). Practical consequences:
+
+- **Adding a role** = commit `agents/<role>.md` and deploy. It resolves at the next
+  executor restart; no human, no `cp`.
+- **A copy under `AGENTS_DIR` still wins**, so a hand-installed file keeps overriding the
+  committed one — and silently, if it has drifted. T13 fails the build on that drift.
+- A file that exists but is unreadable (permissions, a directory in its place) **throws**
+  with path + errno; only ENOENT/ENOTDIR falls through to the next candidate.
+- A *resolved* definition is cached for the process's life — restart after editing one.
+  The bare "no definition anywhere" fallback is deliberately **not** cached, so a role
+  file installed after a run already asked for that role is picked up on the next spawn
+  instead of pinning a mission-less prompt until the next restart.
 
 **What's allowed:** `pm2 restart forge-control` — the API side. Nothing long-running lives
 in that process, so a plain restart is fine and is how route/API changes actually take
