@@ -280,6 +280,53 @@ free path produced it.
 
 ### 6.3 `scripts/perplexity.mjs`
 
+**AMENDED at R702 (2026-08-05) — browser-first, no API key. The `ask` default backend is now
+the authenticated browser profile; the API path below is retained unchanged as an optional
+`--backend api`.** Konrad has no Perplexity API key and will not buy one (stated 2026-08-05
+~09:30): Perplexity is a browser service for him. So `ask` defaults to `--backend browser`,
+which drives `perplexity.ai` inside the shared `perplexity` profile owned by R701's
+`scripts/research-browser.mjs` — navigate, submit, wait for streaming to settle, extract the
+answer **and its numbered citations**. `search` stays API-only; there is no browser surface for
+it that this tool is willing to scrape.
+
+- **This overrules §10's "Building Perplexity browser scraping — fragile, bot-defended,
+  unmaintainable" and the last sentence of the original §6.3 text below.** The judgement was
+  correct and is **not** withdrawn; a constraint overrides it. The response is to MITIGATE, and
+  the mitigations are load-bearing, not decorative: EVERY DOM selector lives in ONE marked
+  table at the top of the script (nothing else in the file, and nothing in
+  `research-browser.mjs`, knows Perplexity's markup); selection prefers `data-testid` /
+  `aria-label` / element semantics over class-name soup; citation harvest is anchor-based, not
+  layout-based; and a missed selector, an unsettled stream or zero extracted citations are
+  **hard errors with a screenshot and a page-text excerpt**. No partial answer is ever emitted
+  as if it were complete. `--dump-capture` re-cuts the parser fixture in one command.
+- **No credential is stored anywhere.** The browser path reads no key, types no password and
+  prompts for nothing. Session cookies live **only** inside Chrome's `user-data-dir` at
+  `/opt/ai-os/browser-profiles/perplexity/` (mode 0700). Konrad logs in ONCE, by hand, in a
+  real Chrome window over a loopback-only noVNC session reached through an SSH tunnel.
+- **New exit code 4 = NEEDS LOGIN**, deliberately the same number as
+  `research-browser.mjs`'s `LOGIN_REQUIRED` (asserted at import time). On a wall the tool
+  screenshots what it saw, hands the handshake to the harness — which queues the reminder,
+  brings up noVNC and leaves the browser running — prints what Konrad must do, and exits 4.
+  It never attempts a login. This is the expected first-run outcome, not a failure.
+- **Bot wall ≠ login wall.** A Cloudflare interstitial is waited out (`--challenge-timeout`,
+  default 90 s) and then, if it persists, is a hard exit 1 with a screenshot and **no
+  reminder** — logging in cannot fix a challenge page. Before exiting it parks a headed browser
+  on the page via the harness so a human can look at it over noVNC.
+- **Screenshots** follow R701's contract verbatim: `/opt/ai-os/uploads/<run_id>/<stamp>-<label>.png`,
+  with both the absolute path and the `/api/uploads/<run_id>/<name>` URL in stdout JSON.
+- **Output contract:** the R502 keys (`answer`, `citations`, `search_results`, `model`,
+  `usage`) are preserved on both backends; the browser adds `backend`, `needs_login`,
+  `sources`, `screenshots`, `extraction`, `bot_challenge`, `stream`, `takeover`, `profile`,
+  `run_id*`, `lock_actions`. On the browser path `model` and `usage` are `null` — the web UI
+  discloses neither — and `search_results` entries carry `{url,title}` only. Documented in
+  `docs/tools/perplexity.md` §4.
+- **Status at amendment time: not yet usable, for a reason the mitigations predicted.** Nobody
+  has logged into the automation browser, so the acceptance target was the exit-4 login wall —
+  but on this box Perplexity's Cloudflare managed challenge does not clear at all (HTTP 403,
+  "Performing security verification", verified 2026-08-05 through both this tool and the R701
+  harness), so runs stop one step earlier at the documented exit-1 bot wall. Details and the
+  open question in `docs/tools/perplexity.md` §12.
+
 **AMENDED at R502 — this whole subsection is superseded by `docs/research/perplexity-api.md`
 (commit d870320); see 01-requirements R22's amendment for the binding text.** Sonar Chat
 Completions was deprecated in July 2026 and `POST /v1/chat/completions` returns 404; there
@@ -356,4 +403,7 @@ executor logs; the helpers are CLIs whose stdout/stderr land in run threads.
 - **npm SDKs (@google/genai etc.) for the helpers** — dependency + lockfile churn for two
   HTTP calls; raw fetch is smaller than the SDK's README.
 - **Building Perplexity browser scraping** — fragile, bot-defended, unmaintainable;
-  documented manual fallback only.
+  documented manual fallback only. **AMENDED at R702 (2026-08-05): overruled by Konrad's
+  constraint — no API key, ever — so it is now the DEFAULT `ask` path. The three risks named
+  here stand and are mitigated explicitly (one selector table, semantic-first locators, loud
+  failure with a screenshot, never a partial answer); see §6.3's R702 amendment.**
