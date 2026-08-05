@@ -221,17 +221,25 @@ function FileExplorerPanelImpl({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
+  // Monotonic sequence for every load* call — used to drop stale responses
+  // that resolve after the user has already navigated elsewhere. Without
+  // this guard, a slow fetch for dir A resolves after a fast fetch for dir
+  // B and overwrites B's entries under B's breadcrumb.
+  const seqRef = useRef(0);
 
   const loadRoots = useCallback(async () => {
+    const seq = ++seqRef.current;
     setLoading(true);
     let rs: FileRoot[];
     try {
       rs = await fetchFileRoots();
     } catch (err) {
+      if (seq !== seqRef.current) return;
       setLoading(false);
       setLoadError(err instanceof Error ? err.message : String(err));
       return;
     }
+    if (seq !== seqRef.current) return;
     setLoading(false);
     setRoots(rs);
     setLoadError(null);
@@ -245,6 +253,7 @@ function FileExplorerPanelImpl({
       await loadRoots();
       return;
     }
+    const seq = ++seqRef.current;
     const key = cacheKey(root, rel);
     const cached = cacheRef.current.get(key);
     if (cached) {
@@ -260,20 +269,22 @@ function FileExplorerPanelImpl({
     try {
       result = await fetchFileList(root, rel);
     } catch (err) {
+      if (seq !== seqRef.current) return;
       setLoading(false);
       setLoadError(err instanceof Error ? err.message : String(err));
       return;
     }
+    // Cache the result regardless — it's still a valid snapshot of `key`
+    // even if the user navigated away, and populating the cache benefits
+    // the eventual return trip.
+    if (!cacheRef.current.has(key)) evictIfNeeded(cacheRef.current);
+    cacheRef.current.set(key, { ...result, ts: Date.now() });
+    if (seq !== seqRef.current) return;
     setLoading(false);
     setLoadError(null);
     setEntries(result.entries);
     setTruncated(result.truncated);
     setTotal(result.total);
-    // Only evict when we're about to add a NEW key. In the stale-while-
-    // revalidate path the key already exists, so evicting would shrink
-    // the cache below CACHE_MAX for no reason.
-    if (!cacheRef.current.has(key)) evictIfNeeded(cacheRef.current);
-    cacheRef.current.set(key, { ...result, ts: Date.now() });
   }, [loadRoots]);
 
   useEffect(() => {
