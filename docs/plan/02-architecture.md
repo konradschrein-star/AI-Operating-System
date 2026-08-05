@@ -167,9 +167,19 @@ research with real sources; steer a real browser for logged-in/web-app surfaces;
 claim carries a citation (URL, title, access date, quoted snippet for load-bearing
 claims); output to `docs/research/*.md`; the Perplexity/gemini-qa helpers are named
 instruments with their key protocol; explicit refusals: no implementation, no task
-creation, no live-checkout edits. Installed by copying to `/root/.claude/agents/` —
-additive; `roleConfig()`'s per-role cache only misses for never-loaded roles, so a NEW
-role needs no executor restart (verified in code, project-tick.ts:84-112).
+creation, no live-checkout edits.
+
+**AMENDED at R502** (surfaced by `docs/plan/evidence/p5-integration-sweep.md` must-fix 7).
+The original text read: "Installed by copying to `/root/.claude/agents/` — additive;
+`roleConfig()`'s per-role cache only misses for never-loaded roles, so a NEW role needs no
+executor restart (verified in code, project-tick.ts:84-112)." That contradicts R19's strike
+and R306's repo fallback: the `cp` into `/root/.claude/agents/` is a path the agent harness
+guards, so no task of this project could ever perform it. **As shipped:** `roleFilePaths()`
+(`forge-control/src/lib/project-tick.ts:185-187`) resolves a role in order
+`${AGENTS_DIR}/<role>.md` then `${REPO_AGENTS_DIR}/<role>.md`, so a role file committed to
+`agents/` in the repo self-installs — no copy, no human step — at the first post-deploy
+executor restart. `roleConfig()`'s per-role cache still means the running executor keeps
+whatever it loaded first, which is why R20's smoke run is gated behind P6's restart.
 
 ### 5.2 The `researcher` prompt branch (already live, project-tick.ts:201) stays as-is
 this project only supplies the role file it reads.
@@ -193,7 +203,10 @@ scout at build time):
    `GET /v1beta/{file.name}` until `state: ACTIVE` (timeout 10 min ⇒ hard error).
    Input URL (incl. YouTube) → passed directly as `file_data.file_uri`.
 2. `POST /v1beta/models/{model}:generateContent` (`x-goog-api-key` header), default model
-   `gemini-3.6-flash` ($1.50/$7.50 per 1M; video ≈ 300 tok/s standard res), with
+   `gemini-3.6-flash` ($1.50/$7.50 per 1M; video ≈ 300 tok/s standard res) —
+   **AMENDED at R502 to `gemini-omni-flash` ($1.50/$9.00 per 1M; video 5,792 tok/sec),
+   per `docs/research/round-399-41e8757d.md`: `gemini-3.6-flash` does not accept video
+   input at all, so it cannot be this tool's default** — with
    `generationConfig.responseMimeType = "application/json"` +
    `generationConfig.responseSchema` = the rubric schema.
 3. Print parsed JSON; schema-invalid response ⇒ hard error with raw body (no repair loop).
@@ -218,6 +231,16 @@ Timestamped findings are the point — a human (or later, a repair agent) must b
 jump to `at_s`.
 
 ### 6.3 `scripts/perplexity.mjs`
+
+**AMENDED at R502 — this whole subsection is superseded by `docs/research/perplexity-api.md`
+(commit d870320); see 01-requirements R22's amendment for the binding text.** Sonar Chat
+Completions was deprecated in July 2026 and `POST /v1/chat/completions` returns 404; there
+is no `perplexity/sonar-pro` slug. As shipped: `ask` → `POST https://api.perplexity.ai/v1/agent`
+(Bearer auth), default `perplexity/sonar`, emitting
+`{ answer, citations, search_results, model, usage }` — `citations` derived, not
+vendor-supplied; `search` → `POST https://api.perplexity.ai/search` emitting
+`{ search_results }`. The Agent API rejects any unknown request field with a hard HTTP 400,
+so the body is an explicit whitelist. The original text follows, kept for the audit trail:
 
 `ask` → `POST https://api.perplexity.ai/chat/completions` (Bearer auth), default
 `sonar-pro` ($3/$15 per 1M + per-request search fee); emit
@@ -260,8 +283,11 @@ executor logs; the helpers are CLIs whose stdout/stderr land in run threads.
 - **Bash for git helper** — it is five git/gh commands; a TS wrapper would add nothing.
 - **Zero-dep `.mjs` CLIs** — standalone-copyable, no lockfile churn, node 22 fetch suffices.
 - **`gemini-3.6-flash` default** — current video-leaderboard flash model at flash pricing;
-  flag-overridable.
+  flag-overridable. **AMENDED at R502: the shipped default is `gemini-omni-flash` —
+  `gemini-3.6-flash` does not accept video input (`docs/research/round-399-41e8757d.md`).**
 - **`sonar-pro` default** — citation-bearing search quality over base `sonar`; flag-overridable.
+  **AMENDED at R502: the shipped default is `perplexity/sonar` on the Agent API; no
+  `sonar-pro` slug exists (`docs/research/perplexity-api.md`, commit d870320).**
 
 ## 10. Rejected alternatives (one line each)
 

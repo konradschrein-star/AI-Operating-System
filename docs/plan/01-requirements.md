@@ -154,12 +154,36 @@ anything that swallows an error is a review-blocking defect.
   02-architecture §5) on stdout; `--out <file>` optional. Default model
   `gemini-3.6-flash`, `--model` override. *Verify:* error-path proof (R23) plus, if a key
   exists by then, one real run on a short sample video.
+  **AMENDED at R502 — superseded by `docs/research/round-399-41e8757d.md`** (build-day
+  re-verification, surfaced by `docs/plan/evidence/p5-integration-sweep.md` §2b). Two
+  corrections, both because the original text predates the model research; the shipped
+  code is right and must not be changed to match it. (a) The default model is
+  **`gemini-omni-flash`**, not `gemini-3.6-flash`: `gemini-3.6-flash` does **not accept
+  video input**, so the tool's primary use case would fail on every invocation
+  (`scripts/gemini-qa.mjs:68-72`; research at `docs/research/round-399-41e8757d.md:15,22,198,233`).
+  (b) The rubric lives in **02-architecture §6.2**, not §5 — §5 is the researcher lane.
+  Everything else in R21 stands as written.
 - **R22 — perplexity helper.** `scripts/perplexity.mjs` (same zero-dep rules): modes
   `ask "<question>"` (chat completions, model default `sonar-pro`, `--model` override) and
   `search "<query>"` (dedicated search endpoint); output JSON
   `{ answer?, citations[], search_results[] }` on stdout. Browser-steering fallback is
   DOCUMENTED in `docs/tools/perplexity.md` as manual procedure, not built. *Verify:*
   error-path proof (R23); live smoke if a key exists.
+  **AMENDED at R502 — superseded by `docs/research/perplexity-api.md` (commit d870320),**
+  surfaced by `docs/plan/evidence/p5-integration-sweep.md` §2c. The original text
+  specified `ask` as Sonar chat completions with model default `sonar-pro`. Live probing
+  on 2026-08-05 found Sonar Chat Completions deprecated (July 2026) and
+  `POST /v1/chat/completions` returning 404; there is no `perplexity/sonar-pro` slug.
+  **New binding text — as built:** `scripts/perplexity.mjs` (same zero-dep rules): modes
+  `ask "<question>"` (Perplexity **Agent API**, `POST https://api.perplexity.ai/v1/agent`,
+  model default `perplexity/sonar`, `--model`/`--preset` override, web search attached and
+  forced by default) and `search "<query>"` (`POST https://api.perplexity.ai/search`);
+  output JSON `{ answer, citations[], search_results[], model, usage }` for `ask` and
+  `{ search_results[] }` for `search`, on stdout — a superset of the original shape, no
+  field lost. The Agent API is strict — any unknown field is a hard HTTP 400 — so the
+  request body is an explicit whitelist, never a pass-through of user options.
+  Browser-steering fallback is DOCUMENTED in `docs/tools/perplexity.md` §11 as manual
+  procedure, not built. *Verify:* error-path proof (R23); live smoke if a key exists.
 - **R23 — Key protocol (both tools).** Key resolution order: env (`GEMINI_API_KEY` /
   `PERPLEXITY_API_KEY`) → secret store file (`/opt/ai-os/.secrets/store/gemini-api-key` /
   `perplexity-api-key`). Missing ⇒ exit code 2 with a message naming BOTH locations and
@@ -212,6 +236,17 @@ anything that swallows an error is a review-blocking defect.
 - **N4 — Migration discipline:** 0035 is additive-only (nullable column + partial unique
   index), applied to the live DB only at deploy phase, safe for the running engine
   (old code never writes `chain_key`).
+  **AMENDED at R502 — the migration number is stale** (surfaced by
+  `docs/plan/evidence/p5-integration-sweep.md` §2a). As written, N4 tells a deploy
+  engineer to treat *main's* `0035_task_idempotency.sql` — already live — as this
+  project's migration, which is exactly the ambiguity the R308 renumber existed to
+  remove. Every other corpus site was updated (`01-requirements.md:41`,
+  `03-quality.md:99`, `04-phases.md:31`); N4 was missed. **New binding text:**
+  `db/migrations/0039_reviewer_chain_key.sql` — renumbered from 0035 at R308, because
+  `main` shipped its own `0035_task_idempotency.sql` while this branch was out and
+  `db/migrations/` has no ledger to disambiguate two `0035_*` files — is additive-only
+  (nullable column + partial unique index), applied to the live DB only at deploy phase,
+  safe for the running engine (old code never writes `chain_key`).
 - **N5 — Worktree discipline (self-referential):** every build task of THIS project works
   only in `/opt/ai-os/workspace/projects/4120f785-…`; the only live-system writes allowed
   before deploy are: queueing reminders (R24), applying nothing to

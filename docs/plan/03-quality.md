@@ -58,8 +58,11 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   pointing at a fixture dir.)
 - **T12 group-failure escalation** (added in P1 fix cycle 1): `noteGroupFailure` /
   `clearGroupFailures` — counts consecutive consolidation failures per
-  `${project_id}:${round}`, returns `notify` exactly once on the threshold crossing (ten
-  failures ⇒ one message), counts groups independently, and a success clears the counter
+  `${project_id}:${round}`, returns `notify` exactly once on the threshold crossing
+  (AMENDED at R502: **three** failures ⇒ one message — the shipped threshold is
+  `MAX_GROUP_FAILURES = 3` at `forge-control/src/lib/project-tick.ts:81`, not the "ten"
+  this line originally claimed; `docs/plan/evidence/0039-conflict-target.md:22-23` already
+  described it as three), counts groups independently, and a success clears the counter
   so only CONSECUTIVE failures escalate.
 - **T11 researcher frontmatter parse:** run `roleConfig()`'s parsing logic (or its
   extracted equivalent) against the literal content of `agents/researcher.md` — tools
