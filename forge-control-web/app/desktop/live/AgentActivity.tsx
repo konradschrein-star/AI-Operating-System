@@ -454,11 +454,11 @@ function SubagentLine({
             opposite thing: this row is NOT its own Claude Code session, it is
             a Task agent inside the process one line above.
 
-            `textMuted2`, not the `textGhost` the plan suggested: at #a6a6ae
-            on the light background ghost is ~2.5:1 against the card, which
-            made the one marker that answers Konrad's actual question the
-            faintest thing in the row. Muted2 is still visibly subordinate to
-            the description beside it — measured against live-light.png. */}
+            `textMuted2`, not the `textGhost` the plan suggested: in the light
+            palette ghost sits around 2.5:1 against the card, which made the
+            one marker that answers Konrad's actual question the faintest
+            thing in the row. Muted2 is still visibly subordinate to the
+            description beside it — see docs/plan/artifacts/phase2/README.md. */}
         <span
           className="mono"
           style={{
