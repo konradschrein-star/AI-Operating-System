@@ -2,27 +2,47 @@
 
 ## 1. What it is
 
-The researcher lane's Perplexity instrument. Since **R702 it is browser-first**: `ask` drives
-`perplexity.ai` inside the authenticated Chrome profile owned by
-`scripts/research-browser.mjs`, waits for the answer to finish streaming, and extracts the
-answer text **and its cited source URLs**. The API path still exists, byte-for-byte unchanged
-in behaviour, behind `--backend api`.
+The researcher lane's Perplexity instrument. Since **R776 it is api-first**: both `ask` and
+`search` default to `POST https://api.perplexity.ai/...` and need `PERPLEXITY_API_KEY`. The
+browser backend — `ask --backend browser`, which drives `perplexity.ai` inside the
+authenticated Chrome profile owned by `scripts/research-browser.mjs`, waits for the answer to
+finish streaming, and extracts the answer text **and its cited source URLs** — is unchanged,
+fully reachable, and is now the **documented fallback**, plus the only path for logged-in work.
 
-**Why browser-first** (Konrad, 2026-08-05 ~09:30): he has no Perplexity API key and will not
-buy one. Perplexity is a browser service for him. That constraint, not a change of engineering
-opinion, is what moved the default — see §11 for what the architecture doc used to say and why
-it is now an *amended* decision rather than a reversed one.
+**Why api-first, and why this is a re-rank rather than a reversal.** R702 made the browser the
+default for a reason that still holds: Konrad has no Perplexity API key and does not intend to
+buy one (stated 2026-08-05 ~09:30) — Perplexity is a browser service for him. Nothing about
+that judgement was wrong. What R702 did not have is the probe that R775 ran and R776 re-ran
+from this host (`65.108.6.149`):
+
+```
+$ curl -s -m 12 -X POST https://api.perplexity.ai/search \
+    -H 'content-type: application/json' -d '{"query":"x"}'
+{"error":{"message":"Invalid API key provided. Ensure your API key is correct and active.",
+          "type":"invalid_api_key","code":401}}          # HTTP 401
+
+$ curl -s -o /dev/null -w '%{http_code}' -m 12 https://www.perplexity.ai/
+403                                                       # Cloudflare "Just a moment"
+```
+
+Read together those two lines rank the backends for us. **The API host answers this box — it
+only wants a key. The consumer site refuses this box at the edge, upstream of anything a
+browser flag can change** (§12.1). R702 therefore promoted the one path that cannot complete
+from here and demoted the one that needs nothing but a key. The ranking flips; R702's reasoning
+does not. What changes is that Konrad's constraint now has a **visible price**: with no key,
+this tool has no working path from this host at all, and the only thing that makes the browser
+lane work unattended is a different egress (proxy/VPN), not a code change.
 
 Two backends, one output contract:
 
-| Backend | Default for | Needs | Costs |
-|---|---|---|---|
-| `browser` | `ask` | a logged-in Perplexity session in the shared profile | nothing; a minute of wall clock |
-| `api` | `search` | `PERPLEXITY_API_KEY` | billed per `web_search` call (§9) |
+| Backend | Default for | Needs | Costs | Status |
+|---|---|---|---|---|
+| `api` | `ask`, `search` | `PERPLEXITY_API_KEY` (§9.1) | billed per `web_search` call (§9.3) | **recommended default** — host reachable, 401 without a key |
+| `browser` | — (pass `--backend browser`) | a logged-in Perplexity session in the shared profile | nothing; a minute of wall clock | documented fallback; **the only path for logged-in work**, but 403 from this host today (§12) |
 
-**The first browser run is meant to stop at a login wall — that is success, not failure (§6).
-On this host it currently stops one step earlier**, at a Cloudflare edge block on the VPS's IP,
-which is a decision for Konrad rather than a bug in the tool: **§12**.
+**A `--backend browser` run is meant to stop at a login wall — that is success, not failure
+(§6). On this host it currently stops one step earlier**, at a Cloudflare edge block on the
+VPS's IP, which is a decision for Konrad rather than a bug in the tool: **§12**.
 
 ## 2. Requirements
 
@@ -50,18 +70,19 @@ scripts/perplexity.mjs search "<query>" [options]          # API only
 scripts/perplexity.mjs --help
 ```
 
-### 3.1 `ask` on the browser backend (the default)
+### 3.1 `ask` on the browser backend (the fallback — pass `--backend browser`)
 
 ```
-scripts/perplexity.mjs ask "What changed in the Perplexity Agent API in July 2026?"
+scripts/perplexity.mjs ask "What changed in the Perplexity Agent API in July 2026?" \
+  --backend browser
 
-scripts/perplexity.mjs ask "who won the 2026 Tour de France" \
+scripts/perplexity.mjs ask "who won the 2026 Tour de France" --backend browser \
   --run-id f47c604a037f --label tour-answer --out /tmp/tour.json
 ```
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--backend browser\|api` | `browser` | `search` mode refuses `browser` (usage error, not a silent downgrade). |
+| `--backend browser\|api` | `api` | Everything below needs `--backend browser`; on `--backend api` these flags are a usage error, not a silent ignore. `search` mode refuses `browser` (usage error, not a silent downgrade). |
 | `--profile <name>` | `perplexity` | The shared research profile. Must match the harness's profile grammar (`docs/tools/research-browser.md` §4). |
 | `--run-id <id>` | `$FORGE_RUN_ID`, else the harness's hex sentinel | Screenshot directory under `/opt/ai-os/uploads/`. |
 | `--label <text>` | `perplexity-answer` | Screenshot label, sanitised to `[a-z0-9-]`. |
@@ -76,14 +97,15 @@ The `api`-only flags (`--model`, `--preset`, `--instructions`, `--max-steps`,
 accepted and ignored — a caller who passes `--model` believes they chose a model. The reverse
 holds too: browser-only flags on `--backend api` are a usage error.
 
-### 3.2 `ask` on the API backend
+### 3.2 `ask` on the API backend (the default since R776)
 
 Unchanged from R502 except that the emitted envelope now carries `"backend": "api"`. Needs a
 key (§9.1); `POST https://api.perplexity.ai/v1/agent`, default model `perplexity/sonar`, web
 search forced by default.
 
 ```
-scripts/perplexity.mjs ask "Summarize current LLM pricing trends" --backend api --preset medium
+scripts/perplexity.mjs ask "Summarize current LLM pricing trends" --preset medium
+scripts/perplexity.mjs ask "Summarize current LLM pricing trends" --backend api --preset medium  # same thing
 ```
 
 ### 3.3 `search`
@@ -398,9 +420,10 @@ Stated plainly so the next round can act on them:
 Until (1) lands, the profile-lock handover is the documented behaviour, not a workaround to be
 quietly removed.
 
-## 9. The API backend (secondary since R702)
+## 9. The API backend (secondary at R702, primary again since R776)
 
-Behaviour is unchanged from R502; the facts below are retained for `--backend api` users.
+Behaviour is unchanged from R502 — only its ranking has moved. The facts below now describe the
+**default** path.
 
 ### 9.1 Key setup
 
@@ -409,9 +432,19 @@ Resolved in this order; **no HTTP request is attempted** unless one yields a non
 1. environment variable `PERPLEXITY_API_KEY`
 2. secret-store file `/opt/ai-os/.secrets/store/perplexity-api-key` (raw key, trimmed)
 
-Neither present ⇒ exit `2` before any network call, printing both locations *and* pointing out
-that dropping `--backend api` needs no key at all. **Konrad has no key and does not intend to
-buy one, so this is the expected state** — no reminder asks him to add one, and none should.
+Neither present ⇒ exit `2` before any network call, printing **both** locations.
+
+R702's exit-`2` text ended with "Drop `--backend api` and this run needs no key at all". R776
+removed that sentence: it pointed the caller at the path that 403s from this host, so it was
+advice that could not be taken. The message now says the opposite — the browser fallback exists
+and is intact, but `perplexity.ai` refuses this box, so **the key is the real unblock** (or a
+different egress; §12.1).
+
+**Konrad has no key and did not intend to buy one, and that remains his call.** The honest
+statement of the trade-off is: with no key and no egress change, `scripts/perplexity.mjs` has
+no working path from this host — `api` returns 401, `browser` returns 403. This doc does not
+queue a reminder demanding a key; it records the cost so the decision is made with the number
+in front of it.
 
 ### 9.2 Why the Agent API
 
@@ -456,8 +489,17 @@ regression.
 
 The architecture doc rejected "Building Perplexity browser scraping — fragile, bot-defended,
 unmaintainable; documented manual fallback only." **That judgement was correct and is not
-withdrawn.** Konrad's constraint (no key, ever) overrules it, and §6.3 now carries a dated
+withdrawn.** Konrad's constraint (no key, ever) overruled it at R702, and §6.3 carries a dated
 `AMENDED at R702` note recording exactly that.
+
+**R776 re-ranked the backends and left both of the above standing.** The browser code is not
+removed, not deprecated, and not deemed a mistake — it is demoted from default to documented
+fallback, because a probe R702 never ran showed that the path it defaulted to is the one this
+host cannot use (401 on the API host vs 403 on the consumer site — §1, §12.1). Note which of
+the three rejected risks actually bit: not `fragile` and not `unmaintainable`, both of which
+the mitigations below handled. It was **`bot-defended`**, and it bit at the network edge rather
+than in the markup, where no selector table could reach it. §6.3 carries a second dated note,
+`AMENDED at R776`, saying so.
 
 The engineering response is to **mitigate, not to pretend**:
 
@@ -473,6 +515,11 @@ The engineering response is to **mitigate, not to pretend**:
 **The expected outcome of R702 was the exit-`4` login wall. The real runs never got that far:
 `perplexity.ai` refuses this host outright.** That is a finding, not a tool failure — the tool
 classified it correctly, refused to invent an answer, and said what it could not do.
+
+Transcript reproduced verbatim from 2026-08-05. It is quoted as recorded and not rewritten: at
+the time `ask` reached the browser with no flag. Since R776 the same run needs an explicit
+`--backend browser` (§1) — everything after that first line is unchanged, because the re-rank
+touched the default, not the browser code.
 
 ```
 $ node scripts/perplexity.mjs ask "What is the Perplexity Agent API rate limit in 2026?" \
@@ -517,6 +564,21 @@ served at `/api/uploads/08e8d160cda1/<name>`; `research-browser.mjs status perpl
 | `curl -A '<real Chrome UA>' https://www.perplexity.ai/` | **403** |
 | `curl https://www.google.com/` from the same host | 200 |
 
+**Re-probed at R775 and again at R776 (2026-08-06), byte-identical both times — this is the
+evidence that re-ranked the backends (§1):**
+
+| Probe (2026-08-06, this host) | Result |
+|---|---|
+| `curl -X POST https://api.perplexity.ai/search -d '{"query":"x"}'` | **HTTP 401** `{"error":{"message":"Invalid API key provided. Ensure your API key is correct and active.","type":"invalid_api_key","code":401}}` |
+| `curl -o /dev/null -w '%{http_code}' https://www.perplexity.ai/` | **403** |
+
+A 401 is a *reachability* result: the request crossed the network, hit Perplexity's application
+layer, and was rejected on credentials. A 403 from the Cloudflare interstitial never reaches an
+application at all. **The API host is fully reachable from `65.108.6.149`; only the consumer
+site is challenged.** That asymmetry is why `api` is the default and `browser` is the fallback,
+and it is a property of this host's egress — on a box Cloudflare scores differently, the
+ranking could reasonably flip back.
+
 The browser is not the problem, and this rules out the usual suspects: `navigator.webdriver`
 is `false`, the UA is stock Chrome 148, and WebGL reports a working
 `ANGLE (… SwiftShader …)` renderer — Chrome is not obviously automated and not obviously
@@ -534,6 +596,11 @@ headless. **Plain `curl` gets the same 403, so the block sits on the egress IP
    on it.
 3. **Accept that Perplexity is not reachable from this VPS** and use the researcher role's other
    instruments. Nothing else in the research lane depends on this tool.
+4. **Add `PERPLEXITY_API_KEY`** (§9.1). Not on the list at R702, because at R702 the browser
+   path was believed to be the free way around it; the 401-vs-403 asymmetry (§12.1) shows it is
+   in fact the *cheapest* unblock — no proxy, no VPN, no human at a noVNC console. This is why
+   R776 made `api` the default. It costs money, which is exactly the constraint Konrad stated,
+   so it stays his call and not the tool's.
 
 A reminder carrying this decision is queued: `1fc35eb9-e49e-4899-b3c8-4676dab32dfa`, due
 2026-08-06 07:00 UTC.

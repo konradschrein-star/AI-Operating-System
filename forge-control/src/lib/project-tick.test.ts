@@ -644,22 +644,37 @@ describe("T16 researcher browser lane", () => {
     }
   });
 
-  test("the pool/browser default is stated as key-free — the whole point of R702", () => {
+  test("each instrument's key requirement is stated as it actually is", () => {
+    // R702 could say "none of them needs a key by default". R776 re-ranked perplexity's backends
+    // — api is now its default for both modes — so that blanket sentence became a lie, and a
+    // researcher told "no keys needed" would read perplexity's exit 2 as a broken tool rather
+    // than a missing key. The prompt must draw the line where it really falls.
     assert.match(
       RESEARCH_INSTRUMENTS,
-      /none of them needs a key by default/,
-      "a researcher that believes it needs keys will not try the instruments at all",
+      /research-browser and gemini-qa need no key on their default path, perplexity does/,
+      "the prompt must say which instruments are key-free and which is not",
     );
     // gemini-qa's default backend really is the free pool.
     assert.ok(
       help(SCRIPTS.geminiQa).includes("default: pool"),
       "gemini-qa's default backend is no longer the pool",
     );
-    // perplexity's ask really does default to the browser.
+    // perplexity's ask really does default to the api backend.
     assert.match(
       help(SCRIPTS.perplexity),
-      /Default backend: browser/,
-      "perplexity ask no longer defaults to the browser backend",
+      /Default backend: api/,
+      "perplexity ask no longer defaults to the api backend",
+    );
+    // ...and the browser backend it demoted is still offered, not deleted.
+    assert.match(
+      help(SCRIPTS.perplexity),
+      /--backend browser\|api/,
+      "perplexity --help no longer offers the browser fallback the prompt points researchers at",
+    );
+    assert.match(
+      RESEARCH_INSTRUMENTS,
+      /--backend browser/,
+      "the prompt must still name the fallback for logged-in work",
     );
   });
 });

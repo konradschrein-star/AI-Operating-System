@@ -19,7 +19,7 @@ Citations are mandatory:
 - An uncited claim is not delivered. Cut it, or go find the source.
 - Mark inference as inference, explicitly ("inferred from X and Y — not stated in either"). Do not let your reasoning wear a citation's clothes.
 
-Instruments — three shipped CLIs in the `ai-os` repo's `scripts/` (from another repo's worktree: `/opt/forge-ai-os/scripts/`). Each one has a real `--help`; read it before first use. None of them needs an API key on its default path:
+Instruments — three shipped CLIs in the `ai-os` repo's `scripts/` (from another repo's worktree: `/opt/forge-ai-os/scripts/`). Each one has a real `--help`; read it before first use. `research-browser` and `gemini-qa` need no API key on their default path; `perplexity` does (see below):
 
 - `scripts/research-browser.mjs` — a real Chrome with persistent, named, logged-in profiles. This is how you reach anything behind a login or a JS app.
   - `scripts/research-browser.mjs open perplexity` — open the profile's service home, evaluate the login signals, screenshot, print JSON.
@@ -27,9 +27,10 @@ Instruments — three shipped CLIs in the `ai-os` repo's `scripts/` (from anothe
   - `scripts/research-browser.mjs status perplexity --probe` — authoritative "is this profile still logged in", by re-navigating.
   - `scripts/research-browser.mjs close scratch` — tear the session and its takeover stack down. Cookies survive; do this when you are finished with a profile.
   - Profiles are SHARED and long-lived (`/opt/ai-os/browser-profiles/<profile>/`). Use the existing profile for a service — `perplexity` for Perplexity, `scratch` for one-off pages — and never invent a per-run profile: the login lives in the profile, and a fresh one is a fresh login wall.
-- `scripts/perplexity.mjs` — Perplexity, browser-first.
-  - `scripts/perplexity.mjs ask "<question>"` — default backend is `browser`: it drives perplexity.ai inside the authenticated `perplexity` profile and returns the answer **with its cited source URLs**. No key involved. A sourceless answer is treated as a broken extraction and fails rather than being handed to you (`--allow-uncited` overrides that; do not, unless you say so in the doc).
-  - `scripts/perplexity.mjs ask "<question>" --backend api` and `scripts/perplexity.mjs search "<query>"` use the HTTP API and need `PERPLEXITY_API_KEY` (env, or `/opt/ai-os/.secrets/store/perplexity-api-key`). `search` has no browser equivalent; without the key it exits 2 naming both locations.
+- `scripts/perplexity.mjs` — Perplexity, api-first since R776.
+  - `scripts/perplexity.mjs ask "<question>"` and `scripts/perplexity.mjs search "<query>"` — default backend is `api` for both: the HTTP API, needing `PERPLEXITY_API_KEY` (env, or `/opt/ai-os/.secrets/store/perplexity-api-key`). Without the key it exits 2 naming both locations, and nothing is sent.
+  - `scripts/perplexity.mjs ask "<question>" --backend browser` — the documented fallback, and the only path for logged-in work: it drives perplexity.ai inside the authenticated `perplexity` profile and returns the answer **with its cited source URLs**, no key involved. A sourceless answer is treated as a broken extraction and fails rather than being handed to you (`--allow-uncited` overrides that; do not, unless you say so in the doc). `search` has no browser equivalent.
+  - Why that ranking: probed from this host, `api.perplexity.ai` answers **401** (reachable, it just wants a key) while `www.perplexity.ai` answers **403** — a Cloudflare edge block on our egress IP. So the browser fallback cannot currently complete from this box no matter what you pass it. Report the exit code and move on; do not treat `--backend browser` as a way around a missing key.
 - `scripts/gemini-qa.mjs` — video quality assurance, pool-first.
   - `scripts/gemini-qa.mjs ./render/final.mp4` — default backend is the local Gemini Pool (`http://127.0.0.1:8090`), which rides pool-account entitlements: no Google key, no bill. Local files only. Returns the frozen QA rubric as JSON.
   - `scripts/gemini-qa.mjs ./clip.mp4 --backend api --model gemini-omni-flash` — the official Gemini API, billed, accepts URLs; needs `GEMINI_API_KEY` (env, or `/opt/ai-os/.secrets/store/gemini-api-key`). There is deliberately NO automatic fallback between the two backends — pick one and say which you used.

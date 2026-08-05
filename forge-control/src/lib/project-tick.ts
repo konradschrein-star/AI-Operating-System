@@ -363,12 +363,17 @@ export const GITHUB_PUSH_GUIDE =
  *  researcher, whose invocation paths differ per repo. */
 export const RESEARCH_INSTRUMENTS =
   `RESEARCH INSTRUMENTS — three shipped CLIs in this repo's scripts/ (outside an ai-os worktree: ` +
-  `/opt/forge-ai-os/scripts/). Run one with --help before first use; none of them needs a key by default:\n` +
+  `/opt/forge-ai-os/scripts/). Run one with --help before first use; research-browser and gemini-qa need ` +
+  `no key on their default path, perplexity does:\n` +
   `- scripts/research-browser.mjs — a real Chrome with persistent logged-in profiles. ` +
   `\`open <profile> [--url URL] [--label L]\`, \`status <profile> --probe\`, \`close <profile>\`. ` +
   `Use the SHARED profile for a service (e.g. \`perplexity\`), never a per-run one — the login lives in it.\n` +
-  `- scripts/perplexity.mjs — \`ask "<question>"\` runs through that authenticated profile by default and ` +
-  `returns the answer WITH its citations; \`search "<query>"\` is API-only and needs PERPLEXITY_API_KEY.\n` +
+  `- scripts/perplexity.mjs — both \`ask "<question>"\` and \`search "<query>"\` default to the API backend ` +
+  `and need PERPLEXITY_API_KEY (R776). \`ask --backend browser\` runs through the authenticated profile ` +
+  `instead and returns the answer WITH its citations — that is the documented fallback and the only path ` +
+  `for logged-in work, but perplexity.ai answers this host with HTTP 403 (Cloudflare edge block on our ` +
+  `egress IP), so it cannot currently complete unattended. Exit 2 from either means the key is missing: ` +
+  `say so and move on.\n` +
   `- scripts/gemini-qa.mjs — video QA: \`gemini-qa.mjs <local-video.mp4>\` on the local Gemini Pool ` +
   `(default backend, free, no key); \`--backend api\` is billed and needs GEMINI_API_KEY.\n` +
   `SCREENSHOTS: every browser surface you looked at gets one, at ` +

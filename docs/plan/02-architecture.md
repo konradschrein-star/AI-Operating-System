@@ -360,6 +360,23 @@ which drives `perplexity.ai` inside the shared `perplexity` profile owned by R70
 answer **and its numbered citations**. `search` stays API-only; there is no browser surface for
 it that this tool is willing to scrape.
 
+**RE-RANKED at R776 (2026-08-06) — `api` is the default backend for BOTH `ask` and `search`;
+the browser path above is unchanged, fully reachable via `--backend browser`, and is now the
+documented fallback and the only path for logged-in work.** This amends the *ranking* in the
+R702 note above, not its reasoning, and it removes nothing. The new fact is a probe run from
+this host at R775 and re-run at R776:
+
+| Probe (2026-08-06, `65.108.6.149`) | Result |
+|---|---|
+| `POST https://api.perplexity.ai/search` | **401** `invalid_api_key` — reachable, it only wants a key |
+| `GET https://www.perplexity.ai/` | **403** — Cloudflare interstitial, an edge block on our egress IP |
+
+R702 had Konrad's constraint but not this measurement, and so promoted the one path that cannot
+complete from this box while demoting the one that needs nothing but a key. Konrad's constraint
+(no key, will not buy one) still stands and is still his call — what changed is that it now has
+a stated price: with no key and no egress change, this tool has no working path from this host.
+Details and the full probe history: `docs/tools/perplexity.md` §1, §9.1, §12.1.
+
 - **This overrules §10's "Building Perplexity browser scraping — fragile, bot-defended,
   unmaintainable" and the last sentence of the original §6.3 text below.** The judgement was
   correct and is **not** withdrawn; a constraint overrides it. The response is to MITIGATE, and
@@ -478,3 +495,9 @@ executor logs; the helpers are CLIs whose stdout/stderr land in run threads.
   constraint — no API key, ever — so it is now the DEFAULT `ask` path. The three risks named
   here stand and are mitigated explicitly (one selector table, semantic-first locators, loud
   failure with a screenshot, never a partial answer); see §6.3's R702 amendment.**
+  **RE-RANKED at R776 (2026-08-06): no longer the default — `api` is, for both modes — but the
+  browser code stays and is the documented fallback plus the only path for logged-in work. Of
+  the three risks named here, the one that actually bit is `bot-defended`: `perplexity.ai`
+  answers this host **403** at the Cloudflare edge while `api.perplexity.ai` answers **401**, so
+  the block sits on the egress IP, upstream of anything the selector-table mitigations can
+  reach. `fragile` and `unmaintainable` were and remain mitigated. See §6.3's R776 note.**
