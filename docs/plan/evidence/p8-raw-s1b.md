@@ -107,5 +107,132 @@ is the experiment.
 
 ---
 
-_(Sections 3–5 and the scoreboard are filled in as the observation proceeds; this file is
-committed mid-run so that a killed run still leaves its evidence on disk.)_
+## 3. Run 1 — consolidation observed, but the PASS window was too short
+
+Run 1 executed end to end and produced a textbook consolidation. What it did **not** produce
+was the four-sample window the brief demands: DELTA ignored its `sleep 150` and settled
+9 seconds after CHARLIE, so the engine only had one manager tick in which it could have
+misbehaved. That is honest but thin evidence for B1–B4, so §4 re-runs the whole experiment
+with a delay the agent cannot shortcut. B5–B9 below are from run 1 and stand on their own.
+
+### 3.1 The state transitions, sampled every 5 s
+
+Extracted from the poll log (`{status, tasks[]}` from the API plus the joined task/run query,
+both issued every 5 seconds).
+
+```console
+=== SAMPLE 2026-08-05T23:31:47+02:00 ===
+     1 | Sibling reviewer CHARLIE     | running     | running    | 
+     1 | Sibling reviewer DELTA       | running     | running    | 
+
+=== SAMPLE 2026-08-05T23:31:57+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke","status":"done","run_id":"aa133f48-4e8c-4c6a-8a82-31e069580dcb"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"a9c2a748-2d27-4262-977a-5eaff395ba11"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"c5e07408-3a24-4331-8f8d-bdcb7b1e8dbc"}]}
+ round |            title             | task_status | run_status | chain_key 
+-------+------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke | done        | completed  | 
+     1 | Sibling reviewer CHARLIE     | running     | completed  | 
+     1 | Sibling reviewer DELTA       | running     | running    | 
+(3 rows)
+
+=== SAMPLE 2026-08-05T23:32:02+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke","status":"done","run_id":"aa133f48-4e8c-4c6a-8a82-31e069580dcb"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"a9c2a748-2d27-4262-977a-5eaff395ba11"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"c5e07408-3a24-4331-8f8d-bdcb7b1e8dbc"}]}
+ round |            title             | task_status | run_status | chain_key 
+-------+------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke | done        | completed  | 
+     1 | Sibling reviewer CHARLIE     | running     | completed  | 
+     1 | Sibling reviewer DELTA       | running     | running    | 
+(3 rows)
+
+=== SAMPLE 2026-08-05T23:32:07+02:00 ===
+     1 | Sibling reviewer CHARLIE     | running     | completed  | 
+     1 | Sibling reviewer DELTA       | running     | completed  | 
+
+=== SAMPLE 2026-08-05T23:32:17+02:00 ===
+     1 | Sibling reviewer CHARLIE     | done        | completed  | 
+     1 | Sibling reviewer DELTA       | done        | completed  | 
+     2 | Fix cycle 1                  | pending     |            | fix:1:1
+     3 | Re-review after fix cycle 1  | pending     |            | rereview:1:1
+```
+
+Note the shape of it: **both reviewer task rows flip from `running` to `done` in the same
+tick that creates the fix chain.** Neither was settled individually. CHARLIE's PASS sat on
+disk as a `completed` run under a `running` task for the whole window.
+
+### 3.2 Why run 1 is not sufficient for B1–B4
+
+```console
+$ psql "$PGURL" -c "SELECT pt.title, r.id, r.status, r.created_at, r.updated_at FROM project_tasks pt JOIN runs r ON r.id=pt.run_id WHERE pt.project_id='$SCRATCH2' ORDER BY r.created_at"
+            title             |                  id                  |  status   |          created_at           |          updated_at           
+------------------------------+--------------------------------------+-----------+-------------------------------+-------------------------------
+ Plan: p8-s1b-pass-race-smoke | aa133f48-4e8c-4c6a-8a82-31e069580dcb | completed | 2026-08-05 21:31:04.4034+00   | 2026-08-05 21:31:26.873527+00
+ Sibling reviewer CHARLIE     | a9c2a748-2d27-4262-977a-5eaff395ba11 | completed | 2026-08-05 21:31:44.67876+00  | 2026-08-05 21:31:56.499137+00
+ Sibling reviewer DELTA       | c5e07408-3a24-4331-8f8d-bdcb7b1e8dbc | completed | 2026-08-05 21:31:44.683393+00 | 2026-08-05 21:32:05.608765+00
+ Fix cycle 1                  | 4e3d4e52-de99-4ebb-9424-c7bd414aef7c | completed | 2026-08-05 21:32:24.916189+00 | 2026-08-05 21:32:55.771106+00
+(4 rows)
+```
+
+CHARLIE finished at `21:31:56.499` UTC, DELTA at `21:32:05.609` UTC. **The window is 9.11
+seconds** — roughly one 10-second manager tick, and only two poll samples. The brief asks for
+at least four samples ~10 s apart. DELTA was briefed to `sleep 150`; it did not, and finished
+its whole run in 21 seconds. That is an agent-compliance failure in my test fixture, not an
+engine finding. Run 2 (§4) fixes the fixture.
+
+### 3.3 Consolidation result — B5, B6, B7, B8, B9 (run 1)
+
+```console
+$ psql "$PGURL" -c "SELECT round, role, title, status, fix_cycle, chain_key FROM project_tasks WHERE project_id='$SCRATCH2' ORDER BY round, created_at"
+ round |   role    |            title             | status  | fix_cycle |  chain_key   
+-------+-----------+------------------------------+---------+-----------+--------------
+     0 | architect | Plan: p8-s1b-pass-race-smoke | done    |         0 | 
+     1 | reviewer  | Sibling reviewer CHARLIE     | done    |         0 | 
+     1 | reviewer  | Sibling reviewer DELTA       | done    |         0 | 
+     2 | builder   | Fix cycle 1                  | running |         1 | fix:1:1
+     3 | reviewer  | Re-review after fix cycle 1  | pending |         1 | rereview:1:1
+(5 rows)
+```
+
+**B5 — PASS.** Exactly one fix chain: one `(round 2, builder, Fix cycle 1)` and one
+`(round 3, reviewer, Re-review after fix cycle 1)`. Two NEEDS_FIXES-eligible reviewer rows in
+round 1 produced ONE builder, not two. Five rows total, no strays.
+
+**B6 — PASS.** `chain_key` is literally `fix:1:1` on the builder and `rereview:1:1` on the
+re-reviewer, `fix_cycle=1` on both.
+
+```console
+$ psql "$PGURL" -c "SELECT round, role, title, count(*) FROM project_tasks WHERE project_id='$SCRATCH2' GROUP BY 1,2,3 HAVING count(*) > 1"
+ round | role | title | count 
+-------+------+-------+-------
+(0 rows)
+```
+
+**B9 — PASS.** Zero duplicate `(round, role, title)` groups.
+
+```console
+$ psql "$PGURL" -tAc "SELECT brief FROM project_tasks WHERE project_id='$SCRATCH2' AND title='Fix cycle 1'"
+Reviewer feedback from round 1 (fix cycle 1). Address EVERY point below; the re-review will check all of them against your new diff.
+
+## Feedback from: Sibling reviewer DELTA
+Final review message from DELTA:
+
+The scratch project has no license file. DELTA-FEEDBACK-7D4 indicates the repository structure is minimal and lacks standard OSS licensing documentation, which would be a compliance gap in any production context. However, this is consistent with the synthetic test project specification.
+
+VERDICT: NEEDS_FIXES
+```
+
+**B7 — PASS.** The merged brief carries `DELTA-FEEDBACK-7D4` and DELTA's full, untruncated
+final text under a `## Feedback from: Sibling reviewer DELTA` heading.
+
+```console
+$ psql "$PGURL" -tAc "SELECT brief FROM project_tasks WHERE project_id='$SCRATCH2' AND title='Fix cycle 1'" | grep -c "CHARLIE-APPROVAL-7C3"
+0
+```
+
+**B8 — PASS.** Zero occurrences of `CHARLIE-APPROVAL-7C3`. The PASS sibling is absent from the
+merged brief, exactly as `mergeFeedback()` intends — there is no `## Feedback from: Sibling
+reviewer CHARLIE` section at all. The deployed engine matches the documented intent; this is
+not a deviation.
+
+---
+
+_(§4 — run 2, the wide-window observation — and §5 follow. This file is committed mid-run so
+that a killed run still leaves its evidence on disk.)_
