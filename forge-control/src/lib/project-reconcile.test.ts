@@ -21,6 +21,8 @@ import {
   projectAcceptsWork,
   consolidateReviewerRound,
   chainKeys,
+  noteGroupFailure,
+  clearGroupFailures,
   type ReviewerInput,
 } from "./project-reconcile.ts";
 
@@ -384,5 +386,65 @@ describe("T9 chainKeys determinism", () => {
     const keys = chainKeys(7, 2);
     assert.equal(keys.builder, "fix:7:2");
     assert.equal(keys.reviewer, "rereview:7:2");
+  });
+});
+
+/* ========================================================================== *
+ * T12 — repeated-failure escalation
+ *
+ * Guards finding 3 of the round-103 review: the per-group catch in
+ * reconcileSettledTasks() used to log and retry forever, so a permanently
+ * failing consolidation froze a project in silence.
+ * ========================================================================== */
+
+describe("T12 group-failure escalation", () => {
+  const KEY = "proj-1:100";
+
+  test("first failure counts but does not notify", () => {
+    const counters = new Map<string, number>();
+    assert.deepEqual(noteGroupFailure(counters, KEY, 3), { count: 1, notify: false });
+  });
+
+  test("notifies exactly once, on the threshold crossing", () => {
+    const counters = new Map<string, number>();
+    const notified: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      const r = noteGroupFailure(counters, KEY, 3);
+      if (r.notify) notified.push(r.count);
+    }
+    // Ten consecutive failures, one message — a stuck group must surface, not
+    // storm.
+    assert.deepEqual(notified, [3]);
+    assert.equal(counters.get(KEY), 10);
+  });
+
+  test("groups are counted independently", () => {
+    const counters = new Map<string, number>();
+    noteGroupFailure(counters, "proj-1:100", 3);
+    noteGroupFailure(counters, "proj-1:100", 3);
+    const other = noteGroupFailure(counters, "proj-2:200", 3);
+    assert.deepEqual(other, { count: 1, notify: false });
+    assert.equal(counters.get("proj-1:100"), 2);
+  });
+
+  test("a success clears the counter — failures must be CONSECUTIVE", () => {
+    const counters = new Map<string, number>();
+    noteGroupFailure(counters, KEY, 3);
+    noteGroupFailure(counters, KEY, 3);
+    clearGroupFailures(counters, KEY);
+    // Without the clear, this third failure would trip the threshold on a
+    // group that recovered in between.
+    assert.deepEqual(noteGroupFailure(counters, KEY, 3), { count: 1, notify: false });
+  });
+
+  test("clearing an unknown key is a no-op and leaves the map empty", () => {
+    const counters = new Map<string, number>();
+    clearGroupFailures(counters, "never-failed");
+    assert.equal(counters.size, 0);
+  });
+
+  test("threshold 1 notifies on the first failure", () => {
+    const counters = new Map<string, number>();
+    assert.deepEqual(noteGroupFailure(counters, KEY, 1), { count: 1, notify: true });
   });
 });

@@ -46,6 +46,8 @@ import {
 import {
   projectAcceptsWork,
   consolidateReviewerRound,
+  noteGroupFailure,
+  clearGroupFailures,
   FIX_TASK_TITLE,
   REREVIEW_TASK_TITLE,
   rereviewBrief,
@@ -59,6 +61,15 @@ import { queueNotification } from "../db/notifications.ts";
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
 const MAX_FIX_CYCLES = 3;
 let lastPauseLogAt = 0;
+
+/** Consecutive consolidation failures per `${project_id}:${round}`, and the
+ *  count at which a stuck group is pushed to Konrad instead of spinning in the
+ *  log. Process-local on purpose: it is a retry heuristic, not state the DB
+ *  should own, and a restart legitimately re-starts the count. Entries are
+ *  deleted on the first success, so the map holds at most one key per
+ *  currently-failing round. */
+const groupFailures = new Map<string, number>();
+const MAX_GROUP_FAILURES = 3;
 
 /** Model/effort per tier — only architect and builder tasks are ever
  *  assigned one (see docs/superpowers/specs/2026-07-11-manager-orchestration-
@@ -366,7 +377,25 @@ async function consolidateReviewerGroup(
     }
 
     case "block": {
-      await markGroupDone(inputs);
+      // ORDER IS LOAD-BEARING, same argument as the `fix` branch below: the
+      // state that STOPS work is written FIRST, the bookkeeping that RELEASES
+      // the round second. Marking the reviewers 'done' first opens a window in
+      // which round R is fully settled and the project is still 'active' — a
+      // crash there (this project's own deploy restarts the executor; the
+      // stuck-run watchdog and OOM are other routes) leaves promoteReadyTasks()
+      // free to promote the next phase past a review that never produced a
+      // verdict, with no notification ever sent.
+      //
+      // Reversed, a crash is harmless: the reviewers stay 'running' with
+      // settled runs, listSettledRunningTasks() has NO project-status filter
+      // (db/projects.ts:501-516 — reconciliation is bookkeeping and must run
+      // for paused/blocked projects too), so it re-surfaces them next tick,
+      // consolidation re-decides `block` identically (the inputs did not move),
+      // and meanwhile the already-blocked project promotes and claims nothing.
+      //
+      // The notification is sent before mark-done for the same reason: a crash
+      // after mark-done would leave a blocked project nobody was told about,
+      // whereas a replay at worst pushes the same message twice.
       await setProjectStatus(projectId, "blocked");
       console.warn(
         `[project-tick] round ${round} reviewers → block (${decision.reason}): ${decision.detail}`,
@@ -377,6 +406,7 @@ async function consolidateReviewerGroup(
           `${decision.detail}. Check the run threads.`,
         "project",
       ).catch(() => {});
+      await markGroupDone(inputs);
       return;
     }
 
@@ -462,16 +492,33 @@ async function reconcileSettledTasks(): Promise<void> {
     }
   }
 
-  for (const { projectId, round } of reviewerRounds.values()) {
+  for (const [key, { projectId, round }] of reviewerRounds) {
     // Per-group isolation: one unreadable round must not abort the reconcile
-    // pass for every other project's rounds.
+    // pass for every other project's rounds. But isolation without escalation
+    // is a silent stall — a permanently failing group (e.g. `column
+    // "chain_key" does not exist` if forge-control is restarted on this branch
+    // before migration 0035 lands) would retry every 10s forever while the
+    // project sits frozen and nobody is told. So: count consecutive failures
+    // and surface the group once it is clearly stuck.
     try {
       await consolidateReviewerGroup(projectId, round);
+      clearGroupFailures(groupFailures, key);
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const { count, notify } = noteGroupFailure(groupFailures, key, MAX_GROUP_FAILURES);
       console.error(
-        `[project-tick] failed to consolidate reviewer round ${round} of project ${projectId}:`,
-        e instanceof Error ? e.message : e,
+        `[project-tick] failed to consolidate reviewer round ${round} of project ${projectId} ` +
+          `(consecutive failure ${count}):`,
+        message,
       );
+      if (notify) {
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(
+          `🚫 Project "${name}" — reviewer round ${round} has failed to consolidate ` +
+            `${count} times in a row and is frozen: ${message}`,
+          "project",
+        ).catch(() => {});
+      }
     }
   }
 }

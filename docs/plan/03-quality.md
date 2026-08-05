@@ -4,7 +4,17 @@ Runner facts (verified 2026-08-05): `forge-control` tests run with
 `pnpm test` = `tsx --test src/lib/*.test.ts` (node:test + `node:assert/strict`, zero
 framework deps — precedent `src/lib/account-health.test.ts`). Typecheck:
 `npx tsc --noEmit`. The worktree's `forge-control/` has **no `node_modules`** — every
-build/review task starts with `pnpm install` there (pnpm only; never npm/yarn).
+build/review task starts with `pnpm install --prod=false` there (pnpm only; never
+npm/yarn).
+
+**`--prod=false` is mandatory, not decoration** (learned in the round-103 gate): the
+executor runs with `NODE_ENV=production` in its environment and every task inherits it,
+so a plain `pnpm install` silently skips `devDependencies` — `typescript` and `tsx` are
+never installed. It still exits 0 and prints "Already up to date", so the failure
+masquerades as a broken repo: `npx tsc --noEmit` answers *"This is not the tsc command
+you are looking for"* (Debian's `/usr/bin/tsc` from `node-typescript`) and `pnpm test`
+dies with `sh: 1: tsx: not found`. `NODE_ENV=development pnpm install --prod=false` is
+the equivalent belt-and-braces form.
 
 ## 1. Unit tests (pure logic — the heart of D1)
 
@@ -37,6 +47,11 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   fixture project/task objects — refactor `buildPrompt` only as far as needed to make it
   importable without I/O; `roleConfig` file reads may be stubbed via `AGENTS_DIR` env
   pointing at a fixture dir.)
+- **T12 group-failure escalation** (added in P1 fix cycle 1): `noteGroupFailure` /
+  `clearGroupFailures` — counts consecutive consolidation failures per
+  `${project_id}:${round}`, returns `notify` exactly once on the threshold crossing (ten
+  failures ⇒ one message), counts groups independently, and a success clears the counter
+  so only CONSECUTIVE failures escalate.
 - **T11 researcher frontmatter parse:** run `roleConfig()`'s parsing logic (or its
   extracted equivalent) against the literal content of `agents/researcher.md` — tools
   list parses to exactly the 8 tools of R18.
@@ -64,15 +79,18 @@ confidence comes from:
 Every phase's gating reviewer runs, inside the worktree:
 
 ```
-cd forge-control && pnpm install && npx tsc --noEmit && pnpm test
+cd forge-control && pnpm install --prod=false && npx tsc --noEmit && pnpm test
 ```
+
+(`--prod=false` for the `NODE_ENV=production` reason at the top of this file. Without it
+the gate is unrunnable and reports a repo failure that does not exist.)
 
 plus `git -C /opt/forge-ai-os status --porcelain` (must be empty — the policy this very
 project encodes, applied to itself from phase 1 onward), plus the phase-specific items:
 
 | Phase | Extra gate |
 |---|---|
-| P1 engine logic | T1–T9 green; I1 red-team walk (§4) with findings addressed; I2 migration dry-run output in the review |
+| P1 engine logic | T1–T9 + T12 green; I1 red-team walk (§4) with findings addressed; I2 migration dry-run output in the review |
 | P2 policy/prompts + GitHub | T10 green; helper pushed THIS branch to origin (S6); grep proves no `--force` in helper; no-origin + no-auth exits proven in a scratch dir |
 | P3 researcher | T11 green; R19 install verified; R20 smoke artifacts inspected (citations real — reviewer spot-checks ≥ 2 URLs actually contain the cited claims); scratch project closed |
 | P4 external tools | I4 re-run by reviewer; docs match `--help`; reminders exist via `GET /api/reminders` (R24); zero new deps (`git diff main...HEAD -- '**/package.json' 'pnpm-lock.yaml'` is empty) |

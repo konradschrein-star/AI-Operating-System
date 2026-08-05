@@ -61,7 +61,9 @@ anything that swallows an error is a review-blocking defect.
   defense-in-depth TS-side filter in `spawnTaskRuns()` in addition to the SQL clauses —
   the SQL is the gate, the predicate is the belt worn in code and in tests. *Verify:* unit
   tests over all five statuses.
-- **R11 — Typecheck + suite.** `npx tsc --noEmit` clean in `forge-control`; `pnpm test`
+- **R11 — Typecheck + suite.** After `pnpm install --prod=false` (never a bare `pnpm
+  install`: `NODE_ENV=production` is inherited from the executor and silently drops the
+  dev deps that ARE the toolchain), `npx tsc --noEmit` clean in `forge-control`; `pnpm test`
   green including the new `project-reconcile.test.ts`. *Verify:* commands run by builder
   and reviewer each phase.
 
@@ -170,8 +172,10 @@ anything that swallows an error is a review-blocking defect.
 
 ## G. Integration, documentation, deploy
 
-- **R26 — Full regression + whole-diff review.** Final build phase: `pnpm install`
-  (worktree `forge-control` has no `node_modules`), `npx tsc --noEmit`, `pnpm test`, and a
+- **R26 — Full regression + whole-diff review.** Final build phase: `pnpm install
+  --prod=false` (worktree `forge-control` has no `node_modules`, and `NODE_ENV=production`
+  in the executor env makes a plain install skip `tsx`/`typescript` — see 03-quality
+  §preamble), `npx tsc --noEmit`, `pnpm test`, and a
   reviewer sweep over `git diff main...HEAD` for the whole project. *Verify:* reviewer
   runs the commands and reasons through the failure-mode checklist in 03-quality.
 - **R27 — Knowledge capture.** Vault updates appended (never overwritten): `AI OS/Goal

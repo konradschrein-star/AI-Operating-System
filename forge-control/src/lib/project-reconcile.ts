@@ -77,6 +77,48 @@ export function projectAcceptsWork(status: ProjectStatus): boolean {
 }
 
 /* ------------------------------------------------------------------------- *
+ * Repeated-failure escalation
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Consolidating a round can throw — a schema drift (`chain_key` missing
+ * because migration 0035 has not been applied yet), a dead pool, a constraint
+ * nobody anticipated. The per-group `catch` in project-tick.ts must keep the
+ * other projects' rounds moving, so it swallows the error and retries on the
+ * next tick. Retrying forever with nothing but a `console.error` is the
+ * silent-stall shape the plan's N3 forbids: the project freezes, the log grows
+ * at one line per 10s, and Konrad is told nothing.
+ *
+ * So: count consecutive failures per group and escalate ONCE at the threshold.
+ * Pure and Map-based rather than a module global so the escalation rule is
+ * testable without a tick, a DB, or a clock.
+ *
+ * `notify` is true only on the exact crossing (`count === threshold`), not on
+ * every failure past it — one actionable message beats a notification storm
+ * from a group that will keep failing until a human intervenes.
+ */
+export function noteGroupFailure(
+  counters: Map<string, number>,
+  key: string,
+  threshold: number,
+): { count: number; notify: boolean } {
+  const count = (counters.get(key) ?? 0) + 1;
+  counters.set(key, count);
+  return { count, notify: count === threshold };
+}
+
+/**
+ * A group that consolidates cleanly starts over: the counter tracks
+ * CONSECUTIVE failures, so a transient error followed by a success must not
+ * accumulate toward the threshold weeks later. Deleting rather than zeroing
+ * also keeps the map from retaining an entry per round the engine has ever
+ * run.
+ */
+export function clearGroupFailures(counters: Map<string, number>, key: string): void {
+  counters.delete(key);
+}
+
+/* ------------------------------------------------------------------------- *
  * Round consolidation
  * ------------------------------------------------------------------------- */
 

@@ -14,7 +14,8 @@ are all done). Within each phase, planners must keep same-round builders off sha
 **Standing constraints for every phase (planners: copy these into builder briefs):**
 worktree-only (never edit `/opt/forge-ai-os`; never `pm2 restart forge-executor` — not
 even "just to test"); no `forge-control-web/app/desktop/**`, no `src/routes/agents.ts`;
-pnpm only, `pnpm install` first (worktree has no `node_modules`); no new npm deps;
+pnpm only, `pnpm install --prod=false` first (worktree has no `node_modules`, and a bare
+install skips `tsx`/`typescript` under the executor's `NODE_ENV=production`); no new npm deps;
 hard errors, no silent fallbacks; commit per task with clear messages.
 
 ---
@@ -98,8 +99,8 @@ hard errors, no silent fallbacks; commit per task with clear messages.
 - **Deliverables:** requirements matrix walked with evidence per R (checklist in the
   reviewer brief); vault notes appended; branch pushed via the P2 helper.
 - **Acceptance / gates:** full-diff review of `git diff main...HEAD`; N2 boundary check
-  (`git diff --name-only` clean of forbidden paths); `pnpm install && npx tsc --noEmit &&
-  pnpm test` green from a clean state; vault notes appended, nothing truncated.
+  (`git diff --name-only` clean of forbidden paths); `pnpm install --prod=false && npx tsc
+  --noEmit && pnpm test` green from a clean state; vault notes appended, nothing truncated.
 - **Requirements covered:** R26 R27.
 
 ## Phase 6 — Deploy (round 600, only after P5 PASS)
@@ -109,7 +110,7 @@ hard errors, no silent fallbacks; commit per task with clear messages.
   0035), pm2 (forge-control only), detached safe-restart for the executor.
 - **Deliverables / protocol (verbatim from the brief + R28):**
   1. In `/opt/forge-ai-os`: `git merge main` into `project/4120f785` first if main moved;
-     re-run `pnpm install && npx tsc --noEmit && pnpm test` in the WORKTREE; then merge
+     re-run `pnpm install --prod=false && npx tsc --noEmit && pnpm test` in the WORKTREE; then merge
      the branch to main. Conflicts ⇒ STOP, report the files, do not improvise.
   2. Apply `db/migrations/0035_reviewer_chain_key.sql` (additive; safe under the running
      old engine).
