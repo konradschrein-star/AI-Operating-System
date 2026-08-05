@@ -38,6 +38,83 @@ const STATUSES = new Set<ProjectStatus>([
 ]);
 const TIERS = new Set<TaskTier>(["fast", "junior", "standard", "flagship"]);
 
+/* ── Project metadata construction (U1, 13-ui-v3-architecture.md §5) ────────
+ *
+ * The metadata object is built HERE, at the route layer. db/projects.ts takes
+ * whatever `metadata` it is handed and writes it verbatim — that `metadata`
+ * parameter is the entire seam, and the engine's db layer stays untouched.
+ *
+ * OPERATOR-PROMPT IMPLICATION (13 §5): for `origin_chat_id` to ever be set on
+ * the write path, the operator must pass ITS OWN run id when it creates a
+ * project. That is a change to the operator's prompt contract in the vault
+ * (config), not to engine code — nothing in this repo can make the operator
+ * send the field. Projects created without it stay resolvable only through
+ * round 304's thread-scan fallback, which is why that fallback exists at all.
+ */
+
+/** The `POST /` request body, as it arrives off the wire: every field optional
+ *  and untrusted, validated below. */
+type CreateProjectBody = {
+  name?: string;
+  brief?: string;
+  repo?: string;
+  base_branch?: string;
+  architect_tier?: string;
+  mode?: string;
+  checkin_hours?: number;
+  origin_chat_id?: string;
+};
+
+/** Thrown by buildProjectMetadata for input it refuses to shape. The route
+ *  maps it to a 400 — never to a silently dropped key, because round 304's
+ *  linkage resolver treats the PRESENCE of `origin_chat_id` as truth: a
+ *  malformed id that got swallowed here would read downstream as "this project
+ *  was never linked to a chat", which is a different and false statement. */
+export class ProjectMetadataError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProjectMetadataError";
+  }
+}
+
+/**
+ * Build the `projects.metadata` object for a create request. Pure: no DB, no
+ * clock, no I/O — so scripts/checks/check-project-metadata.ts can table-drive
+ * it directly.
+ *
+ * Keys are OMITTED rather than set to null/"" when they do not apply. Callers
+ * downstream test presence (`metadata ? 'origin_chat_id'` in SQL, `has()` in
+ * jq), so an explicit null would be a false positive.
+ *
+ * @throws {ProjectMetadataError} when `origin_chat_id` is present, non-empty
+ *         and not a uuid.
+ */
+export function buildProjectMetadata(body: CreateProjectBody): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {};
+
+  if (body.mode === "goal") {
+    metadata.mode = "goal";
+    // Number(undefined) is NaN and NaN > 0 is false, so a missing, zero,
+    // negative or unparsable interval drops the key — goal mode without a
+    // check-in cadence is legal, a check-in every "NaN" hours is not.
+    const checkinHours = Number(body.checkin_hours);
+    if (checkinHours > 0) metadata.checkin_hours = checkinHours;
+  }
+
+  // An empty/whitespace string is "the caller had nothing to send", not an
+  // error — that is the shape a shell `--arg` or an unset template variable
+  // produces. Anything else non-empty must be a real uuid.
+  const originChatId = (body.origin_chat_id ?? "").trim();
+  if (originChatId) {
+    if (!UUID_RE.test(originChatId)) {
+      throw new ProjectMetadataError("origin_chat_id must be a uuid");
+    }
+    metadata.origin_chat_id = originChatId;
+  }
+
+  return metadata;
+}
+
 /* Unified board feed — every task across every active/blocked project,
  * for the Kanban UI. Registered before /:id so "board" doesn't get parsed
  * as a project id. */
@@ -60,15 +137,7 @@ r.get("/", async (c) => {
 });
 
 r.post("/", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as {
-    name?: string;
-    brief?: string;
-    repo?: string;
-    base_branch?: string;
-    architect_tier?: string;
-    mode?: string;
-    checkin_hours?: number;
-  };
+  const body = (await c.req.json().catch(() => ({}))) as CreateProjectBody;
   const name = (body.name ?? "").trim();
   const brief = (body.brief ?? "").trim();
   if (!name) return c.json({ error: "name required" }, 400);
@@ -83,20 +152,23 @@ r.post("/", async (c) => {
     return c.json({ error: `mode must be "goal" or omitted` }, 400);
   }
 
+  // Built (and validated) BEFORE createProject: a rejected origin_chat_id must
+  // not leave a half-born project and its round-0 architect task behind.
+  let metadata: Record<string, unknown>;
+  try {
+    metadata = buildProjectMetadata(body);
+  } catch (e) {
+    if (e instanceof ProjectMetadataError) return c.json({ error: e.message }, 400);
+    throw e;
+  }
+
   const { project, architectTask } = await createProject({
     name,
     brief,
     repo: body.repo as ProjectRepo,
     base_branch: body.base_branch,
     architect_tier: body.architect_tier as TaskTier | undefined,
-    metadata: body.mode === "goal"
-      ? {
-          mode: "goal",
-          ...(Number(body.checkin_hours) > 0
-            ? { checkin_hours: Number(body.checkin_hours) }
-            : {}),
-        }
-      : {},
+    metadata,
   });
 
   try {
