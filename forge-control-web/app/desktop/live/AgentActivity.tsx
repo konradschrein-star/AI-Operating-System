@@ -17,27 +17,42 @@
  * That distinction is not cosmetic — it explains why an in-process subagent
  * vanishes on a timeout while a fleet run keeps going.
  *
- * Row shape, deliberately imitating Claude Code's own task bar:
+ * Row shape, deliberately imitating Claude Code's own task bar — two lines:
+ * WHAT it is doing on top, WHAT IT IS underneath.
  *
- *   ● claude-fable-5   Rework Live agent panel        36m 52s · ↓ 204.7k
- *     ○ architect      Isolation + orchestration       4m 12s · ↓ 12.3k
+ *   ● operator  Rework Live agent panel              36m 52s · ↓ 204.7k
+ *       chat  fable-5  $4.10  Bash
+ *   ● worker    Phase 2b: kind badge + role           4m 12s · ↓ 88.1k
+ *       builder  opus-5  $1.02  Edit
+ *     ○ ↳ sub   Recon chat Bash block rendering       1m 47s · ↓ 132.1k
+ *         Explore  opus-5  Grep
  *
- *   type name in muted colour · title primary truncated · right-aligned
- *   live age + downloaded-token count. One shared 1-second tick drives
- *   every visible row (the previous per-row setInterval scaled with row
- *   count and was flagged by the UI audit §2.2a as a re-render source).
+ *   kind badge in its role's colour · title primary truncated ·
+ *   right-aligned live age + downloaded-token count; role/schedule, model,
+ *   spend and current tool on the faint second line. One shared 1-second
+ *   tick drives every visible row (the previous per-row setInterval scaled
+ *   with row count and was flagged by the UI audit §2.2a as a re-render
+ *   source). Lineage is a native `title` on each row container — no hover
+ *   state anywhere in this directory, by design (R10).
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
 import {
+  agentKindOf,
   fetchAgents,
+  isModelAlias,
+  modelDisplay,
+  roleLabel,
+  roleTokenName,
   runElapsedMs,
   subagentElapsedMs,
+  type AgentKind,
   type AgentRow,
   type AgentUsage,
   type CurrentActivity,
+  type RoleTokenName,
   type SubagentRow,
 } from "./agentsApi";
 
@@ -101,6 +116,110 @@ function activityLabel(act: CurrentActivity | null): string {
   return "";
 }
 
+/* ── Kind grammar, rendering half ─────────────────────────────────────────
+ *
+ * agentsApi.ts decides WHAT a row is and which token NAME its role wears
+ * (that module stays React-free and token-free so the check script can import
+ * it). This is the only place a name becomes a colour.
+ */
+
+const ROLE_COLOR: Record<RoleTokenName, string> = {
+  decide: tokens.decide,
+  info: tokens.info,
+  accent: tokens.accent,
+  warn: tokens.warn,
+  textMuted2: tokens.textMuted2,
+  ok: tokens.ok,
+  textMuted: tokens.textMuted,
+};
+
+function roleColor(role: string | null | undefined): string {
+  return ROLE_COLOR[roleTokenName(role)];
+}
+
+/** The badge is the row's one-word answer to "what is this?".
+ *  `unknown` wears `warn` deliberately — an unclassified run is a fact about
+ *  the fleet, not a rendering hole to be smoothed over. */
+function kindColor(kind: AgentKind, role: string | null | undefined): string {
+  switch (kind) {
+    case "operator":
+      return tokens.accent;
+    case "worker":
+      return roleColor(role);
+    case "cron":
+      return tokens.textMuted;
+    case "unknown":
+      return tokens.warn;
+  }
+}
+
+/** Second-line qualifier: which role, which schedule, or — for an
+ *  unclassified row — the worker identity that failed to classify, because
+ *  that is the one datum that explains why it says "unknown". */
+function kindDetail(a: AgentRow, kind: AgentKind): string {
+  switch (kind) {
+    case "operator":
+      return "chat";
+    case "worker":
+      return roleLabel(a.role);
+    case "cron":
+      return a.cron_name ?? "unnamed schedule";
+    case "unknown":
+      return a.worker ?? "no worker";
+  }
+}
+
+function kindDetailColor(kind: AgentKind, role: string | null | undefined): string {
+  return kind === "worker" ? roleColor(role) : tokens.textFaint;
+}
+
+/** First 8 chars of a UUID — enough to grep the database with, short enough
+ *  to read inside a native tooltip. */
+function short(id: string | null | undefined): string {
+  return id ? id.slice(0, 8) : "none";
+}
+
+/** Lineage, R10 — composed at render time into a NATIVE `title`. No hover
+ *  state, no portal, no tooltip component: those are what phase 3 is cleaning
+ *  up, and this panel must not add more of them.
+ *
+ *  Titles carry the RAW model id, not `modelDisplay`. The badge column is
+ *  where brevity belongs; the tooltip is the diagnostic surface, and
+ *  `claude-haiku-4-5-20251001` is what you paste into a query. */
+function lineageTitle(a: AgentRow, kind: AgentKind): string {
+  const model = a.model ?? "—";
+  const run = short(a.id);
+  switch (kind) {
+    case "operator":
+      return `operator chat (full Claude Code session) · model ${model} · run ${run}`;
+    case "worker": {
+      const base = `project worker · ${a.role ?? "no role"} · project ${short(
+        a.project_id,
+      )} · model ${model} · run ${run}`;
+      return a.parent_run_id ? `${base} · child of ${short(a.parent_run_id)}` : base;
+    }
+    case "cron":
+      return `cron ${a.cron_name ?? "unnamed"} · model ${model} · run ${run}`;
+    case "unknown":
+      return `unclassified run · worker ${a.worker ?? "none"} · run ${run}`;
+  }
+}
+
+/** The line Konrad asked for: is this a whole Claude Code session, or a Task
+ *  agent living inside one? Parent title and parent model arrive as primitive
+ *  props so this stays a pure string function and the child never reads the
+ *  parent row object. */
+function subagentLineageTitle(
+  s: SubagentRow,
+  parentTitle: string,
+  parentModel: string,
+): string {
+  return (
+    `in-process sub-agent of "${parentTitle}" (${parentModel}) · ` +
+    `role ${s.role} · model ${s.model ?? "—"} · started ${s.started_at}`
+  );
+}
+
 function subagentActivityLabel(s: SubagentRow): string {
   const act = s.latest_activity;
   if (!act) return "";
@@ -131,6 +250,17 @@ interface RowProps {
   now: number;
 }
 
+/** Width of the kind column. Fixed so the titles line up down the list and
+ *  nothing wobbles as rows change kind between polls; `minWidth` rather than
+ *  `width` so a long cron name can spill rather than be clipped. */
+const KIND_COL = 52;
+
+/** Aliases render fainter than resolved ids — the colour IS the statement
+ *  that we know less about this row's model (R8). */
+function modelColor(model: string | null | undefined): string {
+  return isModelAlias(model) ? tokens.textGhost : tokens.textFaint;
+}
+
 function AgentRunLine({ a, now }: RowProps) {
   const live = a.status === "running";
   const elapsed = runElapsedMs(a, now);
@@ -142,10 +272,16 @@ function AgentRunLine({ a, now }: RowProps) {
   const tokensIn = downloadedTokens(usage);
   const label = activityLabel(a.current_activity);
   const statusColor = STATUS_COLOR[a.status] ?? tokens.textFaint;
-  const nameColor = live ? tokens.textMuted : tokens.textFaint;
+  const kind = agentKindOf(a);
+  const lineage = lineageTitle(a, kind);
+  const model = modelDisplay(a.model);
 
   return (
-    <div>
+    // Lineage lives on the row container (02-architecture §4.3): every part of
+    // the row that does not state something more specific — the dot, the
+    // badge, the second line, the padding — answers "what is this and whose
+    // child is it?" on hover, with zero JS.
+    <div title={lineage} data-agent-kind={kind}>
       <div
         style={{
           display: "flex",
@@ -164,16 +300,21 @@ function AgentRunLine({ a, now }: RowProps) {
             ...(live ? {} : { background: "transparent", border: `1px solid ${statusColor}` }),
           }}
         />
+        {/* Kind badge. This slot used to hold the raw model id, which said
+            nothing about what the row WAS — the model moved to the second
+            line, where it now sits next to the role it ran. */}
         <span
           className="mono"
           style={{
-            color: nameColor,
+            color: kindColor(kind, a.role),
             flex: "none",
+            minWidth: KIND_COL,
             whiteSpace: "nowrap",
+            fontSize: 9.5,
+            letterSpacing: "0.04em",
           }}
-          title={a.worker ?? "run"}
         >
-          {a.model ?? "run"}
+          {kind}
         </span>
         <span
           className="mono"
@@ -206,57 +347,93 @@ function AgentRunLine({ a, now }: RowProps) {
         </span>
       </div>
 
-      {/* Second line: only shown when there's real information to add —
-          spend, effort, or what the parent tool is doing this second. */}
-      {(a.spent_usd > 0 || a.effort || label) && (
-        <div
-          className="mono"
+      {/* Second line, now unconditional: role/schedule and model are facts
+          about every row, not extras. It used to appear only when there was
+          spend, effort or activity to report, which is exactly when a quiet
+          row is hardest to identify. */}
+      <div
+        className="mono"
+        style={{
+          display: "flex",
+          gap: 10,
+          fontSize: 9.5,
+          color: tokens.textFaint,
+          padding: "0 8px 4px 24px",
+        }}
+      >
+        <span
           style={{
-            display: "flex",
-            gap: 10,
-            fontSize: 9.5,
-            color: tokens.textFaint,
-            padding: "0 8px 4px 24px",
+            color: kindDetailColor(kind, a.role),
+            flex: "none",
+            whiteSpace: "nowrap",
           }}
         >
-          {a.spent_usd > 0 && <span>${a.spent_usd.toFixed(2)}</span>}
-          {a.effort && <span>{a.effort}</span>}
-          {label && (
-            <span
-              style={{
-                color: tokens.textMuted2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                flex: 1,
-                minWidth: 0,
-              }}
-              title={label}
-            >
-              {label}
-            </span>
-          )}
-        </div>
-      )}
+          {kindDetail(a, kind)}
+        </span>
+        <span style={{ color: modelColor(a.model), flex: "none", whiteSpace: "nowrap" }}>
+          {model}
+        </span>
+        {a.spent_usd > 0 && <span>${a.spent_usd.toFixed(2)}</span>}
+        {a.effort && <span>{a.effort}</span>}
+        {label && (
+          <span
+            style={{
+              color: tokens.textMuted2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: 1,
+              minWidth: 0,
+            }}
+            title={label}
+          >
+            {label}
+          </span>
+        )}
+      </div>
 
       {a.subagents?.map((s) => (
-        <SubagentLine key={s.tool_use_id} s={s} now={now} />
+        <SubagentLine
+          key={s.tool_use_id}
+          s={s}
+          now={now}
+          parentTitle={a.title}
+          parentModel={model}
+        />
       ))}
     </div>
   );
 }
 
-function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
+function SubagentLine({
+  s,
+  now,
+  parentTitle,
+  parentModel,
+}: {
+  s: SubagentRow;
+  now: number;
+  /** Primitives, not the parent row: the lineage string is built here but the
+   *  child must not be able to read — or re-render on — the parent object. */
+  parentTitle: string;
+  parentModel: string;
+}) {
   const live = s.status === "running";
   const elapsed = subagentElapsedMs(s, now);
   const statusColor = live ? tokens.accent : tokens.ok;
   const tokensIn = downloadedTokens(s.usage);
   const label = subagentActivityLabel(s);
-  const nameColor = live ? tokens.textMuted : tokens.textFaint;
-  const roleColor = live ? tokens.textHi : tokens.text;
+  const titleColor = live ? tokens.textHi : tokens.text;
+  // What the sub-agent was SENT to do beats what it happens to be touching
+  // this second: "Recon chat Bash block rendering" identifies a sub-agent,
+  // "Bash" does not. Activity keeps the title attribute and the second line.
+  const rowTitle = s.description || label || s.role;
 
   return (
-    <div>
+    <div
+      title={subagentLineageTitle(s, parentTitle, parentModel)}
+      data-agent-kind="subagent"
+    >
       <div
         style={{
           display: "flex",
@@ -273,30 +450,35 @@ function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
             ...(live ? {} : { background: "transparent", border: `1px solid ${statusColor}` }),
           }}
         />
+        {/* Sits in the same column as the top-level kind badge and says the
+            opposite thing: this row is NOT its own Claude Code session, it is
+            a Task agent inside the process one line above. */}
         <span
           className="mono"
           style={{
-            color: nameColor,
+            color: tokens.textGhost,
             flex: "none",
+            minWidth: KIND_COL - 12,
             whiteSpace: "nowrap",
+            fontSize: 9.5,
+            letterSpacing: "0.04em",
           }}
-          title={s.model ?? "task"}
         >
-          {s.role}
+          ↳ sub
         </span>
         <span
           className="mono"
           style={{
-            color: roleColor,
+            color: titleColor,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             flex: 1,
             minWidth: 0,
           }}
-          title={label || s.role}
+          title={label || undefined}
         >
-          {label || s.role}
+          {rowTitle}
         </span>
         <span
           className="mono"
@@ -313,6 +495,41 @@ function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
         >
           ↓ {humanTokens(tokensIn)}
         </span>
+      </div>
+
+      <div
+        className="mono"
+        style={{
+          display: "flex",
+          gap: 10,
+          fontSize: 9.5,
+          color: tokens.textFaint,
+          padding: "0 8px 3px 36px",
+        }}
+      >
+        <span
+          style={{ color: roleColor(s.role), flex: "none", whiteSpace: "nowrap" }}
+        >
+          {roleLabel(s.role)}
+        </span>
+        <span style={{ color: modelColor(s.model), flex: "none", whiteSpace: "nowrap" }}>
+          {modelDisplay(s.model)}
+        </span>
+        {label && (
+          <span
+            style={{
+              color: tokens.textMuted2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              flex: 1,
+              minWidth: 0,
+            }}
+            title={label}
+          >
+            {label}
+          </span>
+        )}
       </div>
     </div>
   );

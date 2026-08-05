@@ -29,6 +29,17 @@ import {
   classifyAgentKind,
   type AgentKind,
 } from "../../forge-control/src/routes/agents.ts";
+import {
+  agentKindOf,
+  isModelAlias,
+  modelDisplay,
+  roleLabel,
+  roleTokenName,
+  type AgentKind as ClientAgentKind,
+  type AgentRow,
+  type AgentUsage,
+  type RoleTokenName,
+} from "../../forge-control-web/app/desktop/live/agentsApi.ts";
 
 /** The six real project roles — routes/projects.ts:24-30. `scout` and
  *  `researcher` have no rows in the database yet; they must classify
@@ -232,8 +243,164 @@ check(
   "unknown",
 );
 
+/* ══ CLIENT HALF (phase 2b) ═══════════════════════════════════════════════
+ *
+ * The server decides the kind; the panel has to survive being handed one it
+ * does not recognise — or none at all, which is exactly what production :7700
+ * returns until phase 5 deploys client and server together. Same file as the
+ * server cases on purpose: the two halves of R7/R8 are one contract, and a
+ * reviewer running one command sees both.
+ *
+ * These import the React-FREE `agentsApi.ts` (same trick check-duration.ts
+ * uses). If that module ever grows a React or token import, this section stops
+ * resolving under tsx — which is the point of keeping it clean.
+ */
+
+/** Generic equality case for the pure client helpers. */
+function eq(name: string, actual: string | boolean, expected: string | boolean): void {
+  const ok = actual === expected;
+  if (!ok) failures++;
+  console.log(
+    `${ok ? "PASS" : "FAIL"}  ${name}` +
+      (ok ? "" : `\n        expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`),
+  );
+}
+
+const NO_USAGE: AgentUsage = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+};
+
+/** A complete wire row, so each case states only what it varies. */
+function row(over: Partial<AgentRow>): AgentRow {
+  return {
+    kind: "run",
+    id: "11111111-2222-3333-4444-555555555555",
+    title: "a run",
+    status: "running",
+    worker: "forge-executor",
+    model: "claude-opus-5",
+    effort: null,
+    engine: null,
+    started_at: "2026-08-05T12:00:00.000Z",
+    last_heartbeat_at: null,
+    elapsed_ms: 1000,
+    settled: false,
+    settled_at: null,
+    spent_usd: 0,
+    usage_total: NO_USAGE,
+    current_activity: null,
+    parent_run_id: null,
+    ...over,
+  };
+}
+
+console.log("\n── client: modelDisplay — verified live values ───────────────");
+// Every id below was counted in `runs` on 2026-08-05; the alias and null rows
+// are legacy and will never be backfilled, so they must render, not crash.
+const MODEL_CASES: Array<[string | null | undefined, string]> = [
+  ["claude-fable-5", "fable-5"],
+  ["claude-opus-5", "opus-5"],
+  ["claude-sonnet-5", "sonnet-5"],
+  ["claude-sonnet-4-6", "sonnet-4-6"],
+  ["claude-opus-4-7", "opus-4-7"],
+  ["claude-opus-4-8", "opus-4-8"],
+  ["claude-haiku-4-5-20251001", "haiku-4-5"],
+  ["haiku", "haiku"],
+  ["opus", "opus"],
+  [null, "—"],
+  [undefined, "—"],
+];
+for (const [input, expected] of MODEL_CASES) {
+  eq(`modelDisplay(${JSON.stringify(input)}) → "${expected}"`, modelDisplay(input), expected);
+}
+
+console.log("\n── client: modelDisplay — unknown ids pass through VERBATIM ──");
+eq("a non-Claude id is not mangled", modelDisplay("gpt-5-codex"), "gpt-5-codex");
+eq("an unheard-of Claude id still strips the prefix", modelDisplay("claude-zephyr-9"), "zephyr-9");
+eq(
+  "a 4-digit tail is a version, not a date — untouched",
+  modelDisplay("internal-model-2026"),
+  "internal-model-2026",
+);
+eq(
+  "an 8-digit snapshot anywhere but the END is untouched",
+  modelDisplay("claude-20251001-preview"),
+  "20251001-preview",
+);
+eq("older dated id", modelDisplay("claude-3-5-sonnet-20241022"), "3-5-sonnet");
+eq("surrounding whitespace is trimmed", modelDisplay("  claude-opus-5  "), "opus-5");
+eq("empty string is not a model", modelDisplay(""), "—");
+eq("degenerate id keeps its raw form rather than blanking", modelDisplay("claude-"), "claude-");
+
+console.log("\n── client: isModelAlias ──────────────────────────────────────");
+eq("haiku is an alias", isModelAlias("haiku"), true);
+eq("opus is an alias", isModelAlias("opus"), true);
+eq("sonnet is an alias", isModelAlias("sonnet"), true);
+eq("fable is an alias", isModelAlias("fable"), true);
+eq("prefixed alias still an alias", isModelAlias("claude-opus"), true);
+eq("case-insensitive", isModelAlias("HAIKU"), true);
+eq("a resolved id is NOT an alias", isModelAlias("claude-opus-5"), false);
+eq("a dated id is NOT an alias", isModelAlias("claude-haiku-4-5-20251001"), false);
+eq("near-miss is not an alias", isModelAlias("opusx"), false);
+eq("null is not an alias", isModelAlias(null), false);
+eq("undefined is not an alias", isModelAlias(undefined), false);
+eq("empty string is not an alias", isModelAlias(""), false);
+
+console.log("\n── client: agentKindOf degrades honestly ─────────────────────");
+eq(
+  "row with NO agent_kind (production :7700 today) → unknown, never a guess",
+  agentKindOf(row({})),
+  "unknown",
+);
+eq(
+  "…even when the row looks exactly like an operator chat",
+  agentKindOf(row({ worker: "forge-executor", title: "Chat: rework live panel" })),
+  "unknown",
+);
+for (const k of ["operator", "worker", "cron", "unknown"] as ClientAgentKind[]) {
+  eq(`agent_kind "${k}" passes through`, agentKindOf(row({ agent_kind: k })), k);
+}
+eq(
+  "a kind this build has never heard of → unknown (server ahead of client)",
+  agentKindOf(row({ agent_kind: "captain" as unknown as ClientAgentKind })),
+  "unknown",
+);
+eq(
+  "a non-string kind → unknown",
+  agentKindOf(row({ agent_kind: 7 as unknown as ClientAgentKind })),
+  "unknown",
+);
+
+console.log("\n── client: role label + colour token, incl. fallback ─────────");
+const ROLE_TOKENS: Record<string, RoleTokenName> = {
+  architect: "decide",
+  planner: "info",
+  scout: "textMuted2",
+  researcher: "ok",
+  builder: "accent",
+  reviewer: "warn",
+};
+for (const role of ROLES) {
+  eq(`roleLabel("${role}")`, roleLabel(role), role);
+  eq(`roleTokenName("${role}")`, roleTokenName(role), ROLE_TOKENS[role]);
+}
+eq("unseen role label passes through verbatim", roleLabel("manager"), "manager");
+eq("unseen role falls back to textMuted", roleTokenName("manager"), "textMuted");
+eq(
+  "a Task sub-agent type is an unseen role, not an error",
+  roleLabel("Explore"),
+  "Explore",
+);
+eq("null role label", roleLabel(null), "—");
+eq("null role colour", roleTokenName(null), "textMuted");
+eq("undefined role label", roleLabel(undefined), "—");
+eq("empty role falls back", roleTokenName(""), "textMuted");
+
 console.log(
-  `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — agent-kind classifier`,
+  `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — agent-kind classifier + panel kind grammar`,
 );
 // Importing routes/agents.ts opened a pg Pool at module load; an idle pool
 // keeps the event loop alive, so exit explicitly rather than hang on green.

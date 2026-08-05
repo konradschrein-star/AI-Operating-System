@@ -54,6 +54,11 @@ export interface SubagentRow {
   status: "running" | "done";
 }
 
+/** Mirrors `AgentKind` in forge-control/src/routes/agents.ts:585. Kept as a
+ *  literal union rather than imported — this module must not reach across
+ *  repos, and the wire contract is exactly these four strings. */
+export type AgentKind = "operator" | "worker" | "cron" | "unknown";
+
 export interface AgentRow {
   /** System-B forge-control task — its own `claude` process, survives session
    *  cycles. Top-level rows in the Live panel; System-A subagents nest under. */
@@ -83,6 +88,23 @@ export interface AgentRow {
   usage_running?: AgentUsage;
   current_activity: CurrentActivity | null;
   parent_run_id: string | null;
+  /* ── Kind truth (R7) ────────────────────────────────────────────────
+   * These four are OPTIONAL on purpose, and the difference matters.
+   * `agent_kind` and friends ship in the same phase-2 server change that
+   * this panel reads them from, but client and server deploy together only
+   * at phase 5 — until then production :7700 answers without them. Typing
+   * them as required would make `agentKindOf`'s fallback look like dead
+   * code to the compiler while the running UI silently rendered
+   * `undefined`. Optional here means: the panel must state "unknown", not
+   * guess. */
+  agent_kind?: AgentKind;
+  /** Project worker role from `metadata.role` — architect/planner/scout/
+   *  researcher/builder/reviewer. Null on anything that isn't a worker. */
+  role?: string | null;
+  project_id?: string | null;
+  /** The schedule's human name ("weekly-review"); `cron_id` is what
+   *  classifies the row, this is display only. */
+  cron_name?: string | null;
   subagents?: SubagentRow[];
 }
 
@@ -176,6 +198,137 @@ export function subagentElapsedMs(s: SubagentRow, now: number): number | null {
   );
   if (!Number.isFinite(settledAt)) return null;
   return Math.max(0, settledAt - started);
+}
+
+/* ── Kind grammar ─────────────────────────────────────────────────────────
+ *
+ * The vocabulary the panel uses to say what a row IS. Pure, React-free and
+ * token-free for the same reason the duration helpers are: `check-classify.ts`
+ * imports this file directly under tsx, with no bundler and no DOM.
+ *
+ * Colours are therefore expressed as token NAMES (`"decide"`, `"info"`, …)
+ * rather than `tokens.decide` strings. AgentActivity.tsx maps a name to the
+ * real token in one place. One map, one source of truth, and the check script
+ * can still assert the fallback for an unseen role — which it could not if the
+ * map lived inside the React module.
+ */
+
+const AGENT_KINDS: ReadonlySet<string> = new Set([
+  "operator",
+  "worker",
+  "cron",
+  "unknown",
+]);
+
+/** The row's kind, or an honest "unknown".
+ *
+ *  Both failure modes map to the same answer and both are real: the field is
+ *  absent (pre-phase-5 production), or it carries a string this build does not
+ *  know (a server ahead of the client). Never infer a kind from `worker` or
+ *  `title` as a consolation prize — a guessed org chart is worse than a blank
+ *  one, because it cannot be told apart from a correct one. */
+export function agentKindOf(a: AgentRow): AgentKind {
+  const k = a.agent_kind;
+  if (typeof k === "string" && AGENT_KINDS.has(k)) return k;
+  return "unknown";
+}
+
+/** Rendered when there is no honest value — same glyph `humanDuration` uses. */
+const EM_DASH = "—";
+
+/** Bare model families with no version. `claude-opus-5` names one model;
+ *  `opus` names whatever the alias resolved to that day, which for the 108
+ *  legacy rows carrying one we can no longer recover. They render faint
+ *  (R8): legible, but visibly less precise than a resolved id. */
+const MODEL_ALIASES: ReadonlySet<string> = new Set([
+  "haiku",
+  "sonnet",
+  "opus",
+  "fable",
+]);
+
+/** Strip the vendor prefix a Claude model id always carries. */
+const CLAUDE_PREFIX = /^claude-/;
+/** Trailing snapshot date: `claude-haiku-4-5-20251001` → `haiku-4-5`. */
+const SNAPSHOT_DATE = /-\d{8}$/;
+
+/** Display form of a model id. Mechanical, not a lookup table — a model this
+ *  build has never heard of must still render as itself.
+ *
+ *    claude-fable-5             → fable-5
+ *    claude-haiku-4-5-20251001  → haiku-4-5
+ *    haiku                      → haiku      (alias; render faint)
+ *    gpt-5-whatever             → gpt-5-whatever   (verbatim)
+ *    null                       → —
+ *
+ *  Never returns an empty string: a pathological id like "claude-" keeps its
+ *  raw form rather than collapsing into a blank column. */
+export function modelDisplay(model: string | null | undefined): string {
+  if (model == null) return EM_DASH;
+  const raw = model.trim();
+  if (!raw) return EM_DASH;
+  const display = raw.replace(CLAUDE_PREFIX, "").replace(SNAPSHOT_DATE, "");
+  return display || raw;
+}
+
+/** True for a bare family alias — with or without the `claude-` prefix. */
+export function isModelAlias(model: string | null | undefined): boolean {
+  if (model == null) return false;
+  return MODEL_ALIASES.has(model.trim().toLowerCase().replace(CLAUDE_PREFIX, ""));
+}
+
+/** The six project roles — forge-control/src/routes/projects.ts:24-30.
+ *
+ *  Deliberately `Record<string, …>` and not keyed by app/api.ts's `TaskRole`:
+ *  that union has no `researcher`, and two surfaces hold exhaustive
+ *  `Record<TaskRole, string>` maps that widening it would break. The panel
+ *  owns its own vocabulary and treats an unseen role as data, not as an
+ *  error — `scout` and `researcher` have no rows in the database yet, and the
+ *  first one ever spawned must render as itself rather than as a blank. */
+export const ROLE_LABEL: Record<string, string> = {
+  architect: "architect",
+  planner: "planner",
+  scout: "scout",
+  researcher: "researcher",
+  builder: "builder",
+  reviewer: "reviewer",
+};
+
+/** Label for a role: known roles from the map, unseen roles verbatim, absent
+ *  role as the em dash. */
+export function roleLabel(role: string | null | undefined): string {
+  if (!role) return EM_DASH;
+  return ROLE_LABEL[role] ?? role;
+}
+
+/** Token names, not token values — see the section header. */
+export type RoleTokenName =
+  | "decide"
+  | "info"
+  | "accent"
+  | "warn"
+  | "textMuted2"
+  | "ok"
+  | "textMuted";
+
+/** Per-role colour. Chosen so the four roles that actually run today are
+ *  distinguishable at a glance in both palettes: architect decides (decide),
+ *  planner informs (info), builder is the live-work colour (accent), reviewer
+ *  is the one who says stop (warn). `scout`/`researcher` have no rows yet and
+ *  take the two remaining neutral-ish tokens. */
+export const ROLE_TOKEN: Record<string, RoleTokenName> = {
+  architect: "decide",
+  planner: "info",
+  builder: "accent",
+  reviewer: "warn",
+  scout: "textMuted2",
+  researcher: "ok",
+};
+
+/** Colour token for a role, `textMuted` for an unseen or absent one. */
+export function roleTokenName(role: string | null | undefined): RoleTokenName {
+  if (!role) return "textMuted";
+  return ROLE_TOKEN[role] ?? "textMuted";
 }
 
 export interface Manager {
