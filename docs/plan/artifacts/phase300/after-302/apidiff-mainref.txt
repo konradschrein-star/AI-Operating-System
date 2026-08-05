@@ -1,0 +1,166 @@
+DRIFT agents — rows in baseline, gone now: ["d7af093b-75e6-43c7-91c1-4d5031704fd1","316a4c7b-87b8-4760-b334-2cdff1dd672e","fea38ac9-5f53-41b5-9c50-263fe869a6e1","2beee357-f197-46a1-9e9f-f9cce179878a","aa90a16a-f138-4eeb-a613-9db36570d852","3db8c3f5-be12-4ef0-9af4-b33f5c02b22a","4790469b-5786-4c0c-9f1a-1d8265baad62","33be4c62-851f-4b0b-b721-6cf05d719886","a7e83a0e-bc9f-4bfc-8284-03c62047a4ca","8c625bb5-7c15-488b-af3c-3cec68d19d1b"]
+DRIFT agents — rows new since baseline: ["4eb314c0-1ae1-45d9-85da-ee688d7e100c","904e5001-f0e6-4a14-af36-300766b1bbc0","0faca9b9-0357-439e-bd29-4f465771ee3c","f6a21983-b055-4314-a818-9fae1fc8cf14","fb54c4ff-09c8-4e2d-8f93-fb11e72f3469","38328342-a1b7-4cc8-9701-d84245facd6b","faa385b7-b356-42cc-84e6-9a2393b839d0","03e54ad6-bbab-4bc5-bf26-5a431973d7c0","4ba0bf95-7e16-45f8-86ac-82616dd3f181","888b2031-9e0f-4e2c-bf86-80b2ed13e6a4"]
+FAIL  agents — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:10.434858379 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:10.434858379 +0200
+        @@ -1,7 +1,5 @@
+         agents
+         agents.[]
+        -agents.[].agent_kind
+        -agents.[].cron_name
+         agents.[].current_activity
+         agents.[].cwd
+         agents.[].effort
+        @@ -12,10 +10,6 @@
+         agents.[].last_heartbeat_at
+         agents.[].model
+         agents.[].parent_run_id
+        -agents.[].project_id
+        -agents.[].role
+        -agents.[].settled
+        -agents.[].settled_at
+         agents.[].spent_usd
+         agents.[].started_at
+         agents.[].status
+DRIFT agents-project — rows new since baseline: ["0faca9b9-0357-439e-bd29-4f465771ee3c","03e54ad6-bbab-4bc5-bf26-5a431973d7c0"]
+FAIL  agents-project — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:10.489858813 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:10.489858813 +0200
+        @@ -1,7 +1,5 @@
+         agents
+         agents.[]
+        -agents.[].agent_kind
+        -agents.[].cron_name
+         agents.[].current_activity
+         agents.[].cwd
+         agents.[].effort
+        @@ -12,10 +10,6 @@
+         agents.[].last_heartbeat_at
+         agents.[].model
+         agents.[].parent_run_id
+        -agents.[].project_id
+        -agents.[].role
+        -agents.[].settled
+        -agents.[].settled_at
+         agents.[].spent_usd
+         agents.[].started_at
+         agents.[].status
+FAIL  agents-run — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:10.503858924 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:10.503858924 +0200
+        @@ -1,13 +1,5 @@
+         agent
+        -agent.agent_kind
+        -agent.cron_name
+         agent.current_activity
+        -agent.current_activity.kind
+        -agent.current_activity.model
+        -agent.current_activity.parent_tool_use_id
+        -agent.current_activity.text
+        -agent.current_activity.tool
+        -agent.current_activity.ts
+         agent.cwd
+         agent.effort
+         agent.elapsed_ms
+        @@ -17,54 +9,14 @@
+         agent.last_heartbeat_at
+         agent.model
+         agent.parent_run_id
+        -agent.project_id
+        -agent.role
+        -agent.settled
+        -agent.settled_at
+         agent.spent_usd
+         agent.started_at
+         agent.status
+         agent.subagents
+        -agent.subagents.[]
+        -agent.subagents.[].description
+        -agent.subagents.[].ended_at
+        -agent.subagents.[].event_count
+        -agent.subagents.[].kind
+        -agent.subagents.[].latest_activity
+        -agent.subagents.[].latest_activity.kind
+        -agent.subagents.[].latest_activity.text
+        -agent.subagents.[].latest_activity.tool
+        -agent.subagents.[].latest_activity.ts
+        -agent.subagents.[].model
+        -agent.subagents.[].role
+        -agent.subagents.[].started_at
+        -agent.subagents.[].status
+        -agent.subagents.[].tool_use_id
+        -agent.subagents.[].updated_at
+        -agent.subagents.[].usage
+        -agent.subagents.[].usage.cache_creation_input_tokens
+        -agent.subagents.[].usage.cache_read_input_tokens
+        -agent.subagents.[].usage.input_tokens
+        -agent.subagents.[].usage.output_tokens
+         agent.title
+         agent.updated_at
+         agent.usage_by_model
+         agent.usage_last_turn
+        -agent.usage_last_turn.cache_creation_input_tokens
+        -agent.usage_last_turn.cache_read_input_tokens
+        -agent.usage_last_turn.input_tokens
+        -agent.usage_last_turn.output_tokens
+         agent.usage_running
+        -agent.usage_running.cache_creation_input_tokens
+        -agent.usage_running.cache_read_input_tokens
+        -agent.usage_running.input_tokens
+        -agent.usage_running.output_tokens
+         agent.usage_total
+        -agent.usage_total.cache_creation_input_tokens
+        -agent.usage_total.cache_read_input_tokens
+        -agent.usage_total.cost_usd
+        -agent.usage_total.input_tokens
+        -agent.usage_total.output_tokens
+        -agent.usage_total.thinking_tokens
+        -agent.usage_total.turns
+         agent.worker
+FAIL  chat-list — normalized VALUES differ
+        --- /tmp/api-diff.b9GUPF/chat-list.base.norm	2026-08-05 16:00:10.539859208 +0200
+        +++ /tmp/api-diff.b9GUPF/chat-list.cur.norm	2026-08-05 16:00:10.542859232 +0200
+        @@ -46,14 +46,14 @@
+               "budget_usd": "0.00",
+               "created_at": "2026-08-04 22:40:19.793779+00",
+               "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        -      "last_heartbeat_at": "2026-08-05 13:03:04.037042+00",
+        -      "last_message_preview": "Done — task `abd02030` injected into engine-v2 (round 860): the engine will learn to recognize a usage-wall death, park the affected tasks with staged backoff i",
+        +      "last_heartbeat_at": "2026-08-05 13:56:55.332778+00",
+        +      "last_message_preview": "See you in a few hours. What's set up for the stretch: - **Both projects are running** — engine-v2 building the Perplexity/Gemini research scripts, operator-vis",
+               "last_role": "assistant",
+        -      "message_count": 314,
+        -      "spent_usd": "49.92",
+        +      "message_count": 354,
+        +      "spent_usd": "55.44",
+               "status": "completed",
+               "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov",
+        -      "updated_at": "2026-08-05 13:03:04.037042+00",
+        +      "updated_at": "2026-08-05 13:56:55.332778+00",
+               "worker": "forge-executor"
+             },
+             {
+FAIL  chat-thread — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:10.583859556 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:10.583859556 +0200
+        @@ -42,12 +42,15 @@
+         run.thread.[].content
+         run.thread.[].kind
+         run.thread.[].meta
+        +run.thread.[].meta.blocked_by
+         run.thread.[].meta.input
+         run.thread.[].meta.is_error
+         run.thread.[].meta.model
+         run.thread.[].meta.provider
+        +run.thread.[].meta.rule_label
+         run.thread.[].meta.tool
+         run.thread.[].meta.tool_use_id
+        +run.thread.[].meta.trip_id
+         run.thread.[].meta.usage
+         run.thread.[].meta.usage.cache_creation_input_tokens
+         run.thread.[].meta.usage.cache_read_input_tokens
+ok    projects — key set identical, normalized values byte-equal
+ok    projects-managers — key set identical, normalized values byte-equal
+ok    secrets — key set identical, normalized values byte-equal
+
+api-diff.sh: FAILED — the read-side API changed. See the diffs above.

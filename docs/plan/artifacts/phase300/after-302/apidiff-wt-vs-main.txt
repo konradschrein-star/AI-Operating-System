@@ -1,0 +1,123 @@
+FAIL  agents — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:22.268951897 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:22.268951897 +0200
+        @@ -1,5 +1,7 @@
+         agents
+         agents.[]
+        +agents.[].agent_kind
+        +agents.[].cron_name
+         agents.[].current_activity
+         agents.[].cwd
+         agents.[].effort
+        @@ -10,6 +12,10 @@
+         agents.[].last_heartbeat_at
+         agents.[].model
+         agents.[].parent_run_id
+        +agents.[].project_id
+        +agents.[].role
+        +agents.[].settled
+        +agents.[].settled_at
+         agents.[].spent_usd
+         agents.[].started_at
+         agents.[].status
+FAIL  agents-project — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:22.327952363 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:22.327952363 +0200
+        @@ -1,5 +1,7 @@
+         agents
+         agents.[]
+        +agents.[].agent_kind
+        +agents.[].cron_name
+         agents.[].current_activity
+         agents.[].cwd
+         agents.[].effort
+        @@ -10,6 +12,10 @@
+         agents.[].last_heartbeat_at
+         agents.[].model
+         agents.[].parent_run_id
+        +agents.[].project_id
+        +agents.[].role
+        +agents.[].settled
+        +agents.[].settled_at
+         agents.[].spent_usd
+         agents.[].started_at
+         agents.[].status
+FAIL  agents-run — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:22.342952482 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:22.342952482 +0200
+        @@ -1,5 +1,13 @@
+         agent
+        +agent.agent_kind
+        +agent.cron_name
+         agent.current_activity
+        +agent.current_activity.kind
+        +agent.current_activity.model
+        +agent.current_activity.parent_tool_use_id
+        +agent.current_activity.text
+        +agent.current_activity.tool
+        +agent.current_activity.ts
+         agent.cwd
+         agent.effort
+         agent.elapsed_ms
+        @@ -9,14 +17,54 @@
+         agent.last_heartbeat_at
+         agent.model
+         agent.parent_run_id
+        +agent.project_id
+        +agent.role
+        +agent.settled
+        +agent.settled_at
+         agent.spent_usd
+         agent.started_at
+         agent.status
+         agent.subagents
+        +agent.subagents.[]
+        +agent.subagents.[].description
+        +agent.subagents.[].ended_at
+        +agent.subagents.[].event_count
+        +agent.subagents.[].kind
+        +agent.subagents.[].latest_activity
+        +agent.subagents.[].latest_activity.kind
+        +agent.subagents.[].latest_activity.text
+        +agent.subagents.[].latest_activity.tool
+        +agent.subagents.[].latest_activity.ts
+        +agent.subagents.[].model
+        +agent.subagents.[].role
+        +agent.subagents.[].started_at
+        +agent.subagents.[].status
+        +agent.subagents.[].tool_use_id
+        +agent.subagents.[].updated_at
+        +agent.subagents.[].usage
+        +agent.subagents.[].usage.cache_creation_input_tokens
+        +agent.subagents.[].usage.cache_read_input_tokens
+        +agent.subagents.[].usage.input_tokens
+        +agent.subagents.[].usage.output_tokens
+         agent.title
+         agent.updated_at
+         agent.usage_by_model
+         agent.usage_last_turn
+        +agent.usage_last_turn.cache_creation_input_tokens
+        +agent.usage_last_turn.cache_read_input_tokens
+        +agent.usage_last_turn.input_tokens
+        +agent.usage_last_turn.output_tokens
+         agent.usage_running
+        +agent.usage_running.cache_creation_input_tokens
+        +agent.usage_running.cache_read_input_tokens
+        +agent.usage_running.input_tokens
+        +agent.usage_running.output_tokens
+         agent.usage_total
+        +agent.usage_total.cache_creation_input_tokens
+        +agent.usage_total.cache_read_input_tokens
+        +agent.usage_total.cost_usd
+        +agent.usage_total.input_tokens
+        +agent.usage_total.output_tokens
+        +agent.usage_total.thinking_tokens
+        +agent.usage_total.turns
+         agent.worker
+ok    chat-list — key set identical, normalized values byte-equal
+ok    chat-thread — key set identical, normalized values byte-equal
+ok    projects — key set identical, normalized values byte-equal
+ok    projects-managers — key set identical, normalized values byte-equal
+ok    secrets — key set identical, normalized values byte-equal
+
+api-diff.sh: FAILED — the read-side API changed. See the diffs above.

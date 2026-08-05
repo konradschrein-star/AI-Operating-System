@@ -1,0 +1,64 @@
+── capturing from http://127.0.0.1:7798
+ok    agents             /api/agents                                                  123401 bytes
+ok    agents-project     /api/agents?project_id=8ea0cc08-28d9-4301-9f28-c98e1c5d6838  36395 bytes
+ok    agents-run         /api/agents/3853c154-e07b-4378-9313-2b34f4a33342             3655 bytes
+ok    chat-list          /api/chat?limit=5                                            3939 bytes
+ok    chat-thread        /api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2               461457 bytes
+ok    projects-managers  /api/projects/managers                                       706 bytes
+ok    projects           /api/projects                                                30904 bytes
+ok    secrets            /api/secrets                                                 1391 bytes
+captured 8 endpoints from http://127.0.0.1:7798 into /tmp/api-diff.ypM0HT/current
+
+DRIFT agents — rows in baseline, gone now: ["d7af093b-75e6-43c7-91c1-4d5031704fd1","316a4c7b-87b8-4760-b334-2cdff1dd672e","fea38ac9-5f53-41b5-9c50-263fe869a6e1","2beee357-f197-46a1-9e9f-f9cce179878a","aa90a16a-f138-4eeb-a613-9db36570d852","3db8c3f5-be12-4ef0-9af4-b33f5c02b22a","4790469b-5786-4c0c-9f1a-1d8265baad62","33be4c62-851f-4b0b-b721-6cf05d719886","a7e83a0e-bc9f-4bfc-8284-03c62047a4ca","8c625bb5-7c15-488b-af3c-3cec68d19d1b"]
+DRIFT agents — rows new since baseline: ["4eb314c0-1ae1-45d9-85da-ee688d7e100c","904e5001-f0e6-4a14-af36-300766b1bbc0","0faca9b9-0357-439e-bd29-4f465771ee3c","f6a21983-b055-4314-a818-9fae1fc8cf14","fb54c4ff-09c8-4e2d-8f93-fb11e72f3469","38328342-a1b7-4cc8-9701-d84245facd6b","faa385b7-b356-42cc-84e6-9a2393b839d0","03e54ad6-bbab-4bc5-bf26-5a431973d7c0","4ba0bf95-7e16-45f8-86ac-82616dd3f181","888b2031-9e0f-4e2c-bf86-80b2ed13e6a4"]
+ok    agents — key set identical, normalized values byte-equal
+DRIFT agents-project — rows new since baseline: ["0faca9b9-0357-439e-bd29-4f465771ee3c","03e54ad6-bbab-4bc5-bf26-5a431973d7c0"]
+ok    agents-project — key set identical, normalized values byte-equal
+ok    agents-run — key set identical, normalized values byte-equal
+FAIL  chat-list — normalized VALUES differ
+        --- /tmp/api-diff.ypM0HT/chat-list.base.norm	2026-08-05 16:00:46.313141905 +0200
+        +++ /tmp/api-diff.ypM0HT/chat-list.cur.norm	2026-08-05 16:00:46.316141929 +0200
+        @@ -46,14 +46,14 @@
+               "budget_usd": "0.00",
+               "created_at": "2026-08-04 22:40:19.793779+00",
+               "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        -      "last_heartbeat_at": "2026-08-05 13:03:04.037042+00",
+        -      "last_message_preview": "Done — task `abd02030` injected into engine-v2 (round 860): the engine will learn to recognize a usage-wall death, park the affected tasks with staged backoff i",
+        +      "last_heartbeat_at": "2026-08-05 13:56:55.332778+00",
+        +      "last_message_preview": "See you in a few hours. What's set up for the stretch: - **Both projects are running** — engine-v2 building the Perplexity/Gemini research scripts, operator-vis",
+               "last_role": "assistant",
+        -      "message_count": 314,
+        -      "spent_usd": "49.92",
+        +      "message_count": 354,
+        +      "spent_usd": "55.44",
+               "status": "completed",
+               "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov",
+        -      "updated_at": "2026-08-05 13:03:04.037042+00",
+        +      "updated_at": "2026-08-05 13:56:55.332778+00",
+               "worker": "forge-executor"
+             },
+             {
+FAIL  chat-thread — KEY SET changed (a field was added, removed or renamed)
+        --- /dev/fd/63	2026-08-05 16:00:46.356142245 +0200
+        +++ /dev/fd/62	2026-08-05 16:00:46.356142245 +0200
+        @@ -42,12 +42,15 @@
+         run.thread.[].content
+         run.thread.[].kind
+         run.thread.[].meta
+        +run.thread.[].meta.blocked_by
+         run.thread.[].meta.input
+         run.thread.[].meta.is_error
+         run.thread.[].meta.model
+         run.thread.[].meta.provider
+        +run.thread.[].meta.rule_label
+         run.thread.[].meta.tool
+         run.thread.[].meta.tool_use_id
+        +run.thread.[].meta.trip_id
+         run.thread.[].meta.usage
+         run.thread.[].meta.usage.cache_creation_input_tokens
+         run.thread.[].meta.usage.cache_read_input_tokens
+ok    projects — key set identical, normalized values byte-equal
+ok    projects-managers — key set identical, normalized values byte-equal
+ok    secrets — key set identical, normalized values byte-equal
+
+api-diff.sh: FAILED — the read-side API changed. See the diffs above.
