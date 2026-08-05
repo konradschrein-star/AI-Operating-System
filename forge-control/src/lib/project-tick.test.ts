@@ -24,6 +24,8 @@ import {
   DEPLOY_GUIDE,
   GITHUB_PUSH_GUIDE,
   RESEARCH_INSTRUMENTS,
+  ESCALATION_POLICY,
+  BROWSER_FIRST,
   parseRoleFile,
   roleFilePaths,
   readRoleFile,
@@ -241,7 +243,7 @@ describe("T10 prompt policy", () => {
     );
   });
 
-  test("force-free contract: none of the four policy constants ever teach a force push", () => {
+  test("force-free contract: no policy constant ever teaches a force push", () => {
     // GITHUB_PUSH_GUIDE legitimately names "--force" and "--force-with-lease"
     // in order to PROHIBIT them ("NEVER force-push, never `--force`, never
     // `--force-with-lease`") — a blanket substring-absence check would fail
@@ -250,12 +252,17 @@ describe("T10 prompt policy", () => {
     // parenthetical, "the guidance must never teach a force push") is that no
     // constant ever instructs RUNNING one: no "push --force", "push -f", or
     // "--force-with-lease" appearing as part of an actual command to execute.
+    //
+    // ESCALATION_POLICY joined the list at R870: it names force-pushing over
+    // shared history as an escalation trigger, which is a prohibition of the
+    // same family — it must never read as an instruction either.
     const FORCE_COMMAND_RE = /push\s+(--force(-with-lease)?|-f\b)/i;
     const texts = [
       WORKTREE_POLICY("/opt/forge-ai-os"),
       REVIEWER_LIVE_CHECK("/opt/forge-ai-os"),
       DEPLOY_GUIDE,
       GITHUB_PUSH_GUIDE,
+      ESCALATION_POLICY,
     ];
     for (const text of texts) {
       assert.ok(!FORCE_COMMAND_RE.test(text), `policy text must never instruct running a force push: ${text}`);
@@ -724,5 +731,249 @@ describe("T16 researcher browser lane", () => {
       /--backend browser/,
       "the prompt must still name the fallback for logged-in work",
     );
+  });
+});
+
+/**
+ * T18 — the escalation protocol reaches every role (R870).
+ *
+ * Konrad set the fleet-wide autonomy rule on 2026-08-05: autonomous by default,
+ * escalate on exactly two things (irreversible/boundary-crossing actions, and
+ * preference decisions on build-once-use-many work). A policy that reaches six
+ * of eight roles is not a fleet-wide policy, so the interesting assertion is the
+ * exhaustive one: ESCALATION_POLICY must appear in the prompt of EVERY member of
+ * TaskRole, on a repo-backed project and on a scratch one alike.
+ *
+ * ROLES above deliberately lists only the roles with a prompt branch of their
+ * own. This suite uses ALL_TASK_ROLES instead — built through a
+ * `satisfies Record<TaskRole, true>` so that adding a role to the union is a
+ * COMPILE error here, not a silently unchecked role at 3am.
+ */
+const ALL_TASK_ROLES = Object.keys({
+  architect: true,
+  planner: true,
+  scout: true,
+  researcher: true,
+  builder: true,
+  reviewer: true,
+  steward: true,
+  tester: true,
+} satisfies Record<TaskRole, true>) as TaskRole[];
+
+describe("T18 escalation protocol", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const POLICY_DOC = "docs/plan/10-policy-agent-autonomy-and-escalation.md";
+  const VAULT_DOC = "/opt/obsidian-vault/AI OS/Policy - Agent Autonomy and Escalation.md";
+
+  test("the premise: ALL_TASK_ROLES really is every role, including the branchless ones", () => {
+    // steward has no branch in buildPrompt and falls through to the bare
+    // header — exactly the kind of role a hand-maintained list forgets.
+    assert.equal(ALL_TASK_ROLES.length, 8);
+    for (const role of ROLES) {
+      assert.ok(ALL_TASK_ROLES.includes(role), `ALL_TASK_ROLES is missing ${role}`);
+    }
+    assert.ok(ALL_TASK_ROLES.includes("steward"), "steward has no prompt branch — it is the point");
+  });
+
+  test("every role on every repo carries ESCALATION_POLICY", () => {
+    for (const repo of ["ai-os", "content-forge", "scratch"] as const) {
+      const proj = project({ repo });
+      for (const role of ALL_TASK_ROLES) {
+        const prompt = buildPrompt(task({ role }), proj);
+        assert.ok(
+          prompt.includes(ESCALATION_POLICY),
+          `role ${role} on repo '${repo}' is missing ESCALATION_POLICY`,
+        );
+      }
+    }
+  });
+
+  test("scratch projects get the escalation policy even though they get no worktree policy", () => {
+    // The wrapper gates WORKTREE_POLICY on a live checkout. Reusing that gate
+    // for R870 would have been the easy mistake: a scratch project can still
+    // spend real money, mail someone as Konrad, or burn his attention on a
+    // question a browser would have answered.
+    const proj = project({ repo: "scratch" });
+    for (const role of ALL_TASK_ROLES) {
+      const prompt = buildPrompt(task({ role }), proj);
+      assert.ok(prompt.includes(ESCALATION_POLICY), `scratch ${role} lost ESCALATION_POLICY`);
+      assert.ok(
+        !prompt.includes(WORKTREE_POLICY("/opt/forge-ai-os")),
+        `scratch ${role} gained a worktree policy it has no checkout for`,
+      );
+    }
+  });
+
+  test("all four clauses of the policy survive into the rendered prompt", () => {
+    // Asserted through a real prompt, not against the constant, so a future
+    // wrapper change that drops or truncates the block fails here too.
+    const prompt = buildPrompt(task({ role: "builder" }), project({ repo: "ai-os" }));
+    // 1) autonomy by default, with a browser named as the way to resolve unknowns.
+    assert.match(prompt, /AUTONOMY IS THE DEFAULT/);
+    assert.match(
+      prompt,
+      /NEVER ask Konrad something research would have answered/,
+      "the failure mode has to be named, or 'be autonomous' reads as encouragement",
+    );
+    assert.ok(
+      ESCALATION_POLICY.includes("scripts/research-browser.mjs"),
+      "clause 1 must name a browser that actually exists on this host",
+    );
+    assert.ok(
+      existsSync(`${repoRoot}scripts/research-browser.mjs`),
+      "ESCALATION_POLICY names scripts/research-browser.mjs but it is not in this checkout",
+    );
+    // The vault note says "playwright / auto-browser"; auto-browser's controller
+    // is not installed here (docs/tools/research-browser.md §2.1), so the
+    // condensed policy must not send agents at it.
+    assert.ok(
+      ESCALATION_POLICY.includes("playwright-skill"),
+      "clause 1 must name the skill-based browser path for roles holding Skill",
+    );
+    assert.ok(
+      !ESCALATION_POLICY.includes("auto-browser"),
+      "auto-browser does not work on this host — naming it would send agents at a dead end",
+    );
+    // 2) irreversible / boundary-crossing actions, each trigger Konrad named.
+    for (const trigger of [
+      "SSH keys",
+      "deleting accounts",
+      "force-pushing over shared history",
+      "outbound communication as Konrad",
+      "spending real money",
+      "business system in production",
+      "third party",
+    ]) {
+      assert.ok(prompt.includes(trigger), `clause 2 is missing the trigger "${trigger}"`);
+    }
+    assert.match(
+      ESCALATION_POLICY,
+      /ESCALATE BEFORE an irreversible or boundary-crossing action/,
+      "clause 2 must be BEFORE-worded — asking afterwards is a report, not an escalation",
+    );
+    // 3) preference/design decisions on build-once-use-many work.
+    assert.match(prompt, /build-once-use-many/);
+    for (const kind of ["interaction models", "schemas", "naming conventions", "workflow shapes"]) {
+      assert.ok(prompt.includes(kind), `clause 3 is missing the decision kind "${kind}"`);
+    }
+    assert.match(
+      prompt,
+      /Restate the model in 2-3 sentences/,
+      "clause 3 must specify the SHAPE of the ask, not just that one is owed",
+    );
+    assert.match(
+      prompt,
+      /state the default you will take if he does not answer/,
+      "an ask with no stated default blocks the task on a reply",
+    );
+    // 4) the mechanism.
+    assert.ok(
+      prompt.includes("http://127.0.0.1:7700/api/reminders"),
+      "clause 4 must give the real endpoint",
+    );
+    assert.match(prompt, /"when":"in 1m"/, "clause 4 must give a `when` the API accepts");
+    assert.match(
+      prompt,
+      /Max 500 chars per reminder/,
+      "the 500-char cap is a hard 400 from the API — an agent that does not know it loses the ask",
+    );
+    assert.match(
+      prompt,
+      /KEEP WORKING on everything that does not depend on the answer/,
+      "without this an escalation becomes an early exit",
+    );
+  });
+
+  test("the policy doc is committed for agents without vault access, verbatim", (t) => {
+    const committed = readFileSync(`${repoRoot}${POLICY_DOC}`, "utf8");
+    assert.ok(committed.length > 0, `${POLICY_DOC} is empty`);
+    assert.ok(
+      ESCALATION_POLICY.includes(POLICY_DOC),
+      "the prompt must point at the committed copy, or the full policy is unreachable from a run",
+    );
+    // The condensed prompt and the doc must agree on the two escalation
+    // categories; the doc is the authority the prompt defers to.
+    assert.match(committed, /irreversible or boundary-crossing actions/);
+    assert.match(committed, /preference and design decisions on load-bearing work/);
+    assert.ok(
+      committed.includes("http://127.0.0.1:7700/api/reminders"),
+      "the doc must carry the same mechanism the prompt does",
+    );
+
+    // Verbatim against the vault original where the vault is readable. A run
+    // inside a container without the vault mount says so out loud rather than
+    // passing quietly on an unchecked claim.
+    if (!existsSync(VAULT_DOC)) {
+      t.diagnostic(`${VAULT_DOC} not readable here — verbatim-ness unchecked this run`);
+      return;
+    }
+    assert.equal(
+      committed,
+      readFileSync(VAULT_DOC, "utf8"),
+      `${POLICY_DOC} has drifted from the vault note it copies — it is meant to be verbatim`,
+    );
+  });
+
+  test("BROWSER_FIRST reaches scout and builder; the researcher has its own instrument block", () => {
+    // Scope is the contract, exactly as for RESEARCH_INSTRUMENTS: these are the
+    // roles that meet unknowns while working. A reviewer or planner that grew
+    // the block would be prompt bloat with no matching behaviour.
+    const proj = project({ repo: "ai-os" });
+    for (const role of ["scout", "builder"] as const) {
+      assert.ok(
+        buildPrompt(task({ role }), proj).includes(BROWSER_FIRST),
+        `role ${role} is missing BROWSER_FIRST`,
+      );
+    }
+    for (const role of ALL_TASK_ROLES.filter((r) => r !== "scout" && r !== "builder")) {
+      assert.ok(
+        !buildPrompt(task({ role }), proj).includes(BROWSER_FIRST),
+        `role ${role} carries BROWSER_FIRST — it belongs to the roles that meet unknowns hands-on`,
+      );
+    }
+    // The researcher's equivalent is the fuller RESEARCH_INSTRUMENTS block plus
+    // an explicit first-resort clause in its own branch.
+    const researcherPrompt = buildPrompt(task({ role: "researcher" }), proj);
+    assert.ok(researcherPrompt.includes(RESEARCH_INSTRUMENTS));
+    assert.match(
+      researcherPrompt,
+      /is the FIRST resort, not the last/,
+      "the researcher must be told the browser is a first move, not a last-ditch one",
+    );
+  });
+
+  test("BROWSER_FIRST quotes a real invocation and forbids credential attempts", () => {
+    assert.ok(
+      BROWSER_FIRST.includes("scripts/research-browser.mjs open scratch --url"),
+      "an unrunnable example is worse than none",
+    );
+    const help = execFileSync(
+      process.execPath,
+      [`${repoRoot}scripts/research-browser.mjs`, "--help"],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    for (const token of ["open <profile>", "--url", "--label", "scratch"]) {
+      assert.ok(
+        help.includes(token),
+        `research-browser --help no longer contains ${JSON.stringify(token)}, quoted by BROWSER_FIRST`,
+      );
+    }
+    assert.match(
+      BROWSER_FIRST,
+      /never attempt credentials/i,
+      "the login-wall boundary applies to every role that can open a browser",
+    );
+  });
+
+  test("the committed scout and builder role files name the browser too", () => {
+    // The engine's prompt is only half the surface: agents/*.md is what the
+    // interactive Task-tool subagents read, where no buildPrompt runs at all.
+    for (const role of ["scout", "builder"] as const) {
+      const mission = parseRoleFile(readFileSync(`${REPO_AGENTS_DIR}/${role}.md`, "utf8")).mission;
+      assert.ok(
+        mission.includes("scripts/research-browser.mjs"),
+        `agents/${role}.md does not name the browser as a way to resolve unknowns`,
+      );
+    }
   });
 });

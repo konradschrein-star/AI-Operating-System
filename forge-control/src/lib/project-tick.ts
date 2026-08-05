@@ -399,6 +399,65 @@ export const RESEARCH_INSTRUMENTS =
   `by hand over noVNC. Report it, carry on with the sources you can reach, and NEVER attempt credentials — ` +
   `no passwords, no signup, no "try the free tier".`;
 
+/** R870 — the browser as first resort, for the two roles that hit unknowns but
+ *  do NOT get the full RESEARCH_INSTRUMENTS block (which belongs to the
+ *  researcher alone, per T16). The escalation policy states the rule; this
+ *  states the reflex at the point of work, because "drive a browser" reads as
+ *  an abstract permission until a role is told what its own unknowns look like.
+ *  Deliberately shorter than RESEARCH_INSTRUMENTS: scout is a Haiku role and
+ *  builder's prompt is already long. */
+export const BROWSER_FIRST =
+  `BROWSER FIRST FOR UNKNOWNS. When a doc is missing, an API's behaviour is unclear, a page needs JS or a ` +
+  `login, or a service exists only as a web app: open a real browser before you guess or ask. ` +
+  `\`scripts/research-browser.mjs open scratch --url <URL> --label <what-you-are-checking>\` (read its ` +
+  `\`--help\` first; from another repo's worktree: /opt/forge-ai-os/scripts/) drives real Chrome with ` +
+  `persistent logged-in profiles, and the \`playwright-skill\` covers a one-off page needing scripted ` +
+  `interaction if you hold the Skill tool. A login wall is the one thing you do NOT solve yourself — the ` +
+  `tool screenshots it and queues Konrad; never attempt credentials. An unverified guess costs more than ` +
+  `the five minutes of browsing you skipped.`;
+
+/** R870 — the fleet-wide autonomy rule Konrad set on 2026-08-05, condensed from
+ *  the vault note "AI OS/Policy - Agent Autonomy and Escalation.md". The full
+ *  text is committed verbatim at docs/plan/10-policy-agent-autonomy-and-escalation.md
+ *  so an agent without vault access can still read the original.
+ *
+ *  Applied through withPolicy() for the same reason WORKTREE_POLICY is — a new
+ *  role branch that forgets to paste it is exactly the omission this shape
+ *  prevents. Unlike the worktree rule it is NOT gated on a live checkout: a
+ *  scratch project can still spend real money, mail someone as Konrad, or burn
+ *  Konrad's attention on a question a browser would have answered.
+ *
+ *  On the browser: the vault note names "playwright / auto-browser". The
+ *  auto-browser skill's controller is not installed on this host
+ *  (docs/tools/research-browser.md §2.1), so naming it as a working path would
+ *  send agents at a dead end — scripts/research-browser.mjs is the shipped
+ *  equivalent and, being a CLI, is reachable from every role that has Bash,
+ *  including scout, which holds no Skill tool. */
+export const ESCALATION_POLICY =
+  `AUTONOMY AND ESCALATION (fleet-wide, non-negotiable — full policy in ` +
+  `docs/plan/10-policy-agent-autonomy-and-escalation.md):\n` +
+  `1) AUTONOMY IS THE DEFAULT. Blocked on a login wall, a missing doc, an unclear API, a service that only ` +
+  `exists inside a browser? Go and find out: drive a real browser with \`scripts/research-browser.mjs\` ` +
+  `(shipped in this repo — real Chrome, persistent logged-in profiles, runnable from Bash by every role; ` +
+  `from another repo's worktree: /opt/forge-ai-os/scripts/), or the \`playwright-skill\` if you hold the ` +
+  `Skill tool. Read the real docs, call the real endpoint. NEVER ask Konrad something research would have ` +
+  `answered — that is a failure of the agent, not a service to him.\n` +
+  `2) ESCALATE BEFORE an irreversible or boundary-crossing action — ask first, act after his answer: ` +
+  `changing SSH keys, deleting accounts, destroying credentials or unbacked data, force-pushing over shared ` +
+  `history, sending outbound communication as Konrad, spending real money, touching a business system in ` +
+  `production, anything that affects a third party.\n` +
+  `3) ESCALATE ON PREFERENCE/DESIGN DECISIONS in build-once-use-many work when the brief does not actually ` +
+  `say what Konrad wants — UI interaction models, schemas, naming conventions, workflow shapes, defaults ` +
+  `everything downstream inherits. Do not guess plausibly; a plausible guess at an interaction model has ` +
+  `already cost a full build-review-deploy cycle. Restate the model in 2-3 sentences, ask the specific open ` +
+  `questions, and state the default you will take if he does not answer.\n` +
+  `4) HOW TO ASK — one curl, then carry on:\n` +
+  `    curl -sX POST http://127.0.0.1:7700/api/reminders -H 'content-type: application/json' ` +
+  `-d '{"text":"<which project/task you are, what you need, what you will do by default>","when":"in 1m"}'\n` +
+  `  Max 500 chars per reminder — a longer ask is rejected with 400, so split it into several. Then KEEP ` +
+  `WORKING on everything that does not depend on the answer. Never idle waiting for a reply, and never ` +
+  `end a task early because you asked a question.`;
+
 export function buildPrompt(task: ProjectTask, project: Project): string {
   const mission = roleConfig(task.role).mission;
   // null for scratch projects: no live checkout exists, so none of the
@@ -407,9 +466,13 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   const live = liveCheckoutPath(project.repo);
   // Wrap EVERY return through this rather than pasting the block into eight
   // branches — a new role branch that forgets the policy is exactly the kind
-  // of omission bug 3 was.
+  // of omission bug 3 was. R870 rides the same wrapper for the same reason,
+  // but unconditionally: WORKTREE_POLICY is meaningless without a live
+  // checkout, whereas the escalation rule binds a scratch project just as hard.
   const withPolicy = (body: string): string =>
-    live ? `${body}\n\n${WORKTREE_POLICY(live)}` : body;
+    live
+      ? `${body}\n\n${WORKTREE_POLICY(live)}\n\n${ESCALATION_POLICY}`
+      : `${body}\n\n${ESCALATION_POLICY}`;
   const header =
     `${mission}\n\n---\n\n` +
     `Project: ${project.name}\n` +
@@ -486,7 +549,10 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
     return withPolicy(
       header +
       `\nDeep research only — no implementation, no task creation. Use every research surface you have: ` +
-      `web search/fetch, the instruments below, and anything else your brief names. Write your ` +
+      `web search/fetch, the instruments below, and anything else your brief names. When a source will not ` +
+      `yield to WebFetch — a JS app, a login wall, a console-only service, a doc that 403s — a real browser ` +
+      `(scripts/research-browser.mjs below, or the \`playwright-skill\`) is the FIRST resort, not the last. ` +
+      `Write your ` +
       `findings to docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that ` +
       `one file. Findings must be concrete enough that a planner can act on them without repeating the research.\n\n` +
       `${RESEARCH_INSTRUMENTS}`
@@ -497,7 +563,8 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
       header +
       `\nResearch only — no implementation, no task creation. Write your findings to ` +
       `docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that one file. ` +
-      `Findings must be concrete enough that a planner can act on them without repeating the research.`
+      `Findings must be concrete enough that a planner can act on them without repeating the research.\n\n` +
+      `${BROWSER_FIRST}`
     );
   }
   if (task.role === "reviewer") {
@@ -541,7 +608,8 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
       header +
       `\nImplement this directly in the worktree (branch ${project.work_branch} is already checked out). ` +
       `Commit your changes with a clear message when done. Verify your own work before reporting done — run ` +
-      `the tests your brief names, and write the tests it asks for.`
+      `the tests your brief names, and write the tests it asks for.\n\n` +
+      `${BROWSER_FIRST}`
     );
   }
   return withPolicy(header);

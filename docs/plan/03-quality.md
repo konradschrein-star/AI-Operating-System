@@ -120,6 +120,31 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   assertion is about a real child process, which is the only thing that was ever in doubt.
   Also asserts the negative (no `runId` ⇒ both variables *deleted*, never inherited from the
   parent) and that `executor.ts` passes `runId: run.id`.
+- **T18 escalation protocol reaches every role** (added at R870),
+  `forge-control/src/lib/project-tick.test.ts`: `ESCALATION_POLICY` — the condensed form of
+  Konrad's 2026-08-05 autonomy rule, whose verbatim source is committed at
+  `docs/plan/10-policy-agent-autonomy-and-escalation.md` — appears in the built prompt of
+  **every member of `TaskRole`**, on `ai-os`, `content-forge` *and* `scratch`. The role list is
+  built through `satisfies Record<TaskRole, true>`, so adding a role to the union is a compile
+  error in the test rather than an unchecked role at 3am; it deliberately includes `steward`,
+  which has no branch in `buildPrompt()` and falls through to the bare header. The scratch case
+  is its own test: `withPolicy()` gates `WORKTREE_POLICY` on a live checkout and reusing that
+  gate for R870 would have been the easy mistake — a scratch project can still spend money or
+  burn Konrad's attention. All four clauses are asserted through a RENDERED prompt (autonomy
+  default + the browser named, every category-1 trigger Konrad listed, the build-once-use-many
+  wording with the "restate in 2-3 sentences / state your default" shape, and the reminders
+  curl with its 500-char cap and the keep-working clause). `BROWSER_FIRST` is scoped to scout
+  and builder — the researcher has the fuller `RESEARCH_INSTRUMENTS` plus a first-resort clause
+  in its own branch — its example invocation is checked against the shipped
+  `research-browser.mjs --help`, and `agents/scout.md` / `agents/builder.md` must name the
+  browser too, since the interactive Task-tool subagents read those files and never run
+  `buildPrompt()`. Note the T-number: T17 was already taken twice (R703's `cc-runner` suite and
+  R850's tester verdicts), so this suite is T18.
+  **Deviation from the vault note, deliberate:** the note says "playwright / auto-browser"; the
+  auto-browser controller is not installed on this host (`docs/tools/research-browser.md` §2.1),
+  so `ESCALATION_POLICY` names `scripts/research-browser.mjs` and `playwright-skill` instead,
+  and T18 asserts the string `auto-browser` never appears — pointing the fleet at a dead end
+  would defeat clause 1.
 
 ### 1.1 T13's install-parity case, amended at R703
 
