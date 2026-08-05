@@ -9,8 +9,10 @@
  *   GET  /api/canvas/stat?path=<rel>         → O(1) mtime for the polling fallback
  *   GET  /api/canvas/events?path=<rel>       → SSE: `changed` (file mtime moved)
  *                                              + `intent` (agent asked to open X)
- *   POST /api/canvas/patch                   → element-level {add,update,remove,connect}
- *                                              with mtime-guarded read-modify-write
+ *   POST /api/canvas/patch                   → element-level ops (add/update/remove)
+ *                                              plus high-level addNode/connect/
+ *                                              addColumn, mtime-guarded, with the
+ *                                              read-modify-write done server-side
  *   POST /api/canvas/open  { path? | query? }→ park an "open this drawing" intent
  *
  * Why a conflict guard: the vault syncs to Konrad's devices over Syncthing,
@@ -44,6 +46,7 @@ import {
   EMPTY_DRAWING,
   type ExcalidrawDoc,
 } from "../lib/excalidraw-md.ts";
+import { applyOps, type PatchOp } from "../lib/excalidraw-build.ts";
 
 const r = new Hono();
 
@@ -513,231 +516,97 @@ r.get("/events", (c) => {
     }
   });
 });
-
 /* ---------------------------------------------------------------------------
  * Element-level patch — the agent's real write path.
  *
- * The blunt `PUT /file` requires shipping the whole `elements[]` (27k tokens
- * for the Directory Engine map, per the design doc). This endpoint takes small
- * ops and does the read-modify-write inside the server, honoring the same
- * ±1ms mtime conflict rule as the full PUT.
+ * `PUT /file` requires shipping the whole `elements[]`: ~27k tokens for the
+ * Directory Engine map, per the design doc's own measurement. This endpoint
+ * takes small ops and does the read-modify-write server-side, so adding a card
+ * costs about twenty tokens.
  *
  *   POST /api/canvas/patch
  *   {
- *     path:      "Excalidraw/Foo.excalidraw.md",
- *     baseMtime: 1738670000000?,      // optional; omit to skip guard
+ *     path:      "AI OS/Canvas/plan.excalidraw.md",
+ *     baseMtime: 1738670000000?,     // optional; supply it to guard explicitly
  *     ops: [
- *       { op: "add",     elements: [...] },      // full Excalidraw shape objects
- *       { op: "update",  id: "abc", patch: {...} },
- *       { op: "remove",  id: "abc" | ids: [...] },
- *       { op: "connect", fromId: "a", toId: "b", label?: "flows" }
+ *       // low level — full Excalidraw shapes, scaffolded for you
+ *       { op: "addElements",    elements: [...] },
+ *       { op: "updateElements", elements: [{ id, ...partial }] },
+ *       { op: "removeElements", ids: [...] },
+ *       // high level — the server owns geometry, bindings and palette
+ *       { op: "addNode",   label: "Fetch layer", x?, y?, color?: "planned" },
+ *       { op: "connect",   fromLabel: "Fetch layer", toLabel: "Parse", label?: "html" },
+ *       { op: "addColumn", labels: ["Fetch","Parse","Store"], x?, y? }
  *     ]
  *   }
+ *
+ * Concurrency. With `baseMtime` the caller gets the same ±1ms guard as the full
+ * PUT — a 409 means "you were working from a stale read". WITHOUT it, the
+ * endpoint owns the whole cycle: it reads, applies, and re-checks the mtime
+ * immediately before writing. If the file moved in that window (Konrad's pane
+ * autosaving mid-patch) it re-reads and re-applies ONCE against the new
+ * content, then gives up with a 409. Ops are relative — "add a card", not "the
+ * canvas is now this" — so re-applying them to a newer scene is correct, and
+ * one retry keeps a busy canvas from turning into a livelock.
  * ------------------------------------------------------------------------- */
 
-type PatchOp =
-  | { op: "add"; elements: Record<string, unknown>[] }
-  | { op: "update"; id: string; patch: Record<string, unknown> }
-  | { op: "remove"; id?: string; ids?: string[] }
-  | { op: "connect"; fromId: string; toId: string; label?: string };
+const PATCH_RETRIES = 1;
 
-const DEFAULT_STROKE = "#1e1e1e";
-const DEFAULT_ARROW_STROKE = "#868e96";
-
-function genId(): string {
-  // Excalidraw ids are opaque 20-ish char strings. Anything unique and URL-safe
-  // is fine — the app never parses them. crypto.randomUUID trimmed to 22 chars.
-  return globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+interface PatchOutcome {
+  mtime: number;
+  added: string[];
+  nodes: Record<string, string>;
+  elementCount: number;
+  retried: boolean;
 }
 
-function nowScaffolding(): Record<string, unknown> {
-  return {
-    angle: 0,
-    strokeColor: DEFAULT_STROKE,
-    backgroundColor: "transparent",
-    fillStyle: "solid",
-    strokeWidth: 1,
-    strokeStyle: "solid",
-    roughness: 0,
-    opacity: 100,
-    groupIds: [],
-    frameId: null,
-    roundness: null,
-    seed: Math.floor(Math.random() * 2 ** 31),
-    version: 1,
-    versionNonce: Math.floor(Math.random() * 2 ** 31),
-    isDeleted: false,
-    boundElements: null,
-    updated: Date.now(),
-    link: null,
-    locked: false,
-  };
-}
-
-function normaliseAddedElement(
-  raw: Record<string, unknown>,
-): Record<string, unknown> {
-  const base = nowScaffolding();
-  const merged: Record<string, unknown> = { ...base, ...raw };
-  if (!merged.id || typeof merged.id !== "string") merged.id = genId();
-  // A rectangle with no explicit roundness should read as the friendly rounded
-  // corners Konrad's existing map uses, not the sharp default. Only apply when
-  // the caller didn't specify anything.
-  if (
-    merged.type === "rectangle" &&
-    (merged.roundness === null || merged.roundness === undefined)
-  ) {
-    merged.roundness = { type: 3 };
-  }
-  return merged;
-}
-
-/** Push {id, type} into a container's boundElements, creating the array if
- *  needed. Immutable — returns a new object. */
-function pushBoundElement(
-  el: Record<string, unknown>,
-  ref: { id: string; type: string },
-): Record<string, unknown> {
-  const cur = Array.isArray(el.boundElements)
-    ? (el.boundElements as Array<Record<string, unknown>>)
-    : [];
-  // Don't duplicate an existing reference.
-  if (cur.some((b) => b?.id === ref.id && b?.type === ref.type)) return el;
-  return { ...el, boundElements: [...cur, ref] };
-}
-
-function applyOps(
-  elements: Record<string, unknown>[],
+/** Read → apply → write, guarding the window between read and write. Throws
+ *  CONFLICT (handled by the caller as 409) when the file keeps moving. */
+async function patchFile(
+  abs: string,
+  rel: string,
   ops: PatchOp[],
-): {
-  next: Record<string, unknown>[];
-  addedIds: string[];
-} {
-  let next = elements.slice();
-  const addedIds: string[] = [];
+  baseMtime: number | undefined,
+): Promise<PatchOutcome> {
+  for (let attempt = 0; ; attempt++) {
+    const raw = await readFile(abs, "utf8");
+    const before = await stat(abs);
 
-  const indexOf = (id: string): number =>
-    next.findIndex((e) => (e as { id?: string }).id === id);
-
-  for (const op of ops) {
-    if (op.op === "add") {
-      if (!Array.isArray(op.elements)) {
-        throw new Error("`add` requires elements[]");
-      }
-      for (const raw of op.elements) {
-        const el = normaliseAddedElement(raw);
-        next.push(el);
-        addedIds.push(String(el.id));
-      }
-    } else if (op.op === "update") {
-      if (!op.id) throw new Error("`update` requires id");
-      const idx = indexOf(op.id);
-      if (idx === -1) throw new Error(`update: no element with id ${op.id}`);
-      const before = next[idx] as Record<string, unknown>;
-      next[idx] = {
-        ...before,
-        ...(op.patch ?? {}),
-        // Bump versionNonce so Excalidraw's own change detection notices.
-        version: ((before.version as number) ?? 1) + 1,
-        versionNonce: Math.floor(Math.random() * 2 ** 31),
-        updated: Date.now(),
-      };
-    } else if (op.op === "remove") {
-      const ids = op.ids ?? (op.id ? [op.id] : []);
-      if (!ids.length) throw new Error("`remove` requires id or ids[]");
-      const dead = new Set(ids);
-      next = next.filter((e) => !dead.has((e as { id?: string }).id ?? ""));
-    } else if (op.op === "connect") {
-      if (!op.fromId || !op.toId) {
-        throw new Error("`connect` requires fromId and toId");
-      }
-      const fromIdx = indexOf(op.fromId);
-      const toIdx = indexOf(op.toId);
-      if (fromIdx === -1 || toIdx === -1) {
-        throw new Error(
-          `connect: element(s) not found (from=${op.fromId} to=${op.toId})`,
-        );
-      }
-      const from = next[fromIdx] as Record<string, number>;
-      const to = next[toIdx] as Record<string, number>;
-      const fromCX = (from.x ?? 0) + (from.width ?? 0) / 2;
-      const fromCY = (from.y ?? 0) + (from.height ?? 0) / 2;
-      const toCX = (to.x ?? 0) + (to.width ?? 0) / 2;
-      const toCY = (to.y ?? 0) + (to.height ?? 0) / 2;
-      const arrowId = genId();
-      const arrow: Record<string, unknown> = {
-        ...nowScaffolding(),
-        id: arrowId,
-        type: "arrow",
-        x: fromCX,
-        y: fromCY,
-        width: Math.abs(toCX - fromCX),
-        height: Math.abs(toCY - fromCY),
-        strokeColor: DEFAULT_ARROW_STROKE,
-        points: [
-          [0, 0],
-          [toCX - fromCX, toCY - fromCY],
-        ],
-        lastCommittedPoint: null,
-        startBinding: { elementId: op.fromId, focus: 0, gap: 8 },
-        endBinding: { elementId: op.toId, focus: 0, gap: 8 },
-        startArrowhead: null,
-        endArrowhead: "arrow",
-        roundness: { type: 2 },
-      };
-      next.push(arrow);
-      addedIds.push(arrowId);
-      // Two-sided binding — without updating both shapes' boundElements the
-      // arrow silently detaches the first time either box is dragged.
-      next[fromIdx] = pushBoundElement(next[fromIdx], {
-        id: arrowId,
-        type: "arrow",
-      });
-      // fromIdx might equal toIdx (self-loop); re-read fresh either way.
-      const toIdxAfter = indexOf(op.toId);
-      next[toIdxAfter] = pushBoundElement(next[toIdxAfter], {
-        id: arrowId,
-        type: "arrow",
-      });
-
-      if (op.label) {
-        const midX = (fromCX + toCX) / 2;
-        const midY = (fromCY + toCY) / 2;
-        const labelId = genId();
-        const label: Record<string, unknown> = {
-          ...nowScaffolding(),
-          id: labelId,
-          type: "text",
-          x: midX - 30,
-          y: midY - 10,
-          width: 60,
-          height: 20,
-          text: op.label,
-          fontSize: 16,
-          fontFamily: 3,
-          textAlign: "center",
-          verticalAlign: "middle",
-          containerId: arrowId,
-          originalText: op.label,
-          lineHeight: 1.25,
-          autoResize: true,
-        };
-        next.push(label);
-        addedIds.push(labelId);
-        // Attach the label to the arrow's boundElements too.
-        const arrowIdx = indexOf(arrowId);
-        if (arrowIdx !== -1) {
-          next[arrowIdx] = pushBoundElement(next[arrowIdx], {
-            id: labelId,
-            type: "text",
-          });
-        }
-      }
-    } else {
-      throw new Error(`unknown op: ${(op as { op: string }).op}`);
+    // Explicit guard: the caller told us which version it reasoned about.
+    if (
+      typeof baseMtime === "number" &&
+      baseMtime > 0 &&
+      Math.abs(before.mtimeMs - baseMtime) > 1
+    ) {
+      throw new Error(
+        `CONFLICT: this drawing changed on disk since you read it (disk ${before.mtimeMs}, you had ${baseMtime}). Re-read and re-apply.`,
+      );
     }
+
+    const doc = parseExcalidrawMarkdown(raw);
+    const { next, added, nodes } = applyOps(doc.drawing.elements, ops);
+    const nextDoc = withDrawing(doc, { elements: next });
+
+    // Someone else may have written between our read and this line.
+    const check = await stat(abs);
+    if (Math.abs(check.mtimeMs - before.mtimeMs) > 1) {
+      if (attempt < PATCH_RETRIES) continue; // re-read, re-apply the same ops
+      throw new Error(
+        "CONFLICT: the drawing is being written faster than this patch can apply (Obsidian or the pane is mid-save). Try again in a moment.",
+      );
+    }
+
+    await writeFile(abs, serializeExcalidrawMarkdown(nextDoc), "utf8");
+    const after = await stat(abs);
+    emitFileChange(rel, after.mtimeMs);
+    return {
+      mtime: after.mtimeMs,
+      added,
+      nodes,
+      elementCount: next.length,
+      retried: attempt > 0,
+    };
   }
-  return { next, addedIds };
 }
 
 r.post("/patch", async (c) => {
@@ -753,44 +622,27 @@ r.post("/patch", async (c) => {
   }
   try {
     const abs = safePath(rel);
-    const raw = await readFile(abs, "utf8").catch(() => null);
-    if (raw === null) return c.json({ error: "no such drawing" }, 404);
-    const s = await stat(abs);
-
-    if (
-      typeof body.baseMtime === "number" &&
-      body.baseMtime > 0 &&
-      Math.abs(s.mtimeMs - body.baseMtime) > 1
-    ) {
+    if (!(await stat(abs).catch(() => null))) {
+      return c.json({ error: "no such drawing", path: rel }, 404);
+    }
+    const out = await patchFile(abs, rel, body.ops, body.baseMtime);
+    return c.json({ ok: true, path: rel, ...out });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg.startsWith("CONFLICT:")) {
+      const s = await stat(safePath(rel)).catch(() => null);
       return c.json(
-        {
-          error: "conflict",
-          detail:
-            "This drawing changed on disk since you read it. Re-read and re-apply.",
-          mtime: s.mtimeMs,
-        },
+        { error: "conflict", detail: msg.slice("CONFLICT: ".length), mtime: s?.mtimeMs ?? 0 },
         409,
       );
     }
-
-    const doc = parseExcalidrawMarkdown(raw);
-    const { next, addedIds } = applyOps(doc.drawing.elements, body.ops);
-    const nextDoc = withDrawing(doc, { elements: next });
-    await writeFile(abs, serializeExcalidrawMarkdown(nextDoc), "utf8");
-    const after = await stat(abs);
-    emitFileChange(rel, after.mtimeMs);
-    return c.json({
-      ok: true,
-      path: rel,
-      mtime: after.mtimeMs,
-      added: addedIds,
-      elementCount: next.length,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // Anything thrown by applyOps is a bad request — an unknown op, a missing
+    // id, an ambiguous label. The message is the diagnostic; don't bury it.
     const code = /escapes|not a drawing/.test(msg)
       ? 400
-      : /^(update:|`|unknown op|connect:)/.test(msg)
+      : /^(unknown op|no element|connect:|update|addNode|addColumn|updateElements|removeElements|addElements|add |"[^"]*" matches)/.test(
+            msg,
+          )
         ? 400
         : 500;
     if (code === 500) console.error("[canvas/patch]", msg);
