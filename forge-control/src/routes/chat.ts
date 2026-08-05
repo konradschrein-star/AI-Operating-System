@@ -1,4 +1,10 @@
 import { Hono } from "hono";
+/* phase 300i (U6) — the plan-doc endpoint reads ONE directory of the project's
+ * own worktree. `realpath` is the load-bearing import: `resolve` alone cannot
+ * see a symlink escape. See `resolvePlanDoc`. */
+import type { Stats } from "node:fs";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import path from "node:path";
 import pg from "pg";
 import {
   loadCanvas,
@@ -606,6 +612,482 @@ r.get("/:id/team", async (c) => {
     errors,
   };
   return c.json(body);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * phase 300i (U6) — GET /api/chat/:id/plan  and  GET /api/chat/:id/plan/doc
+ *
+ * The work in front of the project this chat started, and the planning corpus
+ * that work was derived from.
+ *
+ * `/plan` is deliberately NOT a Kanban payload. 13 §7 makes the point that
+ * matters: THIS RESPONSE IS THE STORE. The Kanban (U25) groups `phases[].tasks`
+ * by block and counts statuses; a future graph toggle (U27) feeds the very same
+ * task objects to React-Flow as nodes and `deps` as edges. Neither needs a
+ * second endpoint, and neither may re-derive a number the server already
+ * decided — that is how the rail badge and the panel bar ended up disagreeing
+ * in the UI this rework replaces.
+ *
+ * `/plan/doc` streams one markdown file out of the project's own worktree.
+ * routes/files.ts is off-limits this cycle AND its configured roots do not
+ * cover per-project worktrees, so the restriction is implemented here, from
+ * scratch, against one directory: `<workspace_dir>/docs/plan/`. Everything
+ * about that is spelled out at `resolvePlanDoc` below.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** One task, in the shape 13 §7 names as the client store's `PlanNode`. */
+interface PlanTask {
+  id: string;
+  round: number;
+  role: string;
+  title: string;
+  status: string;
+  /** The model tier the engine ran (or will run) this task on. Null is a real
+   *  value here — the engine picks a default for tier-less tasks. */
+  tier: string | null;
+  deps: string[];
+}
+
+interface PlanPhase {
+  /** The hundreds-block: `floor(round / 100) * 100`. */
+  round_base: number;
+  /** The block's opening task title, when the corpus's own convention (planner
+   *  or architect at k00) was followed. Absent when no task sits exactly on the
+   *  base round — a phase label is not worth inventing. */
+  title?: string;
+  tasks: PlanTask[];
+  /** Present ONLY when a file in docs/plan/ carries this block's number. See
+   *  `matchPhaseDoc`. Absent is the honest answer; a guessed path would 404 in
+   *  the reader's face one click later. */
+  doc_path?: string;
+}
+
+interface PlanResponse {
+  chat_id: string;
+  project: { id: string; status: string | null } | null;
+  link_source: "metadata" | "thread_scan" | null;
+  link_ambiguous: boolean;
+  phases: PlanPhase[];
+  /** File names (not paths) of `<workspace_dir>/docs/plan/*.md`, sorted. */
+  docs: string[];
+  /** Set when the docs listing failed — U6/NFU6: `docs: []` on its own would
+   *  read as "this project has no plan corpus", which is a different fact from
+   *  "the corpus could not be read, and here is why". The phases are unaffected
+   *  and still present when this is set. */
+  error?: string;
+}
+
+/** Tasks of one project, oldest round first. `created_at` breaks ties inside a
+ *  round so the four round-303 siblings keep the order the planner wrote them.
+ *  Route-local by phase-300 law (13 §3): db/projects.ts is the engine lane's. */
+const PLAN_TASKS_SQL = `SELECT id::text, round, role, title, status, tier
+  FROM project_tasks
+ WHERE project_id = $1
+ ORDER BY round, created_at`;
+
+/** The one column `/plan` needs beyond what the linkage resolver returns. */
+const PLAN_PROJECT_SQL = `SELECT workspace_dir, status FROM projects WHERE id = $1`;
+
+interface PlanTaskRow {
+  id: string;
+  round: number;
+  role: string;
+  title: string;
+  status: string;
+  tier: string | null;
+}
+
+/** 2 MB. A plan doc in this corpus is 4–30 kB; the largest file that has ever
+ *  lived in a docs/plan tree here is under 200 kB. The guard exists so a stray
+ *  multi-megabyte log dropped into the directory cannot be pushed through the
+ *  chat surface — the reader gets a named refusal, not a frozen tab. */
+const PLAN_DOC_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Group tasks into hundreds-blocks and attach `deps`.
+ *
+ * DEPS, PRECISELY: every task id in a STRICTLY LOWER round of the same project.
+ * That is the engine's real ordering rule made explicit (13 §3) — project-tick
+ * releases a round only once every task below it has settled, so "lower round"
+ * IS "must happen first". It is COARSE: round 306 genuinely depends on 305
+ * (same file) but only bureaucratically on 101, and the edge set says both.
+ * It is nonetheless TRUE — no edge here is a lie, only some are uninteresting.
+ *
+ * Refining it later (file-overlap, explicit `depends_on` column) changes which
+ * ids appear in this array and NOTHING about the response shape, so the Kanban
+ * and the future graph both survive the refinement untouched.
+ *
+ * Same-round siblings are never each other's deps: the four round-303 builders
+ * ran in parallel, by design, on disjoint files.
+ */
+function groupPlanPhases(rows: PlanTaskRow[], docs: string[]): PlanPhase[] {
+  const phases: PlanPhase[] = [];
+  const byBase = new Map<number, PlanPhase>();
+  /** ids of every task in a strictly lower round than the cursor. */
+  const lower: string[] = [];
+  /** ids of the round being read right now — they join `lower` only when the
+   *  round changes, which is what keeps siblings out of each other's deps. */
+  let pending: string[] = [];
+  let currentRound: number | null = null;
+
+  for (const row of rows) {
+    if (currentRound !== null && row.round !== currentRound) {
+      lower.push(...pending);
+      pending = [];
+    }
+    currentRound = row.round;
+
+    const base = Math.floor(row.round / 100) * 100;
+    let phase = byBase.get(base);
+    if (!phase) {
+      phase = { round_base: base, tasks: [] };
+      const docPath = matchPhaseDoc(base, docs);
+      if (docPath) phase.doc_path = docPath;
+      byBase.set(base, phase);
+      phases.push(phase);
+    }
+    if (row.round === base) phase.title = row.title;
+
+    phase.tasks.push({
+      id: row.id,
+      round: row.round,
+      role: row.role,
+      title: row.title,
+      status: row.status,
+      tier: row.tier,
+      deps: [...lower],
+    });
+    pending.push(row.id);
+  }
+
+  // `rows` arrives ordered by round, so `phases` is already ascending by base.
+  return phases;
+}
+
+/**
+ * Map a phase block to a file in docs/plan/, or to nothing.
+ *
+ * The rule is exact, not fuzzy: a file matches when one of its digit runs is
+ * the block number written the same way — `300-read-side-api.md`,
+ * `phase300.md` and `plan-300.md` all match block 300; `10-ui-v3-spec.md` does
+ * not match block 100 (its runs are "10" and "3"), and `00-vision.md` does not
+ * match block 0 ("00" is not "0").
+ *
+ * String comparison, not numeric, on purpose. Numeric equality would make
+ * `00-vision.md` the plan document of round-0 by accident of zero-padding —
+ * plausible-looking and unearned. U6 says: no match → no field.
+ *
+ * OBSERVED TODAY: this project's corpus is numbered `00-`…`16-` by document,
+ * not by round, so nothing matches and no phase carries `doc_path`. That is
+ * reported, not hidden: `docs[]` still lists all twelve files, and U26's reader
+ * picks from that list. The day a phase doc is named `300-*.md` the field
+ * appears with no code change.
+ */
+function matchPhaseDoc(roundBase: number, docs: string[]): string | undefined {
+  const want = String(roundBase);
+  return docs.find((name) =>
+    (name.match(/\d+/g) ?? []).some((run) => run === want),
+  );
+}
+
+/** `<workspace_dir>/docs/plan` — or a named reason why there is no such path.
+ *  An absolute `workspace_dir` is required: a relative one would resolve
+ *  against forge-control's cwd, which is a different machine-state entirely
+ *  from "the project's worktree", and silently serving files from it is the
+ *  exact class of bug the rest of this endpoint exists to prevent. */
+function planDirFor(workspaceDir: string | null): { dir: string } | { error: string } {
+  if (!workspaceDir) {
+    return { error: "project has no workspace_dir — plan docs cannot be located" };
+  }
+  if (!path.isAbsolute(workspaceDir)) {
+    return { error: `project workspace_dir is not an absolute path: ${workspaceDir}` };
+  }
+  return { dir: path.join(workspaceDir, "docs", "plan") };
+}
+
+/** A load-bearing plan query failed: 500, naming the step. Mirrors
+ *  `teamFailure` rather than sharing it so each endpoint's log prefix names
+ *  the endpoint that actually broke. */
+function planFailure(step: string, e: unknown): { error: string; step: string; message: string } {
+  const message = e instanceof Error ? e.message : String(e);
+  console.error(`[chat plan] ${step} failed:`, message);
+  return { error: `plan: ${step} failed`, step, message };
+}
+
+/**
+ * GET /api/chat/:id/plan → the phases, their tasks, and the doc listing.
+ *
+ * Status codes: 400 malformed id, 200 otherwise — including a chat that owns
+ * no project (`{project: null, phases: [], docs: []}`; "not a coding chat" is
+ * a fact, not an error), and including an unreadable docs directory (the
+ * phases are real; `error` names what could not be read). 500 only when the
+ * task query or the project row itself fails.
+ *
+ * Cost: 1–3 linkage queries (chat-linkage.ts) + 1 project row + 1 task query +
+ * 1 readdir. No index, no cache — 13 §3: plan dirs are a dozen files and this
+ * panel polls far slower than the team tree.
+ */
+r.get("/:id/plan", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+
+  let link;
+  try {
+    link = await resolveChatProject(id);
+  } catch (e) {
+    return c.json(planFailure("linkage resolution", e), 500);
+  }
+
+  if (!link.project_id) {
+    const empty: PlanResponse = {
+      chat_id: id,
+      project: null,
+      link_source: link.link_source,
+      link_ambiguous: link.link_ambiguous,
+      phases: [],
+      docs: [],
+    };
+    return c.json(empty);
+  }
+
+  let projectRow: { workspace_dir: string | null; status: string } | undefined;
+  try {
+    const res = await teamPool.query<{ workspace_dir: string | null; status: string }>(
+      PLAN_PROJECT_SQL,
+      [link.project_id],
+    );
+    projectRow = res.rows[0];
+  } catch (e) {
+    return c.json(planFailure("project query", e), 500);
+  }
+  // The resolver only returns ids that exist; a miss here means the row was
+  // deleted between the two queries. Say so instead of shipping empty phases.
+  if (!projectRow) {
+    return c.json(
+      planFailure("project query", new Error(`project ${link.project_id} vanished mid-request`)),
+      500,
+    );
+  }
+
+  let taskRows: PlanTaskRow[];
+  try {
+    const res = await teamPool.query<PlanTaskRow>(PLAN_TASKS_SQL, [link.project_id]);
+    taskRows = res.rows;
+  } catch (e) {
+    return c.json(planFailure("task query", e), 500);
+  }
+
+  // The docs listing degrades on its own (NFU6): a project whose worktree was
+  // moved still has a real plan to show.
+  let docs: string[] = [];
+  let docsError: string | undefined;
+  const dir = planDirFor(projectRow.workspace_dir);
+  if ("error" in dir) {
+    docsError = dir.error;
+  } else {
+    try {
+      const entries = await readdir(dir.dir, { withFileTypes: true });
+      docs = entries
+        .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".md"))
+        .map((e) => e.name)
+        .sort();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[chat plan] docs readdir failed:", message);
+      docsError = `plan docs unreadable at ${dir.dir}: ${message}`;
+    }
+  }
+
+  const body: PlanResponse = {
+    chat_id: id,
+    project: { id: link.project_id, status: projectRow.status },
+    link_source: link.link_source,
+    link_ambiguous: link.link_ambiguous,
+    phases: groupPlanPhases(taskRows, docs),
+    docs,
+  };
+  if (docsError) body.error = docsError;
+  return c.json(body);
+});
+
+/** What `resolvePlanDoc` decided: a file to serve, or a rejection with the
+ *  status the caller must answer with. */
+type DocDecision =
+  | { ok: true; file: string }
+  | { ok: false; status: 400 | 404 | 413 | 500; error: string };
+
+/**
+ * Decide whether `name` may be served out of `planDir`. Four layers, in this
+ * order, because each one only holds if the ones above it already ran:
+ *
+ *  1. LEXICAL. A path separator (`/` or `\`) or a NUL in `name` is refused
+ *     outright — a plan doc is a FILE NAME, never a path. Hono has already
+ *     percent-decoded the query, so `..%2f..%2fsecrets` arrives as
+ *     `../../secrets` and dies here, on the same rule as `/etc/passwd`. NUL is
+ *     checked because a truncating layer below (none today, but the check
+ *     costs nothing) would see a different string than this one validated.
+ *     `.md` is required here too: a name that cannot be a plan doc never
+ *     reaches the filesystem.
+ *  2. RESOLUTION. `path.resolve(planDir, name)` — with layer 1 passed this is
+ *     always a direct child lexically, but resolve is what makes the string
+ *     canonical before anything compares it.
+ *  3. REALPATH, BOTH SIDES. The plan dir AND the candidate are resolved
+ *     through symlinks. This is the layer that stops the attack `resolve`
+ *     cannot see: a symlink sitting INSIDE the plan dir whose target is
+ *     /etc/passwd is lexically a perfect child and physically an escape.
+ *     Resolving the dir too is what keeps the comparison valid when the
+ *     worktree path itself runs through a symlink (/tmp → /private/tmp and
+ *     friends) — otherwise every request would fail closed for the wrong
+ *     reason.
+ *  4. CONTAINMENT. `resolved === dir + sep + …`, with the separator explicitly
+ *     part of the prefix. A bare `startsWith(dir)` would accept
+ *     `/…/docs/plan-evil/secrets.md` as living under `/…/docs/plan`. The dir
+ *     itself is also not a file and is rejected by the same comparison.
+ *
+ * Then a stat: only a regular file (a directory named `x.md`, a fifo, a device
+ * are all refusals) and only under the size cap.
+ *
+ * Every rejection names itself. A path-restriction that answers "400" with no
+ * body teaches the operator nothing and teaches an attacker exactly as much.
+ */
+async function resolvePlanDoc(planDir: string, name: string): Promise<DocDecision> {
+  if (!name) return { ok: false, status: 400, error: "missing ?name=" };
+  if (name.includes("/") || name.includes("\\")) {
+    return { ok: false, status: 400, error: `rejected: name must be a bare file name, got a path: ${name}` };
+  }
+  if (name.includes("\0")) {
+    return { ok: false, status: 400, error: "rejected: name contains a NUL byte" };
+  }
+  if (name === "." || name === "..") {
+    return { ok: false, status: 400, error: `rejected: name is a directory reference: ${name}` };
+  }
+  if (!name.toLowerCase().endsWith(".md")) {
+    return { ok: false, status: 400, error: `rejected: only .md documents are served, got: ${name}` };
+  }
+
+  let realDir: string;
+  try {
+    realDir = await realpath(planDir);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const missing = (e as NodeJS.ErrnoException).code === "ENOENT" ||
+      (e as NodeJS.ErrnoException).code === "ENOTDIR";
+    return {
+      ok: false,
+      status: missing ? 404 : 500,
+      error: `plan directory unavailable at ${planDir}: ${message}`,
+    };
+  }
+
+  const candidate = path.resolve(realDir, name);
+  let realFile: string;
+  try {
+    realFile = await realpath(candidate);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    const message = e instanceof Error ? e.message : String(e);
+    // ENOENT covers both "no such file" and "dangling symlink"; both are 404 —
+    // the name was well-formed, the document is not there.
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return { ok: false, status: 404, error: `no such plan document: ${name}` };
+    }
+    return { ok: false, status: 500, error: `cannot resolve ${name}: ${message}` };
+  }
+
+  if (!realFile.startsWith(`${realDir}${path.sep}`)) {
+    return {
+      ok: false,
+      status: 400,
+      error: `rejected: ${name} resolves outside the plan directory (${realFile} is not under ${realDir})`,
+    };
+  }
+
+  let info: Stats;
+  try {
+    info = await stat(realFile);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false, status: 500, error: `cannot stat ${name}: ${message}` };
+  }
+  if (!info.isFile()) {
+    return { ok: false, status: 400, error: `rejected: ${name} is not a regular file` };
+  }
+  if (info.size > PLAN_DOC_MAX_BYTES) {
+    return {
+      ok: false,
+      status: 413,
+      error: `refused: ${name} is ${info.size} bytes, over the ${PLAN_DOC_MAX_BYTES}-byte plan-doc limit`,
+    };
+  }
+  return { ok: true, file: realFile };
+}
+
+/**
+ * GET /api/chat/:id/plan/doc?name=<file> → one plan document as markdown.
+ *
+ * Status codes: 400 malformed id / rejected name, 404 chat owns no project or
+ * no such document, 413 over the size cap, 500 a query or an unexpected fs
+ * error. 200 carries `text/markdown` and nothing else — no JSON envelope, so
+ * the web surface can hand the body straight to `MessageMarkdown` (U26).
+ *
+ * An unlinked chat is a 404 here, not the 200 that `/plan` gives it: `/plan`
+ * answers "what work exists" (none is a real answer), this answers "give me
+ * this file" (there is no file, and no directory it could have come from).
+ */
+r.get("/:id/plan/doc", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const name = c.req.query("name") ?? "";
+
+  let link;
+  try {
+    link = await resolveChatProject(id);
+  } catch (e) {
+    return c.json(planFailure("linkage resolution", e), 500);
+  }
+  if (!link.project_id) {
+    return c.json({ error: "chat is not linked to a project — no plan documents" }, 404);
+  }
+
+  let workspaceDir: string | null;
+  try {
+    const res = await teamPool.query<{ workspace_dir: string | null }>(PLAN_PROJECT_SQL, [
+      link.project_id,
+    ]);
+    const row = res.rows[0];
+    if (!row) {
+      return c.json(
+        planFailure("project query", new Error(`project ${link.project_id} vanished mid-request`)),
+        500,
+      );
+    }
+    workspaceDir = row.workspace_dir;
+  } catch (e) {
+    return c.json(planFailure("project query", e), 500);
+  }
+
+  const dir = planDirFor(workspaceDir);
+  if ("error" in dir) return c.json({ error: dir.error }, 404);
+
+  const decision = await resolvePlanDoc(dir.dir, name);
+  if (!decision.ok) {
+    if (decision.status === 400) console.warn(`[chat plan doc] ${decision.error}`);
+    return c.json({ error: decision.error, name }, decision.status);
+  }
+
+  let content: string;
+  try {
+    content = await readFile(decision.file, "utf8");
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[chat plan doc] read failed:", message);
+    return c.json({ error: `cannot read ${name}: ${message}`, name }, 500);
+  }
+  return c.body(content, 200, {
+    "content-type": "text/markdown; charset=utf-8",
+    "content-length": String(Buffer.byteLength(content)),
+    "x-plan-doc": name,
+  });
 });
 
 /* Search past chats — title, prompt, and every message in the thread, so a

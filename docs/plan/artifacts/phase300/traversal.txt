@@ -1,0 +1,196 @@
+Round 306 (phase 300i) — path-traversal protocol for GET /api/chat/:id/plan/doc
+Captured 2026-08-05T16:55:15+02:00 against the worktree harness on :7798.
+Chat: bfd1283a-b71b-4f35-b577-7d09aad803f2  →  project 8ea0cc08 (operator-visibility)
+Plan dir under test: /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan
+
+=== 1. ATTACKS (14 §'Path traversal') ===
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=../../../../etc/passwd' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: ../../../../etc/passwd","name":"../../../../etc/passwd"}
+<< HTTP 400  content-type=application/json  119 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=..%2f..%2fsecrets'   (raw, NOT re-encoded)
+{"error":"rejected: name must be a bare file name, got a path: ../../secrets","name":"../../secrets"}
+<< HTTP 400  content-type=application/json  101 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=/etc/passwd' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: /etc/passwd","name":"/etc/passwd"}
+<< HTTP 400  content-type=application/json  97 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=..' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: name is a directory reference: ..","name":".."}
+<< HTTP 400  content-type=application/json  67 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=....//....//etc/passwd' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: ....//....//etc/passwd","name":"....//....//etc/passwd"}
+<< HTTP 400  content-type=application/json  119 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=..%252f..%252fetc%252fpasswd'   (raw, NOT re-encoded)
+{"error":"rejected: only .md documents are served, got: ..%2f..%2fetc%2fpasswd","name":"..%2f..%2fetc%2fpasswd"}
+<< HTTP 400  content-type=application/json  112 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=evil' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: only .md documents are served, got: evil","name":"evil"}
+<< HTTP 400  content-type=application/json  76 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=../14-ui-v3-quality.md' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: name must be a bare file name, got a path: ../14-ui-v3-quality.md","name":"../14-ui-v3-quality.md"}
+<< HTTP 400  content-type=application/json  119 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=notes.txt' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"rejected: only .md documents are served, got: notes.txt","name":"notes.txt"}
+<< HTTP 400  content-type=application/json  86 bytes
+
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"missing ?name=","name":""}
+<< HTTP 400  content-type=application/json  36 bytes
+
+
+=== 2. LEGITIMATE READ ===
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=10-ui-v3-spec.md' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+# Spec — Manager Chat UI v3 (Konrad, 2026-08-05)
+
+Authoritative. Supersedes the manager-cards rail from `live-panel-manager-split`. Konrad dictated this after rejecting that UI; where this conflicts with anything older, THIS wins. Source conversation: operator chat, 2026-08-05 morning.
+
+## The core model
+
+**Every chat is a manager chat.** The thing Konrad talks to in any chat IS the manager — "a highly intelligent friend managing a team for me, my right-hand man." There is no separate managers section, no separate manager entity in the UI. A chat that has kicked off a goal/project owns that project's workers. The right sidebar and the Kanban are always views of **the currently open chat*
+
+=== 3. MISSING DOCUMENT (must be 404, not 400, not 500) ===
+--------------------------------------------------------------------------
+$ curl -sS -G --data-urlencode 'name=nonexistent.md' '127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc'
+{"error":"no such plan document: nonexistent.md","name":"nonexistent.md"}
+<< HTTP 404  content-type=application/json  73 bytes
+
+
+=== 3b. NUL BYTE (the shell cannot carry a NUL in an argv string, so this one
+        is sent as a raw percent-escape and Hono decodes it) ===
+$ curl -sS "$B?name=evil%00.md"
+{"error":"rejected: name contains a NUL byte","name":"evil\u0000.md"}
+<< HTTP 400
+
+=== 4. SYMLINK ESCAPE — the attack path.resolve() cannot see ===
+Fixtures created inside the real plan dir, exercised, then removed. Pre-state:
+$ git status --porcelain docs/plan | wc -l  →  2
+
+-- 4a. tmp-backed target OUTSIDE the plan dir (the specified probe) --
+$ ls -l docs/plan/escape-tmp.md  →  lrwxrwxrwx 1 root root 25 Aug  5 16:55 docs/plan/escape-tmp.md -> /tmp/plan-escape-probe.md
+$ curl -sS -G --data-urlencode 'name=escape-tmp.md' $B
+{"error":"rejected: escape-tmp.md resolves outside the plan directory (/tmp/plan-escape-probe.md is not under /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan)","name":"escape-tmp.md"}
+<< HTTP 400  content-type=application/json  212 bytes
+
+
+-- 4b. same trick aimed at /etc/passwd --
+$ ls -l docs/plan/escape-passwd.md  →  lrwxrwxrwx 1 root root 11 Aug  5 16:55 docs/plan/escape-passwd.md -> /etc/passwd
+$ curl -sS -G --data-urlencode 'name=escape-passwd.md' $B
+{"error":"rejected: escape-passwd.md resolves outside the plan directory (/etc/passwd is not under /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan)","name":"escape-passwd.md"}
+<< HTTP 400  content-type=application/json  204 bytes
+
+
+-- 4c. CONTROL: a symlink that stays INSIDE the plan dir must still be served.
+        (Proves the rule is containment, not a blanket ban on symlinks.) --
+$ curl -sS -G --data-urlencode 'name=inside-link.md' $B
+# Spec — Manager Chat UI v3 (Konrad, 2026-08-05)
+
+Authoritative. Supersedes the manager-cards rail from `live-panel-manager-split`. Konrad dictated this after rejecting that UI; where this conflicts with anything older, THIS wins. Source conversation: operator chat, 2026-08-05 morning.
+
+## The core model
+
+**Every chat is a manager chat.** The thing Konrad talks to in any chat IS the manager — 
+
+-- 4d. dangling symlink → 404, not 500 --
+$ curl -sS -G --data-urlencode 'name=dangling.md' $B
+{"error":"no such plan document: dangling.md","name":"dangling.md"}
+<< HTTP 404  content-type=application/json  67 bytes
+
+
+-- 4e. a DIRECTORY named *.md → 400 --
+$ curl -sS -G --data-urlencode 'name=adir.md' $B
+{"error":"rejected: adir.md is not a regular file","name":"adir.md"}
+<< HTTP 400  content-type=application/json  68 bytes
+
+
+
+=== 5. SIZE GUARD (>2 MB refused, not streamed into the chat surface) ===
+$ ls -l → docs/plan/huge-306.md 3145728 bytes
+$ curl -sS -G --data-urlencode 'name=huge-306.md' $B
+{"error":"refused: huge-306.md is 3145728 bytes, over the 2097152-byte plan-doc limit","name":"huge-306.md"}
+<< HTTP 413  content-type=application/json  108 bytes
+
+
+
+=== 6. FIXTURES REMOVED — worktree back to its pre-test state ===
+$ git status --porcelain docs/plan
+?? docs/plan/artifacts/phase300/plan-endpoint.json
+?? docs/plan/artifacts/phase300/traversal.txt
+(no lines above = clean; the two artifacts of this round are added at commit time)
+$ ls docs/plan/*.md | wc -l  →  12  (unchanged: 12)
+
+=== 7. STATUS + HEADERS FOR THE TWO SUCCESSFUL READS ===
+(sections 2 and 4c above piped through 'head -c 400', which clipped their
+ status footer; captured here with -D- and the body suppressed.)
+
+-- 7a. the specified legitimate read --
+$ curl -sS -D- -o /dev/null -G --data-urlencode 'name=10-ui-v3-spec.md' $B
+HTTP/1.1 200 OK
+content-type: text/markdown; charset=utf-8
+x-plan-doc: 10-ui-v3-spec.md
+Date: Wed, 05 Aug 2026 14:56:16 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+   body first line: # Spec — Manager Chat UI v3 (Konrad, 2026-08-05)
+   byte-equal to the file on disk? YES
+
+-- 7b. the inside-the-dir symlink control (fixture recreated for the header capture, then removed) --
+$ curl -sS -D- -o /dev/null -G --data-urlencode 'name=inside-link.md' $B
+HTTP/1.1 200 OK
+content-type: text/markdown; charset=utf-8
+x-plan-doc: inside-link.md
+Date: Wed, 05 Aug 2026 14:56:16 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+
+=== 8. UNLINKED CHAT — the doc endpoint has no directory to serve from ===
+$ curl … /api/chat/05187ada-069c-479f-9236-e8a58b0fde68/plan/doc?name=10-ui-v3-spec.md
+{"error":"chat is not linked to a project — no plan documents"}
+<< HTTP 404
+$ curl … /api/chat/not-a-uuid/plan/doc?name=x.md
+{"error":"invalid run id"}
+<< HTTP 400
+
+=== 9. FINAL STATE ===
+$ git status --porcelain docs/plan
+?? docs/plan/artifacts/phase300/plan-endpoint.json
+?? docs/plan/artifacts/phase300/traversal.txt
+$ find docs/plan -maxdepth 1 -type l  →  0 symlinks (0 expected)
+
+=== 10. POST-CLEANUP RE-RUN (final committed code) ===
+After the transcript above, `resolvePlanDoc` was tightened cosmetically (an evolving-`let`
+given its explicit `Stats` type; the unused `bytes` field dropped from `DocDecision`). The
+protocol was re-run against the final bytes to prove the tightening changed no behaviour:
+
+  /plan response byte-identical to the committed plan-endpoint.json  ✓
+  name=../../../../etc/passwd       → HTTP 400
+  name=/etc/passwd                  → HTTP 400
+  name=10-ui-v3-spec.md             → HTTP 200
+  name=nonexistent.md               → HTTP 404
+  name=notes.txt                    → HTTP 400
+  name=..%2f..%2fsecrets (raw)      → HTTP 400
+  symlink → /etc/passwd             → HTTP 400
+  2.2 MB file                       → HTTP 413
+
+  fixtures gone: 0 symlinks, 12 md files in docs/plan/
