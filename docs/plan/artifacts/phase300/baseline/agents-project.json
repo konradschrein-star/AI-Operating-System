@@ -1,0 +1,917 @@
+{
+  "agents": [
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "tool_call",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": null,
+        "tool": "Bash",
+        "ts": "2026-08-05T13:06:08.114Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 232151,
+      "engine": "claude-code",
+      "id": "5f359463-2df7-4645-93e4-f371dd899c6c",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 13:06:08.115325+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "builder",
+      "settled": false,
+      "settled_at": null,
+      "spent_usd": 0,
+      "started_at": "2026-08-05 13:02:16.047944+00",
+      "status": "running",
+      "subagents": [],
+      "title": "operator-visibility · Phase 300a — additive-API baseline transcript + generalized :7798 harness (no route logic)",
+      "updated_at": "2026-08-05 13:06:08.116184+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 1435,
+        "cache_read_input_tokens": 69335,
+        "input_tokens": 2,
+        "output_tokens": 2
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 33990,
+        "cache_read_input_tokens": 236638,
+        "cost_usd": 0,
+        "input_tokens": 10,
+        "output_tokens": 9,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:builder"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "You've hit your session limit · resets 1:10pm (Europe/Berlin)",
+        "tool": null,
+        "ts": "2026-08-05T09:14:17.553Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 91242,
+      "engine": "claude-code",
+      "id": "a59d2cf8-e28d-4f01-a906-b460ecc1863f",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 09:14:17.857435+00",
+      "model": "<synthetic>",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "builder",
+      "settled": true,
+      "settled_at": "2026-08-05 09:14:17.857435+00",
+      "spent_usd": 0,
+      "started_at": "2026-08-05 09:12:46.615331+00",
+      "status": "failed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 300a — additive-API baseline transcript + generalized :7798 harness (no route logic)",
+      "updated_at": "2026-08-05 09:14:17.877581+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 27589,
+        "cache_read_input_tokens": 72460,
+        "cost_usd": 0,
+        "input_tokens": 4,
+        "output_tokens": 8,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:builder"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 300 is planned and fanned out — 9 builder tasks across 6 rounds plus one reviewer, all within 301–307.\n\n**Round map**\n- **301** — baseline: pre-change cur",
+        "tool": null,
+        "ts": "2026-08-05T09:12:25.923Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 612092,
+      "engine": "claude-code",
+      "id": "2c535643-6632-42ec-9743-0fc58327017e",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 09:12:26.358705+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "planner",
+      "settled": true,
+      "settled_at": "2026-08-05 09:12:26.358705+00",
+      "spent_usd": 3.9,
+      "started_at": "2026-08-05 09:02:14.266152+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Plan phase 300: read-side API (linkage, team, plan, capabilities)",
+      "updated_at": "2026-08-05 09:12:26.358705+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 708,
+        "cache_read_input_tokens": 132268,
+        "input_tokens": 2,
+        "output_tokens": 5
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 26652,
+        "cache_read_input_tokens": 262330,
+        "cost_usd": 0,
+        "input_tokens": 6,
+        "output_tokens": 9,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:planner"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "## Recon Complete\n\n**Findings committed:** `docs/plan/artifacts/phase300/linkage-recon.md`\n\n**Key data for phase 300 planners:**\n\n1. **Resolvable:** 3 of 7 oper",
+        "tool": null,
+        "ts": "2026-08-05T09:01:52.451Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": null,
+      "elapsed_ms": 199459,
+      "engine": "claude-code",
+      "id": "0ed80848-2cad-4047-94dd-1544cfc08214",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 09:01:52.91689+00",
+      "model": "claude-haiku-4-5-20251001",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "scout",
+      "settled": true,
+      "settled_at": "2026-08-05 09:01:52.91689+00",
+      "spent_usd": 0.36,
+      "started_at": "2026-08-05 08:58:33.457901+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Recon: chat-thread evidence for project linkage scan",
+      "updated_at": "2026-08-05 09:01:52.91689+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 272,
+        "cache_read_input_tokens": 76161,
+        "input_tokens": 8,
+        "output_tokens": 1
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 16105,
+        "cache_read_input_tokens": 165985,
+        "cost_usd": 0,
+        "input_tokens": 25,
+        "output_tokens": 5,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:scout"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "The waterfall is planned, committed, pushed, and seeded. Here's the full picture:\n\n**Spec is law, and portable.** Konrad's dictated spec was copied byte-identic",
+        "tool": null,
+        "ts": "2026-08-05T08:58:12.134Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 812689,
+      "engine": "claude-code",
+      "id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 08:58:12.598128+00",
+      "model": "claude-fable-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "architect",
+      "settled": true,
+      "settled_at": "2026-08-05 08:58:12.598128+00",
+      "spent_usd": 7.07,
+      "started_at": "2026-08-05 08:44:39.909275+00",
+      "status": "completed",
+      "subagents": [
+        {
+          "description": "Recon forge-control-web UI",
+          "ended_at": "2026-08-05T08:45:31.660Z",
+          "event_count": 58,
+          "kind": "subagent",
+          "latest_activity": {
+            "kind": "assistant_text",
+            "text": "Based on my recon of the forge-control-web codebase, here's the comprehensive report:\n\n---\n\n## 1. APP LAYOUT: Desktop Shell Composition\n\n**Root component**: `/a",
+            "tool": null,
+            "ts": "2026-08-05T08:47:58.097Z"
+          },
+          "model": "claude-haiku-4-5-20251001",
+          "role": "scout",
+          "started_at": "2026-08-05T08:45:31.627Z",
+          "status": "done",
+          "tool_use_id": "toolu_01AeuQskZPyHpsYrHayvrqrT",
+          "updated_at": "2026-08-05T08:47:58.097Z",
+          "usage": {
+            "cache_creation_input_tokens": 812,
+            "cache_read_input_tokens": 168922,
+            "input_tokens": 16,
+            "output_tokens": 3
+          }
+        },
+        {
+          "description": "Recon forge-control API/data",
+          "ended_at": "2026-08-05T08:45:44.426Z",
+          "event_count": 51,
+          "kind": "subagent",
+          "latest_activity": {
+            "kind": "assistant_text",
+            "text": "Now I'll provide a comprehensive recon report with structured findings:\n\n## Hono API Recon: forge-control (:7700)\n\n### 1. Routes Inventory\n\n**agents.ts** (`/api",
+            "tool": null,
+            "ts": "2026-08-05T08:48:06.040Z"
+          },
+          "model": "claude-haiku-4-5-20251001",
+          "role": "scout",
+          "started_at": "2026-08-05T08:45:44.396Z",
+          "status": "done",
+          "tool_use_id": "toolu_01CaVhCxZ9ysaCrPVKWv7YuX",
+          "updated_at": "2026-08-05T08:48:06.040Z",
+          "usage": {
+            "cache_creation_input_tokens": 12799,
+            "cache_read_input_tokens": 285576,
+            "input_tokens": 58,
+            "output_tokens": 9
+          }
+        },
+        {
+          "description": "Summarize existing plan corpus",
+          "ended_at": "2026-08-05T08:45:50.675Z",
+          "event_count": 75,
+          "kind": "subagent",
+          "latest_activity": {
+            "kind": "assistant_text",
+            "text": "Perfect! Now I have the full task state. Let me create a comprehensive summary:\n\n## Summary Report: operator-visibility Project (8ea0cc08)\n\n### Planning Documen",
+            "tool": null,
+            "ts": "2026-08-05T08:48:12.561Z"
+          },
+          "model": "claude-haiku-4-5-20251001",
+          "role": "scout",
+          "started_at": "2026-08-05T08:45:50.665Z",
+          "status": "done",
+          "tool_use_id": "toolu_01U21ApZZJS2ykMCnDZ9tXM6",
+          "updated_at": "2026-08-05T08:48:12.561Z",
+          "usage": {
+            "cache_creation_input_tokens": 10172,
+            "cache_read_input_tokens": 160289,
+            "input_tokens": 42,
+            "output_tokens": 9
+          }
+        },
+        {
+          "description": "Research agent task-graph UIs",
+          "ended_at": "2026-08-05T08:45:58.388Z",
+          "event_count": 38,
+          "kind": "subagent",
+          "latest_activity": {
+            "kind": "assistant_text",
+            "text": "Now I'll compile the research findings into a concise memo with recommendations.\n\n---\n\n## Research Memo: Agentic Task Graph UI Design (Kanban-Now, Graph-Later)\n",
+            "tool": null,
+            "ts": "2026-08-05T08:47:37.830Z"
+          },
+          "model": "claude-haiku-4-5-20251001",
+          "role": "scout",
+          "started_at": "2026-08-05T08:45:58.381Z",
+          "status": "done",
+          "tool_use_id": "toolu_014exr6WECYL3iKbP7Wh83bW",
+          "updated_at": "2026-08-05T08:47:37.830Z",
+          "usage": {
+            "cache_creation_input_tokens": 4297,
+            "cache_read_input_tokens": 26372,
+            "input_tokens": 18,
+            "output_tokens": 2
+          }
+        }
+      ],
+      "title": "operator-visibility · Chat-Manager UI v3 — full rework per Konrad spec",
+      "updated_at": "2026-08-05 08:58:12.598128+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 1092,
+        "cache_read_input_tokens": 117984,
+        "input_tokens": 2,
+        "output_tokens": 3
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 59486,
+        "cache_read_input_tokens": 735062,
+        "cost_usd": 0,
+        "input_tokens": 19,
+        "output_tokens": 35,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:architect"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 2 review complete. Environment: fresh 7798 harness + 7799 web built against it (both REPRODUCE.md traps handled — routes-manifest confirmed `127.0.0.1:779",
+        "tool": null,
+        "ts": "2026-08-05T08:44:20.433Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 798381,
+      "engine": "claude-code",
+      "id": "1110e146-1de3-4d92-bc07-d05c60ebdcdc",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 08:44:25.715559+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "reviewer",
+      "settled": true,
+      "settled_at": "2026-08-05 08:44:25.715559+00",
+      "spent_usd": 5.91,
+      "started_at": "2026-08-05 08:31:07.334201+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 2 review — kind truth (R7-R11): gate, stranger test, title dumps",
+      "updated_at": "2026-08-05 08:44:25.715559+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 1556,
+        "cache_read_input_tokens": 167567,
+        "input_tokens": 2,
+        "output_tokens": 3
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 28799,
+        "cache_read_input_tokens": 184406,
+        "cost_usd": 0,
+        "input_tokens": 4,
+        "output_tokens": 4,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:reviewer"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 2b is done, committed, and pushed (3 commits, `50dfbaa` at head). pm2 untouched — `forge-executor` never approached.\n\n## What changed\n\n**`forge-control-we",
+        "tool": null,
+        "ts": "2026-08-05T08:30:51.153Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 1319599,
+      "engine": "claude-code",
+      "id": "9a937009-4beb-48c0-983c-36dd43e56c9d",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 08:30:51.56977+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "builder",
+      "settled": true,
+      "settled_at": "2026-08-05 08:30:51.56977+00",
+      "spent_usd": 9.75,
+      "started_at": "2026-08-05 08:08:51.970115+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 2b — Live panel: kind badge, role, model display, sub-agent description, lineage titles (R8-R11)",
+      "updated_at": "2026-08-05 08:30:51.56977+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 1350,
+        "cache_read_input_tokens": 185069,
+        "input_tokens": 2,
+        "output_tokens": 2
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 42350,
+        "cache_read_input_tokens": 1037778,
+        "cost_usd": 0,
+        "input_tokens": 16,
+        "output_tokens": 30,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:builder"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 2a done and pushed (`85eaef1`).\n\n## What changed\n- **`forge-control/src/routes/agents.ts`** — strictly additive:\n  - `AgentRun` gains `agent_kind`, `role`",
+        "tool": null,
+        "ts": "2026-08-05T08:08:31.432Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 276233,
+      "engine": "claude-code",
+      "id": "fdc1eacf-4257-44a7-a5ba-c6198b7db688",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 08:08:36.699341+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "builder",
+      "settled": true,
+      "settled_at": "2026-08-05 08:08:36.699341+00",
+      "spent_usd": 2.3,
+      "started_at": "2026-08-05 08:04:00.466911+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 2a — server: agent_kind classification + role/project_id/cron_name on the wire (R7)",
+      "updated_at": "2026-08-05 08:08:36.699341+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 970,
+        "cache_read_input_tokens": 94870,
+        "input_tokens": 2,
+        "output_tokens": 7
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 34461,
+        "cache_read_input_tokens": 1053041,
+        "cost_usd": 0,
+        "input_tokens": 25,
+        "output_tokens": 40,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:builder"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 2 planned and fanned out — three tasks seeded, rounds 201→203, all inside the 220 ceiling.\n\n**The split** (sequential, because both halves would otherwise",
+        "tool": null,
+        "ts": "2026-08-05T08:03:44.371Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 344840,
+      "engine": "claude-code",
+      "id": "20bb47eb-e2ce-4d6a-a451-700d871de90a",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 08:03:44.816837+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "planner",
+      "settled": true,
+      "settled_at": "2026-08-05 08:03:44.816837+00",
+      "spent_usd": 2.42,
+      "started_at": "2026-08-05 07:57:59.976986+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Plan phase 2: kind truth (row classification, model, lineage)",
+      "updated_at": "2026-08-05 08:03:44.816837+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 3183,
+        "cache_read_input_tokens": 113184,
+        "input_tokens": 2,
+        "output_tokens": 7
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 26559,
+        "cache_read_input_tokens": 234982,
+        "cost_usd": 0,
+        "input_tokens": 6,
+        "output_tokens": 11,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:planner"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "**Phase 1 review — adversarial time-truth gate (R1–R6)**\n\nIndependent environment: I killed the builders' `:7798` / `:7799` processes and started my own (`/tmp/",
+        "tool": null,
+        "ts": "2026-08-05T07:57:41.809Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 876757,
+      "engine": "claude-code",
+      "id": "3d26461f-8e89-4928-9dda-9df62ad50e3b",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 07:57:42.242062+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "reviewer",
+      "settled": true,
+      "settled_at": "2026-08-05 07:57:42.242062+00",
+      "spent_usd": 5.71,
+      "started_at": "2026-08-05 07:43:05.485652+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 1 review — adversarial time-truth gate (R1-R6): hunt every still-ticking settled number",
+      "updated_at": "2026-08-05 07:57:42.242062+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 343,
+        "cache_read_input_tokens": 157384,
+        "input_tokens": 2,
+        "output_tokens": 1
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 28115,
+        "cache_read_input_tokens": 174223,
+        "cost_usd": 0,
+        "input_tokens": 4,
+        "output_tokens": 2,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:reviewer"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Done. Report:\n\n## What changed (round 102 — phase 1b, client time truth)\n\n**`forge-control-web/app/desktop/live/agentsApi.ts`** — type mirror gains `settled` / ",
+        "tool": null,
+        "ts": "2026-08-05T07:42:51.486Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 1377198,
+      "engine": "claude-code",
+      "id": "b4d241ea-7bd2-4bd2-834d-db0b930cb938",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 07:42:51.960708+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "builder",
+      "settled": true,
+      "settled_at": "2026-08-05 07:42:51.960708+00",
+      "spent_usd": 8.18,
+      "started_at": "2026-08-05 07:19:54.762955+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 1b — client: one duration-helper pair; settled rows and done sub-agents never derive from now",
+      "updated_at": "2026-08-05 07:42:51.960708+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 287,
+        "cache_read_input_tokens": 160956,
+        "input_tokens": 2,
+        "output_tokens": 2
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 42628,
+        "cache_read_input_tokens": 1431067,
+        "cost_usd": 0,
+        "input_tokens": 25,
+        "output_tokens": 34,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:builder"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 1a is done and verified. Working tree clean, three commits on `project/8ea0cc08`, exactly two files touched.\n\n## Files changed\n- `forge-control/src/routes",
+        "tool": null,
+        "ts": "2026-08-05T07:19:33.596Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 491422,
+      "engine": "claude-code",
+      "id": "51694164-8697-4134-9b22-fc2859825bde",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 07:19:33.952477+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "builder",
+      "settled": true,
+      "settled_at": "2026-08-05 07:19:33.952477+00",
+      "spent_usd": 4.01,
+      "started_at": "2026-08-05 07:11:22.530536+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Phase 1a — server: settled-aware elapsed_ms, settled/settled_at, sub-agent ended_at+description",
+      "updated_at": "2026-08-05 07:19:33.952477+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 371,
+        "cache_read_input_tokens": 123324,
+        "input_tokens": 2,
+        "output_tokens": 2
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 29370,
+        "cache_read_input_tokens": 636344,
+        "cost_usd": 0,
+        "input_tokens": 16,
+        "output_tokens": 31,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:builder"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Phase 1 is planned and seeded. Three tasks, strictly sequential.\n\n**101 · builder (Opus) — server.** `routes/agents.ts` only: `completed_at` into both SELECTs, ",
+        "tool": null,
+        "ts": "2026-08-05T07:11:05.623Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 506150,
+      "engine": "claude-code",
+      "id": "6eeec7bf-1ccd-49fa-b8dd-b95eefc70f63",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 07:11:05.982698+00",
+      "model": "claude-opus-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "planner",
+      "settled": true,
+      "settled_at": "2026-08-05 07:11:05.982698+00",
+      "spent_usd": 3.83,
+      "started_at": "2026-08-05 07:02:39.832502+00",
+      "status": "completed",
+      "subagents": [],
+      "title": "operator-visibility · Plan phase 1: time truth (frozen settled durations)",
+      "updated_at": "2026-08-05 07:11:05.982698+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 950,
+        "cache_read_input_tokens": 114155,
+        "input_tokens": 2,
+        "output_tokens": 2
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 27670,
+        "cache_read_input_tokens": 326865,
+        "cost_usd": 0,
+        "input_tokens": 8,
+        "output_tokens": 8,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:planner"
+    },
+    {
+      "agent_kind": "worker",
+      "cron_name": null,
+      "current_activity": {
+        "kind": "assistant_text",
+        "model": null,
+        "parent_tool_use_id": null,
+        "text": "Round 0 complete. The waterfall plan is committed and the pipeline is seeded.\n\n**What shipped** — commit `9442d75` on `project/8ea0cc08` (pushed to origin): `do",
+        "tool": null,
+        "ts": "2026-08-05T07:02:25.964Z"
+      },
+      "cwd": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "effort": "high",
+      "elapsed_ms": 949322,
+      "engine": "claude-code",
+      "id": "3853c154-e07b-4378-9313-2b34f4a33342",
+      "kind": "run",
+      "last_heartbeat_at": "2026-08-05 07:02:26.316605+00",
+      "model": "claude-fable-5",
+      "parent_run_id": null,
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "role": "architect",
+      "settled": true,
+      "settled_at": "2026-08-05 07:02:26.316605+00",
+      "spent_usd": 12.93,
+      "started_at": "2026-08-05 06:46:36.994632+00",
+      "status": "completed",
+      "subagents": [
+        {
+          "description": "Recon chat Bash block rendering",
+          "ended_at": "2026-08-05T06:47:12.565Z",
+          "event_count": 118,
+          "kind": "subagent",
+          "latest_activity": {
+            "kind": "assistant_text",
+            "text": "# Recon Report — Desktop chat transcript rendering\n\nAll paths absolute. Repos rooted at `/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/`.\n\n",
+            "tool": null,
+            "ts": "2026-08-05T06:53:09.635Z"
+          },
+          "model": "claude-opus-5",
+          "role": "Explore",
+          "started_at": "2026-08-05T06:47:12.533Z",
+          "status": "done",
+          "tool_use_id": "toolu_014raMUrJcAiXV61BerokrjN",
+          "updated_at": "2026-08-05T06:53:09.635Z",
+          "usage": {
+            "cache_creation_input_tokens": 18986,
+            "cache_read_input_tokens": 130260,
+            "input_tokens": 4,
+            "output_tokens": 2
+          }
+        },
+        {
+          "description": "Recon agents API and runs schema",
+          "ended_at": "2026-08-05T06:47:23.678Z",
+          "event_count": 78,
+          "kind": "subagent",
+          "latest_activity": {
+            "kind": "assistant_text",
+            "text": "# Data layer feeding the Live agent-activity panel\n\n## 1. `GET /api/agents` — full response shape\n\n**File:** `/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9",
+            "tool": null,
+            "ts": "2026-08-05T06:51:58.943Z"
+          },
+          "model": "claude-opus-5",
+          "role": "Explore",
+          "started_at": "2026-08-05T06:47:23.666Z",
+          "status": "done",
+          "tool_use_id": "toolu_012sWh2xagb6t8J11pTV5oMT",
+          "updated_at": "2026-08-05T06:51:58.943Z",
+          "usage": {
+            "cache_creation_input_tokens": 13724,
+            "cache_read_input_tokens": 86168,
+            "input_tokens": 4,
+            "output_tokens": 4
+          }
+        }
+      ],
+      "title": "operator-visibility · Plan: operator-visibility",
+      "updated_at": "2026-08-05 07:02:26.316605+00",
+      "usage_by_model": [],
+      "usage_last_turn": {
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0
+      },
+      "usage_running": {
+        "cache_creation_input_tokens": 1277,
+        "cache_read_input_tokens": 149272,
+        "input_tokens": 2,
+        "output_tokens": 2
+      },
+      "usage_total": {
+        "cache_creation_input_tokens": 45133,
+        "cache_read_input_tokens": 821249,
+        "cost_usd": 0,
+        "input_tokens": 14,
+        "output_tokens": 30,
+        "thinking_tokens": 0,
+        "turns": 0
+      },
+      "worker": "project:architect"
+    }
+  ],
+  "now": "2026-08-05T13:06:08.198Z",
+  "summary": {
+    "active_subagents": 0,
+    "paused": 0,
+    "queued": 0,
+    "running": 1,
+    "spent_usd_last_hour": 66.37,
+    "stuck": 0,
+    "tokens_in_last_hour": 182,
+    "tokens_out_last_hour": 256
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "managers": [
+    {
+      "last_activity_at": "2026-08-05 13:06:08.116184+00",
+      "mode": "goal",
+      "name": "operator-visibility",
+      "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "spent_usd": 66.37,
+      "status": "active",
+      "tasks_done": 13,
+      "tasks_total": 36,
+      "tokens_in": 182,
+      "tokens_out": 256
+    },
+    {
+      "last_activity_at": "2026-08-05 13:05:59.389539+00",
+      "mode": "goal",
+      "name": "engine-v2-research-lane",
+      "project_id": "4120f785-fd86-414c-9a04-f10b2cd0c365",
+      "spent_usd": 69.99,
+      "status": "active",
+      "tasks_done": 26,
+      "tasks_total": 36,
+      "tokens_in": 374,
+      "tokens_out": 524
+    }
+  ]
+}
