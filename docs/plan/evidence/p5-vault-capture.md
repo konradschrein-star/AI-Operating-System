@@ -105,21 +105,37 @@ Nothing was documented that the diff does not contain. Read first:
 
 Plain push, no `--pr` — this project's brief merges to `main` in Phase 6.
 
+The brief expected the remote to be stale at `17a30aa`. It was in fact already at `e847218`:
+the R502 push (recorded in `docs/evidence/`, commit `e847218`) had advanced it. No force was
+needed or used — `e847218..7348fa4` is a fast-forward.
+
 ```
 $ scripts/git-sync-branch.sh /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365
-PUSH_RESULT_PLACEHOLDER
+git-sync-branch.sh: pushing project/4120f785 to git@github.com:konradschrein-star/AI-Operating-System.git
+To github.com:konradschrein-star/AI-Operating-System.git
+   e847218..7348fa4  HEAD -> project/4120f785
+pushed-branch: project/4120f785
+origin-url: git@github.com:konradschrein-star/AI-Operating-System.git
+$ echo $?
+0
 ```
 
-Verification:
+Verification — the two must be equal:
 
 ```
 $ git rev-parse HEAD
-LOCAL_SHA_PLACEHOLDER
+7348fa4da7bf5bb3cea417b2b051f6da30ee1104
 $ git ls-remote origin refs/heads/project/4120f785
-REMOTE_SHA_PLACEHOLDER
+7348fa4da7bf5bb3cea417b2b051f6da30ee1104	refs/heads/project/4120f785
 ```
 
-REMOTE_MATCH_PLACEHOLDER
+MATCH. Commit `7348fa4` is this evidence file itself, so the push carries it, per the brief's
+"commit BEFORE pushing" rule.
+
+This document is then completed in place with the push transcript above and pushed a second
+time — a plain fast-forward, since a pushed commit cannot be amended without a force-push and
+this branch is force-free by policy. The follow-up commit's SHA and its remote confirmation are
+recorded in the round's final message.
 
 ## 6. Live checkout
 
