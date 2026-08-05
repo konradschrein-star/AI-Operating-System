@@ -17,6 +17,7 @@ import {
   dismissReminder,
 } from "../db/reminders.ts";
 import { parseWhen } from "../lib/when-parser.ts";
+import { ReminderTextTooLongError } from "../lib/reminder-text.ts";
 
 const r = new Hono();
 
@@ -48,13 +49,22 @@ r.post("/", async (c) => {
   // Text can live in `text` or trail the when-expression ("in 2h call mom").
   const text = [(body.text ?? "").trim(), parsed.rest].filter(Boolean).join(" ").trim();
   if (!text) return c.json({ error: "reminder text required" }, 400);
-  const reminder = await createReminder({
-    text,
-    dueAt: parsed.dueAt,
-    recur: parsed.recur,
-    source: body.source ?? "chat",
-  });
-  return c.json({ ok: true, reminder }, 201);
+  try {
+    const reminder = await createReminder({
+      text,
+      dueAt: parsed.dueAt,
+      recur: parsed.recur,
+      source: body.source ?? "chat",
+    });
+    return c.json({ ok: true, reminder }, 201);
+  } catch (e) {
+    // Over-length text used to be truncated silently behind a 201. It is a
+    // client error now, with the numbers the caller needs to split on.
+    if (e instanceof ReminderTextTooLongError) {
+      return c.json({ error: e.message, length: e.length, max: e.max }, 400);
+    }
+    throw e;
+  }
 });
 
 r.post("/:id/dismiss", async (c) => {

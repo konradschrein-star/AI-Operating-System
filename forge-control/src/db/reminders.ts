@@ -8,6 +8,7 @@
 
 import pg from "pg";
 import { nextRecurrence } from "../lib/when-parser.ts";
+import { assertReminderTextFits } from "../lib/reminder-text.ts";
 
 const { Pool } = pg;
 
@@ -43,12 +44,15 @@ export async function createReminder(input: {
   recur?: "daily" | "weekly" | null;
   source?: string;
 }): Promise<Reminder> {
+  // Throws rather than truncating: a reminder that arrives cut off mid-word
+  // still looks armed. See lib/reminder-text.ts for the round-604 incident.
+  assertReminderTextFits(input.text);
   const r = await pool.query<Reminder>(
     `INSERT INTO reminders (text, due_at, recur, source)
      VALUES ($1, $2, $3, $4)
      RETURNING ${COLS}`,
     [
-      input.text.slice(0, 500),
+      input.text,
       input.dueAt.toISOString(),
       input.recur ?? null,
       input.source ?? "chat",

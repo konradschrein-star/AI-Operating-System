@@ -42,26 +42,63 @@ const smoke = JSON.parse(readFileSync(SMOKE_PATH, "utf8")) as {
 const brief = smoke.brief;
 const tickSrc = readFileSync(TICK_PATH, "utf8");
 
+/**
+ * Slice one role branch out of buildPrompt(), between two role guards.
+ *
+ * Both ends are asserted. An unchecked end marker is the quiet failure this
+ * file is supposed to be immune to: `indexOf` returns -1 for a renamed guard,
+ * `slice(start, -1)` then runs to EOF, and a branch-scoped assertion silently
+ * becomes a whole-file one — the researcher check would pass against the
+ * scout branch, which carries the identical `docs/research/round-…` string.
+ */
+function roleBranch(role: string, endRole: string): string {
+  const startMarker = `if (task.role === "${role}") {`;
+  const endMarker = `if (task.role === "${endRole}") {`;
+  const start = tickSrc.indexOf(startMarker);
+  assert.ok(start > 0, `the ${role} branch moved — this test has gone stale`);
+  const end = tickSrc.indexOf(endMarker, start);
+  assert.ok(
+    end > start,
+    `the ${endRole} branch no longer follows the ${role} branch — this test has gone stale`,
+  );
+  return tickSrc.slice(start, end);
+}
+
 /** The role branch that decides where a researcher writes its findings. */
-const researcherBranch = (() => {
-  const start = tickSrc.indexOf('if (task.role === "researcher") {');
-  assert.ok(start > 0, "the researcher branch moved — this test has gone stale");
-  return tickSrc.slice(start, tickSrc.indexOf('if (task.role === "scout") {', start));
-})();
+const researcherBranch = roleBranch("researcher", "scout");
 
 /** The reviewer branch — checked for the *absence* of the project id. */
-const reviewerBranch = (() => {
-  const start = tickSrc.indexOf('if (task.role === "reviewer") {');
-  assert.ok(start > 0, "the reviewer branch moved — this test has gone stale");
-  return tickSrc.slice(start, tickSrc.indexOf('if (task.role === "builder") {', start));
-})();
+const reviewerBranch = roleBranch("reviewer", "builder");
 
 describe("R20 smoke payload", () => {
   test("is a valid POST /api/projects body", () => {
     assert.equal(smoke.name, "p6-r20-researcher-smoke");
     assert.equal(smoke.repo, "scratch", "a live repo would put the smoke next to real work");
-    assert.equal(smoke.architect_tier, "fast");
     assert.ok(brief.trim().length > 0, "brief required — the route 400s on an empty one");
+  });
+
+  test("the architect tier can carry the job F1's fix gave it", () => {
+    // R604: `fast` maps to Haiku (project-tick.ts TIER_MODELS). F1's fix turned
+    // round 0 from "create one task" into "create two, paste two multi-paragraph
+    // briefs verbatim, and substitute a UUID throughout the second". If the
+    // architect drops Task B the project auto-closes `done` with no
+    // verification — byte-for-byte the R603 outcome, and nothing in the engine
+    // asserts Task B exists. The tier is the only lever that reduces that odds.
+    assert.notEqual(smoke.architect_tier, "fast", "R604 finding 3: Haiku owns a two-task verbatim paste");
+    assert.ok(
+      ["junior", "standard", "flagship"].includes(smoke.architect_tier),
+      `architect_tier ${smoke.architect_tier} is not a tier that route validation accepts`,
+    );
+    const tierModels = tickSrc.slice(
+      tickSrc.indexOf("const TIER_MODELS"),
+      tickSrc.indexOf("};", tickSrc.indexOf("const TIER_MODELS")),
+    );
+    assert.match(
+      tierModels,
+      new RegExp(`\\b${smoke.architect_tier}: \\{ model:`),
+      "the tier must exist in TIER_MODELS or the run falls back to the role file's model",
+    );
+    assert.match(tierModels, /fast: \{ model: "claude-haiku/, "the premise of this test");
   });
 });
 
@@ -154,10 +191,7 @@ describe("F4 the project id reaches whoever needs it", () => {
   });
 
   test("the architect can actually read the id out of its own prompt", () => {
-    const architectBranch = tickSrc.slice(
-      tickSrc.indexOf('if (task.role === "architect") {'),
-      tickSrc.indexOf('if (task.role === "planner") {'),
-    );
+    const architectBranch = roleBranch("architect", "planner");
     assert.match(architectBranch, /taskCurl\(project\.id\)/);
     assert.match(brief, /curl printed in your prompt: it already carries THIS project's real UUID/);
   });

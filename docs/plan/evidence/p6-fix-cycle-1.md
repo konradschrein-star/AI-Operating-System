@@ -61,8 +61,15 @@ and both the smoke's reviewer clause and Konrad's reminder — keyed on
 `docs/research/*.md` file the engine names for you … do not invent a different
 filename"*. The reviewer clause opens with `ls -la docs/research/` and
 `git log --oneline -3`, and states explicitly *"do NOT assume any particular
-filename"*; an empty `docs/research/` is itself NEEDS_FIXES. The reminder was
-re-issued with the same glob semantics (see finding 3).
+filename"*; an empty `docs/research/` is itself NEEDS_FIXES.
+
+> **Corrected in round 604.** This paragraph originally ended *"The reminder
+> was re-issued with the same glob semantics"*. It was not: the replacement
+> reminder was cut at 500 characters before the glob clause was reached, and
+> the claim was written from the text that was *sent*, never from the text
+> that was *stored*. The payload half of finding 2 was and is real; the
+> reminder half landed only in round 604. See
+> [`p6-fix-cycle-2.md`](./p6-fix-cycle-2.md).
 
 ## Finding 3 — the timeout branch had no watcher
 
@@ -82,10 +89,26 @@ dismiss (`routes/reminders.ts`), so the correction is a replace:
 | `a3c10b77` | 2026-08-06 04:00Z (06:00 local) | check #2 — the watcher, fires *after* the 05:26 give-up point |
 | `7c9fc079` | — | dismissed, superseded |
 
-Check #2 carries the re-arm command and points at the committed copy of the
-payload in case `/tmp` was cleared. Order of operations was deliberate: both
-replacements were created and confirmed `pending` before the stale one was
-dismissed.
+The **due times** in this table are correct and still hold. Everything this
+section claimed about the two reminders' *content* was not.
+
+> **Corrected in round 604.** `createReminder` truncated both writes to
+> exactly 500 characters and returned 201. `4b20dd16` stopped at *"Expect TWO
+> tasks: round"* — losing the two-task assertion and the corrected glob check.
+> `a3c10b77` stopped at *"then tail "* — losing the entire re-arm command and
+> the pointer to the committed payload, which is the one thing that watcher
+> existed to carry. The verification recorded below ("created and confirmed
+> `pending`") checked *status* and never read the *text* back, so the gap was
+> invisible from inside this document.
+>
+> Both were replaced in round 604 by four reminders that fit, each byte-compared
+> against storage after the write, and only then dismissed. The stored text is
+> reproduced in [`p6-fix-cycle-2.md`](./p6-fix-cycle-2.md), which also fixes the
+> silent truncation itself.
+
+Order of operations was deliberate: both replacements were created and
+confirmed `pending` before the stale one was dismissed — the right sequence,
+applied to an insufficient check.
 
 ## Finding 4 — `<this-project-id>` was unresolvable
 
