@@ -121,6 +121,70 @@ body {
   opacity: 1;
 }
 
+/* v3 phase 600 (U20/NFU8): in-chat drill-in navigation. CSS only — there is
+ * no animation dependency in this app and none is being added; transform and
+ * opacity are the only properties touched, so the browser composites both and
+ * neither costs a layout. No colour appears here: every colour on the back
+ * button comes from app/tokens.ts at the call site (NFU1). No React hover
+ * state is involved, which is the same NFU2 bargain `.chat-row` and
+ * `.team-row` above already make.
+ *
+ * `.nav-drill` is the "feel the context switch" half of U20: the drilled view
+ * enters from the right, because you went deeper. It replays only when the
+ * frame on top of the stack changes (ChatSurface keys the container on
+ * `frameKey(navStack)`), so re-renders inside a view do not re-animate it. */
+@keyframes navdrill {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nav-drill {
+  animation: navdrill 0.2s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.nav-back {
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1),
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+}
+.nav-back:hover,
+.nav-back:focus-visible {
+  transform: translateX(-2px);
+}
+.nav-back .nav-back-arrow {
+  display: inline-block;
+  transition: transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.nav-back:hover .nav-back-arrow,
+.nav-back:focus-visible .nav-back-arrow {
+  transform: translateX(-3px);
+}
+
+/* Motion is a nicety; legibility is the product. Anyone who has asked the OS
+ * to stop moving things gets the same navigation with none of it. */
+@media (prefers-reduced-motion: reduce) {
+  .nav-drill {
+    animation: none;
+  }
+  .nav-back,
+  .nav-back .nav-back-arrow {
+    transition: none;
+  }
+  .nav-back:hover,
+  .nav-back:focus-visible,
+  .nav-back:hover .nav-back-arrow,
+  .nav-back:focus-visible .nav-back-arrow {
+    transform: none;
+  }
+}
+
 /* iOS safe-area padding for tab bar bottom. */
 .safe-bottom {
   padding-bottom: max(30px, env(safe-area-inset-bottom, 30px));

@@ -1,0 +1,17 @@
+### forge-control tsc
+OK
+### forge-control-web tsc
+OK
+### check-nav-stack
+ALL PASS — nav stack (U20/U21)
+### web build
+ ✓ Compiled successfully
+### agentViewFrom / isAgentView / onOpenRun in forge-control-web/app
+0
+### hardcoded colours in files this round touched
+(none)
+### globals.css — pre-existing only (html/body rule, untouched by 601B)
+11:  background: #000;
+12:  color: #ededee;
+### NFU5 forbidden files in the diff
+(none — clean)

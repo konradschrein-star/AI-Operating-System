@@ -1,0 +1,15 @@
+{
+  "base": "http://127.0.0.1:7784",
+  "chat": "Okay this session is very important",
+  "backOutToManager": true,
+  "shots": [
+    "phase600-depth1-dark.png",
+    "phase600-depth1-light.png",
+    "phase600-backhover-dark.png",
+    "phase600-backhover-light.png",
+    "phase600-depth2-dark.png",
+    "phase600-depth2-light.png",
+    "phase600-manager-dark.png",
+    "phase600-manager-light.png"
+  ]
+}
