@@ -58,6 +58,20 @@ interface SearchHit {
   mtime: string;
 }
 
+/** A selected file qualified by the (root, parentRel) it was selected in —
+ *  so selection survives navigation without aliasing files that share a
+ *  name across sibling directories (R4). `parentRel` is the containing
+ *  directory's rel; the full rel of the file is `parentRel/entry.name`. */
+interface SelectedFile {
+  root: string;
+  parentRel: string;
+  entry: FileEntry;
+}
+
+function selectionKey(root: string, parentRel: string, name: string): string {
+  return `${root}::${parentRel}::${name}`;
+}
+
 function ext(name: string): string {
   const i = name.lastIndexOf(".");
   return i === -1 ? "" : name.slice(i).toLowerCase();
@@ -192,12 +206,13 @@ function FileExplorerPanelImpl({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [total, setTotal] = useState<number | undefined>(undefined);
-  const [selected, setSelected] = useState<FileEntry[]>([]);
+  const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [attaching, setAttaching] = useState(false);
   const [query, setQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTruncated, setSearchTruncated] = useState(false);
+  const [searchErrors, setSearchErrors] = useState<{ label: string; message: string }[]>([]);
   const [searchSelected, setSearchSelected] = useState<SearchHit[]>([]);
   const [pathCopied, setPathCopied] = useState(false);
 
@@ -250,7 +265,10 @@ function FileExplorerPanelImpl({
     setEntries(result.entries);
     setTruncated(result.truncated);
     setTotal(result.total);
-    evictIfNeeded(cacheRef.current);
+    // Only evict when we're about to add a NEW key. In the stale-while-
+    // revalidate path the key already exists, so evicting would shrink
+    // the cache below CACHE_MAX for no reason.
+    if (!cacheRef.current.has(key)) evictIfNeeded(cacheRef.current);
     cacheRef.current.set(key, { ...result, ts: Date.now() });
   }, [loadRoots]);
 
@@ -271,7 +289,10 @@ function FileExplorerPanelImpl({
       setCurrentRel(newRel);
       void loadDir(currentRoot, newRel);
     }
-    setSelected([]);
+    // Selection persists across navigation (R4). Each selection is
+    // qualified by (root, parentRel, name), so descending into a sibling
+    // folder that happens to contain a same-named file won't visually
+    // steal the earlier selection.
     setQuery("");
   }, [currentRoot, currentRel, roots, loadDir]);
 
@@ -289,7 +310,7 @@ function FileExplorerPanelImpl({
       setCurrentRel(newRel);
       void loadDir(currentRoot, newRel);
     }
-    setSelected([]);
+    // Selection persists across navigation (R4) — see handleDescend.
     setQuery("");
   }, [currentRoot, currentRel, loadDir]);
 
@@ -314,6 +335,7 @@ function FileExplorerPanelImpl({
     if (q.length < 2) {
       setSearchResults(null);
       setSearchTruncated(false);
+      setSearchErrors([]);
       setSearchSelected([]);
       return;
     }
@@ -328,33 +350,46 @@ function FileExplorerPanelImpl({
           const rootEntry = roots.find((r) => r.key === currentRoot);
           scopes = [{ label: rootEntry?.label ?? currentRoot, rootKey: currentRoot, rel: currentRel }];
         }
-        const results = await Promise.all(
-          scopes.map((s) =>
-            searchFiles(s.rootKey, s.rel, q)
-              .then((r) => ({ ...r, label: s.label, rootKey: s.rootKey }))
-              .catch(() => ({
-                entries: [] as FileSearchEntry[],
-                truncated: false,
+        // Track per-scope errors instead of swallowing them into "no
+        // matches" — the reviewer flagged the silent fallback as banned.
+        type ScopeResult =
+          | { ok: true; label: string; rootKey: string; entries: FileSearchEntry[]; truncated: boolean }
+          | { ok: false; label: string; rootKey: string; message: string };
+        const results: ScopeResult[] = await Promise.all(
+          scopes.map(async (s): Promise<ScopeResult> => {
+            try {
+              const r = await searchFiles(s.rootKey, s.rel, q);
+              return { ok: true, label: s.label, rootKey: s.rootKey, entries: r.entries, truncated: r.truncated };
+            } catch (err) {
+              return {
+                ok: false,
                 label: s.label,
                 rootKey: s.rootKey,
-              })),
-          ),
+                message: err instanceof Error ? err.message : String(err),
+              };
+            }
+          }),
         );
         if (cancelled) return;
         const hits: SearchHit[] = results.flatMap((r) =>
-          r.entries
-            .filter((e) => !e.isDir)
-            .map((e) => ({
-              name: e.name,
-              path: `/${r.label}/${e.path}`,
-              root: r.rootKey,
-              rel: e.path,
-              size: e.size,
-              mtime: e.mtime,
-            })),
+          r.ok
+            ? r.entries
+                .filter((e) => !e.isDir)
+                .map((e) => ({
+                  name: e.name,
+                  path: `/${r.label}/${e.path}`,
+                  root: r.rootKey,
+                  rel: e.path,
+                  size: e.size,
+                  mtime: e.mtime,
+                }))
+            : [],
         );
         setSearchResults(hits);
-        setSearchTruncated(results.some((r) => r.truncated));
+        setSearchTruncated(results.some((r) => r.ok && r.truncated));
+        setSearchErrors(
+          results.flatMap((r) => (r.ok ? [] : [{ label: r.label, message: r.message }])),
+        );
         setSearching(false);
       };
       void run();
@@ -364,6 +399,10 @@ function FileExplorerPanelImpl({
       clearTimeout(handle);
     };
   }, [query, currentRoot, currentRel, roots]);
+
+  /** Compose the file's full rel from its containing dir + name. */
+  const selectedFullRel = (sf: SelectedFile): string =>
+    sf.parentRel ? `${sf.parentRel}/${sf.entry.name}` : sf.entry.name;
 
   const attachSelected = async () => {
     if (!onAttach) return;
@@ -375,11 +414,9 @@ function FileExplorerPanelImpl({
           onAttach(attached);
         }
       } else {
-        if (currentRoot === null) return;
-        for (const f of selected) {
-          if (f.isDir) continue;
-          const relPath = currentRel ? `${currentRel}/${f.name}` : f.name;
-          const attached = await attachExistingFile(currentRoot, relPath);
+        for (const sf of selected) {
+          if (sf.entry.isDir) continue;
+          const attached = await attachExistingFile(sf.root, selectedFullRel(sf));
           onAttach(attached);
         }
       }
@@ -397,14 +434,12 @@ function FileExplorerPanelImpl({
         searchSelected.map((h) => attachExistingFile(h.root, h.rel).catch(() => null)),
       );
     } else {
-      if (currentRoot === null) return;
-      const targets = selected.filter((f) => !f.isDir);
+      const targets = selected.filter((sf) => !sf.entry.isDir);
       if (targets.length === 0) return;
       resolved = await Promise.all(
-        targets.map((f) => {
-          const relPath = currentRel ? `${currentRel}/${f.name}` : f.name;
-          return attachExistingFile(currentRoot, relPath).catch(() => null);
-        }),
+        targets.map((sf) =>
+          attachExistingFile(sf.root, selectedFullRel(sf)).catch(() => null),
+        ),
       );
     }
     const paths = resolved.filter((f): f is UploadedFile => f !== null).map((f) => f.path);
@@ -417,7 +452,16 @@ function FileExplorerPanelImpl({
   const isSearching = query.trim().length >= 2;
   const fileSelectionCount = isSearching
     ? searchSelected.length
-    : selected.filter((f) => !f.isDir).length;
+    : selected.filter((sf) => !sf.entry.isDir).length;
+
+  // Selection subset visible in the current directory — VaultFileList
+  // renders the checkmark only for files it can actually see.
+  const selectedInCurrentDir: FileEntry[] = selected
+    .filter((sf) => sf.root === currentRoot && sf.parentRel === currentRel)
+    .map((sf) => sf.entry);
+
+  const currentRootLabel =
+    currentRoot === null ? undefined : roots.find((r) => r.key === currentRoot)?.label;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -502,9 +546,27 @@ function FileExplorerPanelImpl({
         {isSearching
           ? searching
             ? "searching…"
-            : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""} — click to select`
+            : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""}${searchErrors.length > 0 ? ` — ${searchErrors.length} root${searchErrors.length === 1 ? "" : "s"} failed` : ""} — click to select`
           : `select a file, then copy path${onAttach ? " or attach" : ""} — or drag it onto the composer`}
       </div>
+      {isSearching && searchErrors.length > 0 && (
+        <div
+          className="mono"
+          style={{
+            padding: "5px 10px",
+            fontSize: 10,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+          }}
+        >
+          {searchErrors.map((e) => (
+            <div key={e.label}>
+              {e.label}: {e.message}
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflowY: isSearching ? "auto" : undefined }}>
         {isSearching ? (
           <SearchResultsList
@@ -522,33 +584,50 @@ function FileExplorerPanelImpl({
         ) : (
           <VaultFileList
             root={currentRoot}
+            rootLabel={currentRootLabel}
             rel={currentRel}
             entries={entries}
             loading={loading}
             error={loadError}
             truncated={truncated}
             total={total}
-            selected={selected}
+            selected={selectedInCurrentDir}
             onDescend={handleDescend}
             onBreadcrumb={handleBreadcrumb}
-            onToggleSelect={(entry) =>
-              setSelected((prev) =>
-                prev.some((s) => s.name === entry.name && s.isDir === entry.isDir)
-                  ? prev.filter((s) => !(s.name === entry.name && s.isDir === entry.isDir))
-                  : [...prev, entry],
-              )
-            }
+            onToggleSelect={(entry) => {
+              // Toggle qualified by current (root, parentRel) — otherwise
+              // two files named "notes.md" in different sibling folders
+              // would alias to a single selection.
+              if (currentRoot === null) return;
+              const key = selectionKey(currentRoot, currentRel, entry.name);
+              setSelected((prev) => {
+                const has = prev.some(
+                  (s) => selectionKey(s.root, s.parentRel, s.entry.name) === key,
+                );
+                if (has) {
+                  return prev.filter(
+                    (s) => selectionKey(s.root, s.parentRel, s.entry.name) !== key,
+                  );
+                }
+                return [...prev, { root: currentRoot, parentRel: currentRel, entry }];
+              });
+            }}
             onDragStart={handleDragStart}
             onRetry={refresh}
           />
         )}
       </div>
       {(() => {
-        if (isSearching || currentRoot === null || selected.length !== 1) return null;
+        if (isSearching || selected.length !== 1) return null;
         const sel = selected[0];
-        if (!sel || sel.isDir) return null;
-        const rel = currentRel ? `${currentRel}/${sel.name}` : sel.name;
-        return <FilePreview root={currentRoot} rel={rel} name={sel.name} />;
+        if (!sel || sel.entry.isDir) return null;
+        return (
+          <FilePreview
+            root={sel.root}
+            rel={selectedFullRel(sel)}
+            name={sel.entry.name}
+          />
+        );
       })()}
     </div>
   );

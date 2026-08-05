@@ -176,16 +176,30 @@ const SEARCH_RESULT_CAP = 200;
 /** Recursive filename search under root+path — the panel's old "filter"
  *  only matched direct children of whatever directory was already loaded,
  *  which isn't a real search across a 296-file vault. Capped and depth-
- *  first; stops walking as soon as the cap is hit. */
+ *  first; stops walking as soon as the cap is hit.
+ *
+ *  Symlink containment: /list follows symlinks for size/mtime but leaves
+ *  content access to /read (which re-runs resolveInRoot). Here, however,
+ *  we recurse into directories — so a symlink pointing outside the root
+ *  would leak filenames from /etc, etc. Every entry is realpath-checked
+ *  against realRoot before its metadata is emitted or recursed into. */
 async function searchDir(
   rootDir: string,
+  realRoot: string,
   relDir: string,
   query: string,
   out: { name: string; path: string; isDir: boolean; size?: number; mtime: string }[],
 ): Promise<void> {
   if (out.length >= SEARCH_RESULT_CAP) return;
   const abs = path.join(rootDir, relDir);
-  const names = await fs.readdir(abs).catch(() => []);
+  let names: string[];
+  try {
+    names = await fs.readdir(abs);
+  } catch (err) {
+    throw new Error(
+      `could not read directory ${relDir || "(root)"}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   for (const name of names) {
     if (out.length >= SEARCH_RESULT_CAP) return;
     if (name.startsWith(".")) continue;
@@ -193,6 +207,13 @@ async function searchDir(
     const entryAbs = path.join(rootDir, entryRel);
     const st = await fs.stat(entryAbs).catch(() => null);
     if (!st) continue;
+    // Refuse to expose entries whose real path escapes the root. Blocks
+    // a symlink planted inside the root from leaking filenames or stat
+    // metadata for files outside it (e.g. a link to /etc).
+    const entryReal = await fs.realpath(entryAbs).catch(() => entryAbs);
+    if (entryReal !== realRoot && !entryReal.startsWith(realRoot + path.sep)) {
+      continue;
+    }
     if (name.toLowerCase().includes(query)) {
       out.push({
         name,
@@ -202,7 +223,7 @@ async function searchDir(
         mtime: st.mtime.toISOString(),
       });
     }
-    if (st.isDirectory()) await searchDir(rootDir, entryRel, query, out);
+    if (st.isDirectory()) await searchDir(rootDir, realRoot, entryRel, query, out);
   }
 }
 
@@ -220,8 +241,16 @@ r.get("/search", async (c) => {
   }
   const st = await fs.stat(abs).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
+  const realRoot = await fs.realpath(rootDir).catch(() => rootDir);
   const entries: { name: string; path: string; isDir: boolean; size?: number; mtime: string }[] = [];
-  await searchDir(rootDir, rel, q, entries);
+  try {
+    await searchDir(rootDir, realRoot, rel, q, entries);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "search failed" },
+      500,
+    );
+  }
   return c.json({
     root: rootKey,
     path: rel,

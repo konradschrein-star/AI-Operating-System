@@ -10,6 +10,9 @@ export const VPS_FILE_DRAG_MIME = "application/x-forge-vps-file";
 
 export interface VaultFileListProps {
   root: string | null;
+  /** Human-readable label for `root` (e.g. "Obsidian Vault"), shown in the
+   *  breadcrumb. Falls back to the root key when omitted. */
+  rootLabel?: string;
   rel: string;
   entries: FileEntry[];
   loading: boolean;
@@ -32,16 +35,20 @@ function formatSize(bytes: number): string {
 
 function Breadcrumbs({
   root,
+  rootLabel,
   rel,
   onBreadcrumb,
 }: {
   root: string | null;
+  rootLabel?: string;
   rel: string;
   onBreadcrumb: (idx: number) => void;
 }) {
   const segments: string[] = ["Home"];
   if (root !== null) {
-    segments.push(root);
+    // Prefer the human-readable label ("Obsidian Vault") over the raw
+    // root key ("vault") for the first non-Home crumb.
+    segments.push(rootLabel ?? root);
     for (const part of rel.split("/").filter(Boolean)) {
       segments.push(part);
     }
@@ -101,6 +108,7 @@ const ROW_HEIGHT = 32;
 
 export function VaultFileList({
   root,
+  rootLabel,
   rel,
   entries,
   loading,
@@ -127,7 +135,7 @@ export function VaultFileList({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
-      <Breadcrumbs root={root} rel={rel} onBreadcrumb={onBreadcrumb} />
+      <Breadcrumbs root={root} rootLabel={rootLabel} rel={rel} onBreadcrumb={onBreadcrumb} />
 
       {/* Virtualized list area */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
