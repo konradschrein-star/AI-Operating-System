@@ -1,7 +1,9 @@
 # P8 raw evidence — S1b: a PASS must not race a sibling's NEEDS_FIXES
 
 **Round:** 771 · **Phase 8 (live smoke)** · **Date:** 2026-08-05
-**Scratch project:** `0ecb3bd5-d15a-434d-b57a-f5e6d7c48d79` (`p8-s1b-pass-race-smoke`)
+**Scratch projects:** `0ecb3bd5-d15a-434d-b57a-f5e6d7c48d79` (`p8-s1b-pass-race-smoke`, run 1)
+and `956b7261-6e6b-48f7-af1c-719f582a7b25` (`p8-s1b-pass-race-smoke-2`, run 2 — the one that
+carries B1–B4; see §3.2 for why a second run was necessary)
 **Branch:** `project/4120f785`
 **Working dir for every command:** `/opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365`
 **Engine under test:** the DEPLOYED forge-control/forge-executor at `/opt/forge-ai-os`,
@@ -19,17 +21,34 @@ The database password is never written here. Every psql invocation is shown as
 
 ## Scoreboard — read this first
 
-| # | Assertion | Verdict |
-|---|-----------|---------|
-| B1 | No task row with round ≥ 2 exists while the PASS is outstanding — the PASS created nothing | _pending_ |
-| B2 | CHARLIE's task row is still `running` — deferred to its round, not settled individually | _pending_ |
-| B3 | Project status is still `active` — the PASS did not close round or project | _pending_ |
-| B4 | No new `runs` row appeared for this project during the window | _pending_ |
-| B5 | Exactly ONE fix chain: one (round 2, builder, `Fix cycle 1`) + one (round 3, reviewer, `Re-review after fix cycle 1`) | _pending_ |
-| B6 | `chain_key` values are literally `fix:1:1` and `rereview:1:1` | _pending_ |
-| B7 | Merged brief contains `DELTA-FEEDBACK-7D4` | _pending_ |
-| B8 | Merged brief does NOT contain `CHARLIE-APPROVAL-7C3` (PASS siblings omitted by design) | _pending_ |
-| B9 | Duplicate-check query returns ZERO rows | _pending_ |
+| # | Assertion | Verdict | Source |
+|---|-----------|---------|--------|
+| B1 | No task row with round ≥ 2 exists while the PASS is outstanding — the PASS created nothing | **PASS** | §4.2, 66 samples |
+| B2 | CHARLIE's task row is still `running` — deferred to its round, not settled individually | **PASS** | §4.2, 66 samples |
+| B3 | Project status is still `active` — the PASS did not close round or project | **PASS** | §4.2, 66 samples |
+| B4 | No new `runs` row appeared for this project during the window | **PASS** | §4.2, count pinned at 3 |
+| B5 | Exactly ONE fix chain: one (round 2, builder, `Fix cycle 1`) + one (round 3, reviewer, `Re-review after fix cycle 1`) | **PASS** | §3.3 and §4.3 |
+| B6 | `chain_key` values are literally `fix:1:1` and `rereview:1:1` | **PASS** | §3.3 and §4.3 |
+| B7 | Merged brief contains `DELTA-FEEDBACK-7D4` | **PASS** | §3.3 and §4.3 |
+| B8 | Merged brief does NOT contain `CHARLIE-APPROVAL-7C3` (PASS siblings omitted by design) | **PASS** — intent, not deviation | §3.3 and §4.3 |
+| B9 | Duplicate-check query returns ZERO rows | **PASS** | §3.3 and §4.3 |
+
+**Nine of nine PASS. No phase-blocking finding. No divergence between the unit tests and the
+deployed engine.**
+
+**The headline number:** the deployed engine held a settled `VERDICT: PASS` for **334 seconds
+— about 33 manager ticks — and did nothing with it** while its dissenting sibling was still
+running. Then, in a single tick, it produced exactly one fix chain carrying only the dissent.
+
+**Two things a reader must not skim past.**
+
+1. **This experiment was run twice, and the first run is reported in full even though it fell
+   short.** Run 1 (§3) consolidated correctly but its PASS window was 9 seconds — the reviewer
+   agent skipped the `sleep 150` in its brief — which is two samples where the brief demands
+   four. Run 2 (§4) repeated the identical experiment with a delay the agent could not
+   shortcut and produced a 334-second window. B1–B4 are sourced from run 2; B5–B9 hold in both.
+2. **The reverse ordering was not tested.** This drives PASS-first-then-NEEDS_FIXES only. See
+   §6 for exactly what is and is not proven.
 
 ---
 
@@ -234,5 +253,306 @@ not a deviation.
 
 ---
 
-_(§4 — run 2, the wide-window observation — and §5 follow. This file is committed mid-run so
-that a killed run still leaves its evidence on disk.)_
+## 4. Run 2 — the wide-window observation (this is the one that settles B1–B4)
+
+Identical experiment, second scratch project, one fixture change: DELTA's delay is an explicit
+tick loop it is told, in capitals, not to shorten — `for i in $(seq 1 40); do echo tick $i;
+sleep 5; done`, re-run until 200 s of wall clock have passed. It complied, and then some.
+
+**`SCRATCH2_RUN2 = 956b7261-6e6b-48f7-af1c-719f582a7b25`** (`p8-s1b-pass-race-smoke-2`)
+
+```console
+$ date -Is
+2026-08-05T23:33:41+02:00
+$ curl -sS -X POST http://127.0.0.1:7700/api/projects -H 'content-type: application/json' -d '{"name":"p8-s1b-pass-race-smoke-2","repo":"scratch","architect_tier":"fast","brief":"SYNTHETIC ENGINE SMOKE (run 2). ..."}'
+{"project":{"id":"956b7261-6e6b-48f7-af1c-719f582a7b25","name":"p8-s1b-pass-race-smoke-2",...,"status":"active",...},"architectTask":{"id":"53904c6d-4e79-4ae3-a82c-ef3dde3e02d2","round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"pending",...}}
+
+$ date -Is
+2026-08-05T23:33:53+02:00
+$ curl ... /tasks -d '{"role":"reviewer","round":1,"tier":"fast","title":"Sibling reviewer CHARLIE", ...}'
+{"task":{"id":"3e630cee-da95-42e1-8c02-30ddf256101d","round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"pending","run_id":null,"fix_cycle":0,"chain_key":null,...}}
+$ curl ... /tasks -d '{"role":"reviewer","round":1,"tier":"fast","title":"Sibling reviewer DELTA", ...}'
+{"task":{"id":"f6f36682-669a-4310-9e69-94f542278f5f","round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"pending","run_id":null,"fix_cycle":0,"chain_key":null,...}}
+```
+
+### 4.1 The PASS was real and it was on disk
+
+CHARLIE's final assistant message, read out of `runs.thread` for run
+`41584459-12ea-4428-910a-8e97f65e0b44`:
+
+```console
+$ psql "$PGURL" -tAc "SELECT e->>'content' FROM runs r, jsonb_array_elements(r.thread) e WHERE r.id='41584459-12ea-4428-910a-8e97f65e0b44' AND e->>'role'='assistant' ORDER BY e->>'ts' DESC LIMIT 1"
+CHARLIE-APPROVAL-7C3: Nothing here blocks. The worktree contains only the git directory and PLAN.md as expected. 
+
+VERDICT: PASS
+```
+
+So there is no ambiguity about what the engine was holding: a settled, `completed` run whose
+last verdict declaration is `VERDICT: PASS`, sitting in the database for the entire window
+below.
+
+### 4.2 The window — 5 min 34 s, 66 consecutive samples
+
+```console
+$ psql "$PGURL" -c "SELECT pt.title, r.status, r.started_at, r.completed_at FROM project_tasks pt JOIN runs r ON r.id=pt.run_id WHERE pt.project_id='$SCRATCH2_RUN2' ORDER BY r.created_at"
+             title              |  status   |          started_at           |         completed_at          
+--------------------------------+-----------+-------------------------------+-------------------------------
+ Plan: p8-s1b-pass-race-smoke-2 | completed | 2026-08-05 21:33:46.740729+00 | 2026-08-05 21:34:05.375393+00
+ Sibling reviewer CHARLIE       | completed | 2026-08-05 21:34:16.779227+00 | 2026-08-05 21:34:28.252795+00
+ Sibling reviewer DELTA         | completed | 2026-08-05 21:34:16.783056+00 | 2026-08-05 21:40:02.417312+00
+ Fix cycle 1                    | completed | 2026-08-05 21:40:17.294629+00 | 2026-08-05 21:40:45.39117+00
+ Re-review after fix cycle 1    | running   | 2026-08-05 21:40:57.861914+00 | 
+(5 rows)
+```
+
+CHARLIE settled `21:34:28.253` UTC; DELTA settled `21:40:02.417` UTC. **Window = 334.16
+seconds ≈ 33 manager ticks** at the documented 10-second cadence. Both reviewers were claimed
+in the same tick (`21:34:16.78`), so this is genuinely one round with one PASS outstanding, not
+two rounds in sequence.
+
+Sample count inside the window:
+
+```console
+$ grep -c "CHARLIE       | running     | completed" /tmp/s1b/poll2.log
+66
+```
+
+66 samples — the brief asks for at least four. Six of them, spread across the window, verbatim:
+
+```console
+=== SAMPLE 2026-08-05T23:34:31+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"done","run_id":"7d463dd0-a845-4c0e-b586-dc91c61e3765"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"41584459-12ea-4428-910a-8e97f65e0b44"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"1e863678-1af8-43c0-af16-ab70647b2822"}]}
+ round |             title              | task_status | run_status | chain_key 
+-------+--------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke-2 | done        | completed  | 
+     1 | Sibling reviewer CHARLIE       | running     | completed  | 
+     1 | Sibling reviewer DELTA         | running     | running    | 
+(3 rows)
+
+ runs_for_project 
+------------------
+                3
+(1 row)
+
+=== SAMPLE 2026-08-05T23:35:07+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"done","run_id":"7d463dd0-a845-4c0e-b586-dc91c61e3765"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"41584459-12ea-4428-910a-8e97f65e0b44"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"1e863678-1af8-43c0-af16-ab70647b2822"}]}
+ round |             title              | task_status | run_status | chain_key 
+-------+--------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke-2 | done        | completed  | 
+     1 | Sibling reviewer CHARLIE       | running     | completed  | 
+     1 | Sibling reviewer DELTA         | running     | running    | 
+(3 rows)
+
+ runs_for_project 
+------------------
+                3
+(1 row)
+
+=== SAMPLE 2026-08-05T23:36:03+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"done","run_id":"7d463dd0-a845-4c0e-b586-dc91c61e3765"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"41584459-12ea-4428-910a-8e97f65e0b44"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"1e863678-1af8-43c0-af16-ab70647b2822"}]}
+ round |             title              | task_status | run_status | chain_key 
+-------+--------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke-2 | done        | completed  | 
+     1 | Sibling reviewer CHARLIE       | running     | completed  | 
+     1 | Sibling reviewer DELTA         | running     | running    | 
+(3 rows)
+
+ runs_for_project 
+------------------
+                3
+(1 row)
+
+=== SAMPLE 2026-08-05T23:37:50+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"done","run_id":"7d463dd0-a845-4c0e-b586-dc91c61e3765"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"41584459-12ea-4428-910a-8e97f65e0b44"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"1e863678-1af8-43c0-af16-ab70647b2822"}]}
+ round |             title              | task_status | run_status | chain_key 
+-------+--------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke-2 | done        | completed  | 
+     1 | Sibling reviewer CHARLIE       | running     | completed  | 
+     1 | Sibling reviewer DELTA         | running     | running    | 
+(3 rows)
+
+ runs_for_project 
+------------------
+                3
+(1 row)
+
+=== SAMPLE 2026-08-05T23:39:23+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"done","run_id":"7d463dd0-a845-4c0e-b586-dc91c61e3765"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"41584459-12ea-4428-910a-8e97f65e0b44"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"1e863678-1af8-43c0-af16-ab70647b2822"}]}
+ round |             title              | task_status | run_status | chain_key 
+-------+--------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke-2 | done        | completed  | 
+     1 | Sibling reviewer CHARLIE       | running     | completed  | 
+     1 | Sibling reviewer DELTA         | running     | running    | 
+(3 rows)
+
+ runs_for_project 
+------------------
+                3
+(1 row)
+
+=== SAMPLE 2026-08-05T23:39:58+02:00 ===
+{"status":"active","tasks":[{"round":0,"role":"architect","title":"Plan: p8-s1b-pass-race-smoke-2","status":"done","run_id":"7d463dd0-a845-4c0e-b586-dc91c61e3765"},{"round":1,"role":"reviewer","title":"Sibling reviewer CHARLIE","status":"running","run_id":"41584459-12ea-4428-910a-8e97f65e0b44"},{"round":1,"role":"reviewer","title":"Sibling reviewer DELTA","status":"running","run_id":"1e863678-1af8-43c0-af16-ab70647b2822"}]}
+ round |             title              | task_status | run_status | chain_key 
+-------+--------------------------------+-------------+------------+-----------
+     0 | Plan: p8-s1b-pass-race-smoke-2 | done        | completed  | 
+     1 | Sibling reviewer CHARLIE       | running     | completed  | 
+     1 | Sibling reviewer DELTA         | running     | running    | 
+(3 rows)
+
+ runs_for_project 
+------------------
+                3
+(1 row)
+```
+
+**B1 — PASS.** Across all 66 in-window samples the task table holds exactly three rows, all at
+round 0 or 1. No row with `round >= 2` ever appeared while the PASS was outstanding. The PASS
+created nothing — no fix chain, no next-round promotion, no re-review.
+
+**B2 — PASS.** `Sibling reviewer CHARLIE` reads `task_status = running` in every in-window
+sample, while its `run_status` is `completed`. The engine did not settle the task individually
+on the strength of its own PASS; it deferred the decision to the round. This is precisely the
+behaviour that was missing on the first night, when a PASS was a bare `return`.
+
+**B3 — PASS.** `"status":"active"` in the API payload of every in-window sample. The PASS
+neither closed the round nor closed the project. `closeFinishedProjects()` did not fire.
+
+**B4 — PASS.** The `runs` count joined through this project's tasks stayed at **3** for all 66
+samples (architect + CHARLIE + DELTA). Full distribution over the whole poll log:
+
+```console
+$ grep -A2 "runs_for_project" /tmp/s1b/poll2.log | grep -E "^ +[0-9]+$" | sort | uniq -c
+      3                 1
+     71                 3
+      8                 4
+      2                 5
+```
+
+1 run before the reviewers were claimed, 3 for the round (71 samples, covering the window plus
+the tail before consolidation), 4 once `Fix cycle 1` spawned, 5 once the re-review spawned.
+No run appeared during the window.
+
+### 4.3 Consolidation after DELTA settled — B5 to B9 (run 2)
+
+```console
+$ psql "$PGURL" -c "SELECT round, role, title, status, fix_cycle, chain_key FROM project_tasks WHERE project_id='$SCRATCH2_RUN2' ORDER BY round, created_at"
+ round |   role    |             title              | status  | fix_cycle |  chain_key   
+-------+-----------+--------------------------------+---------+-----------+--------------
+     0 | architect | Plan: p8-s1b-pass-race-smoke-2 | done    |         0 | 
+     1 | reviewer  | Sibling reviewer CHARLIE       | done    |         0 | 
+     1 | reviewer  | Sibling reviewer DELTA         | done    |         0 | 
+     2 | builder   | Fix cycle 1                    | done    |         1 | fix:1:1
+     3 | reviewer  | Re-review after fix cycle 1    | running |         1 | rereview:1:1
+(5 rows)
+```
+
+**B5 — PASS.** One `(round 2, builder, Fix cycle 1)`, one `(round 3, reviewer, Re-review after
+fix cycle 1)`. One fix chain from a two-reviewer round, second confirmation.
+
+**B6 — PASS.** `chain_key` is literally `fix:1:1` and `rereview:1:1`; `fix_cycle=1` on both.
+
+```console
+$ psql "$PGURL" -c "SELECT round, role, title, count(*) FROM project_tasks WHERE project_id='$SCRATCH2_RUN2' GROUP BY 1,2,3 HAVING count(*) > 1"
+ round | role | title | count 
+-------+------+-------+-------
+(0 rows)
+```
+
+**B9 — PASS.** Zero duplicates.
+
+```console
+$ psql "$PGURL" -tAc "SELECT brief FROM project_tasks WHERE project_id='$SCRATCH2_RUN2' AND title='Fix cycle 1'"
+Reviewer feedback from round 1 (fix cycle 1). Address EVERY point below; the re-review will check all of them against your new diff.
+
+## Feedback from: Sibling reviewer DELTA
+## Review Complete
+
+**DELTA-FEEDBACK-7D4**
+
+The synthetic engine smoke test has completed all required checks. The 200-second delay loop executed successfully, allowing sibling reviewers to reach their verdicts before this one concludes. The scratch project has no license file.
+
+There are no code paths to review, no error handling to verify, and no security concerns to audit in this synthetic harness—it exists purely to test the goal engine's multi-reviewer coordination and verdict aggregation.
+
+VERDICT: NEEDS_FIXES
+
+$ psql "$PGURL" -tAc "SELECT brief FROM project_tasks WHERE project_id='$SCRATCH2_RUN2' AND title='Fix cycle 1'" | grep -c "CHARLIE-APPROVAL-7C3"
+0
+```
+
+**B7 — PASS.** `DELTA-FEEDBACK-7D4` present, DELTA's text carried in full.
+
+**B8 — PASS.** `CHARLIE-APPROVAL-7C3` absent, zero occurrences. The PASS sibling is omitted, as
+`mergeFeedback()` documents. **This is intent, not a bug** — the fix builder is handed only the
+work it must do, not a reviewer's congratulations.
+
+---
+
+## 5. Closing the scratch projects
+
+```console
+$ curl -sS -X POST http://127.0.0.1:7700/api/projects/0ecb3bd5-d15a-434d-b57a-f5e6d7c48d79/status -H 'content-type: application/json' -d '{"status":"done"}'
+{"project":{"id":"0ecb3bd5-d15a-434d-b57a-f5e6d7c48d79","name":"p8-s1b-pass-race-smoke",...,"status":"done",...,"updated_at":"2026-08-05 21:33:17.192853+00"}}
+$ date -Is
+2026-08-05T23:33:17+02:00
+```
+
+```console
+$ curl -sS -X POST http://127.0.0.1:7700/api/projects/956b7261-6e6b-48f7-af1c-719f582a7b25/status -H 'content-type: application/json' -d '{"status":"done"}'
+{"project":{"id":"956b7261-6e6b-48f7-af1c-719f582a7b25","name":"p8-s1b-pass-race-smoke-2",...,"status":"done",...,"updated_at":"2026-08-05 21:40:58.563392+00"}}
+$ date -Is
+2026-08-05T23:40:58+02:00
+```
+
+**One run was still in flight at close time and was deliberately not killed:** run 2's
+`Re-review after fix cycle 1` started at `21:40:57.862` UTC, one second before the status POST
+landed at `21:40:58.563`. Its cost is one fast-tier reviewer on an empty scratch worktree. In
+run 1 the `Fix cycle 1` builder had already completed (`21:32:55.771`) before the close at
+`21:33:17`, and its re-review never started — the round-2 close gated promotion, which is
+itself a small live confirmation of the blocked/inactive-project gate (bug 2).
+
+---
+
+## 6. What this proves, and what it does not
+
+**Proves.** On the deployed engine, a reviewer PASS is inert until its whole round has settled.
+For 5 minutes 34 seconds and roughly 33 manager ticks the engine sat on a `completed` run
+carrying `VERDICT: PASS` and did nothing with it: no task marked done, no round closed, no
+project closed, no run spawned, no round-2 row created. When the dissenting sibling finally
+landed, one tick produced exactly one fix chain with the documented chain keys and a merged
+brief containing the dissent and only the dissent. Twice, independently, on two scratch
+projects.
+
+**Does not prove.** This exercises the ordering PASS-first-then-NEEDS_FIXES. The reverse
+ordering (NEEDS_FIXES settles first, PASS lands late) was not driven here; by the code's rule
+order — unsettled sibling → wait, decided before any verdict is parsed — it is the same code
+path, but this transcript does not contain that observation and should not be read as if it
+did. Nor does it exercise three or more reviewers, an unparseable verdict inside a mixed round,
+or a project transitioning to `blocked` mid-round.
+
+**No divergence between the unit tests and the deployed engine was observed.** Every assertion
+the pure-function tests make about `consolidateReviewerRound()` and `mergeFeedback()` — one
+chain, `fix:<round>:<cycle>` / `rereview:<round>:<cycle>`, dissent merged, PASS omitted — is
+what the live engine did with real runs and real timing.
+
+### Hygiene during this task
+
+- `/opt/forge-ai-os` was never edited. It was `git status --porcelain`-clean at the start and
+  the only commands run against it were `git log` and `git status`.
+- No `pm2 restart`, `pm2 stop`, or `pm2 delete` was issued. `pm2 jlist` and `pm2 env 35` (both
+  read-only) were used once each, to locate the database URL.
+- Every database statement in this transcript is a `SELECT`. No `INSERT`/`UPDATE`/`DELETE`/DDL.
+- No task was created in the parent project `4120f785-fd86-414c-9a04-f10b2cd0c365`. The only
+  things created were the two scratch projects and their four reviewer tasks.
+- The only file written in this worktree is this one. `docs/plan/evidence/p8-raw-s1-s2.md`,
+  owned by a sibling task in the same round, was not touched, and no `git checkout`, `git
+  stash`, or `git reset` was run.
+
+### One honest note on method
+
+The brief specified a single scratch project. Run 1 produced a valid consolidation but only a
+9-second PASS window — two samples where the brief asks for four — because the reviewer agent
+silently skipped the `sleep 150` it was briefed to run. Rather than write up a two-sample
+window as if it satisfied the requirement, I ran the identical experiment a second time with a
+delay instruction the agent could not shortcut. Both runs are reported in full, including the
+one that came up short. The scoreboard verdicts for B1–B4 are sourced from run 2; B5–B9 are
+confirmed independently in both.
