@@ -21,6 +21,7 @@ forge-control-web/app/desktop/live/agentsApi.ts	spent_usd|cost_usd|spend row	Wir
 forge-control-web/app/desktop/MoneySurface.tsx	.*	The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
 forge-control-web/app/desktop/MemorySurface.tsx	h\.score\.toFixed\(2\)	toFixed(2) here formats a relevance SCORE, not currency.
 forge-control-web/app/desktop/live/AgentActivity.tsx	M < 10 \? M\.toFixed\(2\)	toFixed(2) inside humanTokens()'s "M" suffix (e.g. "1.23M" tokens) — a token-magnitude formatter, not currency; a false positive of the naive toFixed(2) pattern.
+forge-control-web/app/desktop/team/teamApi.ts	M < 10 \? M\.toFixed\(2\)	toFixed(2) inside fmtTokens()'s "M" suffix — the same token-magnitude formatter as AgentActivity.tsx's humanTokens(), ported in round 501a (teamApi.ts:154-156 says so). Same false positive, same reason.
 forge-control-web/app/desktop/chat/slash-registry.ts	spend	/rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
 # forge-control-web/app/desktop/ChatSurface.tsx — REMOVED in round 402.
 # 401b listed the chat header's "spent $X / cap $Y" line here as a documented
