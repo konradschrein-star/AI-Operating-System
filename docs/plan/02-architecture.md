@@ -1,212 +1,202 @@
 # 02 — Architecture
 
-## Recommendation (first)
+## 1. Recommendation (first)
 
-**Replace the third-party `@cubone/react-file-manager` list surface with a small,
-purpose-built, virtualized, token-native component — `VaultFileList` — that we
-fully own. Keep everything already ours (preview, search, attach, drag-out, the
-secure backend) unchanged.**
+**Fix truth at the API boundary, legibility at the classification layer, speed at the component layer, and transparency at the renderer layer — all as additive changes over data that already exists.** Concretely: (a) `routes/agents.ts` starts selecting `completed_at` and projecting `settled_at`, `agent_kind`, `role`, `project_id`, `cron_name`, and per-sub-agent `ended_at`/`description`; (b) `AgentActivity.tsx` funnels all duration math through one settled-aware helper; (c) the hover fix is whatever the trace proves, with React.memo + CSS-`:hover` as the expected shape; (d) chat gains `tools.by_name` renderers for `Agent`/`SendMessage` over the existing thread pipeline, plus `parent_tool_use_id` threading in `thread-mapping.ts`. No migrations, no new dependencies, no engine files, no new state owners.
 
-That single move removes *both* root causes at once:
+Rejected alternatives, one line each:
 
-- **Light mode** becomes correct by construction: our JSX reads `tokens.*` and any
-  component CSS reads `var(--fg-*)`, so the pane flips with `data-theme` like the
-  rest of the app. The 49-line `!important` shadow-palette in
-  `FileExplorerPanel.css` is deleted, not patched.
-- **Lag** goes away: we render a **windowed** list (row count ≪ entry count) over a
-  **bounded per-directory data model** with a small client cache, instead of
-  mounting a heavy third-party tree over an ever-growing flat array.
+- *Compute settled durations client-side from `completed_at`* — pushes the truth rule into every consumer (web + mobile PWA); the API is the single choke point, fix it there.
+- *Add a `settled_at` column or backfill cancelled rows* — a migration for data that `COALESCE` already answers; engine's cancel path is not ours to fix this cycle.
+- *New `/api/agents/v2`* — versioning for an additive change; strictly-additive fields on v1 keep both consumers working.
+- *WebSocket/SSE for the Live panel* — polling isn't the proven problem; don't rebuild transport to fix a hover.
+- *Tooltip library (floating-ui etc.) for lineage* — a dependency and a mount cost to solve what CSS visibility solves; NF4 forbids it anyway.
+- *Nesting sub-agent transcript entries inside their Agent block* — requires restructuring the assistant-message grouping algorithm mid-cycle; marking attribution gets the legibility at a fraction of the risk (revisit later if Konrad wants full nesting).
+- *New notification plumbing so agent completions appear in chat* — dies inside `cc-runner.ts`, an engine file owned by engine-v2-research-lane; the brief's escape hatch says document, so we document (R19).
 
-### Reasoning
+## 2. System as it exists (recon summary, verified 2026-08-05)
 
-1. The library is the *single common cause* of both defects. Fixing light mode by
-   tokenizing its CSS would leave a fragile 49-line `!important` layer we must keep
-   in sync forever; fixing lag inside it is impossible because it has no windowing
-   and re-derives a folder's children from the full flat array we hand it.
-2. Owning the list makes "zero hardcoded colors" **structural** rather than a
-   grep-and-chase. Tokens are the default, not an override.
-3. Real directories are ≤86 entries and the API answers in 1–14 ms (see
-   `BASELINE-FINDINGS.md`), so the replacement component is genuinely small: a
-   virtualized fixed-row list, folder-descend, a breadcrumb, selection, and
-   drag-out. The hard, security-sensitive parts (preview, search, attach,
-   containment) are already ours and stay put.
-4. The blast radius is controlled: the swap is confined to the `<FileManager>`
-   list/nav/breadcrumb surface plus its CSS. Public contracts
-   (`VPS_FILE_DRAG_MIME`, `onAttach`, the `api.ts` client, `files.ts`) are unchanged.
-
-### Rejected alternatives (one line each)
-
-- **Tokenize the library's CSS + cap the rows fed to it** — keeps a brittle 49-line
-  `!important` shadow palette and can't truly virtualize; capping is hacky because
-  the library derives children by prefix from the whole flat array.
-- **Fork `@cubone/react-file-manager` to add windowing** — an unowned upstream
-  surface, slow to do well, over-scoped for a single-operator tool.
-- **Keep the library, fix only light mode, accept the lag** — fails the perf DoD
-  (D1/D2) outright.
-- **Swap in a different heavyweight file-manager lib** — trades one opaque
-  dependency and its theming assumptions for another; no better on virtualization
-  or tokens, and a larger integration risk overnight.
-
-## Components (after the change)
+### 2.1 Data flow, Live panel
 
 ```
-ChatSurface.tsx  (SidePanel: Live | Files tabs — UNCHANGED except it still
-  │                renders <FileExplorerPanel/> for the Files tab)
-  └── FileExplorerPanel.tsx        ← owns navigation + selection + cache state
-        ├── header (search input, selected count, copy-path, attach)  [tokens]
-        ├── VaultFileList.tsx      ← NEW: virtualized list + breadcrumb  [tokens]
-        │     (folder-descend, selection toggle, drag-out, error/empty rows)
-        ├── SearchResultsList      ← OURS today, kept; tokens audited
-        └── FilePreview            ← OURS today, kept; tokens audited
-
-forge-control/src/routes/files.ts  ← /list hardened (bounded, Cache-Control);
-                                       containment UNCHANGED
-app/theme.css + app/tokens.ts      ← new accent-alpha tint tokens (both palettes)
+Postgres runs (content_forge)                    forge-control :7700               forge-control-web :7701
+┌─────────────────────────────┐   4s poll   ┌──────────────────────────┐      ┌────────────────────────────┐
+│ columns: status, started_at,│◄────────────│ routes/agents.ts         │◄─────│ react-query                │
+│ completed_at, updated_at,   │             │  fetchActiveRows (≤60,   │      │  AgentActivity 4s          │
+│ parent_run_id, worker,      │             │   24h window)            │      │  ManagersSection 8s        │
+│ metadata jsonb:             │             │  agentFromRow            │      │ AgentActivity.tsx rows     │
+│  role, project_id, model,   │             │  subagentsFromRollup     │      │  AgentRunLine / SubagentLine│
+│  model_resolved, cron_id,   │             │  ← DROPS completed_at,   │      │  useSharedClock (1s, gated)│
+│  subagents_v2[] (ended_at!, │             │    role, project_id,     │      └────────────────────────────┘
+│  description!), rollup_v1   │             │    ended_at, description │
+└─────────────────────────────┘             └──────────────────────────┘
 ```
 
-### What owns state
+Executor (off-limits) writes `runs` + rollup every 2s. `elapsed_ms` is computed at agents.ts:537–538 as `now − started_at` unconditionally — the time-truth bug. `completed_at` is populated on all completed/failed rows; only cancelled rows (4 legacy) lack it and carry the settle time in `updated_at`.
 
-`FileExplorerPanel` is the single owner of navigation and selection state:
+### 2.2 Data flow, chat transcript
 
-- `currentRoot: string | null`, `currentRel: string` — the location (null root =
-  virtual Home showing the root list). Replaces today's ambiguous `currentPath`
-  string parsing where practical; a `currentPath` virtual string may be retained
-  internally if it simplifies breadcrumb/search reuse, but the source of truth is
-  root+rel.
-- `entries: DirEntry[]` — **only the current directory's** children (bounded).
-- `cache: Map<string, { entries: DirEntry[]; ts: number }>` keyed by
-  `${root}::${rel}`, with an explicit small bound (e.g. keep ≤ 32 most-recent dirs,
-  evict oldest). This is the fix for R14 (no unbounded array).
-- `selected: DirEntry[]`, `query`, `searchResults` — as today.
+```
+runs.thread jsonb ──GET /api/chat/:id──► ChatSurface(detailQ) ──► AssistantThread.mapThreadToMessages
+  {role, content, ts, kind?, meta?}         + SSE snapshots           (thread-mapping.ts: dispatch on role/kind ONLY)
+  meta for tool_call: tool_use_id, tool,                                 │
+        input (≤1500 chars), parent_tool_use_id?                         ▼
+  meta for tool_result: tool_use_id, is_error,          MessagePrimitive.Parts { tools: { Fallback: ToolCallRow } }
+        parent_tool_use_id?                             ToolCallRow = the "Bash block": collapsible, tokens.toolBg,
+                                                        dot(color), preview 110 chars, ARGS/RESULT <pre> sections
+```
 
-`VaultFileList` is **presentational + virtualization only**: given `entries`,
-`loading`, `error`, `selected`, and callbacks (`onDescend`, `onToggleSelect`,
-`onBreadcrumb`, `onDragOutPayload`), it renders a windowed list and a breadcrumb.
-It owns no fetch logic.
+Facts that gate design: there is no per-tool dispatch anywhere today (`tools.by_name` unused; verified supported by installed assistant-ui 0.14.24); `thread-mapping.ts` drops `parent_tool_use_id` and the call-side `is_error`; `Agent` (not `Task`) is the CLI's spawn tool name (63 occurrences vs 0); task-completion notifications never reach the thread (`cc-runner.ts:417–429` forwards only `tool_result` blocks; closed `CcEvent` union).
 
-### What dispatches work
+### 2.3 Kind signals in `runs` (verified against live data, 245 rows)
 
-- **Navigate:** `onDescend(entry)` → panel computes new `(root, rel)` → `loadDir`.
-- **`loadDir(root, rel)`:** check `cache`; if hit, render immediately
-  (stale-while-revalidate); always issue one `api.fetchFileList(root, rel)`; on
-  success update `entries` + `cache`; on error set `error` state.
-- **Breadcrumb click:** `onBreadcrumb(index)` → derive `(root, rel)` → `loadDir`.
-- **Refresh:** delete the cache entry for `(root, rel)` → `loadDir` (forced).
-- **Search:** unchanged effect — debounced, scoped, calls `api.searchFiles`.
-- **Roots (Home):** `loadRoots()` seeds the root list (as today).
+| kind | signature |
+|---|---|
+| operator chat | `worker='forge-executor'`, no `project_id`/`role`/`cron_id`, `parent_run_id` NULL |
+| project worker | `worker='project:<role>'`, `metadata.role`+`project_id`+`task_id` |
+| child run | `parent_run_id` NOT NULL (30 rows), same project metadata shape |
+| cron/watchdog | `metadata.cron_id`/`cron_name`, `source='cron'` (143 rows) |
+| in-process sub-agent | not a row — element of parent's `metadata.subagents_v2[]` with `role`, `model`, `description`, `started_at`, `ended_at`, `status` |
 
-The click path for D3/R15 is therefore exactly: `onDescend → loadDir → one
-/list`. No recursion, no per-navigation stat storm on the client.
+## 3. Component design — Phase 1, time truth
 
-### Data model
+### 3.1 Server (`routes/agents.ts` only)
+
+- Add `completed_at::text` to both SELECTs (`fetchActiveRows`, `/:id`).
+- `agentFromRow`:
+  ```ts
+  const settled = ["completed", "failed", "cancelled"].includes(row.status);
+  const settledAtMs = settled ? Date.parse(row.completed_at ?? row.updated_at) : NaN;
+  const elapsed_ms = !Number.isFinite(startedMs) ? null
+    : settled && Number.isFinite(settledAtMs) ? Math.max(0, settledAtMs - startedMs)
+    : Math.max(0, nowMs - startedMs);
+  ```
+  plus `settled` and `settled_at` on the wire (R2). Hard rule: if `settled` but both timestamps unparsable → `elapsed_ms: null` (renders `—`), never a now-derived number.
+- `subagentsFromRollup`: pass through `ended_at ?? null`, `description ?? null` (R3). Types updated in the local interfaces (agents.ts owns its own response types — no shared engine types touched).
+
+Failure modes: NULL `started_at` (queued rows) → null elapsed, client renders `—`. Stuck→settled later: `completeRun` stamps `completed_at` whenever it settles, covered. Rollup lost on executor restart (rollup is in-process): sub-agents of runs spanning a restart may lack `ended_at` → client fallback chain (R5) ends in `—`, visibly.
+
+### 3.2 Client (`agentsApi.ts`, `AgentActivity.tsx`)
+
+One module-level helper pair (R6):
 
 ```ts
-interface DirEntry {          // one row; mirrors /api/files/list entry shape
-  name: string;
-  isDir: boolean;
-  size?: number;              // undefined for dirs
-  mtime: string;              // ISO
+export function runElapsedMs(a: AgentRow, now: number): number | null   // settled → a.elapsed_ms verbatim; live → now − started_at; queued/unparsable → null
+export function subagentElapsedMs(s: SubagentRow, now: number): number | null  // running → now − started; done → ended_at − started; fallback updated_at − started; else null
+```
+
+`AgentRunLine`/`SubagentLine` call these and nothing else. `humanDuration(null)` already renders `—`. The `useSharedClock` gating stays; with settled rows frozen, the clock also stops sooner (side benefit: fewer 1s re-renders — note for phase 3's baseline interpretation).
+
+## 4. Component design — Phase 2, kind truth
+
+### 4.1 Server classification (in `agentFromRow`)
+
+Ordered precedence, first match wins, `unknown` is a real value (§operability — never guess):
+
+```ts
+const agent_kind =
+  meta.cron_id ? "cron"
+  : meta.project_id && meta.role ? "worker"
+  : row.worker === "forge-executor" ? "operator"
+  : "unknown";
+```
+
+Projected additively: `agent_kind`, `role`, `project_id`, `cron_name`. The `unknown` bucket is expected to be near-empty in practice (7 engine-less legacy rows); if it shows up in the panel, that is signal, which is the point.
+
+### 4.2 Panel rendering
+
+Row grammar extends the existing idiom (no redesign):
+
+```
+● fable-5  operator   Chat: rework live panel            36m 52s · ↓ 204.7k     ← operator chat
+● opus-5   builder    Phase 1: time truth                 4m 12s · ↓ 88.1k     ← project worker (role from R7)
+  ○ Explore opus-5    Recon chat Bash block rendering     1m 47s · ↓ 132.1k    ← sub-agent: description as title (R3)
+● haiku    cron       watchdog: heartbeat check              12s · ↓ 3.2k      ← cron
+```
+
+- Kind badge: small mono label colored by token (`operator` → `tokens.accent`, worker roles → per-role color already used in ChatSurface's `ROLE_COLOR` — reuse/centralize that map, `cron` → `tokens.textMuted`, `unknown` → `tokens.warn`). Both themes come free via tokens.
+- Model display mapping (R8): pure function, unit-tested, unknown ids verbatim.
+- Sub-agent title becomes `description || role` (today it shows latest-activity text; keep activity on the second line slot that already exists for parents, or as `title` attr — planner decides, spec: description must be visible without hover).
+
+### 4.3 Lineage on hover (R10) — decision
+
+**Recommendation: enriched native `title` attributes** composed at render time from data already on the row (`parent run title` for sub-agents needs nothing new — the sub-agent renders under its parent; the title spells it out: `sub-agent of "<parent.title>" · <model> · started <t>`). Native titles cost zero JS, zero layout, zero state — they cannot regress phase 3.
+Rejected: CSS pseudo-tooltip (`::after`) — richer visuals but adds absolutely-positioned layout work inside an `overflowY: auto` scroller and risks clipping; not worth it for v1. If Konrad wants pretty tooltips later, that's a follow-up with the perf harness already in place to police it.
+Child runs (`parent_run_id` set, top-level rows): title includes `child of <parent_run_id ····8>`; full org-chart linking across top-level rows is out of scope (panel is flat + one nesting level today; a stranger still reads the org chart because workers carry role + project and sub-agents nest under parents).
+
+## 5. Component design — Phase 3, hover performance
+
+### 5.1 Protocol-first stance
+
+No fix lands without a baseline trace (R12) and a named mechanism found in that trace (R13). Protocol and numeric gates live in `03-quality.md` §4 so builder and reviewer run literally the same script.
+
+### 5.2 Candidate mechanisms (starting hypotheses for the trace, not conclusions)
+
+1. **Per-row `useState` hover in `ChatListItem`** (ChatSurface.tsx:961–966): each enter/leave commits a state update; if rows are unmemoized children of a large tree, one mouse move across N rows = N commits of nontrivial subtrees.
+2. **Poll-driven commit storms coinciding with hover**: three queries (agents 4s, managers 8s, chat 3s — plus 1s SSE snapshots when a run is live) re-render `ChatSurface` wholesale; `agents` responses are large (≤60 runs × full usage/rollup JSON) and `useMemo` keyed on `q.data` invalidates every poll because the object identity changes each fetch even when payload is equal.
+3. **Style-recalc churn from inline style objects**: every commit re-creates hundreds of style objects; cheap individually, measurable in aggregate on a re-render storm.
+4. **The side-panel task list's direct DOM style mutation** (ChatSurface.tsx:186–191) — cheap by itself; suspect only if the trace says so.
+
+### 5.3 Expected fix shapes (choose by evidence)
+
+- `React.memo` on `ChatListItem` (and rail siblings) with primitive props; move hover visual to a CSS class (`.chat-row:hover .close-x { … }`) killing the `useState` entirely — the ✕ affordance is pure presentation.
+- If polls are the storm: `structuralSharing` is on by default in react-query — verify it's not defeated (fresh object identities from `fetchAgents` mapping); memo row props to primitives so identical data → zero row re-renders.
+- Rate matters less than fan-out: do **not** slow the polls to pass the gate (that trades truthfulness for a benchmark); NF: cadence changes only if the trace proves cadence itself is the cause, and then with Konrad-visible justification in findings.md.
+
+### 5.4 Failure modes
+
+Fix regresses behavior (R15 click-through covers); memo hides a legit update (structural sharing + primitive props make staleness impossible by construction — reviewer checks status dot updates live); measurement flakes on a busy VPS (protocol pins CPU-noise handling: 3 runs, median, recorded machine load).
+
+## 6. Component design — Phase 4, agent comms in chat
+
+### 6.1 Mapping layer (`thread-mapping.ts`)
+
+- `ToolCallPart` gains `parentToolUseId?: string`; populate from `meta.parent_tool_use_id` (R16).
+- Build `spawnIndex: Map<tool_use_id, {description, subagentType}>` in the same single pass, from `Agent` tool_calls (parse `meta.input` JSON; on parse failure, store nothing — attribution then falls back to short id). Attach `agentLabel` to parts whose `parentToolUseId` hits the map (R18). Pure, fixture-tested.
+- No change to grouping/back-search logic.
+
+### 6.2 Renderers (`AssistantThread.tsx`)
+
+```tsx
+tools: {
+  by_name: { Agent: AgentSpawnRow, SendMessage: SendMessageRow },
+  Fallback: ToolCallRow,          // Bash & everything else — unchanged
 }
 ```
 
-`/api/files/list` already returns `{ root, path, entries: {name,isDir,size,mtime}[] }`.
-Phase 2 adds a bounded/paginated form (see below) but keeps this entry shape, so
-the client change is additive.
+`AgentSpawnRow` / `SendMessageRow` are structural siblings of `ToolCallRow` (same collapse state, same tokens, same 110-char preview discipline):
 
-### Interfaces (unchanged contracts)
+```
+┌ → agent · Explore  "Recon chat Bash block rendering"          running ▸ ┐   ← spawn, collapsed
+┌ → agent · Explore  "Recon chat Bash block rendering"             done ▾ ┐
+│ PROMPT                                                                   │
+│ <full prompt payload, pre-wrap mono, maxHeight 260 scroll>               │
+│ LAUNCH                                                                   │
+│ Async agent launched successfully…                                       │
+└──────────────────────────────────────────────────────────────────────────┘
+┌ → send · a28e674…  "Resume RAG recovery — verify partial work first" ▸ ┐  ← SendMessage
+│ MESSAGE  <full message>                                                 │
+│ ← reply  <tool_result content>                                          │
+```
 
-- `api.ts`: `fetchFileRoots`, `fetchFileList`, `searchFiles`, `fileReadUrl`,
-  `attachExistingFile` — signatures preserved. (If Phase 2 adds pagination params,
-  extend `fetchFileList` with optional args; do not break existing callers.)
-- `VPS_FILE_DRAG_MIME` export stays (imported by `CanvasPane.tsx` and read by
-  `useAttachments`). The drag-out payload stays `JSON.stringify({root, rel})`.
-- `onAttach: ((file: UploadedFile) => void) | null` prop stays.
-- `filePreviewComponent` / `FilePreview` contract stays (rendered when a file row
-  is activated for preview).
+Direction grammar: `→` = operator sends (spawn prompt, SendMessage), `←` = operator receives (SendMessage reply/result). Colors: reuse `ToolCallRow`'s state coding (pending `tokens.warn`, done `tokens.info`, error `tokens.bleed`); the direction marker + "agent"/"send" label use `tokens.accent` to lift them above plain tools. All payload parsing is defensive: `JSON.parse` failure → raw `argsText` in the expanded body under an explicit `UNPARSED PAYLOAD` label (R20). SendMessage inputs contain CLI-duplicated fields (`to`/`recipient`, `message`/`content`) — prefer `to`/`message`, tolerate either.
+Sub-agent attribution (R18): parts with `parentToolUseId` get a left-rail marker + `agentLabel` chip; visual weight low (they are context, not headline).
 
-### Technology choices (with one-line rationale)
+### 6.3 What is knowingly absent (R19)
 
-- **Virtualization: `@tanstack/react-virtual`** — headless, ~tiny, React 19
-  compatible, battle-tested; we keep full control of row markup and tokens.
-  *Fallback if a React-19 peer issue appears:* a hand-rolled fixed-row-height
-  windowed list (~40 lines: `scrollTop` + container height → visible range), zero
-  deps. Rows are uniform height, so either approach is simple. Install per R29:
-  `NODE_ENV=development pnpm add @tanstack/react-virtual --prod=false`.
-- **Client cache: a plain bounded `Map`** — boring, explicit, no library. Stale-
-  while-revalidate gives instant re-visits (R12) while staying correct on change.
-- **Tokens: existing `tokens.ts` / `theme.css`** — no new theming mechanism; add
-  accent-alpha tint tokens to both palettes (R20).
-- **Backend `/list` hardening: `fs.readdir(abs, { withFileTypes: true })`** for the
-  dir/file bit without a stat, then stat only as needed for size/mtime (or lazily);
-  cap/paginate very large listings. Rationale: kill the O(N) stat storm on huge
-  dirs while preserving the current entry shape and containment.
+Agent completion payloads (the result text a background agent returns) are not in the thread — the operator's *reaction* to them is, but the notification itself dies in `cc-runner.ts:417–429`. `docs/plan/notification-gap.md` records: exact code path, the closed `CcEvent` union (:170–188), the minimal future fix (new event type → `appendThreadEntry` with a new `kind: "task_notification"` → one mapping branch → these same renderers pick it up), and ownership (engine-v2-research-lane). The renderers are built so that if that `kind` ever appears, the fallback path shows it rather than dropping it.
 
-### Backend `/list` hardening (Phase 2 detail)
+## 7. Interfaces changed (complete list)
 
-Current `/list` does `readdir` then `fs.stat` for **every** child inside
-`Promise.all` — fine at 86 entries (14 ms), an O(N) syscall storm at thousands.
-Plan:
-
-1. Use `fs.readdir(abs, { withFileTypes: true })` to get `isDirectory()` from the
-   `Dirent` without a per-entry stat. **Caveat:** `Dirent.isDirectory()` does not
-   follow symlinks, whereas today's `fs.stat` does. To preserve behavior for a
-   symlinked directory, `stat` only entries whose `Dirent` is a symlink
-   (`d.isSymbolicLink()`), not all entries. Document this explicitly.
-2. `size`/`mtime` still need a stat. Options, in order of preference:
-   (a) keep statting for these but only after the (cheap) type pass, and **cap** the
-   number of entries returned (e.g. `LIST_CAP`, default ~1000) with a `truncated`
-   flag + total count, so a pathological dir never stats unbounded; or
-   (b) add `limit`/`offset` query params for true pagination. Given real dirs are
-   tiny, a cap with a `truncated` signal (mirroring `/search`) is the boring,
-   sufficient choice; pagination is optional if the reviewer wants it.
-3. Sort order unchanged (dirs first, then name, `localeCompare`).
-4. Add `Cache-Control: private, max-age=<small>` (e.g. 5–10 s) to `/list` (R17) so
-   revalidation is cheap; the client cache remains the primary fast path.
-5. **Containment untouched** (R24): `resolveInRoot`, dotfile/traversal/symlink
-   guards behave identically. Only the listing/stat strategy changes.
-
-### Failure modes — and how Konrad sees it broke
-
-| Failure | Behavior (hard-error policy) | Visibility |
+| Interface | Where | Change |
 |---|---|---|
-| `/list` 4xx/5xx or network error | Panel sets `error` state; **no** silent `[]` | Explicit error row in the list: "couldn't load <dir> — <msg>" + a retry/refresh affordance; `console.error` |
-| `/list` truncated (huge dir) | Render the capped page, windowed | A "showing first N of M — narrow or paginate" banner (like search's truncation banner) |
-| Preview fetch fails | `FilePreview` shows "(failed to load)" (already) | In-preview message (unchanged) |
-| Search error per scope | That scope resolves to empty; others still show | Result count reflects it; no crash (unchanged) |
-| Attach/copy-path resolve fails | Skips the unresolved file (unchanged), never throws | Count/clipboard reflect only resolved files |
-| New dep peer conflict at install | Build fails loudly at Phase 3/5 gate | `pnpm build`/`tsc` non-zero; fallback = hand-rolled windowing |
+| `AgentRun` (wire) | routes/agents.ts + agentsApi.ts mirror | + `settled`, `settled_at`, `agent_kind`, `role`, `project_id`, `cron_name` |
+| `Subagent` (wire) | same | + `ended_at`, `description` |
+| `ToolCallPart` | thread-mapping.ts | + `parentToolUseId?`, `agentLabel?` |
+| assistant-ui tool registry | AssistantThread.tsx:127 | + `by_name: { Agent, SendMessage }` |
 
-The guiding rule: **no silent fallback.** The current `loadDir`
-`.catch(() => [])` is explicitly removed (R23).
+Everything additive; no consumer breaks; mobile PWA unaffected.
 
-### How progress/state is observable during the build
+## 8. Observability of this project itself
 
-- The planning corpus (`docs/plan/**`) is committed on the work branch;
-  progress is visible on GitHub if `origin` exists.
-- Each phase is a task on the forge-control Kanban (`/api/projects/.../tasks`),
-  visible in the Live panel; rounds gate ordering.
-- Phase 1 writes measured baselines and Phase 5 writes before/after timings into
-  the corpus, so the perf claim is auditable, not asserted.
-
-## Integration points to preserve (do not break)
-
-1. `CanvasPane.tsx` imports `VPS_FILE_DRAG_MIME` from `FileExplorerPanel` — keep
-   the export in that module (re-export from `VaultFileList` if the constant moves).
-2. `useAttachments` drop handling reads the `application/x-forge-vps-file`
-   dataTransfer payload — keep the payload shape `{root, rel}` (today: the result of
-   `splitVirtualPath`). The new list can set it directly from `(root, rel)` without
-   the virtual-path round-trip.
-3. `ChatSurface` renders `<FileExplorerPanel onAttach={…}/>` — keep this signature;
-   the swap is internal to the panel.
-4. `memo(FileExplorerPanelImpl)` — keep the memo; it still shields the tree from
-   chat re-renders.
-
-## Open decisions left to the phase planners (bounded)
-
-- Whether to keep an internal `currentPath` virtual string for breadcrumb/search
-  reuse or fully switch to `(root, rel)` — either is fine as long as R2/R3/R8 hold.
-- `@tanstack/react-virtual` vs hand-rolled windowing — planner picks based on a
-  quick React-19 peer check; both satisfy R13. Prefer the library unless it fights
-  the peer set.
-- `/list` cap vs true pagination — cap+`truncated` is the default; pagination is an
-  allowed upgrade if the reviewer wants it (R16).
+Progress is observable in the standard places: task board (`/api/projects/<id>`), per-phase commits on `project/8ea0cc08` (pushed to origin), phase artifacts under `docs/plan/perf/` and `docs/plan/notification-gap.md`, reviewer logs with pasted command output. Failure surfaces: a failed task blocks the round and notifies (engine behavior); merge conflicts at deploy stop the phase with a file list per the brief.

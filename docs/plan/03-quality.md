@@ -1,112 +1,76 @@
 # 03 — Quality strategy & QA gates
 
-The rule from the brief is absolute: **a review without executed checks is a
-NEEDS_FIXES on itself.** Every gate below is a *command that runs* and an output
-that is pasted into the task record — not an assertion.
+Rule from the brief: reviewers run `tsc` + the web build, curl the touched endpoints, verify both themes, and — for the hover fix — reproduce the recorded measurement. **An assertion without pasted command output is a NEEDS_FIXES on the review itself.**
 
-## Test strategy
+## 1. Environment ground rules (every phase)
 
-This is a single-operator UI + a thin file API; the highest-value verification is
-executed gates + Playwright visual/interaction checks, not a large unit suite.
-Layers, in order of leverage:
+- Worktree ships without `node_modules`. First command in each repo: `NODE_ENV=development pnpm install --prod=false` (pnpm 10.x at `/usr/bin/pnpm`; lockfiles present in both repos — do not update them).
+- Builds: `npx tsc --noEmit` in `forge-control` and `forge-control-web`; `pnpm build` in `forge-control-web`.
+- A worktree web server for visual checks: `PORT` clash rule — production owns :7701; run the worktree build on **:7799** (`pnpm build && pnpm exec next start -p 7799`). The worktree UI proxies `/api/proxy/*` to `FORGE_CONTROL_URL` (default `http://127.0.0.1:7700`) — i.e., it reads the **live** API and live data; that is intended (real settled rows, real threads) and safe (this project's UI is read-only against the API; do not exercise mutating chat actions from the worktree UI beyond selecting/viewing).
+- API testing of *worktree* forge-control changes: run the worktree API on **:7798** (`PORT=7798 pnpm dev` or the repo's start script) against the same Postgres — `routes/agents.ts` is read-only SQL, so this is safe. Never point pm2 at the worktree.
+- Both themes: toggle via `document.documentElement.dataset.theme = 'light' | 'dark'` (persisted key `forge.theme`) — Playwright: `page.evaluate` then screenshot.
+- Screenshots and traces are artifacts: commit under `docs/plan/artifacts/phase<k>/` (small PNGs; traces gzipped if > 2 MB).
 
-### 1. Static / type gates (cheap, run constantly)
+## 2. Test strategy by layer
 
-- **T1 — `forge-control` types:** `cd forge-control && npx tsc --noEmit` → exit 0.
-- **T2 — `forge-control-web` types:** `cd forge-control-web && npx tsc --noEmit` →
-  exit 0.
-- **T3 — Web build:** `cd forge-control-web && pnpm build` → exit 0.
-- **T4 — Hardcoded-color grep (the light-mode gate):**
-  `grep -nE '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' \
-   forge-control-web/app/desktop/chat/FileExplorerPanel.tsx \
-   forge-control-web/app/desktop/chat/FileExplorerPanel.css \
-   forge-control-web/app/desktop/chat/VaultFileList.tsx` → **0 hits**
-  (adjust file list to whatever the phase actually touched). Note: `var(--fg-*)`
-  and token references are not literals and won't match.
+### Unit (vitest is NOT set up — do not add a test framework; NF4)
+In lieu of a runner, pure helpers get **executable check scripts** under `scripts/checks/` (plain `tsx`/`node` scripts that `process.exit(1)` on failure) — boring, zero-dep, runnable by reviewer:
+- `check-duration.ts` — table-driven cases for `runElapsedMs`/`subagentElapsedMs`: settled uses settled_at; cancelled falls back to updated_at; done sub-agent with null ended_at falls back to updated_at; all-null → null; running ticks with `now`.
+- `check-classify.ts` — classification precedence incl. `unknown`; model display mapping incl. alias and unknown passthrough.
+- `check-thread-mapping.ts` — fixtures: Agent spawn + ack; SendMessage + reply; subagent-attributed Bash call gets `parentToolUseId` + `agentLabel`; malformed input JSON → parts still produced; orphan tool_result degrades to text (existing behavior preserved).
+Fixtures are verbatim thread entries captured from the live DB (samples already in this corpus's recon; extend by read-only psql).
 
-### 2. API / backend checks (executed curl)
+### Integration (curl, against worktree API :7798)
+- Time truth: two `curl`s ≥5s apart, `jq` diff of settled rows' `elapsed_ms` → empty.
+- Additivity: `jq '.agents[0] | keys'` superset of the pre-change key set (recorded in phase 1 planner output).
+- Kind truth: `jq` over known rows (one operator, one worker, one cron — ids pinned in the phase task) → expected `agent_kind`/`role`.
+- Sub-agents: every `status:"done"` element post-rollup-v2 has `ended_at`.
 
-- **T5 — `/list` correctness & timing:** `curl -s -w '%{time_total} %{http_code}'`
-  against `/api/files/list` for both roots and a nested dir → 200, entry shape
-  intact, single-level.
-- **T6 — `/list` on a synthetic large dir:** create a temp dir of ≥2000 entries
-  under `workspace` (a throwaway path, cleaned up after), time `/list` → bounded
-  (capped/`truncated` if over `LIST_CAP`), no unbounded stat storm.
-- **T7 — `Cache-Control` present:** `curl -sI '/api/files/list?...'` → header set.
-- **T8 — Containment preserved:** traversal attempts (`?path=../..`, dotfile,
-  symlink-escape) still return 400/blocked exactly as before.
+### End-to-end (Playwright against worktree web :7799)
+- Frozen timers: locate a settled row's duration cell; poll DOM text 3× across 10s → constant. Same for a done sub-agent line.
+- Kind badges: screenshot dark + light; assert badge text content for the three kinds via selectors.
+- Chat comms: open run `3853c154-e07b-4378-9313-2b34f4a33342` (contains 2 Agent spawns + sub-agent-attributed tool calls); assert spawn blocks render (`→`, "Explore", description preview), expand → full prompt text present; screenshot both themes.
+- Hover behavior regression (R15): click chat-rail row selects; ✕ appears on hover and closes; task-list row opens run.
 
-### 3. Interaction / visual checks (Playwright — use the `playwright-skill`)
+## 3. QA gates per phase (reviewer checklist)
 
-- **T9 — Click-to-render timing (R11):** script the Files-tab click, measure to
-  first list paint via `performance` marks or Playwright timing → ≤ 200 ms on a
-  typical dir. Record the number.
-- **T10 — Cached re-visit (R12):** navigate away and back; confirm paint from
-  cache and a revalidation (not a blocking fetch).
-- **T11 — Virtualization (R13):** point the pane at the synthetic ≥1000-entry dir;
-  assert rendered DOM row count ≪ entry count and scrolling is smooth (no long
-  task > 200 ms in a trace).
-- **T12 — BOTH themes (R21):** screenshot the Files pane with
-  `document.documentElement.dataset.theme = 'dark'` AND `'light'`; a reviewer
-  confirms legibility/consistency in each. Attach both screenshots to the task.
-- **T13 — Behavior parity:** descend, breadcrumb-up, select, copy-path, attach,
-  drag-to-composer, search, preview each type, download — each still works
-  (R1–R10).
-- **T14 — Error surfacing (R23):** force a bad listing (e.g. temporarily point at a
-  non-existent path / bad root); confirm an explicit error row, not an empty folder.
+Every phase gate includes, without exception:
+1. `npx tsc --noEmit` both repos — paste tail.
+2. `pnpm build` in forge-control-web — paste tail.
+3. `git diff --name-only main...HEAD` — confirm **no forbidden file** (`project-tick.ts|cc-runner.ts|executor.ts|db/projects.ts|FileExplorerPanel|VaultFileList|routes/files.ts`) and no file outside the phase's declared scope.
+4. `grep -nE '#[0-9a-fA-F]{3,8}|rgb\(|hsl\(' <touched .tsx/.ts>` — zero hits (NF1).
+5. Phase-specific checks below.
 
-### 4. Code review (adversarial where flagged)
+**Phase 1 (time truth):** run `scripts/checks/check-duration.ts`; the two-curl frozen check; the `keys` additivity check; Playwright frozen-DOM check; screenshot pair. Adversarial instinct: try to find *any* ticking settled number — RECENT section, sub-agent lines, second-line labels.
+**Phase 2 (kind truth):** `check-classify.ts`; curl kind spot-checks against DB rows (paste the psql SELECT too); dark+light screenshots; the stranger test — reviewer states each visible row's kind/role/model from the screenshot alone; hover/`title` content dumped via Playwright `getAttribute('title')` for one sub-agent and one worker row.
+**Phase 3 (hover perf):** see §4 — reviewer *re-runs* the sweep, reproduces within ±20%, checks the named root cause exists in the baseline trace, R15 click-through, and confirms poll cadences unchanged (`grep refetchInterval`).
+**Phase 4 (agent comms):** `check-thread-mapping.ts`; Playwright on run `3853c154…` (+ one SendMessage-bearing run, e.g. `a86cf7b3…` from 2026-08-04); malformed-fixture visible-render check; `notification-gap.md` exists and its quoted code matches `cc-runner.ts` at the pinned lines; both themes.
+**Phase 5 (deploy):** the runbook checks (01-requirements R22) plus production spot-checks: settled runs frozen on :7701, kind badges visible, agent-comm blocks render in a real operator chat, hover sweep numbers from production within tolerance of the phase-3 "after".
 
-- **T15 — Scope diff (R30):** `git diff --stat main...HEAD` — touched paths ⊆ the
-  allowed set in `01-requirements.md`. Any stray file is a finding.
-- **T16 — No silent fallback:** grep the diff for `.catch(() => [])`,
-  `catch {}`, swallowed promises in the click path → none in new code.
-- **T17 — Token discipline:** every color in the diff resolves to `tokens.*` /
-  `var(--fg-*)`; new tokens exist in **both** palettes.
+## 4. Hover-performance measurement protocol (binding for R12–R14)
 
-## QA gates per phase
+**Tooling:** Playwright (chromium already installed under `/root/.cache/ms-playwright`) driving the worktree build, Chrome tracing via `browser.startTracing` / CDP `Performance` + `Tracing` domains. React DevTools is not available headless; the trace's function/component attribution plus targeted `console.count` instrumentation (temporary, removed before merge) stand in for the profiler's flame chart.
 
-| Phase | Gate to pass before the phase is "done" |
-|---|---|
-| P1 Profile | Baseline numbers (T5, and T9-style render timing) written into the corpus; no code changes to gate. |
-| P2 Backend | T1 (forge-control tsc), T5, T6, T7, T8 all green; containment diff reviewed (T24/R24). |
-| P3 List component | T2 (web tsc), T13 behavior parity, T11 virtualization smoke, T14 error surfacing; dep installed per R29. |
-| P4 Theme | T4 (0 hardcoded colors), T12 (both-theme screenshots), T17 token discipline, T22/R22 (`!important` block gone). |
-| P5 Perf verify + final review | T1, T2, T3, T9, T10, T11 re-measured; before/after timings recorded; T15 scope diff; adversarial review sign-off. |
-| P6 Deploy | Post-merge: pm2 both online, `/api/health` 200, web app HTTP 200 on its port. |
+**Scripted sweep (one script, `scripts/checks/hover-sweep.ts`, committed in phase 3 and reused by reviewer and phase 5):**
+1. Launch chromium headless, viewport 1440×900, open `http://127.0.0.1:7799/desktop`, wait for the chat rail + Live panel to be populated (network idle + selector waits).
+2. Settle 5s (let initial polls land).
+3. Start tracing (categories: `devtools.timeline`, `disabled-by-default-devtools.timeline`, `blink.user_timing`).
+4. For 10 seconds, dispatch `mousemove`/`mouseenter`/`mouseleave` sweeps up and down the chat-rail rows at ~60 events/s (Playwright `mouse.move` along the rail's bounding boxes), covering ≥ 8 rows repeatedly.
+5. Stop tracing; save `trace-<label>-<n>.json`.
+6. Repeat ×3; report per-run and median of: total main-thread scripting ms during the 10s window; count of tasks > 50ms; longest task ms; and (from user timing if present) React commit count. Record `uptime`/`nproc`/load average alongside (busy-VPS honesty).
 
-## What the phase reviewer MUST run (non-negotiable checklist)
+**Baseline (R12):** run the sweep on the worktree build at phase-3 start (pre-fix). Label `baseline`. Optionally also against production :7701 for context (label `prod-ref`) — informative, not the gate, since phases 1–2 changed the Live panel.
+**After (R14):** identical script post-fix. Label `after`.
 
-For any phase that touches code, the reviewer's report must include **pasted
-output** of:
+**Numeric gate:** `after` median shows (a) **zero tasks > 50ms** during the sweep window that the trace attributes to script/hover handling (GC and unrelated poll work must be called out explicitly if present), and (b) total scripting ms reduced **≥ 50%** vs baseline *if* baseline total ≥ 120ms; if baseline is already < 120ms total (i.e., the lag lives elsewhere than the swept surface), the phase must instead identify where the felt lag comes from (widen the sweep: sidebar = SidePanel? Managers? DesktopApp nav rail?), measure *that*, fix *that*, and apply the same gate there. Konrad said "the sidebar" — the phase planner must not assume which sidebar until the baseline says so. Sweep both candidates (chat rail + right SidePanel/Live rows) in the baseline.
 
-1. `cd forge-control && npx tsc --noEmit` (if backend touched)
-2. `cd forge-control-web && npx tsc --noEmit`
-3. `cd forge-control-web && pnpm build` (at least at P5)
-4. `curl` timings against `/api/files/list` (both roots + one nested + the
-   synthetic large dir at P5)
-5. The hardcoded-color grep over the touched components (must be 0 at/after P4)
-6. Playwright screenshots of the pane in **dark and light** (at/after P4)
+**Honesty rules:** no cadence slowing to pass the gate; no removing hover affordances to pass (the ✕ must survive, R15); traces committed raw; if the 3 runs disagree wildly (>2× spread), note VPS load and re-run rather than cherry-picking.
 
-A review that only *claims* these passed, without the output, is itself a
-NEEDS_FIXES — re-run with evidence.
+## 5. Adversarial review (phase 3 and phase 4 carry extra risk)
 
-## High-risk phases → adversarial review
+Phase 3's planner must include a **red-team reviewer task** briefed to attack, not check: try to produce visible hover jank after the fix (long transcript open, live run streaming SSE snapshots at 1s, 60-row panel, rapid hover between rail and panel); try to catch a stale UI (status change not reflected after memoization); try to catch the measurement lying (sweep script not actually hitting rows — verify with screenshot mid-sweep or DOM hover-state assertion).
+Phase 4's reviewer must attack payload edge cases: 1,500-char-truncated input JSON (mid-string cut → parse fails → raw render, never blank); Agent call with missing description; SendMessage duplicated fields; a thread where the spawn's tool_result is missing (pending forever → `running` state, not crash); very long prompts (maxHeight scroll, no layout blowout); both themes on every screenshot.
 
-- **P3 (list replacement)** and **P5 (perf + final)** are the high-risk phases.
-  Their planners MUST add a **red-team reviewer** briefed to *attack*, not merely
-  check: try to break drag-out, selection persistence, breadcrumb edge cases
-  (root boundary, deep paths, names with `/`-lookalikes), the error path, the
-  synthetic large dir, and both themes at narrow panel widths. The red-team
-  reviewer assumes the change is broken and must prove it isn't.
-- **P4 (theme)** gets the standard reviewer plus the mandatory both-theme
-  screenshot gate.
+## 6. What "done" means for a reviewer verdict
 
-## Regression guards (things a fix must not break)
-
-- Preview 40k truncation + fetch-cancel-on-unmount (R25).
-- `/read` Range/206 streaming.
-- `VPS_FILE_DRAG_MIME` export + payload shape (CanvasPane / useAttachments).
-- `memo` on the panel (chat-render shielding).
-- Security containment in `files.ts` (R24).
-- Search semantics (debounce, scope, cap/truncated) (R8).
+PASS requires: all gate commands pasted with output, artifacts committed, requirement IDs of the phase each explicitly checked off with evidence reference. NEEDS_FIXES must name the failing requirement ID and the exact command/output that failed. No third verdict exists.

@@ -1,207 +1,114 @@
 # 04 — Phases (the waterfall)
 
-Six phases. Each is seeded as **one planner task** at round `k*100`
-(100, 200, …, 600); the gaps leave room for fix cycles without colliding with the
-next phase. Rounds gate ordering: round `N+1` starts only when everything `≤ N` is
-done. Phases are sequenced so that no two phases edit the same file concurrently —
-in particular **P3 and P4 both touch `FileExplorerPanel.tsx`, so they are in
-consecutive rounds, never the same one.**
+Five phases, one planner task each at rounds 100/200/300/400/500. Gaps leave room for fix cycles (reviewer+1/+2) without colliding with the next phase's planner. Rounds gate ordering only: round N+1 starts when everything ≤ N is done. Phases are sequenced so no two phases edit the same file concurrently — phases 1 and 2 both touch `routes/agents.ts` + `AgentActivity.tsx` + `agentsApi.ts`, phases 3 and 4 both touch the chat surface; strict ordering removes every collision.
 
-Each phase planner reads this file plus `01-requirements.md`, `02-architecture.md`,
-and `03-quality.md`, then breaks its phase into builder/reviewer tasks. **Tasks a
-planner creates in the SAME round must touch disjoint files;** anything that could
-collide goes in consecutive rounds.
+Every phase inherits: the QA gate preamble (03-quality §3 items 1–4), NF1–NF7 (01-requirements), the forbidden-files list, and per-unit commits to `project/8ea0cc08` (pushed to origin after green builds). Every planner should split into builder task(s) + one reviewer task (adversarial where marked), with fix cycles inside the phase's round gap.
 
 ---
 
-## Phase 1 — Profile & baseline  (round 100)
+## Phase 1 — Time truth (round 100)
 
-**Goal:** Prove where the lag is before changing anything, and record numbers the
-final phase will be measured against.
+**Covers: R1 R2 R3 R4 R5 R6**
 
-**Scope:** Read-only + temporary instrumentation. No production source changes.
+**Scope.** `forge-control/src/routes/agents.ts` (SELECTs + `agentFromRow` + `subagentsFromRollup` + local wire interfaces); `forge-control-web/app/desktop/live/agentsApi.ts` (type mirror), `AgentActivity.tsx` (duration helpers + both row components). Nothing else.
 
-**Deliverables:**
-- Extend `docs/plan/BASELINE-FINDINGS.md` (or a new `docs/plan/baseline-render.md`)
-  with **in-browser** measurements: click-to-first-paint of the Files tab on the
-  vault root (typical dir), a React Profiler or `performance.mark` trace of the
-  mount, and confirmation that the accumulating `files` array grows as you
-  navigate. Use the `playwright-skill` to drive the live web app.
-- Confirm the API timings already captured (curl) and add a nested-dir timing.
-- A one-paragraph "root cause confirmed" statement: mount cost + array growth
-  (client), light mode = `!important` CSS. If the data contradicts the architect's
-  read, say so explicitly and flag it — do not proceed on a false premise.
+**Deliverables.**
+1. `completed_at` selected; `elapsed_ms` settled-aware; `settled`/`settled_at` on the wire (additive).
+2. Sub-agent `ended_at` + `description` projected.
+3. `runElapsedMs`/`subagentElapsedMs` helpers own all duration math; components contain none.
+4. `scripts/checks/check-duration.ts` (table-driven, exits nonzero on failure).
+5. Recorded pre-change `jq keys` snapshot (for the additivity check) in the task log.
 
-**Acceptance:** Numbers written into the corpus and committed; root-cause
-statement present. No gate on code (nothing changed).
+**Acceptance.** Phase gate + two-curl frozen check on :7798 + Playwright frozen-DOM check on :7799 + check-duration green + screenshots (dark/light) showing a settled run and a done sub-agent with frozen durations. Reviewer hunts for any still-ticking settled number anywhere in the panel.
 
-**Requirements covered:** measurement basis for R11/R12/R13 (owned/verified later).
+**Notes for the planner.** Worktree needs `pnpm install` in both repos first. The 4 legacy cancelled rows in the live DB are the natural fixture for the `updated_at` fallback — pin their ids in the builder brief (query in 02-architecture §2.3 recon; e.g. `310a6cdb`). Do not "fix" the cancel path in `db/runs.ts` — read around it (non-goal).
 
 ---
 
-## Phase 2 — Backend `/list` hardening  (round 200)
+## Phase 2 — Kind truth (round 200)
 
-**Goal:** Make `/api/files/list` bounded and cache-friendly for large directories
-without changing containment or the entry shape.
+**Covers: R7 R8 R9 R10 R11**
 
-**Scope (files):** `forge-control/src/routes/files.ts` only.
+**Scope.** Same three files as phase 1 (sequential round — no collision), plus (if the planner chooses to centralize the role-color map) a small shared constant in the live module; `ManagersSection.tsx` read-only unless R11 needs a pin.
 
-**Deliverables:**
-- Switch the dir/file distinction to `fs.readdir(abs, { withFileTypes: true })`;
-  `stat` only what still needs size/mtime, and `stat` symlink entries explicitly so
-  a symlinked directory still reports `isDir` correctly (document this caveat in a
-  comment).
-- Cap large listings at `LIST_CAP` (default ~1000) with a `truncated` flag + total
-  count, mirroring `/search`'s `SEARCH_RESULT_CAP` pattern. (Optional upgrade:
-  `limit`/`offset` pagination — allowed if the reviewer prefers it.)
-- Add `Cache-Control: private, max-age=<small>` to `/list`.
-- Preserve `resolveInRoot` and all traversal/dotfile/symlink guards byte-for-byte.
+**Deliverables.**
+1. `agent_kind` + `role` + `project_id` + `cron_name` projected with the ordered precedence (02-architecture §4.1), `unknown` rendered honestly.
+2. Panel row grammar per §4.2: kind badge, role label, model display mapping (pure fn), sub-agent `description` as title.
+3. Lineage via enriched native `title` attributes (§4.3 decision) — no JS hover state in the Live panel.
+4. `scripts/checks/check-classify.ts`.
 
-**Acceptance / gates:** T1 (`forge-control` tsc clean), T5/T6 (`/list` timings incl.
-a synthetic ≥2000-entry temp dir, cleaned up after), T7 (`Cache-Control` present),
-T8 (containment attempts still blocked). Containment diff reviewed.
+**Acceptance.** Phase gate + curl kind spot-checks against pinned DB rows + dark/light screenshots + the stranger test + `title` content dumps. Zero `onMouseEnter` in `app/desktop/live/` (grep).
 
-**Requirements covered:** R16, R17, R24, R26.
+**Notes for the planner.** Reuse the visual idiom, don't redesign. The role set must include scout/researcher (new roles, no rows yet — code against the set in `routes/projects.ts:24–30`). Badge colors from tokens only; check both palettes actually differ enough (light theme faint colors — screenshot judgment).
 
 ---
 
-## Phase 3 — `VaultFileList`: virtualized, token-native list  (round 300)
+## Phase 3 — Hover performance (round 300) ⚠ high-risk: measurement rigor
 
-**Goal:** Replace the `@cubone/react-file-manager` list/nav/breadcrumb surface with
-our own windowed component; move the panel to a bounded per-directory data model +
-client cache; surface errors. **HIGH-RISK — planner adds a red-team reviewer.**
+**Covers: R12 R13 R14 R15**
 
-**Scope (files):**
-- New `forge-control-web/app/desktop/chat/VaultFileList.tsx` (+ optional `.css`).
-- `forge-control-web/app/desktop/chat/FileExplorerPanel.tsx` (swap `<FileManager>`
-  for `<VaultFileList>`; introduce `(root, rel)` state + bounded cache; remove the
-  `.catch(() => [])` silent swallow).
-- `forge-control-web/app/api.ts` only if `fetchFileList` needs optional pagination
-  args (additive; don't break callers).
-- `package.json` + lockfile only if `@tanstack/react-virtual` is added
-  (`NODE_ENV=development pnpm add @tanstack/react-virtual --prod=false`).
-- **Do not** finalize theming/tokens here beyond using tokens for any color you
-  write — the dedicated token audit is Phase 4. (Write tokens from the start; P4
-  verifies and fills gaps.)
+**Scope.** Measurement scripts (`scripts/checks/hover-sweep.ts`), artifacts under `docs/plan/perf/` + `docs/plan/artifacts/phase3/`, and — depending on what the trace names — `ChatSurface.tsx` (ChatListItem, task list rows, memoization), possibly `Providers.tsx` (only with trace evidence). Poll cadences unchanged (honesty rule).
 
-**Deliverables:**
-- Windowed list (row count ≪ entry count) over fixed-height rows; folder-descend;
-  clickable breadcrumb; selection toggle with count; drag-out preserving
-  `VPS_FILE_DRAG_MIME` + `{root, rel}` payload; explicit error row + empty row;
-  truncation banner when `/list` reports `truncated`.
-- Bounded cache (`Map`, ≤~32 dirs, stale-while-revalidate); `refresh` forces
-  refetch; roots seed unchanged.
-- Preserve: `FilePreview` (untouched), `SearchResultsList` (kept; may reuse), the
-  `onAttach` prop, the `memo`, and the `VPS_FILE_DRAG_MIME` export from the panel
-  module.
+**Deliverables.**
+1. `hover-sweep.ts` per protocol 03-quality §4 (both candidate sidebars swept: chat rail AND right SidePanel/Live rows).
+2. `docs/plan/perf/baseline.md` + raw traces (pre-fix, this worktree).
+3. `docs/plan/perf/findings.md` — the named mechanism with trace evidence.
+4. The fix (expected shape: memoized rail rows + CSS-`:hover` for the ✕ affordance, killing per-row `useState` — but the trace decides).
+5. `docs/plan/perf/after.md` + raw traces; before/after table.
 
-**Acceptance / gates:** T2 (web tsc clean), T13 (behavior parity: R1–R10), T11
-(virtualization smoke on synthetic large dir), T14 (error surfacing). Red-team
-reviewer attempts to break drag-out, selection persistence, breadcrumb edges, the
-error path, and large-dir scroll — and signs off only when it can't.
+**Acceptance.** Phase gate + numeric gate (zero >50ms hover-attributed tasks; ≥50% scripting reduction vs baseline when baseline ≥120ms; the "lag lives elsewhere" branch per protocol otherwise) + R15 click-through + **adversarial red-team reviewer** (03-quality §5: attack with live SSE streaming, 60-row panel, rapid cross-surface hover; verify the sweep actually hovers rows; hunt stale-UI regressions from memoization).
 
-**Requirements covered:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R13, R14, R15,
-R23, R25, R27, R29.
+**Notes for the planner.** Seed TWO review tasks in sequence: a standard reviewer (gate + reproduce numbers) and a red-team reviewer briefed to break it — or one reviewer with an explicit attack brief; do NOT run two reviewers in the same round (known engine dedupe bug — Operator Log 2026-08-05). Baseline must be captured BEFORE any fix commit touches ChatSurface — enforce by commit order in the builder brief. Phases 1–2 changed the Live panel; that is fine — baseline is defined as this worktree pre-phase-3, and the protocol's "lag lives elsewhere" branch covers surprises.
 
 ---
 
-## Phase 4 — Theme correctness & token audit  (round 400)
+## Phase 4 — Agent comms in chat (round 400)
 
-**Goal:** Zero hardcoded colors across the Files pane; verified legible and
-consistent in BOTH themes; the old `!important` dark-override CSS gone.
+**Covers: R16 R17 R18 R19 R20**
 
-**Scope (files):**
-- `forge-control-web/app/desktop/chat/FileExplorerPanel.css` — delete the 49-line
-  `!important` hardcoded block (or reduce to token-only rules).
-- `forge-control-web/app/desktop/chat/FileExplorerPanel.tsx` — replace the inline
-  `rgba(91,141,239,0.12)` (line ~569) and any remaining literals with tokens.
-- `forge-control-web/app/desktop/chat/VaultFileList.tsx` — audit; any literal → token.
-- `forge-control-web/app/theme.css` — add accent-alpha tint tokens (e.g.
-  `--fg-rowHover`, `--fg-rowSelected`) to **BOTH** `:root` and
-  `html[data-theme="light"]`.
-- `forge-control-web/app/tokens.ts` — map the new tokens.
+**Scope.** `forge-control-web/app/desktop/chat/thread-mapping.ts`, `AssistantThread.tsx` (new sibling components `AgentSpawnRow`, `SendMessageRow` may live in a new file in the same dir), `app/api.ts` only if `ThreadEntry` typing needs the additive `kind` literals it already has. `docs/plan/notification-gap.md`. **No forge-control changes in this phase; `cc-runner.ts` untouched.**
 
-**Deliverables:**
-- New tint tokens defined in both palettes and consumed via `tokens.*` / `var()`.
-- The hardcoded-color grep (T4) over all touched Files components returns **0**.
-- Playwright screenshots of the pane in dark AND light, attached to the task.
+**Deliverables.**
+1. `parentToolUseId` + spawn-index attribution through the mapper (pure, fixture-tested via `check-thread-mapping.ts`).
+2. `by_name` renderers for Agent + SendMessage per 02-architecture §6.2 — visual grammar cloned from `ToolCallRow`, direction markers, defensive parsing, `UNPARSED PAYLOAD` visible fallback.
+3. Sub-agent attribution marker on transcript parts (R18) — low visual weight.
+4. `docs/plan/notification-gap.md` (R19) with pinned code quotes.
 
-**Acceptance / gates:** T4 (0 hardcoded colors), T12 (both-theme screenshots),
-T17 (token discipline; new tokens in both palettes), T22/R22 (`!important` block
-removed). T2 (web tsc still clean).
+**Acceptance.** Phase gate + check-thread-mapping green + Playwright on run `3853c154-e07b-4378-9313-2b34f4a33342` (2 Agent spawns, sub-agent Bash attribution) and a SendMessage-bearing run (`a86cf7b3…`, 2026-08-04) + malformed-fixture visible render + both themes + adversarial payload attacks (03-quality §5: truncated JSON, missing description, duplicated SendMessage fields, missing tool_result, very long prompts).
 
-**Requirements covered:** R18, R19, R20, R21, R22.
+**Notes for the planner.** The historical runs named above are the ground-truth fixtures — they exist in the live DB and render through the worktree UI at :7799 against the live API with zero setup. Collapse state stays local per-row (existing pattern). Do not restructure the assistant-message grouping algorithm (rejected alternative — 02-architecture §1).
 
 ---
 
-## Phase 5 — Perf verification & final adversarial review  (round 500)
+## Phase 5 — Deploy & production verification (round 500)
 
-**Goal:** Prove the DoD numerically and adversarially before deploy.
-**HIGH-RISK — planner adds a red-team reviewer.**
+**Covers: R21 R22**
 
-**Scope:** Verification + any small fixes the review demands (no new scope).
+**Scope.** `/opt/forge-ai-os` live checkout (first time this project touches it), pm2 `forge-control-web` + `forge-control`. **Never forge-executor.**
 
-**Deliverables / gates (all executed, output pasted into the task):**
-- T1 + T2 (`tsc` clean both repos), T3 (`pnpm build` green).
-- T9 click-to-render ≤ 200 ms on a typical dir; **before/after vs Phase 1 baseline**
-  written into the corpus.
-- T10 cached re-visit < ~30 ms; T11 synthetic ≥1000-entry dir stays responsive
-  (no long task > 200 ms, windowed DOM).
-- T15 scope diff (touched paths ⊆ allowed set, R30); T16 no silent fallback.
-- Final adversarial pass over the whole Files experience in both themes at narrow
-  and wide panel widths.
-- A written **PASS/NEEDS_FIXES** verdict. PASS is required before Phase 6.
+**Deliverables / runbook (in order, stop on any failure):**
+1. In the worktree: final `tsc` ×2 + `pnpm build` green; all phases' tasks done; push branch.
+2. In `/opt/forge-ai-os`: `git fetch` + check whether `main` moved since branch point; if yes, merge `main` INTO `project/8ea0cc08` in the worktree, re-run tsc + build there. **Any conflict → STOP, leave the branch, report exact files.**
+3. Merge `project/8ea0cc08` → `main` in `/opt/forge-ai-os` (fast-forward or clean merge only).
+4. `pnpm install --prod=false` if lockfile moved; rebuild forge-control-web; `pm2 restart forge-control-web`; `pm2 restart forge-control` (agents.ts changed).
+5. Verify: `pm2 jlist` both online; `curl :7700/api/health`; `:7701/desktop` serves (200/307); settled runs frozen in production (two-curl check against :7700); kind badges + agent-comm blocks spot-checked in production UI; hover sweep against :7701 within tolerance of phase-3 "after".
+6. Final summary to the project: changes shipped + the hover before/after numbers (the brief demands them in the final message).
 
-**Requirements covered:** R11, R12, R28 (and re-verifies R13, R26, R27, R30).
+**Acceptance.** Every runbook step's output pasted. A deploy reviewer is optional; if seeded, it re-runs step 5 only.
+
+**Notes for the planner.** forge-executor keeps running old code until the engine-v2 lane deploys it — `/api/agents` reads whatever the executor wrote, and all phase-1/2 fields come from columns + rollup the old executor already writes, so no coordination is needed. If `docs/plan/` conflicts at merge (the previous project's corpus lives on main), resolution is: ours (this project's corpus) — that is the one foreseeable conflict and it is content-disjoint by design; anything else stops per rule 2.
 
 ---
 
-## Phase 6 — Merge & deploy  (round 600)
+## Requirement → phase map (completeness check)
 
-**Goal:** Ship it to the live checkout. Only runs after Phase 5 PASS.
-
-**Scope:** Deployment only. Follows the brief's deployment section exactly.
-
-**Steps:**
-1. In `/opt/forge-ai-os` (the **live** checkout, NOT this worktree):
-   `git merge` the project work branch into `main`. **If it conflicts, STOP** —
-   leave the branch, force nothing, report the conflict in the final message.
-2. Rebuild `forge-control-web` (`pnpm install` only if deps changed, then
-   `pnpm build`); `pm2 restart forge-control-web`. Restart `forge-control` **only
-   if its files changed** (Phase 2 did change `files.ts`, so a `forge-control`
-   restart is expected). **NEVER** touch `forge-executor`.
-3. Verify: `pm2` shows both processes online; `GET http://127.0.0.1:7700/api/health`
-   → 200; the web app serves HTTP 200 on its port (find the port via pm2 env /
-   ecosystem config).
-4. Final task message: what changed + before/after timings.
-
-**Requirements covered:** deployment / S7. Enforces R30 one last time.
-
----
-
-## Requirement → phase coverage matrix (every R assigned to exactly one phase)
-
-| Phase | Requirements owned |
+| Phase | Requirements |
 |---|---|
-| P1 Profile | (measurement basis; owns no unique R) |
-| P2 Backend | R16, R17, R24, R26 |
-| P3 List | R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R13, R14, R15, R23, R25, R27, R29 |
-| P4 Theme | R18, R19, R20, R21, R22 |
-| P5 Perf/Final | R11, R12, R28 |
-| P6 Deploy | S7 (deployment) |
-| Cross-cutting | R30 (enforced every phase, finally at P5/P6) |
+| 1 — Time truth | R1 R2 R3 R4 R5 R6 |
+| 2 — Kind truth | R7 R8 R9 R10 R11 |
+| 3 — Hover perf | R12 R13 R14 R15 |
+| 4 — Agent comms | R16 R17 R18 R19 R20 |
+| 5 — Deploy | R21 R22 |
+| (all) | NF1–NF7 |
 
-All of R1–R29 are owned by exactly one phase; R30 is the cross-cutting scope
-guardrail; deployment (S7) is P6.
-
-## Round map
-
-| Round | Task |
-|---|---|
-| 0 | Architect (this plan) — done |
-| 100 | Planner: Phase 1 — Profile & baseline |
-| 200 | Planner: Phase 2 — Backend `/list` hardening |
-| 300 | Planner: Phase 3 — `VaultFileList` (adds red-team reviewer) |
-| 400 | Planner: Phase 4 — Theme & token audit |
-| 500 | Planner: Phase 5 — Perf verification & final review (adds red-team reviewer) |
-| 600 | Planner: Phase 6 — Merge & deploy |
+22 requirements, each in exactly one phase; no orphans.
