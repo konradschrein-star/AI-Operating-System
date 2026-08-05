@@ -74,6 +74,15 @@ interface Subagent {
   model: string | null;
   started_at: string;
   updated_at: string;
+  /** Stamped by the rollup when the spawn's tool_result fires. This — not
+   *  `updated_at` — is the settle time: late events arriving under a stale
+   *  parent_tool_use_id keep pushing `updated_at` forward after the
+   *  sub-agent is already done. Null on rows predating rollup v2 and on the
+   *  thread-fallback path, where the client falls back visibly. */
+  ended_at: string | null;
+  /** The human one-liner from the spawn's input ("Recon chat Bash block
+   *  rendering") — persisted by the rollup, dropped on the wire until now. */
+  description: string | null;
   usage: Usage;
   event_count: number;
   latest_activity: {
@@ -310,6 +319,12 @@ function foldSubagents(thread: ThreadEntry[]): Subagent[] {
       model: seed.model,
       started_at: seed.ts,
       updated_at: seed.ts,
+      // Thread fallback: the rollup owns the settle stamp and the spawn
+      // description; neither is recoverable from the raw thread here, so we
+      // say null and let the client show its visible fallback rather than
+      // inventing a timestamp.
+      ended_at: null,
+      description: null,
       usage: {
         input_tokens: 0,
         output_tokens: 0,
@@ -339,6 +354,8 @@ function foldSubagents(thread: ThreadEntry[]): Subagent[] {
         model: typeof meta.model === "string" ? meta.model : seed.model,
         started_at: seed.ts,
         updated_at: e.ts,
+        ended_at: null,
+        description: null,
         usage: {
           input_tokens: 0,
           output_tokens: 0,
@@ -532,6 +549,8 @@ function subagentsFromRollup(src: unknown): Subagent[] {
       model: typeof s.model === "string" ? s.model : null,
       started_at: typeof s.started_at === "string" ? s.started_at : "",
       updated_at: typeof s.updated_at === "string" ? s.updated_at : "",
+      ended_at: typeof s.ended_at === "string" ? s.ended_at : null,
+      description: typeof s.description === "string" ? s.description : null,
       usage: pickUsage(s.usage),
       event_count: numOr0(s.event_count),
       latest_activity:
