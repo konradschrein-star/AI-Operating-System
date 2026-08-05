@@ -224,7 +224,19 @@ function FileExplorerPanelImpl({
   rootsRef.current = roots;
 
   const loadRoots = useCallback(async () => {
-    const rs = await fetchFileRoots();
+    // Surface roots-fetch failures the same way loadDir does — otherwise
+    // forge-control being down at mount, or a network fault, silently
+    // renders an empty pane indistinguishable from "no roots configured".
+    let rs: Awaited<ReturnType<typeof fetchFileRoots>>;
+    try {
+      rs = await fetchFileRoots();
+    } catch (err) {
+      setLoadError({
+        path: "",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
     setRoots(rs);
     setFiles(
       rs.map((r) => ({
@@ -234,6 +246,7 @@ function FileExplorerPanelImpl({
         updatedAt: new Date().toISOString(),
       })),
     );
+    setLoadError(null);
   }, []);
 
   useEffect(() => {
