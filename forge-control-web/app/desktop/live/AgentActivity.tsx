@@ -326,10 +326,16 @@ function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
   );
 }
 
-export function AgentActivity() {
+export function AgentActivity({
+  projectId,
+  groupName,
+}: {
+  projectId?: string;
+  groupName?: string;
+} = {}) {
   const q = useQuery({
-    queryKey: ["agents", "activity"],
-    queryFn: fetchAgents,
+    queryKey: ["agents", "activity", projectId ?? null],
+    queryFn: () => fetchAgents(projectId),
     refetchInterval: 4_000,
   });
 
@@ -374,6 +380,20 @@ export function AgentActivity() {
           borderBottom: `1px solid ${tokens.border}`,
         }}
       >
+        {groupName && (
+          <span
+            style={{
+              color: tokens.textMuted,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              maxWidth: 120,
+            }}
+            title={groupName}
+          >
+            {groupName}
+          </span>
+        )}
         <span style={{ color: s?.running ? tokens.accent : tokens.textFaint }}>
           {s?.running ?? 0} running
         </span>
@@ -416,7 +436,9 @@ export function AgentActivity() {
               textAlign: "center",
             }}
           >
-            no agent activity in the last 24h
+            {projectId
+              ? "No active project group"
+              : "no agent activity in the last 24h"}
           </div>
         )}
 
