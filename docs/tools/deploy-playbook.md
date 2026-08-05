@@ -44,9 +44,9 @@ exposed via `liveCheckoutPath(repo)` at `workspace.ts:29-31`):
 | `scratch` | none — `liveCheckoutPath` returns `null` |
 
 **Where it's enforced:** `WORKTREE_POLICY(liveCheckout: string)` in
-`forge-control/src/lib/project-tick.ts:164-177`. `buildPrompt()` (same file, `:227` on)
+`forge-control/src/lib/project-tick.ts:288-302`. `buildPrompt()` (same file, `:351` on)
 routes every role's return value through a local `withPolicy()` wrapper
-(`project-tick.ts:233-236`) that appends this block whenever `liveCheckoutPath(project.repo)`
+(`project-tick.ts:360-361`) that appends this block whenever `liveCheckoutPath(project.repo)`
 is non-null — i.e. for every role, on every repo-backed project, and never for `scratch`
 projects (which have nothing live to protect). The block itself, verbatim:
 
@@ -77,7 +77,7 @@ edit.
 
 The worktree-only rule is only as good as the gate that catches violations, so the
 reviewer role owns it. `REVIEWER_LIVE_CHECK(liveCheckout: string)`
-(`forge-control/src/lib/project-tick.ts:183-193`) is appended to every reviewer prompt for
+(`forge-control/src/lib/project-tick.ts:307-316`) is appended to every reviewer prompt for
 repo-backed projects (via the same `withPolicy` gating), verbatim:
 
 > LIVE-CHECKOUT CLEANLINESS CHECK (mandatory, run it before you write your verdict):
@@ -138,11 +138,11 @@ in that process, so a plain restart is fine and is how route/API changes actuall
 effect.
 
 **What's forbidden, unconditionally:** `pm2 restart forge-executor`. Not to deploy, not to
-test, not "just this once" — from `DEPLOY_GUIDE` (`project-tick.ts:197-215`). It is the
+test, not "just this once" — from `DEPLOY_GUIDE` (`project-tick.ts:321-336`). It is the
 process hosting every live agent turn; restarting it kills whatever is running, including
 the deploy task itself if it issued the command.
 
-**The detached procedure** (`DEPLOY_GUIDE`, `project-tick.ts:203`), the exact command to
+**The detached procedure** (`DEPLOY_GUIDE`, `project-tick.ts:328`), the exact command to
 run after merging:
 
 ```
@@ -208,7 +208,7 @@ autonomously: a force push from an agent with no human in the loop to notice a r
 remote history is unrecoverable, so the helper is built to be structurally incapable of
 it rather than merely instructed not to.
 
-**When reviewers push:** `GITHUB_PUSH_GUIDE` (`project-tick.ts:217-225`), appended to
+**When reviewers push:** `GITHUB_PUSH_GUIDE` (`project-tick.ts:341-349`), appended to
 reviewer and planner prompts for repo-backed projects — when a phase's gating reviewer
 issues `VERDICT: PASS` and the repo has an origin remote, it runs
 `scripts/git-sync-branch.sh <worktree-dir>` to push the work branch so progress is
