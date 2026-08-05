@@ -753,11 +753,11 @@ export const fetchFileRoots = async (): Promise<FileRoot[]> => {
 export const fetchFileList = async (
   root: string,
   path: string,
-): Promise<FileEntry[]> => {
-  const r = await getJson<{ entries: FileEntry[] }>(
+): Promise<{ entries: FileEntry[]; truncated: boolean; total: number }> => {
+  const r = await getJson<{ entries: FileEntry[]; truncated: boolean; total: number }>(
     `/files/list?root=${encodeURIComponent(root)}&path=${encodeURIComponent(path)}`,
   );
-  return r.entries;
+  return r;
 };
 
 export interface FileSearchEntry {
