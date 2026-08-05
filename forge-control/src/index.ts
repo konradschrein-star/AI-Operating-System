@@ -36,6 +36,7 @@ import reminders from "./routes/reminders.ts";
 import uploads from "./routes/uploads.ts";
 import files from "./routes/files.ts";
 import projects from "./routes/projects.ts";
+import capabilities from "./routes/capabilities.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
@@ -179,6 +180,9 @@ app.route("/api/mentor", mentor);
 // builder/reviewer) on top of the runs engine. Stage advancement runs
 // inside forge-executor's manager loop (lib/project-tick.ts), not here.
 app.route("/api/projects", projects);
+// UI v3 (U8): static feature-detection for control-plane actions the engine
+// doesn't support yet. See routes/capabilities.ts for the contract source.
+app.route("/api/capabilities", capabilities);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);

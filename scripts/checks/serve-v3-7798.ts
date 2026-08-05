@@ -55,6 +55,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import agents from "../../forge-control/src/routes/agents.ts";
 import chat from "../../forge-control/src/routes/chat.ts";
 import projects from "../../forge-control/src/routes/projects.ts";
+import capabilities from "../../forge-control/src/routes/capabilities.ts";
 
 const PORT = 7798;
 const HOST = "127.0.0.1";
@@ -71,6 +72,7 @@ const MOUNTS: ReadonlyArray<{ prefix: string; router: FetchRouter }> = [
   { prefix: "/api/agents", router: agents },
   { prefix: "/api/chat", router: chat },
   { prefix: "/api/projects", router: projects },
+  { prefix: "/api/capabilities", router: capabilities },
 ];
 
 /**
