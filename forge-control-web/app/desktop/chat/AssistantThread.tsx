@@ -6,9 +6,35 @@
  * list: viewport auto-scroll that respects the user's scroll position,
  * message-part grouping, and first-class tool-call parts so CC's streamed
  * Bash/Read/Write calls render as a live activity timeline.
+ *
+ * ── Round 602: `mode="summary"` (U23) ─────────────────────────────────────
+ * "The agent's prose is the primary reading layer, the machinery the secondary
+ * one" (13 §8). In summary mode a tool row's collapsed line is round 601A's
+ * `summarizeTool` one-liner — tool, argument gist, outcome — instead of a raw
+ * 110-character slice of the JSON payload, and the row loses its filled card
+ * so the prose cards are the only thing with weight. An Agent/Task call whose
+ * sub-agent was folded into it (see thread-mapping.ts) says how many entries
+ * are down there.
+ *
+ * EXPANDED IS STILL BYTE-COMPLETE. The ARGS/RESULT panes render `argsText` and
+ * the result string verbatim, with no clip, no ellipsis and no character cap;
+ * the only bound is the pre-existing `maxHeight: 260 + overflowY: auto`, which
+ * scrolls rather than truncates. Round 604 measures the expanded text against
+ * the API payload byte-for-byte, so anything added here that shortens it is a
+ * regression, not a tidy-up.
+ *
+ * The mode travels by context rather than by prop because `ToolCallRow` is
+ * mounted by assistant-ui's `tools: { Fallback }` slot, which passes the
+ * message part and nothing of ours.
  */
 
-import { useMemo, useState, type CSSProperties } from "react";
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   AssistantRuntimeProvider,
   MessagePrimitive,
@@ -20,7 +46,18 @@ import {
 import { tokens, dot } from "../../tokens";
 import type { RunDetail } from "../../api";
 import { MessageMarkdown } from "./MessageMarkdown";
-import { mapThreadToMessages } from "./thread-mapping";
+import { summarizeTool, type ToolTone } from "./tool-summary";
+import {
+  mapThreadToMessages,
+  type SubagentFold,
+  type ThreadScope,
+} from "./thread-mapping";
+
+/** `raw` — the pre-602 collapsed line (tool name + a slice of the payload).
+ *  `summary` — 601A's derived one-liner. Expanded is identical in both. */
+export type ToolRenderMode = "raw" | "summary";
+
+const ToolRenderModeContext = createContext<ToolRenderMode>("raw");
 
 function humanAge(ts: Date | undefined): string {
   if (!ts) return "";
@@ -151,22 +188,88 @@ function AssistantText({ text }: { text: string }) {
   );
 }
 
+/** Tone → the row's rule and accent. One mapping, both render modes. */
+const TONE_COLOR: Record<ToolTone, string> = {
+  ok: tokens.info,
+  error: tokens.bleed,
+  pending: tokens.warn,
+};
+
+/**
+ * The folded sub-agent's count, sitting on its spawn row: "118 events" is the
+ * whole reason the parent's transcript is readable — that many entries are not
+ * interleaved into it. Zero is stated, not hidden: an older run's sub-agent
+ * really did run with none of its steps stamped into the thread, and pretending
+ * the fold is absent would leave the reader wondering where the work went.
+ */
+function SubagentChip({ fold }: { fold: SubagentFold }) {
+  const empty = fold.eventCount === 0;
+  return (
+    <span
+      data-subagent-fold={fold.subagentId}
+      title={
+        empty
+          ? `sub-agent ${fold.subagentId} — no entries in this run's thread carry its id, so its individual steps were never recorded`
+          : `sub-agent ${fold.subagentId} — ${fold.eventCount} entries folded out of this transcript`
+      }
+      style={{
+        flex: "none",
+        color: empty ? tokens.textFaint : tokens.info,
+        border: `1px solid ${tokens.borderDivider}`,
+        borderRadius: 4,
+        padding: "0 5px",
+        lineHeight: "15px",
+      }}
+    >
+      {empty
+        ? "no inline events"
+        : `${fold.eventCount} event${fold.eventCount === 1 ? "" : "s"}`}
+    </span>
+  );
+}
+
 /** Streamed CC tool call — collapsed one-liner, expandable to args+result. */
 function ToolCallRow({
   toolName,
   argsText,
   result,
   isError,
+  subagent,
 }: {
   toolCallId?: string;
   toolName: string;
   argsText?: string;
   result?: unknown;
   isError?: boolean;
+  subagent?: SubagentFold;
 }) {
+  const mode = useContext(ToolRenderModeContext);
   const [open, setOpen] = useState(false);
   const pending = result === undefined;
-  const color = isError ? tokens.bleed : pending ? tokens.warn : tokens.info;
+  /* The result is a string on every path thread-mapping builds; `unknown` is
+   * assistant-ui's part type, not our data. Anything else is coerced rather
+   * than dropped, so an unexpected shape is visible instead of blank. */
+  const resultText =
+    result === undefined ? null : typeof result === "string" ? result : String(result);
+
+  /* One derivation per render, and only in the mode that shows it. The raw
+   * mode keeps its 110-char slice byte-for-byte, so nothing about the manager
+   * chat moves. */
+  const summary = useMemo(
+    () =>
+      mode === "summary"
+        ? summarizeTool(toolName, argsText, resultText, isError === true)
+        : null,
+    [mode, toolName, argsText, resultText, isError],
+  );
+
+  const color = summary
+    ? TONE_COLOR[summary.tone]
+    : isError
+      ? tokens.bleed
+      : pending
+        ? tokens.warn
+        : tokens.info;
   const argsPreview = (argsText ?? "").replace(/\s+/g, " ").slice(0, 110);
 
   const preStyle: CSSProperties = {
@@ -182,13 +285,19 @@ function ToolCallRow({
     fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
   };
 
+  /* Visual weight (U23): in summary mode the prose keeps its card and the tool
+   * row gives up its own — no fill, no full border, just the tone rule left.
+   * Expanding restores the panel, because a payload needs a container. */
+  const quiet = summary !== null && !open;
+
   return (
     <div
+      data-tool-row={mode}
       style={{
-        border: `1px solid ${tokens.borderDivider}`,
+        border: `1px solid ${quiet ? "transparent" : tokens.borderDivider}`,
         borderLeft: `2px solid ${color}`,
         borderRadius: 8,
-        background: tokens.toolBg,
+        background: quiet ? "transparent" : tokens.toolBg,
         overflow: "hidden",
       }}
     >
@@ -206,21 +315,55 @@ function ToolCallRow({
         }}
       >
         <span style={dot(color, pending)} />
-        <span style={{ color, fontWeight: 600 }}>{toolName}</span>
-        <span
-          style={{
-            color: tokens.textMuted2,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            flex: 1,
-          }}
-        >
-          {argsPreview}
-        </span>
-        <span style={{ color: tokens.textFaint }}>
-          {pending ? "running" : isError ? "error" : "done"} {open ? "▾" : "▸"}
-        </span>
+        {summary ? (
+          <>
+            <span style={{ flex: "none", color: tokens.textLabel, fontWeight: 600 }}>
+              {summary.label}
+            </span>
+            <span
+              style={{
+                color: tokens.textMuted2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {summary.gist}
+            </span>
+            {subagent && <SubagentChip fold={subagent} />}
+            <span
+              style={{
+                flex: "none",
+                color: summary.tone === "ok" ? tokens.textFaint : color,
+              }}
+            >
+              → {summary.outcome}
+            </span>
+            <span style={{ flex: "none", color: tokens.textGhost }}>
+              {open ? "▾" : "▸"}
+            </span>
+          </>
+        ) : (
+          <>
+            <span style={{ color, fontWeight: 600 }}>{toolName}</span>
+            <span
+              style={{
+                color: tokens.textMuted2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                flex: 1,
+              }}
+            >
+              {argsPreview}
+            </span>
+            <span style={{ color: tokens.textFaint }}>
+              {pending ? "running" : isError ? "error" : "done"} {open ? "▾" : "▸"}
+            </span>
+          </>
+        )}
       </div>
       {open && (
         <div style={{ borderTop: `1px solid ${tokens.borderDivider}` }}>
@@ -250,7 +393,9 @@ function ToolCallRow({
               >
                 RESULT
               </div>
-              <pre style={preStyle}>{String(result)}</pre>
+              {/* Verbatim. No slice, no clip — round 604 diffs this against
+                  the API payload byte-for-byte. */}
+              <pre style={preStyle}>{resultText}</pre>
             </>
           )}
         </div>
@@ -337,10 +482,33 @@ function ActivityStrip({ run }: { run: RunDetail }) {
   );
 }
 
-export function AssistantThread({ run }: { run: RunDetail }) {
+export interface AssistantThreadProps {
+  run: RunDetail;
+  /** Defaults to `raw` — the manager chat and ProjectsSurface are unchanged. */
+  mode?: ToolRenderMode;
+  /** Whose story to tell. Defaults to `{ kind: "all" }`, i.e. every entry
+   *  inline, which is what every caller got before round 602. */
+  scope?: ThreadScope;
+}
+
+export function AssistantThread({ run, mode = "raw", scope }: AssistantThreadProps) {
+  /* Deps are the scope's PRIMITIVES, not the object: callers build the scope
+   * inline, so a fresh identity every render would re-map a 285-entry thread
+   * on every poll tick. This surface is the one where hover cost is measured
+   * (project DoD #3); it does not get to re-derive for nothing. */
+  const scopeKind = scope?.kind ?? "all";
+  const scopeSubagentId = scope?.kind === "subagent" ? scope.subagentId : null;
   const messages = useMemo(
-    () => mapThreadToMessages(run.thread),
-    [run.thread],
+    () =>
+      mapThreadToMessages(
+        run.thread,
+        scopeKind === "subagent" && scopeSubagentId !== null
+          ? { scope: { kind: "subagent", subagentId: scopeSubagentId } }
+          : scopeKind === "top-level"
+            ? { scope: { kind: "top-level" } }
+            : undefined,
+      ),
+    [run.thread, scopeKind, scopeSubagentId],
   );
   const isRunning = run.status === "running" || run.status === "queued";
 
@@ -354,44 +522,46 @@ export function AssistantThread({ run }: { run: RunDetail }) {
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <ThreadPrimitive.Root
-        style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-      >
-        <ThreadPrimitive.Viewport
-          className="scroll-tinted"
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "20px 28px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 16,
-          }}
+    <ToolRenderModeContext.Provider value={mode}>
+      <AssistantRuntimeProvider runtime={runtime}>
+        <ThreadPrimitive.Root
+          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
         >
-          {run.thread.length === 0 && (
-            <div
-              className="mono"
-              style={{
-                fontSize: 11,
-                color: tokens.textFaint,
-                textAlign: "center",
-                padding: 24,
-              }}
-            >
-              empty thread
-            </div>
-          )}
-          <ThreadPrimitive.Messages
-            components={{
-              UserMessage,
-              AssistantMessage,
-              SystemMessage,
+          <ThreadPrimitive.Viewport
+            className="scroll-tinted"
+            style={{
+              flex: 1,
+              overflowY: "auto",
+              padding: "20px 28px",
+              display: "flex",
+              flexDirection: "column",
+              gap: 16,
             }}
-          />
-          {isRunning && <ActivityStrip run={run} />}
-        </ThreadPrimitive.Viewport>
-      </ThreadPrimitive.Root>
-    </AssistantRuntimeProvider>
+          >
+            {run.thread.length === 0 && (
+              <div
+                className="mono"
+                style={{
+                  fontSize: 11,
+                  color: tokens.textFaint,
+                  textAlign: "center",
+                  padding: 24,
+                }}
+              >
+                empty thread
+              </div>
+            )}
+            <ThreadPrimitive.Messages
+              components={{
+                UserMessage,
+                AssistantMessage,
+                SystemMessage,
+              }}
+            />
+            {isRunning && <ActivityStrip run={run} />}
+          </ThreadPrimitive.Viewport>
+        </ThreadPrimitive.Root>
+      </AssistantRuntimeProvider>
+    </ToolRenderModeContext.Provider>
   );
 }

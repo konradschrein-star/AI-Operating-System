@@ -543,7 +543,28 @@ export function AgentChatView({
               }
             />
           )}
-          <AssistantThread run={view} />
+          {/* Round 602 mounting (U23). Two things change for a drilled view
+              and only for a drilled view:
+                · mode="summary" — the collapsed tool line is 601A's derived
+                  one-liner instead of a slice of raw JSON;
+                · scope — a session shows its OWN entries and folds each
+                  sub-agent into the Agent/Task call that spawned it; a
+                  sub-agent view shows its slice plus the envelope.
+              The MANAGER chat keeps today's rendering: it is Konrad's main
+              surface and this phase's mandate is worker-chat legibility.
+              `view.thread` is already narrowed for the sub-agent case, and the
+              scope re-states that narrowing rather than assuming it — the
+              mapper yields the same view either way, so the two cannot drift
+              apart. */}
+          <AssistantThread
+            run={view}
+            mode="summary"
+            scope={
+              subagentId === undefined
+                ? { kind: "top-level" }
+                : { kind: "subagent", subagentId }
+            }
+          />
         </>
       )}
     </div>
