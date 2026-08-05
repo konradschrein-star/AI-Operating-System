@@ -42,7 +42,7 @@ be the detached `safe-restart.sh` pattern — never `pm2 restart forge-executor`
 
 - **S1 (dedupe):** a round with two reviewers both returning NEEDS_FIXES yields exactly ONE
   "Fix cycle N" builder and ONE re-reviewer — proven by unit tests on the consolidation
-  function AND enforced by a DB uniqueness guard (migration 0035, `chain_key`).
+  function AND enforced by a DB uniqueness guard (migration 0039, `chain_key`).
 - **S2 (gating):** a `paused`/`blocked` project spawns zero new runs from the next tick on;
   its pending/ready tasks sit still and resume when status returns to `active`. Proven by
   unit test on the extracted predicate plus red-team scenario walk of the SQL.

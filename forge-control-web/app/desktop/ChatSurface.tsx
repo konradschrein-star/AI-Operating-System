@@ -50,6 +50,14 @@ import { AssistantThread } from "./chat/AssistantThread";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
 import { useRunEvents } from "./chat/useRunEvents";
+import {
+  ResizeHandle,
+  useResizablePanel,
+  usePersistentState,
+  isBool,
+} from "./_ui/ResizableSplit";
+import { toastError } from "./_ui/Toasts";
+import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
@@ -250,6 +258,28 @@ function SidePanel({
   agentProjectId?: string;
   agentGroupName?: string;
 }) {
+  // Per-tab width: Files needs the room for a path column, Live doesn't.
+  // Both remembered separately, both draggable, double-click restores the
+  // designed default.
+  const panel = useResizablePanel({
+    storageKey: `forge.layout.chat.sidePanel.${tab}`,
+    initial: tab === "files" ? 420 : 260,
+    min: 200,
+    max: 760,
+    // Handle sits on the panel's left edge: dragging left must widen it.
+    invert: true,
+  });
+  // Agent activity above, project board below — the divider between them
+  // is a real split now, so "show me more of the board" is a drag.
+  const liveSplit = useResizablePanel({
+    storageKey: "forge.layout.chat.agentsBoard",
+    initial: 0.55,
+    min: 0.15,
+    max: 0.85,
+    axis: "y",
+    unit: "fraction",
+  });
+
   if (collapsed) {
     return (
       <div
@@ -305,14 +335,19 @@ function SidePanel({
   }
 
   return (
+    <>
+      <ResizeHandle
+        {...panel.handleProps}
+        title="Resize panel · double-click to reset"
+      />
     <div
       style={{
-        width: tab === "files" ? 420 : 260,
+        width: panel.size,
         flex: "none",
-        borderLeft: `1px solid ${tokens.borderSoft}`,
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        overflow: "hidden",
       }}
     >
       <div
@@ -367,16 +402,26 @@ function SidePanel({
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <div
               style={{
-                flex: "1 1 55%",
+                flex: `${liveSplit.size} 1 0%`,
                 minHeight: 0,
                 display: "flex",
                 flexDirection: "column",
-                borderBottom: `1px solid ${tokens.border}`,
               }}
             >
               <AgentActivity projectId={agentProjectId} groupName={agentGroupName} />
             </div>
-            <div style={{ flex: "1 1 45%", minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <ResizeHandle
+              {...liveSplit.handleProps}
+              title="Resize agents / board · double-click to reset"
+            />
+            <div
+              style={{
+                flex: `${1 - liveSplit.size} 1 0%`,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
               <LiveProjectsBody onOpenRun={onOpenRun} />
             </div>
           </div>
@@ -385,6 +430,7 @@ function SidePanel({
         )}
       </div>
     </div>
+    </>
   );
 }
 
@@ -405,7 +451,31 @@ export function ChatSurface({
   /** Chat we were on before drilling into an agent run from the Live panel. */
   const [agentViewFrom, setAgentViewFrom] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
-  const [panelCollapsed, setPanelCollapsed] = useState(false);
+  // Collapse + tab persist: DesktopApp unmounts this surface on every nav
+  // click, so `useState` meant the panel sprang back open (on the Live tab)
+  // every time you came back to chat.
+  const [panelCollapsed, setPanelCollapsed] = usePersistentState(
+    "forge.layout.chat.panelCollapsed",
+    false,
+    isBool,
+  );
+
+  // Chat rail — 300 was the magic number; 220 still fits a title + preview.
+  const rail = useResizablePanel({
+    storageKey: "forge.layout.chat.rail",
+    initial: 300,
+    min: 220,
+    max: 560,
+  });
+  // Chat ↔ canvas: a proportion, not pixels, so the split survives a window
+  // resize. Grow factors (not basis percentages) so the ratio is exact.
+  const canvasSplit = useResizablePanel({
+    storageKey: "forge.layout.chat.canvasSplit",
+    initial: 0.55,
+    min: 0.25,
+    max: 0.8,
+    unit: "fraction",
+  });
   // Split-screen canvas, remembered PER CHAT and across reloads. A brainstorm
   // lives in a specific chat + a specific drawing, so switching away and back
   // must restore the same split instead of silently closing it.
@@ -442,7 +512,11 @@ export function ChatSurface({
   const isAgentView =
     !!selId && !(listQ.data?.runs ?? []).some((r) => r.id === selId);
 
-  const [panelTab, setPanelTab] = useState<"live" | "files">("live");
+  const [panelTab, setPanelTab] = usePersistentState<"live" | "files">(
+    "forge.layout.chat.panelTab",
+    "live",
+    (v): v is "live" | "files" => v === "live" || v === "files",
+  );
   const [search, setSearch] = useState("");
   // Lifted out of ChatThread (rather than created per-mount) so the file
   // explorer's "attach to chat" action can reach the active thread's
@@ -486,8 +560,12 @@ export function ChatSurface({
       setSelId(run.id);
       setComposing(false);
     },
+    onError: (e) => toastError("Couldn't start that chat.", e),
   });
 
+  // Every mutation below carries onError. Without it a failed send cleared
+  // the composer and did nothing else — the message was simply gone, with
+  // no way to tell that from a message the engine hadn't answered yet.
   const sendM = useMutation({
     mutationFn: (input: {
       id: string;
@@ -498,6 +576,11 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
     },
+    onError: (e, input) =>
+      toastError(
+        `Message not sent — “${input.content.slice(0, 60)}${input.content.length > 60 ? "…" : ""}”`,
+        e,
+      ),
   });
 
   const statusM = useMutation({
@@ -507,6 +590,8 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
     },
+    onError: (e, input) =>
+      toastError(`Couldn't set this chat to ${input.status}.`, e),
   });
 
   const resumeM = useMutation({
@@ -515,6 +600,7 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
     },
+    onError: (e) => toastError("Resume failed — the run is still stopped.", e),
   });
 
   // Close = archive. Stops the underlying agent first (if it's still
@@ -527,6 +613,8 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       if (selId === id) setSelId(null);
     },
+    onError: (e) =>
+      toastError("Close failed — the chat and its agent are still running.", e),
   });
   const archiveAllM = useMutation({
     mutationFn: () => archiveAllChats(),
@@ -534,6 +622,7 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       setSelId(null);
     },
+    onError: (e) => toastError("Close-all failed — nothing was archived.", e),
   });
 
   const counts = listQ.data?.counts ?? null;
@@ -566,12 +655,12 @@ export function ChatSurface({
       {/* Left rail — chat list */}
       <div
         style={{
-          width: 300,
+          width: rail.size,
           flex: "none",
-          borderRight: `1px solid ${tokens.borderSoft}`,
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          overflow: "hidden",
         }}
       >
         <div
@@ -695,7 +784,17 @@ export function ChatSurface({
                   searching…
                 </div>
               )}
-              {!searchQ.isLoading && (searchQ.data?.length ?? 0) === 0 && (
+              {searchQ.isError && (
+                <ErrorPanel
+                  compact
+                  title="Search failed."
+                  detail={errorDetail(searchQ.error)}
+                  onRetry={() => void searchQ.refetch()}
+                />
+              )}
+              {!searchQ.isLoading &&
+                !searchQ.isError &&
+                (searchQ.data?.length ?? 0) === 0 && (
                 <div
                   className="mono"
                   style={{
@@ -739,7 +838,17 @@ export function ChatSurface({
                   loading…
                 </div>
               )}
-              {!listQ.isLoading && (listQ.data?.runs.length ?? 0) === 0 && (
+              {listQ.isError && (
+                <ErrorPanel
+                  compact
+                  title="Couldn't load your chats."
+                  detail={errorDetail(listQ.error)}
+                  onRetry={() => void listQ.refetch()}
+                />
+              )}
+              {!listQ.isLoading &&
+                !listQ.isError &&
+                (listQ.data?.runs.length ?? 0) === 0 && (
                 <div
                   className="mono"
                   style={{
@@ -789,10 +898,18 @@ export function ChatSurface({
         </div>
       </div>
 
+      <ResizeHandle
+        {...rail.handleProps}
+        title="Resize chat list · double-click to reset"
+      />
+
+      {/* Thread + canvas share one flex region so the split handle measures
+          exactly the space it divides. */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", minHeight: 0 }}>
       {/* Right pane — thread/composer, optionally split with the canvas */}
       <div
         style={{
-          flex: canvasOpen ? "1 1 55%" : 1,
+          flex: canvasOpen ? `${canvasSplit.size} 1 0%` : 1,
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
@@ -914,18 +1031,32 @@ export function ChatSurface({
       </div>
 
       {canvasOpen && (
-        <div style={{ flex: "1 1 45%", minWidth: 320, display: "flex", minHeight: 0 }}>
-          <CanvasPane
-            path={canvasPath}
-            onPathChange={setCanvasPath}
-            onClose={() => setCanvasOpen(false)}
+        <>
+          <ResizeHandle
+            {...canvasSplit.handleProps}
+            title="Resize chat / canvas · double-click to reset"
           />
-        </div>
+          <div
+            style={{
+              flex: `${1 - canvasSplit.size} 1 0%`,
+              minWidth: 320,
+              display: "flex",
+              minHeight: 0,
+            }}
+          >
+            <CanvasPane
+              path={canvasPath}
+              onPathChange={setCanvasPath}
+              onClose={() => setCanvasOpen(false)}
+            />
+          </div>
+        </>
       )}
+      </div>
 
       <SidePanel
         collapsed={panelCollapsed}
-        onToggle={() => setPanelCollapsed((c) => !c)}
+        onToggle={() => setPanelCollapsed(!panelCollapsed)}
         tab={panelTab}
         onTab={setPanelTab}
         onOpenRun={(runId) => {

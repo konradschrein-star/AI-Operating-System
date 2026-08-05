@@ -9,6 +9,7 @@ import {
   listActiveTasks,
   listManagerRollup,
   createTask,
+  unwedgeProject,
   type ProjectRepo,
   type ProjectStatus,
   type TaskRole,
@@ -28,6 +29,8 @@ const ROLES = new Set<TaskRole>([
   "researcher",
   "builder",
   "reviewer",
+  "steward",
+  "tester",
 ]);
 const STATUSES = new Set<ProjectStatus>([
   "active",
@@ -157,7 +160,7 @@ r.post("/:id/tasks", async (c) => {
     return c.json({ error: `tier must be one of: ${[...TIERS].join(", ")}` }, 400);
   }
 
-  const task = await createTask({
+  const { task, created } = await createTask({
     project_id: id,
     round,
     role: body.role as TaskRole,
@@ -165,7 +168,56 @@ r.post("/:id/tasks", async (c) => {
     brief,
     tier: body.tier as TaskTier | undefined,
   });
+  if (!created) {
+    // Idempotency (migration 0035): a retried curl gets the original task id
+    // back, not a second task that would race it in the same worktree.
+    return c.json(
+      {
+        task,
+        error:
+          "duplicate task: this project already has a task with that round/role/title",
+      },
+      409,
+    );
+  }
   return c.json({ task }, 201);
+});
+
+/* Unwedge: retry every failed/blocked task in the earliest round that has one,
+ * and un-block the project. The bulk counterpart to POST /api/tasks/:id/retry
+ * — one call to get a frozen project moving again instead of hand-written SQL
+ * against project_tasks (E3). */
+r.post("/:id/unwedge", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid project id" }, 400);
+  const project = await getProject(id);
+  if (!project) return c.json({ error: "project not found" }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as { force?: boolean };
+  const out = await unwedgeProject(id, { force: body.force === true });
+  if (out.round === null) {
+    return c.json(
+      { error: "nothing to unwedge: no failed or blocked tasks", project },
+      409,
+    );
+  }
+  console.log(
+    `[projects] unwedge ${id} round ${out.round}: ${out.retried.length} retried, ` +
+      `${out.skipped.length} skipped`,
+  );
+  return c.json({
+    project: await getProject(id),
+    round: out.round,
+    retried: out.retried,
+    skipped: out.skipped,
+    ...(out.skipped.length > 0
+      ? {
+          warning:
+            `${out.skipped.length} task(s) exceeded the retry cap — re-send with ` +
+            `{"force":true} to override`,
+        }
+      : {}),
+  });
 });
 
 /* Pause / resume / cancel. Cancel best-effort tears down the git worktree. */

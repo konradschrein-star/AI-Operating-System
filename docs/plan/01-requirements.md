@@ -38,7 +38,8 @@ anything that swallows an error is a review-blocking defect.
 - **R7 — Idempotent, crash-safe creation.** Fix builder + re-reviewer are inserted in ONE
   transaction, each stamped with a deterministic `chain_key`
   (`fix:{round}:{c}` / `rereview:{round}:{c}`), inserted `ON CONFLICT DO NOTHING` against
-  a partial unique index `(project_id, chain_key)` (migration 0035). Reviewers are marked
+  a partial unique index `(project_id, chain_key)` (migration 0039 — renumbered from 0035
+  at R308: `main` shipped its own 0035, the task-identity index). Reviewers are marked
   `done` only AFTER the insert transaction commits, so a crash between the two steps
   re-runs consolidation and the conflict guard absorbs the replay. Historical rows have
   `chain_key NULL` — the migration adds a nullable column + partial index and touches no
@@ -187,7 +188,7 @@ anything that swallows an error is a review-blocking defect.
   `project/4120f785` first if main moved; re-run tsc + tests in the WORKTREE; merge to
   main; on conflicts STOP and report files; `pm2 restart forge-control`; detached
   `safe-restart.sh forge-executor 43200 45` via `setsid nohup … &` without waiting;
-  apply migration 0035 before restarting (additive: nullable column + partial index);
+  apply migration 0039 before restarting (additive: nullable column + partial index);
   final message lists changes, test results, and keys/reminders owed. *Verify:* deploy
   task transcript; post-deploy `pm2 ls` shows forge-control online; safe-restart log
   exists.

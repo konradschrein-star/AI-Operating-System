@@ -28,9 +28,9 @@ hard errors, no silent fallbacks; commit per task with clear messages.
   `forge-control/src/lib/project-reconcile.test.ts` (new),
   `forge-control/src/lib/project-tick.ts` (reconcile + spawn paths),
   `forge-control/src/db/projects.ts` (promote/claim SQL, `listReviewerRound`,
-  `createTask` chain_key, fix-chain transaction), `db/migrations/0035_reviewer_chain_key.sql` (new).
+  fix-chain transaction), `db/migrations/0039_reviewer_chain_key.sql` (new).
 - **Deliverables:** pure module + tests T1–T9; group consolidation wired into
-  `reconcileSettledTasks()`; gated promote/claim; migration 0035 (NOT applied to live DB —
+  `reconcileSettledTasks()`; gated promote/claim; migration 0039 (NOT applied to live DB —
   dry-run only per 03-quality I2).
 - **Acceptance / gates:** T1–T9 green; `tsc --noEmit` clean; existing tests still green;
   red-team review per 03-quality §4 (all 12 scenarios walked, three named failure-mode
@@ -107,12 +107,12 @@ hard errors, no silent fallbacks; commit per task with clear messages.
 
 - **Goal:** land it, restart safely, report.
 - **Scope:** `/opt/forge-ai-os` (the ONE phase allowed to touch it), live DB (migration
-  0035), pm2 (forge-control only), detached safe-restart for the executor.
+  0039), pm2 (forge-control only), detached safe-restart for the executor.
 - **Deliverables / protocol (verbatim from the brief + R28):**
   1. In `/opt/forge-ai-os`: `git merge main` into `project/4120f785` first if main moved;
      re-run `pnpm install --prod=false && npx tsc --noEmit && pnpm test` in the WORKTREE; then merge
      the branch to main. Conflicts ⇒ STOP, report the files, do not improvise.
-  2. Apply `db/migrations/0035_reviewer_chain_key.sql` (additive; safe under the running
+  2. Apply `db/migrations/0039_reviewer_chain_key.sql` (additive; safe under the running
      old engine).
   3. `pm2 restart forge-control` (API side — allowed).
   4. `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`

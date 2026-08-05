@@ -20,12 +20,13 @@
  * agent.spawn_cap ceiling, so there's exactly one place that cap lives.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   promoteReadyTasks,
   claimReadyTasks,
   listSettledRunningTasks,
+  roundIsComplete,
   createRunForTask,
   attachRun,
   setTaskStatus,
@@ -102,20 +103,68 @@ export interface RoleConfig {
 
 const roleConfigCache = new Map<TaskRole, RoleConfig>();
 
+/** A role file whose frontmatter is present but unparseable. Its own class so
+ *  the caller can distinguish "misconfigured definition" from a genuine I/O
+ *  failure, and so tests can assert on it rather than on message text. */
+export class RoleFileParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RoleFileParseError";
+  }
+}
+
+/** A role file's frontmatter delimiters, CRLF-tolerant. A UTF-8 BOM is
+ *  stripped before this runs rather than matched here, so it cannot leak into
+ *  the mission body of a file that has no frontmatter at all. Both a BOM and
+ *  CRLF endings are things an editor introduces with no visible change to the
+ *  file, which is precisely why they must not change behaviour. */
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
+/** Does this file even CLAIM to have frontmatter? Answered separately from
+ *  FRONTMATTER_RE so "no frontmatter at all" (legitimate — a plain mission
+ *  file) can be told apart from "opens a frontmatter block and never closes
+ *  it" (a truncated or corrupted definition). */
+const CLAIMS_FRONTMATTER_RE = /^---\r?\n/;
+
 /** Parse an agents/<role>.md file's raw text into mission body (frontmatter
  *  stripped) and the `tools:`/`model:`/`effort:` fields from the frontmatter.
  *  Pure — no I/O, no cache — so it can be tested directly against the real
- *  agent definition files instead of a hand-copied fixture string. */
+ *  agent definition files instead of a hand-copied fixture string.
+ *
+ *  THROWS on a file that opens a frontmatter block it never closes, because
+ *  the silent alternative escalates privileges. `tools: null` means "no
+ *  allowlist in the definition", and cc-runner.ts reads that as "fall back to
+ *  CC_ALLOWED_TOOLS" — the full set, Write and Edit and Task and Skill
+ *  included. agents/reviewer.md deliberately omits Write/Edit so a reviewer
+ *  can only report findings, never silently fix them; degrading its
+ *  unparseable header to `tools: null` would hand it write access to the
+ *  diff it is judging, with the raw frontmatter pasted into its mission, no
+ *  warning, and cached for the rest of the process's life. An unparseable
+ *  header is a misconfiguration, exactly like the unreadable file
+ *  readRoleFile() already throws on. */
 export function parseRoleFile(raw: string): RoleConfig {
-  const fmMatch = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
+  // "\uFEFF" spelled as an escape on purpose: a literal BOM here would be an
+  // invisible character in the source, and the next editor to touch this file
+  // could delete it without anyone seeing the diff.
+  const text = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
+  const fmMatch = FRONTMATTER_RE.exec(text);
+  if (!fmMatch && CLAIMS_FRONTMATTER_RE.test(text)) {
+    throw new RoleFileParseError(
+      `role file opens a '---' frontmatter block that is never closed by a '---' line — ` +
+        `refusing to fall back to the default tool allowlist (first 80 chars: ` +
+        `${JSON.stringify(text.slice(0, 80))})`,
+    );
+  }
   const frontmatter = fmMatch?.[1] ?? "";
-  const mission = (fmMatch?.[2] ?? raw).trim();
-  const toolsLine = /^tools:\s*(.+)$/m.exec(frontmatter)?.[1];
+  const mission = (fmMatch?.[2] ?? text).trim();
+  // \r?$ on every field: with CRLF endings `.+` would otherwise swallow the
+  // carriage return into the value, producing tools like "WebFetch\r" and a
+  // model string sanitizeModel() would reject.
+  const toolsLine = /^tools:\s*(.+?)\r?$/m.exec(frontmatter)?.[1];
   const tools = toolsLine
     ? toolsLine.split(",").map((t) => t.trim()).filter(Boolean)
     : null;
-  const model = sanitizeModel(/^model:\s*(.+)$/m.exec(frontmatter)?.[1]);
-  const effort = sanitizeEffort(/^effort:\s*(.+)$/m.exec(frontmatter)?.[1]);
+  const model = sanitizeModel(/^model:\s*(.+?)\r?$/m.exec(frontmatter)?.[1]);
+  const effort = sanitizeEffort(/^effort:\s*(.+?)\r?$/m.exec(frontmatter)?.[1]);
   return { mission, tools, model, effort };
 }
 
@@ -218,6 +267,11 @@ const TIER_GUIDE =
   `"standard" (Opus) for most implementation and review work, "flagship" (Fable) only when a task genuinely ` +
   `needs the strongest model. Omit tier to fall back to the role default (Opus). Flagship is the expensive ` +
   `one — reserve it for design-heavy or genuinely hard tasks.`;
+
+const IDEMPOTENCY_NOTE =
+  `A task's identity is (project, round, role, title), so titles must be distinct within one round and role. ` +
+  `Repeating a curl answers 409 with the task that already exists instead of creating a second one — re-issuing ` +
+  `a call you are not sure landed is safe, and can never fan out duplicate agents into the same worktree.`;
 
 const PARALLELISM_GUIDE =
   `Tasks in the SAME round run in PARALLEL inside the SAME worktree — only put tasks in one round when they ` +
@@ -334,7 +388,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
         `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
         `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
         `reviewer briefed to attack, not just check).\n` +
-        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n\n` +
+        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n   ${IDEMPOTENCY_NOTE}\n\n` +
         // R14/R16/R17. Gated on `live` like every other policy block: a scratch
         // project has no live checkout to deploy to and no executor to restart,
         // so this guidance would be noise at best and a wrong instruction at worst.
@@ -355,7 +409,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
       `Split implementation into focused, independently-completable builder tasks. Always end with exactly one ` +
       `"reviewer" task in the round right after your last builder round, briefed to review the whole diff. ` +
       `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
-      TIER_GUIDE
+      `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}`
     );
   }
   if (task.role === "planner") {
@@ -370,7 +424,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
       `which tests/commands to run. Each builder brief must be self-contained: files to touch, the approach, ` +
       `and how the builder verifies its own work (tests to write/run). Do not exceed round ${task.round + 20} — ` +
       `the space beyond that belongs to fix cycles and the next phase.\n` +
-      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n` +
+      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}\n` +
       `Do not write implementation code yourself — plan, then fan out.` +
       // R16: the planner writes the reviewer briefs, so it needs the push rule
       // in hand to put it into them.
@@ -436,7 +490,21 @@ async function spawnTaskRuns(): Promise<void> {
         );
         continue;
       }
-      if (!task.project.workspace_dir || !task.project.work_branch) {
+      // A stored workspace_dir is not evidence the directory still exists.
+      // Both 2026-07-30 worktrees were deleted from disk while the DB kept the
+      // paths (E8); a resumed task would have spawned `claude` with a cwd that
+      // isn't there and died at spawn() with an obscure error. provisionWorkspace
+      // is idempotent and prunes stale worktree registrations, so re-running it
+      // is the cheap, correct repair.
+      const wsMissing =
+        !!task.project.workspace_dir && !existsSync(task.project.workspace_dir);
+      if (wsMissing) {
+        console.warn(
+          `[project-tick] workspace ${task.project.workspace_dir} for project ` +
+            `${task.project_id} is gone from disk — re-provisioning`,
+        );
+      }
+      if (!task.project.workspace_dir || !task.project.work_branch || wsMissing) {
         // Normally the API route provisions synchronously at project creation,
         // but this tick can claim the round-0 architect task inside that
         // window, so the fallback is a real path — and it must write the
@@ -464,6 +532,13 @@ async function spawnTaskRuns(): Promise<void> {
         vault_access: task.role === "architect",
       });
       await attachRun(task.id, run.id);
+      // E4: spawning used to be silent, so a tick that did real work looked
+      // exactly like a tick that did nothing. Every spawn is on the record now.
+      console.log(
+        `[project-tick] spawned ${task.role} run ${run.id} for task ${task.id} ` +
+          `(round ${task.round}, tier ${task.tier ?? "role-default"}) — ` +
+          `${task.project.name} · ${task.title}`,
+      );
     } catch (e) {
       console.error(
         `[project-tick] failed to spawn run for task ${task.id} (${task.role}):`,
@@ -534,6 +609,17 @@ async function consolidateReviewerGroup(
       console.log(
         `[project-tick] round ${round} reviewers → pass (${inputs.length} reviewer(s))`,
       );
+      // E4's round-complete push, moved from the per-task path to here. The
+      // reviewers were only just marked 'done', so roundIsComplete() has to be
+      // asked AFTER markGroupDone or it always answers false. Checked rather
+      // than assumed: a reviewer round can share its round number with other
+      // roles, and only the last task of the round should announce it.
+      if (await roundIsComplete(projectId, round).catch(() => false)) {
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(`🏁 ${name} · round ${round} complete.`, "project").catch(
+          () => {},
+        );
+      }
       // Nothing is created here: closeFinishedProjects() owns completion.
       return;
     }
@@ -576,8 +662,9 @@ async function consolidateReviewerGroup(
       // ORDER IS LOAD-BEARING: create the chain FIRST, mark the reviewers done
       // SECOND. A crash between the two re-runs consolidation next tick — the
       // reviewers are still 'running' with settled runs, the same (round,
-      // cycle) yields the same chain keys, the partial unique index absorbs the
-      // duplicate insert, and mark-done proceeds. The reverse order would leave
+      // cycle) yields the same chain keys, createFixChain's bare ON CONFLICT
+      // DO NOTHING absorbs the duplicate insert on EITHER unique index, and
+      // mark-done proceeds. The reverse order would leave
       // a window where round R is fully 'done' with no fix round in the table,
       // and promoteReadyTasks() would promote the next phase's planner straight
       // past an unfinished fix cycle.
@@ -600,7 +687,17 @@ async function consolidateReviewerGroup(
         console.log(line);
       } else {
         // Not an error: this is the replay guard doing exactly its job.
-        console.log(`${line} — replay absorbed by the chain_key guard, no duplicate chain`);
+        console.log(`${line} — replay absorbed by the ON CONFLICT guard, no duplicate chain`);
+      }
+      // E4's fix-cycle push. Sent only for a chain this tick actually created:
+      // announcing a replay would tell Konrad the same fix cycle opened twice,
+      // which is the exact confusion bug 1 produced in the first place.
+      if (created.builderCreated) {
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(
+          `🔁 ${name} · reviewers want fixes — fix cycle ${decision.cycle} opened at round ${round + 1}.`,
+          "project",
+        ).catch(() => {});
       }
       return;
     }
@@ -616,6 +713,31 @@ async function markGroupDone(inputs: ReviewerInput[]): Promise<void> {
   }
 }
 
+/** Per-task and per-round progress pushes (E4).
+ *
+ *  Goal-mode projects deliberately do NOT get a ping per task — they can carry
+ *  hundreds, and they already have the time-gated heartbeat in goalHeartbeats().
+ *  Round boundaries are notified for every project: in goal mode a round IS a
+ *  waterfall phase, which is exactly the granularity worth a push. */
+async function notifyTaskProgress(
+  task: ProjectTask,
+  project: Project | null,
+): Promise<void> {
+  const name = project?.name ?? task.project_id;
+  if (project && !isGoalMode(project)) {
+    await queueNotification(
+      `✅ ${name} · ${task.role} task "${task.title}" done (round ${task.round}).`,
+      "project",
+    ).catch(() => {});
+  }
+  if (await roundIsComplete(task.project_id, task.round).catch(() => false)) {
+    await queueNotification(
+      `🏁 ${name} · round ${task.round} complete.`,
+      "project",
+    ).catch(() => {});
+  }
+}
+
 async function reconcileSettledTasks(): Promise<void> {
   const settled = await listSettledRunningTasks();
   /** Reviewer rounds touched this tick, keyed `${project_id}:${round}` so a
@@ -628,16 +750,26 @@ async function reconcileSettledTasks(): Promise<void> {
 
   for (const task of settled) {
     try {
+      const project = await getProject(task.project_id).catch(() => null);
+      const name = project?.name ?? task.project_id;
       if (task.run_status !== "completed") {
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
-        const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+        console.warn(
+          `[project-tick] task ${task.id} (${task.role} · ${task.title}) failed — ` +
+            `run ${task.run_id} ${task.run_status}; project ${task.project_id} blocked`,
+        );
         await queueNotification(
-          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. Check its run.`,
+          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. ` +
+            `Retry it: POST /api/tasks/${task.id}/retry (or /api/projects/${task.project_id}/unwedge).`,
           "project",
         ).catch(() => {});
         continue;
       }
+      console.log(
+        `[project-tick] reconciled ${task.role} task ${task.id} (round ${task.round}) ` +
+          `→ done — ${name} · ${task.title}`,
+      );
       if (task.role === "reviewer") {
         reviewerRounds.set(`${task.project_id}:${task.round}`, {
           projectId: task.project_id,
@@ -645,6 +777,7 @@ async function reconcileSettledTasks(): Promise<void> {
         });
       } else {
         await setTaskStatus(task.id, "done");
+        await notifyTaskProgress(task, project);
       }
     } catch (e) {
       console.error(
@@ -659,7 +792,7 @@ async function reconcileSettledTasks(): Promise<void> {
     // pass for every other project's rounds. But isolation without escalation
     // is a silent stall — a permanently failing group (e.g. `column
     // "chain_key" does not exist` if forge-control is restarted on this branch
-    // before migration 0035 lands) would retry every 10s forever while the
+    // before migration 0039 lands) would retry every 10s forever while the
     // project sits frozen and nobody is told. So: count consecutive failures
     // and surface the group once it is clearly stuck.
     try {

@@ -74,7 +74,7 @@ the decision:
 
 Non-reviewer settled tasks keep the existing per-task path untouched.
 
-### 1.3 Data model — migration `db/migrations/0035_reviewer_chain_key.sql`
+### 1.3 Data model — migration `db/migrations/0039_reviewer_chain_key.sql`
 
 ```sql
 ALTER TABLE project_tasks ADD COLUMN chain_key text;   -- NULL for everything historical

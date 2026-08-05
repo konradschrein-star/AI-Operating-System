@@ -82,7 +82,7 @@ export function projectAcceptsWork(status: ProjectStatus): boolean {
 
 /**
  * Consolidating a round can throw — a schema drift (`chain_key` missing
- * because migration 0035 has not been applied yet), a dead pool, a constraint
+ * because migration 0039 has not been applied yet), a dead pool, a constraint
  * nobody anticipated. The per-group `catch` in project-tick.ts must keep the
  * other projects' rounds moving, so it swallows the error and retries on the
  * next tick. Retrying forever with nothing but a `console.error` is the

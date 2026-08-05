@@ -237,7 +237,7 @@ PASS`:
    `NODE_ENV=production`; see `docs/plan/03-quality.md`).
 3. Merge the work branch to `main`. On conflicts: **STOP** and report the conflicting
    files — do not resolve them unilaterally in a deploy task.
-4. Apply any pending migrations added by the project (e.g. `db/migrations/0035_reviewer_chain_key.sql`
+4. Apply any pending migrations added by the project (e.g. `db/migrations/0039_reviewer_chain_key.sql`
    from Phase 1) before restarting either process.
 5. `pm2 restart forge-control` to pick up API/route changes — always safe.
 6. For executor-loaded code (§4's path list): launch the detached restart —

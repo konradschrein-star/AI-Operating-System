@@ -58,6 +58,7 @@ function task(over: Partial<ProjectTask> = {}): ProjectTask {
     run_id: null,
     fix_cycle: 0,
     tier: null,
+    attempt: 0,
     chain_key: null,
     created_at: "",
     updated_at: "",

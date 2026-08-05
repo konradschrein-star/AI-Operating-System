@@ -1,4 +1,13 @@
-# Evidence — migration 0035 dry run (quality gate I2)
+# Evidence — chain_key migration dry run (quality gate I2)
+
+> **Renumbered at R308.** This transcript was recorded when the chain_key migration was
+> numbered `0035`. While this branch was out, `main` shipped its own
+> `db/migrations/0035_task_idempotency.sql` (the `(project_id, round, role, title)` identity
+> index) and is now at 0038, so ours became
+> **`db/migrations/0039_reviewer_chain_key.sql`**. Only the filename changed — the DDL,
+> the index name `project_tasks_chain_key_uniq`, and every result below are unaltered.
+> Read every "0035" in this file as "0039"; the file's own path is left alone so the
+> citations in `db/projects.ts` and `docs/plan/` keep resolving.
 
 Phase 1, round 101 (DB layer). Migration `db/migrations/0035_reviewer_chain_key.sql` was
 applied **only** to a throwaway database `forge_p1_dryrun`, created and dropped inside this
