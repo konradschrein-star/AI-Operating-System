@@ -22,6 +22,13 @@ import {
   type RunStatus,
 } from "../db/runs.ts";
 import { sanitizeEffort } from "../lib/cc-runner.ts";
+/* phase 300g (U2/U3) — chat↔project linkage. All SQL lives in chat-linkage.ts;
+ * this file only calls it. See that module for the scan bounds and the
+ * backfill's idempotence guarantee. */
+import {
+  resolveChatProject,
+  rollupChatProjects,
+} from "./chat-linkage.ts";
 
 const r = new Hono();
 
@@ -39,7 +46,22 @@ const VALID_STATUSES = new Set<RunStatus>([
 ]);
 
 /* List threads (newest first, archived excluded) plus counts by status for
- * the rail. limit/offset page the rail — default 30 + "load more". */
+ * the rail. limit/offset page the rail — default 30 + "load more".
+ *
+ * U3 (phase 300g): each run that owns a coding project also carries
+ * `project_id`, `project_status`, `tasks_done`, `tasks_total` so the rail can
+ * render "x/y tasks" next to the status dot. Additive and OPTIONAL: a chat
+ * with no project has the four fields ABSENT — not zeroed. `tasks_done: 0,
+ * tasks_total: 0` would render as a real progress badge on a chat that never
+ * started a project, which is precisely the kind of confident-looking lie
+ * this phase exists to remove.
+ *
+ * Request cost is O(1) in page size: one listRuns, one runCounts, one grouped
+ * rollup query for the whole page — no per-row query, and no thread scan
+ * (that is the detail path's job; see chat-linkage.ts). CONSEQUENCE: chats
+ * created before `origin_chat_id` existed show no x/y in the rail until they
+ * are opened once, because opening a chat is what runs the scan and backfills
+ * the link. */
 r.get("/", async (c) => {
   const limit = Math.min(
     200,
@@ -50,7 +72,33 @@ r.get("/", async (c) => {
     listRuns(limit, offset),
     runCounts(),
   ]);
-  return c.json({ count: runs.length, runs, counts, hasMore });
+  const links = await rollupChatProjects(runs.map((run) => run.id));
+  const shaped = runs.map((run) => {
+    const link = links.get(run.id);
+    return link ? { ...run, ...link } : run;
+  });
+  return c.json({ count: shaped.length, runs: shaped, counts, hasMore });
+});
+
+/* ─── phase 300g (U2): linkage resolution for ONE chat ──────────────────────
+ *
+ * `GET /api/chat/:id/linkage` → `{chat_id, project_id, project_status,
+ * link_source, link_ambiguous}`. Additive endpoint; nothing else changed.
+ *
+ * This is the detail-path resolver: metadata first, bounded thread scan as
+ * fallback, and a one-time idempotent backfill when the scan is unambiguous
+ * (chat-linkage.ts owns all three). Round 305's `GET /api/chat/:id/team`
+ * calls the same function rather than re-deriving linkage.
+ *
+ * An unlinked chat — and a chat id that does not exist — answers 200 with
+ * `project_id: null`. "No project" is a fact about this chat, not a failure;
+ * only a malformed id (400) or a database error (500, via the resolver's
+ * throw) is an error. */
+r.get("/:id/linkage", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const link = await resolveChatProject(id);
+  return c.json({ chat_id: id, ...link });
 });
 
 /* Search past chats — title, prompt, and every message in the thread, so a
