@@ -1372,45 +1372,83 @@ function ChatThread({
     return true;
   };
   const color = STATUS_COLOR[run.status];
-  const engine = String(run.metadata?.engine ?? "claude-code");
   const model = String(run.metadata?.model ?? DEFAULT_ENGINE_MODEL);
 
   return (
     <>
+      {/* U12 — slim header. Gone: run.title (the rail already names the chat),
+       *  the status word (the dot IS the status), engine, and the cost/cap
+       *  line (U11 — the last rendered dollar in the chat surface). Remaining:
+       *  the status dot with its live/polling indicator docked underneath it as
+       *  ONE unit, the model, the linkage-honesty markers (NFU6), and the
+       *  unchanged actions (canvas via headerExtra, resume, cancel). */}
       <div
         style={{
-          padding: "12px 18px",
+          padding: "7px 18px",
           borderBottom: `1px solid ${tokens.borderSoft}`,
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: 10,
         }}
       >
-        <span style={dot(color, run.status === "running")} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
+        <div
+          style={{
+            flex: "none",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 3,
+          }}
+        >
+          <span style={dot(color, run.status === "running")} />
+          <span
+            className="mono"
             style={{
-              fontSize: 13.5,
-              fontWeight: 500,
-              color: tokens.textHi,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              fontSize: 9,
+              lineHeight: 1,
+              color: live ? tokens.ok : tokens.warn,
             }}
           >
-            {run.title}
-          </div>
-          <div
-            className="mono"
-            style={{ fontSize: 10.5, color: tokens.textFaint, marginTop: 2 }}
-          >
-            {run.status} · {engine} · {model} · spent ${run.spent_usd} / cap $
-            {run.budget_usd} ·{" "}
-            <span style={{ color: live ? tokens.ok : tokens.warn }}>
-              {live ? "live" : "polling"}
-            </span>
-          </div>
+            {live ? "live" : "polling"}
+          </span>
         </div>
+        <div
+          className="mono"
+          style={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 10.5,
+            color: tokens.textFaint,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {model}
+        </div>
+        {/* NFU6 — say how the project link was established when it was guessed.
+         *  A link read from stored metadata is silent; a scanned or contested
+         *  one says so, because a guess presented as truth is the failure mode
+         *  this phase is trying to kill. Props come from ChatSurface's single
+         *  ["chat","linkage",id] query — no second fetch here. */}
+        {linkSource === "thread_scan" && (
+          <span
+            className="mono"
+            title="this chat's project link was derived by scanning the thread, not from stored metadata"
+            style={{ flex: "none", fontSize: 9, color: tokens.textMuted }}
+          >
+            linked heuristically
+          </span>
+        )}
+        {linkAmbiguous === true && (
+          <span
+            className="mono"
+            title="more than one project claims this chat — showing the newest"
+            style={{ flex: "none", fontSize: 9, color: tokens.warn }}
+          >
+            ambiguous link
+          </span>
+        )}
         {headerExtra}
         {run.status === "stuck" && (
           <button

@@ -22,4 +22,10 @@ forge-control-web/app/desktop/MoneySurface.tsx	.*	The dedicated MONEY destinatio
 forge-control-web/app/desktop/MemorySurface.tsx	h\.score\.toFixed\(2\)	toFixed(2) here formats a relevance SCORE, not currency.
 forge-control-web/app/desktop/live/AgentActivity.tsx	M < 10 \? M\.toFixed\(2\)	toFixed(2) inside humanTokens()'s "M" suffix (e.g. "1.23M" tokens) — a token-magnitude formatter, not currency; a false positive of the naive toFixed(2) pattern.
 forge-control-web/app/desktop/chat/slash-registry.ts	spend	/rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
-forge-control-web/app/desktop/ChatSurface.tsx	spent_usd|budget_usd|spent \$	Chat header's "spent $X / cap $Y" line (lines ~1407-1408). OUT OF SCOPE for round 401b — ChatSurface.tsx is owned by a parallel task this round, and per this task's brief "the chat header's dollars are round 402's job." This is a DOCUMENTED OPEN ITEM, not a resolved allowlist: round 402 must remove it.
+# forge-control-web/app/desktop/ChatSurface.tsx — REMOVED in round 402.
+# 401b listed the chat header's "spent $X / cap $Y" line here as a documented
+# OPEN ITEM ("round 402 must remove it"). Round 402 removed it (U12 slim
+# header). The file now has ZERO primary-gate hits, so it needs no entry — and
+# leaving a stale row would be exactly the kind of allowlist rot this gate is
+# supposed to prevent. If a dollar ever returns to ChatSurface.tsx, the gate
+# fails, which is the point.

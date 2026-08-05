@@ -49,3 +49,55 @@ cd forge-control-web && npx tsc --noEmit                      # clean (0 errors 
 bash scripts/checks/dollar-sweep.sh                            # exit 0
 grep -rnE '\$[0-9]|€' app/desktop/live/AgentActivity.tsx app/desktop/DesktopApp.tsx app/MobileApp.tsx   # zero hits
 ```
+
+---
+
+# Phase 400 / Round 402 — dollar sweep, part 2 (the chat surface)
+
+Round 401b closed everything **outside** the chat surface and left exactly one
+open item: the chat header's `spent $X / cap $Y` line, deferred because
+`ChatSurface.tsx` belonged to a parallel task that round. Round 402 owns that
+file and closed it. **U11 is now complete app-wide** — no surface renders an
+agent-cost dollar except the deliberate MONEY destination.
+
+## Edits made this round
+
+| File | What changed |
+|---|---|
+| `app/desktop/ChatSurface.tsx` (header, was ~1380–1413) | Header rebuilt for U12. Deleted: `run.title`, the `{run.status}` word, `{engine}`, and `spent ${run.spent_usd} / cap ${run.budget_usd}` — **the last rendered dollar in the chat surface**. The `const engine = …` line went with it (its only reader). What remains: status dot with `live`/`polling` docked underneath as one unit, the model name, the NFU6 linkage markers, then the unchanged `headerExtra` / resume / cancel actions. |
+| `scripts/checks/dollar-allowlist.txt` | Removed the `ChatSurface.tsx` row (replaced by a comment recording why it is gone). It was never a real waiver — 401b wrote it as a **documented open item** so that round's gate could pass without editing a file it did not own. The line it excused no longer exists, so the row would now be allowlist rot: it would silently pre-excuse a *future* `spent_usd`/`budget_usd` regression in that file. With the row gone, any dollar returning to `ChatSurface.tsx` fails the gate. |
+
+## Surviving hits — the delta from 401b
+
+**No new entries.** The allowlist shrank by one; nothing was added. The
+surviving set is exactly 401b's table minus the `ChatSurface.tsx` row:
+`Providers.tsx` (comment), `api.ts` (wire types, NFU4), `agentsApi.ts` (wire
+types, NFU4), `MoneySurface.tsx` (the deliberate MONEY destination — the open
+question for Konrad about killing it stands, undecided here),
+`MemorySurface.tsx` (relevance score `toFixed(2)`), `AgentActivity.tsx`
+(token-magnitude `toFixed(2)`), `slash-registry.ts` (spend-cap *controls*).
+
+One nuance worth recording for the next reader: the new header carries a
+comment explaining what U11 removed, and the natural phrasing ("spend/cap")
+would itself have tripped the word-boundary-anchored primary gate from inside a
+comment. Reworded to "the cost/cap line" rather than allowlisted — a gate you
+teach yourself to route around stops being a gate.
+
+`ChatSurface.tsx` now appears under the reviewer's literal §6 command only as an
+`isPending` false positive, and the sweep classifies it as such automatically.
+
+## Verification (round 402)
+
+```
+forge-control-web $ npx tsc --noEmit                 # clean
+forge-control     $ npx tsc --noEmit                 # clean
+forge-control-web $ NODE_ENV=production pnpm build   # ✓ 9/9 static pages, no errors
+$ bash scripts/checks/dollar-sweep.sh                # PASS — 46 hits, all allowlisted (was 47)
+$ grep -nE '\$[0-9]|€|spent_usd|budget_usd' forge-control-web/app/desktop/ChatSurface.tsx   # zero hits
+$ git diff forge-control-web/app/desktop/ChatSurface.tsx | grep '^+' | grep -E '#[0-9a-fA-F]{3,8}|rgb\(|hsl\('  # zero (NFU1)
+```
+
+Both themes: the header's five tokens (`borderSoft`, `ok`, `warn`, `textFaint`,
+`textMuted`) each resolve in both palettes — verified as two definitions apiece
+in `app/theme.css` (`:root` dark + `html[data-theme="light"]`). Screenshots are
+round 403's job.
