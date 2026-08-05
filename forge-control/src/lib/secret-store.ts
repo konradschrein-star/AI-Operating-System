@@ -90,6 +90,14 @@ export interface SecretMeta {
    *  so a freshly-handed-over credential is not missed. Cleared automatically
    *  on the first successful reveal. */
   pending: boolean;
+  /** Additive (2026-08-05, U7/round 303). The run id of the agent that asked
+   *  for this secret, as supplied to POST /:name/mark-pending. `null` when
+   *  never supplied — the same "null, not omitted" convention as `note`, so
+   *  every list item has a stable shape a client can destructure without a
+   *  presence check. Only mark-pending sets it; it is NOT cleared by reveal
+   *  or clear-pending, so it stays as an audit trail of the last request
+   *  until a later mark-pending call replaces it. */
+  requestedByRunId: string | null;
 }
 
 const NOTE_SUFFIX = ".note";
@@ -97,6 +105,10 @@ const NOTE_SUFFIX = ".note";
  *  Kept as a separate zero-byte file rather than encoded into the note so the
  *  agent can flip the flag without touching the human-readable note copy. */
 const PENDING_SUFFIX = ".pending";
+/** Sidecar holding the run id that requested this secret (U7/round 303).
+ *  Separate file, same pattern as NOTE_SUFFIX, so it can be set independently
+ *  of the note and of the pending flag itself. */
+const REQUESTED_BY_SUFFIX = ".requested-by";
 
 export async function putSecret(
   name: string,
@@ -144,12 +156,17 @@ export async function putSecret(
   const pending = await stat(`${p}${PENDING_SUFFIX}`)
     .then(() => true)
     .catch(() => false);
+  const requestedByRunId = await readFile(
+    `${p}${REQUESTED_BY_SUFFIX}`,
+    "utf8",
+  ).catch(() => null);
   return {
     name,
     bytes: s.size,
     updatedAt: s.mtime.toISOString(),
     note: noteOnDisk,
     pending,
+    requestedByRunId,
   };
 }
 
@@ -164,8 +181,17 @@ export async function markCollected(name: string): Promise<void> {
 /** Flag an already-stored secret as "for Konrad to collect" without needing to
  *  re-supply its value — used when the agent stored the credential earlier
  *  (or in a different turn) and only now wants to surface it prominently.
+ *  `requestedByRunId`, if supplied, is persisted alongside the pending flag
+ *  so the UI can route the request back to the right chat (U7/round 303).
+ *  Omitting it leaves whatever value is already on disk untouched — same
+ *  "undefined leaves it alone" convention `putSecret` uses for `note`, so a
+ *  bare mark-pending call (the common case: no body) can't clobber a run id
+ *  set by an earlier call.
  *  Returns false if no secret with that name exists. */
-export async function markPending(name: string): Promise<boolean> {
+export async function markPending(
+  name: string,
+  requestedByRunId?: string,
+): Promise<boolean> {
   if (!isValidName(name)) return false;
   const p = pathFor(name);
   try {
@@ -174,6 +200,11 @@ export async function markPending(name: string): Promise<boolean> {
     return false;
   }
   await writeFile(`${p}${PENDING_SUFFIX}`, "", { mode: 0o600 });
+  if (requestedByRunId !== undefined) {
+    await writeFile(`${p}${REQUESTED_BY_SUFFIX}`, requestedByRunId, {
+      mode: 0o600,
+    });
+  }
   return true;
 }
 
@@ -197,7 +228,12 @@ export async function listSecrets(): Promise<SecretMeta[]> {
     const files = await readdir(STORE_DIR);
     const out: SecretMeta[] = [];
     for (const f of files) {
-      if (f.endsWith(NOTE_SUFFIX) || f.endsWith(PENDING_SUFFIX)) continue;
+      if (
+        f.endsWith(NOTE_SUFFIX) ||
+        f.endsWith(PENDING_SUFFIX) ||
+        f.endsWith(REQUESTED_BY_SUFFIX)
+      )
+        continue;
       const s = await stat(join(STORE_DIR, f)).catch(() => null);
       if (!s?.isFile()) continue;
       const note = await readFile(join(STORE_DIR, `${f}${NOTE_SUFFIX}`), "utf8").catch(
@@ -206,12 +242,17 @@ export async function listSecrets(): Promise<SecretMeta[]> {
       const pending = await stat(join(STORE_DIR, `${f}${PENDING_SUFFIX}`))
         .then(() => true)
         .catch(() => false);
+      const requestedByRunId = await readFile(
+        join(STORE_DIR, `${f}${REQUESTED_BY_SUFFIX}`),
+        "utf8",
+      ).catch(() => null);
       out.push({
         name: f,
         bytes: s.size,
         updatedAt: s.mtime.toISOString(),
         note,
         pending,
+        requestedByRunId,
       });
     }
     // Pending secrets first, then alphabetical — the whole point of the
@@ -232,6 +273,7 @@ export async function deleteSecret(name: string): Promise<boolean> {
     await unlink(pathFor(name));
     await unlink(`${pathFor(name)}${NOTE_SUFFIX}`).catch(() => {});
     await unlink(`${pathFor(name)}${PENDING_SUFFIX}`).catch(() => {});
+    await unlink(`${pathFor(name)}${REQUESTED_BY_SUFFIX}`).catch(() => {});
     return true;
   } catch {
     return false;

@@ -11,6 +11,10 @@
  *                                               browser history entry.
  *   POST /api/secrets/:name/clear-pending     → drop the "for Konrad" flag
  *                                               without revealing (dismiss).
+ *   POST /api/secrets/:name/mark-pending      { requested_by_run_id? }
+ *                                               → (re)flag "for Konrad",
+ *                                               optionally naming the run
+ *                                               waiting on it.
  *   DELETE /api/secrets/:name                 → removes it
  *
  * The reveal endpoint is intentionally at a distinct path from the list
@@ -38,6 +42,9 @@ import {
 } from "../lib/secret-store.ts";
 
 const r = new Hono();
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 r.get("/", async (c) => {
   return c.json({ secrets: await listSecrets() });
@@ -108,13 +115,42 @@ r.post("/:name/reveal", async (c) => {
 
 /** Retroactively flag an already-stored secret as "for Konrad to collect".
  *  The agent uses this when a credential was stored in an earlier turn and
- *  it now wants Konrad's attention on it without re-supplying the value. */
+ *  it now wants Konrad's attention on it without re-supplying the value.
+ *
+ *  Body is OPTIONAL (2026-08-05, U7/round 303): `{ requested_by_run_id? }`
+ *  lets the agent say which run is waiting, so a UI can route the request
+ *  to the right chat. Some callers send no body and no content-type at all —
+ *  that must resolve to "no run id supplied", not a 500, so an unparseable
+ *  body is treated the same as an absent one. Only a body that DOES parse
+ *  but carries an invalid `requested_by_run_id` is a 400. */
 r.post("/:name/mark-pending", async (c) => {
   const name = normalizeName(c.req.param("name"));
   if (!isValidName(name)) {
     return c.json({ error: "invalid name" }, 400);
   }
-  const ok = await markPending(name);
+
+  let body: { requested_by_run_id?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+
+  let requestedByRunId: string | undefined;
+  if (body.requested_by_run_id !== undefined && body.requested_by_run_id !== null) {
+    if (
+      typeof body.requested_by_run_id !== "string" ||
+      !UUID_RE.test(body.requested_by_run_id)
+    ) {
+      // Do NOT echo the supplied value (or the secret name) into `error` —
+      // see the reveal route's comment above about log shippers grepping
+      // top-level error/message fields.
+      return c.json({ error: "requested_by_run_id must be a valid uuid" }, 400);
+    }
+    requestedByRunId = body.requested_by_run_id;
+  }
+
+  const ok = await markPending(name, requestedByRunId);
   return ok ? c.json({ ok: true }) : c.json({ error: "not found" }, 404);
 });
 
