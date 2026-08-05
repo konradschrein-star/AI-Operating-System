@@ -64,6 +64,7 @@ import {
   fetchCapabilities,
   fetchChatTeam,
   type CapabilitiesResponse,
+  type TeamNode,
   type TeamResponse,
 } from "./teamApi";
 import { flattenTeam, responseNowMs, type FlatTeam } from "./teamRows";
@@ -98,7 +99,12 @@ type TeamState = "loading" | "error" | "empty" | "unlinked" | "ready";
 
 export interface ChatTeamPanelProps {
   chatId: string;
-  onOpenRun: (runId: string) => void;
+  /** Drill into a row (U20). Takes the NODE, not an id: a sub-agent's `id` is
+   *  a `tool_use_id` and the nav frame ChatSurface builds needs its `kind` and
+   *  `parent_id` as well. The panel does not build the frame itself — where
+   *  the middle surface goes is ChatSurface's business, and the panel's whole
+   *  contract is "this row was clicked". */
+  onOpenNode: (node: TeamNode) => void;
   /** False when the Team tab is closed or the side panel is collapsed. Gates
    *  the poll — a hidden panel costs zero requests and zero timers. */
   visible: boolean;
@@ -124,7 +130,7 @@ function Note({ children, color }: { children: React.ReactNode; color?: string }
   );
 }
 
-export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps) {
+export function ChatTeamPanel({ chatId, onOpenNode, visible }: ChatTeamPanelProps) {
   const enabled = visible && Boolean(chatId);
 
   const team = useQuery<TeamResponse, Error>({
@@ -170,14 +176,14 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
   const armedRef = useRef<ArmedState | null>(null);
 
   const capsRef = useRef(caps);
-  const openRunRef = useRef(onOpenRun);
+  const openNodeRef = useRef(onOpenNode);
   const dismissRef = useRef(dismiss);
   useEffect(() => {
     capsRef.current = caps;
   }, [caps]);
   useEffect(() => {
-    openRunRef.current = onOpenRun;
-  }, [onOpenRun]);
+    openNodeRef.current = onOpenNode;
+  }, [onOpenNode]);
   useEffect(() => {
     dismissRef.current = dismiss;
   }, [dismiss]);
@@ -194,8 +200,12 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
     return () => clearTimeout(t);
   }, [armedId]);
 
-  const handleOpenRun = useCallback((runId: string) => {
-    openRunRef.current(runId);
+  /* Ref-stable, empty deps — the identity handed to every memoized row must
+   * not change when ChatSurface re-renders with a fresh arrow, or every row
+   * re-renders and NFU2's zero-re-render hover claim dies with it. The ref
+   * above is what carries the current callback through. */
+  const handleOpenNode = useCallback((node: TeamNode) => {
+    openNodeRef.current(node);
   }, []);
 
   const handleStop = useCallback((nodeId: string, settled: boolean) => {
@@ -369,7 +379,7 @@ export function ChatTeamPanel({ chatId, onOpenRun, visible }: ChatTeamPanelProps
                 canTerminate={caps.terminate}
                 degradedTime={degradedTime}
                 degradedTasks={degradedTasks}
-                onOpenRun={handleOpenRun}
+                onOpenNode={handleOpenNode}
                 onStop={handleStop}
                 onX={handleX}
               />

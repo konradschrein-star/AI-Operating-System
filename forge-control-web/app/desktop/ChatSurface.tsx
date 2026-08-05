@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
@@ -43,7 +43,20 @@ import {
   type SurfaceKey,
 } from "./chat/slash-registry";
 import { ChatTeamPanel } from "./team/ChatTeamPanel";
+import type { TeamNode } from "./team/teamApi";
 import { AssistantThread } from "./chat/AssistantThread";
+import { AgentChatView } from "./chat/AgentChatView";
+import { PlanDocView } from "./chat/PlanDocView";
+import {
+  crumbs,
+  frameKey,
+  push,
+  pop,
+  reset,
+  top,
+  type NavFrame,
+  type NavStack,
+} from "./chat/nav-stack";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
 import { useRunEvents } from "./chat/useRunEvents";
@@ -86,7 +99,7 @@ function SidePanel({
   onToggle,
   tab,
   onTab,
-  onOpenRun,
+  onOpenNode,
   fileAtt,
   chatId,
 }: {
@@ -94,7 +107,7 @@ function SidePanel({
   onToggle: () => void;
   tab: "team" | "files";
   onTab: (t: "team" | "files") => void;
-  onOpenRun: (runId: string) => void;
+  onOpenNode: (node: TeamNode) => void;
   fileAtt: ReturnType<typeof useAttachments> | null;
   /** The OPEN chat (U14: no selector of the panel's own — the chat decides what
    *  the panel shows). `null` = nothing open, so there is no team to fetch. */
@@ -218,7 +231,7 @@ function SidePanel({
             // there being no observer at all (NFU3).
             <ChatTeamPanel
               chatId={chatId}
-              onOpenRun={onOpenRun}
+              onOpenNode={onOpenNode}
               visible={!collapsed && tab === "team"}
             />
           ) : (
@@ -260,9 +273,69 @@ export function ChatSurface({
     queryFn: () => fetchChatList({ limit: visibleCount }),
     refetchInterval: 8000,
   });
-  const [selId, setSelId] = useState<string | null>(null);
-  /** Chat we were on before drilling into an agent run from the Live panel. */
-  const [agentViewFrom, setAgentViewFrom] = useState<string | null>(null);
+  /* ── selId and navStack: two different questions (U21, 13 §2) ───────────
+   *
+   * `selId` is WHICH CHAT IS OPEN. `navStack` is WHAT YOU ARE LOOKING AT
+   * inside it — empty means the manager chat itself, one frame means a worker
+   * or a plan doc, two means a worker's sub-agent.
+   *
+   * `selId` DOES NOT MOVE WHEN YOU DRILL IN. That is the whole point of this
+   * round. Until now, clicking a worker set `selId` to the worker's run, which
+   * silently re-scoped the right sidebar to that worker — and the spec's rule
+   * is that "the right sidebar is always a view of the currently open chat"
+   * (10 §"Right sidebar"). With the stack, SidePanel keeps `chatId={selId}`,
+   * the team tree stays exactly where it was, and you can read a worker while
+   * still looking at the org chart it belongs to.
+   *
+   * The raw setter is deliberately private to `openChat` below: every chat
+   * switch must reset the stack, and the way to guarantee that is to leave no
+   * other way to switch. */
+  const [selId, setSelIdRaw] = useState<string | null>(null);
+  const [navStack, setNavStack] = useState<NavStack>(reset());
+
+  /** Open a chat. Resets the drill-in stack — a worker view left standing
+   *  under a newly opened chat asserts that worker belongs to the new chat,
+   *  which is false. `reset()` returns one shared frozen array, so resetting
+   *  an already-empty stack is a React bail-out and costs nothing. */
+  const openChat = useCallback((id: string | null) => {
+    setSelIdRaw(id);
+    setNavStack(reset());
+  }, []);
+
+  /** Descend one level from a clicked team row.
+   *
+   *  A sub-agent is not a run: its `id` is the `tool_use_id` of the Task call
+   *  that spawned it, and its transcript lives inline in its PARENT run's
+   *  thread — so the frame fetches `parent_id` and slices by `id`. A session
+   *  row fetches itself.
+   *
+   *  The architecture doc's sketch was `node.parent_id ?? node.id`; that is
+   *  wrong for sessions, because a worker run's `parent_id` is its
+   *  `parent_run_id` (forge-control/src/routes/chat.ts:495) and is NOT always
+   *  null — a worker with a parent run would have drilled into its parent.
+   *  Discriminating on `kind` says the intended thing exactly.
+   *
+   *  Stable identity (empty deps): ChatTeamPanel holds this in a ref so that
+   *  every memoized row keeps the same callback prop, which is what keeps a
+   *  hover sweep at zero re-renders (NFU2). A fresh arrow per render here
+   *  would leak straight through that ref's effect. */
+  const openNode = useCallback((node: TeamNode) => {
+    setComposing(false);
+    const frame: NavFrame =
+      node.kind === "subagent"
+        ? { kind: "agent", runId: node.parent_id ?? node.id, subagentId: node.id }
+        : { kind: "agent", runId: node.id };
+    setNavStack((s) => push(s, frame));
+  }, []);
+
+  /** Climb one level. At depth 1 that is the manager chat (`pop` says so). */
+  const goBack = useCallback(() => setNavStack((s) => pop(s)), []);
+
+  const drilled = top(navStack);
+  /* What the back button says it returns to: the crumb one level BELOW the
+   * top. `crumbs[0]` is the manager chat and `crumbs[i]` is `navStack[i-1]`,
+   * so the level below the top sits at `navStack.length - 1`. */
+  const backLabel = crumbs(navStack)[Math.max(0, navStack.length - 1)].label;
   const [composing, setComposing] = useState(false);
   const [panelCollapsed, setPanelCollapsed] = useState(false);
   // Split-screen canvas, remembered PER CHAT and across reloads. A brainstorm
@@ -295,11 +368,13 @@ export function ChatSurface({
   const setCanvasOpen = (v: boolean) => patchCanvas({ open: v });
   const setCanvasPath = (p: string) => patchCanvas({ path: p, open: true });
 
-  // An "agent view" is any run that isn't in the chat rail — i.e. a project
-  // task or sub-run. Derived rather than stored so it stays true even after a
-  // reload or if the rail list changes underneath us.
-  const isAgentView =
-    !!selId && !(listQ.data?.runs ?? []).some((r) => r.id === selId);
+  /* The derived "am I in an agent view" flag — `selId` is not in the chat
+   * rail — is gone along with the one-slot backtrack state it partnered (U21;
+   * both are at ChatSurface.tsx:265/301 in git 275b9d4). It inferred
+   * navigation from the RAIL's contents, which made pagination a navigation
+   * input: a `load more` that pulled the run into the list would have flipped
+   * the app out of the drilled view underneath the user. `navStack` states the
+   * same fact directly instead of inferring it. */
 
   // Not persisted anywhere — no localStorage key, no query param, no server
   // setting (`grep -rn "panelTab\|localStorage" app` says so). So the "live" →
@@ -324,17 +399,25 @@ export function ChatSurface({
 
   useEffect(() => {
     if (!selId && (listQ.data?.runs.length ?? 0) > 0) {
-      setSelId(listQ.data!.runs[0].id);
+      openChat(listQ.data!.runs[0].id);
     }
-  }, [listQ.data, selId]);
+  }, [listQ.data, selId, openChat]);
 
   // v2.0: SSE stream is the primary sync path; the query interval is only
   // a safety net (tight when the stream is down, lazy when it's live).
+  //
+  // The stream stays on `selId` and is NOT re-pointed when you drill in: one
+  // stream, for the chat that is open, exactly as before (NFU3).
   const { live } = useRunEvents(selId, !composing);
   const detailQ = useQuery({
     queryKey: ["chat", "run", selId],
     queryFn: () => fetchChat(selId!),
-    enabled: !!selId && !composing,
+    // `navStack.length === 0` is the poll-budget half of the drill-in (NFU3).
+    // A drilled view runs its own detail query at the same intervals; leaving
+    // this one enabled underneath it would DOUBLE the surface's request rate
+    // for a thread nobody is currently reading. The cache entry survives, so
+    // coming back renders instantly and then refreshes.
+    enabled: !!selId && !composing && navStack.length === 0,
     refetchInterval: live ? 20000 : 3000,
   });
 
@@ -346,7 +429,7 @@ export function ChatSurface({
     }) => createChat(input),
     onSuccess: (run) => {
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
-      setSelId(run.id);
+      openChat(run.id);
       setComposing(false);
     },
   });
@@ -388,14 +471,14 @@ export function ChatSurface({
     mutationFn: (id: string) => archiveChat(id),
     onSuccess: (_run, id) => {
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
-      if (selId === id) setSelId(null);
+      if (selId === id) openChat(null);
     },
   });
   const archiveAllM = useMutation({
     mutationFn: () => archiveAllChats(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
-      setSelId(null);
+      openChat(null);
     },
   });
 
@@ -464,7 +547,7 @@ export function ChatSurface({
           />
           <button
             onClick={() => {
-              setSelId(null);
+              openChat(null);
               setComposing(true);
             }}
             className="mono"
@@ -569,7 +652,7 @@ export function ChatSurface({
                   run={r}
                   selected={r.id === selId && !composing}
                   onSelect={() => {
-                    setSelId(r.id);
+                    openChat(r.id);
                     setComposing(false);
                     setSearch("");
                   }}
@@ -615,7 +698,7 @@ export function ChatSurface({
                   run={r}
                   selected={r.id === selId && !composing}
                   onSelect={() => {
-                    setSelId(r.id);
+                    openChat(r.id);
                     setComposing(false);
                   }}
                   onClose={() => archiveM.mutate(r.id)}
@@ -654,35 +737,12 @@ export function ChatSurface({
           position: "relative",
         }}
       >
-        {/* Escape hatch from an agent run. Agent/task runs never appear in the
-            chat rail, so once you drill into one there's no selected row to
-            click back to — this is the only way out. */}
-        {isAgentView && (
-          <button
-            onClick={() => {
-              setSelId(agentViewFrom);
-              setAgentViewFrom(null);
-            }}
-            className="mono"
-            title="Back to your chats"
-            style={{
-              position: "absolute",
-              top: 8,
-              left: 10,
-              zIndex: 3,
-              fontSize: 10,
-              letterSpacing: "0.06em",
-              padding: "4px 9px",
-              borderRadius: 6,
-              cursor: "pointer",
-              color: tokens.accent,
-              background: tokens.bgCard,
-              border: `1px solid ${tokens.accent}`,
-            }}
-          >
-            ← agent view · back
-          </button>
-        )}
+        {/* The floating "← agent view · back" escape hatch used to live here,
+            absolutely positioned over the transcript. It is gone with the
+            backtrack state it read (U21): back is now a real, animated control
+            in the drilled view's own header (AgentChatView / PlanDocView),
+            which is where U20 asks for it, and it pops ONE level instead of
+            teleporting to the chat you started from. */}
         {composing ? (
           <NewChat
             isCreating={createM.isPending}
@@ -703,6 +763,36 @@ export function ChatSurface({
               })
             }
           />
+        ) : drilled !== null ? (
+          /* U20: the drill-in replaces the MIDDLE surface only. `selId` is
+           * untouched, so SidePanel below still shows this chat's team and the
+           * tree you clicked from does not move under you.
+           *
+           * The key is the frame, not the render: `.nav-drill` replays its
+           * entry animation when you descend or climb, and not when the
+           * transcript polls. */
+          <div
+            key={frameKey(navStack)}
+            className="nav-drill"
+            style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+          >
+            {drilled.kind === "agent" ? (
+              <AgentChatView
+                frame={drilled}
+                stack={navStack}
+                live={live}
+                onBack={goBack}
+                backLabel={backLabel}
+              />
+            ) : (
+              <PlanDocView
+                name={drilled.name}
+                stack={navStack}
+                onBack={goBack}
+                backLabel={backLabel}
+              />
+            )}
+          </div>
         ) : detailQ.data ? (
           <ChatThread
             key={detailQ.data.id}
@@ -784,14 +874,7 @@ export function ChatSurface({
         onToggle={() => setPanelCollapsed((c) => !c)}
         tab={panelTab}
         onTab={setPanelTab}
-        onOpenRun={(runId) => {
-          setComposing(false);
-          // Remember where we came from. An agent/task run is NOT in the chat
-          // rail (the rail is conversations only), so without this there is
-          // literally nothing to click to get back out of it.
-          setAgentViewFrom(selId);
-          setSelId(runId);
-        }}
+        onOpenNode={openNode}
         fileAtt={composing ? null : threadAtt}
         // The SAME id the detail query and the header run on — one open chat,
         // one scope, no third source of "which chat is this".

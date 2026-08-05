@@ -353,8 +353,13 @@ export interface TeamRowProps {
    *  `settled` travels as an argument rather than being looked up by id in the
    *  panel: it keeps the handlers dependency-free (and therefore stable for
    *  the life of the panel) without a node map that would have to be kept in
-   *  sync with the poll. */
-  onOpenRun: (runId: string) => void;
+   *  sync with the poll.
+   *
+   *  `onOpenNode` takes the whole node for the same reason — a sub-agent's
+   *  `id` is a `tool_use_id`, so the frame ChatSurface pushes needs `kind` and
+   *  `parent_id` too, and looking those back up by id would need exactly the
+   *  node map this design avoids. */
+  onOpenNode: (node: TeamNode) => void;
   onStop: (nodeId: string, settled: boolean) => void;
   onX: (nodeId: string, settled: boolean) => void;
 }
@@ -367,16 +372,24 @@ function TeamRowViewImpl({
   canTerminate,
   degradedTime,
   degradedTasks,
-  onOpenRun,
+  onOpenNode,
   onStop,
   onX,
 }: TeamRowProps) {
   const n = row.node;
   const settled = n.settled;
-  // Only workers drill in. The manager row IS the chat you are looking at, and
-  // sub-agent drill-in is phase 600 — a row that looks clickable and does
-  // nothing is worse than one that does not look clickable.
-  const clickable = n.kind === "worker";
+  /* Workers AND their sub-agents drill in (U20, phase 600). The manager row
+   * stays inert: it IS the chat you are looking at, so "opening" it would
+   * navigate to where you already are.
+   *
+   * Until this round only workers were clickable, because a sub-agent's id is
+   * a `tool_use_id` and the callback carried a run id — there was nothing to
+   * hand it. `onOpenNode` takes the NODE, so the caller reads `kind` and
+   * `parent_id` off it and builds the right nav frame; a sub-agent resolves to
+   * "its parent's run, sliced". `cron`/`unknown` rows stay inert: a row that
+   * looks clickable and does nothing is worse than one that does not look
+   * clickable. */
+  const clickable = n.kind === "worker" || n.kind === "subagent";
 
   const sourceNote = workingSourceNote(n);
 
@@ -408,7 +421,7 @@ function TeamRowViewImpl({
       data-status={n.status}
       data-role={n.role ?? "-"}
       title={lineageTitle(row)}
-      onClick={clickable ? () => onOpenRun(n.id) : undefined}
+      onClick={clickable ? () => onOpenNode(n) : undefined}
       style={{
         padding: `4px ${ROW_PAD_X}px`,
         paddingLeft: ROW_PAD_X + DEPTH_PAD[Math.min(row.depth, DEPTH_PAD.length - 1)],
