@@ -107,6 +107,20 @@ body {
   opacity: 0;
 }
 
+/* v3 phase 500 (U17/NFU2): team-panel hover reveal, CSS-only — the same
+ * proven pattern as `.chat-row` above. The stop/✕ controls are mounted in
+ * EVERY row at all times and occupy a fixed-width slot, so revealing them
+ * costs one opacity change: no React hover state, no re-render, no reflow.
+ * `:focus-within` keeps them reachable by keyboard. Opacity only: every
+ * colour still comes from app/tokens.ts (NFU1). */
+.team-row .team-row-controls {
+  opacity: 0;
+}
+.team-row:hover .team-row-controls,
+.team-row:focus-within .team-row-controls {
+  opacity: 1;
+}
+
 /* iOS safe-area padding for tab bar bottom. */
 .safe-bottom {
   padding-bottom: max(30px, env(safe-area-inset-bottom, 30px));

@@ -1,0 +1,579 @@
+"use client";
+
+/**
+ * One row of the team tree, and the two leaf components that own working time.
+ *
+ * ── Why the row is two lines ──────────────────────────────────────────────
+ * The brief lists the row content left to right: status dot, kind badge, role,
+ * model, description, tokens, working time. That is the reading order this
+ * file implements — but not on one physical line. The Team panel lives in
+ * ChatSurface's SidePanel, which is 260px wide (ChatSurface.tsx:305); seven
+ * columns in 244px of content box gives every one of them about 34px, which
+ * is not a column, it is a stub. So the row wraps after `model`:
+ *
+ *     ● session  builder  opus-5                        [stop] [✕]
+ *       build the team panel              88.1k   4m 12s
+ *
+ * Read top-to-bottom, left-to-right, the order is exactly the briefed one.
+ * The controls take the far right of line 1 in a fixed-width slot. Nothing
+ * about this changes if round 503 widens the panel — every column is
+ * `flex: none` with a min width and the description flexes.
+ *
+ * ── The one design choice the brief asked to be stated (U15) ──────────────
+ * "A FINISHED row shows tokens + model and NO time at all … render an em dash
+ * in the time slot for settled rows unless the row is the manager."
+ *
+ * The choice made here: **settled worker and sub-agent rows show "—"; the
+ * manager row always shows its working time, frozen once it settles.** The
+ * manager is the operator chat — its working time is the one number that
+ * describes the whole session rather than a finished fragment of it, and a
+ * panel whose top row goes blank the moment the chat completes reads as
+ * broken. The honest number is never destroyed: a settled worker's real
+ * working time is in the row's native `title`, one hover away. This is the
+ * behaviour the round-504 screenshots must show.
+ *
+ * ── Time truth, structurally (U15/U16) ────────────────────────────────────
+ * Two leaves, and the difference is not a branch inside one component:
+ * `FrozenTime` does not import `useTick` and therefore CANNOT tick, at any
+ * clock, for any reason. `LiveTime` is the only subscriber to the 1s store in
+ * this panel. The row picks between them on `node.settled`, so "a settled row
+ * ticked" is not a bug that can be introduced by editing a condition — it
+ * would take swapping the component.
+ *
+ * ── Hover (U17, NFU2) ─────────────────────────────────────────────────────
+ * There is no pointer-enter handler, no pointer-leave handler and no hover
+ * state in this file — the reviewer's grep for them comes back empty, which is
+ * the point. The controls are mounted in every row, always, and revealed by the
+ * `.team-row` rules in app/globals.css. They sit in a fixed-width slot, so the
+ * reveal changes opacity and nothing else — no reflow, no re-render.
+ */
+
+import { memo, type CSSProperties } from "react";
+import { tokens, dot } from "../../tokens";
+import {
+  isModelAlias,
+  modelDisplay,
+  roleLabel,
+  roleTokenName,
+  type RoleTokenName,
+} from "../live/agentsApi";
+import { capabilityTitle } from "./confirm";
+import { fmtTokens, fmtWorkingTime, type TeamNode } from "./teamApi";
+import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
+import { useTick } from "./tickStore";
+
+const EM_DASH = "—";
+
+/* ── Colour ───────────────────────────────────────────────────────────────
+ *
+ * Every value below is a `tokens.*` reference; no literal colour of any
+ * notation appears in this directory (NFU1). `roleTokenName` in agentsApi decides which
+ * NAME a role wears — this is the only place the name becomes a colour, the
+ * same split AgentActivity.tsx uses.
+ */
+
+const ROLE_COLOR: Record<RoleTokenName, string> = {
+  decide: tokens.decide,
+  info: tokens.info,
+  accent: tokens.accent,
+  warn: tokens.warn,
+  textMuted2: tokens.textMuted2,
+  ok: tokens.ok,
+  textMuted: tokens.textMuted,
+};
+
+/** Status dot colours, exactly as briefed: running → info, planned/queued →
+ *  textMuted, done/completed → ok, failed → bleed. The rest of the engine's
+ *  status vocabulary gets the nearest honest token rather than being folded
+ *  into one of the four — `stuck` in particular must not read as `running`. */
+const STATUS_COLOR: Record<string, string> = {
+  running: tokens.info,
+  planned: tokens.textMuted,
+  queued: tokens.textMuted,
+  done: tokens.ok,
+  completed: tokens.ok,
+  failed: tokens.bleed,
+  cancelled: tokens.textFaint,
+  stuck: tokens.stuck,
+  paused: tokens.warn,
+};
+
+function statusColor(status: string): string {
+  return STATUS_COLOR[status] ?? tokens.textFaint;
+}
+
+/* ── Kind truth ───────────────────────────────────────────────────────────
+ *
+ * The question Konrad asked this project to answer on every row: is this a
+ * whole Claude Code session, or a Task agent living inside one? Operator
+ * chats and project workers are both real `claude` processes with their own
+ * run row — they say "session". A sub-agent shares its parent's process and
+ * dies with it — it says "sub-agent". The badge is the answer; the colour
+ * repeats it so the two are distinguishable without reading.
+ */
+
+const KIND_LABEL: Record<string, string> = {
+  operator: "session",
+  worker: "session",
+  subagent: "sub-agent",
+  cron: "cron",
+  unknown: "unknown",
+};
+
+const KIND_COLOR: Record<string, string> = {
+  operator: tokens.info,
+  worker: tokens.info,
+  subagent: tokens.textMuted2,
+  cron: tokens.textMuted,
+  /** An unclassified run is a fact about the fleet, not a rendering hole. */
+  unknown: tokens.warn,
+};
+
+function kindLabel(kind: string): string {
+  return KIND_LABEL[kind] ?? kind;
+}
+
+function kindColor(kind: string): string {
+  return KIND_COLOR[kind] ?? tokens.warn;
+}
+
+/** Aliases render fainter than resolved ids — the colour IS the statement that
+ *  we know less about this row's model (R8, ported from AgentActivity). */
+function modelColor(model: string | null): string {
+  return isModelAlias(model) ? tokens.textGhost : tokens.textFaint;
+}
+
+/** First 8 chars of a uuid — enough to grep the database with, short enough to
+ *  read inside a native tooltip. */
+function short(id: string | null): string {
+  return id ? id.slice(0, 8) : "none";
+}
+
+/**
+ * The row's native `title` — full description plus lineage.
+ *
+ * Native, not a mounted tooltip component, and that is the whole point: NFU2
+ * forbids anything on the hover path that mounts, measures or re-renders.
+ * The browser draws this one for free.
+ *
+ * It carries the RAW model id rather than `modelDisplay`'s short form: the
+ * badge column is where brevity belongs, the tooltip is the diagnostic
+ * surface, and `claude-haiku-4-5-20251001` is what you paste into a query.
+ */
+function lineageTitle(row: TeamRow): string {
+  const n = row.node;
+  const parts: string[] = [n.description ?? "(no description)"];
+  parts.push(
+    n.kind === "subagent"
+      ? "in-process sub-agent — a Task agent inside its parent's process, dies with it"
+      : "full Claude Code session — its own process, survives session cycles",
+  );
+  parts.push(`status ${n.status}`);
+  if (n.role) parts.push(`role ${n.role}`);
+  parts.push(`model ${n.model ?? EM_DASH}`);
+  parts.push(`id ${short(n.id)}`);
+  if (row.parentDescription !== null || n.parent_id !== null) {
+    parts.push(
+      `child of "${row.parentDescription ?? "(no description)"}" (${short(n.parent_id)})`,
+    );
+  }
+  if (n.task) {
+    parts.push(`task round ${n.task.round} · ${n.task.role} · ${n.task.status}`);
+  }
+  return parts.join(" · ");
+}
+
+/** How `working_ms` was measured, as tooltip prose. The `~` prefix on a
+ *  rollup value is the visible half (13 §9); this is the explanation. */
+function workingSourceNote(node: TeamNode): string | null {
+  if (node.working_ms === null) return "not measurable";
+  if (node.working_ms_source === "rollup") {
+    return (
+      "approximate — rolled up from the spawn's wall-clock span, not summed " +
+      "from this agent's own thread events"
+    );
+  }
+  return null;
+}
+
+/* ── The two time leaves ──────────────────────────────────────────────────── */
+
+interface TimeCellProps {
+  /** Rendered verbatim through `fmtWorkingTime`; `null` renders "—". */
+  ms: number | null;
+  /** `~` for a rollup-sourced value, "" otherwise. */
+  prefix: string;
+  title: string;
+}
+
+/**
+ * A settled row's time. Does not import `useTick`, does not subscribe to
+ * anything, has no clock — it renders the number it was handed and re-renders
+ * only when that number changes, which for a settled node is never (U16).
+ */
+function FrozenTime({ ms, prefix, title }: TimeCellProps) {
+  return (
+    <span
+      data-working-cell
+      data-frozen="true"
+      className="mono"
+      title={title}
+      style={TIME_STYLE}
+    >
+      {prefix}
+      {fmtWorkingTime(ms)}
+    </span>
+  );
+}
+
+interface LiveTimeProps {
+  /** The row, for `interpolatedWorkingMs` — the single place client-side time
+   *  policy lives (teamRows.ts). The brief named this component's props
+   *  `baseMs`/`responseNowMs`; passing the row instead is the one deviation,
+   *  and it exists so that not a line of the clamp/settled/null policy is
+   *  re-derived here. A leaf that re-implemented the policy is exactly the
+   *  second source of truth round 501 built `interpolatedWorkingMs` to
+   *  prevent. */
+  row: TeamRow;
+  /** The server clock at response time, from `responseNowMs(res)`. */
+  responseNow: number;
+  prefix: string;
+  title: string;
+}
+
+/**
+ * A running row's time. The ONLY subscriber to the 1s tick in this panel:
+ * a tick re-renders this `<span>`, not the row, not the controls, not the
+ * native title (13 §6).
+ */
+function LiveTime({ row, responseNow, prefix, title }: LiveTimeProps) {
+  const nowMs = useTick();
+  return (
+    <span
+      data-working-cell
+      data-frozen="false"
+      className="mono"
+      title={title}
+      style={TIME_STYLE}
+    >
+      {prefix}
+      {fmtWorkingTime(interpolatedWorkingMs(row, responseNow, nowMs))}
+    </span>
+  );
+}
+
+/* ── Layout constants ─────────────────────────────────────────────────────
+ *
+ * Fixed widths everywhere a value can change length between polls, so the
+ * columns never wobble as numbers count up and no hover ever moves a pixel
+ * (the layout-shift half of the NFU2 protocol).
+ */
+
+/** Depth → indent. Capped at 2: sub-agents do not nest (teamRows.ts). */
+const DEPTH_PAD = [0, 12, 24];
+
+const ROW_PAD_X = 8;
+const KIND_COL = 52;
+const ROLE_COL = 48;
+const TOKENS_COL = 42;
+const TIME_COL = 50;
+/** Fixed at all times, occupied by the always-mounted controls. Reserving it
+ *  is what makes the CSS reveal free of reflow. */
+const CONTROLS_COL = 46;
+
+const TIME_STYLE: CSSProperties = {
+  color: tokens.textSecondary,
+  minWidth: TIME_COL,
+  textAlign: "right",
+  flex: "none",
+  fontSize: 10.5,
+  fontVariantNumeric: "tabular-nums",
+};
+
+const BTN_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "none",
+  padding: "0 3px",
+  fontSize: 10,
+  lineHeight: 1.6,
+  borderRadius: 3,
+  fontFamily: "inherit",
+};
+
+/* ── The row ─────────────────────────────────────────────────────────────── */
+
+export interface TeamRowProps {
+  row: TeamRow;
+  /** `responseNowMs(res)` — the anchor every interpolation measures from. */
+  responseNow: number;
+  /** Is THIS row's X currently armed? A boolean, so arming re-renders exactly
+   *  two rows (the one losing it and the one gaining it) instead of the list. */
+  armed: boolean;
+  canStop: boolean;
+  canTerminate: boolean;
+  /** The team response reported `errors[].scope === "working_time"`: the
+   *  numbers in the time column are not available, and the cell shows "—"
+   *  rather than a zero that would read as measured (NFU6). */
+  degradedTime: boolean;
+  /** …`scope === "tasks"`: worker descriptions may be missing. */
+  degradedTasks: boolean;
+  /** Stable identities, hoisted with `useCallback` in the panel. A fresh arrow
+   *  here would defeat `memo` and re-render every row on every panel render.
+   *
+   *  `settled` travels as an argument rather than being looked up by id in the
+   *  panel: it keeps the handlers dependency-free (and therefore stable for
+   *  the life of the panel) without a node map that would have to be kept in
+   *  sync with the poll. */
+  onOpenRun: (runId: string) => void;
+  onStop: (nodeId: string, settled: boolean) => void;
+  onX: (nodeId: string, settled: boolean) => void;
+}
+
+function TeamRowViewImpl({
+  row,
+  responseNow,
+  armed,
+  canStop,
+  canTerminate,
+  degradedTime,
+  degradedTasks,
+  onOpenRun,
+  onStop,
+  onX,
+}: TeamRowProps) {
+  const n = row.node;
+  const settled = n.settled;
+  // Only workers drill in. The manager row IS the chat you are looking at, and
+  // sub-agent drill-in is phase 600 — a row that looks clickable and does
+  // nothing is worse than one that does not look clickable.
+  const clickable = n.kind === "worker";
+
+  const sourceNote = workingSourceNote(n);
+
+  /* The U15 suppression, stated once. `showTime` is false for a settled
+   * non-manager row: it renders "—" and says why on hover. */
+  const isManager = row.depth === 0;
+  const showTime = !settled || isManager;
+  const timeMs = degradedTime || !showTime ? null : n.working_ms;
+  /* The `~` marks an approximate NUMBER (13 §9). A cell with no number to
+   * qualify — "—" — never wears it. */
+  const prefix = timeMs !== null && n.working_ms_source === "rollup" ? "~" : "";
+  const timeTitle = degradedTime
+    ? "working time unavailable — the server reported an error for this enrichment step"
+    : !showTime
+      ? `finished after ${fmtWorkingTime(n.working_ms)} — finished rows show ` +
+        `tokens and model, not a clock (U15); the number is history, not a stopwatch`
+      : settled
+        ? `frozen at settle: ${fmtWorkingTime(n.working_ms)}${sourceNote ? ` (${sourceNote})` : ""}`
+        : `working time, still running${sourceNote ? ` (${sourceNote})` : ""}`;
+
+  const description = n.description ?? (degradedTasks ? EM_DASH : "(no description)");
+
+  return (
+    <div
+      className="team-row"
+      data-team-row
+      data-node-id={n.id}
+      data-kind={n.kind}
+      data-depth={Math.min(row.depth, DEPTH_PAD.length - 1)}
+      data-settled={settled ? "true" : "false"}
+      data-status={n.status}
+      data-role={n.role ?? "-"}
+      title={lineageTitle(row)}
+      onClick={clickable ? () => onOpenRun(n.id) : undefined}
+      style={{
+        padding: `4px ${ROW_PAD_X}px`,
+        paddingLeft: ROW_PAD_X + DEPTH_PAD[Math.min(row.depth, DEPTH_PAD.length - 1)],
+        borderBottom: `1px solid ${tokens.borderDivider}`,
+        cursor: clickable ? "pointer" : "default",
+        fontSize: 11,
+      }}
+    >
+      {/* line 1 — what this is: dot, kind, role, model … controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {/* Filled dot = live, hollow = anything else — the same glyph grammar
+            the Live panel uses, so the two surfaces read alike. */}
+        <span
+          style={{
+            ...dot(statusColor(n.status), n.status === "running"),
+            ...(settled
+              ? { background: "transparent", border: `1px solid ${statusColor(n.status)}` }
+              : {}),
+          }}
+        />
+        <span
+          className="mono"
+          style={{
+            color: kindColor(n.kind),
+            minWidth: KIND_COL,
+            flex: "none",
+            whiteSpace: "nowrap",
+            fontSize: 9.5,
+            letterSpacing: "0.04em",
+          }}
+        >
+          {kindLabel(n.kind)}
+        </span>
+        <span
+          className="mono"
+          style={{
+            color: ROLE_COLOR[roleTokenName(n.role)],
+            minWidth: ROLE_COL,
+            flex: "none",
+            whiteSpace: "nowrap",
+            fontSize: 9.5,
+          }}
+        >
+          {roleLabel(n.role)}
+        </span>
+        <span
+          data-model-cell
+          className="mono"
+          style={{
+            color: modelColor(n.model),
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 9.5,
+          }}
+        >
+          {modelDisplay(n.model)}
+        </span>
+
+        {/* Always mounted, revealed by CSS only (.team-row rules in
+            globals.css). Fixed width at all times so the reveal cannot move a
+            pixel of the row. */}
+        <span
+          className="team-row-controls"
+          style={{
+            flex: "none",
+            minWidth: CONTROLS_COL,
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 2,
+          }}
+        >
+          <button
+            data-team-stop
+            type="button"
+            disabled={!canStop}
+            title={canStop ? "Stop this agent" : capabilityTitle("stop")}
+            onClick={(e) => {
+              e.stopPropagation();
+              onStop(n.id, settled);
+            }}
+            className="mono"
+            style={{
+              ...BTN_STYLE,
+              color: canStop ? tokens.warn : tokens.textGhost,
+              cursor: canStop ? "pointer" : "not-allowed",
+            }}
+          >
+            ⏸
+          </button>
+          <button
+            data-team-x
+            data-confirm={armed ? "armed" : "idle"}
+            type="button"
+            /* Settled X is a local, reversible dismissal — always available.
+               Running X is terminate, and terminate is capability-gated. */
+            disabled={!settled && !canTerminate}
+            title={
+              settled
+                ? "Hide this row — reversible from “N hidden · show” below"
+                : canTerminate
+                  ? "Terminate this agent — click again to confirm"
+                  : capabilityTitle("terminate")
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              onX(n.id, settled);
+            }}
+            className="mono"
+            style={{
+              ...BTN_STYLE,
+              color: !settled && !canTerminate ? tokens.textGhost : tokens.bleed,
+              cursor: !settled && !canTerminate ? "not-allowed" : "pointer",
+              ...(armed
+                ? {
+                    background: tokens.dangerActionBg,
+                    border: `1px solid ${tokens.dangerActionBorder}`,
+                    padding: "0 2px",
+                  }
+                : {}),
+            }}
+          >
+            {armed ? "sure?" : "✕"}
+          </button>
+        </span>
+      </div>
+
+      {/* line 2 — what it is doing: description … tokens, working time */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 6,
+          marginTop: 2,
+          paddingLeft: 13,
+        }}
+      >
+        <span
+          style={{
+            color: tokens.textLabel,
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 11,
+          }}
+        >
+          {description}
+        </span>
+        <span
+          data-tokens-cell
+          className="mono"
+          title={
+            `${n.tokens.total.toLocaleString()} tokens total — ` +
+            `in ${n.tokens.input.toLocaleString()}, out ${n.tokens.output.toLocaleString()}, ` +
+            `cache read ${n.tokens.cache_read.toLocaleString()}, ` +
+            `cache write ${n.tokens.cache_creation.toLocaleString()}`
+          }
+          style={{
+            color: tokens.textFaint,
+            minWidth: TOKENS_COL,
+            textAlign: "right",
+            flex: "none",
+            fontSize: 10.5,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {fmtTokens(n.tokens.total)}
+        </span>
+        {/* The structural half of U16: settled rows get a component that has
+            no access to the clock at all. A running row whose working time the
+            server could not measure takes the same component — a cell with no
+            honest value must not be wired to a clock either, and "—" that
+            ticks is a contradiction. */}
+        {settled || degradedTime ? (
+          <FrozenTime ms={timeMs} prefix={prefix} title={timeTitle} />
+        ) : (
+          <LiveTime
+            row={row}
+            responseNow={responseNow}
+            prefix={prefix}
+            title={timeTitle}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Memoized on a shallow prop compare. Hover changes no prop — it is CSS — so
+ *  a hover sweep across the list commits nothing (NFU2). A poll replaces
+ *  `row`, which is the only thing that should re-render a row. */
+export const TeamRowView = memo(TeamRowViewImpl);
