@@ -41,6 +41,7 @@ import {
 } from "./lib/thread-compressor.ts";
 import { prefetchMemoryForUserTurn } from "./lib/memory-prefetch.ts";
 import { queueNotification } from "./db/notifications.ts";
+import { reminderCardTitle, reminderCardAsk } from "./lib/reminder-text.ts";
 import { projectTick } from "./lib/project-tick.ts";
 
 const { Pool } = pg;
@@ -1394,8 +1395,11 @@ async function reminderTick(): Promise<void> {
                    'reminders', $4)
            ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING`,
           [
-            rem.text.slice(0, 120),
-            `Reminder — due ${dueLocal}${rem.recur ? ` (repeats ${rem.recur})` : ""}`,
+            // The title is a lede; the reminder itself goes in `ask`, whole.
+            // Truncating here used to be the last place a reminder could lose
+            // its payload silently — see lib/reminder-text.ts.
+            reminderCardTitle(rem.text),
+            reminderCardAsk(rem.text, dueLocal, rem.recur),
             JSON.stringify([
               { label: "Done", variant: "ok", action_id: "resolve" },
             ]),

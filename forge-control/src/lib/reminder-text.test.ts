@@ -19,8 +19,11 @@ import { fileURLToPath } from "node:url";
 
 import {
   REMINDER_TEXT_MAX,
+  REMINDER_TITLE_MAX,
   ReminderTextTooLongError,
   assertReminderTextFits,
+  reminderCardTitle,
+  reminderCardAsk,
 } from "./reminder-text.ts";
 
 const atLimit = "x".repeat(REMINDER_TEXT_MAX);
@@ -84,6 +87,86 @@ describe("the storage path never truncates", () => {
   test("the telegram /remind path answers with the split instruction", () => {
     const src = readSource("./telegram-bridge.ts");
     assert.match(src, /parsed\.rest\.length > REMINDER_TEXT_MAX/);
+  });
+
+  test("the inbox delivery path carries the whole text, not a 120-char lede", () => {
+    // Round 605: storage stopped truncating but `reminderTick` still wrote
+    // `rem.text.slice(0, 120)` into the card title with no field holding the
+    // rest, so the 485–491 char R20 watchers surfaced as fragments.
+    const src = readSource("../executor.ts");
+    assert.doesNotMatch(
+      src,
+      /rem\.text\.slice\(/,
+      "the round-605 defect, by name: a silent slice on the way to the inbox",
+    );
+    assert.match(src, /reminderCardAsk\(rem\.text, dueLocal, rem\.recur\)/);
+  });
+});
+
+describe("the inbox card", () => {
+  // A real R20 watcher, 485 chars in the DB — the length that exposed the bug.
+  const watcher =
+    "R20 watcher: at 22:00 check that the detached safe-restart landed. " +
+    "x".repeat(REMINDER_TEXT_MAX - 67);
+
+  test("ask carries the reminder verbatim, prefix-exact", () => {
+    const ask = reminderCardAsk(watcher, "5. Aug. 2026, 17:26", null);
+    assert.ok(
+      ask.startsWith(watcher),
+      "the reminder must survive delivery byte-for-byte",
+    );
+    assert.match(ask, /\n\n— due 5\. Aug\. 2026, 17:26$/);
+  });
+
+  test("ask appends the recurrence when there is one", () => {
+    assert.match(
+      reminderCardAsk("water the plants", "6. Aug. 2026, 08:30", "daily"),
+      /^water the plants\n\n— due 6\. Aug\. 2026, 08:30 \(repeats daily\)$/,
+    );
+  });
+
+  test("short text passes through as its own title, untouched", () => {
+    assert.equal(reminderCardTitle("check the deploy"), "check the deploy");
+    assert.equal(reminderCardTitle("x".repeat(REMINDER_TITLE_MAX)), "x".repeat(REMINDER_TITLE_MAX));
+  });
+
+  test("a long title is elided — and the elision is visible", () => {
+    const title = reminderCardTitle(watcher);
+    assert.ok(title.length <= REMINDER_TITLE_MAX, `title was ${title.length} chars`);
+    assert.ok(title.endsWith("…"), "a shortened title must announce that it is shortened");
+    assert.ok(
+      watcher.startsWith(title.slice(0, -1)),
+      "the lede must be a real prefix of the reminder",
+    );
+  });
+
+  test("elision cuts at a word boundary when there is a plausible one", () => {
+    const words = "alpha bravo charlie delta echo foxtrot golf hotel india juliett ".repeat(4);
+    const title = reminderCardTitle(words);
+    assert.ok(title.endsWith("…"));
+    assert.doesNotMatch(title, / …$/, "no dangling space before the ellipsis");
+    assert.ok(
+      words.startsWith(title.slice(0, -1)),
+      "word-boundary cut must still be a prefix",
+    );
+  });
+
+  test("a single unbroken token is cut hard rather than emptied", () => {
+    // lastIndexOf(" ") === -1: no boundary to fall back on.
+    const title = reminderCardTitle("y".repeat(400));
+    assert.equal(title, `${"y".repeat(REMINDER_TITLE_MAX - 1)}…`);
+  });
+
+  test("the title is the first line, and newlines never leak into it", () => {
+    assert.equal(
+      reminderCardTitle("Deploy check\n\nssh in and tail the log"),
+      "Deploy check",
+    );
+    assert.doesNotMatch(reminderCardTitle(`${"z".repeat(200)}\nsecond`), /\n/);
+  });
+
+  test("a leading blank line falls back to the body rather than an empty title", () => {
+    assert.equal(reminderCardTitle("\n\n  actually here  "), "actually here");
   });
 });
 
