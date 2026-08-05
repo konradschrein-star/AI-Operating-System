@@ -17,6 +17,7 @@
     "@cubone/react-file-manager": "^1.35.0",
     "@excalidraw/excalidraw": "0.18.1",
     "@tanstack/react-query": "5.62.7",
+    "@tanstack/react-virtual": "^3.14.9",
     "next": "15.1.3",
     "next-auth": "5.0.0-beta.25",
     "react": "19.0.0",

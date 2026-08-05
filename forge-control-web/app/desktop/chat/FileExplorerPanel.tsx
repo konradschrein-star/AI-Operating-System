@@ -7,21 +7,12 @@
  * button (which just registers the existing VPS path as an attachment, no
  * re-upload).
  *
- * Modeled as two virtual top-level folders over @cubone/react-file-manager's
- * single flat `files` array, populated lazily per-directory as the user
- * navigates (onFolderChange), since eagerly listing the whole vault tree up
- * front would be wasteful.
- *
- * react-file-manager requires every node's `path` to end with its own
- * `name` (that's how it derives a folder's children — see splitVirtualPath
- * below), so root nodes use the human label ("Obsidian Vault") as both name
- * and trailing path segment; splitVirtualPath resolves that back to the
- * short API root key ("vault") via the fetched roots list.
+ * Uses VaultFileList for virtualized, token-native directory rendering.
+ * Bounded LRU cache (CACHE_MAX entries) with stale-while-revalidate so
+ * navigating back to a previously seen directory is instant.
  */
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { FileManager } from "@cubone/react-file-manager";
-import "@cubone/react-file-manager/dist/style.css";
 import "./FileExplorerPanel.css";
 import { tokens } from "../../tokens";
 import {
@@ -31,65 +22,81 @@ import {
   attachExistingFile,
   searchFiles,
   type FileRoot,
+  type FileEntry,
+  type FileSearchEntry,
   type UploadedFile,
 } from "../../api";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { VaultFileList, VPS_FILE_DRAG_MIME } from "./VaultFileList";
 
-interface FMFile {
-  name: string;
-  isDirectory: boolean;
-  path: string;
-  updatedAt?: string;
-  size?: number;
-}
+export { VPS_FILE_DRAG_MIME };
 
 const MD_EXT = new Set([".md", ".txt", ".json", ".csv"]);
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"]);
 const VIDEO_EXT = new Set([".mp4", ".webm", ".mov"]);
 const AUDIO_EXT = new Set([".mp3", ".wav", ".m4a"]);
 
-/** Native drag-out payload mime type — read by useAttachments' dropHandlers. */
-export const VPS_FILE_DRAG_MIME = "application/x-forge-vps-file";
+/** Hard cap on previewed text — large files (65KB+) froze the UI. */
+const PREVIEW_MAX_CHARS = 40_000;
+
+const CACHE_MAX = 32;
+
+interface CacheEntry {
+  entries: FileEntry[];
+  truncated: boolean;
+  total: number;
+  ts: number;
+}
+
+/** Search result enriched with root+rel so attach/copy work without re-resolving. */
+interface SearchHit {
+  name: string;
+  path: string;   // '/{rootLabel}/{relPath}' — unique key for selection identity
+  root: string;   // root key
+  rel: string;    // full relative path within root
+  size?: number;
+  mtime: string;
+}
+
+/** A selected file qualified by the (root, parentRel) it was selected in —
+ *  so selection survives navigation without aliasing files that share a
+ *  name across sibling directories (R4). `parentRel` is the containing
+ *  directory's rel; the full rel of the file is `parentRel/entry.name`. */
+interface SelectedFile {
+  root: string;
+  parentRel: string;
+  entry: FileEntry;
+}
+
+function selectionKey(root: string, parentRel: string, name: string): string {
+  return `${root}::${parentRel}::${name}`;
+}
 
 function ext(name: string): string {
   const i = name.lastIndexOf(".");
   return i === -1 ? "" : name.slice(i).toLowerCase();
 }
 
-/** "/Obsidian Vault/20_Coding/notes.md" -> { root: "vault", rel: "20_Coding/notes.md" } */
-function splitVirtualPath(virtualPath: string, roots: FileRoot[]): { root: string; rel: string } | null {
-  const parts = virtualPath.split("/").filter(Boolean);
-  if (parts.length === 0) return null;
-  const rootEntry = roots.find((r) => r.label === parts[0]);
-  if (!rootEntry) return null;
-  return { root: rootEntry.key, rel: parts.slice(1).join("/") };
+function cacheKey(root: string | null, rel: string): string {
+  return `${root ?? ""}::${rel}`;
 }
 
-/** Hard cap on previewed text.
- *
- *  Why: this preview used to fetch a file whole and hand every byte to
- *  MessageMarkdown, which parses and lays out synchronously on the main
- *  thread. The vault routinely holds files far past the point where that is
- *  free — "AI OS/Operator Log.md" is 65KB and grows every session,
- *  contentforge_archive_report.md is 159KB — so clicking one in the file
- *  explorer froze the whole app. A preview only has to be enough to recognise
- *  the file; anything past a screen or two is cost with no benefit. */
-const PREVIEW_MAX_CHARS = 40_000;
+function evictIfNeeded(cache: Map<string, CacheEntry>): void {
+  if (cache.size >= CACHE_MAX) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
 
-function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
-  // NOTE: every hook must run before any early return. This component used to
-  // `return null` on an unresolvable path BEFORE calling useState/useEffect,
-  // which changes hook order between renders — React's "rendered fewer hooks
-  // than expected" crash, and a source of stale/duplicated fetches.
-  const split = splitVirtualPath(file.path, roots);
-  const url = split ? fileReadUrl(split.root, split.rel) : null;
-  const e = ext(file.name);
+function FilePreview({ root, rel, name }: { root: string; rel: string; name: string }) {
+  const url = fileReadUrl(root, rel);
+  const e = ext(name);
 
   const [mdText, setMdText] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
 
   useEffect(() => {
-    if (!url || !MD_EXT.has(e)) return;
+    if (!MD_EXT.has(e)) return;
     let cancelled = false;
     setMdText(null);
     setTruncated(false);
@@ -97,8 +104,6 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
       .then((r) => r.text())
       .then((t) => {
         if (cancelled) return;
-        // Truncate on a line boundary so markdown isn't cut mid-construct
-        // (an unterminated code fence would swallow the rest of the render).
         if (t.length > PREVIEW_MAX_CHARS) {
           const cut = t.slice(0, PREVIEW_MAX_CHARS);
           const lastNl = cut.lastIndexOf("\n");
@@ -111,14 +116,10 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
       .catch(() => {
         if (!cancelled) setMdText("(failed to load)");
       });
-    // Cancel on unmount / file change: clicking through a folder quickly used
-    // to leave earlier fetches racing to setState on a dead component.
     return () => {
       cancelled = true;
     };
   }, [url, e]);
-
-  if (!split || !url) return null;
 
   if (MD_EXT.has(e)) {
     return (
@@ -153,7 +154,7 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
   }
   if (IMAGE_EXT.has(e)) {
     // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt={file.name} style={{ maxWidth: "100%", display: "block" }} />;
+    return <img src={url} alt={name} style={{ maxWidth: "100%", display: "block" }} />;
   }
   if (VIDEO_EXT.has(e)) {
     return <video controls src={url} style={{ maxWidth: "100%", display: "block" }} />;
@@ -171,7 +172,7 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
       </p>
       <a
         href={url}
-        download={file.name}
+        download={name}
         className="mono"
         style={{
           fontSize: 11.5,
@@ -182,140 +183,233 @@ function FilePreview({ file, roots }: { file: FMFile; roots: FileRoot[] }) {
           textDecoration: "none",
         }}
       >
-        download {file.name}
+        download {name}
       </a>
     </div>
   );
 }
 
-/** Memoised on purpose — this is the fix for "opening Files makes everything
- *  lag".
- *
- *  ChatSurface re-renders on every streamed chat event (many per second while
- *  a run is talking). Without memo, each of those re-rendered this entire
- *  third-party file tree — hundreds of rows, its own drag/keyboard wiring and
- *  layout — even though none of its inputs had changed. The panel only takes
- *  `onAttach`, which is a stable useCallback, so a plain memo is enough to cut
- *  the tree out of the chat's render path entirely. */
+/** Memoised — ChatSurface re-renders on every streamed event; without memo
+ *  the entire file tree would re-render on every token even when nothing
+ *  file-related has changed. */
 function FileExplorerPanelImpl({
   onAttach,
 }: {
-  /** null when there's no active chat to attach into (e.g. composing a new
-   *  one) — the attach action is disabled in that case. */
+  /** null when there's no active chat to attach into. */
   onAttach: ((file: UploadedFile) => void) | null;
 }) {
   const [roots, setRoots] = useState<FileRoot[]>([]);
-  const [files, setFiles] = useState<FMFile[]>([]);
-  const [selected, setSelected] = useState<FMFile[]>([]);
+  const [currentRoot, setCurrentRoot] = useState<string | null>(null);
+  const [currentRel, setCurrentRel] = useState<string>("");
+  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [total, setTotal] = useState<number | undefined>(undefined);
+  const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [attaching, setAttaching] = useState(false);
-  const [currentPath, setCurrentPath] = useState("");
   const [query, setQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<FMFile[] | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchHit[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchTruncated, setSearchTruncated] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const filesRef = useRef<FMFile[]>([]);
-  const rootsRef = useRef<FileRoot[]>([]);
-  filesRef.current = files;
-  rootsRef.current = roots;
+  const [searchErrors, setSearchErrors] = useState<{ label: string; message: string }[]>([]);
+  const [searchSelected, setSearchSelected] = useState<SearchHit[]>([]);
+  const [pathCopied, setPathCopied] = useState(false);
+  // Errors from user-initiated actions (attach, copy path). Distinct from
+  // loadError (which is directory-load failures) so a click failure surfaces
+  // even while the file list itself is healthy. T16: no silent fallbacks.
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
+  // Monotonic sequence for every load* call — used to drop stale responses
+  // that resolve after the user has already navigated elsewhere. Without
+  // this guard, a slow fetch for dir A resolves after a fast fetch for dir
+  // B and overwrites B's entries under B's breadcrumb.
+  const seqRef = useRef(0);
 
   const loadRoots = useCallback(async () => {
-    const rs = await fetchFileRoots();
+    const seq = ++seqRef.current;
+    setLoading(true);
+    let rs: FileRoot[];
+    try {
+      rs = await fetchFileRoots();
+    } catch (err) {
+      if (seq !== seqRef.current) return;
+      setLoading(false);
+      setLoadError(err instanceof Error ? err.message : String(err));
+      return;
+    }
+    if (seq !== seqRef.current) return;
+    setLoading(false);
     setRoots(rs);
-    setFiles(
-      rs.map((r) => ({
-        name: r.label,
-        isDirectory: true,
-        path: `/${r.label}`,
-        updatedAt: new Date().toISOString(),
-      })),
-    );
+    setLoadError(null);
+    setEntries(rs.map((r) => ({ name: r.label, isDir: true, size: 0, mtime: new Date().toISOString() })));
+    setTruncated(false);
+    setTotal(undefined);
   }, []);
 
-  useEffect(() => {
-    void loadRoots();
+  const loadDir = useCallback(async (root: string | null, rel: string) => {
+    if (root === null) {
+      await loadRoots();
+      return;
+    }
+    const seq = ++seqRef.current;
+    const key = cacheKey(root, rel);
+    const cached = cacheRef.current.get(key);
+    if (cached) {
+      // Stale-while-revalidate: render cached data immediately, then refresh below
+      setEntries(cached.entries);
+      setTruncated(cached.truncated);
+      setTotal(cached.total);
+      setLoadError(null);
+    } else {
+      setLoading(true);
+    }
+    let result: Awaited<ReturnType<typeof fetchFileList>>;
+    try {
+      result = await fetchFileList(root, rel);
+    } catch (err) {
+      if (seq !== seqRef.current) return;
+      setLoading(false);
+      // Preserve the SWR contract: if we already rendered cached entries above,
+      // keep them visible on revalidation failure instead of replacing them
+      // with an error row. Only surface the error when we have nothing to show.
+      if (!cached) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
+    // Cache the result regardless — it's still a valid snapshot of `key`
+    // even if the user navigated away, and populating the cache benefits
+    // the eventual return trip.
+    if (!cacheRef.current.has(key)) evictIfNeeded(cacheRef.current);
+    cacheRef.current.set(key, { ...result, ts: Date.now() });
+    if (seq !== seqRef.current) return;
+    setLoading(false);
+    setLoadError(null);
+    setEntries(result.entries);
+    setTruncated(result.truncated);
+    setTotal(result.total);
   }, [loadRoots]);
 
-  const loadDir = useCallback(async (virtualPath: string) => {
-    const split = splitVirtualPath(virtualPath, rootsRef.current);
-    if (!split) return; // the virtual "/" root — already seeded by loadRoots
-    const entries = await fetchFileList(split.root, split.rel).catch(() => []);
-    setFiles((prev) => {
-      const prefix = virtualPath.endsWith("/") ? virtualPath : `${virtualPath}/`;
-      // Drop any stale entries directly under this dir, then re-add fresh ones.
-      const withoutThisDir = prev.filter((f) => {
-        if (!f.path.startsWith(prefix)) return true;
-        return f.path.slice(prefix.length).includes("/");
-      });
-      const fresh: FMFile[] = entries.map((e) => ({
-        name: e.name,
-        isDirectory: e.isDir,
-        path: `${prefix}${e.name}`,
-        updatedAt: e.mtime,
-        size: e.isDir ? undefined : e.size,
-      }));
-      return [...withoutThisDir, ...fresh];
-    });
-  }, []);
+  useEffect(() => {
+    void loadDir(null, "");
+  }, [loadDir]);
 
-  const handleFolderChange = useCallback(
-    (path: string) => {
-      setCurrentPath(path);
-      setQuery("");
-      void loadDir(path);
-    },
-    [loadDir],
-  );
+  const handleDescend = useCallback((entry: FileEntry) => {
+    if (!entry.isDir) return;
+    if (currentRoot === null) {
+      const matchedRoot = roots.find((r) => r.label === entry.name);
+      if (!matchedRoot) return;
+      setCurrentRoot(matchedRoot.key);
+      setCurrentRel("");
+      void loadDir(matchedRoot.key, "");
+    } else {
+      const newRel = currentRel ? `${currentRel}/${entry.name}` : entry.name;
+      setCurrentRel(newRel);
+      void loadDir(currentRoot, newRel);
+    }
+    // Selection persists across navigation (R4). Each selection is
+    // qualified by (root, parentRel, name), so descending into a sibling
+    // folder that happens to contain a same-named file won't visually
+    // steal the earlier selection.
+    setQuery("");
+  }, [currentRoot, currentRel, roots, loadDir]);
+
+  const handleBreadcrumb = useCallback((idx: number) => {
+    if (idx === 0) {
+      setCurrentRoot(null);
+      setCurrentRel("");
+      void loadDir(null, "");
+    } else if (idx === 1) {
+      setCurrentRel("");
+      void loadDir(currentRoot, "");
+    } else {
+      const segs = currentRel.split("/").filter(Boolean);
+      const newRel = segs.slice(0, idx - 1).join("/");
+      setCurrentRel(newRel);
+      void loadDir(currentRoot, newRel);
+    }
+    // Selection persists across navigation (R4) — see handleDescend.
+    setQuery("");
+  }, [currentRoot, currentRel, loadDir]);
+
+  const handleDragStart = useCallback((entry: FileEntry, e: React.DragEvent<HTMLDivElement>) => {
+    if (entry.isDir || currentRoot === null) return;
+    const rel = currentRel ? `${currentRel}/${entry.name}` : entry.name;
+    e.dataTransfer.setData(VPS_FILE_DRAG_MIME, JSON.stringify({ root: currentRoot, rel }));
+  }, [currentRoot, currentRel]);
 
   const refresh = useCallback(() => {
-    if (currentPath === "") void loadRoots();
-    else void loadDir(currentPath);
-  }, [currentPath, loadDir, loadRoots]);
+    if (currentRoot === null) {
+      void loadRoots();
+    } else {
+      cacheRef.current.delete(cacheKey(currentRoot, currentRel));
+      void loadDir(currentRoot, currentRel);
+    }
+  }, [currentRoot, currentRel, loadDir, loadRoots]);
 
-  // Real recursive search (debounced), scoped to the current folder — or,
-  // at the virtual Home root, across every root at once. Replaces the old
-  // "filter" which only ever matched direct children of whatever directory
-  // happened to already be loaded — not a real search over a 296-file vault.
+  // Debounced recursive search scoped to the current folder (or all roots at Home).
   useEffect(() => {
     const q = query.trim().toLowerCase();
     if (q.length < 2) {
       setSearchResults(null);
       setSearchTruncated(false);
+      setSearchErrors([]);
+      setSearchSelected([]);
       return;
     }
     let cancelled = false;
     setSearching(true);
     const handle = setTimeout(() => {
       const run = async () => {
-        const split = currentPath === "" ? null : splitVirtualPath(currentPath, rootsRef.current);
-        const scopes = split
-          ? [{ label: currentPath.split("/").filter(Boolean)[0] ?? "", ...split }]
-          : rootsRef.current.map((r) => ({ label: r.label, root: r.key, rel: "" }));
-        const results = await Promise.all(
-          scopes.map((s) =>
-            searchFiles(s.root, s.rel, q)
-              .then((r) => ({ label: s.label, ...r }))
-              .catch(() => ({ label: s.label, entries: [], truncated: false })),
-          ),
+        let scopes: Array<{ label: string; rootKey: string; rel: string }>;
+        if (currentRoot === null) {
+          scopes = roots.map((r) => ({ label: r.label, rootKey: r.key, rel: "" }));
+        } else {
+          const rootEntry = roots.find((r) => r.key === currentRoot);
+          scopes = [{ label: rootEntry?.label ?? currentRoot, rootKey: currentRoot, rel: currentRel }];
+        }
+        // Track per-scope errors instead of swallowing them into "no
+        // matches" — the reviewer flagged the silent fallback as banned.
+        type ScopeResult =
+          | { ok: true; label: string; rootKey: string; entries: FileSearchEntry[]; truncated: boolean }
+          | { ok: false; label: string; rootKey: string; message: string };
+        const results: ScopeResult[] = await Promise.all(
+          scopes.map(async (s): Promise<ScopeResult> => {
+            try {
+              const r = await searchFiles(s.rootKey, s.rel, q);
+              return { ok: true, label: s.label, rootKey: s.rootKey, entries: r.entries, truncated: r.truncated };
+            } catch (err) {
+              return {
+                ok: false,
+                label: s.label,
+                rootKey: s.rootKey,
+                message: err instanceof Error ? err.message : String(err),
+              };
+            }
+          }),
         );
         if (cancelled) return;
-        // Files only — a folder result can't be "opened" from this flat
-        // list without re-syncing react-file-manager's own internal nav
-        // state (it isn't rendered while searching), so it'd dead-end.
-        // The actual use case here is finding a file to copy-path/attach.
-        const files: FMFile[] = results.flatMap((r) =>
-          r.entries
-            .filter((e) => !e.isDir)
-            .map((e) => ({
-              name: e.name,
-              isDirectory: false,
-              path: `/${r.label}/${e.path}`,
-              updatedAt: e.mtime,
-              size: e.size,
-            })),
+        const hits: SearchHit[] = results.flatMap((r) =>
+          r.ok
+            ? r.entries
+                .filter((e) => !e.isDir)
+                .map((e) => ({
+                  name: e.name,
+                  path: `/${r.label}/${e.path}`,
+                  root: r.rootKey,
+                  rel: e.path,
+                  size: e.size,
+                  mtime: e.mtime,
+                }))
+            : [],
         );
-        setSearchResults(files);
-        setSearchTruncated(results.some((r) => r.truncated));
+        setSearchResults(hits);
+        setSearchTruncated(results.some((r) => r.ok && r.truncated));
+        setSearchErrors(
+          results.flatMap((r) => (r.ok ? [] : [{ label: r.label, message: r.message }])),
+        );
         setSearching(false);
       };
       void run();
@@ -324,80 +418,109 @@ function FileExplorerPanelImpl({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [query, currentPath]);
+  }, [query, currentRoot, currentRel, roots]);
 
-  // react-file-manager only sets the native `draggable` attribute on rows
-  // when permissions.move is on (it's built for internal drag-to-move — we
-  // leave onPaste/onCut unwired so that stays inert) — we piggyback on that
-  // attribute to drag a *file* row out onto the chat composer. Delegated at
-  // the panel container so it survives re-renders of the row list.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onDragStart = (e: DragEvent) => {
-      const row = (e.target as HTMLElement | null)?.closest?.(".file-item-container");
-      const name = row?.getAttribute("title");
-      if (!name) return;
-      const prefix = currentPath === "" ? "/" : `${currentPath}/`;
-      const file = filesRef.current.find((f) => f.path === `${prefix}${name}`);
-      if (!file || file.isDirectory) {
-        e.preventDefault();
-        return;
-      }
-      const split = splitVirtualPath(file.path, rootsRef.current);
-      if (!split) return;
-      e.dataTransfer?.setData(VPS_FILE_DRAG_MIME, JSON.stringify(split));
-    };
-    el.addEventListener("dragstart", onDragStart);
-    return () => el.removeEventListener("dragstart", onDragStart);
-  }, [currentPath]);
+  /** Compose the file's full rel from its containing dir + name. */
+  const selectedFullRel = (sf: SelectedFile): string =>
+    sf.parentRel ? `${sf.parentRel}/${sf.entry.name}` : sf.entry.name;
 
   const attachSelected = async () => {
-    if (!onAttach || selected.length === 0) return;
+    if (!onAttach) return;
     setAttaching(true);
+    setActionError(null);
     try {
-      for (const f of selected) {
-        if (f.isDirectory) continue;
-        const split = splitVirtualPath(f.path, roots);
-        if (!split) continue;
-        const attached = await attachExistingFile(split.root, split.rel);
-        onAttach(attached);
+      if (isSearching) {
+        for (const h of searchSelected) {
+          const attached = await attachExistingFile(h.root, h.rel);
+          onAttach(attached);
+        }
+      } else {
+        for (const sf of selected) {
+          if (sf.entry.isDir) continue;
+          const attached = await attachExistingFile(sf.root, selectedFullRel(sf));
+          onAttach(attached);
+        }
       }
+    } catch (err) {
+      setActionError(
+        `attach failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setAttaching(false);
     }
   };
 
-  const [pathCopied, setPathCopied] = useState(false);
-
-  /** Simpler alternative to drag/attach: resolve the selection to absolute
-   *  VPS paths and put them on the clipboard — paste directly into any
-   *  composer, no drag gesture or attachment round-trip required.
-   *  /files/attach is read-only (just stats the file), so reusing it here
-   *  has no side effects. */
+  /** Resolve selection to absolute VPS paths and put them on the clipboard. */
   const copySelectedPaths = async () => {
-    const targets = selected.filter((f) => !f.isDirectory);
-    if (targets.length === 0) return;
-    const resolved = await Promise.all(
-      targets.map((f) => {
-        const split = splitVirtualPath(f.path, roots);
-        return split ? attachExistingFile(split.root, split.rel).catch(() => null) : null;
-      }),
-    );
-    const paths = resolved.filter((f): f is UploadedFile => f !== null).map((f) => f.path);
-    if (paths.length === 0) return;
-    await navigator.clipboard.writeText(paths.join("\n"));
+    setActionError(null);
+    let resolved: (UploadedFile | Error)[];
+    if (isSearching) {
+      if (searchSelected.length === 0) return;
+      resolved = await Promise.all(
+        searchSelected.map((h) =>
+          attachExistingFile(h.root, h.rel).catch((e: unknown): Error =>
+            e instanceof Error ? e : new Error(String(e)),
+          ),
+        ),
+      );
+    } else {
+      const targets = selected.filter((sf) => !sf.entry.isDir);
+      if (targets.length === 0) return;
+      resolved = await Promise.all(
+        targets.map((sf) =>
+          attachExistingFile(sf.root, selectedFullRel(sf)).catch((e: unknown): Error =>
+            e instanceof Error ? e : new Error(String(e)),
+          ),
+        ),
+      );
+    }
+    const paths = resolved
+      .filter((f): f is UploadedFile => !(f instanceof Error))
+      .map((f) => f.path);
+    const failures = resolved.filter((f): f is Error => f instanceof Error);
+    if (paths.length === 0) {
+      const first = failures[0]?.message ?? "unknown error";
+      setActionError(
+        `copy path failed: ${failures.length > 1 ? `${failures.length} paths failed — first: ${first}` : first}`,
+      );
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(paths.join("\n"));
+    } catch (err) {
+      setActionError(
+        `copy path: clipboard write failed — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
     setPathCopied(true);
     setTimeout(() => setPathCopied(false), 1500);
+    // Partial success: some paths copied but others failed — surface the
+    // failure alongside the success so the user knows the clipboard is
+    // incomplete.
+    if (failures.length > 0) {
+      setActionError(
+        `copy path: ${failures.length} of ${resolved.length} failed — first: ${failures[0]?.message ?? "unknown error"}`,
+      );
+    }
   };
 
   const isSearching = query.trim().length >= 2;
+  const fileSelectionCount = isSearching
+    ? searchSelected.length
+    : selected.filter((sf) => !sf.entry.isDir).length;
+
+  // Selection subset visible in the current directory — VaultFileList
+  // renders the checkmark only for files it can actually see.
+  const selectedInCurrentDir: FileEntry[] = selected
+    .filter((sf) => sf.root === currentRoot && sf.parentRel === currentRel)
+    .map((sf) => sf.entry);
+
+  const currentRootLabel =
+    currentRoot === null ? undefined : roots.find((r) => r.key === currentRoot)?.label;
 
   return (
-    <div
-      ref={containerRef}
-      style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
         style={{
           padding: "8px 10px",
@@ -411,7 +534,7 @@ function FileExplorerPanelImpl({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={
-            currentPath === "" ? "search the whole vault…" : "search this folder, recursively…"
+            currentRoot === null ? "search the whole vault…" : "search this folder, recursively…"
           }
           className="mono"
           style={{
@@ -426,10 +549,10 @@ function FileExplorerPanelImpl({
           }}
         />
         <span className="mono" style={{ fontSize: 10, color: tokens.textFaint, whiteSpace: "nowrap" }}>
-          {selected.filter((f) => !f.isDirectory).length} selected
+          {fileSelectionCount} selected
         </span>
         <button
-          disabled={selected.filter((f) => !f.isDirectory).length === 0}
+          disabled={fileSelectionCount === 0}
           onClick={() => void copySelectedPaths()}
           className="mono"
           style={{
@@ -440,7 +563,7 @@ function FileExplorerPanelImpl({
             borderRadius: 6,
             padding: "4px 10px",
             cursor: "pointer",
-            opacity: selected.filter((f) => !f.isDirectory).length === 0 ? 0.5 : 1,
+            opacity: fileSelectionCount === 0 ? 0.5 : 1,
             whiteSpace: "nowrap",
           }}
         >
@@ -448,7 +571,7 @@ function FileExplorerPanelImpl({
         </button>
         {onAttach && (
           <button
-            disabled={attaching || selected.filter((f) => !f.isDirectory).length === 0}
+            disabled={attaching || fileSelectionCount === 0}
             onClick={() => void attachSelected()}
             className="mono"
             style={{
@@ -469,74 +592,148 @@ function FileExplorerPanelImpl({
       </div>
       <div
         className="mono"
-        style={{ padding: "5px 10px", fontSize: 9.5, color: tokens.textGhost, borderBottom: `1px solid ${tokens.borderSoft}` }}
+        style={{
+          padding: "5px 10px",
+          fontSize: 9.5,
+          color: tokens.textGhost,
+          borderBottom: `1px solid ${tokens.borderSoft}`,
+        }}
       >
         {isSearching
           ? searching
             ? "searching…"
-            : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""} — click to select`
+            : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""}${searchErrors.length > 0 ? ` — ${searchErrors.length} root${searchErrors.length === 1 ? "" : "s"} failed` : ""} — click to select`
           : `select a file, then copy path${onAttach ? " or attach" : ""} — or drag it onto the composer`}
       </div>
+      {actionError && (
+        <div
+          className="mono"
+          style={{
+            padding: "5px 10px",
+            fontSize: 10,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>{actionError}</span>
+          <button
+            onClick={() => setActionError(null)}
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: tokens.textLabel,
+              background: "transparent",
+              border: `1px solid ${tokens.borderEmphasis}`,
+              borderRadius: 4,
+              padding: "1px 6px",
+              cursor: "pointer",
+            }}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
+      {isSearching && searchErrors.length > 0 && (
+        <div
+          className="mono"
+          style={{
+            padding: "5px 10px",
+            fontSize: 10,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+          }}
+        >
+          {searchErrors.map((e) => (
+            <div key={e.label}>
+              {e.label}: {e.message}
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ flex: 1, minHeight: 0, overflowY: isSearching ? "auto" : undefined }}>
         {isSearching ? (
           <SearchResultsList
             results={searchResults ?? []}
             searching={searching}
-            selected={selected}
-            onToggle={(f) =>
-              setSelected((prev) =>
-                prev.some((s) => s.path === f.path)
-                  ? prev.filter((s) => s.path !== f.path)
-                  : [...prev, f],
+            selected={searchSelected}
+            onToggle={(h) =>
+              setSearchSelected((prev) =>
+                prev.some((s) => s.path === h.path)
+                  ? prev.filter((s) => s.path !== h.path)
+                  : [...prev, h],
               )
             }
           />
         ) : (
-          <FileManager
-            files={files}
-            height="100%"
-            width="100%"
-            layout="list"
-            primaryColor={tokens.accent}
-            permissions={{
-              create: false,
-              upload: false,
-              move: true,
-              copy: false,
-              rename: false,
-              delete: false,
-              download: true,
+          <VaultFileList
+            root={currentRoot}
+            rootLabel={currentRootLabel}
+            rel={currentRel}
+            entries={entries}
+            loading={loading}
+            error={loadError}
+            truncated={truncated}
+            total={total}
+            selected={selectedInCurrentDir}
+            onDescend={handleDescend}
+            onBreadcrumb={handleBreadcrumb}
+            onToggleSelect={(entry) => {
+              // Toggle qualified by current (root, parentRel) — otherwise
+              // two files named "notes.md" in different sibling folders
+              // would alias to a single selection.
+              if (currentRoot === null) return;
+              const key = selectionKey(currentRoot, currentRel, entry.name);
+              setSelected((prev) => {
+                const has = prev.some(
+                  (s) => selectionKey(s.root, s.parentRel, s.entry.name) === key,
+                );
+                if (has) {
+                  return prev.filter(
+                    (s) => selectionKey(s.root, s.parentRel, s.entry.name) !== key,
+                  );
+                }
+                return [...prev, { root: currentRoot, parentRel: currentRel, entry }];
+              });
             }}
-            collapsibleNav
-            defaultNavExpanded={false}
-            onFolderChange={handleFolderChange}
-            onRefresh={refresh}
-            onSelectionChange={(sel: FMFile[]) => setSelected(sel)}
-            filePreviewComponent={(file: FMFile) => <FilePreview file={file} roots={roots} />}
+            onDragStart={handleDragStart}
+            onRetry={refresh}
           />
         )}
       </div>
+      {(() => {
+        if (isSearching || selected.length !== 1) return null;
+        const sel = selected[0];
+        if (!sel || sel.entry.isDir) return null;
+        return (
+          <FilePreview
+            root={sel.root}
+            rel={selectedFullRel(sel)}
+            name={sel.entry.name}
+          />
+        );
+      })()}
     </div>
   );
 }
 
-/** Search results span multiple folders, so they can't be rendered through
- *  react-file-manager's own list (it derives a folder's children from path
- *  prefix matching against the current directory — a flat cross-folder
- *  result set isn't a "folder" it can express). Own lightweight list
- *  instead, reusing the same `selected` state so copy-path/attach need no
- *  special-casing for where a file came from. Files only — folders are
- *  filtered out before this ever renders (see the search effect above). */
+/** Search results span multiple roots and paths — rendered as a flat token-native
+ *  list rather than through VaultFileList's directory-scoped view. Files only
+ *  (dirs are filtered before this renders). */
 function SearchResultsList({
   results,
   searching,
   selected,
   onToggle,
 }: {
-  results: FMFile[];
+  results: SearchHit[];
   searching: boolean;
-  selected: FMFile[];
-  onToggle: (f: FMFile) => void;
+  selected: SearchHit[];
+  onToggle: (h: SearchHit) => void;
 }) {
   if (results.length === 0) {
     return (
@@ -550,15 +747,15 @@ function SearchResultsList({
   }
   return (
     <div>
-      {results.map((f) => {
-        const parts = f.path.split("/").filter(Boolean);
+      {results.map((h) => {
+        const parts = h.path.split("/").filter(Boolean);
         const rootLabel = parts[0] ?? "";
         const dir = parts.slice(1, -1).join("/");
-        const seld = selected.some((s) => s.path === f.path);
+        const seld = selected.some((s) => s.path === h.path);
         return (
           <div
-            key={f.path}
-            onClick={() => onToggle(f)}
+            key={h.path}
+            onClick={() => onToggle(h)}
             style={{
               display: "flex",
               alignItems: "center",
@@ -566,7 +763,7 @@ function SearchResultsList({
               padding: "8px 12px",
               cursor: "pointer",
               borderBottom: `1px solid ${tokens.borderSoft}`,
-              background: seld ? "rgba(91, 141, 239, 0.12)" : "transparent",
+              background: seld ? tokens.rowSelected : "transparent",
             }}
           >
             <span className="ms" style={{ fontSize: 15, color: tokens.textMuted }}>
@@ -583,7 +780,7 @@ function SearchResultsList({
                   whiteSpace: "nowrap",
                 }}
               >
-                {f.name}
+                {h.name}
               </div>
               <div
                 className="mono"

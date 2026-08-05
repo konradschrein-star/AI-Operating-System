@@ -1,0 +1,28 @@
+/* VaultFileList — hover rules only. All other colors are set via tokens.*
+   in the component. NEVER add hardcoded hex/rgb/hsl here. */
+
+.vfl-row--file:hover,
+.vfl-row--dir:hover {
+  background: var(--fg-rowHover) !important;
+}
+
+.vfl-row--selected,
+.vfl-row--selected:hover {
+  background: var(--fg-rowSelected) !important;
+}
+
+.vfl-breadcrumb-btn:hover {
+  color: var(--fg-text) !important;
+  text-decoration: underline;
+}
+
+.vfl-breadcrumbs::-webkit-scrollbar {
+  height: 4px;
+}
+.vfl-breadcrumbs::-webkit-scrollbar-track {
+  background: var(--fg-bgTabBar);
+}
+.vfl-breadcrumbs::-webkit-scrollbar-thumb {
+  background: var(--fg-scrollbar);
+  border-radius: 2px;
+}

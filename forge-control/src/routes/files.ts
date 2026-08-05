@@ -14,6 +14,7 @@ import { promises as fs, createReadStream, statSync } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
+import type { Dirent } from "node:fs";
 import type { UploadedFile } from "./uploads.ts";
 
 const r = new Hono();
@@ -86,6 +87,8 @@ r.get("/roots", (c) =>
   }),
 );
 
+const LIST_CAP = 1000;
+
 r.get("/list", async (c) => {
   const rootKey = c.req.query("root") ?? "";
   const rel = c.req.query("path") ?? "";
@@ -97,27 +100,75 @@ r.get("/list", async (c) => {
   }
   const st = await fs.stat(abs).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
-  const names = await fs.readdir(abs).catch(() => []);
+  // Bubble readdir failures (EPERM, ENOENT-during-race, EIO) as a real
+  // 500 instead of swallowing them into an empty entry list — a silent
+  // empty result was indistinguishable from a genuinely empty
+  // directory, made worse by the new `total` field which would also
+  // report 0. See BASELINE-FINDINGS.md.
+  let dirents: Dirent[];
+  try {
+    dirents = await fs.readdir(abs, { withFileTypes: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "could not read directory";
+    return c.json({ error: `could not read directory: ${msg}` }, 500);
+  }
+  // Filter dotfiles, then sort dirents deterministically (dirs first, then name)
+  // BEFORE truncating. Sorting after slicing would leave the truncated set at
+  // the mercy of the OS's readdir order — `zebra.md` might vanish while
+  // `aardvark.md` in the discarded half stays visible. Symlinks are ordered
+  // as non-dirs here for stability; we don't stat before the cap because the
+  // whole point of capping first is to keep I/O at O(LIST_CAP), not O(total).
+  const visible = dirents.filter((d) => !d.name.startsWith("."));
+  visible.sort((a, b) => {
+    const aDir = a.isDirectory();
+    const bDir = b.isDirectory();
+    return aDir === bDir ? a.name.localeCompare(b.name) : aDir ? -1 : 1;
+  });
+  const total = visible.length;
+  const truncated = total > LIST_CAP;
+  const capped = truncated ? visible.slice(0, LIST_CAP) : visible;
   const entries = await Promise.all(
-    names
-      .filter((n) => !n.startsWith("."))
-      .map(async (name) => {
-        const entryStat = await fs.stat(path.join(abs, name)).catch(() => null);
-        return entryStat
-          ? {
-              name,
-              isDir: entryStat.isDirectory(),
-              size: entryStat.size,
-              mtime: entryStat.mtime.toISOString(),
-            }
-          : null;
-      }),
+    capped.map(async (dirent) => {
+      const entryAbs = path.join(abs, dirent.name);
+
+      if (dirent.isSymbolicLink()) {
+        // stat (not lstat) follows the symlink so a symlinked directory
+        // still reports isDir:true. Note: resolveInRoot's realpath check
+        // guards the REQUESTED parent path only — individual children
+        // are not re-checked here, so a symlink planted inside a root
+        // and pointing outside it will still show its target's size and
+        // mtime in this listing. Content access is safely blocked at
+        // /read (which routes back through resolveInRoot), so this only
+        // exposes stat metadata, not bytes.
+        const st = await fs.stat(entryAbs).catch(() => null);
+        if (!st) return null;
+        return { name: dirent.name, isDir: st.isDirectory(), size: st.size, mtime: st.mtime.toISOString() };
+      }
+
+      if (dirent.isDirectory()) {
+        // Dirent confirms type — no stat needed for isDir.
+        // mtime/size omitted for directories (not meaningful in the list UI).
+        return { name: dirent.name, isDir: true as const, size: 0, mtime: "" };
+      }
+
+      if (dirent.isFile()) {
+        const st = await fs.stat(entryAbs).catch(() => null);
+        if (!st) return null;
+        return { name: dirent.name, isDir: false as const, size: st.size, mtime: st.mtime.toISOString() };
+      }
+
+      // Skip sockets, block devices, etc.
+      return null;
+    }),
   );
+  // Symlink resolution can flip isDir after the pre-sort — re-sort the final
+  // slice so directories-first ordering holds even for symlinked dirs.
   const filtered = entries.filter((e): e is NonNullable<typeof e> => e !== null);
   filtered.sort((a, b) =>
     a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1,
   );
-  return c.json({ root: rootKey, path: rel, entries: filtered });
+  c.header("Cache-Control", "private, max-age=10");
+  return c.json({ root: rootKey, path: rel, entries: filtered, truncated, total });
 });
 
 const SEARCH_RESULT_CAP = 200;
@@ -125,16 +176,30 @@ const SEARCH_RESULT_CAP = 200;
 /** Recursive filename search under root+path — the panel's old "filter"
  *  only matched direct children of whatever directory was already loaded,
  *  which isn't a real search across a 296-file vault. Capped and depth-
- *  first; stops walking as soon as the cap is hit. */
+ *  first; stops walking as soon as the cap is hit.
+ *
+ *  Symlink containment: /list follows symlinks for size/mtime but leaves
+ *  content access to /read (which re-runs resolveInRoot). Here, however,
+ *  we recurse into directories — so a symlink pointing outside the root
+ *  would leak filenames from /etc, etc. Every entry is realpath-checked
+ *  against realRoot before its metadata is emitted or recursed into. */
 async function searchDir(
   rootDir: string,
+  realRoot: string,
   relDir: string,
   query: string,
   out: { name: string; path: string; isDir: boolean; size?: number; mtime: string }[],
 ): Promise<void> {
   if (out.length >= SEARCH_RESULT_CAP) return;
   const abs = path.join(rootDir, relDir);
-  const names = await fs.readdir(abs).catch(() => []);
+  let names: string[];
+  try {
+    names = await fs.readdir(abs);
+  } catch (err) {
+    throw new Error(
+      `could not read directory ${relDir || "(root)"}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
   for (const name of names) {
     if (out.length >= SEARCH_RESULT_CAP) return;
     if (name.startsWith(".")) continue;
@@ -142,6 +207,13 @@ async function searchDir(
     const entryAbs = path.join(rootDir, entryRel);
     const st = await fs.stat(entryAbs).catch(() => null);
     if (!st) continue;
+    // Refuse to expose entries whose real path escapes the root. Blocks
+    // a symlink planted inside the root from leaking filenames or stat
+    // metadata for files outside it (e.g. a link to /etc).
+    const entryReal = await fs.realpath(entryAbs).catch(() => entryAbs);
+    if (entryReal !== realRoot && !entryReal.startsWith(realRoot + path.sep)) {
+      continue;
+    }
     if (name.toLowerCase().includes(query)) {
       out.push({
         name,
@@ -151,7 +223,7 @@ async function searchDir(
         mtime: st.mtime.toISOString(),
       });
     }
-    if (st.isDirectory()) await searchDir(rootDir, entryRel, query, out);
+    if (st.isDirectory()) await searchDir(rootDir, realRoot, entryRel, query, out);
   }
 }
 
@@ -169,8 +241,16 @@ r.get("/search", async (c) => {
   }
   const st = await fs.stat(abs).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not a directory" }, 404);
+  const realRoot = await fs.realpath(rootDir).catch(() => rootDir);
   const entries: { name: string; path: string; isDir: boolean; size?: number; mtime: string }[] = [];
-  await searchDir(rootDir, rel, q, entries);
+  try {
+    await searchDir(rootDir, realRoot, rel, q, entries);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "search failed" },
+      500,
+    );
+  }
   return c.json({
     root: rootKey,
     path: rel,

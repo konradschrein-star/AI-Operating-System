@@ -1,0 +1,63 @@
+{
+  "base_url": "http://127.0.0.1:7799",
+  "captured_at": "2026-08-05T01:56:20.895Z",
+  "T9_click_to_first_paint": {
+    "ms": 41,
+    "target_ms": 200,
+    "pass": true
+  },
+  "T10_cache_revisit": {
+    "uncached_ms": 12.3,
+    "cached_ms": 14.1,
+    "target_cached_ms": 30,
+    "pass": true
+  },
+  "T11_uncached_deep_dir": null,
+  "T13_drag_payload": {
+    "ok": true,
+    "mime": "application/x-forge-vps-file",
+    "raw": "{\"root\":\"vault\",\"rel\":\"_Attachements/001_Product_Builder_EN_0.pdf\"}",
+    "text": "description001_Product_Builder_EN_0.pdf60.3 KB 6/14/2026"
+  },
+  "T13_selection_and_attach": {
+    "ok": true,
+    "before": "0",
+    "afterSelect": "1",
+    "afterDeselect": "0"
+  },
+  "screenshots": {
+    "dark": "/tmp/files-verify/out/files-pane-dark.png",
+    "dark_desktop": "/tmp/files-verify/out/desktop-dark.png",
+    "light": "/tmp/files-verify/out/files-pane-light.png",
+    "light_desktop": "/tmp/files-verify/out/desktop-light.png"
+  },
+  "notes": [
+    "2026-08-05T01:56:23.625Z T9 cold click→paint: 41.0ms",
+    "2026-08-05T01:56:24.498Z dark screenshot -> /tmp/files-verify/out/files-pane-dark.png (pane box: {\"x\":980,\"y\":46,\"width\":420,\"height\":826})",
+    "2026-08-05T01:56:24.504Z root dirs: [\"_Attachements\",\"_Templates\",\"10_Idea_Reactor\",\"20_Coding\",\"30_YouTube\"]",
+    "2026-08-05T01:56:24.507Z enter root \"_Attachements\": 1.9ms",
+    "2026-08-05T01:56:24.540Z back to Home: 28.9ms",
+    "2026-08-05T01:56:24.544Z root dirs after home: [\"Obsidian Vault\",\"Agent Workspace\"]",
+    "2026-08-05T01:56:24.861Z subdirs of Obsidian Vault: [\"_Attachements\",\"_Templates\",\"10_Idea_Reactor\",\"20_Coding\",\"30_YouTube\"]",
+    "2026-08-05T01:56:24.875Z uncached descend into _Attachements: 12.3ms",
+    "2026-08-05T01:56:24.907Z up one level: 30.0ms",
+    "2026-08-05T01:56:25.073Z CACHED re-descend into _Attachements: 14.1ms",
+    "2026-08-05T01:56:25.078Z drag payload: {\"ok\":true,\"mime\":\"application/x-forge-vps-file\",\"raw\":\"{\\\"root\\\":\\\"vault\\\",\\\"rel\\\":\\\"_Attachements/001_Product_Builder_EN_0.pdf\\\"}\",\"text\":\"description001_Product_Builder_EN_0.pdf60.3 KB 6/14/2026\"}",
+    "2026-08-05T01:56:25.283Z selection wiring: {\"ok\":true,\"before\":\"0\",\"afterSelect\":\"1\",\"afterDeselect\":\"0\"}",
+    "2026-08-05T01:56:28.568Z light screenshot -> /tmp/files-verify/out/files-pane-light.png (pane box: {\"x\":980,\"y\":46,\"width\":420,\"height\":826})",
+    "2026-08-05T01:56:28.570Z light theme tokens: {\"dataTheme\":\"light\",\"bg\":\"\",\"text\":\"\",\"rowHover\":\"rgba(44,98,212,.06)\",\"rowSelected\":\"rgba(44,98,212,.1)\",\"accent\":\"\",\"rowColor\":\"rgb(23, 23, 26)\"}",
+    "2026-08-05T01:56:30.641Z cold-context click→paint: 26.6ms (page nav: 2044ms)"
+  ],
+  "theme_proof_light": {
+    "dataTheme": "light",
+    "bg": "",
+    "text": "",
+    "rowHover": "rgba(44,98,212,.06)",
+    "rowSelected": "rgba(44,98,212,.1)",
+    "accent": "",
+    "rowColor": "rgb(23, 23, 26)"
+  },
+  "T9_cold_context": {
+    "ms": 26.6
+  }
+}

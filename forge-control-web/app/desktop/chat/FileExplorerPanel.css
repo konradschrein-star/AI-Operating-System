@@ -1,14 +1,17 @@
 /**
  * @cubone/react-file-manager ships a light-only theme with a handful of
  * hardcoded backgrounds. `primaryColor` (passed as a prop) only covers
- * accents — everything else needs overriding here to match the app's dark
- * palette (tokens.ts). Colors below are copy-pasted from tokens.ts, not
- * invented — keep them in sync if tokens.ts changes.
+ * accents — everything else needs overriding here to match the app's
+ * palette. Every rule below references a CSS custom property from
+ * theme.css so the pane flips between dark and light with the rest of
+ * the UI (data-theme on <html>). NEVER hardcode a hex/rgb/rgba/hsl
+ * literal here — the light-mode regression that motivated this file
+ * came from exactly that.
  */
 
 .file-explorer {
-  background: #0b0b0c !important;
-  color: #ededee !important;
+  background: var(--fg-bgCard) !important;
+  color: var(--fg-text) !important;
   font-family: inherit !important;
   border: none !important;
 }
@@ -18,8 +21,8 @@
 
 .file-explorer .toolbar,
 .file-explorer .fm-toolbar {
-  background: #08080a !important;
-  border-color: #1c1c1f !important;
+  background: var(--fg-bgTabBar) !important;
+  border-color: var(--fg-border) !important;
 }
 /* The library's own selection-action bar (Cut / Download / "N item
    selected" / clear) duplicates our custom header's selection UI —
@@ -30,114 +33,114 @@
   display: none !important;
 }
 .file-explorer .item-action {
-  color: #b8b8be !important;
+  color: var(--fg-textBody) !important;
 }
 .file-explorer .item-action:hover {
-  background: rgba(91, 141, 239, 0.15) !important;
-  color: #ededee !important;
+  background: var(--fg-selectedBg) !important;
+  color: var(--fg-text) !important;
 }
 .file-explorer .item-separator {
-  background: #1c1c1f !important;
+  background: var(--fg-border) !important;
 }
 
 .file-explorer .files-container {
-  background: #0b0b0c !important;
+  background: var(--fg-bgCard) !important;
 }
 
 .file-explorer .navigation-pane {
-  background: #08080a !important;
-  border-color: #1c1c1f !important;
+  background: var(--fg-bgTabBar) !important;
+  border-color: var(--fg-border) !important;
 }
 .file-explorer .sb-folders-list-item {
-  color: #b8b8be !important;
+  color: var(--fg-textBody) !important;
 }
 .file-explorer .sb-folders-list-item:hover {
-  background: rgba(91, 141, 239, 0.1) !important;
+  background: var(--fg-selectedBg) !important;
 }
 .file-explorer .sb-folder-name {
-  color: #b8b8be !important;
+  color: var(--fg-textBody) !important;
 }
 .file-explorer .sidebar-resize {
-  background: #1c1c1f !important;
+  background: var(--fg-border) !important;
 }
 
 .file-explorer .folders-preview {
-  background: #0b0b0c !important;
+  background: var(--fg-bgCard) !important;
 }
 .file-explorer .bread-crumb-container {
-  background: #0b0b0c !important;
-  border-color: #1c1c1f !important;
+  background: var(--fg-bgCard) !important;
+  border-color: var(--fg-border) !important;
 }
 .file-explorer .breadcrumb .folder-name {
-  color: #9a9aa0 !important;
+  color: var(--fg-textSecondary) !important;
 }
 .file-explorer .breadcrumb .folder-name:hover {
-  color: #ededee !important;
+  color: var(--fg-text) !important;
 }
 
 .file-explorer .files.list {
-  background: #0b0b0c !important;
+  background: var(--fg-bgCard) !important;
 }
 .file-explorer .files-header {
-  background: #0c0c0e !important;
-  border-color: #161617 !important;
-  color: #6a6a70 !important;
+  background: var(--fg-bgGutter) !important;
+  border-color: var(--fg-borderSoft) !important;
+  color: var(--fg-textMuted2) !important;
 }
 .file-explorer .file-name.active {
-  color: #5b8def !important;
+  color: var(--fg-accent) !important;
 }
 .file-explorer .empty-folder {
-  color: #56565c !important;
+  color: var(--fg-textFaint) !important;
 }
 
 .file-explorer .file-item-container {
-  border-color: #161617 !important;
-  color: #ededee !important;
+  border-color: var(--fg-borderSoft) !important;
+  color: var(--fg-text) !important;
 }
 .file-explorer .file-item-container:hover {
-  background: rgba(255, 255, 255, 0.04) !important;
+  background: var(--fg-bgGutter) !important;
 }
 .file-explorer .file-item-container.file-selected {
-  background: rgba(91, 141, 239, 0.12) !important;
+  background: var(--fg-selectedBg) !important;
 }
 .file-explorer .file-date,
 .file-explorer .file-size {
-  color: #6a6a70 !important;
+  color: var(--fg-textMuted2) !important;
 }
 
 /* Context menu (right-click) */
 .file-explorer .fm-context-menu {
-  background: #0c0c0e !important;
-  border: 1px solid #1c1c1f !important;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+  background: var(--fg-bgGutter) !important;
+  border: 1px solid var(--fg-border) !important;
+  box-shadow: 0 8px 24px var(--fg-overlay) !important;
 }
 .file-explorer .file-context-menu-list li {
-  color: #b8b8be !important;
+  color: var(--fg-textBody) !important;
 }
 .file-explorer .file-context-menu-list li:hover {
-  background: rgba(91, 141, 239, 0.12) !important;
-  color: #ededee !important;
+  background: var(--fg-selectedBg) !important;
+  color: var(--fg-text) !important;
 }
 
 /* Preview / rename / delete dialogs (native <dialog>, browser backdrop is
    already a translucent black so no override needed there) */
 .file-explorer .fm-modal {
-  background: #0b0b0c !important;
-  color: #ededee !important;
-  border: 1px solid #222226 !important;
+  background: var(--fg-bgCard) !important;
+  color: var(--fg-text) !important;
+  border: 1px solid var(--fg-borderEmphasis) !important;
 }
 .file-explorer .fm-modal-header {
-  background: #08080a !important;
-  border-color: #1c1c1f !important;
+  background: var(--fg-bgTabBar) !important;
+  border-color: var(--fg-border) !important;
 }
 .file-explorer .fm-modal-heading {
-  color: #ededee !important;
+  color: var(--fg-text) !important;
 }
 .file-explorer .close-icon {
-  color: #8a8a90 !important;
+  color: var(--fg-textMuted) !important;
 }
 .file-explorer .close-icon:hover {
-  color: #ededee !important;
+  color: var(--fg-text) !important;
 }
 
 .file-explorer ::-webkit-scrollbar {
@@ -145,12 +148,12 @@
   height: 8px;
 }
 .file-explorer ::-webkit-scrollbar-track {
-  background: #0b0b0c;
+  background: var(--fg-bgCard);
 }
 .file-explorer ::-webkit-scrollbar-thumb {
-  background: #222226;
+  background: var(--fg-scrollbar);
   border-radius: 4px;
 }
 .file-explorer ::-webkit-scrollbar-thumb:hover {
-  background: #2c2c31;
+  background: var(--fg-borderEmphasis);
 }
