@@ -365,6 +365,33 @@ preset, and the CLI rejects the invented name locally instead of paying for a 40
 
 ---
 
+## 14. Commit attribution note (concurrent-builder artifact)
+
+`scripts/perplexity.mjs` landed in commit **`baf6d93`** ("feat(tools): gemini-qa CLI …"), not in
+this task's own commit. Cause: the two Phase-4 builders share this worktree, and the file was
+already staged (`git add`, for the step-9 mode check) when the Gemini builder committed — their
+`git commit` swept the staged index entry in with theirs.
+
+Nothing was lost or altered. Verified:
+
+```
+$ git log --oneline -- scripts/perplexity.mjs
+baf6d93 feat(tools): gemini-qa CLI — zero-dep Gemini video QA with frozen rubric contract
+
+$ git ls-tree HEAD scripts/perplexity.mjs
+100755 blob d008ce1d91e92c2dc34dac43c33cc14322f56bdb	scripts/perplexity.mjs
+
+$ git diff HEAD --stat -- scripts/perplexity.mjs
+(no output)
+```
+
+The committed blob hash `d008ce1d…` is identical to the one recorded in step 9, and mode is
+`100755`. History was deliberately **not** rewritten: the other builder may still be working off
+these commits, and rewriting shared history mid-phase is exactly the kind of destructive fix this
+project forbids.
+
+---
+
 ## What is NOT proven here, and why
 
 - **No successful 200 response was ever observed.** No key exists on this box. Response parsing
