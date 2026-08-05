@@ -1,5 +1,34 @@
 # `gemini-qa` — video QA through Gemini (pool-first)
 
+> ## ⚠ STATUS as of 2026-08-06: `gemini-qa` cannot analyze a video. Both backends are down.
+>
+> This is a statement of fact about the two credentials the tool runs on, not a judgement on
+> the tool. Everything documented below is implemented, unit-tested and reachable; what is
+> missing is a working backend to point it at.
+>
+> - **`--backend pool` (the default) rejects every file.** `POST /v1/analyze` returns
+>   `HTTP 500 … Unknown API error code: 1100` for a 1.3 MB `video/mp4` and for a 40-byte
+>   `text/plain` alike — six generation attempts, one success, and that success was text-only
+>   (measured 2026-08-05, 19:00–20:44 CEST; full transcript in **§1.2**).
+> - **`--backend api` has no credential.** No `GEMINI_API_KEY` exists on this box: not in the
+>   environment, and no `gemini-api-key` file in `/opt/ai-os/.secrets/store/` (verified
+>   2026-08-06). Every `api` run therefore stops at the missing-key error path (§4.2, §8).
+>
+> **Two paths unblock it**, and choosing between them is Konrad's call, not this document's:
+>
+> 1. **Refresh the pool's JWT — free, no new vendor.** `/opt/gemini-pool-api/src/pool.py:10`
+>    carries a hardcoded `VEOPARKING_JWT` fallback that **expired 2026-06-26 12:18 UTC**
+>    (`exp: 1782476321`); the env var `VEOPARKING_JWT` overrides it. That is a ~10-minute fix
+>    **conditional on a fresh veoparking token being mintable for user `4915785471426`** —
+>    the conditional is the whole question, and only Konrad can answer it. Note this repairs
+>    the *credential*; whether the 1100 fault is solely credential-driven is unproven, because
+>    §1.2 shows the pool returns the same opaque code for every failure mode.
+> 2. **Add `GEMINI_API_KEY` — billed.** Cost is **~$0.52 per minute of video** (§7), so a 60 s
+>    QA pass is ~$0.52 and a 10-minute pass ~$5.
+>
+> Repairing the Gemini Pool itself is outside this project's scope. Tracked on the reminder
+> due 2026-08-06 07:00 CEST (`eff58681-bd02-4663-b447-dd7a74bda4f6`).
+
 Transcribed from `scripts/gemini-qa.mjs --help` and the shipped script (R25; re-synced in R406
 after the round-405 review changed `--out` semantics — §5.1; **rewritten at R702** when the
 Gemini Pool became the primary backend — §1.1). Evidence for every claim below:
@@ -600,6 +629,13 @@ Three reminders queued 2026-08-05, all `pending` at time of writing:
 | `a2224386-845a-4e27-a109-f766eb4f9104` | 2026-08-06 09:00 | Fresh `__Secure-1PSID` / `__Secure-1PSIDTS` for account `cdp-9400` in `/opt/gemini-pool-api/fresh_accounts.json` — the current pair is from Jun 30 |
 | `0a1176d1-975c-4f0e-ad81-5ea959038526` | 2026-08-06 09:05 | `VEOPARKING_JWT` at `/opt/gemini-pool-api/src/pool.py:10` **expired 2026-06-26**, so the account-assign fallback is dead too; and `session_pool.py:128` should reject `AccountStatus.UNAUTHENTICATED` (1016), not only `TOS_PENDING` (1040) — that is why `/health` reports dead sessions as ready |
 | `cacf9d2b-5f35-411c-a925-db5a795bcb48` | 2026-08-06 09:10 | *Optional*: the billed backend, §9.2 |
+
+**Update 2026-08-06 (R776): all three rows above are now `dismissed`, not `pending`.** They
+were superseded — not answered — by a single decision reminder,
+`eff58681-bd02-4663-b447-dd7a74bda4f6`, due 2026-08-06 07:00 CEST, which puts the same choice
+to Konrad as (a) refresh the pool JWT vs (b) add a billed key (see the status banner under the
+H1). The *content* of the three rows still stands: nothing here has been fixed, and each row
+remains an accurate description of what is broken. Only their delivery was consolidated.
 
 Verification command once the pool is re-authed, in this order:
 
