@@ -27,9 +27,6 @@ import {
   fetchAutonomy,
   updateRule,
   attachmentsBlock,
-  fetchProjectBoard,
-  type ProjectTaskWithProject,
-  type TaskRole,
   type RunDetail,
   type RunStatus,
   type RunSummary,
@@ -45,7 +42,7 @@ import {
   type SlashDirective,
   type SurfaceKey,
 } from "./chat/slash-registry";
-import { AgentActivity } from "./live/AgentActivity";
+import { ChatTeamPanel } from "./team/ChatTeamPanel";
 import { AssistantThread } from "./chat/AssistantThread";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
@@ -72,165 +69,18 @@ function humanAge(ts: string | null | undefined): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-const ROLE_LABEL: Record<TaskRole, string> = {
-  architect: "architect",
-  planner: "planner",
-  scout: "scout",
-  builder: "builder",
-  reviewer: "reviewer",
-};
-
-const ROLE_COLOR: Record<TaskRole, string> = {
-  architect: tokens.decide,
-  planner: tokens.info,
-  scout: tokens.textMuted,
-  builder: tokens.accent,
-  reviewer: tokens.warn,
-};
-
-const TASK_STATUS_COLOR: Record<string, string> = {
-  pending: tokens.textFaint,
-  ready: tokens.info,
-  running: tokens.accent,
-  done: tokens.ok,
-  failed: tokens.bleed,
-  blocked: tokens.warn,
-};
-
-/** Live "what's the plan, what's it doing right now" sidebar — every active
- *  project's tasks, shares the same query cache as ProjectsSurface's board
- *  so opening both doesn't double-poll. Clicking a task with a run just
- *  opens that run in the same chat pane (a project task IS an ordinary
- *  `runs` row) — that's the "interact with them directly" part, reusing
- *  the exact send/thread machinery already built for regular chats. */
-/** Just the task-list body — SidePanel owns the collapse/tab chrome around it. */
-function LiveProjectsBody({ onOpenRun }: { onOpenRun: (runId: string) => void }) {
-  const boardQ = useQuery({
-    queryKey: ["projects", "board"],
-    queryFn: fetchProjectBoard,
-    refetchInterval: 6_000,
-  });
-  const tasks = boardQ.data ?? [];
-
-  const byProject = new Map<string, { name: string; tasks: ProjectTaskWithProject[] }>();
-  for (const t of tasks) {
-    if (!byProject.has(t.project_id)) {
-      byProject.set(t.project_id, { name: t.project_name, tasks: [] });
-    }
-    byProject.get(t.project_id)!.tasks.push(t);
-  }
-
-  return (
-    <>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "8px 10px",
-        }}
-      >
-        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-          {tasks.filter((t) => t.status === "running").length} running
-        </span>
-      </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "0 10px 8px" }}>
-        {byProject.size === 0 && (
-          <div
-            className="mono"
-            style={{
-              padding: "24px 8px",
-              fontSize: 10.5,
-              color: tokens.textFaint,
-              lineHeight: 1.6,
-              textAlign: "center",
-            }}
-          >
-            no active projects — the manager hasn't kicked one off yet
-          </div>
-        )}
-        {[...byProject.entries()].map(([projectId, p]) => (
-          <div key={projectId} style={{ marginBottom: 14 }}>
-            <div
-              className="mono"
-              style={{
-                fontSize: 10,
-                color: tokens.textFaint,
-                letterSpacing: "0.06em",
-                marginBottom: 6,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={p.name}
-            >
-              {p.name}
-            </div>
-            {p.tasks
-              .sort((a, b) => a.round - b.round)
-              .map((t) => {
-                const clickable = !!t.run_id;
-                return (
-                  <div
-                    key={t.id}
-                    onClick={() => clickable && onOpenRun(t.run_id!)}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "5px 6px",
-                      borderRadius: 6,
-                      cursor: clickable ? "pointer" : "default",
-                      opacity: clickable ? 1 : 0.55,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (clickable) e.currentTarget.style.background = tokens.bgCard;
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                    }}
-                  >
-                    <span style={dot(TASK_STATUS_COLOR[t.status] ?? tokens.textFaint)} />
-                    <span
-                      className="mono"
-                      style={{ fontSize: 9.5, color: ROLE_COLOR[t.role], flex: "none" }}
-                    >
-                      {ROLE_LABEL[t.role]}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        color: tokens.textMuted,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        flex: 1,
-                      }}
-                      title={t.title}
-                    >
-                      {t.title}
-                    </span>
-                    {t.tier && (
-                      <span
-                        className="mono"
-                        style={{ fontSize: 9, color: tokens.textFaint, flex: "none" }}
-                      >
-                        {t.tier}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-/** Collapsible right-hand panel with two tabs: Live (project/task board) and
+/** Collapsible right-hand panel with two tabs: Team (this chat's org chart) and
  *  Files (VPS explorer). Owns collapse state; each tab's body is a plain
- *  component with no chrome of its own. */
+ *  component with no chrome of its own.
+ *
+ *  U14 — the Team tab is ONE panel. Until round 503 it was a 55/45 split of
+ *  the fleet-activity list over the project board (see git 8e6b243^): two
+ *  components, two polls (`/api/agents` every 4s, `/api/projects/board` every
+ *  6s), two half-answers to the same question — the board showed tasks with no
+ *  agents, the list showed agents with no tasks. `ChatTeamPanel` answers it
+ *  once, from one request, scoped to the open chat. The fleet list itself is
+ *  NOT deleted: it is still the whole-fleet surface on /live (13 §1) and only
+ *  loses this slot. The board query still belongs to ProjectsSurface. */
 function SidePanel({
   collapsed,
   onToggle,
@@ -238,16 +88,17 @@ function SidePanel({
   onTab,
   onOpenRun,
   fileAtt,
-  agentProjectId,
+  chatId,
 }: {
   collapsed: boolean;
   onToggle: () => void;
-  tab: "live" | "files";
-  onTab: (t: "live" | "files") => void;
+  tab: "team" | "files";
+  onTab: (t: "team" | "files") => void;
   onOpenRun: (runId: string) => void;
   fileAtt: ReturnType<typeof useAttachments> | null;
-  /** The open chat's linked project (U9). `undefined` = show the whole fleet. */
-  agentProjectId?: string;
+  /** The OPEN chat (U14: no selector of the panel's own — the chat decides what
+   *  the panel shows). `null` = nothing open, so there is no team to fetch. */
+  chatId: string | null;
 }) {
   if (collapsed) {
     return (
@@ -265,10 +116,10 @@ function SidePanel({
       >
         <button
           onClick={() => {
-            onTab("live");
+            onTab("team");
             onToggle();
           }}
-          title="Show live projects panel"
+          title="Show the team for this chat"
           className="mono"
           style={{
             fontSize: 10,
@@ -279,7 +130,7 @@ function SidePanel({
             writingMode: "vertical-rl",
           }}
         >
-          ● LIVE
+          ● TEAM
         </button>
         <button
           onClick={() => {
@@ -323,7 +174,7 @@ function SidePanel({
           borderBottom: `1px solid ${tokens.borderSoft}`,
         }}
       >
-        {(["live", "files"] as const).map((t) => (
+        {(["team", "files"] as const).map((t) => (
           <button
             key={t}
             onClick={() => onTab(t)}
@@ -338,7 +189,7 @@ function SidePanel({
               cursor: "pointer",
             }}
           >
-            {t === "live" ? "Live" : "Files"}
+            {t === "team" ? "Team" : "Files"}
           </button>
         ))}
         <span style={{ flex: 1 }} />
@@ -358,30 +209,39 @@ function SidePanel({
         </button>
       </div>
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {tab === "live" ? (
-          // Agent activity on top (who is working, for how long, tokens/cost,
-          // with in-process subagents nested under their parent run), the
-          // project/task board underneath. The board alone never showed
-          // subagents, which is why running work looked like nothing at all.
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {tab === "team" ? (
+          chatId ? (
+            // One panel, full height, one poll, scoped to THIS chat. `visible`
+            // gates the query's `enabled` (ChatTeamPanel.tsx:126); the mount is
+            // conditional on the same facts, so a collapsed panel or the Files
+            // tab stops the team poll twice over — by `enabled: false` and by
+            // there being no observer at all (NFU3).
+            <ChatTeamPanel
+              chatId={chatId}
+              onOpenRun={onOpenRun}
+              visible={!collapsed && tab === "team"}
+            />
+          ) : (
+            // No chat open: there is no id to scope to, and mounting the panel
+            // with "" would key a query cache entry on a chat that doesn't
+            // exist. Say the true thing instead.
             <div
+              className="mono"
               style={{
-                flex: "1 1 55%",
-                minHeight: 0,
-                display: "flex",
-                flexDirection: "column",
-                borderBottom: `1px solid ${tokens.border}`,
+                padding: "24px 12px",
+                fontSize: 10.5,
+                color: tokens.textFaint,
+                lineHeight: 1.6,
+                textAlign: "center",
               }}
             >
-              <AgentActivity projectId={agentProjectId} />
+              no chat open — pick one on the left to see its team
             </div>
-            <div style={{ flex: "1 1 45%", minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <LiveProjectsBody onOpenRun={onOpenRun} />
-            </div>
-          </div>
+          )
         ) : (
           <FileExplorerPanel onAttach={fileAtt ? fileAtt.addExisting : null} />
         )}
+        {/* PlanKanban (U25) lands in this panel's bottom zone in phase 700 */}
       </div>
     </div>
   );
@@ -441,7 +301,11 @@ export function ChatSurface({
   const isAgentView =
     !!selId && !(listQ.data?.runs ?? []).some((r) => r.id === selId);
 
-  const [panelTab, setPanelTab] = useState<"live" | "files">("live");
+  // Not persisted anywhere — no localStorage key, no query param, no server
+  // setting (`grep -rn "panelTab\|localStorage" app` says so). So the "live" →
+  // "team" rename needs no stale-value migration: every reload starts on
+  // "team". If this ever gains persistence, read it through a mapper.
+  const [panelTab, setPanelTab] = useState<"team" | "files">("team");
   const [search, setSearch] = useState("");
   // Lifted out of ChatThread (rather than created per-mount) so the file
   // explorer's "attach to chat" action can reach the active thread's
@@ -548,10 +412,11 @@ export function ChatSurface({
     staleTime: Infinity,
     refetchOnWindowFocus: false,
   });
-  // On error `linkQ.data` is undefined and the panel falls back to the global
-  // fleet view (no project filter). That is a deliberate stopgap, not a silent
-  // fallback pretending to be scoped: phase 500 replaces this panel with
-  // ChatTeamPanel, which renders an explicit inline error row (NFU6).
+  // Phase 500 (U14): the right panel no longer reads `project_id` from here —
+  // ChatTeamPanel resolves the chat→project link server-side and renders its
+  // own error row on failure (NFU6). What survives of this query is the
+  // header's linkage-honesty markers below; on error they simply don't render,
+  // which is honest: an unresolved link makes no claim about how it was made.
   const linkage: ChatLinkage | undefined = linkQ.data;
 
   return (
@@ -928,7 +793,9 @@ export function ChatSurface({
           setSelId(runId);
         }}
         fileAtt={composing ? null : threadAtt}
-        agentProjectId={linkage?.project_id ?? undefined}
+        // The SAME id the detail query and the header run on — one open chat,
+        // one scope, no third source of "which chat is this".
+        chatId={composing ? null : selId}
       />
     </div>
   );
