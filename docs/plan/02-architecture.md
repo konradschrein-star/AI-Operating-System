@@ -184,6 +184,77 @@ whatever it loaded first, which is why R20's smoke run is gated behind P6's rest
 ### 5.2 The `researcher` prompt branch (already live, project-tick.ts:201) stays as-is
 this project only supplies the role file it reads.
 
+**AMENDED at R703 (2026-08-05) — the branch no longer stays as-is.** As written it said only
+"use every research surface you have (web search/fetch, browser automation skills, external AI
+services named in your brief)", which is a surface an agent cannot act on: nothing in it names
+a command. It now appends the exported constant `RESEARCH_INSTRUMENTS`
+(`forge-control/src/lib/project-tick.ts`) — the three CLIs with real invocations, the screenshot
+convention, and the login-wall protocol (§5.3). It is deliberately terse: this text is prepended
+to *every* researcher run. The constant is exported so `project-tick.test.ts` (T16) asserts
+against the engine's own output rather than a hand-copied substring, and T16 additionally
+executes each named script's `--help` so a quoted invocation cannot drift from what shipped.
+
+### 5.3 The browser research lane (R701–R703)
+
+Built in phase 7 after Konrad's constraint "no API keys": the way to reach a logged-in service
+is a real browser he has logged into once, by hand. Full reference:
+`docs/tools/research-browser.md` (and `docs/tools/perplexity.md` §browser backend). The design
+facts the rest of the corpus depends on:
+
+- **Profiles.** `/opt/ai-os/browser-profiles/<profile>/` is a Chrome `user-data-dir`, mode
+  0700, holding session cookies and Chrome's own profile state and **nothing else** — no
+  credential of any kind is written there or anywhere else. This tool's own bookkeeping (pids,
+  logs, the pinned display, the last login evaluation, the request/response queue) lives
+  *outside* the profile, in `/opt/ai-os/browser-profiles/.state/<profile>/`, so that sentence
+  stays literally true. Profile names match `/^[a-z0-9][a-z0-9-]{0,38}$/`; the dot is excluded
+  so a profile can never collide with `.state`. Profiles are SHARED and long-lived — one per
+  service (`perplexity`), plus `scratch` for one-off pages. A per-run profile would be a
+  per-run login wall.
+- **Takeover stack.** `Xvfb` → optional `openbox` → `x11vnc` → `websockify` serving
+  `/usr/share/novnc/vnc.html`, one display pinned per profile. **`x11vnc` binds `-localhost`
+  and `websockify` binds `127.0.0.1` explicitly; the VNC surface is NEVER exposed on a public
+  interface.** Konrad reaches it through an SSH tunnel the tool prints for him
+  (`ssh -N -L <port>:127.0.0.1:<port> root@65.108.6.149`). Rebinding it to `0.0.0.0` would put
+  an unauthenticated desktop that owns his logged-in sessions on the open internet; there is no
+  configuration flag for it and there must never be one.
+- **Login handshake.** A wall is detected from the `SERVICES` signal table, not guessed. On one,
+  the tool screenshots the wall, brings the takeover stack up, queues Konrad a reminder (deduped
+  — `docs/tools/research-browser.md` §9.1), leaves the browser running and exits **4**. Exit 4
+  means "needs Konrad", not "broke". The agent's contract is: report it, continue with what it
+  can still reach, and **never attempt credentials** — no password, no email code, no signup.
+  Konrad logs in ONCE per service; the cookie jar in the profile carries every later run.
+- **Screenshot convention (a contract with the operator-visibility project).**
+  `/opt/ai-os/uploads/<run_id>/<compact-ISO8601>-<label>.png`, served by forge-control at
+  `/api/uploads/<run_id>/<name>`, and referenced in `docs/research/*.md` by that URL so the
+  Console renders it inline. `<run_id>` resolves as `--run-id`, else `$FORGE_RUN_ID`, else the
+  12-hex sentinel `deadbeefcafe`. This project builds **no UI** for it — that repo is the
+  operator-visibility project's (`forge-control-web/**` is untouched here).
+- **The linchpin, fixed at R703: `FORGE_RUN_ID` did not exist.** Every screenshot path above
+  hangs off one environment variable, and `cc-runner.ts` never set it — verified by reading the
+  env of a live run's own child process, which had no `FORGE_*` at all. Every screenshot the
+  lane took would have landed in the shared `deadbeefcafe` bucket, untraceable to the run that
+  took it. `runClaudeCode()` now takes `runId` (passed by `executor.ts` from the claimed run)
+  and exports **`FORGE_RUN_ID`** = the run UUID's first 12 hex characters, plus
+  **`FORGE_RUN_UUID`** = the id verbatim. The truncation is not cosmetic: `GET /api/uploads/:id`
+  gates the id on `/^[a-f0-9]{12}$/` and 400s anything else, so exporting the raw UUID would
+  produce screenshots on disk whose URLs never resolve (`docs/tools/research-browser.md` §5.1
+  calls a UUID-shaped run id "the realistic case" and flags it `url_servable: false`). The
+  prefix is also what executor log lines already print (`run ece63bdb…`), so a directory stays
+  greppable back to its run. When a caller has no run, both variables are *deleted* from the
+  child env rather than inherited — a stale id would file one run's screenshots under another's.
+  Covered by T17 (`forge-control/src/lib/cc-runner.test.ts`), which spawns a stub `CC_BIN` and
+  reads what the child actually received.
+- **The `auto-browser` MCP controller does not exist on this host — settled, do not
+  re-litigate.** The `auto-browser` SKILL.md documents a controller on `http://127.0.0.1:8000`
+  with noVNC on `:6081`; that file lives inside a Hermes docker volume and describes a
+  *different machine*. Verified independently at R701 and again at R703 (2026-08-05): both
+  ports return connect-failure (`http_code 000`), there is no `/opt/auto-browser`, and
+  `mcpServers` in `/root/.claude.json` is `{}` — an empty object, i.e. no MCP server is
+  configured for this account at all. Anything that needs a browser here goes through
+  `scripts/research-browser.mjs`, which reimplements the skill's *semantics* (named profile,
+  save and reuse, takeover URL) on what is actually installed. One-line check before trusting
+  this paragraph: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/docs`.
+
 ## 6. External service helpers (zero-dependency node ≥ 22, built-in fetch)
 
 ### 6.1 Key resolution (shared pattern, ~15 lines duplicated per script — no shared lib,

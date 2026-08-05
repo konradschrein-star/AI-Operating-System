@@ -348,6 +348,38 @@ export const GITHUB_PUSH_GUIDE =
   `- If the push fails (no origin, gh not authenticated, rejected), report the failure verbatim in your ` +
   `final message and move on. A push failure NEVER changes the verdict.`;
 
+/** R703 — the browser research lane, named concretely for the researcher.
+ *
+ *  This text is prepended to EVERY researcher run, so it stays terse: three
+ *  invocations that actually exist (quoted from the shipped `--help` of
+ *  scripts/research-browser.mjs, perplexity.mjs and gemini-qa.mjs), the
+ *  screenshot convention, and the one rule that keeps the lane safe — a login
+ *  wall is Konrad's job, never the agent's. The old branch said only "use every
+ *  research surface you have", which in practice meant WebFetch and nothing
+ *  else: an agent does not discover a 78k-line CLI by hoping.
+ *
+ *  Lives here rather than in agents/researcher.md for the same reason as
+ *  WORKTREE_POLICY: that file is shared with the interactive Task-tool
+ *  researcher, whose invocation paths differ per repo. */
+export const RESEARCH_INSTRUMENTS =
+  `RESEARCH INSTRUMENTS — three shipped CLIs in this repo's scripts/ (outside an ai-os worktree: ` +
+  `/opt/forge-ai-os/scripts/). Run one with --help before first use; none of them needs a key by default:\n` +
+  `- scripts/research-browser.mjs — a real Chrome with persistent logged-in profiles. ` +
+  `\`open <profile> [--url URL] [--label L]\`, \`status <profile> --probe\`, \`close <profile>\`. ` +
+  `Use the SHARED profile for a service (e.g. \`perplexity\`), never a per-run one — the login lives in it.\n` +
+  `- scripts/perplexity.mjs — \`ask "<question>"\` runs through that authenticated profile by default and ` +
+  `returns the answer WITH its citations; \`search "<query>"\` is API-only and needs PERPLEXITY_API_KEY.\n` +
+  `- scripts/gemini-qa.mjs — video QA: \`gemini-qa.mjs <local-video.mp4>\` on the local Gemini Pool ` +
+  `(default backend, free, no key); \`--backend api\` is billed and needs GEMINI_API_KEY.\n` +
+  `SCREENSHOTS: every browser surface you looked at gets one, at ` +
+  `/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png (FORGE_RUN_ID is in your environment; the tools ` +
+  `write there themselves). Cite each one in your research doc as its URL, /api/uploads/$FORGE_RUN_ID/<name>, ` +
+  `so the Console renders it. An uncited browser session is an unverifiable claim.\n` +
+  `LOGIN WALL = STOP. Exit 4 from research-browser or perplexity means a login is required: the tool has ` +
+  `already screenshotted the wall, queued Konrad a reminder and left the browser up for him to log in ONCE ` +
+  `by hand over noVNC. Report it, carry on with the sources you can reach, and NEVER attempt credentials — ` +
+  `no passwords, no signup, no "try the free tier".`;
+
 export function buildPrompt(task: ProjectTask, project: Project): string {
   const mission = roleConfig(task.role).mission;
   // null for scratch projects: no live checkout exists, so none of the
@@ -434,10 +466,11 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   if (task.role === "researcher") {
     return withPolicy(
       header +
-      `\nDeep research only — no implementation, no task creation. Use every research surface you have ` +
-      `(web search/fetch, browser automation skills, external AI services named in your brief). Write your ` +
+      `\nDeep research only — no implementation, no task creation. Use every research surface you have: ` +
+      `web search/fetch, the instruments below, and anything else your brief names. Write your ` +
       `findings to docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that ` +
-      `one file. Findings must be concrete enough that a planner can act on them without repeating the research.`
+      `one file. Findings must be concrete enough that a planner can act on them without repeating the research.\n\n` +
+      `${RESEARCH_INSTRUMENTS}`
     );
   }
   if (task.role === "scout") {

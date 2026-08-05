@@ -111,6 +111,42 @@ export function sanitizeEffort(e: unknown): string | null {
   return EFFORT_LEVELS.has(v) ? v : null;
 }
 
+/** The shape `GET /api/uploads/:id/:name` accepts — `src/routes/uploads.ts`
+ *  gates the id on exactly this and 400s anything else. */
+export const UPLOADS_RUN_ID_RE = /^[a-f0-9]{12}$/;
+
+/** The run id a child process gets as `FORGE_RUN_ID`, and with it the whole
+ *  screenshot convention (`/opt/ai-os/uploads/<run_id>/<stamp>-<label>.png`,
+ *  served at `/api/uploads/<run_id>/<name>`).
+ *
+ *  It is the run UUID's first 12 hex characters, NOT the UUID itself, and that
+ *  is deliberate: the uploads route accepts `/^[a-f0-9]{12}$/` and nothing
+ *  else, so handing a child its raw UUID would produce screenshots on disk
+ *  whose URLs 400 forever — `docs/tools/research-browser.md` §5.1 calls a
+ *  UUID-shaped run id "the realistic case" and reports `url_servable: false`
+ *  for it. The tools refuse to mangle an id they were given; deciding the
+ *  servable form is the producer's job, and this is the producer. The prefix
+ *  is also what every executor log line already prints (`run ece63bdb…`), so
+ *  a screenshot directory stays greppable back to its run. The full UUID is
+ *  still exported alongside it as `FORGE_RUN_UUID` for anything that talks to
+ *  the API about the run itself.
+ *
+ *  Throws rather than degrading: a run id too short to yield 12 hex characters
+ *  is not a run id this system produces (`runs.id` is a `uuid` primary key),
+ *  and silently substituting a sentinel would scatter screenshots into a
+ *  directory that belongs to no run. */
+export function uploadsRunId(runId: string): string {
+  const hex = runId.toLowerCase().replace(/[^a-f0-9]/g, "");
+  if (hex.length < 12) {
+    throw new Error(
+      `[cc-runner] cannot derive an uploads-servable run id from ${JSON.stringify(runId)}: ` +
+        `it yields only ${hex.length} hex characters, and /api/uploads requires 12 ` +
+        `(expected a runs.id UUID)`,
+    );
+  }
+  return hex.slice(0, 12);
+}
+
 /** v2.5: the system prompt is built per-run instead of a single static
  *  const — most of it is unconditional, but the vault/knowledge block only
  *  applies when this run actually has vault access (--add-dir + Read/Grep
@@ -276,6 +312,16 @@ export async function runClaudeCode(opts: {
    *  ambient config, which is the pre-2026-08-02 behaviour and should only
    *  happen for callers that genuinely have no registry (e.g. one-off scripts). */
   configDir?: string | null;
+  /** The `runs.id` this turn belongs to. Exported to the child as
+   *  FORGE_RUN_ID (uploads-servable 12-hex form, see uploadsRunId) and
+   *  FORGE_RUN_UUID (verbatim). The research lane's screenshot convention
+   *  hangs off the first one: scripts/research-browser.mjs, perplexity.mjs and
+   *  gemini-qa.mjs all resolve their upload directory as `--run-id`, else
+   *  $FORGE_RUN_ID, else an ad-hoc sentinel — without it every screenshot a
+   *  run takes lands in the shared `deadbeefcafe` bucket and cannot be traced
+   *  back to the run that took it. Omitted only by callers that genuinely have
+   *  no run (one-off scripts). */
+  runId?: string | null;
   onEvent: (e: CcEvent) => void;
   /** Polled every ~5s; return true to kill the child (cancel/pause). */
   isCancelled?: () => Promise<boolean>;
@@ -299,6 +345,17 @@ export async function runClaudeCode(opts: {
   const env = { ...process.env };
   delete env.ANTHROPIC_API_KEY; // OAuth only — never bill the API key.
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir;
+  // Run identity for the child's own tools. Cleared when this call has no run
+  // rather than inherited: a stale FORGE_RUN_ID from the parent environment
+  // would file this run's screenshots under a different run's id, which is
+  // worse than the tools' honest ad-hoc sentinel.
+  if (opts.runId) {
+    env.FORGE_RUN_ID = uploadsRunId(opts.runId);
+    env.FORGE_RUN_UUID = opts.runId;
+  } else {
+    delete env.FORGE_RUN_ID;
+    delete env.FORGE_RUN_UUID;
+  }
 
   const t0 = Date.now();
   const child = spawn(CC_BIN, args, {

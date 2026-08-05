@@ -874,6 +874,10 @@ async function processWithClaudeCode(
       prompt: over.prompt,
       sessionId: over.sessionId,
       configDir: over.configDir,
+      // The child's own run identity — FORGE_RUN_ID/FORGE_RUN_UUID on its
+      // environment. The research lane's screenshot convention
+      // (/opt/ai-os/uploads/<run_id>/...) is unusable without it.
+      runId: run.id,
       timeoutMs,
       model,
       effort,
