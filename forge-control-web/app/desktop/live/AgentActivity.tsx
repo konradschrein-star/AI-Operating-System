@@ -452,11 +452,17 @@ function SubagentLine({
         />
         {/* Sits in the same column as the top-level kind badge and says the
             opposite thing: this row is NOT its own Claude Code session, it is
-            a Task agent inside the process one line above. */}
+            a Task agent inside the process one line above.
+
+            `textMuted2`, not the `textGhost` the plan suggested: at #a6a6ae
+            on the light background ghost is ~2.5:1 against the card, which
+            made the one marker that answers Konrad's actual question the
+            faintest thing in the row. Muted2 is still visibly subordinate to
+            the description beside it — measured against live-light.png. */}
         <span
           className="mono"
           style={{
-            color: tokens.textGhost,
+            color: tokens.textMuted2,
             flex: "none",
             minWidth: KIND_COL - 12,
             whiteSpace: "nowrap",
