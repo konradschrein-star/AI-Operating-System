@@ -474,8 +474,31 @@ export async function bumpFixCycle(id: string): Promise<number> {
   return r.rows[0]?.fix_cycle ?? 0;
 }
 
-/** Tasks whose run has settled (completed/failed/cancelled) but whose task
- *  row hasn't been reconciled yet — the other half of the project-tick loop. */
+/** Is every task of this project+round done? Called when a task settles, so
+ *  the LAST task of a round is the one that reports the round complete —
+ *  no extra bookkeeping table, and it fires exactly once per round. */
+export async function roundIsComplete(
+  projectId: string,
+  round: number,
+): Promise<boolean> {
+  const r = await pool.query<{ complete: boolean }>(
+    `SELECT NOT EXISTS (
+       SELECT 1 FROM project_tasks
+        WHERE project_id = $1 AND round = $2 AND status <> 'done'
+     ) AS complete`,
+    [projectId, round],
+  );
+  return r.rows[0]?.complete ?? false;
+}
+
+/** Tasks whose run has settled but whose task row hasn't been reconciled yet
+ *  — the other half of the project-tick loop.
+ *
+ *  'stuck' counts as settled. It is a terminal state for the TASK even though
+ *  the run itself stays resumable: the watchdog only flips a run to 'stuck'
+ *  after 90s without a heartbeat, i.e. the engine process is gone or hung.
+ *  Before this, such a task sat 'running' forever with no owner and the
+ *  project could never close or wedge — it just went quiet (E4). */
 export async function listSettledRunningTasks(): Promise<
   Array<ProjectTask & { run_status: RunStatus; last_text: string | null }>
 > {
@@ -494,7 +517,7 @@ export async function listSettledRunningTasks(): Promise<
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'
-        AND r.status IN ('completed','failed','cancelled')`,
+        AND r.status IN ('completed','failed','cancelled','stuck')`,
   );
   return r.rows;
 }

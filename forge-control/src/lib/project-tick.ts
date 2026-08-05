@@ -20,11 +20,12 @@
  * agent.spawn_cap ceiling, so there's exactly one place that cap lives.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   promoteReadyTasks,
   claimReadyTasks,
   listSettledRunningTasks,
+  roundIsComplete,
   createRunForTask,
   attachRun,
   setTaskStatus,
@@ -245,7 +246,21 @@ async function spawnTaskRuns(): Promise<void> {
   const claimed = await claimReadyTasks();
   for (const task of claimed) {
     try {
-      if (!task.project.workspace_dir || !task.project.work_branch) {
+      // A stored workspace_dir is not evidence the directory still exists.
+      // Both 2026-07-30 worktrees were deleted from disk while the DB kept the
+      // paths (E8); a resumed task would have spawned `claude` with a cwd that
+      // isn't there and died at spawn() with an obscure error. provisionWorkspace
+      // is idempotent and prunes stale worktree registrations, so re-running it
+      // is the cheap, correct repair.
+      const wsMissing =
+        !!task.project.workspace_dir && !existsSync(task.project.workspace_dir);
+      if (wsMissing) {
+        console.warn(
+          `[project-tick] workspace ${task.project.workspace_dir} for project ` +
+            `${task.project_id} is gone from disk — re-provisioning`,
+        );
+      }
+      if (!task.project.workspace_dir || !task.project.work_branch || wsMissing) {
         // Normally the API route provisions synchronously at project creation,
         // but this tick can claim the round-0 architect task inside that
         // window, so the fallback is a real path — and it must write the
@@ -273,6 +288,13 @@ async function spawnTaskRuns(): Promise<void> {
         vault_access: task.role === "architect",
       });
       await attachRun(task.id, run.id);
+      // E4: spawning used to be silent, so a tick that did real work looked
+      // exactly like a tick that did nothing. Every spawn is on the record now.
+      console.log(
+        `[project-tick] spawned ${task.role} run ${run.id} for task ${task.id} ` +
+          `(round ${task.round}, tier ${task.tier ?? "role-default"}) — ` +
+          `${task.project.name} · ${task.title}`,
+      );
     } catch (e) {
       console.error(
         `[project-tick] failed to spawn run for task ${task.id} (${task.role}):`,
@@ -292,15 +314,21 @@ async function spawnTaskRuns(): Promise<void> {
   }
 }
 
+/** What a settled reviewer did to the project — the caller uses it to decide
+ *  whether a progress push would be honest ("round complete" right after
+ *  "project blocked" is not). */
+type ReviewerOutcome = "pass" | "fix_cycle" | "blocked";
+
 async function reconcileReviewer(
   task: ProjectTask,
   lastText: string | null,
-): Promise<void> {
+): Promise<ReviewerOutcome> {
   await setTaskStatus(task.id, "done");
   const verdict = /VERDICT:\s*(PASS|NEEDS_FIXES)/i.exec(lastText ?? "")?.[1]?.toUpperCase();
 
   if (verdict === "PASS") {
-    return; // closeFinishedProjects() picks this up once every task is done
+    console.log(`[project-tick] reviewer ${task.id} → PASS`);
+    return "pass"; // closeFinishedProjects() picks this up once every task is done
   }
 
   if (verdict !== "NEEDS_FIXES") {
@@ -312,7 +340,7 @@ async function reconcileReviewer(
       `🚫 Project "${name}" blocked — reviewer produced no parseable VERDICT line. Check the run's last message.`,
       "project",
     ).catch(() => {});
-    return;
+    return "blocked";
   }
 
   if (task.fix_cycle >= MAX_FIX_CYCLES) {
@@ -325,7 +353,7 @@ async function reconcileReviewer(
       `🚫 Project "${name}" blocked — ${MAX_FIX_CYCLES} fix cycles exhausted, reviewer still finds issues.`,
       "project",
     ).catch(() => {});
-    return;
+    return "blocked";
   }
 
   // Two reviewers in one round that both return NEEDS_FIXES used to create two
@@ -354,26 +382,73 @@ async function reconcileReviewer(
       `(builder ${fix.task.id}${fix.created ? "" : " existing"}, ` +
       `reviewer ${rereview.task.id}${rereview.created ? "" : " existing"})`,
   );
+  return "fix_cycle";
+}
+
+/** Per-task and per-round progress pushes (E4).
+ *
+ *  Goal-mode projects deliberately do NOT get a ping per task — they can carry
+ *  hundreds, and they already have the time-gated heartbeat in goalHeartbeats().
+ *  Round boundaries are notified for every project: in goal mode a round IS a
+ *  waterfall phase, which is exactly the granularity worth a push. */
+async function notifyTaskProgress(
+  task: ProjectTask,
+  project: Project | null,
+): Promise<void> {
+  const name = project?.name ?? task.project_id;
+  if (project && !isGoalMode(project)) {
+    await queueNotification(
+      `✅ ${name} · ${task.role} task "${task.title}" done (round ${task.round}).`,
+      "project",
+    ).catch(() => {});
+  }
+  if (await roundIsComplete(task.project_id, task.round).catch(() => false)) {
+    await queueNotification(
+      `🏁 ${name} · round ${task.round} complete.`,
+      "project",
+    ).catch(() => {});
+  }
 }
 
 async function reconcileSettledTasks(): Promise<void> {
   const settled = await listSettledRunningTasks();
   for (const task of settled) {
     try {
+      const project = await getProject(task.project_id).catch(() => null);
+      const name = project?.name ?? task.project_id;
       if (task.run_status !== "completed") {
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
-        const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+        console.warn(
+          `[project-tick] task ${task.id} (${task.role} · ${task.title}) failed — ` +
+            `run ${task.run_id} ${task.run_status}; project ${task.project_id} blocked`,
+        );
         await queueNotification(
-          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. Check its run.`,
+          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. ` +
+            `Retry it: POST /api/tasks/${task.id}/retry (or /api/projects/${task.project_id}/unwedge).`,
           "project",
         ).catch(() => {});
         continue;
       }
+      console.log(
+        `[project-tick] reconciled ${task.role} task ${task.id} (round ${task.round}) ` +
+          `→ done — ${name} · ${task.title}`,
+      );
       if (task.role === "reviewer") {
-        await reconcileReviewer(task, task.last_text);
+        const outcome = await reconcileReviewer(task, task.last_text);
+        if (outcome === "fix_cycle") {
+          await queueNotification(
+            `🔁 ${name} · reviewer wants fixes — fix cycle ${task.fix_cycle + 1} opened at round ${task.round + 1}.`,
+            "project",
+          ).catch(() => {});
+        } else if (outcome === "pass") {
+          await notifyTaskProgress(task, project);
+        }
+        // 'blocked' already sent its own notification inside reconcileReviewer;
+        // a "round complete" push on top of it would contradict it.
       } else {
         await setTaskStatus(task.id, "done");
+        await notifyTaskProgress(task, project);
       }
     } catch (e) {
       console.error(
