@@ -1,8 +1,10 @@
 # `gemini-qa` — video QA through the Gemini API
 
-Transcribed from `scripts/gemini-qa.mjs --help` and the shipped script (R25, frozen — this
-doc does not modify it). Evidence for every claim below: `docs/plan/evidence/p4-gemini-errorpaths.md`
-(real command transcripts, 2026-08-05) and `docs/research/round-399-41e8757d.md` (API/cost facts).
+Transcribed from `scripts/gemini-qa.mjs --help` and the shipped script (R25; re-synced in R406
+after the round-405 review changed `--out` semantics — §5.1). Evidence for every claim below:
+`docs/plan/evidence/p4-gemini-errorpaths.md` (real command transcripts, 2026-08-05),
+`docs/research/round-399-41e8757d.md` (API/cost facts), and
+`forge-control/src/lib/gemini-qa-cli.test.ts` (the output-path behaviour, stubbed `fetch`).
 
 ## 1. What it is / when to use it
 
@@ -41,7 +43,7 @@ gemini-qa.mjs <video-path-or-url> [--model M] [--out FILE] [--prompt-extra "..."
 | Flag | Default | Meaning |
 |---|---|---|
 | `--model M` | `gemini-omni-flash` | Gemini model to use |
-| `--out FILE` | stdout | Write the QA JSON to FILE instead of stdout |
+| `--out FILE` | stdout only | **Also** write the QA JSON to FILE. stdout always gets it first — see §5.1 |
 | `--prompt-extra "..."` | none | Extra caller context appended to the QA prompt, e.g. `"this is a 60s YouTube Short about sky photography"` |
 | `--help`, `-h` | — | Print usage and exit 0 |
 
@@ -87,10 +89,35 @@ the same deterministic failure whether or not the video argument is valid.
 
 | Code | Meaning |
 |---|---|
-| 0 | Success — QA JSON written to stdout or `--out` |
+| 0 | Success — QA JSON on stdout, plus a copy in `--out FILE` if one was given |
 | 1 | API or processing error: invalid key, upload failure, file processing `FAILED`, poll timeout (10 min), non-2xx response, unparseable or incomplete model output. HTTP status and response body are printed verbatim. |
 | 2 | Missing key: neither `GEMINI_API_KEY` nor `/opt/ai-os/.secrets/store/gemini-api-key` |
-| 3 | Usage error: no argument, unknown flag, unreadable input file, unsupported extension, or an unwritable `--out` target |
+| 3 | Usage error: no argument, unknown flag, unreadable input file, unsupported extension, or an unusable `--out` target (a directory, an unwritable file, or a missing/non-directory parent). A write that fails *after* the request is also exit 3 — and the QA JSON is on stdout in full regardless (§5.1). |
+
+### 5.1 `--out` and the paid-result rule
+
+A 10-minute QA pass costs roughly **$5** (§7) and cannot be recovered: the video has been
+uploaded, polled to `ACTIVE`, and `generateContent` has been billed by the time there is
+anything to write. So `--out` never diverts the result — it *duplicates* it.
+
+1. **Pre-flight.** Before any upload or request, an existing `--out` target must be a regular
+   file (not a directory) and `W_OK`; otherwise its parent must exist, be a directory, and be
+   `W_OK`. A bad path costs nothing: exit 3, no HTTP. Gate order overall is arguments → key →
+   input classification → `--out`, so a caller with no key still gets exit 2.
+2. **stdout first.** The rubric is written to stdout *before* `writeFileSync`. If the write
+   fails anyway, the exit is 3 (not 1 — a caller retrying on 1 must not re-buy a result it
+   already has), and stderr says the result is not lost.
+
+What the pre-flight cannot catch is only what changes after it runs: the target or its
+directory unlinked/replaced mid-run, or `ENOSPC`. This is the same contract, function for
+function, as `scripts/perplexity.mjs` (`docs/tools/perplexity.md` §5).
+
+**Large payloads are safe on a pipe.** `process.stdout.write()` is asynchronous when stdout is
+a pipe, and `process.exit()` drops whatever has not drained — a silent cut at 64 KiB. Every
+byte of stdout and stderr therefore goes out through `fs.writeSync()` on the raw fd, so both
+the rubric and the verbatim error bodies survive at any size. Regression tests:
+`forge-control/src/lib/gemini-qa-cli.test.ts`, block `R405-2`, driving a >64 KiB payload through
+a real `pipe(2)`.
 
 ## 6. The QA rubric
 
@@ -272,10 +299,14 @@ Until that key lands, every invocation of `gemini-qa.mjs` on this box exits 2 de
 - **Video cost per second is unsettled (§7).** The token-derived figure (~$0.0087/sec) and the
   research doc's "≈ $0.10/sec" cannot both be right; this file budgets from the token math and
   flags the other as an unverified worst case. Settles on the first real invoice.
-- **No successful run has ever been observed.** No Gemini key exists on this box (§9), so
-  every success-path claim — the rubric JSON the model returns, the upload/poll timings, the
-  cost figures — is derived from the shipped code and the vendor's published material, not
-  from a captured round-trip. Only the error paths in §8 are live transcripts.
+- **No successful run against the live API has ever been observed.** No Gemini key exists on
+  this box (§9), so every success-path claim about the *vendor* — the rubric JSON the model
+  actually returns, the upload/poll timings, the cost figures — is derived from the shipped
+  code and published material, not from a captured round-trip. Only the error paths in §8 are
+  live transcripts. What *is* exercised end to end is this script's own output handling:
+  `forge-control/src/lib/gemini-qa-cli.test.ts` stubs `globalThis.fetch` through a `--import`
+  preload and drives the §5.1 contract (stdout-first, the pre-flight, the >64 KiB pipe cases)
+  against the real script, with no key and no spend.
 
 Everything else matched when this file was written: `--help` output, the four exit codes, both
 key locations, the frozen rubric schema (checked field by field against the script's

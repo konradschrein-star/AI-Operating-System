@@ -20,7 +20,7 @@
 // is deliberately NO runtime fallback between endpoints. Probe output is in
 // docs/plan/evidence/p4-perplexity-errorpaths.md.
 
-import { readFileSync, writeFileSync, accessSync, constants } from 'node:fs';
+import { readFileSync, writeFileSync, accessSync, statSync, writeSync, constants } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const AGENT_URL = 'https://api.perplexity.ai/v1/agent';
@@ -68,7 +68,8 @@ OPTIONS FOR ask
                           The model may then answer without searching (uncited).
   --out <file>            Also write the JSON result to <file>. stdout is unaffected and is
                           always written FIRST, so a billed answer survives a write failure.
-                          Writability is pre-flighted before the request (exit 3, nothing sent).
+                          The target is pre-flighted before the request — it must not be a
+                          directory and must be writable (exit 3, nothing sent).
 
 OPTIONS FOR search
   --max-results <n>       1-${MAX_RESULTS_CAP}. Default: ${DEFAULT_MAX_RESULTS}
@@ -94,20 +95,59 @@ EXIT CODES
   1  API or response error (invalid key, non-2xx, status failed/cancelled, unparseable body,
      or a response whose search_results item does not carry a "results" array)
   2  missing API key (neither location above yielded a key; no request was sent)
-  3  usage error (bad or missing arguments; no request was sent), or an unwritable --out
-     target. The --out target is pre-flighted before the request, so this normally also means
-     nothing was sent; if the target only breaks mid-run the result is still on stdout.
+  3  usage error (bad or missing arguments; no request was sent), or an unusable --out
+     target (a directory, unwritable, or a missing parent directory). The --out target is
+     pre-flighted before the request, so this normally also means nothing was sent. Only a
+     target unlinked mid-run, or a full disk, can fail after the call — and then the result
+     is still on stdout, in full.
 `;
+
+// ---------------------------------------------------------------------------------------------
+// Synchronous, drain-guaranteed output (R405 finding 2).
+//
+// process.stdout/stderr are ASYNCHRONOUS when they point at a pipe — and the researcher lane
+// captures this script through a pipe. process.stdout.write() only queues; process.exit()
+// then discards whatever has not drained, truncating at the 64 KiB pipe buffer. That silently
+// voided both guarantees this tool makes: the "answer is already on stdout" promise in emit()
+// and the "body verbatim" diagnostic that justifies hard-erroring instead of emitting [].
+//
+// writeSync() on the raw fd bypasses the stream entirely, so the bytes are gone before exit().
+// EAGAIN is the non-blocking-pipe "buffer full, try again" signal, not a failure; EPIPE means
+// the reader is gone (`| head`), where stopping quietly is the only sane response.
+// ---------------------------------------------------------------------------------------------
+const SLEEP_SLOT = new Int32Array(new SharedArrayBuffer(4));
+
+function writeFd(fd, text) {
+  const buf = Buffer.from(text, 'utf8');
+  let offset = 0;
+  while (offset < buf.length) {
+    try {
+      offset += writeSync(fd, buf, offset, buf.length - offset);
+    } catch (err) {
+      if (err.code === 'EAGAIN') {
+        Atomics.wait(SLEEP_SLOT, 0, 0, 5); // 5 ms, synchronous: nothing else may run first
+        continue;
+      }
+      if (err.code === 'EPIPE') return; // reader closed; there is nobody left to tell
+      throw err;
+    }
+  }
+}
+
+/** All stdout in this script goes through here — never process.stdout.write (see above). */
+const writeOut = (text) => writeFd(1, text);
+/** All stderr in this script goes through here — never process.stderr.write (see above). */
+const writeErr = (text) => writeFd(2, text);
 
 /** Usage error: no request has been sent and none will be. */
 function usageError(message) {
-  process.stderr.write(`usage error: ${message}\n\nRun with --help for the full usage.\n`);
+  writeErr(`usage error: ${message}\n\nRun with --help for the full usage.\n`);
   process.exit(EXIT_USAGE);
 }
 
 /** API/response error. */
 function apiError(message) {
-  process.stderr.write(`${message}\n`);
+  writeErr(`${message}\n`);
   process.exit(EXIT_API);
 }
 
@@ -116,7 +156,7 @@ function apiError(message) {
  * wrong, and callers that retry on 1 must not retry — and re-pay for — a filesystem fault.
  */
 function outputError(message) {
-  process.stderr.write(`output error: ${message}\n`);
+  writeErr(`output error: ${message}\n`);
   process.exit(EXIT_USAGE);
 }
 
@@ -136,7 +176,7 @@ function resolveApiKey() {
   } catch (err) {
     // Only "not there" is a normal miss; anything else (EACCES, EISDIR) is a real fault to report.
     if (err.code !== 'ENOENT') {
-      process.stderr.write(
+      writeErr(
         `Could not read the secret-store file ${KEY_FILE_PATH}: ${err.code ?? 'unknown'} ${err.message}\n` +
           `Fix the file or set the environment variable ${KEY_ENV_NAME} instead. No request was sent.\n`,
       );
@@ -144,7 +184,7 @@ function resolveApiKey() {
     }
   }
   if (fromFile) return fromFile;
-  process.stderr.write(
+  writeErr(
     `No Perplexity API key found. Nothing was sent.\n` +
       `Set the key named ${KEY_ENV_NAME} in ONE of these two locations:\n` +
       `  1. environment variable: ${KEY_ENV_NAME}\n` +
@@ -166,7 +206,7 @@ function parseIntFlag(flag, raw, min, max) {
 
 function parseArgs(argv) {
   if (argv.includes('--help') || argv.includes('-h')) {
-    process.stdout.write(USAGE);
+    writeOut(USAGE);
     process.exit(EXIT_OK);
   }
 
@@ -273,24 +313,54 @@ function parseArgs(argv) {
  * Pre-flight the --out target BEFORE any request. An Agent run is billed per web_search
  * invocation, so discovering ENOENT/EACCES after the answer arrives means paying for a result
  * we then have to re-buy. Mirrors assertOutWritable() in gemini-qa.mjs.
+ *
+ * R405 finding 3: accessSync(path, W_OK) succeeds on a *directory*, so `--out /tmp` used to
+ * sail through the pre-flight and only blow up at writeFileSync with EISDIR — after the bill.
+ * Shape is therefore checked before permission, on both the target and its parent. What this
+ * pre-flight still cannot cover is genuinely narrow: the target or its directory being
+ * unlinked/replaced between this check and the write, or the disk filling up (ENOSPC).
  */
 function assertOutWritable(outPath) {
   if (outPath === undefined) return;
   const path = resolve(outPath);
+
+  let stat;
   try {
-    // Existing file: it must be writable (it will be overwritten).
-    accessSync(path, constants.W_OK);
-    return;
+    stat = statSync(path);
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      outputError(`--out target is not writable: ${path}: ${err.code ?? 'unknown'} ${err.message}`);
+      outputError(`--out target cannot be inspected: ${path}: ${err.code ?? 'unknown'} ${err.message}`);
     }
   }
-  // Not there yet: the directory has to accept a new file.
+
+  if (stat !== undefined) {
+    // Existing target: it must be a file (a directory can never be overwritten) and writable.
+    if (stat.isDirectory()) {
+      outputError(`--out target is a directory, not a file: ${path}`);
+    }
+    try {
+      accessSync(path, constants.W_OK);
+    } catch (err) {
+      outputError(`--out target is not writable: ${path}: ${err.code ?? 'unknown'} ${err.message}`);
+    }
+    return;
+  }
+
+  // Not there yet: the parent has to exist, be a directory, and accept a new file.
+  const dir = dirname(path);
+  let dirStat;
   try {
-    accessSync(dirname(path), constants.W_OK);
+    dirStat = statSync(dir);
   } catch (err) {
-    outputError(`--out directory is not writable: ${dirname(path)}: ${err.code ?? 'unknown'} ${err.message}`);
+    outputError(`--out directory is not usable: ${dir}: ${err.code ?? 'unknown'} ${err.message}`);
+  }
+  if (!dirStat.isDirectory()) {
+    outputError(`--out directory is not a directory: ${dir}`);
+  }
+  try {
+    accessSync(dir, constants.W_OK);
+  } catch (err) {
+    outputError(`--out directory is not writable: ${dir}: ${err.code ?? 'unknown'} ${err.message}`);
   }
 }
 
@@ -398,12 +468,13 @@ function extractCitations(searchResults) {
 /**
  * stdout FIRST, then the file. The request is already paid for by the time this runs, so the
  * durable copy has to leave the process before anything that can fail. assertOutWritable()
- * pre-flights the target before the request; reaching the catch below means the target changed
- * under us mid-run, and by then the answer is safely on stdout.
+ * pre-flights the target before the request; reaching the catch below means the target was
+ * unlinked or replaced under us mid-run, or the disk filled — and by then the answer is safely
+ * out of the process, because writeOut() is synchronous even when stdout is a pipe.
  */
 function emit(payload, outPath) {
   const json = `${JSON.stringify(payload, null, 2)}\n`;
-  process.stdout.write(json);
+  writeOut(json);
   if (outPath === undefined) return;
   const path = resolve(outPath);
   try {
@@ -433,7 +504,7 @@ async function runAsk(opts, apiKey) {
   }
   if (status === 'incomplete') {
     const reason = response.incomplete_details?.reason ?? '(no incomplete_details.reason in the response)';
-    process.stderr.write(`warning: Agent run status "incomplete" — incomplete_details.reason: ${reason}\n`);
+    writeErr(`warning: Agent run status "incomplete" — incomplete_details.reason: ${reason}\n`);
   }
 
   const searchResults = extractSearchResults(response);

@@ -477,3 +477,49 @@ no args / `--max-results 21` / unknown flag / `--model` with `--preset` → 3; g
 key → 2; `grep -n "require(\|from '[^n]" scripts/*.mjs` → no hits (zero deps intact);
 `git ls-files -s scripts/perplexity.mjs` → `100755`. `npx tsc --noEmit` → 0.
 `pnpm test` → `# tests 153 # pass 153 # fail 0` across 31 suites (143/29 before this round).
+
+---
+
+## R406 — round-405 fix cycle 2: directory pre-flight + no truncation on a pipe
+
+**1. A directory `--out` is now rejected before the request** (previously `accessSync(dir, W_OK)`
+passed it straight through to a billed Agent call that then died at `writeFileSync`):
+
+```
+$ PERPLEXITY_API_KEY=definitely-invalid node scripts/perplexity.mjs ask "q" --out /tmp
+output error: --out target is a directory, not a file: /tmp
+exit=3
+```
+
+**2. A legitimate `--out` path still reaches the API** — no over-rejection:
+
+```
+$ PERPLEXITY_API_KEY=definitely-invalid node scripts/perplexity.mjs ask "q" --out /tmp/px-probe.json
+HTTP 401 Unauthorized from https://api.perplexity.ai/v1/agent
+{"error":{"message":"Invalid API key provided. Ensure your API key is correct and active.","type":"invalid_api_key","code":401}}
+exit=1
+```
+
+No `/tmp/px-probe.json` is created.
+
+**3. `emit()`'s "the result is NOT lost" promise and the "body verbatim" diagnostic are now
+true on a pipe.** `process.stdout.write()` is asynchronous when stdout is a pipe — how the
+researcher lane captures this script — and `process.exit()` dropped everything undrained at the
+64 KiB boundary. Measured on the pre-fix code with a 140,001-byte payload: `| wc -c` returned
+exactly 65,536, a redirect to a file returned all 140,001. Both streams now go out through
+`fs.writeSync()` on the raw fd (EAGAIN retried, EPIPE ignored), so size no longer matters.
+
+Note for anyone writing tests here: `spawnSync` hands the child a **socketpair** (~200 KiB
+buffer), not a pipe, so it returned the full 140,001 bytes even from the broken script. The
+`R405-2` block in `forge-control/src/lib/perplexity-cli.test.ts` therefore runs the CLI through
+a real `/bin/bash` pipeline and reads what `cat` actually received.
+
+**4. The pre-flight's real limits, corrected.** The earlier claim that "the pre-flight cannot
+cover that window" was applied to a case it demonstrably can cover (a directory target). What it
+genuinely cannot cover is narrower: the target or its parent being unlinked or replaced between
+the check and the write, or `ENOSPC`. The test that exercises this now creates that race
+explicitly — the stubbed `fetch` mkdirs the target at request time, strictly between pre-flight
+and write.
+
+**Regression proof.** Reverting both scripts to their pre-fix versions fails 10 of the 24 CLI
+tests; with the fixes, 24/24 pass and `pnpm test` is 167/167 (was 153/153).

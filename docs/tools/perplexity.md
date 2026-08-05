@@ -97,7 +97,7 @@ before any network call. It does not fall back to any other key name or path.
 | `0` | Success. |
 | `1` | API or response error — invalid key, non-2xx HTTP status, an Agent run with `status: failed` or `cancelled`, a response body that fails to parse as JSON, or a `search_results` output item whose `results` is not an array (§6). |
 | `2` | Missing API key — neither `PERPLEXITY_API_KEY` nor the secret-store file yielded a key. No request was sent. |
-| `3` | Usage error — bad or missing arguments (unknown flag, missing subject, out-of-range value, mutually exclusive flags together, etc.), **or an unwritable `--out` target**. Usage errors and the `--out` pre-flight both run before the request, so no request was sent. The one exception is an `--out` target that breaks *between* the pre-flight and the write; that also exits `3`, and the result is on stdout regardless (see below). |
+| `3` | Usage error — bad or missing arguments (unknown flag, missing subject, out-of-range value, mutually exclusive flags together, etc.), **or an unusable `--out` target** (a directory, an unwritable file, or a missing/non-directory parent). Usage errors and the `--out` pre-flight both run before the request, so no request was sent. The one exception is an `--out` target unlinked or replaced *between* the pre-flight and the write, or a full disk; that also exits `3`, and the result is on stdout regardless (see below). |
 
 A local filesystem fault is deliberately **not** exit `1`: a caller that retries on `1` would
 re-run — and re-pay for — an Agent call that the API handled perfectly well.
@@ -107,11 +107,30 @@ re-run — and re-pay for — an Agent call that the API handled perfectly well.
 An Agent run is billed per `web_search` invocation, so the tool never lets a local write fault
 destroy a result that has already been paid for:
 
-1. **Pre-flight.** `--out` is checked for writability *before* the request (existing file must
-   be `W_OK`; otherwise its directory must be). A bad path costs nothing — exit `3`, no HTTP.
+1. **Pre-flight.** `--out` is checked *before* the request: an existing target must be a
+   regular file (not a directory) and `W_OK`; otherwise its parent must exist, be a directory,
+   and be `W_OK`. A bad path costs nothing — exit `3`, no HTTP.
 2. **stdout first.** `emit()` writes the full JSON to stdout *before* touching the file. If the
-   target is destroyed mid-run (the pre-flight cannot cover that window), the tool still exits
-   `3`, but the answer has already left the process and stderr says so explicitly.
+   write still fails, the tool exits `3` with the answer already out of the process, and stderr
+   says so explicitly.
+
+**What the pre-flight can and cannot catch.** It catches every *static* fault: a directory
+passed as `--out`, a non-existent parent, a parent that is a regular file, an unwritable target.
+It cannot catch what changes *after* it runs — the target or its directory being unlinked or
+replaced between the check and the write, or the disk filling (`ENOSPC`). Those are the only
+paths that reach the `catch` in `emit()`, and the stdout-first ordering is what makes them
+survivable. (Note that this box runs as **root**, so the `W_OK` half of the check is close to a
+no-op: root passes `accessSync` on a `0444` file and then writes it successfully anyway. The
+shape checks are what do the real work here.)
+
+**Ordering is guaranteed on a pipe, too.** `process.stdout.write()` is asynchronous when stdout
+is a pipe — which is how the researcher lane captures this script — and `process.exit()`
+discards whatever has not drained, truncating at the 64 KiB pipe buffer. The script therefore
+writes every byte of stdout and stderr with `fs.writeSync()` on the raw fd, so "already on
+stdout" and "body verbatim" hold for payloads of any size. Regression tests:
+`forge-control/src/lib/perplexity-cli.test.ts`, block `R405-2`, which drives a >64 KiB payload
+through a real `pipe(2)` (a `spawnSync` harness cannot reproduce the bug — it hands the child a
+socketpair with a ~200 KiB buffer).
 
 Gate order overall: arguments → key → `--out` filesystem. A caller with no key gets exit `2`
 whether or not the `--out` path is valid.

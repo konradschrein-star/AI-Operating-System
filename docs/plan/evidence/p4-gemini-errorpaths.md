@@ -302,3 +302,58 @@ Correct incantation, used for every commit after this one: `git commit -- <expli
 - Cost model documentation (5,792 tok/s at 720p, ~$0.10/sec video; $1.50/$9.00 per 1M text) —
   same docs task.
 - A live smoke run against a real video: impossible until `GEMINI_API_KEY` exists.
+
+---
+
+## R406 — round-405 fix cycle 2: `--out` no longer diverts, and no longer pre-flights blind
+
+Three changes to `scripts/gemini-qa.mjs`, all verified below (node v22.22.2, 2026-08-05, this
+worktree; `git -C /opt/forge-ai-os status --short` empty before and after).
+
+**1. A directory target is rejected before anything is billed.** Previously
+`accessSync('/tmp', W_OK)` succeeded, so the video uploaded, polled to `ACTIVE`, and
+`generateContent` was billed (~$5 on a 10-minute pass) before `writeFileSync` threw `EISDIR`:
+
+```
+$ time GEMINI_API_KEY=definitely-invalid node scripts/gemini-qa.mjs \
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ' --out /tmp
+gemini-qa.mjs: --out target is a directory, not a file: /tmp
+real	0m0.027s
+exit=3
+```
+
+27 ms and no network: the rejection is in the pre-flight, not in the write.
+
+**2. A legitimate `--out` path still reaches the API** — the pre-flight does not over-reject:
+
+```
+$ GEMINI_API_KEY=definitely-invalid node scripts/gemini-qa.mjs \
+    'https://www.youtube.com/watch?v=dQw4w9WgXcQ' --out /tmp/qa-probe.json
+gemini-qa.mjs: generateContent failed
+HTTP 400 Bad Request
+{ "error": { "code": 400, "message": "API key not valid. Please pass a valid API key.", ... } }
+exit=1
+```
+
+No `/tmp/qa-probe.json` is created — the run never got as far as having a result to write.
+
+**3. stdout always gets the rubric; `--out` only adds a copy.** Proven by
+`forge-control/src/lib/gemini-qa-cli.test.ts` (stubbed `fetch` via `--import`, no key, no
+spend), which also covers the >64 KiB pipe truncation: `process.stdout.write()` is async on a
+pipe and `process.exit()` discarded the undrained tail at exactly 65,536 bytes. All output now
+goes through `fs.writeSync()` on the raw fd.
+
+Measured, on the pre-fix script, with a 140,001-byte payload:
+
+```
+node trunc-test.mjs | wc -c            ->   65536      (truncated)
+node trunc-test.mjs > file             ->  140001      (files are synchronous — no loss)
+spawnSync(node, [trunc-test.mjs])      ->  140001      (socketpair, ~200 KiB buffer — no loss)
+```
+
+The third line is why the new tests drive a real `pipe(2)` through `/bin/bash` instead of using
+`spawnSync`: a `spawnSync` harness cannot observe this bug at all and would pass either way.
+
+**Regression proof.** With the two fixed scripts reverted to their pre-fix versions
+(`git show HEAD:...`), the new suites fail 10 of 24 tests; with the fixes in place, 24 of 24
+pass, and the whole `pnpm test` suite is 167/167 (was 153/153).

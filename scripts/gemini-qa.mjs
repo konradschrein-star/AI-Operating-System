@@ -18,12 +18,52 @@
 //   1  API or processing error (invalid key, upload failure, poll timeout, unparseable
 //      or incomplete response) — HTTP status + response body reach stderr verbatim
 //   2  no API key (neither GEMINI_API_KEY nor the secret-store file)
-//   3  usage error (no argument, unknown flag, unreadable input, --out unwritable)
+//   3  usage error (no argument, unknown flag, unreadable input, unusable --out target)
+//
+// The QA JSON ALWAYS goes to stdout; --out only adds a durable copy, written afterwards.
+// A billed result must never be destroyed by a local write fault.
 
-import { readFileSync, statSync, accessSync, writeFileSync, constants } from 'node:fs';
+import { readFileSync, statSync, accessSync, writeFileSync, writeSync, constants } from 'node:fs';
 import { dirname, resolve, extname, basename } from 'node:path';
 
 const SELF = 'gemini-qa.mjs';
+
+// ---------------------------------------------------------------------------
+// Synchronous, drain-guaranteed output (R405 finding 2).
+//
+// process.stdout/stderr are ASYNCHRONOUS when they point at a pipe, and the researcher lane
+// captures this script through a pipe. process.stdout.write() only queues the bytes;
+// process.exit() then throws away whatever has not drained, truncating at the 64 KiB pipe
+// buffer. For a tool whose entire value is "here is the QA JSON you just paid ~$5 for" and
+// whose diagnostics print Gemini's response body verbatim, a silent 64 KiB cut is fatal.
+//
+// writeSync() on the raw fd is done before exit() can discard anything. EAGAIN is the
+// non-blocking-pipe "buffer full, retry" signal, not a failure; EPIPE means the reader is
+// already gone (`| head`), and there is nobody left to write to.
+// ---------------------------------------------------------------------------
+const SLEEP_SLOT = new Int32Array(new SharedArrayBuffer(4));
+
+function writeFd(fd, text) {
+  const buf = Buffer.from(text, 'utf8');
+  let offset = 0;
+  while (offset < buf.length) {
+    try {
+      offset += writeSync(fd, buf, offset, buf.length - offset);
+    } catch (err) {
+      if (err.code === 'EAGAIN') {
+        Atomics.wait(SLEEP_SLOT, 0, 0, 5); // 5 ms, synchronous: nothing else may run first
+        continue;
+      }
+      if (err.code === 'EPIPE') return; // reader closed
+      throw err;
+    }
+  }
+}
+
+/** All stdout goes through here — never process.stdout.write (see above). */
+const writeOut = (text) => writeFd(1, text);
+/** All stderr goes through here — never process.stderr.write (see above). */
+const writeErr = (text) => writeFd(2, text);
 
 // round-399 finding 1: 02-architecture.md section 6.2 documents `gemini-3.6-flash` as the
 // default, but that model does NOT accept video input — the tool's primary use case would
@@ -220,7 +260,10 @@ arguments:
 
 flags:
   --model M               Gemini model to use              (default: ${DEFAULT_MODEL})
-  --out FILE              write the QA JSON to FILE        (default: stdout)
+  --out FILE              ALSO write the QA JSON to FILE   (default: stdout only)
+                          stdout always gets the JSON first, so a billed result survives a
+                          write failure. FILE must not be a directory and must be writable;
+                          that is pre-flighted before any upload or request (exit 3).
   --prompt-extra "..."    extra caller context appended to the QA prompt,
                           e.g. "this is a 60s YouTube Short about sky photography"
                                                            (default: none)
@@ -240,15 +283,18 @@ output:
     verdict (pass|needs_work|reject), confidence, hook, pacing, audio, visual, factual,
     top_fixes, summary
   Every finding carries a timestamp in seconds from the start of the video.
+  It is written to stdout on every successful run; --out adds a copy, it does not divert.
 
 exit codes:
-  0  success — QA JSON written to stdout or --out
+  0  success — QA JSON on stdout (and in --out FILE if given)
   1  API or processing error: invalid key, upload failure, file processing FAILED,
      poll timeout (${POLL_TIMEOUT_MS / 60000} min), non-2xx response, unparseable or
      incomplete model output. HTTP status and response body are printed verbatim.
   2  missing key: neither ${ENV_VAR} nor ${SECRET_FILE}
   3  usage error: no argument, unknown flag, unreadable input file, unsupported
-     extension, or an unwritable --out target
+     extension, or an unusable --out target (a directory, unwritable, or a missing
+     parent directory). If --out fails AFTER the request, the exit is still 3 and the
+     QA JSON is already on stdout in full.
 
 examples:
   gemini-qa.mjs ./render/final.mp4
@@ -257,14 +303,14 @@ examples:
 `;
 
 function die(code, message) {
-  process.stderr.write(`${SELF}: ${message}\n`);
+  writeErr(`${SELF}: ${message}\n`);
   process.exit(code);
 }
 
 /** Non-2xx from any Gemini endpoint: status + body verbatim, exit 1. */
 async function dieHttp(step, res) {
   const body = await res.text().catch((err) => `<response body unreadable: ${err.message}>`);
-  process.stderr.write(
+  writeErr(
     `${SELF}: ${step} failed\nHTTP ${res.status} ${res.statusText}\n${body}\n`,
   );
   process.exit(1);
@@ -290,7 +336,7 @@ function parseArgs(argv) {
     const arg = argv[i];
 
     if (arg === '--help' || arg === '-h') {
-      process.stdout.write(USAGE);
+      writeOut(USAGE);
       process.exit(0);
     }
 
@@ -338,7 +384,7 @@ function resolveApiKey() {
   }
   if (fromFile !== '') return fromFile;
 
-  process.stderr.write(
+  writeErr(
     `${SELF}: no Gemini API key found.\n` +
       `  Set the environment variable ${ENV_VAR}, or write the key to the secret-store file ` +
       `${SECRET_FILE}.\n` +
@@ -376,19 +422,49 @@ function classifyInput(input) {
   return { kind: 'file', path, size: stat.size, mimeType };
 }
 
+/**
+ * R405 finding 3: accessSync(path, W_OK) succeeds on a *directory*, so `--out /tmp` used to
+ * pass this pre-flight, upload the video, poll it to ACTIVE, pay for generateContent, and only
+ * then die at writeFileSync with EISDIR. Shape is checked before permission now, on the target
+ * and on its parent. The window this pre-flight genuinely cannot cover is narrow: the target or
+ * its directory being unlinked/replaced between here and the write, or a full disk (ENOSPC).
+ * Mirrors assertOutWritable() in scripts/perplexity.mjs.
+ */
 function assertOutWritable(out) {
   if (out === null) return;
   const path = resolve(out);
+
+  let stat;
   try {
-    accessSync(path, constants.W_OK);
-    return;
+    stat = statSync(path);
   } catch (err) {
-    if (err.code !== 'ENOENT') die(3, `--out target is not writable: ${path}: ${err.message}`);
+    if (err.code !== 'ENOENT') die(3, `--out target cannot be inspected: ${path}: ${err.message}`);
   }
+
+  if (stat !== undefined) {
+    // Existing target: must be a file (a directory can never be overwritten) and writable.
+    if (stat.isDirectory()) die(3, `--out target is a directory, not a file: ${path}`);
+    try {
+      accessSync(path, constants.W_OK);
+    } catch (err) {
+      die(3, `--out target is not writable: ${path}: ${err.message}`);
+    }
+    return;
+  }
+
+  // Not there yet: the parent must exist, be a directory, and accept a new file.
+  const dir = dirname(path);
+  let dirStat;
   try {
-    accessSync(dirname(path), constants.W_OK);
+    dirStat = statSync(dir);
   } catch (err) {
-    die(3, `--out directory is not writable: ${dirname(path)}: ${err.message}`);
+    return die(3, `--out directory is not usable: ${dir}: ${err.message}`);
+  }
+  if (!dirStat.isDirectory()) die(3, `--out directory is not a directory: ${dir}`);
+  try {
+    accessSync(dir, constants.W_OK);
+  } catch (err) {
+    die(3, `--out directory is not writable: ${dir}: ${err.message}`);
   }
 }
 
@@ -580,14 +656,24 @@ if (input.kind === 'url') {
 const qa = await generateQa(apiKey, opts, media);
 const rendered = `${JSON.stringify(qa, null, 2)}\n`;
 
-if (opts.out === null) {
-  process.stdout.write(rendered);
-} else {
+// R405 finding 1: stdout FIRST, always — --out is an *additional* copy, never a replacement.
+// A 10-minute QA pass costs ~$5 (docs/tools/gemini-qa.md section 7) and cannot be recovered
+// from a failed local write, so the result leaves the process before anything that can fail.
+// This mirrors emit() in scripts/perplexity.mjs; the two tools behave identically here.
+writeOut(rendered);
+
+if (opts.out !== null) {
   const path = resolve(opts.out);
   try {
     writeFileSync(path, rendered);
   } catch (err) {
-    die(3, `writing --out ${path} failed: ${err.message}`);
+    // Exit 3, not 1: the API did its job and was paid. A caller that retries on 1 would
+    // re-buy a result it already has on stdout.
+    die(
+      3,
+      `writing --out ${path} failed: ${err.code ?? 'unknown'} ${err.message}\n` +
+        `  The QA result is NOT lost — it was already written to stdout in full.`,
+    );
   }
-  process.stderr.write(`${SELF}: QA JSON written to ${path}\n`);
+  writeErr(`${SELF}: QA JSON written to ${path} (and to stdout)\n`);
 }
