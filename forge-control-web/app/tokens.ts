@@ -75,6 +75,8 @@ export const tokens = {
   overlay: v("overlay"),
   /** Selected list row / tool-call block — see theme.css. */
   selectedBg: v("selectedBg"),
+  rowHover: v("rowHover"),
+  rowSelected: v("rowSelected"),
   toolBg: v("toolBg"),
   scrollbar: v("scrollbar"),
 } as const;

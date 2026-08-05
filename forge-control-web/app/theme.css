@@ -74,6 +74,9 @@
      #0a0a0c) at 8+ call sites, which is why selected chats and every tool
      row stayed pitch black in light mode. */
   --fg-selectedBg: #101013;
+  --fg-accent-rgb: 91, 141, 239;
+  --fg-rowHover: rgba(91, 141, 239, 0.06);
+  --fg-rowSelected: rgba(91, 141, 239, 0.12);
   --fg-toolBg: #0a0a0c;
 }
 
@@ -134,6 +137,9 @@ html[data-theme="light"] {
   /* Light: a selected row reads as a soft tint, and a tool block as a faint
      recessed panel — the dark values inverted rather than transplanted. */
   --fg-selectedBg: #e8e8e3;
+  --fg-accent-rgb: 44, 98, 212;
+  --fg-rowHover: rgba(44, 98, 212, 0.06);
+  --fg-rowSelected: rgba(44, 98, 212, 0.10);
   --fg-toolBg: #f2f2ee;
 
   /* v2.css declares its own surface scale and calls it "not theme-dependent".

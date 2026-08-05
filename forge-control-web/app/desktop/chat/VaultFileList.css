@@ -3,11 +3,12 @@
 
 .vfl-row--file:hover,
 .vfl-row--dir:hover {
-  background: var(--fg-bgGutter) !important;
+  background: var(--fg-rowHover) !important;
 }
 
+.vfl-row--selected,
 .vfl-row--selected:hover {
-  background: var(--fg-selectedBg) !important;
+  background: var(--fg-rowSelected) !important;
 }
 
 .vfl-breadcrumb-btn:hover {

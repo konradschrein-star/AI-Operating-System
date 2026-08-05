@@ -244,7 +244,7 @@ export function VaultFileList({
                       padding: "0 12px",
                       cursor: entry.isDir ? "default" : "pointer",
                       boxSizing: "border-box",
-                      background: isSelected ? tokens.selectedBg : "transparent",
+                      background: "transparent",
                       borderBottom: `1px solid ${tokens.borderSoft}`,
                       userSelect: "none",
                     }}
