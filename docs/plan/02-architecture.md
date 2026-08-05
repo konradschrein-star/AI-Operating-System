@@ -1,212 +1,273 @@
 # 02 — Architecture
 
-## Recommendation (first)
+State ownership is unchanged and remains the law of this system: **PostgreSQL owns state**
+(`projects`, `project_tasks`, `runs`), **the deterministic tick dispatches work**
+(`projectTick()` in `forge-control/src/lib/project-tick.ts`, called from the executor's
+manager loop every ~10s), **failure surfaces as blocked status + Telegram notification**
+(`queueNotification`), and **Konrad sees it on the Kanban board and heartbeats**. Every
+change below is a refinement of that machine, not a new machine.
 
-**Replace the third-party `@cubone/react-file-manager` list surface with a small,
-purpose-built, virtualized, token-native component — `VaultFileList` — that we
-fully own. Keep everything already ours (preview, search, attach, drag-out, the
-secure backend) unchanged.**
+## 1. Reviewer-round consolidation (bugs 1)
 
-That single move removes *both* root causes at once:
+### 1.1 What is wrong today (read from the code, 2026-08-05)
 
-- **Light mode** becomes correct by construction: our JSX reads `tokens.*` and any
-  component CSS reads `var(--fg-*)`, so the pane flips with `data-theme` like the
-  rest of the app. The 49-line `!important` shadow-palette in
-  `FileExplorerPanel.css` is deleted, not patched.
-- **Lag** goes away: we render a **windowed** list (row count ≪ entry count) over a
-  **bounded per-directory data model** with a small client cache, instead of
-  mounting a heavy third-party tree over an ever-growing flat array.
+`reconcileReviewer()` (project-tick.ts:290) fires once per settled reviewer task, with no
+awareness of sibling reviewers in the same round. Two reviewers in round R that both say
+NEEDS_FIXES each insert a `Fix cycle 1` builder at R+1 and a re-reviewer at R+2 — the
+first night produced exactly this, plus downstream duplicate deploy builders. A PASS is a
+no-op return, so ordering between a PASS and a sibling's NEEDS_FIXES is tick-arrival
+luck. Nothing is idempotent: a crash between the two `createTask` calls would replay one
+side on the next tick.
 
-### Reasoning
+### 1.2 Target design
 
-1. The library is the *single common cause* of both defects. Fixing light mode by
-   tokenizing its CSS would leave a fragile 49-line `!important` layer we must keep
-   in sync forever; fixing lag inside it is impossible because it has no windowing
-   and re-derives a folder's children from the full flat array we hand it.
-2. Owning the list makes "zero hardcoded colors" **structural** rather than a
-   grep-and-chase. Tokens are the default, not an override.
-3. Real directories are ≤86 entries and the API answers in 1–14 ms (see
-   `BASELINE-FINDINGS.md`), so the replacement component is genuinely small: a
-   virtualized fixed-row list, folder-descend, a breadcrumb, selection, and
-   drag-out. The hard, security-sensitive parts (preview, search, attach,
-   containment) are already ours and stay put.
-4. The blast radius is controlled: the swap is confined to the `<FileManager>`
-   list/nav/breadcrumb surface plus its CSS. Public contracts
-   (`VPS_FILE_DRAG_MIME`, `onAttach`, the `api.ts` client, `files.ts`) are unchanged.
-
-### Rejected alternatives (one line each)
-
-- **Tokenize the library's CSS + cap the rows fed to it** — keeps a brittle 49-line
-  `!important` shadow palette and can't truly virtualize; capping is hacky because
-  the library derives children by prefix from the whole flat array.
-- **Fork `@cubone/react-file-manager` to add windowing** — an unowned upstream
-  surface, slow to do well, over-scoped for a single-operator tool.
-- **Keep the library, fix only light mode, accept the lag** — fails the perf DoD
-  (D1/D2) outright.
-- **Swap in a different heavyweight file-manager lib** — trades one opaque
-  dependency and its theming assumptions for another; no better on virtualization
-  or tokens, and a larger integration risk overnight.
-
-## Components (after the change)
-
-```
-ChatSurface.tsx  (SidePanel: Live | Files tabs — UNCHANGED except it still
-  │                renders <FileExplorerPanel/> for the Files tab)
-  └── FileExplorerPanel.tsx        ← owns navigation + selection + cache state
-        ├── header (search input, selected count, copy-path, attach)  [tokens]
-        ├── VaultFileList.tsx      ← NEW: virtualized list + breadcrumb  [tokens]
-        │     (folder-descend, selection toggle, drag-out, error/empty rows)
-        ├── SearchResultsList      ← OURS today, kept; tokens audited
-        └── FilePreview            ← OURS today, kept; tokens audited
-
-forge-control/src/routes/files.ts  ← /list hardened (bounded, Cache-Control);
-                                       containment UNCHANGED
-app/theme.css + app/tokens.ts      ← new accent-alpha tint tokens (both palettes)
-```
-
-### What owns state
-
-`FileExplorerPanel` is the single owner of navigation and selection state:
-
-- `currentRoot: string | null`, `currentRel: string` — the location (null root =
-  virtual Home showing the root list). Replaces today's ambiguous `currentPath`
-  string parsing where practical; a `currentPath` virtual string may be retained
-  internally if it simplifies breadcrumb/search reuse, but the source of truth is
-  root+rel.
-- `entries: DirEntry[]` — **only the current directory's** children (bounded).
-- `cache: Map<string, { entries: DirEntry[]; ts: number }>` keyed by
-  `${root}::${rel}`, with an explicit small bound (e.g. keep ≤ 32 most-recent dirs,
-  evict oldest). This is the fix for R14 (no unbounded array).
-- `selected: DirEntry[]`, `query`, `searchResults` — as today.
-
-`VaultFileList` is **presentational + virtualization only**: given `entries`,
-`loading`, `error`, `selected`, and callbacks (`onDescend`, `onToggleSelect`,
-`onBreadcrumb`, `onDragOutPayload`), it renders a windowed list and a breadcrumb.
-It owns no fetch logic.
-
-### What dispatches work
-
-- **Navigate:** `onDescend(entry)` → panel computes new `(root, rel)` → `loadDir`.
-- **`loadDir(root, rel)`:** check `cache`; if hit, render immediately
-  (stale-while-revalidate); always issue one `api.fetchFileList(root, rel)`; on
-  success update `entries` + `cache`; on error set `error` state.
-- **Breadcrumb click:** `onBreadcrumb(index)` → derive `(root, rel)` → `loadDir`.
-- **Refresh:** delete the cache entry for `(root, rel)` → `loadDir` (forced).
-- **Search:** unchanged effect — debounced, scoped, calls `api.searchFiles`.
-- **Roots (Home):** `loadRoots()` seeds the root list (as today).
-
-The click path for D3/R15 is therefore exactly: `onDescend → loadDir → one
-/list`. No recursion, no per-navigation stat storm on the client.
-
-### Data model
+**New pure module `forge-control/src/lib/project-reconcile.ts`** (no DB, no I/O — the
+unit-testable core, precedent `account-health.ts`):
 
 ```ts
-interface DirEntry {          // one row; mirrors /api/files/list entry shape
-  name: string;
-  isDir: boolean;
-  size?: number;              // undefined for dirs
-  mtime: string;              // ISO
+export type Verdict = "PASS" | "NEEDS_FIXES" | null;
+export function parseVerdict(text: string | null): Verdict;          // LAST occurrence wins
+export function projectAcceptsWork(status: ProjectStatus): boolean;  // status === 'active'
+
+export interface ReviewerInput {
+  taskId: string; title: string; fixCycle: number;
+  settled: boolean;               // run status is 'completed'
+  lastText: string | null;
+}
+export type RoundDecision =
+  | { action: "wait" }                                   // some sibling not settled
+  | { action: "pass" }                                   // all settled, all PASS
+  | { action: "block"; reason: "no_verdict" | "max_cycles"; detail: string }
+  | { action: "fix"; cycle: number; mergedBrief: string; // one builder + one re-reviewer
+      builderChainKey: string; reviewerChainKey: string };
+export function consolidateReviewerRound(
+  round: number, reviewers: ReviewerInput[], maxFixCycles: number,
+): RoundDecision;
+export function chainKeys(round: number, cycle: number):
+  { builder: string; reviewer: string };                 // "fix:R:c" / "rereview:R:c"
+```
+
+Decision rules (in order): any unsettled sibling → `wait`; any settled sibling with
+unparseable verdict → `block(no_verdict)`; any NEEDS_FIXES with
+`max(fixCycle) >= maxFixCycles` → `block(max_cycles)`; any NEEDS_FIXES →
+`fix(cycle = max(fixCycle)+1)` with `mergedBrief` = each NEEDS_FIXES reviewer's full text
+under a `## Feedback from: <task title>` heading; else → `pass`.
+
+**Orchestration change in `reconcileSettledTasks()`:** settled reviewer tasks are grouped
+by `(project_id, round)`; for each group the tick loads ALL reviewer tasks of that
+project+round (new query `listReviewerRound(projectId, round)` in db/projects.ts,
+returning task + run settlement + last_text), maps them to `ReviewerInput[]`, and applies
+the decision:
+
+- `wait` → do nothing this tick (tasks stay `running`; the group re-evaluates next tick).
+- `pass` → mark all group reviewers `done`.
+- `block` → mark reviewers `done`, set project `blocked`, `queueNotification` with the
+  reason and the offending task title(s).
+- `fix` → **one transaction**: insert builder (round+1, `fix_cycle = cycle`,
+  `chain_key = fix:R:c`) and re-reviewer (round+2, `chain_key = rereview:R:c`), both
+  `ON CONFLICT (project_id, chain_key) DO NOTHING`; commit; THEN mark all group reviewers
+  `done`. Crash after commit but before mark-done ⇒ next tick recomputes `fix`, the
+  conflict guard absorbs the duplicate inserts, mark-done proceeds. Order matters:
+  creating tasks before marking reviewers done means `promoteReadyTasks` can never see a
+  fully-done round R with the fix round missing (which would wrongly promote round-R+100
+  phase planners past an unfinished fix cycle).
+
+Non-reviewer settled tasks keep the existing per-task path untouched.
+
+### 1.3 Data model — migration `db/migrations/0035_reviewer_chain_key.sql`
+
+```sql
+ALTER TABLE project_tasks ADD COLUMN chain_key text;   -- NULL for everything historical
+CREATE UNIQUE INDEX project_tasks_chain_key_uniq
+  ON project_tasks (project_id, chain_key) WHERE chain_key IS NOT NULL;
+```
+
+Additive-only; the running (old) engine never writes `chain_key`, so applying it live at
+deploy time is safe, and historical duplicate rows from the first night (all in
+terminal projects) are untouched because NULLs are excluded from the index. `createTask()`
+gains an optional `chain_key`; the API route does NOT expose it (only the reconciler sets
+it — agents cannot forge chain keys).
+
+## 2. Project-status gating (bug 2)
+
+`promoteReadyTasks()` gains
+`AND EXISTS (SELECT 1 FROM projects p WHERE p.id = pt.project_id AND p.status = 'active')`.
+`claimReadyTasks()`'s claim SELECT gains the same predicate (JOIN form). `spawnTaskRuns()`
+additionally filters claimed tasks through `projectAcceptsWork(task.project.status)` —
+defense in depth in code, and the thing unit tests pin down. Semantics decided:
+
+- Pause/block stops NEW promotion and NEW claiming. In-flight runs finish and reconcile
+  (bookkeeping is not billable work; the FREEZE switch precedent in `projectTick()`
+  already draws this line for fleet-pause).
+- Reconciliation MAY create fix-chain tasks for a non-active project — they are inert
+  `pending` rows under the gate, and the project resumes exactly where it stopped when
+  Konrad flips it back to `active`. This beats dropping verdict outcomes on the floor.
+
+## 3. Worktree-only policy + executor-safe deploy (bugs 3 + 4) — prompt architecture
+
+Policy lives where behavior is generated: `buildPrompt()`. Three new exported prompt
+constants (exported so unit tests assert on the same strings the engine emits):
+
+- **`WORKTREE_POLICY(liveCheckout: string)`** — appended to EVERY role prompt for
+  non-scratch projects: work only in the worktree; NEVER edit `<liveCheckout>` during
+  build phases; never `pm2 restart forge-executor`; live-endpoint verification happens
+  only via an explicitly-briefed deploy/verify task. Live checkout path derives from
+  `project.repo` (`ai-os` → `/opt/forge-ai-os`, `content-forge` → `/opt/content-forge`) —
+  mirror of `REPO_PATHS` in workspace.ts, moved/shared so there is one mapping.
+- **`REVIEWER_LIVE_CHECK(liveCheckout: string)`** — appended to reviewer prompts
+  (non-scratch): run `git -C <liveCheckout> status --porcelain`; ANY output ⇒ someone
+  hot-applied ⇒ that alone is a NEEDS_FIXES finding naming the dirty files.
+- **`DEPLOY_GUIDE`** — appended to the goal-mode architect prompt (and quoted in
+  `docs/tools/deploy-playbook.md`): executor-loaded code (`src/lib/project-tick.ts`,
+  `src/lib/cc-runner.ts`, `src/executor.ts`, `src/db/*`, `agents/*.md`) deploys via
+  `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`
+  launched detached, task ends without waiting; `pm2 restart forge-control` stays allowed
+  for API-side code. GitHub guidance (see §4) rides in the same constants.
+
+The role `.md` files in `agents/` are NOT the vehicle for this policy: they are shared
+with the interactive Task-tool subagents, which legitimately operate on live checkouts
+when Konrad asks. Project-context policy belongs in the project prompt builder.
+
+## 4. GitHub integration — helper + guidance, deliberately not engine code
+
+**`scripts/git-sync-branch.sh <worktree-dir> [--pr "<title>"]`** (bash, repo root):
+
+1. `git -C <dir> remote get-url origin` — missing ⇒ exit 3 "no origin remote".
+2. `gh auth status` — failing ⇒ exit 4 "gh not authenticated".
+3. `git -C <dir> push origin HEAD` — plain push; the string `--force` appears nowhere in
+   the file; a rejected push exits non-zero with git's stderr intact.
+4. With `--pr`: if `gh pr list --head <branch>` is empty, `gh pr create --base <base>
+   --title …` (base read from `--base` flag, default `main`); body links the project id.
+
+Guidance (in the planner/reviewer prompt branches): on a gating reviewer's PASS for a
+repo with origin, run the helper to push the branch; at project completion, the brief
+decides merge vs `--pr`. Failures are reported in the reviewer's message (visible in the
+run thread + Kanban) — a push failure never blocks the verdict.
+
+## 5. Researcher lane
+
+### 5.1 Role file `agents/researcher.md`
+
+Frontmatter per R18 (`model: claude-opus-5`, `effort: high`, tools incl. `Skill` for
+playwright/hermes browser skills — note the parser in `roleConfig()` is a plain
+`tools:` line regex, so the line stays single-line comma-separated). Mission core:
+research with real sources; steer a real browser for logged-in/web-app surfaces; every
+claim carries a citation (URL, title, access date, quoted snippet for load-bearing
+claims); output to `docs/research/*.md`; the Perplexity/gemini-qa helpers are named
+instruments with their key protocol; explicit refusals: no implementation, no task
+creation, no live-checkout edits. Installed by copying to `/root/.claude/agents/` —
+additive; `roleConfig()`'s per-role cache only misses for never-loaded roles, so a NEW
+role needs no executor restart (verified in code, project-tick.ts:84-112).
+
+### 5.2 The `researcher` prompt branch (already live, project-tick.ts:201) stays as-is
+this project only supplies the role file it reads.
+
+## 6. External service helpers (zero-dependency node ≥ 22, built-in fetch)
+
+### 6.1 Key resolution (shared pattern, ~15 lines duplicated per script — no shared lib,
+these must stay standalone-copyable): env var → `/opt/ai-os/.secrets/store/<name>` file
+(trimmed) → hard exit 2 printing BOTH locations. Never a partial run. Secret names:
+`gemini-api-key`, `perplexity-api-key` (secret-store `NAME_RE`-compatible). As of
+2026-08-05 recon NEITHER exists; R24's reminders tell Konrad exactly this.
+
+### 6.2 `scripts/gemini-qa.mjs`
+
+Flow (facts researched 2026-08-05 against ai.google.dev docs; re-verified by the phase
+scout at build time):
+
+1. Input local path → Files API resumable upload
+   (`POST https://generativelanguage.googleapis.com/upload/v1beta/files`,
+   `X-Goog-Upload-Protocol: resumable` start/upload/finalize), then poll
+   `GET /v1beta/{file.name}` until `state: ACTIVE` (timeout 10 min ⇒ hard error).
+   Input URL (incl. YouTube) → passed directly as `file_data.file_uri`.
+2. `POST /v1beta/models/{model}:generateContent` (`x-goog-api-key` header), default model
+   `gemini-3.6-flash` ($1.50/$7.50 per 1M; video ≈ 300 tok/s standard res), with
+   `generationConfig.responseMimeType = "application/json"` +
+   `generationConfig.responseSchema` = the rubric schema.
+3. Print parsed JSON; schema-invalid response ⇒ hard error with raw body (no repair loop).
+
+**QA rubric schema (the contract the video pipeline will consume later):**
+
+```jsonc
+{
+  "verdict": "pass | needs_work | reject",
+  "confidence": 0.0-1.0,
+  "hook": { "score": 0-10, "first_seconds_analysis": "...", "notes": "..." },
+  "pacing": { "score": 0-10, "dead_spots": [{ "start_s": n, "end_s": n, "note": "..." }] },
+  "audio": { "score": 0-10, "glitches": [{ "at_s": n, "type": "click|dropout|desync|clipping|other", "note": "..." }] },
+  "visual": { "score": 0-10, "artifacts": [{ "at_s": n, "type": "flicker|blur|caption_error|broken_asset|other", "note": "..." }] },
+  "factual": { "red_flags": [{ "at_s": n, "claim": "...", "concern": "..." }] },
+  "top_fixes": ["ordered, concrete, max 5"],
+  "summary": "2-3 sentences"
 }
 ```
 
-`/api/files/list` already returns `{ root, path, entries: {name,isDir,size,mtime}[] }`.
-Phase 2 adds a bounded/paginated form (see below) but keeps this entry shape, so
-the client change is additive.
+Timestamped findings are the point — a human (or later, a repair agent) must be able to
+jump to `at_s`.
 
-### Interfaces (unchanged contracts)
+### 6.3 `scripts/perplexity.mjs`
 
-- `api.ts`: `fetchFileRoots`, `fetchFileList`, `searchFiles`, `fileReadUrl`,
-  `attachExistingFile` — signatures preserved. (If Phase 2 adds pagination params,
-  extend `fetchFileList` with optional args; do not break existing callers.)
-- `VPS_FILE_DRAG_MIME` export stays (imported by `CanvasPane.tsx` and read by
-  `useAttachments`). The drag-out payload stays `JSON.stringify({root, rel})`.
-- `onAttach: ((file: UploadedFile) => void) | null` prop stays.
-- `filePreviewComponent` / `FilePreview` contract stays (rendered when a file row
-  is activated for preview).
+`ask` → `POST https://api.perplexity.ai/chat/completions` (Bearer auth), default
+`sonar-pro` ($3/$15 per 1M + per-request search fee); emit
+`{ answer, citations, search_results }` from the response fields of the same names.
+`search` → the dedicated `POST /search` endpoint (`query`, `max_results` ≤ 20) emitting
+`{ search_results }`. Exact endpoint paths re-verified by the phase scout at build time
+(docs.perplexity.ai) — API surface drift is the risk, not the design. Browser-steering
+fallback: documented manual procedure only (perplexity.ai via playwright skill), because
+scraping a bot-defended SPA is exactly the fragile artifact this system refuses to own.
 
-### Technology choices (with one-line rationale)
+## 7. Failure modes (each answers: what breaks, who notices, how)
 
-- **Virtualization: `@tanstack/react-virtual`** — headless, ~tiny, React 19
-  compatible, battle-tested; we keep full control of row markup and tokens.
-  *Fallback if a React-19 peer issue appears:* a hand-rolled fixed-row-height
-  windowed list (~40 lines: `scrollTop` + container height → visible range), zero
-  deps. Rows are uniform height, so either approach is simple. Install per R29:
-  `NODE_ENV=development pnpm add @tanstack/react-virtual --prod=false`.
-- **Client cache: a plain bounded `Map`** — boring, explicit, no library. Stale-
-  while-revalidate gives instant re-visits (R12) while staying correct on change.
-- **Tokens: existing `tokens.ts` / `theme.css`** — no new theming mechanism; add
-  accent-alpha tint tokens to both palettes (R20).
-- **Backend `/list` hardening: `fs.readdir(abs, { withFileTypes: true })`** for the
-  dir/file bit without a stat, then stat only as needed for size/mtime (or lazily);
-  cap/paginate very large listings. Rationale: kill the O(N) stat storm on huge
-  dirs while preserving the current entry shape and containment.
-
-### Backend `/list` hardening (Phase 2 detail)
-
-Current `/list` does `readdir` then `fs.stat` for **every** child inside
-`Promise.all` — fine at 86 entries (14 ms), an O(N) syscall storm at thousands.
-Plan:
-
-1. Use `fs.readdir(abs, { withFileTypes: true })` to get `isDirectory()` from the
-   `Dirent` without a per-entry stat. **Caveat:** `Dirent.isDirectory()` does not
-   follow symlinks, whereas today's `fs.stat` does. To preserve behavior for a
-   symlinked directory, `stat` only entries whose `Dirent` is a symlink
-   (`d.isSymbolicLink()`), not all entries. Document this explicitly.
-2. `size`/`mtime` still need a stat. Options, in order of preference:
-   (a) keep statting for these but only after the (cheap) type pass, and **cap** the
-   number of entries returned (e.g. `LIST_CAP`, default ~1000) with a `truncated`
-   flag + total count, so a pathological dir never stats unbounded; or
-   (b) add `limit`/`offset` query params for true pagination. Given real dirs are
-   tiny, a cap with a `truncated` signal (mirroring `/search`) is the boring,
-   sufficient choice; pagination is optional if the reviewer wants it.
-3. Sort order unchanged (dirs first, then name, `localeCompare`).
-4. Add `Cache-Control: private, max-age=<small>` (e.g. 5–10 s) to `/list` (R17) so
-   revalidation is cheap; the client cache remains the primary fast path.
-5. **Containment untouched** (R24): `resolveInRoot`, dotfile/traversal/symlink
-   guards behave identically. Only the listing/stat strategy changes.
-
-### Failure modes — and how Konrad sees it broke
-
-| Failure | Behavior (hard-error policy) | Visibility |
+| Failure | Behavior | Konrad sees |
 |---|---|---|
-| `/list` 4xx/5xx or network error | Panel sets `error` state; **no** silent `[]` | Explicit error row in the list: "couldn't load <dir> — <msg>" + a retry/refresh affordance; `console.error` |
-| `/list` truncated (huge dir) | Render the capped page, windowed | A "showing first N of M — narrow or paginate" banner (like search's truncation banner) |
-| Preview fetch fails | `FilePreview` shows "(failed to load)" (already) | In-preview message (unchanged) |
-| Search error per scope | That scope resolves to empty; others still show | Result count reflects it; no crash (unchanged) |
-| Attach/copy-path resolve fails | Skips the unresolved file (unchanged), never throws | Count/clipboard reflect only resolved files |
-| New dep peer conflict at install | Build fails loudly at Phase 3/5 gate | `pnpm build`/`tsc` non-zero; fallback = hand-rolled windowing |
+| Reviewer run dies (`failed`/`cancelled`) | Existing path: task `failed`, project `blocked` (unchanged; group consolidation only handles all-settled groups) | 🚫 notification + red Kanban card |
+| Reviewer emits no VERDICT | Group `block(no_verdict)` | 🚫 notification naming the task |
+| 3 fix cycles exhausted | Group `block(max_cycles)` | 🚫 notification |
+| Tick crashes mid-consolidation | Re-runs next tick; `chain_key` conflict guard absorbs replays; reviewers still `running`-with-settled-run so the group re-evaluates | nothing (self-heals), log line |
+| Two ticks overlap (defensive) | Claim path already `FOR UPDATE SKIP LOCKED`; consolidation inserts are conflict-guarded | nothing |
+| Project paused mid-round | In-flight runs finish; nothing new promotes/claims; resumes on `active` | Kanban status + (existing) heartbeat wording |
+| gemini/perplexity key missing | Tool exits 2 with both locations; build task queued a reminder | ⏰ reminder + tool stderr |
+| Gemini file stuck processing | 10-min poll timeout ⇒ hard error, non-zero exit | tool stderr (and phase reviewer) |
+| Push rejected (non-FF) | Helper exits non-zero, never forces; reviewer reports it | reviewer message in run thread |
+| Executor restart needed post-deploy | Detached safe-restart waits for fleet idle (≤ 12h, 45s quiet) | safe-restart log + eventual restart; deploy task's final message says it was launched |
 
-The guiding rule: **no silent fallback.** The current `loadDir`
-`.catch(() => [])` is explicitly removed (R23).
+## 8. Observability
 
-### How progress/state is observable during the build
+Unchanged surfaces, richer content: Kanban board (`GET /api/projects/board`) shows the
+single fix chain instead of duplicate chains; goal heartbeats keep firing every
+`checkin_hours`; every block path already notifies. New: consolidation logs one line per
+group decision (`[project-tick] round R reviewers → fix cycle c` etc.) — grep-able in
+executor logs; the helpers are CLIs whose stdout/stderr land in run threads.
 
-- The planning corpus (`docs/plan/**`) is committed on the work branch;
-  progress is visible on GitHub if `origin` exists.
-- Each phase is a task on the forge-control Kanban (`/api/projects/.../tasks`),
-  visible in the Live panel; rounds gate ordering.
-- Phase 1 writes measured baselines and Phase 5 writes before/after timings into
-  the corpus, so the perf claim is auditable, not asserted.
+## 9. Technology choices (one line each)
 
-## Integration points to preserve (do not break)
+- **Pure-function module + node:test** — matches `account-health.ts` precedent; no framework.
+- **Partial unique index on `chain_key`** — DB-enforced idempotency without mutating
+  historical rows; NULL-excluded so migration is additive.
+- **Prompt constants exported from project-tick.ts** — policy testable as data, single source.
+- **Bash for git helper** — it is five git/gh commands; a TS wrapper would add nothing.
+- **Zero-dep `.mjs` CLIs** — standalone-copyable, no lockfile churn, node 22 fetch suffices.
+- **`gemini-3.6-flash` default** — current video-leaderboard flash model at flash pricing;
+  flag-overridable.
+- **`sonar-pro` default** — citation-bearing search quality over base `sonar`; flag-overridable.
 
-1. `CanvasPane.tsx` imports `VPS_FILE_DRAG_MIME` from `FileExplorerPanel` — keep
-   the export in that module (re-export from `VaultFileList` if the constant moves).
-2. `useAttachments` drop handling reads the `application/x-forge-vps-file`
-   dataTransfer payload — keep the payload shape `{root, rel}` (today: the result of
-   `splitVirtualPath`). The new list can set it directly from `(root, rel)` without
-   the virtual-path round-trip.
-3. `ChatSurface` renders `<FileExplorerPanel onAttach={…}/>` — keep this signature;
-   the swap is internal to the panel.
-4. `memo(FileExplorerPanelImpl)` — keep the memo; it still shields the tree from
-   chat re-renders.
+## 10. Rejected alternatives (one line each)
 
-## Open decisions left to the phase planners (bounded)
-
-- Whether to keep an internal `currentPath` virtual string for breadcrumb/search
-  reuse or fully switch to `(root, rel)` — either is fine as long as R2/R3/R8 hold.
-- `@tanstack/react-virtual` vs hand-rolled windowing — planner picks based on a
-  quick React-19 peer check; both satisfy R13. Prefer the library unless it fights
-  the peer set.
-- `/list` cap vs true pagination — cap+`truncated` is the default; pagination is an
-  allowed upgrade if the reviewer wants it (R16).
+- **Advisory lock / serialize whole tick** — tick is already effectively serial; the real
+  bug is group-blindness, not concurrency.
+- **Forbid parallel reviewers in prompts** — prompt-only guarantees are what just failed;
+  fix the reconciler, keep parallel review legal.
+- **Unique index on `(project_id, round, role, fix_cycle)`** — collides with historical
+  duplicate rows and overloads `fix_cycle` semantics; a dedicated `chain_key` is explicit.
+- **Cancel in-flight runs on pause** — destructive semantics hiding behind a status flip;
+  cancellation stays an explicit per-run act.
+- **Engine-side automatic git push on PASS** — puts shelling-to-git (auth, network, hooks)
+  inside the tick's failure domain for a cosmetic feature; guidance + helper keeps the
+  tick pure bookkeeping.
+- **Researcher policy inside agents/*.md role files** — those files are shared with
+  interactive subagents that legitimately touch live checkouts; project policy belongs in
+  buildPrompt().
+- **npm SDKs (@google/genai etc.) for the helpers** — dependency + lockfile churn for two
+  HTTP calls; raw fetch is smaller than the SDK's README.
+- **Building Perplexity browser scraping** — fragile, bot-defended, unmaintainable;
+  documented manual fallback only.
