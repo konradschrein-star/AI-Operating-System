@@ -66,6 +66,9 @@ export interface ProjectTask {
   run_id: string | null;
   fix_cycle: number;
   tier: TaskTier | null;
+  /** Manual/automatic retries spent on this task (migration 0037). Capped by
+   *  MAX_TASK_ATTEMPTS unless an operator forces it. */
+  attempt: number;
   created_at: string;
   updated_at: string;
 }
@@ -77,7 +80,7 @@ export interface ProjectTaskWithProject extends ProjectTask {
 const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, work_branch,
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
-  run_id::text, fix_cycle, tier, created_at::text, updated_at::text`;
+  run_id::text, fix_cycle, tier, attempt, created_at::text, updated_at::text`;
 
 export async function listProjects(): Promise<Project[]> {
   const r = await pool.query<Project>(
@@ -179,7 +182,8 @@ export async function listActiveTasks(): Promise<ProjectTaskWithProject[]> {
   const r = await pool.query<ProjectTaskWithProject>(
     `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
             pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-            pt.created_at::text, pt.updated_at::text, p.name AS project_name
+            pt.attempt, pt.created_at::text, pt.updated_at::text,
+            p.name AS project_name
        FROM project_tasks pt
        JOIN projects p ON p.id = pt.project_id
       WHERE p.status IN ('active','blocked')
@@ -465,6 +469,87 @@ export async function setTaskStatus(
   );
 }
 
+/** Automatic-retry ceiling (E3). Two retries, then the task stays put until
+ *  an operator forces it — an infinitely-retried task is just a slower way of
+ *  burning money on the same failure. */
+export const MAX_TASK_ATTEMPTS = 2;
+
+export type RetryOutcome =
+  | { ok: true; task: ProjectTask; project_resumed: boolean }
+  | { ok: false; reason: "not_found" | "not_retryable" | "attempts_exhausted"; task: ProjectTask | null };
+
+/** failed|blocked -> ready: drop the dead run reference, count the attempt,
+ *  and un-block the project so the tick can actually pick it up again (after
+ *  Step 5 a 'blocked' project is skipped by promote/claim, so leaving the
+ *  project status alone would make retry a silent no-op).
+ *
+ *  `force` is the operator override for the attempt cap — reachable from the
+ *  API, never from the tick. */
+export async function retryTask(
+  id: string,
+  opts: { force?: boolean } = {},
+): Promise<RetryOutcome> {
+  const task = await getTask(id);
+  if (!task) return { ok: false, reason: "not_found", task: null };
+  if (task.status !== "failed" && task.status !== "blocked") {
+    return { ok: false, reason: "not_retryable", task };
+  }
+  if (task.attempt >= MAX_TASK_ATTEMPTS && !opts.force) {
+    return { ok: false, reason: "attempts_exhausted", task };
+  }
+
+  const r = await pool.query<ProjectTask>(
+    `UPDATE project_tasks
+        SET status = 'ready', run_id = NULL, attempt = attempt + 1, updated_at = now()
+      WHERE id = $1 AND status IN ('failed','blocked')
+      RETURNING ${TASK_COLS}`,
+    [id],
+  );
+  if (!r.rows[0]) {
+    // Lost a race with the tick between the read and the write.
+    return { ok: false, reason: "not_retryable", task };
+  }
+
+  const p = await pool.query(
+    `UPDATE projects SET status = 'active', updated_at = now()
+      WHERE id = $1 AND status = 'blocked'`,
+    [task.project_id],
+  );
+  return { ok: true, task: r.rows[0], project_resumed: (p.rowCount ?? 0) > 0 };
+}
+
+/** Retry every failed task in the EARLIEST round that has one. Later rounds
+ *  are left alone deliberately: they are gated behind this round anyway, and
+ *  re-running them before the blocker is fixed just burns tokens. */
+export async function unwedgeProject(
+  projectId: string,
+  opts: { force?: boolean } = {},
+): Promise<{ round: number | null; retried: ProjectTask[]; skipped: ProjectTask[] }> {
+  const blocking = await pool.query<{ round: number }>(
+    `SELECT MIN(round)::int AS round FROM project_tasks
+      WHERE project_id = $1 AND status IN ('failed','blocked')`,
+    [projectId],
+  );
+  const round = blocking.rows[0]?.round ?? null;
+  if (round === null) return { round: null, retried: [], skipped: [] };
+
+  const candidates = await pool.query<ProjectTask>(
+    `SELECT ${TASK_COLS} FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND status IN ('failed','blocked')
+      ORDER BY created_at ASC`,
+    [projectId, round],
+  );
+
+  const retried: ProjectTask[] = [];
+  const skipped: ProjectTask[] = [];
+  for (const c of candidates.rows) {
+    const out = await retryTask(c.id, opts);
+    if (out.ok) retried.push(out.task);
+    else skipped.push(c);
+  }
+  return { round, retried, skipped };
+}
+
 export async function bumpFixCycle(id: string): Promise<number> {
   const r = await pool.query<{ fix_cycle: number }>(
     `UPDATE project_tasks SET fix_cycle = fix_cycle + 1, updated_at = now()
@@ -507,7 +592,7 @@ export async function listSettledRunningTasks(): Promise<
   >(
     `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
             pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-            pt.created_at::text, pt.updated_at::text,
+            pt.attempt, pt.created_at::text, pt.updated_at::text,
             r.status AS run_status,
             (SELECT elem->>'content'
                FROM jsonb_array_elements(r.thread) elem
