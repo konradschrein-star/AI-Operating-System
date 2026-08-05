@@ -25,6 +25,7 @@ const ROLES = new Set<TaskRole>([
   "architect",
   "planner",
   "scout",
+  "researcher",
   "builder",
   "reviewer",
 ]);
@@ -35,7 +36,7 @@ const STATUSES = new Set<ProjectStatus>([
   "blocked",
   "cancelled",
 ]);
-const TIERS = new Set<TaskTier>(["fast", "standard", "flagship"]);
+const TIERS = new Set<TaskTier>(["fast", "junior", "standard", "flagship"]);
 
 /* Unified board feed — every task across every active/blocked project,
  * for the Kanban UI. Registered before /:id so "board" doesn't get parsed

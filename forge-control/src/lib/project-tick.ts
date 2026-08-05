@@ -55,10 +55,14 @@ let lastPauseLogAt = 0;
  *  assigned one (see docs/superpowers/specs/2026-07-11-manager-orchestration-
  *  model-tiering-design.md). Overrides the role file's static model:/effort:
  *  when a task carries a tier. */
+/** Re-pinned 2026-08-05 (Konrad): "standard should be Opus 5; Sonnet stays
+ *  for junior-engineer work like tests and boilerplate." Both fable-5 and
+ *  sonnet-5 verified live via `claude --model X -p` before pinning. */
 const TIER_MODELS: Record<TaskTier, { model: string; effort: string }> = {
   fast: { model: "claude-haiku-4-5-20251001", effort: "medium" },
-  standard: { model: "claude-sonnet-4-6", effort: "high" },
-  flagship: { model: "claude-opus-4-8", effort: "high" },
+  junior: { model: "claude-sonnet-5", effort: "high" },
+  standard: { model: "claude-opus-5", effort: "high" },
+  flagship: { model: "claude-fable-5", effort: "high" },
 };
 
 interface RoleConfig {
@@ -119,9 +123,11 @@ function taskCurl(projectId: string): string {
 }
 
 const TIER_GUIDE =
-  `Each task's "tier" picks its model: "fast" (Haiku) for straightforward, well-specified work, ` +
-  `"standard" (Sonnet) for most tasks, "flagship" (Opus) only when a task genuinely needs the strongest ` +
-  `model. Omit tier to fall back to the default. Don't over-use flagship — it's the expensive one.`;
+  `Each task's "tier" picks its model: "fast" (Haiku) for trivial mechanical work, "junior" (Sonnet) for ` +
+  `well-specified junior-engineer work — writing tests, boilerplate, repetitive edits from a clear spec — ` +
+  `"standard" (Opus) for most implementation and review work, "flagship" (Fable) only when a task genuinely ` +
+  `needs the strongest model. Omit tier to fall back to the role default (Opus). Flagship is the expensive ` +
+  `one — reserve it for design-heavy or genuinely hard tasks.`;
 
 const PARALLELISM_GUIDE =
   `Tasks in the SAME round run in PARALLEL inside the SAME worktree — only put tasks in one round when they ` +
@@ -190,6 +196,15 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `the space beyond that belongs to fix cycles and the next phase.\n` +
       `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n` +
       `Do not write implementation code yourself — plan, then fan out.`
+    );
+  }
+  if (task.role === "researcher") {
+    return (
+      header +
+      `\nDeep research only — no implementation, no task creation. Use every research surface you have ` +
+      `(web search/fetch, browser automation skills, external AI services named in your brief). Write your ` +
+      `findings to docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that ` +
+      `one file. Findings must be concrete enough that a planner can act on them without repeating the research.`
     );
   }
   if (task.role === "scout") {

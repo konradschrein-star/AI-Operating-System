@@ -28,12 +28,18 @@ pool.on("error", (e) => console.error("[projects pool]", e.message));
 
 export type ProjectRepo = "ai-os" | "content-forge" | "scratch";
 export type ProjectStatus = "active" | "paused" | "done" | "blocked" | "cancelled";
-export type TaskRole = "architect" | "planner" | "scout" | "builder" | "reviewer";
+export type TaskRole =
+  | "architect"
+  | "planner"
+  | "scout"
+  | "researcher"
+  | "builder"
+  | "reviewer";
 export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
 /** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
  *  the role file's static model:/effort: default. Only architect and
  *  builder tasks are ever assigned one. */
-export type TaskTier = "fast" | "standard" | "flagship";
+export type TaskTier = "fast" | "junior" | "standard" | "flagship";
 
 export interface Project {
   id: string;
