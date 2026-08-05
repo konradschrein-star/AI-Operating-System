@@ -389,12 +389,21 @@ export async function listGoalProgress(): Promise<GoalProgress[]> {
 
 /** Promote every 'pending' task whose project has no earlier-round task
  *  still outstanding to 'ready'. Single set-based query across all
- *  projects — this is the "manager" for stage sequencing, run every tick. */
+ *  projects — this is the "manager" for stage sequencing, run every tick.
+ *
+ *  Only 'active' projects advance. Neither this query nor claimReadyTasks
+ *  used to look at the project row at all, so `paused` was decoration: the
+ *  two projects Konrad paused on 2026-07-30 would have resumed the moment
+ *  anyone unwedged them (E7). Pause, blocked and cancelled all now mean what
+ *  they say — a project has to be explicitly returned to 'active' to move. */
 export async function promoteReadyTasks(): Promise<number> {
   const r = await pool.query(
     `UPDATE project_tasks pt
         SET status = 'ready', updated_at = now()
-      WHERE pt.status = 'pending'
+       FROM projects p
+      WHERE p.id = pt.project_id
+        AND p.status = 'active'
+        AND pt.status = 'pending'
         AND NOT EXISTS (
           SELECT 1 FROM project_tasks earlier
            WHERE earlier.project_id = pt.project_id
@@ -408,7 +417,12 @@ export async function promoteReadyTasks(): Promise<number> {
 
 /** Claim every 'ready' task with no run yet (FOR UPDATE SKIP LOCKED so a
  *  second tick overlap never double-fires one). Caller creates the `runs`
- *  row per task and then calls attachRun(). */
+ *  row per task and then calls attachRun().
+ *
+ *  Joined to projects and filtered to 'active' for the same reason as
+ *  promoteReadyTasks (E7): pausing a project must actually stop it spending
+ *  money. `FOR UPDATE OF pt` locks only the task rows — locking the project
+ *  row too would let one claimed task hide the rest of its project's work. */
 export async function claimReadyTasks(): Promise<
   Array<ProjectTask & { project: Project }>
 > {
@@ -416,11 +430,17 @@ export async function claimReadyTasks(): Promise<
   try {
     await client.query("BEGIN");
     const r = await client.query<ProjectTask>(
-      `SELECT ${TASK_COLS} FROM project_tasks
-        WHERE status = 'ready' AND run_id IS NULL
-        ORDER BY round ASC, created_at ASC
+      `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
+              pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
+              pt.attempt, pt.created_at::text, pt.updated_at::text
+         FROM project_tasks pt
+         JOIN projects p ON p.id = pt.project_id
+        WHERE pt.status = 'ready'
+          AND pt.run_id IS NULL
+          AND p.status = 'active'
+        ORDER BY pt.round ASC, pt.created_at ASC
         LIMIT 32
-        FOR UPDATE SKIP LOCKED`,
+        FOR UPDATE OF pt SKIP LOCKED`,
     );
     if (r.rows.length === 0) {
       await client.query("COMMIT");
