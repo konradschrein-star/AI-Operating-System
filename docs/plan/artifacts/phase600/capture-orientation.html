@@ -1,0 +1,459 @@
+<!doctype html>
+  <html data-theme="dark">
+  <head>
+  <meta charset="utf-8">
+  <style>*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  color: #ededee;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.006em;
+}
+
+body {
+  overscroll-behavior-y: contain;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: 0;
+}
+
+.ms {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  direction: ltr;
+  font-variation-settings: 'FILL' 0, 'wght' 200, 'opsz' 20;
+  -webkit-font-smoothing: antialiased;
+}
+
+.scroll::-webkit-scrollbar {
+  display: none;
+}
+.scroll {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* v1.6 phase 2: thin accent scrollbar moved to v2.css (global ::-webkit-scrollbar
+ * rules). .scroll-tinted no longer needs its own block. */
+
+.slidein {
+  animation: slidein 0.24s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes slidein {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* v3 phase 400 (U9/NFU2): chat rail hover reveal, CSS-only. The close ✕ and
+ * the age stamp share one slot; hovering swaps their opacity. This replaces a
+ * React `useState(hover)` per row — the source of the sidebar lag. Opacity
+ * only: every colour still comes from app/tokens.ts (NFU1). */
+.chat-row .chat-row-x {
+  opacity: 0;
+}
+.chat-row:hover .chat-row-x,
+.chat-row:focus-within .chat-row-x {
+  opacity: 1;
+}
+.chat-row:hover .chat-row-age,
+.chat-row:focus-within .chat-row-age {
+  opacity: 0;
+}
+
+/* v3 phase 500 (U17/NFU2): team-panel hover reveal, CSS-only — the same
+ * proven pattern as `.chat-row` above. The stop/✕ controls are mounted in
+ * EVERY row at all times and occupy a fixed-width slot, so revealing them
+ * costs one opacity change: no React hover state, no re-render, no reflow.
+ * `:focus-within` keeps them reachable by keyboard. Opacity only: every
+ * colour still comes from app/tokens.ts (NFU1). */
+.team-row .team-row-controls {
+  opacity: 0;
+}
+.team-row:hover .team-row-controls,
+.team-row:focus-within .team-row-controls {
+  opacity: 1;
+}
+
+/* v3 phase 600 (U20/NFU8): in-chat drill-in navigation. CSS only — there is
+ * no animation dependency in this app and none is being added; transform and
+ * opacity are the only properties touched, so the browser composites both and
+ * neither costs a layout. No colour appears here: every colour on the back
+ * button comes from app/tokens.ts at the call site (NFU1). No React hover
+ * state is involved, which is the same NFU2 bargain `.chat-row` and
+ * `.team-row` above already make.
+ *
+ * `.nav-drill` is the "feel the context switch" half of U20: the drilled view
+ * enters from the right, because you went deeper. It replays only when the
+ * frame on top of the stack changes (ChatSurface keys the container on
+ * `frameKey(navStack)`), so re-renders inside a view do not re-animate it. */
+@keyframes navdrill {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.nav-drill {
+  animation: navdrill 0.2s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
+.nav-back {
+  transition:
+    transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1),
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+}
+.nav-back:hover,
+.nav-back:focus-visible {
+  transform: translateX(-2px);
+}
+.nav-back .nav-back-arrow {
+  display: inline-block;
+  transition: transform 0.16s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.nav-back:hover .nav-back-arrow,
+.nav-back:focus-visible .nav-back-arrow {
+  transform: translateX(-3px);
+}
+
+/* Motion is a nicety; legibility is the product. Anyone who has asked the OS
+ * to stop moving things gets the same navigation with none of it. */
+@media (prefers-reduced-motion: reduce) {
+  .nav-drill {
+    animation: none;
+  }
+  .nav-back,
+  .nav-back .nav-back-arrow {
+    transition: none;
+  }
+  .nav-back:hover,
+  .nav-back:focus-visible,
+  .nav-back:hover .nav-back-arrow,
+  .nav-back:focus-visible .nav-back-arrow {
+    transform: none;
+  }
+}
+
+/* iOS safe-area padding for tab bar bottom. */
+.safe-bottom {
+  padding-bottom: max(30px, env(safe-area-inset-bottom, 30px));
+}
+</style>
+  <style>/**
+ * Runtime theming.
+ *
+ * Every design token is a CSS custom property so the whole UI can flip between
+ * dark and light at runtime without touching the ~1150 `tokens.*` call sites in
+ * the components (app/tokens.ts maps each token to `var(--fg-*)`).
+ *
+ * Dark is the default and lives on :root, so anything rendered before the theme
+ * script runs is already correct. Light is opt-in via [data-theme="light"] on
+ * <html> — set by ThemeToggle and pre-applied by the inline script in layout.tsx
+ * so there's no flash of dark on load.
+ *
+ * Light is NOT a naive inversion: pure-white on pure-black inverts to eye-searing
+ * white, and the dark palette's saturated status colours wash out on light
+ * backgrounds. Surfaces use a warm off-white ramp and the status hues are
+ * darkened to keep contrast legible in direct sunlight, which is the actual
+ * use case Konrad asked for.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* surfaces */
+  --fg-bgBody: #000;
+  --fg-bgTabBar: #08080a;
+  --fg-bgCard: #0b0b0c;
+  --fg-bgGutter: #0c0c0e;
+
+  /* borders */
+  --fg-border: #1c1c1f;
+  --fg-borderSoft: #161617;
+  --fg-borderDivider: #141416;
+  --fg-borderEmphasis: #222226;
+
+  /* text */
+  --fg-text: #ededee;
+  --fg-textHi: #f4f4f5;
+  --fg-textSoft: #e4e4e6;
+  --fg-textLabel: #cacad0;
+  --fg-textBody: #b8b8be;
+  --fg-textSecondary: #9a9aa0;
+  --fg-textMuted: #8a8a90;
+  --fg-textMuted2: #6a6a70;
+  --fg-textFaint: #56565c;
+  --fg-textGhost: #48484e;
+
+  /* accent + status */
+  --fg-accent: #5b8def;
+  --fg-ok: #57a06b;
+  --fg-bleed: #cf6360;
+  --fg-stuck: #c07ad0;
+  --fg-warn: #d8c24a;
+  --fg-info: #4fb0c4;
+  --fg-decide: #9b8cf0;
+
+  /* tinted status surfaces */
+  --fg-freezeBgOk: #0a0f0b;
+  --fg-freezeBgWarn: #140e08;
+  --fg-freezeBorderOk: #1c2a20;
+  --fg-freezeBorderWarn: #3a2a1f;
+  --fg-primaryActionBg: #0e1320;
+  --fg-okActionBg: #0c130e;
+  --fg-okActionBorder: #2a3a2e;
+  --fg-dangerActionBg: #130c0c;
+  --fg-dangerActionBorder: #2a1f1f;
+  --fg-invariantBg: #0b0908;
+  --fg-invariantBorder: #2a1f1f;
+
+  /* shared, theme-aware chrome */
+  --fg-scrollbar: #2a2a2e;
+  --fg-overlay: rgba(0, 0, 0, 0.6);
+  --fg-inputBg: #0b0b0c;
+  /* Selected list row + tool-call block. These were hardcoded (#101013 /
+     #0a0a0c) at 8+ call sites, which is why selected chats and every tool
+     row stayed pitch black in light mode. */
+  --fg-selectedBg: #101013;
+  --fg-accent-rgb: 91, 141, 239;
+  --fg-rowHover: rgba(91, 141, 239, 0.06);
+  --fg-rowSelected: rgba(91, 141, 239, 0.12);
+  --fg-toolBg: #0a0a0c;
+}
+
+/* html[...] rather than a bare attribute selector: this must outrank v2.css's
+   :root defaults no matter what order the bundler emits the stylesheets in. */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* Warm off-white ramp — bright enough for sunlight, not a white-out. */
+  --fg-bgBody: #f7f7f5;
+  --fg-bgTabBar: #eeeeec;
+  --fg-bgCard: #ffffff;
+  --fg-bgGutter: #f1f1ef;
+
+  /* Borders must be visibly darker than surfaces or the layout dissolves. */
+  --fg-border: #d6d6d2;
+  --fg-borderSoft: #e2e2de;
+  --fg-borderDivider: #e7e7e3;
+  --fg-borderEmphasis: #c2c2bd;
+
+  /* Text ramp mirrors the dark one: high→ghost, just inverted in luminance. */
+  --fg-text: #17171a;
+  --fg-textHi: #0b0b0d;
+  --fg-textSoft: #232327;
+  --fg-textLabel: #3a3a40;
+  --fg-textBody: #4a4a52;
+  --fg-textSecondary: #5c5c64;
+  --fg-textMuted: #6c6c74;
+  --fg-textMuted2: #7e7e86;
+  --fg-textFaint: #90909a;
+  --fg-textGhost: #a6a6ae;
+
+  /* Darkened so they stay legible against white. */
+  --fg-accent: #2c62d4;
+  --fg-ok: #2f7a46;
+  --fg-bleed: #b23c39;
+  --fg-stuck: #8e46a0;
+  --fg-warn: #8a7513;
+  --fg-info: #1f7f93;
+  --fg-decide: #6152c8;
+
+  /* Tints become pale washes instead of near-black. */
+  --fg-freezeBgOk: #eef6f0;
+  --fg-freezeBgWarn: #fbf3e8;
+  --fg-freezeBorderOk: #c5ddcc;
+  --fg-freezeBorderWarn: #e6d2b4;
+  --fg-primaryActionBg: #e8effc;
+  --fg-okActionBg: #ecf5ee;
+  --fg-okActionBorder: #c2dccb;
+  --fg-dangerActionBg: #fbeceb;
+  --fg-dangerActionBorder: #e8c6c4;
+  --fg-invariantBg: #faf3f2;
+  --fg-invariantBorder: #e8c6c4;
+
+  --fg-scrollbar: #c9c9c4;
+  --fg-overlay: rgba(0, 0, 0, 0.35);
+  --fg-inputBg: #ffffff;
+  /* Light: a selected row reads as a soft tint, and a tool block as a faint
+     recessed panel — the dark values inverted rather than transplanted. */
+  --fg-selectedBg: #e8e8e3;
+  --fg-accent-rgb: 44, 98, 212;
+  --fg-rowHover: rgba(44, 98, 212, 0.06);
+  --fg-rowSelected: rgba(44, 98, 212, 0.10);
+  --fg-toolBg: #f2f2ee;
+
+  /* v2.css declares its own surface scale and calls it "not theme-dependent".
+     It is now. Same variable names, light values — otherwise every v2-styled
+     component stays black while the rest of the app turns white. Borders flip
+     from white-alpha to black-alpha or they vanish entirely on light. */
+  --v2-bg: #f7f7f5;
+  --v2-surface-1: #ffffff;
+  --v2-surface-2: #f2f2f0;
+  --v2-surface-3: #e9e9e6;
+  --v2-surface-4: #dededa;
+
+  --v2-border-0: rgba(0, 0, 0, 0.06);
+  --v2-border-1: rgba(0, 0, 0, 0.11);
+  --v2-border-2: rgba(0, 0, 0, 0.18);
+  --v2-border-3: rgba(0, 0, 0, 0.26);
+
+  --v2-text-1: #17171a;
+  --v2-text-2: #5f5870;
+  --v2-text-3: #8a8496;
+
+  --v2-accent: #2c62d4;
+  --v2-accent-rgb: 44, 98, 212;
+  --v2-accent-dim: #1e4bb0;
+  --v2-accent-secondary: #4d7ee0;
+
+  --v2-success: #0f9186;
+  --v2-success-rgb: 15, 145, 134;
+  --v2-warning: #b8560f;
+  --v2-warning-rgb: 184, 86, 15;
+  --v2-error-soft: #c2564d;
+  --v2-error: #c62f2f;
+  --v2-error-rgb: 198, 47, 47;
+  --v2-muted: #7a7488;
+}
+
+/* Body follows the theme rather than the hardcoded black in globals.css. */
+html,
+body {
+  background: var(--fg-bgBody);
+  color: var(--fg-text);
+}
+
+/* Native controls (select dropdowns, checkboxes, date pickers) inherit the
+   OS palette unless told otherwise — this is what made the Grid/List dropdown
+   render white-on-white in dark mode. color-scheme above fixes the popup
+   chrome; these rules fix the trigger itself. */
+select,
+input,
+textarea,
+button {
+  color-scheme: inherit;
+}
+
+select option {
+  background: var(--fg-bgCard);
+  color: var(--fg-text);
+}
+</style>
+  <style>
+    body { background: var(--fg-bgBody); color: var(--fg-text); padding: 0; }
+    .shot { width: 1000px; background: var(--fg-bgCard); }
+    .case { border-bottom: 1px solid var(--fg-border); }
+    .caption {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 10px; letter-spacing: 0.06em;
+      color: var(--fg-textFaint); padding: 10px 14px 4px;
+    }
+  </style>
+  </head>
+  <body>
+  <div id="orientation" class="shot"><div class="case"><div class="caption">session · running · task from the team tree · phase derived from round 603</div><div data-orientation-strip="true" data-orientation-degraded="" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-info)">session</span><span data-agent-role="true" style="flex:none;color:var(--fg-accent)">builder</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="claude-sonnet-5" style="flex:none;color:var(--fg-textFaint)">sonnet-5</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-orientation-task="true" title="603 · OrientationStrip + story-so-far digest in the drilled view" style="flex:1;min-width:0;color:var(--fg-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">603 · OrientationStrip + story-so-far digest in the drilled view</span><span data-orientation-round="true" title="task builder · round 603 · running" style="flex:none;color:var(--fg-textMuted2)">round 603</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">currently:</span><span data-orientation-activity="tool_call" title="calling Bash
+
+2026-08-06T09:14:02.113Z" style="flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden"><span style="flex:none;color:var(--fg-accent)">calling Bash</span></span><span data-orientation-plan="600" title="derived from round 603: rounds 600–699 are phase 600" style="flex:none;color:var(--fg-textMuted)">phase 600 → 700</span></div></div></div>
+<div class="case"><div class="caption">session · SETTLED — the same activity reads 'ended:', never 'currently:'</div><div data-orientation-strip="true" data-orientation-degraded="" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-info)">session</span><span data-agent-role="true" style="flex:none;color:var(--fg-decide)">architect</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="claude-fable-5" style="flex:none;color:var(--fg-textFaint)">fable-5</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-orientation-task="true" title="603 · OrientationStrip + story-so-far digest in the drilled view" style="flex:1;min-width:0;color:var(--fg-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">603 · OrientationStrip + story-so-far digest in the drilled view</span><span data-orientation-round="true" title="task builder · round 603 · running" style="flex:none;color:var(--fg-textMuted2)">round 603</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">ended:</span><span data-orientation-activity="assistant_text" title="Round 0 complete. The waterfall plan is committed and the pipeline is seeded.
+
+**What shipped** — commit `9442d75` on `project/8ea0cc08` (pushed to origin): `do
+
+2026-08-05T07:02:25.964Z" style="flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden"><span style="flex:none;color:var(--fg-accent)">writing</span><span style="flex:1;min-width:0;color:var(--fg-textMuted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Round 0 complete. The waterfall plan is committed and the pipeline is seeded. **What shipped** — commit `9442d75` on `project/8ea0…</span></span><span data-orientation-plan="600" title="derived from round 603: rounds 600–699 are phase 600" style="flex:none;color:var(--fg-textMuted)">phase 600 → 700</span></div></div></div>
+<div class="case"><div class="caption">sub-agent · its OWN latest_activity, and no task (sub-agents carry none)</div><div data-orientation-strip="true" data-orientation-degraded="no-task" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-textMuted2)">sub-agent</span><span data-agent-role="true" style="flex:none;color:var(--fg-textMuted)">Explore</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="claude-haiku-4-5-20251001" style="flex:none;color:var(--fg-textFaint)">haiku-4-5</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-orientation-task="fallback" title="Recon chat Bash block rendering
+
+(this is the run&#x27;s own description — no project task on this node)" style="flex:1;min-width:0;color:var(--fg-textLabel);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Recon chat Bash block rendering</span><span data-orientation-missing="true" class="mono" title="no project task on this node — a round is never guessed" style="color:var(--fg-textGhost);font-style:italic">round —</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">ended:</span><span data-orientation-activity="tool_result" title="12 matches in app/desktop/chat
+
+2026-08-05T06:58:41.002Z" style="flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden"><span style="flex:none;color:var(--fg-accent)">Grep returned</span><span style="flex:1;min-width:0;color:var(--fg-textMuted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">12 matches in app/desktop/chat</span></span><span data-orientation-missing="true" class="mono" title="no project task on this node — no phase is inferred" style="color:var(--fg-textGhost);font-style:italic">no project task on this node</span></div></div></div>
+<div class="case"><div class="caption">DEGRADED · team panel closed — nothing is polling, so nothing is claimed</div><div data-orientation-strip="true" data-orientation-degraded="team-not-polling" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-info)">session</span><span data-agent-role="true" style="flex:none;color:var(--fg-decide)">architect</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="claude-fable-5" style="flex:none;color:var(--fg-textFaint)">fable-5</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-orientation-task="fallback" title="operator-visibility · Plan: operator-visibility
+
+(this is the run&#x27;s own description — team panel closed — no task or plan position)" style="flex:1;min-width:0;color:var(--fg-textLabel);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">operator-visibility · Plan: operator-visibility</span><span data-orientation-missing="true" class="mono" title="team panel closed — no task or plan position — a round is never guessed" style="color:var(--fg-textGhost);font-style:italic">round —</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">ended:</span><span data-orientation-activity="assistant_text" title="Round 0 complete. The waterfall plan is committed and the pipeline is seeded.
+
+**What shipped** — commit `9442d75` on `project/8ea0cc08` (pushed to origin): `do
+
+2026-08-05T07:02:25.964Z" style="flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden"><span style="flex:none;color:var(--fg-accent)">writing</span><span style="flex:1;min-width:0;color:var(--fg-textMuted2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Round 0 complete. The waterfall plan is committed and the pipeline is seeded. **What shipped** — commit `9442d75` on `project/8ea0…</span></span><span data-orientation-missing="true" class="mono" title="team panel closed — no task or plan position — no phase is inferred" style="color:var(--fg-textGhost);font-style:italic">team panel closed — no task or plan position</span></div></div></div>
+<div class="case"><div class="caption">DEGRADED · team request failed</div><div data-orientation-strip="true" data-orientation-degraded="team-error" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-info)">session</span><span data-agent-role="true" style="flex:none;color:var(--fg-decide)">architect</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="claude-fable-5" style="flex:none;color:var(--fg-textFaint)">fable-5</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-orientation-task="fallback" title="operator-visibility · Plan: operator-visibility
+
+(this is the run&#x27;s own description — team unavailable — no task or plan position)" style="flex:1;min-width:0;color:var(--fg-textLabel);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">operator-visibility · Plan: operator-visibility</span><span data-orientation-missing="true" class="mono" title="team unavailable — no task or plan position — a round is never guessed" style="color:var(--fg-textGhost);font-style:italic">round —</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">currently:</span><span data-orientation-activity="tool_call" title="calling Bash
+
+2026-08-06T09:14:02.113Z" style="flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden"><span style="flex:none;color:var(--fg-accent)">calling Bash</span></span><span data-orientation-missing="true" class="mono" title="team unavailable — no task or plan position — no phase is inferred" style="color:var(--fg-textGhost);font-style:italic">team unavailable — no task or plan position</span></div></div></div>
+<div class="case"><div class="caption">DEGRADED · the live tree does not contain this node</div><div data-orientation-strip="true" data-orientation-degraded="node-absent" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-info)">session</span><span data-agent-role="true" style="flex:none;color:var(--fg-decide)">architect</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="claude-fable-5" style="flex:none;color:var(--fg-textFaint)">fable-5</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-orientation-task="fallback" title="operator-visibility · Plan: operator-visibility
+
+(this is the run&#x27;s own description — not in the team tree — no task or plan position)" style="flex:1;min-width:0;color:var(--fg-textLabel);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">operator-visibility · Plan: operator-visibility</span><span data-orientation-missing="true" class="mono" title="not in the team tree — no task or plan position — a round is never guessed" style="color:var(--fg-textGhost);font-style:italic">round —</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">currently:</span><span data-orientation-activity="tool_call" title="calling Bash
+
+2026-08-06T09:14:02.113Z" style="flex:1;min-width:0;display:flex;align-items:baseline;gap:6px;overflow:hidden"><span style="flex:none;color:var(--fg-accent)">calling Bash</span></span><span data-orientation-missing="true" class="mono" title="not in the team tree — no task or plan position — no phase is inferred" style="color:var(--fg-textGhost);font-style:italic">not in the team tree — no task or plan position</span></div></div></div>
+<div class="case"><div class="caption">DEGRADED · no identity recorded at all, and no activity stamped</div><div data-orientation-strip="true" data-orientation-degraded="team-loading" style="flex:none;display:flex;flex-direction:column;gap:3px;padding:7px 14px;background:var(--fg-bgGutter);border-bottom:1px solid var(--fg-borderSoft)"><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10.5px"><span data-orientation-kind="true" style="flex:none;font-size:9.5px;letter-spacing:0.04em;color:var(--fg-info)">session</span><span data-agent-role="true" style="flex:none;color:var(--fg-textMuted)">—</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span data-agent-model="true" title="the executor did not record a resolved model" style="flex:none;color:var(--fg-textFaint)">—</span><span style="flex:none;color:var(--fg-textGhost)">·</span><span style="flex:1;min-width:0"><span data-orientation-missing="true" class="mono" title="neither a project task nor a run description was recorded" style="color:var(--fg-textGhost);font-style:italic">no title</span></span><span data-orientation-missing="true" class="mono" title="team loading… — a round is never guessed" style="color:var(--fg-textGhost);font-style:italic">round —</span></div><div class="mono" style="display:flex;align-items:baseline;gap:7px;min-width:0;font-size:10px"><span style="flex:none;color:var(--fg-textFaint)">currently:</span><span style="flex:1;min-width:0"><span data-orientation-missing="true" class="mono" title="the executor recorded no current_activity for this node" style="color:var(--fg-textGhost);font-style:italic">not recorded</span></span><span data-orientation-missing="true" class="mono" title="team loading… — no phase is inferred" style="color:var(--fg-textGhost);font-style:italic">team loading…</span></div></div></div></div>
+  <div id="digest" class="shot"><div class="case"><div class="caption">collapsed — the default, and the only state the app opens in</div><div data-story-so-far="true" data-story-open="0" style="flex:none;border-bottom:1px solid var(--fg-borderSoft);background:transparent"><div data-story-toggle="true" class="mono" style="display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;font-size:10.5px;user-select:none"><span style="flex:none;color:var(--fg-textLabel);font-weight:600">story so far</span><span class="mono" title="Every thread entry handed to the digest — prose, tool calls, tool results, errors, heartbeats." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">285</span> entries</span><span class="mono" title="Entries with kind = &#x27;tool_call&#x27;, sub-agents included." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">136</span> tool calls</span><span class="mono" title="Entries flagged meta.is_error, plus kind = &#x27;error&#x27; entries. That is &#x27;tool calls that returned an error&#x27; — not &#x27;problems&#x27;, and not &#x27;failures&#x27;. A run can complete successfully with several of these." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-warn)">3</span> tool errors</span><span class="mono" title="Sub-agents with entries in this thread, plus ones spawned here that have not produced any yet. A role the executor has not stamped reads &#x27;unknown&#x27; rather than being guessed." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">2</span> sub-agents (Explore)</span><span style="flex:1"></span><span style="flex:none;color:var(--fg-textGhost)">▸</span></div></div></div>
+<div class="case"><div class="caption">expanded — 285 entries, 136 tool calls, 3 tool errors, 2 sub-agents</div><div data-story-so-far="true" data-story-open="1" style="flex:none;border-bottom:1px solid var(--fg-borderSoft);background:var(--fg-toolBg)"><div data-story-toggle="true" class="mono" style="display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;font-size:10.5px;user-select:none"><span style="flex:none;color:var(--fg-textLabel);font-weight:600">story so far</span><span class="mono" title="Every thread entry handed to the digest — prose, tool calls, tool results, errors, heartbeats." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">285</span> entries</span><span class="mono" title="Entries with kind = &#x27;tool_call&#x27;, sub-agents included." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">136</span> tool calls</span><span class="mono" title="Entries flagged meta.is_error, plus kind = &#x27;error&#x27; entries. That is &#x27;tool calls that returned an error&#x27; — not &#x27;problems&#x27;, and not &#x27;failures&#x27;. A run can complete successfully with several of these." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-warn)">3</span> tool errors</span><span class="mono" title="Sub-agents with entries in this thread, plus ones spawned here that have not produced any yet. A role the executor has not stamped reads &#x27;unknown&#x27; rather than being guessed." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">2</span> sub-agents (Explore)</span><span style="flex:1"></span><span style="flex:none;color:var(--fg-textGhost)">▾</span></div><div style="border-top:1px solid var(--fg-borderDivider);padding:8px 14px 10px;display:flex;flex-direction:column;gap:9px"><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">TASK</div><div class="mono" style="font-size:11px;color:var(--fg-textBody);line-height:1.5">operator-visibility · Plan: operator-visibility <span title="the run&#x27;s own title" style="color:var(--fg-textGhost)">(title)</span></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">TIME</div><div class="mono" style="font-size:10.5px;color:var(--fg-textMuted)"><span style="color:var(--fg-textBody)">2026-08-05 06:46:36.994632+00</span>  ·  <span data-story-elapsed="frozen" title="completed_at − started_at. Frozen: this run has settled, so the number is the same at any clock and never ticks again." style="color:var(--fg-text)">ran 15m 49s</span></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">WORK</div><div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:10.5px"><span class="mono" title="Every thread entry handed to the digest — prose, tool calls, tool results, errors, heartbeats." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">285</span> entries</span><span class="mono" title="Entries belonging to this agent itself: no meta.parent_tool_use_id on them." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">89</span> its own</span><span class="mono" title="Entries written by in-process sub-agents, stamped meta.parent_tool_use_id. They are inline in this thread, not a separate run." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">196</span> delegated</span><span class="mono" title="Entries with kind = &#x27;tool_call&#x27;, sub-agents included." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">136</span> tool calls</span><span class="mono" title="Entries flagged meta.is_error, plus kind = &#x27;error&#x27; entries. That is &#x27;tool calls that returned an error&#x27; — not &#x27;problems&#x27;, and not &#x27;failures&#x27;. A run can complete successfully with several of these." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-warn)">3</span> tool errors</span><span class="mono" title="Sub-agents with entries in this thread, plus ones spawned here that have not produced any yet. A role the executor has not stamped reads &#x27;unknown&#x27; rather than being guessed." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">2</span> sub-agents</span><span class="mono" title="Sub-agents with entries in this thread, plus ones spawned here that have not produced any yet. A role the executor has not stamped reads &#x27;unknown&#x27; rather than being guessed." style="flex:none;color:var(--fg-textGhost)">Explore</span></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">LAST 3 TURNS, VERBATIM <span style="letter-spacing:0">(this agent&#x27;s own prose only)</span></div><div style="display:flex;flex-direction:column;gap:5px"><div data-story-snippet="whole" style="display:flex;gap:8px;font-size:10.5px;line-height:1.5;border-left:2px solid var(--fg-borderDivider);padding-left:8px"><span class="mono" style="flex:none;color:var(--fg-textGhost)" title="2026-08-05T07:01:50.276Z">07:01:50</span><span style="color:var(--fg-textBody);overflow-wrap:anywhere">All five planners seeded. Pushing the branch so progress is visible on GitHub:</span></div><div data-story-snippet="whole" style="display:flex;gap:8px;font-size:10.5px;line-height:1.5;border-left:2px solid var(--fg-borderDivider);padding-left:8px"><span class="mono" style="flex:none;color:var(--fg-textGhost)" title="2026-08-05T07:01:59.902Z">07:01:59</span><span style="color:var(--fg-textBody);overflow-wrap:anywhere">Planning is complete. Two closing actions: append the durable findings to the Operator Log, and cancel the fallback wakeup.</span></div><div data-story-snippet="clipped" style="display:flex;gap:8px;font-size:10.5px;line-height:1.5;border-left:2px solid var(--fg-borderDivider);padding-left:8px"><span class="mono" style="flex:none;color:var(--fg-textGhost)" title="2026-08-05T07:02:25.965Z">07:02:25</span><span style="color:var(--fg-textBody);overflow-wrap:anywhere">Round 0 complete. The waterfall plan is committed and the pipeline is seeded.
+
+**What shipped** — commit `9442d75` on `project/8ea0cc08` (pushed to origin): `do…<span title="A verbatim leading substring — the entry continues in the transcript below." style="color:var(--fg-textGhost)"> [clipped]</span></span></div></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">WHERE IT STANDS <span style="letter-spacing:0" title="the agent&#x27;s own last prose turn, verbatim">(assistant prose)</span></div><div style="font-size:11px;line-height:1.55;color:var(--fg-textBody);overflow-wrap:anywhere">Round 0 complete. The waterfall plan is committed and the pipeline is seeded.
+
+**What shipped** — commit `9442d75` on `project/8ea0cc08` (pushed to origin): `docs/plan/00-vision.md` through `04-phases.md`, replacing the previous project&#x27;s c…</div></div><div class="mono" style="font-size:9.5px;line-height:1.5;color:var(--fg-textGhost);border-top:1px solid var(--fg-borderDivider);padding-top:7px">derived, never summarised — no model reads this thread. What it <em>cannot</em> know (causality, abandoned branches, quality, per-entry cost) is written down in <span data-story-gap-doc="true" title="The measured list of what U23/U24 cannot derive from the stored thread, and what it would take to get each one. Written by round 601A against the 285-entry reference capture." style="color:var(--fg-textMuted);user-select:all">docs/plan/artifacts/phase600/digest-gap.md</span></div></div></div></div>
+<div class="case"><div class="caption">expanded, sub-agent scope — the scout's own 118-entry slice, no borrowed clock</div><div data-story-so-far="true" data-story-open="1" style="flex:none;border-bottom:1px solid var(--fg-borderSoft);background:var(--fg-toolBg)"><div data-story-toggle="true" class="mono" style="display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer;font-size:10.5px;user-select:none"><span style="flex:none;color:var(--fg-textLabel);font-weight:600">story so far</span><span class="mono" title="Every thread entry handed to the digest — prose, tool calls, tool results, errors, heartbeats." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">118</span> entries</span><span class="mono" title="Entries with kind = &#x27;tool_call&#x27;, sub-agents included." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">58</span> tool calls</span><span class="mono" title="Entries flagged meta.is_error, plus kind = &#x27;error&#x27; entries. That is &#x27;tool calls that returned an error&#x27; — not &#x27;problems&#x27;, and not &#x27;failures&#x27;. A run can complete successfully with several of these." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-warn)">1</span> tool errors</span><span style="flex:1"></span><span style="flex:none;color:var(--fg-textGhost)">▾</span></div><div style="border-top:1px solid var(--fg-borderDivider);padding:8px 14px 10px;display:flex;flex-direction:column;gap:9px"><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">TASK</div><div class="mono" style="font-size:11px;color:var(--fg-textBody);line-height:1.5">Recon chat Bash block rendering <span title="the run&#x27;s own title" style="color:var(--fg-textGhost)">(title)</span></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">TIME</div><div class="mono" style="font-size:10.5px;color:var(--fg-textMuted)"><span title="A sub-agent is a Task call inside its parent&#x27;s process — it has no run row and no independent start or end stamp in this payload. The parent&#x27;s timestamps are not restated here under its name." style="color:var(--fg-textGhost);font-style:italic">in-process sub-agent — no independent start or duration recorded</span></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">WORK</div><div style="display:flex;flex-wrap:wrap;gap:4px 14px;font-size:10.5px"><span class="mono" title="Every thread entry handed to the digest — prose, tool calls, tool results, errors, heartbeats." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">118</span> entries</span><span class="mono" title="Every entry in this slice is stamped with this sub-agent&#x27;s parent_tool_use_id, so the own-vs-delegated split has nothing to split. It is the parent&#x27;s to make, and its block makes it." style="flex:none;color:var(--fg-textGhost)">all its own</span><span class="mono" title="Entries with kind = &#x27;tool_call&#x27;, sub-agents included." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">58</span> tool calls</span><span class="mono" title="Entries flagged meta.is_error, plus kind = &#x27;error&#x27; entries. That is &#x27;tool calls that returned an error&#x27; — not &#x27;problems&#x27;, and not &#x27;failures&#x27;. A run can complete successfully with several of these." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-warn)">1</span> tool errors</span><span class="mono" title="Sub-agents with entries in this thread, plus ones spawned here that have not produced any yet. A role the executor has not stamped reads &#x27;unknown&#x27; rather than being guessed." style="flex:none;color:var(--fg-textMuted);white-space:nowrap"><span style="color:var(--fg-text)">0</span> sub-agents</span></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">LAST 2 TURNS, VERBATIM <span style="letter-spacing:0">(this slice&#x27;s prose)</span></div><div style="display:flex;flex-direction:column;gap:5px"><div data-story-snippet="whole" style="display:flex;gap:8px;font-size:10.5px;line-height:1.5;border-left:2px solid var(--fg-borderDivider);padding-left:8px"><span class="mono" style="flex:none;color:var(--fg-textGhost)" title="2026-08-05T06:47:14.127Z">06:47:14</span><span style="color:var(--fg-textBody);overflow-wrap:anywhere">I&#x27;ll start by exploring the repo structure and finding the relevant files.</span></div><div data-story-snippet="clipped" style="display:flex;gap:8px;font-size:10.5px;line-height:1.5;border-left:2px solid var(--fg-borderDivider);padding-left:8px"><span class="mono" style="flex:none;color:var(--fg-textGhost)" title="2026-08-05T06:53:09.636Z">06:53:09</span><span style="color:var(--fg-textBody);overflow-wrap:anywhere"># Recon Report — Desktop chat transcript rendering
+
+All paths absolute. Repos rooted at `/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/`.…<span title="A verbatim leading substring — the entry continues in the transcript below." style="color:var(--fg-textGhost)"> [clipped]</span></span></div></div></div><div><div class="mono" style="font-size:9px;letter-spacing:0.08em;color:var(--fg-textFaint);padding-bottom:3px">WHERE IT STANDS <span style="letter-spacing:0" title="the agent&#x27;s own last prose turn, verbatim">(assistant prose)</span></div><div style="font-size:11px;line-height:1.55;color:var(--fg-textBody);overflow-wrap:anywhere"># Recon Report — Desktop chat transcript rendering
+
+All paths absolute. Repos rooted at `/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/`.
+
+---
+
+## 1. The component that renders Bash tool_use calls
+
+**There is no Bash-sp…</div></div><div class="mono" style="font-size:9.5px;line-height:1.5;color:var(--fg-textGhost);border-top:1px solid var(--fg-borderDivider);padding-top:7px">derived, never summarised — no model reads this thread. What it <em>cannot</em> know (causality, abandoned branches, quality, per-entry cost) is written down in <span data-story-gap-doc="true" title="The measured list of what U23/U24 cannot derive from the stored thread, and what it would take to get each one. Written by round 601A against the 285-entry reference capture." style="color:var(--fg-textMuted);user-select:all">docs/plan/artifacts/phase600/digest-gap.md</span></div></div></div></div></div>
+  </body>
+  </html>

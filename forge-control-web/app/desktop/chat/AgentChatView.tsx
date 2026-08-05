@@ -2,11 +2,25 @@
 
 /**
  * AgentChatView — the middle surface when you have drilled into an agent
- * (U20, 13 §1). A SHELL this round: header + back button + the EXISTING
- * `<AssistantThread>` verbatim. The orientation strip, the summarised tool
- * rows and the story-so-far digest (U22–U24) land in rounds 602/603; this
- * round's job is that the navigation underneath them is correct and costs
- * nothing.
+ * (U20, 13 §1). Round 601B built the shell, 602 made the transcript readable,
+ * and this round (603) mounts the two blocks that sit above it:
+ *
+ *   <OrientationStrip>  U22 — who this is, on what model, which task, which
+ *       round, what it is doing right now, and where that sits in the plan.
+ *       Two lines, pinned, pure function of data already on the wire.
+ *   <StorySoFar>        U24 — 601A's `deriveDigest` rendered, collapsed by
+ *       default, only above `DIGEST_MIN_ENTRIES`.
+ *
+ * Neither adds a request. The strip observes the team panel's existing poll
+ * through the react-query cache (see OrientationStrip.tsx); the digest is pure
+ * derivation over the thread this file already holds.
+ *
+ * ── Where the identity line went ──────────────────────────────────────────
+ * The header used to carry kind/role/model/description on its own line above
+ * the crumbs. That is line 1 of the orientation strip now, `data-agent-role`
+ * and `data-agent-model` included — the round-601B e2e harness reads those two
+ * attributes document-wide, and there is still exactly one of each. The header
+ * keeps what is genuinely navigation: the back button and the lineage trail.
  *
  * ── One fetch, no more than the manager was making (NFU3) ─────────────────
  * While this view is mounted, ChatSurface's manager `detailQ` is DISABLED —
@@ -36,8 +50,9 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import { fetchChat, type RunDetail, type RunStatus, type ThreadEntry } from "../../api";
-import { modelDisplay, roleLabel } from "../live/agentsApi";
 import { AssistantThread } from "./AssistantThread";
+import { OrientationStrip } from "./OrientationStrip";
+import { StorySoFar } from "./StorySoFar";
 import {
   parseSubagentsV2,
   subagentEntries,
@@ -45,7 +60,14 @@ import {
 } from "./subagent-slice";
 import { crumbs, type NavFrame, type NavStack } from "./nav-stack";
 
-const EM_DASH = "—";
+/** Statuses that can never change again. Drives the strip's "currently:" vs
+ *  "ended:" — a settled agent must never be described in the present tense
+ *  (project Definition of Done #1). */
+const SETTLED: ReadonlySet<RunStatus> = new Set<RunStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 /* ── Metadata readers ─────────────────────────────────────────────────────
  *
@@ -294,13 +316,26 @@ function Crumbs({ stack, current }: { stack: NavStack; current: string }) {
 
 /** One muted line, the panel vocabulary for "a fact that is not a transcript".
  *  Never a spinner: this surface is full-width, and a spinner in it reads as a
- *  hang (same reasoning as ChatTeamPanel's `Note`). */
-function Note({ children, color }: { children: React.ReactNode; color?: string }) {
+ *  hang (same reasoning as ChatTeamPanel's `Note`).
+ *
+ *  `tight` is for the notes that now sit UNDER the orientation strip and the
+ *  digest: three stacked blocks at 20px/28px padding would push the transcript
+ *  down the page, and U22's one hard layout rule is that the strip must not do
+ *  that. The error/empty notes, which are the whole screen, keep the room. */
+function Note({
+  children,
+  color,
+  tight,
+}: {
+  children: React.ReactNode;
+  color?: string;
+  tight?: boolean;
+}) {
   return (
     <div
       className="mono"
       style={{
-        padding: "20px 28px",
+        padding: tight ? "7px 14px" : "20px 28px",
         fontSize: 11,
         lineHeight: 1.6,
         color: color ?? tokens.textMuted,
@@ -312,12 +347,17 @@ function Note({ children, color }: { children: React.ReactNode; color?: string }
 }
 
 /** Says what the transcript below actually IS, so a two-entry view is not
- *  mistaken for a two-entry session. Round 603's story-so-far digest replaces
- *  this line; until then it is the honest minimum (NFU6). */
+ *  mistaken for a two-entry session.
+ *
+ *  Round 603 kept it rather than folding it into the digest: the digest is
+ *  collapsed by default and only appears above 50 entries, while the case this
+ *  line exists for — a sub-agent whose inner steps were never stamped — is
+ *  usually a TWO-entry view. The one thing that had to be said about those is
+ *  said where it cannot be missed. */
 function SliceNote({ total, inner }: { total: number; inner: number }) {
   if (total === 0) {
     return (
-      <Note color={tokens.warn}>
+      <Note tight color={tokens.warn}>
         nothing in this run’s thread carries this sub-agent’s id — not its spawn call, not
         its result. Its work is recorded in the team rollup but none of it was written to
         the transcript. A gap in the recorded data, not an empty agent.
@@ -326,7 +366,7 @@ function SliceNote({ total, inner }: { total: number; inner: number }) {
   }
   if (inner === 0) {
     return (
-      <Note>
+      <Note tight>
         {total} {total === 1 ? "entry" : "entries"} — this sub-agent’s brief and its
         report. Its individual steps were never stamped with{" "}
         <span className="mono">meta.parent_tool_use_id</span> on this run, so the work
@@ -335,7 +375,7 @@ function SliceNote({ total, inner }: { total: number; inner: number }) {
     );
   }
   return (
-    <Note>
+    <Note tight>
       {total} entries — {inner} of this sub-agent’s own, plus the spawn call and result
       that framed it.
     </Note>
@@ -415,24 +455,29 @@ export function AgentChatView({
     );
   }, [run, subagentId, known, sub, spawn, entries]);
 
-  /* Header facts. A sub-agent's role/model/description come from its rollup
-   * entry or, failing that, its spawn call; a session's come from its own
-   * metadata. Neither kind is ever guessed from the other. */
+  /* Identity, resolved ONCE and here. A sub-agent's role/model/description come
+   * from its rollup entry or, failing that, its spawn call; a session's come
+   * from its own metadata. Neither kind is ever guessed from the other, and
+   * OrientationStrip does not re-derive any of it — it is handed the answer. */
   const isSubagent = subagentId !== undefined;
-  const role = isSubagent
-    ? (sub?.role ?? spawn?.role ?? null)
-    : run
-      ? metaString(run.metadata, "role")
-      : null;
-  const model = isSubagent
-    ? (sub?.model ?? spawn?.model ?? null)
-    : run
-      ? runModel(run.metadata)
-      : null;
-  const kindLabel = isSubagent ? "sub-agent" : "session";
-  const description = isSubagent
-    ? (sub?.description ?? spawn?.description ?? null)
-    : (run?.title ?? null);
+  const identity = useMemo(
+    () => ({
+      role: isSubagent
+        ? (sub?.role ?? spawn?.role ?? null)
+        : run
+          ? metaString(run.metadata, "role")
+          : null,
+      model: isSubagent
+        ? (sub?.model ?? spawn?.model ?? null)
+        : run
+          ? runModel(run.metadata)
+          : null,
+      description: isSubagent
+        ? (sub?.description ?? spawn?.description ?? null)
+        : (run?.title ?? null),
+    }),
+    [isSubagent, sub, spawn, run],
+  );
 
   const currentCrumb =
     subagentId !== undefined
@@ -453,54 +498,14 @@ export function AgentChatView({
           display: "flex",
           alignItems: "center",
           gap: 10,
-          padding: "10px 14px",
+          padding: "8px 14px",
           borderBottom: `1px solid ${tokens.borderSoft}`,
         }}
       >
         <BackButton label={backLabel} onClick={onBack} />
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-            <span
-              className="mono"
-              style={{
-                flex: "none",
-                fontSize: 9.5,
-                letterSpacing: "0.04em",
-                color: subagentId !== undefined ? tokens.textMuted2 : tokens.info,
-              }}
-            >
-              {kindLabel}
-            </span>
-            <span
-              data-agent-role
-              className="mono"
-              style={{ flex: "none", fontSize: 11, color: tokens.text }}
-            >
-              {roleLabel(role)}
-            </span>
-            <span
-              data-agent-model
-              className="mono"
-              style={{ flex: "none", fontSize: 9.5, color: tokens.textFaint }}
-            >
-              {modelDisplay(model)}
-            </span>
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                fontSize: 11,
-                color: tokens.textLabel,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {description ?? EM_DASH}
-            </span>
-          </div>
-          <Crumbs stack={stack} current={currentCrumb} />
-        </div>
+        {/* Navigation only. Identity moved down into the orientation strip —
+            one place per fact, and the strip is the place. */}
+        <Crumbs stack={stack} current={currentCrumb} />
       </div>
 
       {detailQ.isError ? (
@@ -528,6 +533,27 @@ export function AgentChatView({
         <Note color={tokens.warn}>transcript unavailable for this frame</Note>
       ) : (
         <>
+          {/* U22. Pinned above everything, on every worker and sub-agent view.
+              `settled` is computed from the VIEW's status, which for a
+              sub-agent is `subagentRunStatus` — the rollup's word, or its
+              spawn's tool_result when the rollup is silent. That is what makes
+              the strip say "ended:" on a finished child of a still-running
+              parent instead of describing it in the present tense. */}
+          <OrientationStrip
+            frame={frame}
+            identity={identity}
+            metadata={run.metadata}
+            subagent={sub}
+            settled={SETTLED.has(view.status)}
+          />
+          {/* U24. Collapsed, and absent entirely below 50 entries — which is
+              most sub-agent slices, and all of the two-entry ones the note
+              below explains. `view.thread` is the scope in both cases. */}
+          <StorySoFar
+            run={view}
+            thread={view.thread}
+            scope={isSubagent ? "subagent" : "session"}
+          />
           {isSubagent && (
             /* How much of this transcript is the sub-agent's own work vs the
              * envelope its parent recorded. On a run the executor stamped,
