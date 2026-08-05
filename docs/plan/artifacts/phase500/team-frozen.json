@@ -1,0 +1,488 @@
+{
+  "protocol": "U16 frozen-time truth (14 §Frozen-time truth)",
+  "base": "http://127.0.0.1:7787",
+  "api": "http://127.0.0.1:7798",
+  "gap_ms": 12000,
+  "live_runs_at_start": [
+    {
+      "id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "model": "claude-opus-5",
+      "status": "running"
+    },
+    {
+      "id": "406ef179-3183-4af0-9d41-888e7620e66c",
+      "model": "claude-opus-5",
+      "status": "running"
+    }
+  ],
+  "why_two_parts": "no single chat in this database owns both a settled tree and a live row: the rail's chats link only to finished/paused projects, and the projects that own today's live runs have no chat linkage at all",
+  "parts": [
+    {
+      "part": "A-settled",
+      "navigation": "real rail row (clicked by text)",
+      "chat": "Okay this session is very important",
+      "ready": {
+        "ok": true,
+        "state": "ready",
+        "rowCount": 20,
+        "settledCount": 20
+      },
+      "settled_rows_checked": 20,
+      "running_rows_seen": 0,
+      "sample1": [
+        {
+          "nodeId": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "settled": true,
+          "status": "completed",
+          "workingText": "2h 37m",
+          "workingFrozen": "true",
+          "tokensText": "24.4M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "665k",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "3.68M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "5.05M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "3.25M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "4.60M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "5.89M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "4.70M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "2.29M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "3.25M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "settled": true,
+          "status": "cancelled",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "settled": true,
+          "status": "cancelled",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        }
+      ],
+      "sample2": [
+        {
+          "nodeId": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "settled": true,
+          "status": "completed",
+          "workingText": "2h 37m",
+          "workingFrozen": "true",
+          "tokensText": "24.4M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "665k",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "settled": true,
+          "status": "done",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "3.68M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "5.05M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "3.25M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "4.60M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "5.89M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "4.70M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "2.29M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "settled": true,
+          "status": "completed",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "3.25M",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "settled": true,
+          "status": "cancelled",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        },
+        {
+          "nodeId": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "settled": true,
+          "status": "cancelled",
+          "workingText": "—",
+          "workingFrozen": "true",
+          "tokensText": "0",
+          "hasWorkingCell": true
+        }
+      ],
+      "failures": [],
+      "verdict": "PASS"
+    },
+    {
+      "part": "B-live",
+      "navigation": "injected-rail-row",
+      "navigation_note": "one row spliced into GET /api/proxy/chat (the rail LIST) so a project worker can be clicked; the /team response measured below is the real server's, unmodified",
+      "live_run_id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "ready": {
+        "ok": true,
+        "state": "unlinked",
+        "rowCount": 1,
+        "runningCount": 1
+      },
+      "running_rows": 1,
+      "running_rows_that_changed": 1,
+      "changes": [
+        {
+          "nodeId": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "from": "8m 29s",
+          "to": "8m 40s"
+        }
+      ],
+      "sample1": [
+        {
+          "nodeId": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "kind": "worker",
+          "settled": false,
+          "status": "running",
+          "workingText": "8m 29s",
+          "workingFrozen": "false",
+          "tokensText": "500k",
+          "hasWorkingCell": true
+        }
+      ],
+      "sample2": [
+        {
+          "nodeId": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "kind": "worker",
+          "settled": false,
+          "status": "running",
+          "workingText": "8m 40s",
+          "workingFrozen": "false",
+          "tokensText": "500k",
+          "hasWorkingCell": true
+        }
+      ],
+      "failures": [],
+      "verdict": "PASS"
+    }
+  ],
+  "verdict": "PASS"
+}

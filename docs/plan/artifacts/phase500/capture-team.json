@@ -12,38 +12,85 @@
   "results": [
     {
       "case": "ready",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "phase300 round-304 linkage fixture",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-ready-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-ready-light.png"
+      ],
+      "data": "real",
+      "ok": true
     },
     {
       "case": "ambiguous",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "Okay this session is very important",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-ambiguous-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-ambiguous-light.png"
+      ],
+      "link_marker_present": true,
+      "data": "real",
+      "ok": true
     },
     {
       "case": "unlinked",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "Okay when I click the file section",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-unlinked-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-unlinked-light.png"
+      ],
+      "data": "real",
+      "ok": true
     },
     {
       "case": "empty",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "phase300 round-304 linkage fixture",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-empty-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-empty-light.png"
+      ],
+      "data": "synthetic (browser-side fulfilled response, no chat in the live rail resolves to this state)",
+      "ok": true
     },
     {
       "case": "error",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "phase300 round-304 linkage fixture",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-error-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-error-light.png"
+      ],
+      "data": "real 404 from 00000000-0000-0000-0000-000000000000",
+      "ok": true
     },
     {
       "case": "hover",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "phase300 round-304 linkage fixture",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-hover-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-hover-light.png"
+      ],
+      "data": "real",
+      "ok": true
+    },
+    {
+      "case": "live",
+      "chat": "ROUND504 LIVE-RUN PROBE (injected rail row) → run e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-live-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-live-light.png"
+      ],
+      "data": "real /team response; navigation via injected rail row",
+      "live_run_id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "ok": true
     },
     {
       "case": "armed",
-      "ok": false,
-      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+      "chat": "ROUND504 LIVE-RUN PROBE (injected rail row) → run e5cc35d7-9855-4380-abdc-dd723f14af52",
+      "files": [
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-armed-dark.png",
+        "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/phase500-armed-light.png"
+      ],
+      "data": "real running row and real /team numbers; SYNTHETIC capabilities (terminate:true) — unreachable otherwise, see control-inert.json",
+      "ok": true
     }
   ]
 }

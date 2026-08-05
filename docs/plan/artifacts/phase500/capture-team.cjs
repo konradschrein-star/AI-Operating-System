@@ -2,7 +2,7 @@
  * capture-team.cjs — both-theme screenshots of every Team panel state, in the
  * style of phase400/capture.cjs.
  *
- * Seven cases, each shot dark AND light (`phase500-<case>-<theme>.png`):
+ * Eight cases, each shot dark AND light (`phase500-<case>-<theme>.png`):
  *
  *   ready      — a linked chat with a normal tree (data-team-state="ready")
  *   ambiguous  — a thread_scan/ambiguous-linked chat, [data-link-marker] visible
@@ -10,7 +10,24 @@
  *   empty      — a linked chat with zero workers (data-team-state="empty")
  *   error      — a fetch failure (data-team-state="error")
  *   hover      — a row hovered, [.team-row-controls] revealed
- *   armed      — [data-team-x] clicked once, data-confirm="armed"
+ *   live       — a run that is RUNNING right now: filled dot, ticking time
+ *   armed      — [data-team-x] clicked once on a running row, data-confirm="armed"
+ *
+ * ── Round 504 change to the `armed` case ──────────────────────────────────
+ * Round 501b shot `armed` by clicking the first `[data-team-x]` on the ready
+ * fixture. Under the rules round 502 shipped, that click DISMISSES: X on a
+ * settled row is a reversible local hide and fires in one click
+ * (team/confirm.ts rule 1). Only a RUNNING row arms — and its X is `disabled`
+ * today because terminate is capability-gated. ChatTeamPanel.tsx's header
+ * predicted this and named the fix: strip `disabled` in the page, then click a
+ * running row's X. That is what `caseArmed` now does, on a REAL live run.
+ *
+ * Reaching a live run needs one piece of navigation the rail cannot provide:
+ * the rail lists conversations, and a project worker is excluded from it by
+ * design (listRuns drops rows carrying metadata.project_id). `injectLiveRow`
+ * splices ONE row into the rail LIST response so the run can be clicked. The
+ * `/team` response the panel then renders is the real server's, unmodified —
+ * every number in the `live` and `armed` shots is the server's own.
  *
  * Fixture notes (verified via curl against :7798, 2026-08-05):
  *   - "ready": c0de0304 (phase300 fixture) — link_source "metadata", 2 workers.
@@ -56,10 +73,15 @@ function resolveChromium() {
   return candidates[0];
 }
 
-const BASE = process.env.TEAM_BASE_URL ?? "http://127.0.0.1:7789";
+const BASE = process.env.TEAM_BASE_URL ?? "http://127.0.0.1:7787";
+/** Where the live run is discovered from — the same worktree API the build
+ *  proxies to. Never hardcoded: whatever is running when the reviewer re-runs
+ *  is what gets photographed. */
+const API = process.env.TEAM_API_URL ?? "http://127.0.0.1:7798";
 const COOKIE = process.env.FORGE_SESSION_COOKIE ?? "";
 const OUT = __dirname;
 const NONSENSE_ID = "00000000-0000-0000-0000-000000000000";
+const LIVE_ROW_TITLE = "ROUND504 LIVE-RUN PROBE (injected rail row)";
 
 const CHATS = {
   ready: process.env.TEAM_CHAT_READY ?? "phase300 round-304 linkage fixture",
@@ -97,6 +119,63 @@ async function openChat(page, chatText) {
   await page.waitForTimeout(3_000);
   await page.getByText(chatText, { exact: false }).first().click();
   await page.waitForTimeout(3_000);
+}
+
+/** Whatever is running at THIS moment, straight from the fleet endpoint. */
+async function discoverLiveRun() {
+  const res = await fetch(`${API}/api/agents`);
+  if (!res.ok) throw new Error(`GET ${API}/api/agents → HTTP ${res.status}`);
+  const body = await res.json();
+  const live = (Array.isArray(body.agents) ? body.agents : []).filter(
+    (a) => a.status === "running" && typeof a.id === "string",
+  );
+  if (!live.length)
+    throw new Error(
+      `no running run in the fleet right now (${API}/api/agents) — the live/armed cases need one in flight; re-run later`,
+    );
+  return live[0].id;
+}
+
+/** NAVIGATION ONLY — splices one row into the rail LIST so a project worker
+ *  can be clicked. `/chat/:id/team` is never intercepted. */
+async function injectLiveRow(page, liveRunId) {
+  await page.route("**/api/proxy/chat*", async (route) => {
+    const url = new URL(route.request().url());
+    if (!url.pathname.endsWith("/api/proxy/chat")) return route.continue();
+    const res = await route.fetch();
+    const body = await res.json();
+    const template = body.runs?.[0];
+    if (!template) return route.fulfill({ response: res });
+    const injected = { ...template, id: liveRunId, title: LIVE_ROW_TITLE, status: "running" };
+    delete injected.project_id;
+    delete injected.project_status;
+    delete injected.tasks_done;
+    delete injected.tasks_total;
+    body.runs = [injected, ...body.runs];
+    body.count = body.runs.length;
+    await route.fulfill({ response: res, contentType: "application/json", body: JSON.stringify(body) });
+  });
+}
+
+/** The panel with a running row on screen. Returns that row's node id. */
+async function waitForRunningRow(page, timeoutMs = 20_000) {
+  const id = await page
+    .waitForFunction(
+      () =>
+        document.querySelector("[data-team-scroll] [data-team-row][data-settled='false']")
+          ?.getAttribute("data-node-id") ?? false,
+      { timeout: timeoutMs },
+    )
+    .then((h) => h.jsonValue())
+    .catch(async () => {
+      const panelExists = await page.locator("[data-team-panel]").count().catch(() => 0);
+      if (!panelExists)
+        throw new Error(`no [data-team-panel] found in the DOM within ${timeoutMs}ms`);
+      throw new Error(
+        `no [data-team-row][data-settled="false"] appeared within ${timeoutMs}ms — the run settled between discovery and render`,
+      );
+    });
+  return id;
 }
 
 async function waitForState(page, expected, timeoutMs = 15_000) {
@@ -247,31 +326,109 @@ async function caseHover(browser) {
   return { case: "hover", chat: CHATS.hover, files, data: "real" };
 }
 
-async function caseArmed(browser) {
+/** A run that is RUNNING right now: filled status dot, "session" kind badge,
+ *  a live (data-frozen="false") time cell. Real numbers, injected navigation. */
+async function caseLive(browser) {
+  const liveRunId = await discoverLiveRun();
   const page = await newPage(browser);
-  await openChat(page, CHATS.armed);
-  await waitForState(page, "ready");
-  const box = await page.evaluate(() => {
-    const row = document.querySelector("[data-team-scroll] [data-team-row][data-settled='true']") ??
-      document.querySelector("[data-team-scroll] [data-team-row]");
-    if (!row) return null;
+  await injectLiveRow(page, liveRunId);
+  await openChat(page, LIVE_ROW_TITLE);
+  const nodeId = await waitForRunningRow(page);
+  const box = await page.evaluate((id) => {
+    const row = document.querySelector(`[data-team-row][data-node-id="${id}"]`);
     const r = row.getBoundingClientRect();
     return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-  });
-  if (!box) throw new Error("no [data-team-row] found inside [data-team-scroll] to arm");
+  }, nodeId);
   await page.mouse.move(box.x, box.y);
-  await page.waitForTimeout(400);
-  const xBtn = page.locator("[data-team-x]").first();
-  if (!(await xBtn.count())) throw new Error("no [data-team-x] button found on the hovered row");
-  await xBtn.click();
+  await page.waitForTimeout(500);
+  const files = await shootBothThemes(page, "live");
+  await page.close();
+  return {
+    case: "live",
+    chat: `${LIVE_ROW_TITLE} → run ${liveRunId}`,
+    files,
+    data: "real /team response; navigation via injected rail row",
+    live_run_id: liveRunId,
+  };
+}
+
+/**
+ * The confirm step, armed — on a RUNNING row, which is the only kind that arms
+ * (settled X dismisses in one click, team/confirm.ts rule 1).
+ *
+ * ── Why this case fakes ONE flag, and what round 504 learned doing it ──────
+ * ChatTeamPanel.tsx's header says round 504 should reach this screenshot by
+ * stripping the `disabled` attribute in the page and clicking. Round 504 tried
+ * exactly that and it does not work — for a reason worth writing down:
+ *
+ *   React does not dispatch mouse events to a form element whose *props* say
+ *   `disabled`, regardless of what the DOM attribute currently says
+ *   (react-dom's `shouldPreventMouseEvent` / `getListener`). The click reaches
+ *   the button in the DOM — a capture-phase listener sees it, `defaultPrevented`
+ *   is false — and React's onClick still never runs.
+ *
+ * That is a FOURTH defence nobody claimed (confirm.ts lists three), and it is
+ * proven, not asserted, by `control-inert.cjs`. Its consequence here: with
+ * today's all-false capabilities the armed state is UNREACHABLE through the
+ * UI at all. So this case flips the one flag the engine lane will flip —
+ * `capabilities.control_plane.terminate` — by intercepting GET
+ * /api/proxy/capabilities, and photographs the confirm step as it will look
+ * the day that endpoint answers true. The row, the run and every number in
+ * the shot stay real; `data: "synthetic capabilities"` records the lie.
+ */
+async function caseArmed(browser) {
+  const liveRunId = await discoverLiveRun();
+  const page = await newPage(browser);
+  await injectLiveRow(page, liveRunId);
+  // The ONE fake: the flag the engine lane ships. Everything else is real.
+  await page.route("**/api/proxy/capabilities", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        control_plane: {
+          message_into_session: false,
+          resume_finished: false,
+          stop: false,
+          terminate: true,
+        },
+      }),
+    });
+  });
+  await openChat(page, LIVE_ROW_TITLE);
+  const nodeId = await waitForRunningRow(page);
+
+  const xSel = `[data-team-row][data-node-id="${nodeId}"] [data-team-x]`;
+  const enabled = await page.evaluate((sel) => {
+    const btn = document.querySelector(sel);
+    return btn ? !btn.disabled : null;
+  }, xSel);
+  if (enabled === null) throw new Error(`no ${xSel} found on the running row`);
+  if (!enabled)
+    throw new Error(
+      "the running row's X is still disabled with terminate:true — the capability flag is not reaching the button",
+    );
+
+  await page.locator(xSel).click();
   await page
-    .waitForFunction(() => document.querySelector('[data-team-x][data-confirm="armed"]') !== null, { timeout: 5_000 })
+    .waitForFunction(
+      (sel) => document.querySelector(sel)?.getAttribute("data-confirm") === "armed",
+      xSel,
+      { timeout: 5_000 },
+    )
     .catch(() => {
-      throw new Error('[data-team-x] did not reach data-confirm="armed" after one click');
+      throw new Error('[data-team-x] on the running row did not reach data-confirm="armed"');
     });
   const files = await shootBothThemes(page, "armed");
   await page.close();
-  return { case: "armed", chat: CHATS.armed, files, data: "real" };
+  return {
+    case: "armed",
+    chat: `${LIVE_ROW_TITLE} → run ${liveRunId}`,
+    files,
+    data:
+      "real running row and real /team numbers; SYNTHETIC capabilities " +
+      "(terminate:true) — unreachable otherwise, see control-inert.json",
+  };
 }
 
 async function main() {
@@ -283,6 +440,7 @@ async function main() {
     ["empty", caseEmpty],
     ["error", caseError],
     ["hover", caseHover],
+    ["live", caseLive],
     ["armed", caseArmed],
   ];
 

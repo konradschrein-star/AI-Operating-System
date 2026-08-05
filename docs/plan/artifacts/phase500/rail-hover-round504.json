@@ -1,0 +1,19 @@
+{
+  "label": "phase500-round504",
+  "base": "http://127.0.0.1:7787",
+  "rows_on_screen": 7,
+  "window_ms": 10000,
+  "crossings": 74,
+  "idle": {
+    "commits": 2,
+    "mutations": 0
+  },
+  "hover": {
+    "commits": 2,
+    "mutations": 0
+  },
+  "attributable_to_hover": {
+    "commits": 0,
+    "mutations": 0
+  }
+}

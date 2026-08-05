@@ -1,0 +1,31 @@
+=== fixture verification, round 504 — 2026-08-05T22:22:11+02:00 ===
+every chat this round used, curled against the worktree API on :7798 before use
+
+$ curl -s 127.0.0.1:7798/api/chat/11dd264b-f173-44d7-ada4-f1eb39fb4abd/team | head -c 220
+{"chat_id":"11dd264b-f173-44d7-ada4-f1eb39fb4abd","now":"2026-08-05T20:22:11.223Z","project":{"id":"1d574922-b407-4b1b-9351-142d7e5956ed","status":"paused"},"link_source":"thread_scan","link_ambiguous":true,"manager":{"i
+
+$ curl -s 127.0.0.1:7798/api/chat/c0de0304-0000-4000-8000-000000000304/team | head -c 220
+{"chat_id":"c0de0304-0000-4000-8000-000000000304","now":"2026-08-05T20:22:11.549Z","project":{"id":"4d3291c4-4eb3-483a-8d32-acc817a7b352","status":"done"},"link_source":"metadata","link_ambiguous":false,"manager":{"id":"
+
+$ curl -s 127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team | head -c 220
+{"chat_id":"bfd1283a-b71b-4f35-b577-7d09aad803f2","now":"2026-08-05T20:22:11.566Z","project":null,"link_source":null,"link_ambiguous":false,"manager":{"id":"bfd1283a-b71b-4f35-b577-7d09aad803f2","kind":"operator","role":
+
+$ curl -s 127.0.0.1:7798/api/chat/ece63bdb-884c-4d2c-9680-deca13cf2dda/team | head -c 220
+{"chat_id":"ece63bdb-884c-4d2c-9680-deca13cf2dda","now":"2026-08-05T20:22:11.617Z","project":null,"link_source":null,"link_ambiguous":false,"manager":{"id":"ece63bdb-884c-4d2c-9680-deca13cf2dda","kind":"operator","role":
+
+$ curl -s -o /dev/null -w '%{http_code}' 127.0.0.1:7798/api/chat/00000000-0000-0000-0000-000000000000/team ; body
+404 {"error":"run not found"}
+
+$ curl -s -o /dev/null -w '%{http_code}' 127.0.0.1:7798/api/chat/not-a-uuid/team ; body
+400 {"error":"invalid run id"}
+
+$ curl -s 127.0.0.1:7798/api/capabilities
+{"control_plane":{"message_into_session":false,"resume_finished":false,"stop":false,"terminate":false}}
+
+row/kind census per fixture (manager + workers + sub-agents, flattened as the panel flattens):
+  11dd264b-f173-44d7-ada4-f1eb39fb4abd  project=1d574922-b407-4b1b-9351-142d7e5956ed src=thread_scan ambiguous=True
+    rows=20 settled=20 running=0 sessions=12 sub-agents=8
+  c0de0304-0000-4000-8000-000000000304  project=4d3291c4-4eb3-483a-8d32-acc817a7b352 src=metadata ambiguous=False
+    rows=3 settled=3 running=0 sessions=3 sub-agents=0
+  bfd1283a-b71b-4f35-b577-7d09aad803f2  project=null src=None ambiguous=False
+    rows=1 settled=1 running=0 sessions=1 sub-agents=0

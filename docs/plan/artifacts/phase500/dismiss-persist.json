@@ -1,0 +1,67 @@
+{
+  "protocol": "14 §500 — dismissal persistence across reloads + restore",
+  "base": "http://127.0.0.1:7787",
+  "chat": "Okay this session is very important",
+  "storage_key": "forge.teamDismissed",
+  "interception": "none — every response in this run is the real server's",
+  "target_node_id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+  "rows_before": 20,
+  "rows_after_dismiss": 19,
+  "rows_after_reload": 19,
+  "rows_after_restore": 20,
+  "steps": [
+    {
+      "step": "settled-x-enabled",
+      "ok": true,
+      "detail": "settled row's X disabled=false (a dismissal is reversible, so it is never capability-gated)",
+      "x_state": {
+        "disabled": false,
+        "confirm": "idle",
+        "title": "Hide this row — reversible from “N hidden · show” below"
+      }
+    },
+    {
+      "step": "dismissed-in-one-click",
+      "ok": true,
+      "detail": "rows 20 → 19, target toolu_01S2kh gone"
+    },
+    {
+      "step": "dismiss-issues-no-write",
+      "ok": true,
+      "detail": "0 non-GET request(s) during the dismissal — a dismissal is local (round 1600 makes it server-backed)",
+      "non_get": []
+    },
+    {
+      "step": "restore-affordance-shown",
+      "ok": true,
+      "detail": "[data-team-restore] reads \"1 hidden · show\""
+    },
+    {
+      "step": "persisted-to-storage",
+      "ok": true,
+      "detail": "localStorage[\"forge.teamDismissed\"] = {\"11dd264b-f173-44d7-ada4-f1eb39fb4abd\":[\"toolu_01S2khB7D19HjSMJzgjGQGMH\"]}"
+    },
+    {
+      "step": "hidden-after-reload",
+      "ok": true,
+      "detail": "after reload: 19 rows, target still hidden"
+    },
+    {
+      "step": "restore-affordance-after-reload",
+      "ok": true,
+      "detail": "[data-team-restore] reads \"1 hidden · show\""
+    },
+    {
+      "step": "restored",
+      "ok": true,
+      "detail": "rows 19 → 20, target back"
+    },
+    {
+      "step": "affordance-gone-when-empty",
+      "ok": true,
+      "detail": "[data-team-restore] present=false"
+    }
+  ],
+  "failures": [],
+  "verdict": "PASS"
+}

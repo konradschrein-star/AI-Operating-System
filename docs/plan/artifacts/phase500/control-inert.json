@@ -1,0 +1,277 @@
+{
+  "protocol": "14 §500 RED-TEAM (destructive controls) — inertness under all-false capabilities",
+  "base": "http://127.0.0.1:7787",
+  "api": "http://127.0.0.1:7798",
+  "live_run_id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+  "capabilities": {
+    "message_into_session": false,
+    "resume_finished": false,
+    "stop": false,
+    "terminate": false
+  },
+  "capabilities_source": "real GET /api/capabilities — nothing intercepted",
+  "navigation": "injected-rail-row (list response only; /team and /capabilities untouched)",
+  "allowed_get_paths": [
+    "/chat",
+    "/chat/:id",
+    "/chat/:id/team",
+    "/chat/:id/linkage",
+    "/chat/:id/events",
+    "/capabilities",
+    "/usage/quota",
+    "/agents",
+    "/health"
+  ],
+  "affordance": {
+    "row_present": true,
+    "stop": {
+      "present": true,
+      "disabled": true,
+      "title": "engine support pending (control plane contract: stop)",
+      "cursor": "not-allowed",
+      "rendered": true
+    },
+    "x": {
+      "present": true,
+      "disabled": true,
+      "title": "engine support pending (control plane contract: terminate)",
+      "cursor": "not-allowed",
+      "rendered": true,
+      "confirm": "idle"
+    }
+  },
+  "attacks": [
+    {
+      "attack": "baseline",
+      "window_ms": 4058,
+      "action_error": null,
+      "dom_click_observed": 0,
+      "dom_clicks": [],
+      "confirm_state": "idle",
+      "allowed_requests": {
+        "/chat/:id": 2,
+        "/chat": 1
+      },
+      "disallowed_requests": [],
+      "non_get_requests": [],
+      "raw": [
+        {
+          "at": 1785960908160,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        },
+        {
+          "at": 1785960909891,
+          "method": "GET",
+          "url": "/chat?limit=30",
+          "endpoint": "/chat"
+        },
+        {
+          "at": 1785960911231,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "attack": "stop-click",
+      "window_ms": 4023,
+      "action_error": null,
+      "dom_click_observed": 0,
+      "dom_clicks": [],
+      "confirm_state": "idle",
+      "allowed_requests": {
+        "/chat/:id/team": 1,
+        "/chat/:id": 1
+      },
+      "disallowed_requests": [],
+      "non_get_requests": [],
+      "raw": [
+        {
+          "at": 1785960912408,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "endpoint": "/chat/:id/team"
+        },
+        {
+          "at": 1785960914288,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "attack": "x-click",
+      "window_ms": 4037,
+      "action_error": null,
+      "dom_click_observed": 0,
+      "dom_clicks": [],
+      "confirm_state": "idle",
+      "allowed_requests": {
+        "/chat/:id": 1,
+        "/chat/:id/team": 1,
+        "/chat": 1
+      },
+      "disallowed_requests": [],
+      "non_get_requests": [],
+      "raw": [
+        {
+          "at": 1785960917384,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        },
+        {
+          "at": 1785960917512,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "endpoint": "/chat/:id/team"
+        },
+        {
+          "at": 1785960918168,
+          "method": "GET",
+          "url": "/chat?limit=30",
+          "endpoint": "/chat"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "attack": "stop-stripped",
+      "window_ms": 4159,
+      "action_error": null,
+      "dom_click_observed": 1,
+      "dom_clicks": [
+        {
+          "tag": "BUTTON",
+          "stop": true,
+          "x": false,
+          "defaultPrevented": false
+        }
+      ],
+      "confirm_state": "idle",
+      "allowed_requests": {
+        "/chat/:id": 2,
+        "/chat/:id/team": 1
+      },
+      "disallowed_requests": [],
+      "non_get_requests": [],
+      "raw": [
+        {
+          "at": 1785960920451,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        },
+        {
+          "at": 1785960922562,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "endpoint": "/chat/:id/team"
+        },
+        {
+          "at": 1785960923566,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "attack": "x-stripped",
+      "window_ms": 4403,
+      "action_error": null,
+      "dom_click_observed": 2,
+      "dom_clicks": [
+        {
+          "tag": "BUTTON",
+          "stop": false,
+          "x": true,
+          "defaultPrevented": false
+        },
+        {
+          "tag": "BUTTON",
+          "stop": false,
+          "x": true,
+          "defaultPrevented": false
+        }
+      ],
+      "confirm_state": "idle",
+      "allowed_requests": {
+        "/chat": 1,
+        "/chat/:id": 1,
+        "/chat/:id/team": 1
+      },
+      "disallowed_requests": [],
+      "non_get_requests": [],
+      "raw": [
+        {
+          "at": 1785960926426,
+          "method": "GET",
+          "url": "/chat?limit=30",
+          "endpoint": "/chat"
+        },
+        {
+          "at": 1785960926639,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        },
+        {
+          "at": 1785960927677,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52/team",
+          "endpoint": "/chat/:id/team"
+        }
+      ],
+      "verdict": "PASS"
+    },
+    {
+      "attack": "x-raw-dom",
+      "window_ms": 4033,
+      "action_error": null,
+      "dom_click_observed": 2,
+      "dom_clicks": [
+        {
+          "tag": "BUTTON",
+          "stop": false,
+          "x": true,
+          "defaultPrevented": false
+        },
+        {
+          "tag": "BUTTON",
+          "stop": false,
+          "x": true,
+          "defaultPrevented": false
+        }
+      ],
+      "confirm_state": "idle",
+      "allowed_requests": {
+        "/chat/:id": 1
+      },
+      "disallowed_requests": [],
+      "non_get_requests": [],
+      "raw": [
+        {
+          "at": 1785960929708,
+          "method": "GET",
+          "url": "/chat/e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "endpoint": "/chat/:id"
+        }
+      ],
+      "verdict": "PASS"
+    }
+  ],
+  "react_props_disabled_gate": {
+    "claim": "react-dom does not dispatch mouse events to a form element whose props say disabled, regardless of the DOM attribute — stripping `disabled` does not reach the onClick handler",
+    "evidence": "attacks 4-6 show dom_click_observed > 0 (the browser really delivered the click, defaultPrevented false) while confirm_state stayed idle and no request left the page"
+  },
+  "failures": [],
+  "verdict": "PASS"
+}

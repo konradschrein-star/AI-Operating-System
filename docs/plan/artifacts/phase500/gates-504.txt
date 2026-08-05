@@ -1,0 +1,119 @@
+=== round 504 universal gates — 2026-08-05T22:19:18+02:00 ===
+
+$ (cd forge-control && npx tsc --noEmit)
+(no output = clean)
+
+$ (cd forge-control-web && npx tsc --noEmit)
+(no output = clean)
+
+$ (cd forge-control-web && NODE_ENV=production pnpm build)   [tail]
+
+ƒ Middleware                             83.2 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+
+$ grep -o '127.0.0.1:77[0-9][0-9]' forge-control-web/.next/routes-manifest.json | sort -u   # re-baked to prod
+127.0.0.1:7700
+
+$ bash scripts/checks/dollar-sweep.sh
+ALLOWLISTED  forge-control-web/app/desktop/MoneySurface.tsx
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+
+$ (cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-team-rows.ts)
+PASS  1000 → '1.0k'
+PASS  9999 → '10.0k'
+PASS  12_345 → '12.3k'
+PASS  204_700 → '205k'
+PASS  1_200_000 → '1.20M'
+PASS  12_300_000 → '12.3M'
+
+ALL PASS — team row model
+
+$ (cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts)
+PASS  …with reason 'capability'
+PASS  stopping an already-settled row is refused, not faked
+PASS  stop fires only with the flag on and a live row
+
+── exhaustive sweep: nothing fires today ────────────────────
+PASS  80 combinations swept, terminates issued
+
+ALL PASS — team confirm machine
+
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(' forge-control-web/app/desktop/team/ forge-control-web/app/globals.css   # token purity (NFU1)
+forge-control-web/app/globals.css:11:  background: #000;
+forge-control-web/app/globals.css:12:  color: #ededee;
+(HITS ABOVE = FAIL)
+
+$ git diff --name-only 08106cb..HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|FileExplorerPanel|VaultFileList|routes/files'
+(empty = PASS)
+
+$ git diff --name-only 08106cb..HEAD   # everything phase 500 touched
+docs/plan/artifacts/phase500/README.md
+docs/plan/artifacts/phase500/capture-team.cjs
+docs/plan/artifacts/phase500/capture-team.json
+docs/plan/artifacts/phase500/team-frozen.cjs
+docs/plan/artifacts/phase500/team-hover.cjs
+docs/plan/artifacts/phase500/team-network.cjs
+forge-control-web/app/desktop/ChatSurface.tsx
+forge-control-web/app/desktop/team/ChatTeamPanel.tsx
+forge-control-web/app/desktop/team/TeamRow.tsx
+forge-control-web/app/desktop/team/confirm.ts
+forge-control-web/app/desktop/team/dismissals.ts
+forge-control-web/app/desktop/team/teamApi.ts
+forge-control-web/app/desktop/team/teamRows.ts
+forge-control-web/app/desktop/team/tickStore.ts
+forge-control-web/app/globals.css
+scripts/checks/check-team-confirm.ts
+scripts/checks/check-team-rows.ts
+scripts/checks/dollar-allowlist.txt
+
+$ grep -rn playwright forge-control/package.json forge-control-web/package.json   # NFU8
+(empty = PASS)
+
+$ git status --short   # round 504 touched only phase500 artifacts
+ M docs/plan/artifacts/phase500/capture-team.cjs
+ M docs/plan/artifacts/phase500/capture-team.json
+ M docs/plan/artifacts/phase500/team-frozen.cjs
+?? docs/plan/artifacts/phase500/control-inert.cjs
+?? docs/plan/artifacts/phase500/control-inert.json
+?? docs/plan/artifacts/phase500/dismiss-persist.cjs
+?? docs/plan/artifacts/phase500/dismiss-persist.json
+?? docs/plan/artifacts/phase500/gates-504.txt
+?? docs/plan/artifacts/phase500/phase500-ambiguous-dark.png
+?? docs/plan/artifacts/phase500/phase500-ambiguous-light.png
+?? docs/plan/artifacts/phase500/phase500-armed-dark.png
+?? docs/plan/artifacts/phase500/phase500-armed-light.png
+?? docs/plan/artifacts/phase500/phase500-empty-dark.png
+?? docs/plan/artifacts/phase500/phase500-empty-light.png
+?? docs/plan/artifacts/phase500/phase500-error-dark.png
+?? docs/plan/artifacts/phase500/phase500-error-light.png
+?? docs/plan/artifacts/phase500/phase500-hover-dark.png
+?? docs/plan/artifacts/phase500/phase500-hover-light.png
+?? docs/plan/artifacts/phase500/phase500-live-dark.png
+?? docs/plan/artifacts/phase500/phase500-live-light.png
+?? docs/plan/artifacts/phase500/phase500-ready-dark.png
+?? docs/plan/artifacts/phase500/phase500-ready-light.png
+?? docs/plan/artifacts/phase500/phase500-unlinked-dark.png
+?? docs/plan/artifacts/phase500/phase500-unlinked-light.png
+?? docs/plan/artifacts/phase500/rail-hover-round504.json
+?? docs/plan/artifacts/phase500/team-frozen.json
+?? docs/plan/artifacts/phase500/team-hover-after.json
+?? docs/plan/artifacts/phase500/team-network-after.json
+
+── token purity, resolved ──────────────────────────────────────────────
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(' forge-control-web/app/desktop/team/
+(empty = PASS — the panel itself defines no colour)
+
+The two globals.css hits are the body rule, and they predate this project:
+c7e488d4 (Konrad 2026-06-21 11)   background: #000;
+c7e488d4 (Konrad 2026-06-21 12)   color: #ededee;
+
+$ git diff 08106cb..HEAD -- forge-control-web/app/globals.css | grep -E '^\+' | grep -cE '#[0-9a-fA-F]{3,8}|rgb\(|hsl\('
+0
+→ 0 colours added by phase 500; its globals.css block is opacity-only.
