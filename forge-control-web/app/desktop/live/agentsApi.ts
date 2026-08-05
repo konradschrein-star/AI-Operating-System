@@ -35,6 +35,14 @@ export interface SubagentRow {
   model: string | null;
   started_at: string;
   updated_at: string;
+  /** When the rollup saw the spawn's tool_result — the real settle time.
+   *  `updated_at` is NOT a substitute: late events arriving under a stale
+   *  parent_tool_use_id keep pushing it forward after the sub-agent is done.
+   *  Null on rows predating rollup v2 and on the thread-fallback path. */
+  ended_at: string | null;
+  /** Human one-liner from the spawn's input ("Recon chat Bash block
+   *  rendering"). Null where the rollup never captured one. */
+  description: string | null;
   usage: AgentUsage;
   event_count: number;
   latest_activity: {
@@ -59,9 +67,17 @@ export interface AgentRow {
   engine: string | null;
   started_at: string | null;
   last_heartbeat_at: string | null;
-  /** Server-derived wall clock. `null` when the run has not started yet
-   *  (queued) — the client tolerates it and renders "—". */
+  /** Server-derived wall clock. For a LIVE run, `now − started_at` at the
+   *  moment of the response. For a SETTLED run, FROZEN at
+   *  `settled_at − started_at` — the client must use it verbatim and never
+   *  recompute. `null` when the server could not derive one (queued, or
+   *  unusable timestamps) — the client tolerates it and renders "—". */
   elapsed_ms: number | null;
+  /** status ∈ {completed, failed, cancelled}: the run's duration is history,
+   *  not a stopwatch. */
+  settled: boolean;
+  /** When the run settled (`completed_at ?? updated_at`). Null while live. */
+  settled_at: string | null;
   spent_usd: number;
   usage_total: AgentUsage;
   usage_running?: AgentUsage;
@@ -83,6 +99,62 @@ export interface AgentsResponse {
     tokens_out_last_hour: number;
   };
   agents: AgentRow[];
+}
+
+/* ── Duration truth ───────────────────────────────────────────────────────
+ *
+ * These three functions are the ONLY place in the Live panel where a
+ * duration is derived (R6). They live here, next to the wire types, rather
+ * than in AgentActivity.tsx for two reasons: this module has no React and no
+ * imports, so `scripts/checks/check-duration.ts` can import it directly under
+ * tsx with no bundler; and co-locating them with the interfaces keeps the
+ * settled-vs-live contract readable as one thing.
+ *
+ * The invariant they exist to enforce: a finished row NEVER derives its
+ * number from `now`. If the honest value is unavailable we return null, which
+ * `humanDuration` renders as "—". A visible gap beats a growing lie.
+ */
+
+/** Parse the two timestamp shapes the API hands out: Postgres
+ *  "2026-07-30 16:21:19.674825+00" and ISO 8601
+ *  "2026-08-05T06:47:23.678Z". Returns NaN for anything unusable. */
+export function parseTs(ts: string | null | undefined): number {
+  if (!ts) return NaN;
+  return new Date(ts.replace(" ", "T").replace(/\+00$/, "Z")).getTime();
+}
+
+/** Wall-clock for a top-level run row.
+ *
+ *  1. queued            → null. `started_at` is non-null on every row in the
+ *     DB today, so status is the only honest signal that work has not begun.
+ *  2. settled           → `elapsed_ms` verbatim. The server froze it against
+ *     `settled_at`; recomputing here would re-introduce the bug. May itself
+ *     be null (unusable server-side timestamps) → "—".
+ *  3. live with a parsable start → `now − started_at`.
+ *  4. otherwise         → null. */
+export function runElapsedMs(a: AgentRow, now: number): number | null {
+  if (a.status === "queued") return null;
+  if (a.settled) return a.elapsed_ms;
+  const started = parseTs(a.started_at);
+  if (Number.isFinite(started)) return Math.max(0, now - started);
+  return null;
+}
+
+/** Wall-clock for a nested sub-agent line.
+ *
+ *  Running ticks; done measures against `ended_at`, falling back to
+ *  `updated_at` for rows recorded before rollup v2 carried a settle stamp.
+ *  A done sub-agent never sees `now` — that fallback is what made finished
+ *  sub-agents grow forever. */
+export function subagentElapsedMs(s: SubagentRow, now: number): number | null {
+  const started = parseTs(s.started_at);
+  if (!Number.isFinite(started)) return null;
+  if (s.status === "running") return Math.max(0, now - started);
+  const ended = parseTs(s.ended_at);
+  if (Number.isFinite(ended)) return Math.max(0, ended - started);
+  const updated = parseTs(s.updated_at);
+  if (Number.isFinite(updated)) return Math.max(0, updated - started);
+  return null;
 }
 
 export interface Manager {

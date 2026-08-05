@@ -33,6 +33,8 @@ import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
 import {
   fetchAgents,
+  runElapsedMs,
+  subagentElapsedMs,
   type AgentRow,
   type AgentUsage,
   type CurrentActivity,
@@ -108,16 +110,12 @@ function subagentActivityLabel(s: SubagentRow): string {
   return "";
 }
 
-/** Parse the two timestamp shapes the API hands out: Postgres
- *  "2026-07-30 09:12:34.567+00" and ISO 8601. */
-function parseTs(ts: string | null | undefined): number {
-  if (!ts) return NaN;
-  return new Date(ts.replace(" ", "T").replace(/\+00$/, "Z")).getTime();
-}
-
 /** Single 1s tick shared across every visible row. This replaces the
  *  per-row useLiveTick / setInterval pair — with ~10 running rows plus
- *  subagents that was 20+ timers each firing setState every second. */
+ *  subagents that was 20+ timers each firing setState every second.
+ *
+ *  This is the one legitimate `Date.now()` left in this file: it is the
+ *  clock, not duration math. Every duration is derived in agentsApi.ts. */
 function useSharedClock(enabled: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -135,9 +133,7 @@ interface RowProps {
 
 function AgentRunLine({ a, now }: RowProps) {
   const live = a.status === "running";
-  const started = parseTs(a.started_at);
-  const elapsed =
-    live && Number.isFinite(started) ? now - started : a.elapsed_ms;
+  const elapsed = runElapsedMs(a, now);
 
   // Live usage during the current turn is more useful than the aggregated
   // total, which resets on session restart and lags by a full assistant
@@ -252,11 +248,7 @@ function AgentRunLine({ a, now }: RowProps) {
 
 function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
   const live = s.status === "running";
-  const started = parseTs(s.started_at);
-  const updated = parseTs(s.updated_at);
-  const elapsed = Number.isFinite(started)
-    ? (live ? now : Number.isFinite(updated) ? updated : now) - started
-    : NaN;
+  const elapsed = subagentElapsedMs(s, now);
   const statusColor = live ? tokens.accent : tokens.ok;
   const tokensIn = downloadedTokens(s.usage);
   const label = subagentActivityLabel(s);
@@ -309,7 +301,7 @@ function SubagentLine({ s, now }: { s: SubagentRow; now: number }) {
         <span
           className="mono"
           style={{ color: tokens.textFaint, flex: "none" }}
-          title="how long this subagent has been running"
+          title={live ? "running for this long" : "total subagent run time"}
         >
           {humanDuration(elapsed)}
         </span>
