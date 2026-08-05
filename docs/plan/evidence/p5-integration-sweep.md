@@ -688,3 +688,91 @@ deliverable. Item 5 is the one genuinely incomplete R (R27).
 
 No code defect was found: the four engine bugs are fixed as specified, N1/N2/N3/N5 hold,
 the gate matches baseline exactly, and `/opt/forge-ai-os` is clean.
+
+---
+
+## Resolution (round 502)
+
+Round 501's text above is untouched; this section is appended only. Nine must-fix
+items, all closed. Seven were documentation-truth defects where the shipped code was
+already correct — no code was changed to match stale text, per the sweep's own
+instruction. Amendments follow the R19/R20 precedent: the original wording stays
+visible and an `AMENDED at R502` note carries the reason and the new binding text.
+
+| # | Item | Resolution |
+|---|---|---|
+| 1 | N4 names migration 0035 | **FIXED** — `docs/plan/01-requirements.md` N4, commit `5e31be0`. Original line kept; `AMENDED at R502` block names `db/migrations/0039_reviewer_chain_key.sql` and records the R308 renumber and why (`main` shipped its own `0035_task_idempotency.sql`; `db/migrations/` has no ledger to disambiguate two `0035_*` files). |
+| 2 | R22 describes Sonar chat completions | **FIXED** — `docs/plan/01-requirements.md` R22, commit `5e31be0`. `AMENDED at R502 — superseded by docs/research/perplexity-api.md (commit d870320)`: Agent API `POST /v1/agent`, default `perplexity/sonar`, search at `POST /search`, output `{answer, citations[], search_results[], model, usage}`, strict-whitelist request body, browser fallback documented in `docs/tools/perplexity.md` §11 not built. |
+| 3 | R21 pins `gemini-3.6-flash`; rubric cross-ref | **FIXED** — `docs/plan/01-requirements.md` R21, commit `5e31be0`. `AMENDED at R502 — superseded by docs/research/round-399-41e8757d.md`: default is `gemini-omni-flash` because `gemini-3.6-flash` does not accept video input; rubric cross-reference corrected from "02-architecture §5" to "§6.2". |
+| 4 | Push the branch | **FIXED** — `scripts/git-sync-branch.sh` run against this worktree, plain push, no `--force`. Transcript in §R502.1 below. |
+| 5 | `AI OS/Goal Mode Design.md` not appended (R27) | **FIXED** — appended, never truncated. Verification in §R502.2 below: the original 29 lines are byte-identical after the append (`head -29 | diff` against a pre-append copy = no output). New section `## Engine v2 — hardening + the research lane (2026-08-05, project engine-v2-research-lane)` covers all five required topics: consolidation semantics (group-settle, NEEDS_FIXES beats PASS, one fix chain, block-before-mark-done, `chain_key` idempotency, 3-cycle cap), status gating (`AND p.status = 'active'` on both paths, in-flight runs not killed), the worktree-only policy + `REVIEWER_LIVE_CHECK`, the detached `safe-restart.sh` deploy pattern with the exact command, and the researcher lane (`agents/researcher.md`, `roleFilePaths()` repo fallback, both helpers with their key protocol, `git-sync-branch.sh`). |
+| 6 | `02-architecture.md:196,262` model + pricing | **FIXED** — commit `5e31be0`. §6.2 step 2 and §9 both annotated `AMENDED at R502`: `gemini-omni-flash`, $1.50/$9.00 per 1M, video 5,792 tok/sec, citing `docs/research/round-399-41e8757d.md`. |
+| 7 | `02-architecture.md` §5.1 role-file install | **FIXED** — commit `5e31be0`. The `cp` into `/root/.claude/agents/` sentence is quoted as the original and superseded: the shipped resolution order is `${AGENTS_DIR}/<role>.md` then `${REPO_AGENTS_DIR}/<role>.md` (`project-tick.ts:185-187`), so a role file committed to `agents/` self-installs at the first post-deploy executor restart. The note also keeps the true half of the old claim — `roleConfig()`'s per-role cache is why R20's smoke is gated behind P6's restart. |
+| 8 | `02-architecture.md` §6.3 Perplexity | **FIXED** — commit `5e31be0`. §6.3 headed with an `AMENDED at R502` supersession pointing at `docs/research/perplexity-api.md` and R22's amendment; the original paragraph is retained beneath it for the audit trail. §9's `sonar-pro` bullet annotated to match. |
+| 9 | `03-quality.md:61` T12 "ten failures" | **FIXED** — commit `5e31be0`. Corrected to three, naming `MAX_GROUP_FAILURES = 3` at `forge-control/src/lib/project-tick.ts:81` and the pre-existing agreement in `docs/plan/evidence/0039-conflict-target.md:22-23`. |
+
+**Deliberately not fixed — `bumpFixCycle` (`forge-control/src/db/projects.ts:616`).** §4
+found it dead and ruled it out of scope; round 502 agrees and re-verified rather than
+assuming. It has exactly one reference, its own definition
+(`grep -rn "bumpFixCycle" --include=*.ts --include=*.mjs .` → one line), and it is dead on
+`main` too, so it is not a P1-refactor artifact. Deleting it would be an unrelated cleanup
+inside a diff whose reviewability is the point. Left for a future cleanup commit, and it is
+now recorded in two places rather than one.
+
+**No code change was needed or made in round 502.** Every must-fix was corpus text, an
+unexecuted deliverable, or a vault append — so the "extend the existing suites" rule
+(task step 3) has no target: the test count neither grew nor dropped, which is the
+correct outcome when `forge-control/src/**` is untouched. Verified:
+`git diff --stat main...HEAD -- forge-control/src` is byte-identical before and after
+this round's commits.
+
+### §R502.1 — gate, boundary, live checkout, branch push (all re-run this round)
+
+```
+$ cd forge-control && pnpm install --prod=false && npx tsc --noEmit && pnpm test
+Already up to date
+Done in 724ms using pnpm v9.15.9
+=== TSC ===
+TSC_EXIT=0
+=== TEST ===
+1..53
+# tests 167
+# suites 36
+# pass 167
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1093.215162
+```
+
+**167 tests / 167 pass / 0 fail / 36 suites — exact match to the round-500 planner
+baseline and to §5's own run. No regression, no test-count drop.**
+
+```
+$ git diff --name-only main...HEAD | grep -E '^forge-control-web/|^forge-control/src/routes/agents\.ts$'
+GREP_EXIT=1        (no output, no match)
+
+$ git -C /opt/forge-ai-os status --porcelain
+LIVE_EXIT=0        (no lines above = clean)
+```
+
+N2 still clean; the live checkout is still untouched, now including round 502's own work
+(the only live-system write this round is the permitted vault append).
+
+### §R502.2 — vault append verified non-destructive
+
+```
+$ cp "/opt/obsidian-vault/AI OS/Goal Mode Design.md" /tmp/goal-mode-design.bak
+$ wc -l /tmp/goal-mode-design.bak
+29
+   ... append via `cat >> ` ...
+$ wc -l "/opt/obsidian-vault/AI OS/Goal Mode Design.md"
+80
+$ head -29 "/opt/obsidian-vault/AI OS/Goal Mode Design.md" | diff - /tmp/goal-mode-design.bak
+ORIGINAL 29 LINES INTACT      (diff produced no output)
+```
+
+R27's first named deliverable is now done. The `Operator Log.md` entry and
+`docs/tools/deploy-playbook.md` were already in place per §1, so R27 moves DEFECT →
+SATISFIED.

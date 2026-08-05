@@ -126,3 +126,31 @@ the live script at `/opt/ai-os/scripts/safe-restart.sh` (outside this worktree, 
 untouched). No `pnpm install` / `tsc` / `pnpm test` was run in this task per the brief's
 constraint (a sibling task shares this worktree); this sweep was zero-dependency `node`/`git`/`grep`
 only, as instructed.
+
+---
+
+## Resolution (round 502)
+
+Round 501's text above is untouched; this section is appended only.
+
+**This audit's `## For round 502` list was empty — "Nothing".** Per the round-502 task's
+step 7, an empty list is not licence to idle: the load-bearing claims were independently
+re-verified rather than taken on trust. Second pair of eyes, run this round:
+
+| Claim re-checked | Method | Result |
+|---|---|---|
+| Gate green | `cd forge-control && pnpm install --prod=false && npx tsc --noEmit && pnpm test` | `TSC_EXIT=0`, no output; **167 tests / 167 pass / 0 fail / 36 suites**. Matches the round-500 baseline and sweep A §5 exactly. |
+| N2 boundary | `git diff --name-only main...HEAD \| grep -E '^forge-control-web/\|^forge-control/src/routes/agents\.ts$'` | `GREP_EXIT=1`, no output. Clean. |
+| `gemini-qa.mjs` `--help` vs `docs/tools/gemini-qa.md` | live `--help`, flags extracted and sorted, diffed against the doc's flags | `--help --model --out --prompt-extra` in both directions. `--import` appears in the doc as prose, not as a flag — as this audit already stated. **Clean.** |
+| `perplexity.mjs` `--help` vs `docs/tools/perplexity.md` | same method | `--instructions --max-results --max-steps --max-tool-calls --model --no-force-search --out --preset` in both directions. **Clean.** |
+| `deploy-playbook.md`'s corrected `project-tick.ts` line citations | `grep -n` for the four prompt constants in the live file | `WORKTREE_POLICY:288`, `REVIEWER_LIVE_CHECK:307`, `DEPLOY_GUIDE:321`, `GITHUB_PUSH_GUIDE:341`, `withPolicy` wrapper `:361`. Matches this audit's correction table line for line. **No drift reintroduced.** |
+
+**Nothing to fix, and nothing was changed in `docs/tools/**` this round.** The
+`deploy-playbook.md` modification this audit's sibling task had open at sweep time
+(sweep A §1) has since been committed at `2913377`; `git status --porcelain` in the
+worktree is clean.
+
+Round 502's nine must-fix items all came from sweep A
+(`docs/plan/evidence/p5-integration-sweep.md`); their closures are recorded in that
+file's own `## Resolution (round 502)` section. None of them touched `docs/tools/**`,
+so this audit's conclusions stand unamended.
