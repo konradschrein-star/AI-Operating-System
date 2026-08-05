@@ -85,7 +85,7 @@ const TIER_MODELS: Record<TaskTier, { model: string; effort: string }> = {
   flagship: { model: "claude-fable-5", effort: "high" },
 };
 
-interface RoleConfig {
+export interface RoleConfig {
   mission: string;
   tools: string[] | null;
   model: string | null;
@@ -93,6 +93,23 @@ interface RoleConfig {
 }
 
 const roleConfigCache = new Map<TaskRole, RoleConfig>();
+
+/** Parse an agents/<role>.md file's raw text into mission body (frontmatter
+ *  stripped) and the `tools:`/`model:`/`effort:` fields from the frontmatter.
+ *  Pure — no I/O, no cache — so it can be tested directly against the real
+ *  agent definition files instead of a hand-copied fixture string. */
+export function parseRoleFile(raw: string): RoleConfig {
+  const fmMatch = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
+  const frontmatter = fmMatch?.[1] ?? "";
+  const mission = (fmMatch?.[2] ?? raw).trim();
+  const toolsLine = /^tools:\s*(.+)$/m.exec(frontmatter)?.[1];
+  const tools = toolsLine
+    ? toolsLine.split(",").map((t) => t.trim()).filter(Boolean)
+    : null;
+  const model = sanitizeModel(/^model:\s*(.+)$/m.exec(frontmatter)?.[1]);
+  const effort = sanitizeEffort(/^effort:\s*(.+)$/m.exec(frontmatter)?.[1]);
+  return { mission, tools, model, effort };
+}
 
 /** Read an agents/<role>.md file — the SAME file the Task-tool subagent
  *  system reads — and split it into the mission body (frontmatter stripped)
@@ -106,16 +123,7 @@ function roleConfig(role: TaskRole): RoleConfig {
   if (cached) return cached;
   try {
     const raw = readFileSync(`${AGENTS_DIR}/${role}.md`, "utf8");
-    const fmMatch = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
-    const frontmatter = fmMatch?.[1] ?? "";
-    const mission = (fmMatch?.[2] ?? raw).trim();
-    const toolsLine = /^tools:\s*(.+)$/m.exec(frontmatter)?.[1];
-    const tools = toolsLine
-      ? toolsLine.split(",").map((t) => t.trim()).filter(Boolean)
-      : null;
-    const model = sanitizeModel(/^model:\s*(.+)$/m.exec(frontmatter)?.[1]);
-    const effort = sanitizeEffort(/^effort:\s*(.+)$/m.exec(frontmatter)?.[1]);
-    const cfg: RoleConfig = { mission, tools, model, effort };
+    const cfg = parseRoleFile(raw);
     roleConfigCache.set(role, cfg);
     return cfg;
   } catch {

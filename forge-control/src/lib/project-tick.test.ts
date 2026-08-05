@@ -14,6 +14,7 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   buildPrompt,
@@ -21,6 +22,7 @@ import {
   REVIEWER_LIVE_CHECK,
   DEPLOY_GUIDE,
   GITHUB_PUSH_GUIDE,
+  parseRoleFile,
 } from "./project-tick.ts";
 import type { Project, ProjectTask } from "../db/projects.ts";
 
@@ -226,5 +228,38 @@ describe("T10 prompt policy", () => {
       const prompt = buildPrompt(task({ role }), proj);
       assert.ok(!FORCE_COMMAND_RE.test(prompt), `${role} prompt must never instruct running a force push`);
     }
+  });
+});
+
+describe("T11 researcher frontmatter parse", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+
+  test("parseRoleFile parses agents/researcher.md via the engine's own logic", () => {
+    const raw = readFileSync(`${repoRoot}agents/researcher.md`, "utf8");
+    const cfg = parseRoleFile(raw);
+
+    assert.deepEqual(
+      cfg.tools,
+      ["Read", "Write", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "Skill"],
+      "researcher.md tools frontmatter should parse to exactly this allowlist, in order",
+    );
+    assert.equal(cfg.model, "claude-opus-5", "researcher.md model should survive sanitizeModel");
+    assert.equal(cfg.effort, "high", "researcher.md effort should survive sanitizeEffort");
+    assert.ok(cfg.mission.length > 0, "researcher.md mission should be non-empty");
+    assert.ok(!cfg.mission.startsWith("---"), "researcher.md mission should have frontmatter stripped");
+    assert.ok(cfg.mission.includes("docs/research"), "researcher.md mission should mention docs/research");
+    assert.match(
+      cfg.mission,
+      /citation/i,
+      "researcher.md mission should mention a citation obligation",
+    );
+  });
+
+  test("parseRoleFile negative control: raw text with no frontmatter", () => {
+    const cfg = parseRoleFile("no frontmatter here");
+    assert.equal(cfg.mission, "no frontmatter here");
+    assert.equal(cfg.tools, null);
+    assert.equal(cfg.model, null);
+    assert.equal(cfg.effort, null);
   });
 });
