@@ -129,6 +129,11 @@ const TIER_GUIDE =
   `needs the strongest model. Omit tier to fall back to the role default (Opus). Flagship is the expensive ` +
   `one — reserve it for design-heavy or genuinely hard tasks.`;
 
+const IDEMPOTENCY_NOTE =
+  `A task's identity is (project, round, role, title), so titles must be distinct within one round and role. ` +
+  `Repeating a curl answers 409 with the task that already exists instead of creating a second one — re-issuing ` +
+  `a call you are not sure landed is safe, and can never fan out duplicate agents into the same worktree.`;
+
 const PARALLELISM_GUIDE =
   `Tasks in the SAME round run in PARALLEL inside the SAME worktree — only put tasks in one round when they ` +
   `touch disjoint files. Anything that could collide goes in consecutive rounds instead. Rounds only gate ` +
@@ -165,7 +170,7 @@ function buildPrompt(task: ProjectTask, project: Project): string {
         `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
         `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
         `reviewer briefed to attack, not just check).\n` +
-        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n\n` +
+        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n   ${IDEMPOTENCY_NOTE}\n\n` +
         `3) GIT/GITHUB. If the repo has an origin remote you may push the work branch so progress is visible ` +
         `on GitHub; never force-push, never open PRs unless the brief asks.\n\n` +
         `Do not write implementation code or commit anything outside docs/plan/ — that's the builders' job.`
@@ -179,7 +184,7 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `Split implementation into focused, independently-completable builder tasks. Always end with exactly one ` +
       `"reviewer" task in the round right after your last builder round, briefed to review the whole diff. ` +
       `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
-      TIER_GUIDE
+      `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}`
     );
   }
   if (task.role === "planner") {
@@ -194,7 +199,7 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `which tests/commands to run. Each builder brief must be self-contained: files to touch, the approach, ` +
       `and how the builder verifies its own work (tests to write/run). Do not exceed round ${task.round + 20} — ` +
       `the space beyond that belongs to fix cycles and the next phase.\n` +
-      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n` +
+      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}\n` +
       `Do not write implementation code yourself — plan, then fan out.`
     );
   }
@@ -323,8 +328,12 @@ async function reconcileReviewer(
     return;
   }
 
+  // Two reviewers in one round that both return NEEDS_FIXES used to create two
+  // fix builders and two re-reviews. createTask is idempotent on
+  // (project, round, role, title) now, so the second reviewer joins the fix
+  // cycle the first one opened instead of doubling it.
   const nextCycle = task.fix_cycle + 1;
-  await createTask({
+  const fix = await createTask({
     project_id: task.project_id,
     round: task.round + 1,
     role: "builder",
@@ -332,7 +341,7 @@ async function reconcileReviewer(
     brief: `Reviewer feedback from the previous round:\n\n${lastText}`,
     fix_cycle: nextCycle,
   });
-  await createTask({
+  const rereview = await createTask({
     project_id: task.project_id,
     round: task.round + 2,
     role: "reviewer",
@@ -340,6 +349,11 @@ async function reconcileReviewer(
     brief: "Re-check the same concerns raised in the previous review round against the new diff.",
     fix_cycle: nextCycle,
   });
+  console.log(
+    `[project-tick] reviewer ${task.id} → NEEDS_FIXES: fix cycle ${nextCycle} ` +
+      `(builder ${fix.task.id}${fix.created ? "" : " existing"}, ` +
+      `reviewer ${rereview.task.id}${rereview.created ? "" : " existing"})`,
+  );
 }
 
 async function reconcileSettledTasks(): Promise<void> {

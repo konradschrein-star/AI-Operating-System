@@ -196,6 +196,14 @@ export async function getTask(id: string): Promise<ProjectTask | null> {
   return r.rows[0] ?? null;
 }
 
+/** Create a fan-out task, idempotently.
+ *
+ *  (project_id, round, role, title) is the task's identity — migration 0035
+ *  enforces it with a unique index. An architect that runs its fan-out curls
+ *  twice (2026-07-30, canvas-ux) gets the SAME task back the second time
+ *  instead of a duplicate that then races the original inside one worktree.
+ *  `created` tells the caller which happened: the API route turns
+ *  created=false into a 409, the fix-cycle path treats it as a no-op. */
 export async function createTask(input: {
   project_id: string;
   round: number;
@@ -204,22 +212,41 @@ export async function createTask(input: {
   brief: string;
   fix_cycle?: number;
   tier?: TaskTier;
-}): Promise<ProjectTask> {
+}): Promise<{ task: ProjectTask; created: boolean }> {
+  const title = input.title.slice(0, 200);
   const r = await pool.query<ProjectTask>(
     `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (project_id, round, role, title) DO NOTHING
      RETURNING ${TASK_COLS}`,
     [
       input.project_id,
       input.round,
       input.role,
-      input.title.slice(0, 200),
+      title,
       input.brief,
       input.fix_cycle ?? 0,
       input.tier ?? null,
     ],
   );
-  return r.rows[0];
+  if (r.rows[0]) return { task: r.rows[0], created: true };
+
+  const existing = await pool.query<ProjectTask>(
+    `SELECT ${TASK_COLS} FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND role = $3 AND title = $4
+      LIMIT 1`,
+    [input.project_id, input.round, input.role, title],
+  );
+  if (!existing.rows[0]) {
+    // DO NOTHING fired but nothing matches the identity we just tried to
+    // insert — the unique index is on different columns than we think.
+    throw new Error(
+      `createTask: insert for (${input.project_id}, round ${input.round}, ` +
+        `${input.role}, "${title}") conflicted but no existing row matches — ` +
+        `project_tasks_identity_idx (migration 0035) may be missing or altered`,
+    );
+  }
+  return { task: existing.rows[0], created: false };
 }
 
 /** Mark 'active' projects 'done' once every one of their tasks has settled

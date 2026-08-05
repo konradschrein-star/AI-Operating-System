@@ -157,7 +157,7 @@ r.post("/:id/tasks", async (c) => {
     return c.json({ error: `tier must be one of: ${[...TIERS].join(", ")}` }, 400);
   }
 
-  const task = await createTask({
+  const { task, created } = await createTask({
     project_id: id,
     round,
     role: body.role as TaskRole,
@@ -165,6 +165,18 @@ r.post("/:id/tasks", async (c) => {
     brief,
     tier: body.tier as TaskTier | undefined,
   });
+  if (!created) {
+    // Idempotency (migration 0035): a retried curl gets the original task id
+    // back, not a second task that would race it in the same worktree.
+    return c.json(
+      {
+        task,
+        error:
+          "duplicate task: this project already has a task with that round/role/title",
+      },
+      409,
+    );
+  }
   return c.json({ task }, 201);
 });
 
