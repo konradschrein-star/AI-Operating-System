@@ -215,6 +215,10 @@ function FileExplorerPanelImpl({
   const [searchErrors, setSearchErrors] = useState<{ label: string; message: string }[]>([]);
   const [searchSelected, setSearchSelected] = useState<SearchHit[]>([]);
   const [pathCopied, setPathCopied] = useState(false);
+  // Errors from user-initiated actions (attach, copy path). Distinct from
+  // loadError (which is directory-load failures) so a click failure surfaces
+  // even while the file list itself is healthy. T16: no silent fallbacks.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const cacheRef = useRef<Map<string, CacheEntry>>(new Map());
 
@@ -407,6 +411,7 @@ function FileExplorerPanelImpl({
   const attachSelected = async () => {
     if (!onAttach) return;
     setAttaching(true);
+    setActionError(null);
     try {
       if (isSearching) {
         for (const h of searchSelected) {
@@ -420,6 +425,10 @@ function FileExplorerPanelImpl({
           onAttach(attached);
         }
       }
+    } catch (err) {
+      setActionError(
+        `attach failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     } finally {
       setAttaching(false);
     }
@@ -427,26 +436,57 @@ function FileExplorerPanelImpl({
 
   /** Resolve selection to absolute VPS paths and put them on the clipboard. */
   const copySelectedPaths = async () => {
-    let resolved: (UploadedFile | null)[];
+    setActionError(null);
+    let resolved: (UploadedFile | Error)[];
     if (isSearching) {
       if (searchSelected.length === 0) return;
       resolved = await Promise.all(
-        searchSelected.map((h) => attachExistingFile(h.root, h.rel).catch(() => null)),
+        searchSelected.map((h) =>
+          attachExistingFile(h.root, h.rel).catch((e: unknown): Error =>
+            e instanceof Error ? e : new Error(String(e)),
+          ),
+        ),
       );
     } else {
       const targets = selected.filter((sf) => !sf.entry.isDir);
       if (targets.length === 0) return;
       resolved = await Promise.all(
         targets.map((sf) =>
-          attachExistingFile(sf.root, selectedFullRel(sf)).catch(() => null),
+          attachExistingFile(sf.root, selectedFullRel(sf)).catch((e: unknown): Error =>
+            e instanceof Error ? e : new Error(String(e)),
+          ),
         ),
       );
     }
-    const paths = resolved.filter((f): f is UploadedFile => f !== null).map((f) => f.path);
-    if (paths.length === 0) return;
-    await navigator.clipboard.writeText(paths.join("\n"));
+    const paths = resolved
+      .filter((f): f is UploadedFile => !(f instanceof Error))
+      .map((f) => f.path);
+    const failures = resolved.filter((f): f is Error => f instanceof Error);
+    if (paths.length === 0) {
+      const first = failures[0]?.message ?? "unknown error";
+      setActionError(
+        `copy path failed: ${failures.length > 1 ? `${failures.length} paths failed — first: ${first}` : first}`,
+      );
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(paths.join("\n"));
+    } catch (err) {
+      setActionError(
+        `copy path: clipboard write failed — ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
     setPathCopied(true);
     setTimeout(() => setPathCopied(false), 1500);
+    // Partial success: some paths copied but others failed — surface the
+    // failure alongside the success so the user knows the clipboard is
+    // incomplete.
+    if (failures.length > 0) {
+      setActionError(
+        `copy path: ${failures.length} of ${resolved.length} failed — first: ${failures[0]?.message ?? "unknown error"}`,
+      );
+    }
   };
 
   const isSearching = query.trim().length >= 2;
@@ -549,6 +589,38 @@ function FileExplorerPanelImpl({
             : `${searchResults?.length ?? 0} match${searchResults?.length === 1 ? "" : "es"}${searchTruncated ? " (more exist — narrow the search)" : ""}${searchErrors.length > 0 ? ` — ${searchErrors.length} root${searchErrors.length === 1 ? "" : "s"} failed` : ""} — click to select`
           : `select a file, then copy path${onAttach ? " or attach" : ""} — or drag it onto the composer`}
       </div>
+      {actionError && (
+        <div
+          className="mono"
+          style={{
+            padding: "5px 10px",
+            fontSize: 10,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span style={{ flex: 1, minWidth: 0 }}>{actionError}</span>
+          <button
+            onClick={() => setActionError(null)}
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: tokens.textLabel,
+              background: "transparent",
+              border: `1px solid ${tokens.borderEmphasis}`,
+              borderRadius: 4,
+              padding: "1px 6px",
+              cursor: "pointer",
+            }}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
       {isSearching && searchErrors.length > 0 && (
         <div
           className="mono"
