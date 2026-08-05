@@ -56,6 +56,8 @@ import {
   usePersistentState,
   isBool,
 } from "./_ui/ResizableSplit";
+import { toastError } from "./_ui/Toasts";
+import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
@@ -558,8 +560,12 @@ export function ChatSurface({
       setSelId(run.id);
       setComposing(false);
     },
+    onError: (e) => toastError("Couldn't start that chat.", e),
   });
 
+  // Every mutation below carries onError. Without it a failed send cleared
+  // the composer and did nothing else — the message was simply gone, with
+  // no way to tell that from a message the engine hadn't answered yet.
   const sendM = useMutation({
     mutationFn: (input: {
       id: string;
@@ -570,6 +576,11 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
     },
+    onError: (e, input) =>
+      toastError(
+        `Message not sent — “${input.content.slice(0, 60)}${input.content.length > 60 ? "…" : ""}”`,
+        e,
+      ),
   });
 
   const statusM = useMutation({
@@ -579,6 +590,8 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
     },
+    onError: (e, input) =>
+      toastError(`Couldn't set this chat to ${input.status}.`, e),
   });
 
   const resumeM = useMutation({
@@ -587,6 +600,7 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.setQueryData(["chat", "run", run.id], run);
     },
+    onError: (e) => toastError("Resume failed — the run is still stopped.", e),
   });
 
   // Close = archive. Stops the underlying agent first (if it's still
@@ -599,6 +613,8 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       if (selId === id) setSelId(null);
     },
+    onError: (e) =>
+      toastError("Close failed — the chat and its agent are still running.", e),
   });
   const archiveAllM = useMutation({
     mutationFn: () => archiveAllChats(),
@@ -606,6 +622,7 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       setSelId(null);
     },
+    onError: (e) => toastError("Close-all failed — nothing was archived.", e),
   });
 
   const counts = listQ.data?.counts ?? null;
@@ -767,7 +784,17 @@ export function ChatSurface({
                   searching…
                 </div>
               )}
-              {!searchQ.isLoading && (searchQ.data?.length ?? 0) === 0 && (
+              {searchQ.isError && (
+                <ErrorPanel
+                  compact
+                  title="Search failed."
+                  detail={errorDetail(searchQ.error)}
+                  onRetry={() => void searchQ.refetch()}
+                />
+              )}
+              {!searchQ.isLoading &&
+                !searchQ.isError &&
+                (searchQ.data?.length ?? 0) === 0 && (
                 <div
                   className="mono"
                   style={{
@@ -811,7 +838,17 @@ export function ChatSurface({
                   loading…
                 </div>
               )}
-              {!listQ.isLoading && (listQ.data?.runs.length ?? 0) === 0 && (
+              {listQ.isError && (
+                <ErrorPanel
+                  compact
+                  title="Couldn't load your chats."
+                  detail={errorDetail(listQ.error)}
+                  onRetry={() => void listQ.refetch()}
+                />
+              )}
+              {!listQ.isLoading &&
+                !listQ.isError &&
+                (listQ.data?.runs.length ?? 0) === 0 && (
                 <div
                   className="mono"
                   style={{
