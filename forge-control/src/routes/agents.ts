@@ -98,9 +98,17 @@ interface AgentRun {
   started_at: string | null;
   updated_at: string;
   last_heartbeat_at: string | null;
-  /** Live wall-clock derived server-side too, so a paused UI reflects the
-   *  true elapsed by the time it renders (the client also ticks it). */
+  /** Wall-clock runtime. For a LIVE run this is `now − started_at`, derived
+   *  server-side so a paused UI reflects the true elapsed by the time it
+   *  renders (the client also ticks it). For a SETTLED run it is frozen at
+   *  `settled_at − started_at` — never now-derived, or a finished 130-second
+   *  run reads "5h 05m" and grows every poll. Unusable timestamps → null,
+   *  which the client renders as "—". */
   elapsed_ms: number | null;
+  /** status ∈ {completed, failed, cancelled}. */
+  settled: boolean;
+  /** When the run settled: `completed_at ?? updated_at`. Null while live. */
+  settled_at: string | null;
   spent_usd: number;
   /** Aggregate across every turn this run has taken. */
   usage_total: Usage & {
@@ -143,6 +151,10 @@ interface AgentsResponse {
 // is Konrad's overview of what ran tonight, not only what runs this instant.
 // Completed rows never pull the thread fallback and LIMIT 60 bounds payload.
 const RECENT_COMPLETION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Terminal statuses. Once a run is in one of these its duration is history,
+ *  not a stopwatch. */
+const SETTLED_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 function numOr0(v: unknown): number {
   const n = typeof v === "string" ? Number(v) : (v as number);
@@ -380,6 +392,10 @@ interface AgentRowRaw {
   parent_run_id: string | null;
   started_at: string | null;
   updated_at: string;
+  /** Stamped by every complete/fail path. The cancel path never stamps it
+   *  (4 legacy rows), which is why the settle time falls back to
+   *  `updated_at` — see `agentFromRow`. */
+  completed_at: string | null;
   last_heartbeat_at: string | null;
 }
 
@@ -426,7 +442,8 @@ async function fetchActiveRows(projectId?: string): Promise<AgentRowRaw[]> {
               ELSE NULL::jsonb
             END AS thread,
             parent_run_id::text AS parent_run_id,
-            started_at::text, updated_at::text, last_heartbeat_at::text
+            started_at::text, updated_at::text, completed_at::text,
+            last_heartbeat_at::text
        FROM runs
       WHERE (
               status IN ('running','queued','paused','stuck')
@@ -535,7 +552,21 @@ function subagentsFromRollup(src: unknown): Subagent[] {
 function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
   const meta = row.metadata ?? {};
   const startedMs = row.started_at ? Date.parse(row.started_at) : NaN;
-  const elapsed = Number.isFinite(startedMs) ? Math.max(0, nowMs - startedMs) : null;
+  // Time truth: a settled run's duration is measured against when it settled,
+  // never against `now`. `completed_at` is stamped by every complete/fail
+  // path; the legacy cancel path isn't, so `updated_at` carries the settle
+  // time there. If neither parses we return null rather than a now-derived
+  // number — a visible "—" beats a plausible lie that grows all day.
+  const settled = SETTLED_STATUSES.has(row.status);
+  const settledAtRaw = settled ? (row.completed_at ?? row.updated_at) : null;
+  const settledAtMs = settledAtRaw ? Date.parse(settledAtRaw) : NaN;
+  const elapsed = !Number.isFinite(startedMs)
+    ? null
+    : settled
+      ? Number.isFinite(settledAtMs)
+        ? Math.max(0, settledAtMs - startedMs)
+        : null
+      : Math.max(0, nowMs - startedMs);
   const usageRunningRaw = (meta as Record<string, unknown>).usage_running;
   const totalRunningRaw = (meta as Record<string, unknown>).usage_total_running;
   // Prefer the persisted rollup; only crack the thread when a live row has
@@ -566,6 +597,8 @@ function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
     updated_at: row.updated_at,
     last_heartbeat_at: row.last_heartbeat_at,
     elapsed_ms: elapsed,
+    settled,
+    settled_at: settledAtRaw,
     spent_usd: numOr0(row.spent_usd),
     // usage_total_running (the rollup's aggregate for the current process)
     // beats the older metadata.usage_total path — that field was never
@@ -661,7 +694,8 @@ r.get("/:id", async (c) => {
   const r0 = await pool.query<AgentRowRaw>(
     `SELECT id::text, title, status, worker, spent_usd::text,
             metadata, thread, parent_run_id::text AS parent_run_id,
-            started_at::text, updated_at::text, last_heartbeat_at::text
+            started_at::text, updated_at::text, completed_at::text,
+            last_heartbeat_at::text
        FROM runs
       WHERE id = $1
       LIMIT 1`,
