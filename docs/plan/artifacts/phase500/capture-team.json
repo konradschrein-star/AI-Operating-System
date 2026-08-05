@@ -1,0 +1,49 @@
+{
+  "base": "http://127.0.0.1:7787",
+  "chats": {
+    "ready": "phase300 round-304 linkage fixture",
+    "ambiguous": "Okay this session is very important",
+    "unlinked": "Okay when I click the file section",
+    "empty": "phase300 round-304 linkage fixture",
+    "error": "phase300 round-304 linkage fixture",
+    "hover": "phase300 round-304 linkage fixture",
+    "armed": "phase300 round-304 linkage fixture"
+  },
+  "results": [
+    {
+      "case": "ready",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    },
+    {
+      "case": "ambiguous",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    },
+    {
+      "case": "unlinked",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    },
+    {
+      "case": "empty",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    },
+    {
+      "case": "error",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    },
+    {
+      "case": "hover",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    },
+    {
+      "case": "armed",
+      "ok": false,
+      "error": "no [data-team-panel] found in the DOM within 15000ms — the Team panel does not exist yet"
+    }
+  ]
+}
