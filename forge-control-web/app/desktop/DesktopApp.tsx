@@ -43,6 +43,7 @@ import { MoneySurface } from "./MoneySurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
+import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -265,6 +266,15 @@ export function DesktopApp() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQ, setPaletteQ] = useState("");
 
+  // Nav rail width — draggable and remembered. 120 still shows the labels;
+  // 360 is as wide as this rail can be without stealing the surface.
+  const navRail = useResizablePanel({
+    storageKey: "forge.layout.navRail",
+    initial: 184,
+    min: 120,
+    max: 360,
+  });
+
   const todayQ = useQuery({ queryKey: ["today"], queryFn: fetchToday });
   const inboxQ = useQuery({ queryKey: ["inbox"], queryFn: fetchInbox });
   const liveQ = useQuery({
@@ -345,7 +355,13 @@ export function DesktopApp() {
         badges={inboxBadges}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <LeftRail surface={surface} onNav={setSurface} badges={inboxBadges} />
+        <LeftRail
+          surface={surface}
+          onNav={setSurface}
+          badges={inboxBadges}
+          width={navRail.size}
+        />
+        <ResizeHandle {...navRail.handleProps} title="Resize navigation · double-click to reset" />
         <div
           style={{
             flex: 1,
@@ -661,10 +677,14 @@ function LeftRail({
   surface,
   onNav,
   badges,
+  width,
 }: {
   surface: Surface;
   onNav: (s: Surface) => void;
   badges: Record<string, string>;
+  /** Owned by DesktopApp's useResizablePanel — the adjacent ResizeHandle
+   *  also supplies the hairline this nav used to draw itself. */
+  width: number;
 }) {
   const railStyle = (key: Surface): CSSProperties => ({
     display: "flex",
@@ -685,13 +705,13 @@ function LeftRail({
   return (
     <nav
       style={{
-        width: 184,
+        width,
         flex: "none",
-        borderRight: `1px solid ${tokens.borderSoft}`,
         background: tokens.bgBody,
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        overflow: "hidden",
       }}
     >
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 0" }}>

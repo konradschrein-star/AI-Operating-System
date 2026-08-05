@@ -1,0 +1,306 @@
+"use client";
+
+/**
+ * The app's one resize primitive.
+ *
+ * Before this, every panel dimension in the console was a magic number
+ * (audit §4: nav rail 184, chat rail 300, side panel 260/420, chat↔canvas
+ * 55/45 …) and nothing about the layout survived a reload. On a 1280px
+ * laptop the chat surface spent 904px on chrome before the thread got a
+ * pixel, and there was no way to claw any of it back.
+ *
+ * Two pieces:
+ *   • `useResizablePanel` — owns the size, clamps it, persists it under a
+ *     localStorage key, and hands back the props for the grab handle.
+ *   • `<ResizeHandle>` — the 5px grab strip. Renders as a hairline that
+ *     lights up on hover/drag, so it reads as the panel border it replaces.
+ *
+ * Sizes come in two units. `px` for panels that should keep their width as
+ * the window changes (rails, side panel). `fraction` for splits of the
+ * remaining space (chat↔canvas, agents↔board), measured against the
+ * handle's parent so the split holds its proportion at any window size.
+ *
+ * Double-click a handle to reset that panel to its designed default —
+ * cheaper than dragging back and the only way out of a size you can no
+ * longer see.
+ *
+ * SSR: the stored size is applied in a layout effect, not in the useState
+ * initializer. Reading localStorage during render would make the server
+ * and client markup disagree; a layout effect lands before paint, so
+ * there's no flash of the default width either.
+ */
+
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
+import { tokens } from "../../tokens";
+
+export type ResizeAxis = "x" | "y";
+
+export interface ResizeHandleProps {
+  axis: ResizeAxis;
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onDoubleClick: () => void;
+  /** Not named `ref`: React 19 treats a literal `ref` prop specially and we
+   *  need this to survive a plain `{...handleProps}` spread. */
+  handleRef: (el: HTMLDivElement | null) => void;
+  active: boolean;
+}
+
+interface PanelOptions {
+  /** localStorage key. Namespace with `forge.layout.` for readability. */
+  storageKey: string;
+  /** Designed default, and the value double-click restores. */
+  initial: number;
+  min: number;
+  max: number;
+  /** `x` = horizontal drag (width), `y` = vertical drag (height). */
+  axis?: ResizeAxis;
+  /** px = absolute size; fraction = 0..1 of the handle's parent. */
+  unit?: "px" | "fraction";
+  /**
+   * True when the panel being sized is *after* the handle (e.g. a
+   * right-hand side panel, whose handle sits on its left edge): dragging
+   * toward the start of the axis must then grow it, not shrink it.
+   */
+  invert?: boolean;
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, n));
+}
+
+function readStored(key: string): number | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null; // private mode / disabled storage — defaults are fine
+  }
+}
+
+export function useResizablePanel(opts: PanelOptions): {
+  size: number;
+  handleProps: ResizeHandleProps;
+  reset: () => void;
+} {
+  const {
+    storageKey,
+    initial,
+    min,
+    max,
+    axis = "x",
+    unit = "px",
+    invert = false,
+  } = opts;
+  const [size, setSize] = useState(initial);
+  const [dragging, setDragging] = useState(false);
+  const elRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ origin: number; startSize: number; scale: number } | null>(
+    null,
+  );
+
+  // Re-reads when the key changes, so a panel whose identity depends on
+  // which tab is showing (the side panel: Live and Files want different
+  // widths) picks up that tab's remembered size — and falls back to that
+  // tab's default rather than inheriting the other tab's width.
+  useLayoutEffect(() => {
+    const stored = readStored(storageKey);
+    setSize(clamp(stored ?? initial, min, max));
+  }, [storageKey, initial, min, max]);
+
+  const persist = useCallback(
+    (v: number) => {
+      try {
+        localStorage.setItem(storageKey, String(v));
+      } catch {
+        /* storage unavailable — the size just won't survive a reload */
+      }
+    },
+    [storageKey],
+  );
+
+  const reset = useCallback(() => {
+    setSize(initial);
+    try {
+      localStorage.removeItem(storageKey);
+    } catch {
+      /* nothing to clean up */
+    }
+  }, [initial, storageKey]);
+
+  const onPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const el = elRef.current;
+      // For fractional splits every pixel of pointer travel is worth
+      // 1/containerSize of the split — measure the container once, at
+      // grab time, rather than per move event.
+      let scale = 1;
+      if (unit === "fraction") {
+        const parent = el?.parentElement;
+        const box = parent?.getBoundingClientRect();
+        const span = axis === "x" ? (box?.width ?? 0) : (box?.height ?? 0);
+        if (span <= 0) return; // not laid out yet — a drag would be nonsense
+        scale = 1 / span;
+      }
+      dragRef.current = {
+        origin: axis === "x" ? e.clientX : e.clientY,
+        startSize: size,
+        scale,
+      };
+      el?.setPointerCapture(e.pointerId);
+      setDragging(true);
+    },
+    [axis, size, unit],
+  );
+
+  // Move/up live on the captured element, attached imperatively so the
+  // listeners exist only while a drag is in flight.
+  useEffect(() => {
+    if (!dragging) return;
+    const el = elRef.current;
+    if (!el) return;
+
+    const onMove = (e: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      const pos = axis === "x" ? e.clientX : e.clientY;
+      const delta = (pos - d.origin) * (invert ? -1 : 1) * d.scale;
+      setSize(clamp(d.startSize + delta, min, max));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      setDragging(false);
+    };
+
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onUp);
+
+    // Kill text selection and keep the resize cursor while dragging, even
+    // when the pointer outruns the 5px handle.
+    const prevCursor = document.body.style.cursor;
+    const prevSelect = document.body.style.userSelect;
+    document.body.style.cursor = axis === "x" ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+
+    return () => {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      document.body.style.cursor = prevCursor;
+      document.body.style.userSelect = prevSelect;
+    };
+  }, [dragging, axis, invert, min, max]);
+
+  // Persist on release rather than per move — one write per drag.
+  const wasDragging = useRef(false);
+  useEffect(() => {
+    if (wasDragging.current && !dragging) persist(size);
+    wasDragging.current = dragging;
+  }, [dragging, size, persist]);
+
+  return {
+    size,
+    handleProps: {
+      axis,
+      onPointerDown,
+      onDoubleClick: reset,
+      handleRef: (el) => {
+        elRef.current = el;
+      },
+      active: dragging,
+    },
+    reset,
+  };
+}
+
+/** The grab strip. Sits between two flex children and replaces their border. */
+export function ResizeHandle({
+  axis,
+  onPointerDown,
+  onDoubleClick,
+  handleRef,
+  active,
+  title = "Drag to resize · double-click to reset",
+}: ResizeHandleProps & { title?: string }) {
+  const [hover, setHover] = useState(false);
+  const lit = active || hover;
+  const base: CSSProperties = {
+    flex: "none",
+    background: lit ? tokens.accent : tokens.borderSoft,
+    transition: active ? "none" : "background 120ms ease",
+    touchAction: "none",
+    zIndex: 2,
+  };
+  const style: CSSProperties =
+    axis === "x"
+      ? { ...base, width: lit ? 3 : 1, cursor: "col-resize", alignSelf: "stretch" }
+      : { ...base, height: lit ? 3 : 1, cursor: "row-resize", alignSelf: "stretch" };
+  return (
+    <div
+      ref={handleRef}
+      role="separator"
+      aria-orientation={axis === "x" ? "vertical" : "horizontal"}
+      title={title}
+      onPointerDown={onPointerDown}
+      onDoubleClick={onDoubleClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={style}
+    />
+  );
+}
+
+/**
+ * localStorage-backed useState for small layout flags (panel collapsed,
+ * active tab). Same SSR discipline as useResizablePanel: default on the
+ * server, stored value applied before paint.
+ */
+export function usePersistentState<T>(
+  storageKey: string,
+  initial: T,
+  isValid: (v: unknown) => v is T,
+): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(initial);
+
+  useLayoutEffect(() => {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      if (raw === null) return;
+      const parsed: unknown = JSON.parse(raw);
+      if (isValid(parsed)) setValue(parsed);
+    } catch {
+      /* unreadable or malformed — keep the default */
+    }
+    // isValid is a stable type-guard by construction; re-running on its
+    // identity would reset the panel on every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
+
+  const set = useCallback(
+    (v: T) => {
+      setValue(v);
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(v));
+      } catch {
+        /* storage unavailable — flag just won't survive a reload */
+      }
+    },
+    [storageKey],
+  );
+
+  return [value, set];
+}
+
+export const isBool = (v: unknown): v is boolean => typeof v === "boolean";
