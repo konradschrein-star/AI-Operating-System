@@ -29,6 +29,8 @@ const ROLES = new Set<TaskRole>([
   "researcher",
   "builder",
   "reviewer",
+  "steward",
+  "tester",
 ]);
 const STATUSES = new Set<ProjectStatus>([
   "active",

@@ -34,7 +34,9 @@ export type TaskRole =
   | "scout"
   | "researcher"
   | "builder"
-  | "reviewer";
+  | "reviewer"
+  | "steward"
+  | "tester";
 export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
 /** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
  *  the role file's static model:/effort: default. Only architect and
