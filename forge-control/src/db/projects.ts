@@ -551,8 +551,9 @@ export async function setTaskStatus(
 }
 
 /**
- * Mark ONE gating task 'done', but only while its run is still `completed` —
- * the optimistic-concurrency half of consolidation (red-team S4, R905).
+ * Mark ONE gating task 'done', but only while the round's view of it still
+ * holds — the optimistic-concurrency half of consolidation (red-team S4, R905;
+ * predicate widened by R1005 findings 1 and 2).
  *
  * The verdict a round is judged on is read by listVerdictRound() and acted on
  * several DB round trips later. In between, the control plane can requeue a
@@ -564,31 +565,66 @@ export async function setTaskStatus(
  * honoured zero times, silently, which is the one outcome this whole module
  * exists to prevent.
  *
- * `r.status = 'completed'` is an exact detector for that interleaving, not an
- * approximation: every write that could deliver a message to a settled run
- * moves it out of `completed` in the SAME statement as the append. So a row
- * still `completed` here is a row whose text nobody has touched.
+ * The predicate is the SQL mirror of verdictMemberSettled() in
+ * lib/project-reconcile.ts — the same three-term rule the decision layer uses,
+ * so the two halves cannot disagree about which member is settled:
+ *
+ *  - `pt.status = 'done'` — already marked by an earlier tick. For a VERDICT
+ *    role that write can only have come from this function: project-tick's
+ *    per-task branch marks 'done' for non-verdict roles only (`isVerdictRole`
+ *    defers the rest to consolidation), and no API route writes a task status
+ *    at all — so the branch re-confirms THIS module's own earlier decision, it
+ *    does not trust a stranger. Re-marking is
+ *    the no-op it is meant to be, and it must NOT be conditioned on the run:
+ *    that row's verdict was consumed by bookkeeping and its run is free to be
+ *    resumed, stopped or to fail afterwards. Requiring `completed` here was
+ *    R1005 finding 2's other half — the round would be refused release forever
+ *    instead of merely waiting forever.
+ *  - `r.status = 'completed'` — the settled snapshot the decision was computed
+ *    from. Every write that delivers a message to a settled run moves it out of
+ *    `completed` in the SAME statement as the append, so a move is visible here.
+ *  - `pending_input IS DISTINCT FROM 'true'` — R1005 finding 1. `completed`
+ *    alone is NOT an exact detector: completeRun's handshake is two statements
+ *    (executor.ts E1/E2), and a `/message` to a RUNNING reviewer sets the flag
+ *    and leaves the row `running` for E1 to complete. If the executor dies
+ *    between E1 and E2 — OOM, pm2 restart, or this project's own DETACHED
+ *    safe-restart — the row sits `completed` carrying an undelivered message
+ *    for ≥PENDING_INPUT_STRANDED_MS and unboundedly while the executor is down.
+ *    Closing the round in that window buries the revised verdict in a 'done'
+ *    task nothing ever reads again: the exact silent outcome R906 exists to
+ *    prevent, arriving through the `running`-target door. NULL-safe by
+ *    construction — a run with no flag yields NULL, which IS DISTINCT FROM
+ *    'true'.
+ *
+ * EXISTS rather than `FROM runs r`: an UPDATE ... FROM is an inner join, so a
+ * 'done' task whose run reference was dropped (retryTask clears run_id) could
+ * never re-confirm itself. The done branch must not depend on a run row at all.
  *
  * Returns whether the task moved. `false` means the round must NOT be treated
  * as decided — the caller re-consolidates on the next tick, by which time the
  * requeued run has either settled again with a fresh verdict or is plainly
- * unsettled (→ `wait`).
+ * unsettled (→ `wait`), and the stranded-input sweep has requeued whatever the
+ * flag was guarding.
  */
 export async function markVerdictTaskDone(taskId: string): Promise<boolean> {
   const r = await pool.query(
     `UPDATE project_tasks pt
         SET status = 'done', updated_at = now()
-       FROM runs r
       WHERE pt.id = $1
-        AND r.id = pt.run_id
-        AND r.status = 'completed'`,
+        AND (pt.status = 'done'
+             OR EXISTS (SELECT 1
+                          FROM runs r
+                         WHERE r.id = pt.run_id
+                           AND r.status = 'completed'
+                           AND (r.metadata->>'pending_input') IS DISTINCT FROM 'true'))`,
     [taskId],
   );
   return (r.rowCount ?? 0) > 0;
 }
 
 /**
- * Which of these gating tasks no longer have a settled (`completed`) run.
+ * Which of these gating tasks are NOT settled — the exact complement of
+ * markVerdictTaskDone()'s predicate, term for term.
  *
  * The cheap pre-check that keeps markVerdictTaskDone()'s refusal from arriving
  * AFTER an irreversible side effect. consolidateVerdictGroup creates the fix
@@ -598,8 +634,16 @@ export async function markVerdictTaskDone(taskId: string): Promise<boolean> {
  * behind it as the backstop for whatever slips through the remaining
  * milliseconds.
  *
- * A task with no run (`run_id IS NULL`) counts as unsettled: it cannot have
- * produced the verdict the decision was computed from.
+ * The two predicates being exact complements is the property that matters, and
+ * it is pinned in cp2-reconciler-interaction.test.ts: a pre-check that let
+ * through what the mark-done then refuses turns every consolidation into a
+ * partially-applied round, and one that refuses what mark-done would accept
+ * wedges the round instead.
+ *
+ * A task with no run (`run_id IS NULL`) counts as unsettled unless it is
+ * already 'done': it cannot have produced the verdict the decision was computed
+ * from. A run still carrying `pending_input` counts as unsettled for the reason
+ * spelled out above — it owes a turn nobody has delivered yet.
  */
 export async function unsettledVerdictTasks(
   taskIds: readonly string[],
@@ -610,7 +654,9 @@ export async function unsettledVerdictTasks(
        FROM project_tasks pt
        LEFT JOIN runs r ON r.id = pt.run_id
       WHERE pt.id = ANY($1::uuid[])
-        AND (r.status IS DISTINCT FROM 'completed')`,
+        AND pt.status IS DISTINCT FROM 'done'
+        AND (r.status IS DISTINCT FROM 'completed'
+             OR r.metadata->>'pending_input' = 'true')`,
     [[...taskIds]],
   );
   return r.rows.map((row) => row.id);
@@ -773,20 +819,38 @@ export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
  *  maps to `settled: false` — a group with any such member must wait, never
  *  decide. Task status is deliberately NOT filtered: a reviewer already marked
  *  'done' still belongs to the group's history and the caller decides what
- *  that means. ORDER BY created_at ASC is load-bearing — it is what makes the
+ *  that means (verdictMemberSettled: it is settled BY BOOKKEEPING, whatever
+ *  its run has done since).
+ *
+ *  `pending_input` rides along for the same reason markVerdictTaskDone reads it
+ *  (R1005 finding 1): a `completed` run still carrying the flag owes an
+ *  undelivered turn, so the decision layer must call it unsettled and `wait`
+ *  rather than compute a decision from text a message is about to revise. The
+ *  column is projected as a boolean here so lib/project-reconcile.ts's pure
+ *  predicate never has to know about jsonb.
+ *
+ *  ORDER BY created_at ASC is load-bearing — it is what makes the
  *  merged fix brief byte-identical across replays of the same round; the id
  *  tiebreak covers the two-rows-same-timestamp case, which a single-statement
  *  insert of a reviewer and a tester makes reachable. */
+export interface VerdictRoundRow extends ProjectTask {
+  /** NULL when the task has no run yet (LEFT JOIN). */
+  run_status: RunStatus | null;
+  /** `metadata.pending_input === 'true'` — the run owes an undelivered turn. */
+  pending_input: boolean;
+  /** Last ASSISTANT message — the verdict text. */
+  last_text: string | null;
+}
+
 export async function listVerdictRound(
   projectId: string,
   round: number,
   roles: readonly TaskRole[],
-): Promise<Array<ProjectTask & { run_status: RunStatus | null; last_text: string | null }>> {
-  const r = await pool.query<
-    ProjectTask & { run_status: RunStatus | null; last_text: string | null }
-  >(
+): Promise<VerdictRoundRow[]> {
+  const r = await pool.query<VerdictRoundRow>(
     `SELECT ${TASK_COLS_PT},
             r.status AS run_status,
+            COALESCE(r.metadata->>'pending_input' = 'true', false) AS pending_input,
             ${LAST_ASSISTANT_TEXT} AS last_text
        FROM project_tasks pt
        LEFT JOIN runs r ON r.id = pt.run_id

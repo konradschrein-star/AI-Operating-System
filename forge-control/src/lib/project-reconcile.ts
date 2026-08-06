@@ -33,7 +33,8 @@
  * would drag the pg pool into the test process.
  */
 
-import type { ProjectStatus, TaskRole } from "../db/projects.ts";
+import type { ProjectStatus, TaskRole, TaskStatus } from "../db/projects.ts";
+import type { RunStatus } from "../db/runs.ts";
 
 /* ------------------------------------------------------------------------- *
  * Verdict roles
@@ -62,6 +63,66 @@ export type VerdictRole = (typeof VERDICT_ROLES)[number];
  *  whether a settled task is reconciled per-task or deferred to its round. */
 export function isVerdictRole(role: TaskRole): role is VerdictRole {
   return (VERDICT_ROLES as readonly string[]).includes(role);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Settlement
+ * ------------------------------------------------------------------------- */
+
+/** One gating task as the settlement rule sees it — task row plus the two
+ *  columns of its run that decide whether its verdict is final. */
+export interface VerdictMemberState {
+  /** The TASK's status. 'done' means an earlier tick already consumed it. */
+  taskStatus: TaskStatus;
+  /** The RUN's current status. `null` when the task has no run yet. */
+  runStatus: RunStatus | null;
+  /** `metadata.pending_input` — the run owes a turn nobody has delivered. */
+  pendingInput: boolean;
+}
+
+/**
+ * Is this member's verdict final enough to decide its round on?
+ *
+ * The single definition of "settled", extracted from project-tick's inline
+ * mapping by R1005 so it can be tested exhaustively and so db/projects.ts's two
+ * SQL predicates have something to be the mirror OF. Three layers read it —
+ * the decision (consolidateVerdictRound), the pre-check (unsettledVerdictTasks)
+ * and the commit (markVerdictTaskDone) — and any disagreement between them is
+ * either a partially-closed round or a permanently-wedged one.
+ *
+ *  - task 'done' → SETTLED, unconditionally. Its verdict was consumed by an
+ *    earlier tick's bookkeeping and lives in the round's history; the run is
+ *    then free to be resumed, stopped, or to fail, and none of that may
+ *    re-open a question already answered. Judging a 'done' member by its run's
+ *    CURRENT status was R1005 finding 2: a partially-refused markGroupDone
+ *    (R906's documented mixed state) leaves one member 'done' and one
+ *    'running'; a `/message` or `/resume-chat` to the done member's run
+ *    followed by a failed/paused turn then made it report unsettled forever,
+ *    the round returned `wait` on every tick, and — because a 'done' task is
+ *    invisible to listSettledRunningTasks — no per-task failure path could ever
+ *    fire. Project 'active', one task 'running' forever, no notification, and a
+ *    heartbeat that reads it as work in progress.
+ *
+ *    The accepted trade-off: a resumed 'done' member's NEW last message
+ *    re-enters parseVerdict on any re-consolidation of its round, so a reply
+ *    that does not restate `VERDICT:` yields block(no_verdict). That is loud,
+ *    pushed, and recoverable with /unwedge — which C20 prefers over a silent
+ *    wedge. CP3's MANAGER COMMS block closes it at the prompt level by telling
+ *    verdict roles to restate their verdict line (docs/plan/09, finding F3).
+ *
+ *  - run 'completed' AND no pending input → SETTLED. `completed` alone is not
+ *    enough: completeRun's E1/E2 handshake can strand a row as `completed`
+ *    with an undelivered message (R1005 finding 1), and deciding there buries
+ *    the revised verdict in a task nothing reads again.
+ *
+ *  - everything else → NOT settled. No run yet (`null`), still running, or
+ *    failed/cancelled/stuck/paused: the per-task path in project-tick.ts owns
+ *    the failure cases and the group must wait rather than fold a broken round
+ *    into a verdict it cannot honestly compute.
+ */
+export function verdictMemberSettled(m: VerdictMemberState): boolean {
+  if (m.taskStatus === "done") return true;
+  return m.runStatus === "completed" && !m.pendingInput;
 }
 
 /* ------------------------------------------------------------------------- *

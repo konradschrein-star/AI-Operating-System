@@ -1002,16 +1002,20 @@ describe("T19 consolidation precondition (red-team S4)", () => {
   const TICK = readFileSync(`${repoRoot}forge-control/src/lib/project-tick.ts`, "utf8");
   const PROJECTS_DB = readFileSync(`${repoRoot}forge-control/src/db/projects.ts`, "utf8");
 
-  test("markVerdictTaskDone carries r.status='completed' into the UPDATE", () => {
+  test("markVerdictTaskDone carries the settlement predicate into the UPDATE", () => {
     const body = PROJECTS_DB.slice(
       PROJECTS_DB.indexOf("export async function markVerdictTaskDone"),
-      PROJECTS_DB.indexOf("export async function unsettledVerdictTasks"),
+      PROJECTS_DB.indexOf("/**", PROJECTS_DB.indexOf("export async function markVerdictTaskDone")),
     );
     assert.ok(body.length > 0, "markVerdictTaskDone not found in db/projects.ts");
     assert.match(body, /UPDATE project_tasks pt/);
-    assert.match(body, /FROM runs r/);
-    assert.match(body, /AND r\.id = pt\.run_id/);
+    assert.match(body, /WHERE r\.id = pt\.run_id/);
     assert.match(body, /AND r\.status = 'completed'/);
+    // R1005: the SQL mirror of verdictMemberSettled. 'done' re-confirms itself
+    // (finding 2), and a `completed` run that still owes an undelivered turn
+    // does NOT count as settled (finding 1).
+    assert.match(body, /AND \(pt\.status = 'done'/);
+    assert.match(body, /AND \(r\.metadata->>'pending_input'\) IS DISTINCT FROM 'true'/);
     // The caller has to be able to tell "did not move" from "moved".
     assert.match(body, /return \(r\.rowCount \?\? 0\) > 0;/);
   });
@@ -1025,6 +1029,10 @@ describe("T19 consolidation precondition (red-team S4)", () => {
     // unsettled, and `NULL <> 'completed'` is NULL, i.e. not matched.
     assert.match(body, /LEFT JOIN runs r ON r\.id = pt\.run_id/);
     assert.match(body, /r\.status IS DISTINCT FROM 'completed'/);
+    // ...and the exact complement of the mark-done predicate above, or the
+    // pre-check and the commit disagree about which member is settled.
+    assert.match(body, /AND pt\.status IS DISTINCT FROM 'done'/);
+    assert.match(body, /OR r\.metadata->>'pending_input' = 'true'/);
   });
 
   test("markGroupDone reports refusals instead of swallowing them", () => {

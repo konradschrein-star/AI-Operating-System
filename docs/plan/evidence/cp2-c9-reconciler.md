@@ -308,10 +308,19 @@ first refusal (`project-tick.ts:1025-1027`), so any refusal at all leaves some m
 some `running`, and R906 documents that as the intended shape (`:876-878`). The `block` and
 `fix` branches produce it too.
 
-**Verdict: F2 is a finding.** Also worth noting: the same wedge is reachable WITHOUT a resume, by
-`/stop` alone (A's run `paused` while B keeps the round alive) — CP1 shipped that verb, so the hole
-is not strictly new in CP2; CP2 widens it from "operator paused a finished reviewer" to "manager
-asked a finished reviewer a question".
+**Verdict: F2 is a finding.** Also worth noting: the same wedge is reachable WITHOUT `/resume-chat`,
+through CP1's own verbs — `/message` against A's `completed` run (`completed ∈ QUEUE_ELIGIBLE`,
+`run-control-rules.ts:67`) requeues it, and a `/stop` on the now-`queued` run, or simply a follow-up
+turn that fails, strands it outside `completed`. So the hole is not strictly new in CP2; CP2 widens
+it from "operator messaged a finished reviewer" to "manager asked a finished reviewer a question".
+
+**Corrected at R1005 (review finding 3).** The original sentence here credited `/stop` ALONE with
+that wedge. It cannot do it: `STOP_ELIGIBLE` is `queued|running|stuck` and `stopAction("completed")`
+returns `{kind:"reject", status:409, reason:"run is already settled (completed)"}`
+(`run-control-rules.ts:219-226`), so `/stop` against a `done` member's `completed` run 409s. The
+conclusion stands by the `/message`-first route above; the mechanism did not. This sentence carried
+the "the hole is not strictly new in CP2" weight, so it had to be right rather than merely
+directionally true.
 
 ### F(ii) — a `cancelled` run resumed BEFORE the next reconcile tick
 
@@ -455,13 +464,23 @@ consumers already read, no migration (C21). The group would then `wait` until th
 requeues the run, which is exactly claim B's intended behaviour. Deciding this is the reviewer's and
 the next fix cycle's call, not this task's.
 
+*Resolution — FIXED at R1005 (CP2 fix cycle 1).* Both predicates carry the term, and the flag now
+travels on `listVerdictRound` as a boolean so the DECISION layer calls such a row unsettled too and
+returns `wait` instead of computing a decision it would then have to abandon. The rule itself is
+`verdictMemberSettled()` in `lib/project-reconcile.ts`, table-tested (T20) over the full cross
+product; the two SQL halves are asserted to be its exact complements in
+`cp2-reconciler-interaction.test.ts`. Claim B's "exact detector" sentence in `db/projects.ts` was
+rewritten: it no longer claims exactness from `completed` alone, it enumerates the three terms.
+
 ### F2 — a `done` group member whose run is later resumed/stopped wedges its round indefinitely
 
 *Interleaving:* §F(i)(b), t0-t8, verbatim. Requires (1) a partially-refused `markGroupDone` (R906's
 documented mixed state, `project-tick.ts:1025-1027`) leaving one member `done` and one `running`, and
 (2) the `done` member's run leaving `completed` and not returning — `/resume-chat` followed by a
-failed turn, or plain `/stop`. Result: `wait` forever, project stays `active`, no notification, the
-per-task failure path can never fire for the `done` member because fact 0.2 filters it out.
+failed turn, or (CP1-only route, see §F(i)'s R1005 correction) `/message` to requeue it followed by a
+`/stop` or a failed turn. NOT `/stop` alone: `completed ∉ STOP_ELIGIBLE` and `stopAction` 409s it.
+Result: `wait` forever, project stays `active`, no notification, the per-task failure path can never
+fire for the `done` member because fact 0.2 filters it out.
 
 *File that would have to change:* `forge-control/src/lib/project-tick.ts` — the `settled` mapping at
 `:764`. A task already marked `done` was settled by BOOKKEEPING and its verdict is already in the
@@ -471,6 +490,26 @@ must weigh: that also means a resumed `done` reviewer's NEW text can re-enter a 
 round with a different verdict, which is arguably desirable and arguably a second S4 — hence a
 decision for the reviewer, not a drive-by patch here. `unsettledVerdictTasks`/`markVerdictTaskDone`
 would need the matching treatment so the two halves keep agreeing.
+
+*Resolution — FIXED at R1005 (CP2 fix cycle 1), all three parts together,* because the one-line
+version the paragraph above proposes is not enough: with only the `settled` mapping changed,
+`markGroupDone` still calls `markVerdictTaskDone` for the `done` member whose run is no longer
+`completed`, so the round would be refused release forever instead of waiting forever — the same
+wedge with a different log line. What landed:
+
+1. `lib/project-reconcile.ts` — `verdictMemberSettled()`: `taskStatus === 'done'` ⇒ settled,
+   unconditionally; otherwise `runStatus === 'completed' && !pendingInput`.
+   `lib/project-tick.ts`'s mapping calls it instead of testing `run_status` inline.
+2. `db/projects.ts` `markVerdictTaskDone` — `AND (pt.status = 'done' OR EXISTS (… completed …))`.
+   EXISTS rather than `UPDATE … FROM runs r`, which is an inner join and would strand a `done` task
+   whose `run_id` was cleared by `retryTask`.
+3. `db/projects.ts` `unsettledVerdictTasks` — `AND pt.status IS DISTINCT FROM 'done'`.
+
+The trade-off flagged above was taken deliberately, and the reviewer at R1004 endorsed it: a resumed
+`done` member's NEW text does re-enter `parseVerdict`, so a follow-up that does not restate its
+verdict line yields `block(no_verdict)` — loud, pushed, `/unwedge`-recoverable — instead of a silent
+wedge. That is F3, and F3's prompt-level closure is now written into CP3's scope in
+`docs/plan/09-control-plane-phases.md` rather than living only here.
 
 ### F3 — resuming a verdict role blocks the round unless the new turn restates `VERDICT:`
 
@@ -496,6 +535,30 @@ person who reads the "exact detector" comment knows the enumeration was complete
 
 ---
 
+## R1005 — the two repaired predicates, EXECUTED (not only source-asserted)
+
+Structural assertions prove the SQL says what it should; they cannot prove Postgres agrees. So both
+predicates were run verbatim against a **throwaway `postgres:16-alpine` container** — created for
+this check, `--rm`, torn down after, never `content_forge` and never the live checkout — over two
+five-column tables carrying one row per interesting cell:
+
+| task | `pt.status` | run | `pending_input` | `unsettledVerdictTasks` | `markVerdictTaskDone` |
+|---|---|---|---|---|---|
+| a1 | running | completed | – | – | **moved** |
+| a2 | running | completed | `'true'` | **unsettled** | refused ← F1 |
+| a3 | running | queued | – | **unsettled** | refused |
+| a4 | done | failed | – | – | **moved** ← F2 |
+| a5 | done | *(run_id NULL)* | – | – | **moved** ← F2, the inner-join trap |
+| a6 | running | *(no run)* | – | **unsettled** | refused |
+
+`unsettled = {a2,a3,a6}`, `moved = {a1,a4,a5}`: disjoint, and their union is all six rows — the
+complementarity claim, empirically, not just term-for-term in the source. a5 is the case that would
+have failed under `UPDATE … FROM runs r`: a `done` task whose run reference `retryTask` cleared can
+still re-confirm itself.
+
+Not covered by this: the cross-process ORDERING that creates the states (executor loop vs manager
+loop vs HTTP handler). That remains a written argument, for the reason below.
+
 ## Not provable by pure/structural test — and why (09 §CP2 allows the written argument)
 
 - **F1's and F2's interleavings** are cross-process orderings between the executor loop, the manager
@@ -506,6 +569,10 @@ person who reads the "exact detector" comment knows the enumeration was complete
   filter, the `settled` mapping, the single-statement append, the E1/E2 split and the sweep's ≥60 s
   scope. If any of those changes, `cp2-reconciler-interaction.test.ts` fails and this document is
   known to be stale.
+  **Narrowed at R1005:** the settlement RULE is no longer only structural — it was extracted to the
+  pure `verdictMemberSettled()` and is driven over its whole cross product by T20, and both SQL
+  predicates were executed against a disposable Postgres (section above). What stays a written
+  argument is only the cross-process ordering, not the predicates it acts through.
 - **"Exactly one notification" (C)** is asserted structurally (one `queueNotification` call in the
   branch, followed by `continue`), not dynamically — counting real pushes needs the live notification
   queue, which belongs to CP4's deploy verification.

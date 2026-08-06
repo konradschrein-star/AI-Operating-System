@@ -146,6 +146,27 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   and T18 asserts the string `auto-browser` never appears — pointing the fleet at a dead end
   would defeat clause 1.
 
+- **T19 consolidation precondition** (added at R905, red-team S4),
+  `forge-control/src/lib/project-tick.test.ts`: registered here at R1005 so the number cannot be
+  taken twice the way T17 was. Source-assertion — the R906 optimistic-concurrency SQL and the
+  control flow that applies it (mark-done reports refusals, `pass` aborts before any side effect,
+  `block`/`fix` pre-check before their irreversible step).
+- **T20 `verdictMemberSettled`** (added at R1005, review findings 1 and 2),
+  `forge-control/src/lib/project-reconcile.test.ts`: the settlement rule, extracted from
+  project-tick's inline `settled:` mapping into a pure function precisely so it could be driven
+  instead of asserted as a source string. The first test is the WHOLE cross product — 6 task
+  statuses × 8 run statuses (7 + `null`) × `pendingInput`, 96 cells, with a count assertion so the
+  loops cannot silently stop covering it — because both defects it closes were single cells nobody
+  had enumerated: a `done` member judged by its run's CURRENT status (wedges its round forever,
+  silently) and a `completed` run still carrying `pending_input` (closes the round on a verdict a
+  message is about to revise). Two named-interleaving tests carry the R1005 scenarios end to end
+  through `consolidateVerdictRound`, including the accepted trade-off — a resumed `done` member
+  whose follow-up omits `VERDICT:` yields `block(no_verdict)`, loud and `/unwedge`-recoverable,
+  which C20 prefers over a silent wedge. The SQL mirrors in `db/projects.ts` are asserted to be
+  the predicate's EXACT complements, term for term, in
+  `forge-control/src/lib/cp2-reconciler-interaction.test.ts` — a term in one and not the other is a
+  round that half-closes or one that never closes.
+
 ### 1.1 T13's install-parity case, amended at R703
 
 The original assertion was `AGENTS_DIR copy === the committed agents/researcher.md`. It is

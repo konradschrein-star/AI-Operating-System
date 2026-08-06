@@ -22,6 +22,7 @@ import {
   parseVerdict,
   projectAcceptsWork,
   consolidateVerdictRound,
+  verdictMemberSettled,
   isVerdictRole,
   chainKeys,
   noteGroupFailure,
@@ -31,6 +32,10 @@ import {
   VERDICT_ROLES,
   type VerdictInput,
 } from "./project-reconcile.ts";
+// Type-only, like the module under test: a value import of db/* would open a
+// pg Pool in the test process.
+import type { TaskStatus } from "../db/projects.ts";
+import type { RunStatus } from "../db/runs.ts";
 
 /** A reviewer row. `tv()` below is its tester twin — both default to a settled
  *  PASS so each test only states the field it is actually about. */
@@ -860,5 +865,162 @@ describe("T17 tester verdicts", () => {
     assert.match(testerBrief, /as a customer would/);
     assert.match(reviewerBrief, /Re-review the work/);
     assert.match(reviewerBrief, /against the new diff/);
+  });
+});
+
+/* ========================================================================== *
+ * T20 — verdictMemberSettled (added at R1005, findings 1 and 2)
+ *
+ * The settlement rule, extracted from project-tick's inline mapping so it can
+ * be driven exhaustively instead of asserted as a source string. Three layers
+ * consume it — the decision here, the pre-check `unsettledVerdictTasks` and the
+ * commit `markVerdictTaskDone` — and the two SQL halves are its mirror
+ * (pinned structurally in cp2-reconciler-interaction.test.ts).
+ *
+ * The table below is the WHOLE cross product: 6 task statuses × 8 run statuses
+ * (7 + null) × pendingInput. 96 cases, no sampling — the two defects it closes
+ * were both single cells nobody had enumerated.
+ * ========================================================================== */
+
+describe("T20 verdictMemberSettled", () => {
+  const TASK_STATUSES: TaskStatus[] = [
+    "pending",
+    "ready",
+    "running",
+    "done",
+    "failed",
+    "blocked",
+  ];
+  const RUN_STATUSES: Array<RunStatus | null> = [
+    null,
+    "queued",
+    "running",
+    "paused",
+    "stuck",
+    "completed",
+    "failed",
+    "cancelled",
+  ];
+
+  test("the full cross product matches the documented rule, cell for cell", () => {
+    let done = 0;
+    let clean = 0;
+    let unsettled = 0;
+    for (const taskStatus of TASK_STATUSES) {
+      for (const runStatus of RUN_STATUSES) {
+        for (const pendingInput of [false, true]) {
+          const actual = verdictMemberSettled({ taskStatus, runStatus, pendingInput });
+          const expected =
+            taskStatus === "done" || (runStatus === "completed" && !pendingInput);
+          assert.equal(
+            actual,
+            expected,
+            `task=${taskStatus} run=${runStatus} pending=${pendingInput}`,
+          );
+          if (taskStatus === "done") done++;
+          else if (expected) clean++;
+          else unsettled++;
+        }
+      }
+    }
+    // Guards the guard: if the loops ever stop covering the cross product, the
+    // assertion above passes vacuously. 6 × 8 × 2 = 96.
+    assert.equal(done + clean + unsettled, 96);
+    assert.equal(done, 16); // one task status × 8 run statuses × 2 flags
+    assert.equal(clean, 5); // the other 5 task statuses, completed, no flag
+  });
+
+  test("a 'done' member is settled whatever its run has done since (finding 2)", () => {
+    // R1005 finding 2, the wedge: a partially-refused markGroupDone leaves
+    // member A 'done' and member B 'running'; A's run is then resumed and its
+    // follow-up turn fails/pauses/is cancelled. Judged by run status alone, A
+    // reported unsettled forever, its round returned `wait` on every tick, and
+    // — because a 'done' task is invisible to listSettledRunningTasks — no
+    // per-task failure path could ever fire. Silent, indefinite, project still
+    // 'active'.
+    for (const runStatus of RUN_STATUSES) {
+      for (const pendingInput of [false, true]) {
+        assert.equal(
+          verdictMemberSettled({ taskStatus: "done", runStatus, pendingInput }),
+          true,
+          `a 'done' member must stay settled with run=${runStatus} pending=${pendingInput}`,
+        );
+      }
+    }
+  });
+
+  test("a `completed` run that still owes a turn is NOT settled (finding 1)", () => {
+    // R1005 finding 1: completeRun is E1 (complete + RETURN the flag) then E2
+    // (requeue). A /message to a RUNNING reviewer sets the flag; if the
+    // executor dies between the statements the row sits `completed` +
+    // pending_input for ≥60s and unboundedly while it is down. Deciding there
+    // closes the round on a verdict the operator has already moved to withdraw.
+    assert.equal(
+      verdictMemberSettled({
+        taskStatus: "running",
+        runStatus: "completed",
+        pendingInput: true,
+      }),
+      false,
+    );
+    assert.equal(
+      verdictMemberSettled({
+        taskStatus: "running",
+        runStatus: "completed",
+        pendingInput: false,
+      }),
+      true,
+    );
+  });
+
+  test("a round wedged by a resumed 'done' member now decides instead of waiting", () => {
+    // The end-to-end shape of finding 2, through the decision function: A is
+    // 'done' (its run resumed and failed), B is 'running' with a settled PASS.
+    // Before the fix this was `wait` on every tick, forever.
+    const a = rv({
+      taskId: "a",
+      title: "Diff review",
+      settled: verdictMemberSettled({
+        taskStatus: "done",
+        runStatus: "failed",
+        pendingInput: false,
+      }),
+      lastText: "VERDICT: PASS",
+    });
+    const b = tv({
+      taskId: "b",
+      title: "Customer sweep",
+      settled: verdictMemberSettled({
+        taskStatus: "running",
+        runStatus: "completed",
+        pendingInput: false,
+      }),
+      lastText: "VERDICT: PASS",
+    });
+    assert.deepEqual(consolidateVerdictRound(7, [a, b], 3), { action: "pass" });
+  });
+
+  test("the accepted trade-off: a resumed 'done' member with no verdict line blocks, loudly", () => {
+    // Settled-by-bookkeeping means the member's CURRENT last message re-enters
+    // parseVerdict on a re-consolidation, and a follow-up answer rarely
+    // restates `VERDICT:`. The outcome is block(no_verdict) — pushed, and
+    // recoverable with /unwedge — which C20 prefers over the silent wedge it
+    // replaces. CP3's MANAGER COMMS block closes it at the prompt level
+    // (docs/plan/09, F3).
+    const a = rv({
+      taskId: "a",
+      title: "Diff review",
+      settled: verdictMemberSettled({
+        taskStatus: "done",
+        runStatus: "completed",
+        pendingInput: false,
+      }),
+      lastText: "Yes — I checked the migration, it is idempotent.",
+    });
+    const decision = consolidateVerdictRound(7, [a], 3);
+    assert.equal(decision.action, "block");
+    if (decision.action !== "block") return;
+    assert.equal(decision.reason, "no_verdict");
+    assert.match(decision.detail, /reviewer "Diff review"/);
   });
 });

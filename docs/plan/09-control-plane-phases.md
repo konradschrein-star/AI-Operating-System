@@ -43,12 +43,26 @@ workspace-gone 409 proven; unknown-subagent 409 proven; check script extended to
 
 **Scope.** The D5 sentence in `lib/cc-runner.ts`'s operator prompt (C15); `origin_chat_id` copy in
 `db/projects.ts` `createRunForTask` (C16); MANAGER COMMS block in `project-tick.ts` `buildPrompt`
-via a `withComms`-style wrapper mirroring `withPolicy` (C17); slug interpolation into the goal-mode
-architect corpus paths + planner corpus references (C18); `docs/tools/run-control.md` documenting
-all six endpoints, body shapes, eligibility, and the restart matrix.
+via a `withComms`-style wrapper mirroring `withPolicy` (C17) — and that block MUST tell a VERDICT
+role (reviewer, tester) that any reply it sends after it has already declared its verdict has to end
+with a `VERDICT:` line again, restating the unchanged one if nothing changed; slug interpolation
+into the goal-mode architect corpus paths + planner corpus references (C18);
+`docs/tools/run-control.md` documenting all six endpoints, body shapes, eligibility, and the restart
+matrix.
+
+*Why that clause, and where it comes from (R1005, review finding 4).* `parseVerdict` reads only the
+LAST assistant message, by design — first-match parsing read reviewers' rehearsals instead of their
+verdicts. So a verdict role that is messaged or resumed, answers the question in prose, and stops,
+leaves its round with no parseable verdict and `consolidateVerdictRound` returns `block(no_verdict)`.
+That is F3 of `docs/plan/evidence/cp2-c9-reconciler.md`, deferred here from CP2 — and R1005's
+finding-2 fix makes it reachable more often, because a `done` member's CURRENT text now re-enters a
+re-consolidation of its round. The failure is loud and `/unwedge`-recoverable, which is why it is a
+prompt fix and not a reconciler fix: scanning the last N assistant entries for a verdict would
+re-open the rehearsal bug the `/g` + last-match parser exists to close.
 **Deliverables.** Prompt/code changes + tests (slug already unit-tested in CP1; here: prompt
-snapshot tests asserting the block appears iff `origin_chat_id` present, and the architect prompt
-contains `docs/plan/<slug>/` and no flat `docs/plan/0` path).
+snapshot tests asserting the block appears iff `origin_chat_id` present, that the rendered block for
+`reviewer` and `tester` carries the restate-your-`VERDICT:`-line instruction, and that the architect
+prompt contains `docs/plan/<slug>/` and no flat `docs/plan/0` path).
 **Acceptance.** 08 §4 gate incl. the extended `origin_chat_id` grep (matches only
 `lib/cc-runner.ts` + `db/projects.ts`); no behavior change for projects without linkage.
 **Covers.** C15–C18.

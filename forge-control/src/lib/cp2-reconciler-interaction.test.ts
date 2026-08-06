@@ -20,10 +20,12 @@
  * it is gated (not just the three T19 samples), that the settled predicate is
  * run-status-only, and that no delivery write is split in two.
  *
- * TWO ASSERTIONS DELIBERATELY DOCUMENT A HOLE rather than a guarantee — the
- * E1/E2 split and the sweep's 60s floor (claim B / finding F1). They are marked
- * as such at the point of assertion: they stay true after F1 is fixed, because
- * the fix belongs in db/projects.ts's predicate, not in the handshake.
+ * TWO ASSERTIONS DESCRIBE THE HANDSHAKE THE DETECTOR HAS TO SURVIVE — the
+ * E1/E2 split and the sweep's 60s floor (claim B / finding F1). They were
+ * written as documentation of a hole; R1005 closed the hole in
+ * db/projects.ts's predicate rather than in the handshake, which is correct as
+ * designed, so both assertions are unchanged and now read as the WHY of the
+ * pending_input term rather than as a known defect.
  */
 
 import { test, describe } from "node:test";
@@ -121,12 +123,12 @@ describe("claim A — listSettledRunningTasks is the only door, and it filters t
  * listVerdictRound's read.
  * ========================================================================== */
 
-describe("claim B — the group's settled predicate is run-status-only", () => {
+describe("claim B — the group's settled predicate has ONE definition", () => {
   test("listVerdictRound is a LEFT JOIN and does NOT filter pt.status", () => {
     // LEFT JOIN so a task with no run yet surfaces as run_status NULL (→ not
     // settled → wait). No pt.status filter, so a member already marked 'done'
-    // stays in the group's history — which is also what makes finding F2
-    // possible when that member's run is later resumed.
+    // stays in the group's history — the caller decides what that means, and
+    // since R1005 finding 2 it means SETTLED, unconditionally.
     const body = sliceBetween(
       PROJECTS_DB,
       "export async function listVerdictRound",
@@ -142,18 +144,44 @@ describe("claim B — the group's settled predicate is run-status-only", () => {
     );
   });
 
-  test("project-tick maps settled from the run's CURRENT status, nothing else", () => {
+  test("listVerdictRound projects pending_input as a boolean", () => {
+    // R1005 finding 1: the decision layer cannot call a `completed` run settled
+    // without knowing whether it still owes an undelivered turn, so the flag
+    // has to travel with the row. COALESCE, not a bare comparison: a run with
+    // no flag must read `false`, not NULL.
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function listVerdictRound",
+      "/** What became of one chain row",
+      "listVerdictRound",
+    );
+    assert.match(
+      body,
+      /COALESCE\(r\.metadata->>'pending_input' = 'true', false\) AS pending_input,/,
+    );
+  });
+
+  test("project-tick delegates settled to verdictMemberSettled, all three inputs", () => {
     const consolidate = sliceBetween(
       TICK,
       "async function consolidateVerdictGroup(",
       "async function markGroupDone(",
       "consolidateVerdictGroup",
     );
-    assert.match(consolidate, /settled: r\.run_status === "completed",/);
-    // Evidence doc §F(i)/F2 turns on this being the ONLY input to `settled`: a
-    // member whose task is 'done' but whose run has been resumed reports false
-    // and its round can never decide. If this line ever gains a `pt.status`
-    // term, cp2-c9-reconciler.md's F2 is stale and must be re-argued.
+    // The rule is pure and table-tested in project-reconcile.test.ts. What is
+    // asserted here is that consolidation actually ROUTES through it and feeds
+    // it the task status and the pending flag, not just the run status — an
+    // inline predicate here is how the two halves drifted apart in the first
+    // place (R1005 findings 1 and 2).
+    assert.match(consolidate, /settled: verdictMemberSettled\(\{/);
+    assert.match(consolidate, /taskStatus: r\.status,/);
+    assert.match(consolidate, /runStatus: r\.run_status,/);
+    assert.match(consolidate, /pendingInput: r\.pending_input,/);
+    assert.doesNotMatch(
+      consolidate,
+      /settled: r\.run_status === "completed",/,
+      "the run-status-only predicate is R1005 finding 2 - it must not come back",
+    );
   });
 });
 
@@ -165,18 +193,68 @@ describe("claim B — R906 optimistic concurrency (the detector and its consumer
     "markVerdictTaskDone",
   );
 
+  const unsettled = sliceBetween(
+    PROJECTS_DB,
+    "export async function unsettledVerdictTasks",
+    "/** Automatic-retry ceiling",
+    "unsettledVerdictTasks",
+  );
+
   test("the UPDATE carries r.status = 'completed' and returns a rowCount boolean", () => {
     assert.match(markDone, /AND r\.status = 'completed'/);
     assert.match(markDone, /return \(r\.rowCount \?\? 0\) > 0;/);
   });
 
-  test("unsettledVerdictTasks treats a run-less task as unsettled", () => {
-    const unsettled = sliceBetween(
-      PROJECTS_DB,
-      "export async function unsettledVerdictTasks",
-      "/** Automatic-retry ceiling",
-      "unsettledVerdictTasks",
+  test("the detector excludes a `completed` run that still owes a turn (F1)", () => {
+    // R1005 finding 1. completeRun is E1+E2; a crash between them leaves the
+    // row `completed` with pending_input='true' and an undelivered message.
+    // Closing a round there buries the revised verdict in a 'done' task.
+    // IS DISTINCT FROM, not <>: no flag means NULL, which must PASS the test.
+    assert.match(markDone, /AND \(r\.metadata->>'pending_input'\) IS DISTINCT FROM 'true'/);
+    assert.match(unsettled, /OR r\.metadata->>'pending_input' = 'true'/);
+  });
+
+  test("an already-'done' task re-confirms without consulting its run (F2)", () => {
+    // R1005 finding 2(b)/(c): a member marked 'done' by an earlier tick was
+    // settled by BOOKKEEPING. Its run may since have been resumed, stopped or
+    // failed, and none of that may make the round un-closeable. EXISTS rather
+    // than `FROM runs r`, because an UPDATE ... FROM is an inner join and would
+    // drop a done task whose run reference was cleared.
+    assert.match(markDone, /AND \(pt\.status = 'done'/);
+    assert.match(markDone, /OR EXISTS \(SELECT 1/);
+    // The join must live INSIDE the EXISTS, never between the UPDATE's SET and
+    // its WHERE: `UPDATE ... FROM runs r` is an inner join, and a 'done' task
+    // whose run reference was cleared would then be unable to re-confirm.
+    const updateHead = sliceBetween(
+      markDone,
+      "UPDATE project_tasks pt",
+      "WHERE pt.id = $1",
+      "markVerdictTaskDone UPDATE head",
     );
+    assert.doesNotMatch(updateHead, /FROM runs/);
+    assert.match(unsettled, /AND pt\.status IS DISTINCT FROM 'done'/);
+  });
+
+  test("the two predicates are exact complements, term for term", () => {
+    // THE property. The pre-check runs immediately before the irreversible step
+    // and the mark-done is the backstop behind it, so a term in one and not the
+    // other is either a round that half-closes (pre-check passes, mark-done
+    // refuses) or one that never closes (the reverse). Asserted structurally:
+    // each of the three terms appears in both, in its negated form.
+    for (const [positive, negated] of [
+      [/pt\.status = 'done'/, /pt\.status IS DISTINCT FROM 'done'/],
+      [/r\.status = 'completed'/, /r\.status IS DISTINCT FROM 'completed'/],
+      [
+        /\(r\.metadata->>'pending_input'\) IS DISTINCT FROM 'true'/,
+        /r\.metadata->>'pending_input' = 'true'/,
+      ],
+    ] as const) {
+      assert.match(markDone, positive);
+      assert.match(unsettled, negated);
+    }
+  });
+
+  test("unsettledVerdictTasks treats a run-less task as unsettled", () => {
     assert.match(unsettled, /LEFT JOIN runs r ON r\.id = pt\.run_id/);
     assert.match(unsettled, /r\.status IS DISTINCT FROM 'completed'/);
   });
@@ -415,11 +493,15 @@ describe("claim G — every other thread writer is single-statement or cannot to
 });
 
 /* ========================================================================== *
- * FINDING F1 — the window in which a `completed` row still owes a turn
+ * FINDING F1 (FIXED IN R1005) — the window in which a `completed` row still
+ * owes a turn
  *
- * These two assertions document a HOLE, not a guarantee (see the file header).
- * They stay true after F1 is fixed: the repair belongs in db/projects.ts's
- * detector predicate, not in the handshake, which is correct as designed.
+ * These two assertions describe the window, not a guarantee about it. The
+ * repair went into db/projects.ts's detector predicate (the pending_input term
+ * asserted under claim B above), not into the handshake, which is correct as
+ * designed — so both still hold, and they are what makes that term necessary.
+ * If the handshake ever becomes one statement, the term becomes redundant
+ * rather than wrong, and these tests are where that is noticed.
  * ========================================================================== */
 
 describe("finding F1 — E1/E2 is a two-statement handshake with a 60s sweep floor", () => {
@@ -433,7 +515,9 @@ describe("finding F1 — E1/E2 is a two-statement handshake with a 60s sweep flo
   test("E1 and E2 are separate statements, so a crash can strand `completed`+pending_input", () => {
     // E1 completes the run and RETURNs the flag; E2 requeues it. Both guarded,
     // but between them the row is `completed` with an undelivered message in
-    // its thread — and markVerdictTaskDone's `r.status='completed'` accepts it.
+    // its thread. markVerdictTaskDone used to accept exactly that row; since
+    // R1005 its predicate carries the pending_input term, so the round waits
+    // for the sweep instead of closing on the pre-message verdict.
     assert.match(complete, /RETURNING status, metadata->>'pending_input' AS pending_input/);
     assert.match(complete, /WHERE id = \$1 AND status = 'completed'/); // E2's own guard
     assert.ok(

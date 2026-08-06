@@ -51,6 +51,7 @@ import {
 import {
   projectAcceptsWork,
   consolidateVerdictRound,
+  verdictMemberSettled,
   isVerdictRole,
   noteGroupFailure,
   clearGroupFailures,
@@ -751,17 +752,18 @@ async function consolidateVerdictGroup(
     role: assertVerdictRole(r.role, r.id, projectId, round),
     title: r.title,
     fixCycle: r.fix_cycle,
-    // 'completed' and nothing else.
-    //  - run_status null (no run yet) or 'running' → plainly not settled.
-    //  - a gating task already marked 'done' by an EARLIER tick is still settled
-    //    and stays in the group: its verdict is part of this round, and
-    //    excluding it would let a late sibling re-decide the round on a
-    //    partial view and fire a second chain.
-    //  - 'failed'/'cancelled' → deliberately NOT settled here. The per-task
-    //    path in reconcileSettledTasks() has already failed that task and
-    //    blocked the project; the group must wait rather than fold a broken
-    //    round into a verdict it cannot honestly compute.
-    settled: r.run_status === "completed",
+    // The rule itself lives in project-reconcile.ts (verdictMemberSettled) so
+    // it can be tested exhaustively and so db/projects.ts's mark-done and
+    // pre-check predicates have one definition to mirror. Read it there: a
+    // 'done' member is settled by bookkeeping whatever its run does later
+    // (R1005 finding 2), a `completed` run still carrying pending_input is NOT
+    // settled because it owes an undelivered turn (finding 1), and everything
+    // else — no run, running, failed/cancelled/stuck/paused — waits.
+    settled: verdictMemberSettled({
+      taskStatus: r.status,
+      runStatus: r.run_status,
+      pendingInput: r.pending_input,
+    }),
     lastText: r.last_text,
   }));
 
