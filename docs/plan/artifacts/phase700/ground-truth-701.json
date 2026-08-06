@@ -1,0 +1,57 @@
+{
+  "captured_at": "2026-08-06T01:08:50Z",
+  "chat_id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+  "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+  "plan_endpoint": {
+    "link_source": "metadata",
+    "link_ambiguous": false,
+    "phases": [
+      { "round_base": 0, "task_count": 1, "done_count": 1, "doc_path": null },
+      { "round_base": 100, "task_count": 5, "done_count": 5, "doc_path": null },
+      { "round_base": 200, "task_count": 6, "done_count": 6, "doc_path": null },
+      { "round_base": 300, "task_count": 13, "done_count": 13, "doc_path": null },
+      { "round_base": 400, "task_count": 6, "done_count": 6, "doc_path": null },
+      { "round_base": 500, "task_count": 10, "done_count": 10, "doc_path": null },
+      { "round_base": 600, "task_count": 9, "done_count": 9, "doc_path": null },
+      { "round_base": 700, "task_count": 7, "done_count": 1, "doc_path": null },
+      { "round_base": 800, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 900, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 1200, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 1300, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 1400, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 1500, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 1600, "task_count": 1, "done_count": 0, "doc_path": null },
+      { "round_base": 1700, "task_count": 2, "done_count": 0, "doc_path": null }
+    ],
+    "docs": [
+      "00-vision.md",
+      "01-requirements.md",
+      "02-architecture.md",
+      "03-quality.md",
+      "04-phases.md",
+      "10-ui-v3-spec.md",
+      "11-ui-v3-vision.md",
+      "12-ui-v3-requirements.md",
+      "13-ui-v3-architecture.md",
+      "14-ui-v3-quality.md",
+      "15-ui-v3-phases.md",
+      "16-ui-v3-graph-research.md"
+    ]
+  },
+  "rail": {
+    "tasks_done": 51,
+    "tasks_total": 66
+  },
+  "projects_api": {
+    "done": 51,
+    "total": 66,
+    "status_breakdown": { "done": 51, "pending": 13, "running": 2 }
+  },
+  "three_way_agreement": true,
+  "discrepancy": null,
+  "notes": [
+    "Phase-block count (16) is double the brief's rough estimate of ~8; task total (66) is close to the ~60 estimate. Cause: rounds 1200/1600/1700 are single-task blocks Konrad injected mid-flight, plus rounds 300-900 are the 9-block v3 rework, not originally counted as '~8 phases' at brief-writing time.",
+    "No phase block anywhere carries doc_path (matchPhaseDoc matches on round-number digit runs; this corpus is numbered by document position 00-16, not by round). U26 click-through must use docs[], not doc_path.",
+    "2 tasks were running and 13 pending at capture time; a later re-check may show different done/total while remaining internally consistent across all three sources."
+  ]
+}
