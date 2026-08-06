@@ -28,8 +28,10 @@
 #
 # WHAT IT DOES. It never touches a real run. It creates its own disposable
 # scratch runs via POST /api/chat (budget_usd:0, a harmless no-op prompt) and
-# drives them through message -> stop -> message -> terminate -> message,
-# asserting the HTTP status code and response body the contract promises at
+# drives them through message -> stop -> message -> terminate -> message, plus
+# (step 6b) a message into a run the live executor actually finished, which is
+# the only way to prove the requeue clears `completed_at` (R906) -- asserting
+# the HTTP status code and response body the contract promises at
 # every step, then best-effort terminates whatever scratch runs are left
 # before it exits. Because these are real rows in a live `runs` table, the
 # live executor's own claim loop may pick one up and run it for real before
@@ -412,6 +414,72 @@ http POST "/api/runs/$RUN_A/message" \
 step_assert_code "409" "message to cancelled run"
 step_assert_jq '.error | test("resume-chat")' "$HTTP_BODY" \
   "error names /resume-chat"
+
+step_finish
+
+# --------------------------------------------------------------------------
+# Step 6b: message to a run that reached `completed` -> 202, status back to
+# queued, and `completed_at` CLEARED (R906, gating finding 3 / red-team S1).
+#
+# Why this needs its own step. `append_and_queue` puts a settled run back to
+# work; if the write leaves `completed_at` stamped, the rail renders a live run
+# as settled-at-<past> and its duration is nonsense until it settles again --
+# and if the watchdog catches it first, the row is `stuck` WITH a completion
+# timestamp, which completeRun's own invariant forbids. Nothing in steps 1-6
+# reaches that state: run A goes queued -> paused -> queued -> cancelled and
+# never carries a completion stamp on an eligible status.
+#
+# It uses run B, which has been sitting on the live queue since setup, and
+# waits for the executor to finish it. If it never completes within the window
+# the step FAILS rather than skipping (this script has no silent skips) -- read
+# such a failure as "the executor is not draining the queue", which is worth
+# knowing on a deploy either way.
+# --------------------------------------------------------------------------
+
+step_start "6b" "message to a completed run -> 202, status queued, completed_at cleared"
+
+RUN_B_COMPLETED=0
+for _ in $(seq 1 60); do
+  s="$(run_status "$RUN_B")"
+  if [ "$s" = "completed" ]; then
+    RUN_B_COMPLETED=1
+    break
+  fi
+  if [ "$s" = "failed" ] || [ "$s" = "cancelled" ]; then
+    break
+  fi
+  sleep 3
+done
+
+if [ "$RUN_B_COMPLETED" -ne 1 ]; then
+  step_assert_eq "$(run_status "$RUN_B")" "completed" \
+    "run B must reach 'completed' within 180s for this step to be meaningful (executor draining?)"
+else
+  COMPLETED_AT_BEFORE="$(run_completed_at "$RUN_B")"
+  echo "  run B completed_at before the message: '$COMPLETED_AT_BEFORE'"
+  step_assert_nonempty "$COMPLETED_AT_BEFORE" \
+    "a completed run must carry completed_at before we message it (else this step proves nothing)"
+
+  http POST "/api/runs/$RUN_B/message" \
+    "$(jq -n '{text:"step6b one more thing", from:"konrad"}')"
+  step_assert_code "202" "message to completed run"
+  step_assert_jq '.queued == true and .delivery == "next-turn"' "$HTTP_BODY" \
+    "message to completed run body shape"
+
+  STATUS_AFTER_REQUEUE="$(run_status "$RUN_B")"
+  COMPLETED_AT_AFTER="$(run_completed_at "$RUN_B")"
+  echo "  run B after the message: status '$STATUS_AFTER_REQUEUE', completed_at '$COMPLETED_AT_AFTER'"
+  # The executor may already have re-claimed it (queued -> running); both are
+  # live states and both must be free of a completion stamp.
+  case "$STATUS_AFTER_REQUEUE" in
+    queued|running) : ;;
+    *)
+      STEP_FAILS+=("status after message to completed run must be queued or running, got '$STATUS_AFTER_REQUEUE'")
+      ;;
+  esac
+  step_assert_eq "$COMPLETED_AT_AFTER" "" \
+    "completed_at must be CLEARED when a message requeues a completed run (R906)"
+fi
 
 step_finish
 

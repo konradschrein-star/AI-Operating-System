@@ -550,6 +550,72 @@ export async function setTaskStatus(
   );
 }
 
+/**
+ * Mark ONE gating task 'done', but only while its run is still `completed` —
+ * the optimistic-concurrency half of consolidation (red-team S4, R905).
+ *
+ * The verdict a round is judged on is read by listVerdictRound() and acted on
+ * several DB round trips later. In between, the control plane can requeue a
+ * settled reviewer run: `POST /api/runs/:id/message` against a `completed`
+ * target appends and flips it to `queued` in one statement, so the run owes one
+ * more turn — and that turn may say NEEDS_FIXES where the snapshot said PASS.
+ * An unconditional mark-done wrote 'done' anyway, and a 'done' task is
+ * invisible to listSettledRunningTasks() forever: the flipped verdict was
+ * honoured zero times, silently, which is the one outcome this whole module
+ * exists to prevent.
+ *
+ * `r.status = 'completed'` is an exact detector for that interleaving, not an
+ * approximation: every write that could deliver a message to a settled run
+ * moves it out of `completed` in the SAME statement as the append. So a row
+ * still `completed` here is a row whose text nobody has touched.
+ *
+ * Returns whether the task moved. `false` means the round must NOT be treated
+ * as decided — the caller re-consolidates on the next tick, by which time the
+ * requeued run has either settled again with a fresh verdict or is plainly
+ * unsettled (→ `wait`).
+ */
+export async function markVerdictTaskDone(taskId: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE project_tasks pt
+        SET status = 'done', updated_at = now()
+       FROM runs r
+      WHERE pt.id = $1
+        AND r.id = pt.run_id
+        AND r.status = 'completed'`,
+    [taskId],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Which of these gating tasks no longer have a settled (`completed`) run.
+ *
+ * The cheap pre-check that keeps markVerdictTaskDone()'s refusal from arriving
+ * AFTER an irreversible side effect. consolidateVerdictGroup creates the fix
+ * chain and blocks the project before it marks the group done — that order is
+ * deliberate and crash-safe — so the same window is closed from the front here:
+ * one query immediately before the side effect, and the conditional mark-done
+ * behind it as the backstop for whatever slips through the remaining
+ * milliseconds.
+ *
+ * A task with no run (`run_id IS NULL`) counts as unsettled: it cannot have
+ * produced the verdict the decision was computed from.
+ */
+export async function unsettledVerdictTasks(
+  taskIds: readonly string[],
+): Promise<string[]> {
+  if (taskIds.length === 0) return [];
+  const r = await pool.query<{ id: string }>(
+    `SELECT pt.id::text AS id
+       FROM project_tasks pt
+       LEFT JOIN runs r ON r.id = pt.run_id
+      WHERE pt.id = ANY($1::uuid[])
+        AND (r.status IS DISTINCT FROM 'completed')`,
+    [[...taskIds]],
+  );
+  return r.rows.map((row) => row.id);
+}
+
 /** Automatic-retry ceiling (E3). Two retries, then the task stays put until
  *  an operator forces it — an infinitely-retried task is just a slower way of
  *  burning money on the same failure. */

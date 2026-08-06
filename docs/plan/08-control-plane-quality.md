@@ -11,9 +11,13 @@ functions extracted and table-tested; that is the pattern every phase follows.
 - `resumeAction(status)` → `resume | reject(reason)` — C6.
 - `stopAction(status)`, `terminateAction(status)` — C11/C12, including the
   already-paused→409-on-stop and already-cancelled→409-on-terminate cells.
-- Property: for every status, exactly one of `/message` and `/resume-chat` accepts OR both reject
-  with reasons that name the other verb — no status may be unreachable by both without explanation
-  (`failed`/`cancelled` reachable via resume-chat; `running`/`queued` via message).
+- Property: for every status, **at least one** of `/message` and `/resume-chat` accepts OR both
+  reject with reasons that name the other verb — no status may be unreachable by both without
+  explanation (`failed`/`cancelled` reachable via resume-chat; `running`/`queued` via message).
+  Corrected at R906: this bullet originally said "exactly one", which contradicts 07 §4's normative
+  endpoint table — the two verbs deliberately OVERLAP on `paused|stuck|completed`, where both "say
+  something to it" and "reopen it" are legitimate. The property is reachability, not exclusivity;
+  the R902 test transcribed the stronger wording and was red for three rounds because of it.
 
 **Completion transition** (07 §5-6): `completionTransition({outcome, rowStatus, pendingInput})`
 table-tested for all outcome ∈ {completed, failed, stuck} × rowStatus ∈ {running, paused, cancelled,

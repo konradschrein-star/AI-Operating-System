@@ -14,10 +14,13 @@
  *    escape hatch, an operator would have NO way to unstick that run from the
  *    UI. This is 08 §1's explicit property test, not just the two matrices.
  *
- * This file does NOT modify run-control-rules.ts. Per the round-902 brief, any
- * genuine bug found here is asserted as a FAILING test with the defect spelled
- * out in a comment, not silently worked around — see the note below the
- * eligibility-matrix section if one turns up.
+ * Round 902 wrote this file under a brief that said: assert genuine bugs as
+ * FAILING tests rather than working around them. One such test was left red on
+ * purpose (the coverage property) and round 905's reviewers triaged it — the
+ * contradiction was in the TEST, not the rules; 07 §4's endpoint table
+ * deliberately overlaps the two verbs. It is corrected in place below, with the
+ * reasoning kept beside it. The suite is green from round 906 on: a red
+ * concurrency-rules suite gates every later phase by itself.
  */
 
 import { test, describe } from "node:test";
@@ -57,12 +60,18 @@ const ALL_STATUSES: readonly RunStatus[] = [
 
 describe("eligibility matrices", () => {
   test("messageAction — exact shape for all 7 statuses", () => {
+    // `eligible` is part of the shape, not decoration: it is the precondition
+    // the route carries into the append's WHERE, and the whole point of it
+    // living on the action is that the accept and the precondition are one
+    // value. Asserting the exact arrays here is what makes a partition edit
+    // visible in this table (R905 finding 4).
+    const QUEUE_ELIGIBLE = ["paused", "stuck", "completed"];
     const expected: Record<RunStatus, unknown> = {
-      queued: { kind: "append" },
-      running: { kind: "append_and_flag" },
-      paused: { kind: "append_and_queue" },
-      stuck: { kind: "append_and_queue" },
-      completed: { kind: "append_and_queue" },
+      queued: { kind: "append", eligible: ["queued"] },
+      running: { kind: "append_and_flag", eligible: ["running"] },
+      paused: { kind: "append_and_queue", eligible: QUEUE_ELIGIBLE },
+      stuck: { kind: "append_and_queue", eligible: QUEUE_ELIGIBLE },
+      completed: { kind: "append_and_queue", eligible: QUEUE_ELIGIBLE },
       failed: {
         kind: "reject",
         status: 409,
@@ -235,29 +244,36 @@ describe("eligibility matrices", () => {
 });
 
 /* ========================================================================== *
- * 2. PROPERTY (08 §1) — every status reachable by exactly one of
- *    message/resume, or both reject naming the other verb's route.
+ * 2. PROPERTY (08 §1) — no status is unreachable by BOTH message and resume:
+ *    at least one accepts, or both reject naming the other verb's route.
  * ========================================================================== */
 
 describe("message/resume-chat coverage property", () => {
-  test("every status: exactly one of message/resume accepts, or both reject naming the other verb", () => {
+  /**
+   * WHY THIS IS "AT LEAST ONE", NOT "EXACTLY ONE" (R905 finding 1).
+   *
+   * The round-902 version of this test asserted the two verbs were mutually
+   * exclusive, and it failed — correctly reporting a contradiction, but blaming
+   * the wrong side. 07 §4's endpoint table is the normative source and it gives
+   * `/message` {queued, running, paused, stuck, completed} and `/resume-chat`
+   * {completed, failed, cancelled, stuck, paused}: they OVERLAP on
+   * {paused, stuck, completed} by design. Those are the three states where both
+   * readings are legitimate — "say something to it" and "reopen it" — and 06
+   * C1/C6 gives no rule that one must be refused.
+   *
+   * What 08 §1 actually protects is REACHABILITY: "no status may be unreachable
+   * by both without explanation". Its "exactly one" is loose prose, corrected
+   * in the same commit as this test so the doc and the suite agree.
+   */
+  test("every status: at least one of message/resume accepts, or both reject naming the other verb", () => {
     for (const status of ALL_STATUSES) {
       const msg = messageAction(status);
       const res = resumeAction(status);
       const msgAccepts = msg.kind !== "reject";
       const resAccepts = res.kind !== "reject";
 
-      if (msgAccepts || resAccepts) {
-        // At least one accepts. Property is satisfied by definition, but
-        // additionally: they must not BOTH accept for the same status (each
-        // status has exactly one canonical verb per 06 C1/C6).
-        assert.notEqual(
-          msgAccepts && resAccepts,
-          true,
-          `status ${status}: both message and resume-chat accept - ambiguous routing`,
-        );
-        continue;
-      }
+      // At least one accepts → the status is reachable, which is the property.
+      if (msgAccepts || resAccepts) continue;
 
       // Both reject: each reason must name the OTHER verb's route so the
       // operator is never stuck with no way forward.
@@ -273,6 +289,82 @@ describe("message/resume-chat coverage property", () => {
         /\/message/,
         `resume(${status}) rejection must name /message as the escape hatch: "${res.reason}"`,
       );
+    }
+  });
+});
+
+/* ========================================================================== *
+ * 2b. PROPERTY — MessageAction.eligible IS the precondition (R905 finding 4)
+ *
+ * The route puts `action.eligible` straight into the UPDATE's WHERE. Three
+ * things must therefore hold, or the route accepts a message the SQL then
+ * refuses — producing a 409 that says the run "moved" when it never did:
+ *   (a) the status that produced the action is itself in it;
+ *   (b) every status in it maps to the SAME action kind (one precondition per
+ *       write shape — the three writes are not interchangeable);
+ *   (c) their union is exactly MESSAGE_ELIGIBLE.
+ * ========================================================================== */
+
+describe("MessageAction.eligible integrity", () => {
+  test("every accepted status is a member of its own eligible list", () => {
+    for (const status of ALL_STATUSES) {
+      const action = messageAction(status);
+      if (action.kind === "reject") continue;
+      assert.ok(
+        action.eligible.includes(status),
+        `messageAction(${status}).eligible must contain '${status}' - the route ` +
+          `carries it into the UPDATE's WHERE, so a status missing from its own ` +
+          `precondition can never write`,
+      );
+    }
+  });
+
+  test("every status in an eligible list maps back to the same action kind", () => {
+    for (const status of ALL_STATUSES) {
+      const action = messageAction(status);
+      if (action.kind === "reject") continue;
+      for (const sibling of action.eligible) {
+        const siblingAction = messageAction(sibling);
+        assert.equal(
+          siblingAction.kind,
+          action.kind,
+          `messageAction(${status}) would apply the '${action.kind}' write to ` +
+            `'${sibling}', but messageAction(${sibling}) is '${siblingAction.kind}' - ` +
+            `the precondition is wider than the write it belongs to`,
+        );
+      }
+    }
+  });
+
+  test("the union of the three partitions is exactly MESSAGE_ELIGIBLE", () => {
+    const union = new Set<RunStatus>();
+    for (const status of ALL_STATUSES) {
+      const action = messageAction(status);
+      if (action.kind === "reject") continue;
+      for (const s of action.eligible) union.add(s);
+    }
+    assert.deepEqual(
+      [...union].sort(),
+      [...MESSAGE_ELIGIBLE].sort(),
+      "MESSAGE_ELIGIBLE must be exactly the union of the per-action preconditions",
+    );
+  });
+
+  test("the three partitions do not overlap", () => {
+    // Two kinds claiming one status would mean the route's write depends on
+    // which status it read first, which is the drift this shape prevents.
+    const owner = new Map<RunStatus, string>();
+    for (const status of ALL_STATUSES) {
+      const action = messageAction(status);
+      if (action.kind === "reject") continue;
+      for (const s of action.eligible) {
+        const prev = owner.get(s);
+        assert.ok(
+          prev === undefined || prev === action.kind,
+          `status '${s}' is claimed by both '${prev}' and '${action.kind}'`,
+        );
+        owner.set(s, action.kind);
+      }
     }
   });
 });

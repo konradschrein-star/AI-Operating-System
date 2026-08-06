@@ -225,6 +225,54 @@ describe("call sites", () => {
     assert.equal(guardedNotifies.length, 2, "both catch-path notifies must be gated");
   });
 
+  test("the guardrail-block completion passes guardRunning and gates its push", () => {
+    // R905 finding 2. This path sits BEFORE the engine branch and runs for
+    // claude-code runs too, after two awaited round trips (todaySpendRollup +
+    // evaluateGuardrails). Unguarded, an operator's terminate landing in that
+    // window was overwritten by `failed` and Konrad was pushed about a run he
+    // had just killed.
+    const block = sliceFrom(EXEC, "if (!guard.allow) {", "const memory = await prefetch");
+    assert.match(block, /const written = await completeRun\(/);
+    assert.match(block, /"failed",\s*\n\s*null,\s*\n\s*\{ guardRunning \},/);
+    assert.match(block, /if \(written\.applied\) \{/);
+    assert.ok(
+      block.indexOf("written.applied") < block.indexOf("queueNotification"),
+      "the guardrail push must be gated by the completion result",
+    );
+  });
+
+  test("guardRunning is decided once, above the guardrail pre-flight", () => {
+    // The pre-flight is itself a completion path, so `engine` has to be known
+    // before it — one declaration, used by every completion call site in
+    // processRun, is what makes that impossible to get wrong again.
+    const proc = sliceFrom(EXEC, "async function processRun(", "if (!guard.allow) {");
+    assert.match(proc, /const engine = String\(run\.metadata\?\.engine \?\? DEFAULT_ENGINE\);/);
+    assert.match(proc, /const guardRunning = engine === "claude-code";/);
+    assert.equal(
+      (EXEC.match(/const guardRunning = engine === "claude-code";/g) ?? []).length,
+      1,
+      "guardRunning must be declared exactly once in processRun",
+    );
+  });
+
+  test("the session-wait requeue yields to operator verbs", () => {
+    // R905 red-team finding 3: this UPDATE had no status precondition, so a
+    // terminate landing during the procfs scan was flipped back to 'queued' and
+    // the run Konrad killed came back to life — every backoff cycle, on exactly
+    // the wedged runs operators terminate.
+    const requeue = sliceFrom(
+      EXEC,
+      "const requeued = await pool.query(",
+      "if (run.metadata?.session_wait_attempts !== undefined)",
+    );
+    assert.match(requeue, /SET status = 'queued'/);
+    assert.match(requeue, /WHERE id = \$1\s*\n\s*AND status = 'running'/);
+    assert.match(requeue, /if \(requeued\.rowCount === 0\)/);
+    assert.match(requeue, /session-wait requeue yielded to operator status/);
+    // C20: no swallowed pg error on this path any more.
+    assert.doesNotMatch(requeue, /\.catch\(/);
+  });
+
   test("the LEGACY claude-pool success path is NOT guarded", () => {
     // 07 §6: the pool branch is not on this control plane and changing it is
     // scope creep. Its completion write and its notify stay unconditional.
@@ -232,6 +280,52 @@ describe("call sites", () => {
     assert.match(poolPath, /"completed",\s*\n\s*\);/);
     assert.doesNotMatch(poolPath, /guardRunning/);
     assert.match(poolPath, /await notifyRunOutcome\(run, "completed", text\);/);
+  });
+});
+
+/* ========================================================================== *
+ * 5b. The stranded-flag sweep — E2 replayed from durable state (red-team S6)
+ * ========================================================================== */
+
+describe("pendingInputSweepTick", () => {
+  const SWEEP = sliceFrom(
+    EXEC,
+    "async function pendingInputSweepTick(",
+    "async function managerLoop(",
+  );
+
+  test("it targets exactly the stranded shape: completed + the flag", () => {
+    // A crash between E1 and E2 leaves `completed` + pending_input=true with no
+    // consumer: claimNextRun only touches 'queued' rows and E2 never re-runs.
+    // The 202 had already promised "delivery: next-turn".
+    assert.match(SWEEP, /WHERE status = 'completed'/);
+    assert.match(SWEEP, /AND metadata->>'pending_input' = 'true'/);
+  });
+
+  test("it performs E2's write, byte for byte", () => {
+    assert.match(SWEEP, /SET status = 'queued'/);
+    assert.match(SWEEP, /completed_at = NULL/);
+    assert.match(SWEEP, /wake_after = NULL/);
+    assert.match(SWEEP, /metadata = metadata - 'pending_input'/);
+  });
+
+  test("it waits out the in-flight E2 rather than racing it", () => {
+    // E1 and E2 are one statement apart; a row still in this shape a minute
+    // later is not in flight. Without the age filter the sweep would routinely
+    // beat E2 and fill the log with yields for handshakes that worked.
+    assert.match(SWEEP, /AND updated_at < now\(\) - \(interval '1 millisecond' \* \$1\)/);
+    assert.match(EXEC, /const PENDING_INPUT_STRANDED_MS = 60_000;/);
+  });
+
+  test("it never touches failed/stuck rows — 07 §5's last bullet", () => {
+    // Those keep the flag by design: a message must not convert a failure into
+    // a silent retry loop. resume-chat is the delivery path there.
+    assert.doesNotMatch(SWEEP, /'failed'|'stuck'/);
+  });
+
+  test("it runs on the manager loop, beside the other watchdogs", () => {
+    const ml = EXEC.slice(EXEC.indexOf("async function managerLoop("));
+    assert.match(ml, /await pendingInputSweepTick\(\);/);
   });
 });
 

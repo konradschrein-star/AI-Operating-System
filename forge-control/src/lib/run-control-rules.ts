@@ -40,17 +40,41 @@ export type Rejection = { kind: "reject"; status: 409; reason: string };
  * Eligibility matrices (07 §4).
  *
  * These are exported as data — not just baked into the switches — because the
- * route carries them into SQL as the UPDATE's precondition
+ * eligible list is carried into SQL as the UPDATE's precondition
  * (`WHERE id=$1 AND status = ANY($2)`), which is what makes two operators
  * clicking at once resolve to one 202 and one 409 instead of a mixed state.
+ *
+ * WHO CARRIES WHAT, precisely (the R905 gating reviewer caught this comment
+ * claiming more than it delivered):
+ *
+ *  - `STOP_ELIGIBLE` / `TERMINATE_ELIGIBLE` are imported by `db/runs.ts` and
+ *    baked into `stopRun`/`terminateRun`'s own WHERE clause. The route never
+ *    sees them.
+ *  - `/message` has THREE preconditions, not one — a message to a `running`
+ *    row must not land on a row that became `completed` under it, because the
+ *    two need different writes. So the per-status precondition travels inside
+ *    the action itself (`MessageAction.eligible`), and the route puts THAT in
+ *    the WHERE. `MESSAGE_ELIGIBLE` below is derived from the same three arrays,
+ *    so the union and the partition cannot drift.
+ *  - `RESUME_ELIGIBLE` is CP2's; nothing carries it into SQL yet.
  * ------------------------------------------------------------------------- */
 
+/** queued — nothing to move: the pending turn folds the thread tail in itself. */
+const APPEND_ELIGIBLE: readonly RunStatus[] = ["queued"];
+/** running — the flag write's precondition (07 §5, T2). */
+const FLAG_ELIGIBLE: readonly RunStatus[] = ["running"];
+/** paused | stuck | completed — the requeue's precondition. */
+const QUEUE_ELIGIBLE: readonly RunStatus[] = ["paused", "stuck", "completed"];
+
+/**
+ * Derived, never hand-written: the union of the three partitions above. A
+ * status added to one of them is a status this matrix reports as eligible, with
+ * no second edit and no way to forget one.
+ */
 export const MESSAGE_ELIGIBLE: readonly RunStatus[] = [
-  "queued",
-  "running",
-  "paused",
-  "stuck",
-  "completed",
+  ...APPEND_ELIGIBLE,
+  ...FLAG_ELIGIBLE,
+  ...QUEUE_ELIGIBLE,
 ];
 
 export const RESUME_ELIGIBLE: readonly RunStatus[] = [
@@ -87,28 +111,36 @@ function unreachableStatus(status: never): never {
  * POST /api/runs/:id/message  (C1–C4)
  * ------------------------------------------------------------------------- */
 
+/**
+ * `eligible` is the precondition the route puts into the append's WHERE, the
+ * same way `StatusVerbAction` carries stop's and terminate's. It lives ON the
+ * action rather than in a lookup table beside it so that a status added to a
+ * `case` below cannot be accepted by `messageAction` and then rejected by an
+ * out-of-date precondition list — the accept and the precondition are now one
+ * value, produced in one place.
+ */
 export type MessageAction =
   /** queued — the pending turn's prompt builder folds the thread tail in. */
-  | { kind: "append" }
+  | { kind: "append"; eligible: readonly RunStatus[] }
   /** running — append + metadata.pending_input=true in ONE statement (07 §5). */
-  | { kind: "append_and_flag" }
+  | { kind: "append_and_flag"; eligible: readonly RunStatus[] }
   /** paused | stuck | completed — append + status 'queued' (for stuck this doubles as the nudge). */
-  | { kind: "append_and_queue" }
+  | { kind: "append_and_queue"; eligible: readonly RunStatus[] }
   | Rejection;
 
 export function messageAction(status: RunStatus): MessageAction {
   switch (status) {
     case "queued":
-      return { kind: "append" };
+      return { kind: "append", eligible: APPEND_ELIGIBLE };
     case "running":
       // The turn in flight is untouchable (`claude -p` closed its stdin at
       // spawn). The flag is consumed by the executor's completion handshake,
       // which requeues instead of completing — see completionTransition.
-      return { kind: "append_and_flag" };
+      return { kind: "append_and_flag", eligible: FLAG_ELIGIBLE };
     case "paused":
     case "stuck":
     case "completed":
-      return { kind: "append_and_queue" };
+      return { kind: "append_and_queue", eligible: QUEUE_ELIGIBLE };
     // failed/cancelled are resume-chat's job: reopening a dead run is a
     // deliberate act, not casual messaging (06 C1).
     case "failed":

@@ -125,9 +125,25 @@ route side (target running):           executor side (turn just ended OK):
 - Both sides act → E2's `WHERE status='completed'` and the route's status write are idempotent
   towards `queued`; the claim loop clears `pending_input` on claim (belt) and E2 removed it (braces).
   One extra turn at absolute worst, never a lost message.
+- The route loses the write race itself (the row moved between `getRun` and the UPDATE, so the
+  precondition matched 0 rows) → **one bounded re-dispatch**: recompute `messageAction` against the
+  status the failed UPDATE reported and attempt exactly once more. Safe because rowcount 0 means
+  nothing was appended, so the retry is a first delivery against a freshly-read status. A second
+  loss is an honest 409 and the caller owns the next move. This is asymmetric on purpose: `/stop`
+  and `/terminate` never re-dispatch — a message means the same thing in every state that accepts
+  it, whereas a verb applied to a state nobody looked at is a different decision. (Added R906: the
+  original 409-only handler made this bullet's delivery promise depend on a caller retry the plan
+  never required of managers.)
 - Executor restarts between T2 and the next claim → the flag and the entry are in the row; nothing
   was in memory (C23). The requeue happens via the route's completed-path or the flag consumption on
   whatever completion eventually lands.
+- Executor restarts **between E1 and E2** → the row is `completed` + `pending_input=true` and E2
+  died with the process. The flag has exactly two consumers (`claimNextRun`, which only touches
+  `queued` rows, and E2 itself) so nothing would ever pick it up, while the caller already holds a
+  202 saying `delivery: next-turn`. Closed R906 by `pendingInputSweepTick()` on the manager loop:
+  E2's UPDATE replayed from durable state, scoped to `status='completed' AND
+  metadata->>'pending_input'='true'` and rows untouched for 60s so it cannot race a live E2.
+  `failed`/`stuck` keep their flag — see the last bullet.
 - Turn ends `failed`/`stuck` instead → no E2 by design (§4 table sends casual traffic to live-ish
   runs only); the message sits in the thread, the run's failure notification fires normally, and a
   `resume-chat`/existing resume delivers it. A message must never convert a failure into a silent
@@ -151,6 +167,22 @@ branch keeps its current behavior — it is not on this control plane and changi
 flipped to `stuck` by a timeout that was already moot. The stuck-watchdog
 (`executor.ts:1094-1118`) already self-guards via `WHERE status='running'` — verified, no change.
 
+Two further status writes were found unguarded at R905 and are covered from R906, because the
+control plane is what makes them newly reachable by an operator:
+
+- **The guardrail-block completion** (`processRun`'s spend pre-flight). It sits before the engine
+  branch, so it fires for `claude-code` runs, and it is reached after two awaited round trips —
+  a wide window for a terminate to land on a row it then overwrites with `failed`, plus a push about
+  a run Konrad had just killed. Now takes `{guardRunning}` and gates its notification on the write
+  applying. `engine`/`guardRunning` are hoisted to the top of `processRun` so every completion call
+  site in it shares one declaration.
+- **The session-contention requeue** (`processWithClaudeCode`, failure mode E10). `UPDATE runs SET
+  status='queued' WHERE id=$1` with no precondition, executed after an awaited procfs scan — and it
+  fires repeatedly, on exactly the wedged runs operators terminate. A terminate landing in that
+  window was flipped back to `queued` and the killed run came back and kept spending; a stop's
+  `paused` went the same way. Now carries `AND status='running'` and logs a yield on rowcount 0.
+  Its `.catch` is gone with it: a pg failure here must surface (C20).
+
 ## 7. Interaction with project reconciliation (C9 — verified against code, not assumed)
 
 - Task marked `done` → invisible to `listSettledRunningTasks` (filters `pt.status='running'`)
@@ -158,8 +190,18 @@ flipped to `stuck` by a timeout that was already moot. The stuck-watchdog
 - Reviewer settled but NOT yet consolidated (≤10s window), then messaged/resumed: run leaves
   `completed`, so the round consolidator's `settled: r.run_status === "completed"` turns false and
   the group correctly `wait`s until the resumed run settles; the FINAL settled text is the verdict.
-  Deterministic, no code change needed — but it is a red-team scenario in 08 because it is the
-  subtlest interaction on this surface.
+  **Only true if the message beats `listVerdictRound`'s read** — R905's red-team found the other
+  half: a message landing AFTER that read but before mark-done was written over by an unconditional
+  `setTaskStatus(done)`, and a 'done' task never re-surfaces, so the flipped verdict was honoured
+  zero times in silence. Fixed R906 with optimistic concurrency: `markVerdictTaskDone` carries
+  `AND r.status='completed'` into the UPDATE and reports whether the row moved; a refusal aborts the
+  decision and the next tick re-consolidates. `r.status='completed'` is an exact detector, not an
+  approximation — every write that can deliver a message to a settled run moves it out of
+  `completed` in the same statement as the append. The two branches whose side effect precedes
+  mark-done (`block` blocks the project and pushes; `fix` inserts the chain — both orders are
+  crash-safety requirements and stay) additionally pre-check with `unsettledVerdictTasks()`
+  immediately before that side effect, so the conditional mark-done only has to cover the remaining
+  milliseconds.
 - Terminating a task's run: run → `cancelled` → reconciler fails the task and blocks the project
   with a notification — exactly today's behavior for a died run, which is the correct reading of
   "Konrad killed my worker". Documented, not changed.

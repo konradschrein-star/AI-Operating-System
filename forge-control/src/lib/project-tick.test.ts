@@ -977,3 +977,128 @@ describe("T18 escalation protocol", () => {
     }
   });
 });
+
+/* ========================================================================== *
+ * T19 consolidation is preconditioned on the gating runs still being settled
+ *
+ * SOURCE-ASSERTION, like executor-completion-guard.test.ts and for the same
+ * reason: project-tick.ts and db/projects.ts both reach a pg Pool, and there is
+ * no test database in this suite. The DECISION half of consolidation is pure
+ * and table-tested in project-reconcile.test.ts; what is asserted here is the
+ * SQL and the control flow that apply it.
+ *
+ * The defect (R905 red-team S4): `listVerdictRound` reads the round, then
+ * several DB round trips later the decision is applied. In that window the
+ * control plane can requeue a settled reviewer — `POST /api/runs/:id/message`
+ * against a `completed` target appends and flips it to `queued` in ONE
+ * statement — so the run owes another turn whose verdict may contradict the
+ * snapshot. Mark-done was unconditional, and a 'done' task is invisible to
+ * listSettledRunningTasks() forever: the flip was honoured zero times, in
+ * silence. That is the one outcome this module exists to prevent.
+ * ========================================================================== */
+
+describe("T19 consolidation precondition (red-team S4)", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const TICK = readFileSync(`${repoRoot}forge-control/src/lib/project-tick.ts`, "utf8");
+  const PROJECTS_DB = readFileSync(`${repoRoot}forge-control/src/db/projects.ts`, "utf8");
+
+  test("markVerdictTaskDone carries r.status='completed' into the UPDATE", () => {
+    const body = PROJECTS_DB.slice(
+      PROJECTS_DB.indexOf("export async function markVerdictTaskDone"),
+      PROJECTS_DB.indexOf("export async function unsettledVerdictTasks"),
+    );
+    assert.ok(body.length > 0, "markVerdictTaskDone not found in db/projects.ts");
+    assert.match(body, /UPDATE project_tasks pt/);
+    assert.match(body, /FROM runs r/);
+    assert.match(body, /AND r\.id = pt\.run_id/);
+    assert.match(body, /AND r\.status = 'completed'/);
+    // The caller has to be able to tell "did not move" from "moved".
+    assert.match(body, /return \(r\.rowCount \?\? 0\) > 0;/);
+  });
+
+  test("unsettledVerdictTasks counts a run-less task as unsettled", () => {
+    const body = PROJECTS_DB.slice(
+      PROJECTS_DB.indexOf("export async function unsettledVerdictTasks"),
+      PROJECTS_DB.indexOf("export async function unsettledVerdictTasks") + 1200,
+    );
+    // LEFT JOIN + IS DISTINCT FROM, not `<>`: a NULL run_status must count as
+    // unsettled, and `NULL <> 'completed'` is NULL, i.e. not matched.
+    assert.match(body, /LEFT JOIN runs r ON r\.id = pt\.run_id/);
+    assert.match(body, /r\.status IS DISTINCT FROM 'completed'/);
+  });
+
+  test("markGroupDone reports refusals instead of swallowing them", () => {
+    const body = TICK.slice(
+      TICK.indexOf("async function markGroupDone("),
+      TICK.indexOf("function logGroupNotReleased("),
+    );
+    assert.ok(body.length > 0, "markGroupDone not found");
+    assert.match(body, /markVerdictTaskDone\(r\.taskId\)/);
+    assert.match(body, /refused\.push\(r\)/);
+    assert.doesNotMatch(body, /setTaskStatus\(/);
+  });
+
+  test("the pass branch aborts before any side effect when a member refuses", () => {
+    const branch = TICK.slice(
+      TICK.indexOf('case "pass": {'),
+      TICK.indexOf('case "block": {'),
+    );
+    // Mark-done first, and the early return must precede the notifications —
+    // a PASS is the decision with no undo: it releases the next phase.
+    const refusalReturn = branch.indexOf("logGroupNotReleased");
+    assert.ok(refusalReturn > 0, "pass branch does not handle a refusal");
+    assert.ok(
+      refusalReturn < branch.indexOf("queueNotification"),
+      "the refusal check must come before the round's notifications",
+    );
+    assert.ok(
+      refusalReturn < branch.indexOf("roundIsComplete"),
+      "the refusal check must come before the round-complete push",
+    );
+  });
+
+  test("the irreversible branches pre-check before their side effect", () => {
+    const block = TICK.slice(
+      TICK.indexOf('case "block": {'),
+      TICK.indexOf('case "fix": {'),
+    );
+    // Blocking a project and pushing to Konrad's phone cannot be undone by a
+    // later refusal, so the window is closed from the front too.
+    assert.ok(
+      block.indexOf("unsettledVerdictTasks") < block.indexOf("setProjectStatus"),
+      "block must pre-check before it blocks the project",
+    );
+
+    const fix = TICK.slice(TICK.indexOf('case "fix": {'));
+    assert.ok(
+      fix.indexOf("unsettledVerdictTasks") < fix.indexOf("await createFixChain("),
+      "fix must pre-check before it inserts the chain",
+    );
+    // ...and the conditional mark-done is still the backstop for the
+    // milliseconds a pre-check cannot cover: a refusal after the chain exists
+    // must stop the round closing and must not announce the fix cycle.
+    const afterChain = fix.slice(fix.indexOf("const refused = await markGroupDone(inputs);"));
+    assert.ok(afterChain.length > 0, "fix branch does not check markGroupDone's result");
+    assert.ok(
+      afterChain.indexOf("return;") < afterChain.indexOf("queueNotification"),
+      "a refused fix round must not push a fix-cycle announcement",
+    );
+  });
+
+  test("no branch marks a gating task done unconditionally any more", () => {
+    const consolidate = TICK.slice(
+      TICK.indexOf("async function consolidateVerdictGroup("),
+      TICK.indexOf("async function markGroupDone("),
+    );
+    assert.doesNotMatch(
+      consolidate,
+      /setTaskStatus\([^)]*"done"\)/,
+      "consolidation must route every mark-done through the preconditioned helper",
+    );
+    // Every markGroupDone call site captures the result; a bare `await
+    // markGroupDone(inputs);` would be the old, silent behaviour wearing the
+    // new helper's name.
+    const bare = consolidate.match(/^\s*await markGroupDone\(inputs\);\s*$/gm) ?? [];
+    assert.deepEqual(bare, [], "markGroupDone's return value must never be discarded");
+  });
+});

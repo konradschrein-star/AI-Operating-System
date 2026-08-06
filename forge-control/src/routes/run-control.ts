@@ -62,34 +62,47 @@ const UUID_RE =
 const COMMS_FROM = new Set<string>(["konrad", "manager", "worker"]);
 
 /**
- * The write each accepted message action performs, straight out of 07 §4's
- * table. `eligible` is the precondition the UPDATE carries into its WHERE, so
- * the append is atomic with the status/flag change and cannot land on a row
- * that moved between `getRun` and the write.
+ * The row EFFECT each accepted message action performs, straight out of 07 §4's
+ * table. The PRECONDITION is not here: it travels on the action itself
+ * (`action.eligible`, run-control-rules.ts) and is passed into the write below,
+ * so the status set that `messageAction` accepts and the status set the UPDATE
+ * requires are one value rather than two lists that can drift (R905 finding 4).
  *
  * Keyed by `MessageAction["kind"]` minus the rejection, so a new action kind in
  * the rules module is a COMPILE error here rather than a missing case that
- * silently appends with no precondition at all.
+ * silently appends with no effect at all.
  */
 type AppendKind = Exclude<MessageAction["kind"], "reject">;
 
 const MESSAGE_WRITE: Record<
   AppendKind,
   {
-    eligible: readonly RunStatus[];
     setStatus?: RunStatus;
     setPendingInput?: boolean;
+    clearCompletedAt?: boolean;
+    clearWakeAfter?: boolean;
   }
 > = {
   // The pending turn's prompt builder folds the thread tail in by itself.
-  append: { eligible: ["queued"] },
+  append: {},
   // The turn in flight is untouchable; the flag is consumed by the executor's
   // completion handshake, which requeues instead of completing (07 §5).
-  append_and_flag: { eligible: ["running"], setPendingInput: true },
+  append_and_flag: { setPendingInput: true },
   // For `stuck` this doubles as the contract's nudge.
+  //
+  // The two stamps are cleared for the same reason the executor's E2 clears
+  // them (executor.ts, "a run that is going back to work carries a completion
+  // timestamp, and every duration in the UI lies about it"): a `completed`
+  // target carries `completed_at`, and messaging it puts it back to work — a
+  // live row with a past completion time renders as settled-at-10:00 while it
+  // runs, and the watchdog can later leave a `stuck` row with `completed_at`
+  // set, which completeRun's own invariant forbids. `wake_after` goes for the
+  // matching reason: a `paused` row parked behind a usage-wall backoff must not
+  // silently delay a message Konrad just sent.
   append_and_queue: {
-    eligible: ["paused", "stuck", "completed"],
     setStatus: "queued",
+    clearCompletedAt: true,
+    clearWakeAfter: true,
   },
 };
 
@@ -98,9 +111,10 @@ const MESSAGE_WRITE: Record<
  * `getRun` and no longer holds at the UPDATE, and the rules function applied to
  * the CURRENT status does not itself produce a rejection to quote.
  *
- * It is a 409 rather than a retry on purpose: the operator asked to act on a
- * run in a state it is no longer in, and inventing a second attempt would mean
- * applying a verb to a situation nobody looked at.
+ * For /stop and /terminate this is the final answer, on purpose: the operator
+ * asked to apply a VERB to a run in a state it is no longer in, and inventing a
+ * second attempt would mean acting on a situation nobody looked at. /message is
+ * different — see the re-dispatch below.
  */
 function raceReason(status: RunStatus, verb: string): string {
   return `run moved to '${status}' while the ${verb} was being applied - re-read the run and retry`;
@@ -185,16 +199,48 @@ r.post("/:id/message", async (c) => {
     ts,
   });
 
-  const delivered = await appendCommsEntry(
-    id,
-    toThreadEntry(receiver),
-    MESSAGE_WRITE[action.kind],
-  );
+  const entry = toThreadEntry(receiver);
+  let delivered = await appendCommsEntry(id, entry, {
+    ...MESSAGE_WRITE[action.kind],
+    eligible: action.eligible,
+  });
+
+  // ONE bounded re-dispatch — not a loop, not a poll (07 §5).
+  //
+  // 07 §5 promises delivery in BOTH orders of the message-vs-completion race:
+  // an append landing before the executor's E1 rides the pending_input
+  // handshake, and one landing after it is requeued by the `completed` row of
+  // this very handler. The window between `getRun` and the UPDATE is the third
+  // order, and answering 409 there made that promise depend on a caller retry
+  // the plan never required of managers (R905 red-team finding 5).
+  //
+  // Safe precisely because the first attempt's rowcount was 0: NOTHING was
+  // appended, so this is a first delivery against a freshly-read status, not a
+  // second one. It recomputes the action from the status the failed UPDATE
+  // reported and attempts exactly once more; if that one also loses, the 409
+  // below is the honest answer and the caller owns the next move. A message is
+  // re-dispatchable in a way a verb is not: its payload is the operator's text,
+  // which means the same thing in every state that accepts it, whereas "stop"
+  // applied to a state nobody looked at is a different decision.
+  if (!delivered.applied && delivered.status) {
+    const current = messageAction(delivered.status);
+    if (current.kind !== "reject") {
+      console.log(
+        `[run-control] message ${id} lost the write race to '${delivered.status}' - one re-dispatch`,
+      );
+      delivered = await appendCommsEntry(id, entry, {
+        ...MESSAGE_WRITE[current.kind],
+        eligible: current.eligible,
+      });
+    }
+  }
+
   if (!delivered.applied) {
     if (!delivered.status) return c.json({ error: "unknown run" }, 404);
-    // Re-read race: recompute the decision ONCE against what the row actually
-    // holds now and answer 409 naming that status. No loop, no retry — the
-    // caller decides whether the new state still deserves the message.
+    // Still lost after the re-dispatch (or the current status rejects outright).
+    // Recompute ONCE more against what the row actually holds and answer 409
+    // naming that status — the caller decides whether it still deserves the
+    // message.
     const current = messageAction(delivered.status);
     return c.json(
       {

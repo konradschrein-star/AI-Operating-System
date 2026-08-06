@@ -115,6 +115,28 @@ describe("appendCommsEntry — single-statement atomicity (07 §5)", () => {
   test("the WHERE carries the eligibility precondition via status = ANY(", () => {
     assert.match(body, /AND status = ANY\(/);
   });
+
+  test("it can clear completed_at and wake_after, in the SAME statement", () => {
+    // R905 finding 3 / red-team finding 4. `append_and_queue` puts a settled
+    // run back to work; leaving `completed_at` stamped renders a live run as
+    // settled-at-10:00 and makes every duration in the UI lie — and if the
+    // watchdog catches it first, produces a `stuck` row with a completion
+    // timestamp, which completeRun's own invariant forbids. The two sibling
+    // requeue paths (executor.ts's E2 and requeueRunAfterUsageWall) clear the
+    // same stamps; this was the odd one out.
+    assert.match(body, /if \(opts\.clearCompletedAt\) sets\.push\("completed_at = NULL"\)/);
+    assert.match(body, /if \(opts\.clearWakeAfter\) sets\.push\("wake_after = NULL"\)/);
+    // Pushed into `sets`, i.e. into the ONE UPDATE — not a follow-up statement
+    // a completion write could interleave with.
+    const setsBlock = body.slice(body.indexOf("const sets ="), body.indexOf("UPDATE runs SET"));
+    assert.match(setsBlock, /completed_at = NULL/);
+    assert.match(setsBlock, /wake_after = NULL/);
+    assert.equal(
+      (body.match(/pool\.query/g) ?? []).length,
+      1,
+      "appendCommsEntry must still issue exactly one pool.query call",
+    );
+  });
 });
 
 /* ========================================================================== *
@@ -255,6 +277,88 @@ describe("eligibility logic is imported from lib/run-control-rules.ts, not re-im
     assert.match(ROUTE, /terminateAction/);
     assert.match(ROUTE, /commsEntries/);
     assert.match(ROUTE, /from\s*"\.\.\/lib\/run-control-rules\.ts"/);
+  });
+});
+
+/* ========================================================================== *
+ * 9b. routes/run-control.ts — the message precondition comes from the ACTION
+ * ========================================================================== */
+
+describe("the /message precondition is the action's own (C5, R905 finding 4)", () => {
+  test("MESSAGE_WRITE describes the effect only — it declares no eligibility", () => {
+    // The old shape kept a second, hand-written copy of the partition here.
+    // Nothing type-checked it against messageAction, so adding a status to the
+    // rules module and forgetting this table produced a route that accepts a
+    // message the UPDATE then matches zero rows for — a 409 telling the
+    // operator the run "moved" to the status it was already in.
+    const table = ROUTE.slice(
+      ROUTE.indexOf("const MESSAGE_WRITE"),
+      ROUTE.indexOf("function raceReason"),
+    );
+    assert.ok(table.length > 0, "MESSAGE_WRITE table not found");
+    assert.doesNotMatch(table, /eligible/);
+    assert.match(table, /setStatus: "queued"/);
+    assert.match(table, /clearCompletedAt: true/);
+    assert.match(table, /clearWakeAfter: true/);
+  });
+
+  test("every append call for a message passes eligible: <action>.eligible", () => {
+    const spreads = ROUTE.match(/eligible: (action|current)\.eligible,/g) ?? [];
+    assert.equal(
+      spreads.length,
+      2,
+      "both the first attempt and the re-dispatch must carry the action's own precondition",
+    );
+  });
+});
+
+/* ========================================================================== *
+ * 9c. routes/run-control.ts — the bounded re-dispatch (07 §5, red-team #5)
+ * ========================================================================== */
+
+describe("lost-race re-dispatch is bounded to exactly one extra attempt", () => {
+  const handler = ROUTE.slice(
+    ROUTE.indexOf('r.post("/:id/message"'),
+    ROUTE.indexOf('r.post("/:id/stop"'),
+  );
+
+  test("the message handler appends at most twice, and never in a loop", () => {
+    assert.equal(
+      (handler.match(/await appendCommsEntry\(id,/g) ?? []).length,
+      2,
+      "exactly two append call sites against the target: the attempt and the one re-dispatch",
+    );
+    // A `while`/`for` here would be a retry loop against a live row — the thing
+    // 07 §4's "no read-then-write" discipline exists to keep out.
+    assert.doesNotMatch(handler, /\bwhile\s*\(|\bfor\s*\(/);
+  });
+
+  test("the re-dispatch is gated on a NON-reject recompute of the current status", () => {
+    assert.match(handler, /const current = messageAction\(delivered\.status\);/);
+    assert.match(handler, /if \(current\.kind !== "reject"\)/);
+  });
+
+  test("a second loss is still an honest 409, never a 202", () => {
+    // C20: the re-dispatch must not be able to report success for a write that
+    // did not apply. The final answer is still driven by `delivered.applied`.
+    assert.match(handler, /if \(!delivered\.applied\) \{/);
+    assert.ok(
+      handler.lastIndexOf("if (!delivered.applied) {") >
+        handler.indexOf("if (current.kind !== \"reject\")"),
+      "the applied check must come after the re-dispatch",
+    );
+  });
+
+  test("stop and terminate do NOT re-dispatch — a verb is not a message", () => {
+    const verb = ROUTE.slice(
+      ROUTE.indexOf("async function statusVerb("),
+      ROUTE.indexOf('r.post("/:id/stop"'),
+    );
+    assert.equal(
+      (verb.match(/await write\(id\)/g) ?? []).length,
+      1,
+      "statusVerb must attempt its write exactly once",
+    );
   });
 });
 

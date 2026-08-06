@@ -30,6 +30,8 @@ import {
   createRunForTask,
   attachRun,
   setTaskStatus,
+  markVerdictTaskDone,
+  unsettledVerdictTasks,
   listVerdictRound,
   createFixChain,
   setProjectStatus,
@@ -787,7 +789,17 @@ async function consolidateVerdictGroup(
     }
 
     case "pass": {
-      await markGroupDone(inputs);
+      // Mark-done FIRST, and abort the whole branch if any member refuses.
+      // A PASS is the one decision with no undo: it releases the next phase.
+      // If a message requeued a reviewer between the read and here, its next
+      // turn may say NEEDS_FIXES, and closing the round now would bury that
+      // verdict in a task nothing ever looks at again. Nothing below this line
+      // has run yet, so aborting is free and the next tick re-decides.
+      const refused = await markGroupDone(inputs);
+      if (refused.length > 0) {
+        logGroupNotReleased(projectId, round, "pass", refused);
+        return;
+      }
       console.log(`[project-tick] round ${round} verdicts → pass (${roster})`);
       // E4's two pushes, moved from the per-task path to here. Both halves:
       // the per-task ✅ (non-goal projects only — a goal project can carry
@@ -835,6 +847,21 @@ async function consolidateVerdictGroup(
       // The notification is sent before mark-done for the same reason: a crash
       // after mark-done would leave a blocked project nobody was told about,
       // whereas a replay at worst pushes the same message twice.
+      //
+      // Pre-check, immediately before the first irreversible step. Blocking a
+      // project and pushing to Konrad's phone cannot be taken back by a later
+      // mark-done refusal, so the S4 window is closed from the front here and
+      // the conditional mark-done below catches the remaining milliseconds.
+      const moved = await unsettledVerdictTasks(inputs.map((r) => r.taskId));
+      if (moved.length > 0) {
+        logGroupNotReleased(
+          projectId,
+          round,
+          "block",
+          inputs.filter((r) => moved.includes(r.taskId)),
+        );
+        return;
+      }
       await setProjectStatus(projectId, "blocked");
       console.warn(
         `[project-tick] round ${round} verdicts → block (${decision.reason}, ${roster}): ${decision.detail}`,
@@ -845,7 +872,12 @@ async function consolidateVerdictGroup(
           `${decision.detail}. Check the run threads.`,
         "project",
       ).catch(() => {});
-      await markGroupDone(inputs);
+      // A refusal here is already too late to undo the block, but it must not
+      // pass unrecorded — and leaving the member 'running' is the right state:
+      // the next tick re-consolidates it against the already-blocked project,
+      // which promotes and claims nothing meanwhile.
+      const refused = await markGroupDone(inputs);
+      if (refused.length > 0) logGroupNotReleased(projectId, round, "block", refused);
       return;
     }
 
@@ -859,6 +891,24 @@ async function consolidateVerdictGroup(
       // a window where round R is fully 'done' with no fix round in the table,
       // and promoteReadyTasks() would promote the next phase's planner straight
       // past an unfinished fix cycle.
+      //
+      // Same pre-check as `block`, same reason: the chain INSERT is the
+      // irreversible step here. A reviewer requeued by a message between
+      // listVerdictRound() and this point may be about to withdraw the very
+      // NEEDS_FIXES this chain would be built from, and a stray fix chain at
+      // round+1 promotes builders nobody asked for. The conditional mark-done
+      // after createFixChain covers the milliseconds this cannot.
+      const moved = await unsettledVerdictTasks(inputs.map((r) => r.taskId));
+      if (moved.length > 0) {
+        logGroupNotReleased(
+          projectId,
+          round,
+          `fix cycle ${decision.cycle}`,
+          inputs.filter((r) => moved.includes(r.taskId)),
+        );
+        return;
+      }
+
       const chain = await createFixChain({
         project_id: projectId,
         round,
@@ -913,11 +963,24 @@ async function consolidateVerdictGroup(
             `POST /api/projects/${projectId}/unwedge.`,
           "project",
         ).catch(() => {});
-        await markGroupDone(inputs);
+        const refusedOnCollision = await markGroupDone(inputs);
+        if (refusedOnCollision.length > 0) {
+          logGroupNotReleased(projectId, round, "fix/collision", refusedOnCollision);
+        }
         return;
       }
 
-      await markGroupDone(inputs);
+      // The chain exists at this point, so a refusal cannot un-create it — but
+      // it MUST stop the round from closing and must not announce a fix cycle
+      // whose premise a message may have just withdrawn. The next tick waits
+      // for the requeued run, re-decides, and — if the verdict is unchanged —
+      // recomputes the same (round, cycle) chain keys, which createFixChain's
+      // guard absorbs as a replay.
+      const refused = await markGroupDone(inputs);
+      if (refused.length > 0) {
+        logGroupNotReleased(projectId, round, `fix cycle ${decision.cycle}`, refused);
+        return;
+      }
       const dissenters = decision.checkers.map((c) => c.role).join(" + ");
       const line =
         `[project-tick] round ${round} verdicts → fix cycle ${decision.cycle} ` +
@@ -945,13 +1008,40 @@ async function consolidateVerdictGroup(
   }
 }
 
-/** Mark every gating task of a decided group 'done'. Idempotent by construction
- *  — re-marking an already-'done' row is a no-op UPDATE — which is what makes
- *  the crash-replay path above safe to re-run. */
-async function markGroupDone(inputs: VerdictInput[]): Promise<void> {
+/** Mark every gating task of a decided group 'done', each write preconditioned
+ *  on its run still being settled (`completed`).
+ *
+ *  Idempotent by construction — re-marking an already-'done' row whose run is
+ *  still completed is a no-op UPDATE — which is what makes the crash-replay
+ *  path above safe to re-run.
+ *
+ *  Returns the tasks that REFUSED to move. A non-empty list means the control
+ *  plane requeued a gating run while this consolidation was deciding (red-team
+ *  S4): the round is not decided after all, and the caller must stop rather
+ *  than close it. See markVerdictTaskDone in db/projects.ts for why the run
+ *  status is an exact detector of that. */
+async function markGroupDone(inputs: VerdictInput[]): Promise<VerdictInput[]> {
+  const refused: VerdictInput[] = [];
   for (const r of inputs) {
-    await setTaskStatus(r.taskId, "done");
+    if (!(await markVerdictTaskDone(r.taskId))) refused.push(r);
   }
+  return refused;
+}
+
+/** The log line every mark-done refusal shares. Loud on purpose: the round is
+ *  left mid-decision on purpose, and the next tick's `wait` would otherwise be
+ *  the only trace of a message that changed a verdict. */
+function logGroupNotReleased(
+  projectId: string,
+  round: number,
+  branch: string,
+  refused: VerdictInput[],
+): void {
+  console.warn(
+    `[project-tick] round ${round} verdicts → ${branch} NOT released for project ${projectId}: ` +
+      `${refused.map((r) => `${r.role} "${r.title}"`).join(", ")} left 'completed' while the ` +
+      `round was being decided (a message requeued the run) — re-consolidating next tick`,
+  );
 }
 
 /** Per-task and per-round progress pushes (E4).

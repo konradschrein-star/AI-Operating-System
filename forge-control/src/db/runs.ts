@@ -658,6 +658,17 @@ export interface RunWriteResult {
  * `opts.eligible` is the precondition, carried into SQL. Passing an EMPTY array
  * means nothing is eligible and the write is refused — it is not silently
  * treated as "no precondition"; omit the key for that.
+ *
+ * `clearCompletedAt` / `clearWakeAfter` exist because putting a settled run
+ * back on the queue has to leave a row that does not lie about itself. The
+ * executor's E2 (executor.ts, the pending-input requeue) and
+ * `requeueRunAfterUsageWall` above both clear these stamps for the same reason,
+ * and this is the third requeue path: without them, messaging a `completed` run
+ * produces a `queued`/`running` row still carrying `completed_at`, so every
+ * duration in the UI is wrong until it settles again — and if the watchdog
+ * catches it first, a `stuck` row with a completion timestamp, which
+ * completeRun's own invariant forbids. Two flags rather than one so the SET
+ * clause says exactly what it does.
  */
 export async function appendCommsEntry(
   id: string,
@@ -666,6 +677,8 @@ export async function appendCommsEntry(
     eligible?: readonly RunStatus[];
     setStatus?: RunStatus;
     setPendingInput?: boolean;
+    clearCompletedAt?: boolean;
+    clearWakeAfter?: boolean;
   } = {},
 ): Promise<RunWriteResult> {
   const params: unknown[] = [id, JSON.stringify([entry])];
@@ -680,6 +693,8 @@ export async function appendCommsEntry(
       `metadata = COALESCE(metadata, '{}'::jsonb) || '{"pending_input":true}'::jsonb`,
     );
   }
+  if (opts.clearCompletedAt) sets.push("completed_at = NULL");
+  if (opts.clearWakeAfter) sets.push("wake_after = NULL");
   sets.push("updated_at = now()");
 
   let where = "id = $1";
