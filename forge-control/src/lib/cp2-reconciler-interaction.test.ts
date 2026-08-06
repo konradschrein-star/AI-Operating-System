@@ -1,0 +1,458 @@
+/**
+ * CP2-2 (round 1001): the structural facts C9's re-verification rests on.
+ *
+ * Companion to docs/plan/evidence/cp2-c9-reconciler.md, which argues claims
+ * A–H of 07 §7 against the round-1001 reconciler. This file pins the code
+ * properties that argument quotes, so a later edit that invalidates it fails
+ * the suite instead of quietly making the document a lie.
+ *
+ * SOURCE-ASSERTION, not import-and-call — same reason as
+ * run-control-surface.test.ts and project-tick.test.ts's T19 block: there is no
+ * test database, and db/projects.ts, db/runs.ts and executor.ts all open a pg
+ * Pool at module load, so importing any of them from a test process connects
+ * before a single assertion runs. Nothing here imports db/, routes/ or
+ * executor.ts; every assertion reads source text with readFileSync.
+ *
+ * SCOPE DISCIPLINE. Every assertion below names the claim it protects. The
+ * overlap with project-tick.test.ts's T19 block is deliberate but narrow: T19
+ * spot-checks the R906 guard, this file asserts the properties the CP2 argument
+ * adds — that consolidation has exactly ONE entry point, that EVERY branch of
+ * it is gated (not just the three T19 samples), that the settled predicate is
+ * run-status-only, and that no delivery write is split in two.
+ *
+ * TWO ASSERTIONS DELIBERATELY DOCUMENT A HOLE rather than a guarantee — the
+ * E1/E2 split and the sweep's 60s floor (claim B / finding F1). They are marked
+ * as such at the point of assertion: they stay true after F1 is fixed, because
+ * the fix belongs in db/projects.ts's predicate, not in the handshake.
+ */
+
+import { test, describe } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+function readSource(rel: string): string {
+  return readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+}
+
+const PROJECTS_DB = readSource("../db/projects.ts");
+const RUNS_DB = readSource("../db/runs.ts");
+const TICK = readSource("./project-tick.ts");
+const EXECUTOR = readSource("../executor.ts");
+
+/** Slice from one marker to the next so an assertion cannot accidentally match
+ *  prose in a neighbouring JSDoc block or SQL in the next function. Both
+ *  markers must exist and be in order, or the test fails naming the missing
+ *  one — a rename must break loudly here, not silently pass an empty string. */
+function sliceBetween(src: string, from: string, to: string, label: string): string {
+  const start = src.indexOf(from);
+  assert.ok(start >= 0, `${label}: start marker ${JSON.stringify(from)} not found`);
+  const end = src.indexOf(to, start + from.length);
+  assert.ok(end > start, `${label}: end marker ${JSON.stringify(to)} not found after the start`);
+  return src.slice(start, end);
+}
+
+/* ========================================================================== *
+ * CLAIM A — a `done` task is invisible to the reconciler forever
+ *
+ * The whole of A (and the "cannot re-consolidate" half of F(i)) is one WHERE
+ * clause plus the fact that reconciliation has exactly one entry point.
+ * ========================================================================== */
+
+describe("claim A — listSettledRunningTasks is the only door, and it filters the TASK", () => {
+  const body = sliceBetween(
+    PROJECTS_DB,
+    "export async function listSettledRunningTasks",
+    "/** Every gating task of one project+round",
+    "listSettledRunningTasks",
+  );
+
+  test("the WHERE filters on pt.status = 'running'", () => {
+    // A task already marked 'done' can never be returned again, so resuming its
+    // run later cannot re-reconcile, double-notify or re-consolidate it.
+    assert.match(body, /WHERE pt\.status = 'running'/);
+  });
+
+  test("the settled-run set is exactly completed|failed|cancelled|stuck", () => {
+    // Claim D rides on the same list: 'paused' and 'queued' are absent, which is
+    // why a stopped run is ignored by the reconciler and its task sits 'running'.
+    assert.match(body, /AND r\.status IN \('completed','failed','cancelled','stuck'\)/);
+    assert.doesNotMatch(body, /'paused'/);
+  });
+
+  test("consolidateVerdictGroup has exactly one call site, fed by that query", () => {
+    // If consolidation could be entered from anywhere else — an API route, a
+    // retry path — claim A would protect nothing, because that door would not
+    // carry the pt.status='running' filter.
+    const callSites = (TICK.match(/await consolidateVerdictGroup\(/g) ?? []).length;
+    assert.equal(callSites, 1, "consolidateVerdictGroup must have exactly one call site");
+
+    const reconcile = sliceBetween(
+      TICK,
+      "async function reconcileSettledTasks(",
+      "const DEFAULT_CHECKIN_HOURS",
+      "reconcileSettledTasks",
+    );
+    assert.match(reconcile, /const settled = await listSettledRunningTasks\(\);/);
+    // The round keys are built inside the loop over `settled` and consumed
+    // after it; nothing else writes to the map.
+    const keyWrites = (reconcile.match(/verdictRounds\.set\(/g) ?? []).length;
+    assert.equal(keyWrites, 1, "verdictRounds must be populated from the settled loop only");
+  });
+
+  test("retryTask cannot bring a 'done' task back to 'running'", () => {
+    // 'done' is terminal for the row: the only status writer that moves a task
+    // backwards is retryTask, and its precondition excludes 'done'.
+    const retry = sliceBetween(
+      PROJECTS_DB,
+      "export async function retryTask(",
+      "export async function",
+      "retryTask",
+    );
+    assert.match(retry, /WHERE id = \$1 AND status IN \('failed','blocked'\)/);
+  });
+});
+
+/* ========================================================================== *
+ * CLAIM B — the settled-but-not-consolidated reviewer
+ *
+ * Two halves: the group waits while the run is out of `completed` (the settled
+ * predicate), and the R906 optimistic concurrency that covers the window after
+ * listVerdictRound's read.
+ * ========================================================================== */
+
+describe("claim B — the group's settled predicate is run-status-only", () => {
+  test("listVerdictRound is a LEFT JOIN and does NOT filter pt.status", () => {
+    // LEFT JOIN so a task with no run yet surfaces as run_status NULL (→ not
+    // settled → wait). No pt.status filter, so a member already marked 'done'
+    // stays in the group's history — which is also what makes finding F2
+    // possible when that member's run is later resumed.
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function listVerdictRound",
+      "/** What became of one chain row",
+      "listVerdictRound",
+    );
+    assert.match(body, /LEFT JOIN runs r ON r\.id = pt\.run_id/);
+    assert.match(body, /WHERE pt\.project_id = \$1/);
+    assert.doesNotMatch(
+      body,
+      /pt\.status/,
+      "listVerdictRound must not filter on task status - the caller decides what 'done' means",
+    );
+  });
+
+  test("project-tick maps settled from the run's CURRENT status, nothing else", () => {
+    const consolidate = sliceBetween(
+      TICK,
+      "async function consolidateVerdictGroup(",
+      "async function markGroupDone(",
+      "consolidateVerdictGroup",
+    );
+    assert.match(consolidate, /settled: r\.run_status === "completed",/);
+    // Evidence doc §F(i)/F2 turns on this being the ONLY input to `settled`: a
+    // member whose task is 'done' but whose run has been resumed reports false
+    // and its round can never decide. If this line ever gains a `pt.status`
+    // term, cp2-c9-reconciler.md's F2 is stale and must be re-argued.
+  });
+});
+
+describe("claim B — R906 optimistic concurrency (the detector and its consumers)", () => {
+  const markDone = sliceBetween(
+    PROJECTS_DB,
+    "export async function markVerdictTaskDone",
+    "/**",
+    "markVerdictTaskDone",
+  );
+
+  test("the UPDATE carries r.status = 'completed' and returns a rowCount boolean", () => {
+    assert.match(markDone, /AND r\.status = 'completed'/);
+    assert.match(markDone, /return \(r\.rowCount \?\? 0\) > 0;/);
+  });
+
+  test("unsettledVerdictTasks treats a run-less task as unsettled", () => {
+    const unsettled = sliceBetween(
+      PROJECTS_DB,
+      "export async function unsettledVerdictTasks",
+      "/** Automatic-retry ceiling",
+      "unsettledVerdictTasks",
+    );
+    assert.match(unsettled, /LEFT JOIN runs r ON r\.id = pt\.run_id/);
+    assert.match(unsettled, /r\.status IS DISTINCT FROM 'completed'/);
+  });
+
+  test("EVERY branch of the consolidation switch is gated on the detector", () => {
+    // T19 in project-tick.test.ts spot-checks pass/block/fix. This asserts
+    // TOTALITY: the set of branches is exactly the four the argument in
+    // cp2-c9-reconciler.md walks, and each one either has no side effect
+    // (`wait`) or routes its side effect through markGroupDone — so a FIFTH
+    // branch added later cannot quietly close a round unguarded.
+    const consolidate = sliceBetween(
+      TICK,
+      "async function consolidateVerdictGroup(",
+      "async function markGroupDone(",
+      "consolidateVerdictGroup",
+    );
+    const branches = [...consolidate.matchAll(/^\s{4}case "([a-z ]+)": \{$/gm)].map((m) => m[1]);
+    assert.deepEqual(
+      branches,
+      ["wait", "pass", "block", "fix"],
+      "the consolidation switch's branches changed - re-argue docs/plan/evidence/cp2-c9-reconciler.md",
+    );
+
+    const bodyOf = (name: string, next: string | null): string =>
+      next
+        ? sliceBetween(consolidate, `case "${name}": {`, `case "${next}": {`, `${name} branch`)
+        : consolidate.slice(consolidate.indexOf(`case "${name}": {`));
+
+    // `wait` is the invariant: nothing is marked, created, blocked or pushed.
+    const wait = bodyOf("wait", "pass");
+    for (const forbidden of [
+      "markGroupDone",
+      "createFixChain",
+      "setProjectStatus",
+      "queueNotification",
+    ]) {
+      assert.ok(
+        !wait.includes(forbidden),
+        `the wait branch must have no side effect, found ${forbidden}`,
+      );
+    }
+
+    // Every acting branch consumes markGroupDone's verdict.
+    for (const [name, next] of [
+      ["pass", "block"],
+      ["block", "fix"],
+      ["fix", null],
+    ] as const) {
+      const branch = bodyOf(name, next);
+      assert.match(
+        branch,
+        /const refused[A-Za-z]* = await markGroupDone\(inputs\);/,
+        `the ${name} branch must capture markGroupDone's refusals`,
+      );
+      assert.match(
+        branch,
+        /logGroupNotReleased\(/,
+        `the ${name} branch must report a refusal instead of swallowing it`,
+      );
+    }
+
+    // The two irreversible branches pre-check immediately before the step that
+    // cannot be taken back (block: the project + the push; fix: the chain).
+    const block = bodyOf("block", "fix");
+    assert.ok(
+      block.indexOf("unsettledVerdictTasks") < block.indexOf("await setProjectStatus("),
+      "block must pre-check before blocking the project",
+    );
+    const fix = bodyOf("fix", null);
+    assert.ok(
+      fix.indexOf("unsettledVerdictTasks") < fix.indexOf("await createFixChain("),
+      "fix must pre-check before inserting the chain",
+    );
+  });
+
+  test("markGroupDone routes every write through the preconditioned helper", () => {
+    const body = sliceBetween(
+      TICK,
+      "async function markGroupDone(",
+      "function logGroupNotReleased(",
+      "markGroupDone",
+    );
+    assert.match(body, /if \(!\(await markVerdictTaskDone\(r\.taskId\)\)\) refused\.push\(r\);/);
+    assert.doesNotMatch(body, /setTaskStatus\(/);
+  });
+});
+
+/* ========================================================================== *
+ * CLAIM C — terminate → cancelled → task failed, project blocked, ONE push
+ * CLAIM D — stop → paused → ignored, task stays 'running', heartbeat reports it
+ * ========================================================================== */
+
+describe("claim C — a non-completed run fails its task before any verdict handling", () => {
+  const reconcile = sliceBetween(
+    TICK,
+    "async function reconcileSettledTasks(",
+    "const DEFAULT_CHECKIN_HOURS",
+    "reconcileSettledTasks",
+  );
+  const nonCompleted = sliceBetween(
+    reconcile,
+    'if (task.run_status !== "completed") {',
+    "if (isVerdictRole(task.role)) {",
+    "non-completed branch",
+  );
+
+  test("the branch precedes the verdict-role branch and ends in `continue`", () => {
+    // Order is the claim: a CANCELLED reviewer must take the failure path, not
+    // the consolidation path, or terminate would be decided on as a verdict.
+    assert.ok(
+      reconcile.indexOf('if (task.run_status !== "completed") {') <
+        reconcile.indexOf("if (isVerdictRole(task.role)) {"),
+      "the failure branch must be evaluated before the verdict-role branch",
+    );
+    assert.match(nonCompleted, /continue;\s*\}\s*$/);
+  });
+
+  test("it fails the task, blocks the project, and pushes exactly once", () => {
+    assert.match(nonCompleted, /await setTaskStatus\(task\.id, "failed"\);/);
+    assert.match(nonCompleted, /await setProjectStatus\(task\.project_id, "blocked"\);/);
+    const pushes = (nonCompleted.match(/await queueNotification\(/g) ?? []).length;
+    assert.equal(pushes, 1, "a cancelled/failed task must notify exactly once - not twice, not zero");
+  });
+
+  test("deferForUsageWall cannot divert a cancelled run away from that path", () => {
+    // A terminate must not be mistaken for a usage wall and parked: the first
+    // refusal is an equality on 'failed'.
+    const defer = sliceBetween(
+      TICK,
+      "export async function deferForUsageWall(",
+      "async function reconcileSettledTasks(",
+      "deferForUsageWall",
+    );
+    assert.match(defer, /if \(task\.run_status !== "failed" \|\| !task\.run_id\) return false;/);
+  });
+});
+
+describe("claim D — a paused task stays visible to Konrad through the heartbeat", () => {
+  test("listGoalProgress reports titles of tasks in status 'running'", () => {
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function listGoalProgress",
+      "/** Promote every 'pending' task",
+      "listGoalProgress",
+    );
+    assert.match(body, /FILTER \(WHERE pt\.status = 'running'\)\s*,\s*'\{\}'\)\s*AS running_titles/);
+    assert.match(body, /WHERE p\.status = 'active'/);
+  });
+});
+
+/* ========================================================================== *
+ * CLAIMS E + G — no delivery write may leave a settled run `completed`
+ *
+ * The detector in markVerdictTaskDone is exact only while every write that can
+ * deliver a message to a settled run moves it out of `completed` in the SAME
+ * statement as the append. resume-chat (CP2-1) and subagent-message (CP2-3)
+ * both ride appendCommsEntry, so this is where that invariant is pinned.
+ * ========================================================================== */
+
+describe("claim E/G — appendCommsEntry is exactly one statement", () => {
+  const body = sliceBetween(
+    RUNS_DB,
+    "export async function appendCommsEntry",
+    "/**",
+    "appendCommsEntry",
+  );
+
+  test("the function body issues exactly one pool.query", () => {
+    // One write means no interleaving is possible between the append and the
+    // status move. The rowcount-0 re-read is readRunStatus(), a SELECT called
+    // only when nothing was written, so it cannot be a second write path.
+    const queries = (body.match(/pool\.query/g) ?? []).length;
+    assert.equal(queries, 1, "appendCommsEntry must issue exactly one pool.query");
+    assert.match(body, /UPDATE runs SET \$\{sets\.join\(", "\)\} WHERE \$\{where\}/);
+  });
+
+  test("append, status, pending_input and both stamps are fragments of that ONE statement", () => {
+    const setsBlock = sliceBetween(body, "const sets = [", "let where =", "sets assembly");
+    assert.match(setsBlock, /thread = thread \|\| \$2::jsonb/);
+    assert.match(setsBlock, /sets\.push\(`status = \$\$\{params\.length\}`\)/);
+    assert.match(setsBlock, /'\{"pending_input":true\}'::jsonb/);
+    assert.match(setsBlock, /- 'pending_input'/); // clearPendingInput (CP2-1)
+    assert.match(setsBlock, /completed_at = NULL/);
+    assert.match(setsBlock, /wake_after = NULL/);
+  });
+
+  test("setPendingInput + clearPendingInput throws rather than letting order decide", () => {
+    // C20: two conflicting SET fragments on one jsonb column in one statement is
+    // a programming error and must surface, not resolve itself.
+    assert.match(body, /if \(opts\.setPendingInput && opts\.clearPendingInput\) \{/);
+    assert.match(body, /throw new Error\(/);
+  });
+
+  test("the WHERE carries the caller's eligibility precondition", () => {
+    assert.match(body, /AND status = ANY\(\$\$\{params\.length\}::text\[\]\)/);
+  });
+});
+
+describe("claim G — every other thread writer is single-statement or cannot touch a settled run", () => {
+  test("appendMessage sets thread and status in the SAME statement", () => {
+    // The pre-existing delivery path (POST /api/chat/:id/message, the telegram
+    // bridge, POST /:id/resume) that subagent-message's relay inherits nothing
+    // from but which targets the same rows.
+    const body = sliceBetween(
+      RUNS_DB,
+      "export async function appendMessage",
+      "/** Set (or clear with null) metadata.model",
+      "appendMessage",
+    );
+    const withStatus = sliceBetween(body, "const sql = newStatus", ": `UPDATE runs", "sql variant");
+    assert.match(withStatus, /SET thread = thread \|\| \$2::jsonb,\s*\n\s*status = \$3,/);
+  });
+
+  test("requeueRunAfterUsageWall is one statement and only ever touches a 'failed' row", () => {
+    const body = sliceBetween(
+      RUNS_DB,
+      "export async function requeueRunAfterUsageWall",
+      "export async function runCounts",
+      "requeueRunAfterUsageWall",
+    );
+    assert.equal((body.match(/pool\.query/g) ?? []).length, 1);
+    assert.match(body, /thread = thread \|\| \$3::jsonb/);
+    assert.match(body, /AND status = 'failed'/);
+  });
+
+  test("the executor's streamed append never moves status", () => {
+    const body = sliceBetween(
+      EXECUTOR,
+      "async function appendThreadEntry(",
+      "async function saveCcSession(",
+      "appendThreadEntry",
+    );
+    assert.match(body, /SET thread = thread \|\| \$2::jsonb/);
+    assert.doesNotMatch(body, /status =/);
+  });
+});
+
+/* ========================================================================== *
+ * FINDING F1 — the window in which a `completed` row still owes a turn
+ *
+ * These two assertions document a HOLE, not a guarantee (see the file header).
+ * They stay true after F1 is fixed: the repair belongs in db/projects.ts's
+ * detector predicate, not in the handshake, which is correct as designed.
+ * ========================================================================== */
+
+describe("finding F1 — E1/E2 is a two-statement handshake with a 60s sweep floor", () => {
+  const complete = sliceBetween(
+    EXECUTOR,
+    "async function completeRun(",
+    "* v2.2: push run outcomes to Telegram",
+    "completeRun",
+  );
+
+  test("E1 and E2 are separate statements, so a crash can strand `completed`+pending_input", () => {
+    // E1 completes the run and RETURNs the flag; E2 requeues it. Both guarded,
+    // but between them the row is `completed` with an undelivered message in
+    // its thread — and markVerdictTaskDone's `r.status='completed'` accepts it.
+    assert.match(complete, /RETURNING status, metadata->>'pending_input' AS pending_input/);
+    assert.match(complete, /WHERE id = \$1 AND status = 'completed'/); // E2's own guard
+    assert.ok(
+      (complete.match(/await pool\.query/g) ?? []).length >= 2,
+      "completeRun's handshake is two statements - this test documents the F1 window",
+    );
+  });
+
+  test("the sweep's scope is exactly the F1 window, and it waits 60s", () => {
+    const sweep = sliceBetween(
+      EXECUTOR,
+      "async function pendingInputSweepTick(",
+      "async function managerLoop(",
+      "pendingInputSweepTick",
+    );
+    assert.match(sweep, /WHERE status = 'completed'\s*\n\s*AND metadata->>'pending_input' = 'true'/);
+    assert.match(sweep, /AND updated_at < now\(\) - \(interval '1 millisecond' \* \$1\)/);
+    assert.match(EXECUTOR, /const PENDING_INPUT_STRANDED_MS = 60_000;/);
+    // ≥60s during which a settled-looking reviewer run owes another turn: the
+    // interleaving in docs/plan/evidence/cp2-c9-reconciler.md §B, steps 1-6.
+  });
+});
