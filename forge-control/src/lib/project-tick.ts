@@ -1011,17 +1011,24 @@ async function consolidateVerdictGroup(
 }
 
 /** Mark every gating task of a decided group 'done', each write preconditioned
- *  on its run still being settled (`completed`).
+ *  on that member still being SETTLED by the same three-term rule the decision
+ *  was computed from (`verdictMemberSettled`): 'done' already, or a `completed`
+ *  run owing no undelivered turn. NOT "its run is still `completed`" — that
+ *  qualifier was R1005 finding 2, and re-adding it to the done branch
+ *  reinstates the wedge it removed.
  *
- *  Idempotent by construction — re-marking an already-'done' row whose run is
- *  still completed is a no-op UPDATE — which is what makes the crash-replay
- *  path above safe to re-run.
+ *  Idempotent by construction — re-marking an already-'done' row is a no-op
+ *  UPDATE independent of what its run has done since (that row was settled by
+ *  BOOKKEEPING, and its run is free to be resumed, stopped or to fail
+ *  afterwards) — which is what makes the crash-replay path above safe to
+ *  re-run.
  *
- *  Returns the tasks that REFUSED to move. A non-empty list means the control
- *  plane requeued a gating run while this consolidation was deciding (red-team
- *  S4): the round is not decided after all, and the caller must stop rather
- *  than close it. See markVerdictTaskDone in db/projects.ts for why the run
- *  status is an exact detector of that. */
+ *  Returns the tasks that REFUSED to move. A non-empty list means a member left
+ *  the settled set while this consolidation was deciding (red-team S4): the
+ *  control plane requeued its run, or the run never left `completed` but now
+ *  carries an undelivered message. Either way the round is not decided after
+ *  all, and the caller must stop rather than close it. See markVerdictTaskDone
+ *  in db/projects.ts for the SQL mirror of the rule, term for term. */
 async function markGroupDone(inputs: VerdictInput[]): Promise<VerdictInput[]> {
   const refused: VerdictInput[] = [];
   for (const r of inputs) {
@@ -1041,8 +1048,9 @@ function logGroupNotReleased(
 ): void {
   console.warn(
     `[project-tick] round ${round} verdicts → ${branch} NOT released for project ${projectId}: ` +
-      `${refused.map((r) => `${r.role} "${r.title}"`).join(", ")} left 'completed' while the ` +
-      `round was being decided (a message requeued the run) — re-consolidating next tick`,
+      `${refused.map((r) => `${r.role} "${r.title}"`).join(", ")} is no longer settled ` +
+      `(a message requeued the run, or it is 'completed' still owing an undelivered turn) — ` +
+      `re-consolidating next tick`,
   );
 }
 

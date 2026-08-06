@@ -18,7 +18,9 @@
  * spot-checks the R906 guard, this file asserts the properties the CP2 argument
  * adds — that consolidation has exactly ONE entry point, that EVERY branch of
  * it is gated (not just the three T19 samples), that the settled predicate is
- * run-status-only, and that no delivery write is split in two.
+ * the shared three-term rule and not an inline run-status test (R1005 findings
+ * 1 and 2 rewrote this one: it used to read "run-status-only"), and that no
+ * delivery write is split in two.
  *
  * TWO ASSERTIONS DESCRIBE THE HANDSHAKE THE DETECTOR HAS TO SURVIVE — the
  * E1/E2 split and the sweep's 60s floor (claim B / finding F1). They were
@@ -40,6 +42,7 @@ function readSource(rel: string): string {
 const PROJECTS_DB = readSource("../db/projects.ts");
 const RUNS_DB = readSource("../db/runs.ts");
 const TICK = readSource("./project-tick.ts");
+const RECONCILE = readSource("./project-reconcile.ts");
 const EXECUTOR = readSource("../executor.ts");
 
 /** Slice from one marker to the next so an assertion cannot accidentally match
@@ -339,6 +342,92 @@ describe("claim B — R906 optimistic concurrency (the detector and its consumer
     );
     assert.match(body, /if \(!\(await markVerdictTaskDone\(r\.taskId\)\)\) refused\.push\(r\);/);
     assert.doesNotMatch(body, /setTaskStatus\(/);
+  });
+});
+
+/* ========================================================================== *
+ * R1007 — the PROSE around the settlement rule, pinned like the SQL
+ *
+ * R1006 blocked this lane on three comments that the R1005 fix falsified and
+ * left behind, one of which restated verbatim the claim the fix existed to
+ * refute. A stale comment here is not cosmetic: the specific trap named in the
+ * review is a maintainer restoring consistency between comment and code by
+ * re-adding `AND r.status='completed'` to the done branch, which reinstates the
+ * forever-wedge R1005 finding 2 removed. The three predicates are already
+ * pinned above; these assertions pin the sentences that TELL A READER what the
+ * predicates mean, so prose and rule can only drift apart through a failing
+ * test.
+ * ========================================================================== */
+
+describe("R1007 — the settlement rule's prose cannot drift back", () => {
+  /** Strip JSDoc leaders and collapse the wrapping so an assertion matches a
+   *  SENTENCE rather than a particular line break — otherwise re-flowing a
+   *  paragraph fails a test that has no opinion about line width. */
+  const prose = (s: string): string => s.replace(/^\s*\*+\/?/gm, " ").replace(/\s+/g, " ").trim();
+
+  test("markGroupDone's docstring describes the three-term rule, not `completed`", () => {
+    const doc = prose(
+      sliceBetween(
+        TICK,
+        "/** Mark every gating task of a decided group 'done'",
+        "async function markGroupDone(",
+        "markGroupDone docstring",
+      ),
+    );
+    // Positive: it names the shared rule and its two arms.
+    assert.match(doc, /verdictMemberSettled/);
+    assert.match(doc, /'done' already, or a `completed` run owing no undelivered turn/);
+    // Negative: the three sentences R1006 finding 1 struck. Each one asserted a
+    // run-status precondition that the done branch no longer has.
+    assert.doesNotMatch(
+      doc,
+      /still being settled \(`completed`\)/,
+      "the done branch is NOT preconditioned on its run - R1005 finding 2(b)",
+    );
+    assert.doesNotMatch(
+      doc,
+      /whose run is still completed/,
+      "re-marking a 'done' row is a no-op regardless of its run - do not re-qualify this",
+    );
+    assert.doesNotMatch(
+      doc,
+      /exact detector/,
+      "db/projects.ts now states the opposite in as many words - R1005 finding 1",
+    );
+  });
+
+  test("VerdictInput.settled's comment matches verdictMemberSettled", () => {
+    const iface = prose(
+      sliceBetween(RECONCILE, "export interface VerdictInput {", "/** One re-check task", "VerdictInput"),
+    );
+    assert.match(iface, /verdictMemberSettled\(\)/);
+    assert.doesNotMatch(
+      iface,
+      /Its run status is 'completed'\./,
+      "`settled` is true for a 'done' member with any run status, and false for a " +
+        "`completed` run carrying pending_input - R1006 finding 2",
+    );
+  });
+
+  test("the refusal log names BOTH causes a refusal can have", () => {
+    // R1006 finding 3: this line is the only trace the abandoned round leaves,
+    // so a refusal caused by an undelivered turn must not tell Konrad a message
+    // requeued a run that never moved.
+    const body = prose(
+      sliceBetween(
+        TICK,
+        "function logGroupNotReleased(",
+        "/** Per-task and per-round progress pushes",
+        "logGroupNotReleased",
+      ),
+    );
+    assert.match(body, /a message requeued the run/);
+    assert.match(body, /'completed' still owing an undelivered turn/);
+    assert.doesNotMatch(
+      body,
+      /left 'completed' while the/,
+      "a refusal no longer implies the run left 'completed' - R1006 finding 3",
+    );
   });
 });
 

@@ -235,7 +235,8 @@ export interface VerdictInput {
   role: VerdictRole;
   title: string;
   fixCycle: number;
-  /** Its run status is 'completed'. An unsettled sibling freezes the round. */
+  /** verdictMemberSettled(): 'done' by bookkeeping, or a 'completed' run owing
+   *  no turn. An unsettled sibling freezes the round. */
   settled: boolean;
   lastText: string | null;
 }

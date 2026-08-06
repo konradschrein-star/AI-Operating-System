@@ -37,7 +37,9 @@ export function isVerdictRole(role: TaskRole): role is VerdictRole;
 
 export interface VerdictInput {
   taskId: string; role: VerdictRole; title: string; fixCycle: number;
-  settled: boolean;               // run status is 'completed'
+  settled: boolean;               // AMENDED R1005: verdictMemberSettled() — task 'done' by
+                                  //   bookkeeping, OR run 'completed' with no pending_input.
+                                  //   NOT run-status-only; see project-reconcile.ts.
   lastText: string | null;
 }
 export interface CheckerChain { role: VerdictRole; chainKey: string }

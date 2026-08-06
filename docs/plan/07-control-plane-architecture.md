@@ -195,9 +195,19 @@ control plane is what makes them newly reachable by an operator:
   `setTaskStatus(done)`, and a 'done' task never re-surfaces, so the flipped verdict was honoured
   zero times in silence. Fixed R906 with optimistic concurrency: `markVerdictTaskDone` carries
   `AND r.status='completed'` into the UPDATE and reports whether the row moved; a refusal aborts the
-  decision and the next tick re-consolidates. `r.status='completed'` is an exact detector, not an
-  approximation — every write that can deliver a message to a settled run moves it out of
-  `completed` in the same statement as the append. The two branches whose side effect precedes
+  decision and the next tick re-consolidates. **AMENDED R1005 — the "`r.status='completed'` is an
+  exact detector, not an approximation" claim written here at round 800 is FALSE and is withdrawn**
+  (argued as F1 in `evidence/cp2-c9-reconciler.md`). It holds only for writes that deliver a message
+  to an already-settled run; it misses two shapes. `completeRun` is a two-statement handshake
+  (executor E1/E2), so a `/message` to a RUNNING reviewer sets `pending_input` and a crash before E2
+  strands the row `completed` while it still owes an undelivered turn. And a member already `'done'`
+  was settled by BOOKKEEPING — its run is then free to be resumed, stopped or to fail, and requiring
+  `completed` there refused the round release forever. Settlement is now the three-term rule
+  `verdictMemberSettled()` in `lib/project-reconcile.ts` — task `'done'`, OR run `completed` with
+  `metadata->>'pending_input' IS DISTINCT FROM 'true'` — mirrored term for term in
+  `markVerdictTaskDone` / `unsettledVerdictTasks`, and the consolidator's input now reads
+  `settled: verdictMemberSettled({...})`, not the `settled: r.run_status === "completed"` quoted
+  above. The two branches whose side effect precedes
   mark-done (`block` blocks the project and pushes; `fix` inserts the chain — both orders are
   crash-safety requirements and stay) additionally pre-check with `unsettledVerdictTasks()`
   immediately before that side effect, so the conditional mark-done only has to cover the remaining

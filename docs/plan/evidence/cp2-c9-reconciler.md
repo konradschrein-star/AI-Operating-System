@@ -533,6 +533,24 @@ a status move, two statements before the real message append. Same class as F1, 
 (never a verdict), and in a D1 never-touch file. Not touched, not fixed, named here so the next
 person who reads the "exact detector" comment knows the enumeration was complete.
 
+### F5 — the same stranded shape is unguarded on the NON-verdict path (R1006, recorded only)
+
+Raised by the R1006 re-review as an explicitly non-blocking observation, and recorded here rather
+than fixed because it is pre-existing, untouched by the R1005 diff, and outside that round's
+feedback.
+
+R1005 finding 1's `pending_input` term was applied to the two VERDICT predicates, which is what was
+prescribed. `listSettledRunningTasks` (`db/projects.ts`) carries no such filter, so a
+builder/planner/architect run stranded `completed` + `pending_input` surfaces as settled, falls
+through `project-tick.ts`'s per-task branch into the non-verdict `else`, and is marked `done`. The
+stranded-input sweep then requeues the run ~60s later, and that turn's output lands in a task
+already closed. Milder than the verdict case — no verdict is buried and no round is decided on it —
+but it is the same hole through the same door.
+
+*Owner:* not CP3 (prompts) and not CP4 (deploy). It is a one-term change to one query plus its
+complement in the per-task branch, so it belongs to whichever round next opens `db/projects.ts`'s
+task-listing surface; until then it lives here, named, with the failure spelled out.
+
 ---
 
 ## R1005 — the two repaired predicates, EXECUTED (not only source-asserted)
