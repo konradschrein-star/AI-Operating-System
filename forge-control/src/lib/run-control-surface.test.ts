@@ -69,6 +69,27 @@ function sliceExport(src: string, name: string): string {
   return src.slice(from, end);
 }
 
+/**
+ * CP2-4a: slice ONE `r.post`/`r.get` handler out of routes/run-control.ts, from
+ * its own literal call site (e.g. `r.post("/:id/resume-chat"`) up to the next
+ * `r.post(`/`r.get(` call site — backing up over a leading block comment that
+ * belongs to the NEXT handler, the same guard `sliceExport` uses above, so a
+ * neighbour's own doc-comment prose can never be mistaken for this handler's
+ * body.
+ */
+function sliceHandler(src: string, startMarker: string): string {
+  const start = src.indexOf(startMarker);
+  assert.ok(start >= 0, `handler not found: ${startMarker}`);
+  const searchFrom = start + startMarker.length;
+  const nextPost = src.indexOf('r.post("', searchFrom);
+  const nextGet = src.indexOf('r.get("', searchFrom);
+  const candidates = [nextPost, nextGet].filter((i) => i >= 0);
+  let end = candidates.length > 0 ? Math.min(...candidates) : src.length;
+  const precedingComment = src.lastIndexOf("/* ---", end);
+  if (precedingComment > start) end = precedingComment;
+  return src.slice(start, end);
+}
+
 /* ========================================================================== *
  * 1. db/runs.ts — ThreadEntry.kind carries "comms"
  * ========================================================================== */
@@ -226,7 +247,7 @@ describe("STOP_ELIGIBLE / TERMINATE_ELIGIBLE are imported, not re-typed (C5)", (
  * 7. routes/run-control.ts — all four routes exist
  * ========================================================================== */
 
-describe("route surface — all four endpoints exist", () => {
+describe("route surface — all six endpoints exist", () => {
   test('post "/:id/message"', () => {
     assert.match(ROUTE, /r\.post\(\s*"\/:id\/message"/);
   });
@@ -238,6 +259,13 @@ describe("route surface — all four endpoints exist", () => {
   });
   test('get "/:id/comms"', () => {
     assert.match(ROUTE, /r\.get\(\s*"\/:id\/comms"/);
+  });
+  // CP2-4a (round 1003): the two handlers round 1002 added.
+  test('post "/:id/resume-chat"', () => {
+    assert.match(ROUTE, /r\.post\(\s*"\/:id\/resume-chat"/);
+  });
+  test('post "/:parentId/subagent-message"', () => {
+    assert.match(ROUTE, /r\.post\(\s*"\/:parentId\/subagent-message"/);
   });
 });
 
@@ -429,5 +457,219 @@ describe("index.ts mount (boundary D2)", () => {
       runControlIdx > webhookInIdx,
       `runControl mount (index ${runControlIdx}) must come after webhookIn mount (index ${webhookInIdx})`,
     );
+  });
+});
+
+/* ========================================================================== *
+ * CP2-4a (round 1003) — source-assertion tests for the two handlers CP2-3
+ * (round 1002) added: POST /:id/resume-chat and POST /:parentId/subagent-
+ * message. Same idiom as sections 1-12 above: readFileSync the source text,
+ * assert on the code, never on live behaviour. `sliceHandler` (declared next
+ * to `sliceExport` above) scopes each assertion to one handler's own body, so
+ * a match can never land in a neighbouring handler or a JSDoc paragraph.
+ * ========================================================================== */
+
+/* ========================================================================== *
+ * 13. resume-chat — the requeue is ONE statement (07 §7 detector invariant)
+ * ========================================================================== */
+
+describe("resume-chat — the requeue is ONE statement (07 §7 detector invariant)", () => {
+  const handler = sliceHandler(ROUTE, 'r.post("/:id/resume-chat"');
+
+  test("RESUME_WRITE carries setStatus queued, clearCompletedAt, clearWakeAfter, clearPendingInput and eligible: RESUME_ELIGIBLE together, in ONE object", () => {
+    // Property: markVerdictTaskDone's `AND r.status='completed'` detector (07
+    // §7) stays exact only if the append and the status move are the SAME
+    // write. Split across two statements, a round consolidation landing in the
+    // gap marks the reviewer task done while the resumed run is about to
+    // produce a flipped verdict — which is then honoured zero times, in
+    // silence.
+    const rwStart = handler.indexOf("const RESUME_WRITE");
+    assert.ok(rwStart >= 0, "RESUME_WRITE not found in resume-chat handler");
+    const rwEnd = handler.indexOf("} as const;", rwStart);
+    assert.ok(rwEnd >= 0, "RESUME_WRITE block has no closing `} as const;`");
+    const block = handler.slice(rwStart, rwEnd + "} as const;".length);
+    assert.match(block, /eligible:\s*RESUME_ELIGIBLE/);
+    assert.match(block, /setStatus:\s*"queued"/);
+    assert.match(block, /clearCompletedAt:\s*true/);
+    assert.match(block, /clearWakeAfter:\s*true/);
+    assert.match(block, /clearPendingInput:\s*true/);
+  });
+
+  test("the handler has no setRunStatus( call and no second status-writing call site — the append and the status move are the same write", () => {
+    assert.doesNotMatch(handler, /setRunStatus\(/);
+  });
+
+  test("db/runs.ts appendCommsEntry clears pending_input with `- 'pending_input'`", () => {
+    const body = sliceExport(DB, "appendCommsEntry");
+    assert.match(body, /-\s*'pending_input'/);
+  });
+
+  test("appendCommsEntry throws when setPendingInput and clearPendingInput are both passed", () => {
+    const body = sliceExport(DB, "appendCommsEntry");
+    assert.match(body, /opts\.setPendingInput\s*&&\s*opts\.clearPendingInput/);
+    assert.match(body, /mutually exclusive/);
+  });
+});
+
+/* ========================================================================== *
+ * 14. resume-chat — workspace pre-flight precedes every write (C7)
+ * ========================================================================== */
+
+describe("resume-chat — workspace pre-flight precedes every write (C7)", () => {
+  const handler = sliceHandler(ROUTE, 'r.post("/:id/resume-chat"');
+
+  test("imports existsSync from node:fs and calls workspaceDirOf( in the handler", () => {
+    assert.match(ROUTE, /import\s*\{\s*existsSync\s*\}\s*from\s*"node:fs"/);
+    assert.match(handler, /workspaceDirOf\(/);
+  });
+
+  test("the existsSync check and its return precede the FIRST appendCommsEntry( call — never spawn a CC child into a deleted worktree, never leave a thread entry on a 409", () => {
+    const existsIdx = handler.indexOf("existsSync(");
+    const firstAppendIdx = handler.indexOf("appendCommsEntry(");
+    assert.ok(existsIdx >= 0, "existsSync( not found in resume-chat handler");
+    assert.ok(firstAppendIdx >= 0, "appendCommsEntry( not found in resume-chat handler");
+    assert.ok(
+      existsIdx < firstAppendIdx,
+      "the existsSync check must precede the first appendCommsEntry( call",
+    );
+    const returnIdx = handler.indexOf("return", existsIdx);
+    assert.ok(
+      returnIdx >= 0 && returnIdx < firstAppendIdx,
+      "the existsSync branch's return must precede the first appendCommsEntry( call",
+    );
+  });
+
+  test('the 409 reason comes from workspaceGoneReason( — "workspace gone:" is not retyped in the route', () => {
+    assert.match(handler, /workspaceGoneReason\(/);
+    assert.doesNotMatch(handler, /"workspace gone:/);
+  });
+});
+
+/* ========================================================================== *
+ * 15. resume-chat — response shape and in-place identity (C6)
+ * ========================================================================== */
+
+describe("resume-chat — response shape and in-place identity (C6)", () => {
+  const handler = sliceHandler(ROUTE, 'r.post("/:id/resume-chat"');
+
+  test("responds resumed_run_id: id with 202 — resume is IN PLACE, no new run is ever created", () => {
+    assert.match(handler, /resumed_run_id:\s*id\b/);
+    assert.match(handler, /\b202\b/);
+  });
+
+  test("the handler contains no createRun( call", () => {
+    assert.doesNotMatch(handler, /createRun\(/);
+  });
+
+  test("resumeAction( gates it — eligibility is imported, not re-implemented (C5)", () => {
+    assert.match(handler, /resumeAction\(/);
+  });
+});
+
+/* ========================================================================== *
+ * 16. subagent-message — addressability is checked before parent eligibility
+ *     (C10)
+ * ========================================================================== */
+
+describe("subagent-message — addressability is checked before parent eligibility (C10)", () => {
+  const handler = sliceHandler(ROUTE, 'r.post("/:parentId/subagent-message"');
+
+  test("subagentAddressable( is checked before messageAction( — addressability is a property of the ADDRESS, not of timing", () => {
+    const addrIdx = handler.indexOf("subagentAddressable(");
+    const actionIdx = handler.indexOf("messageAction(");
+    assert.ok(addrIdx >= 0, "subagentAddressable( not found in subagent-message handler");
+    assert.ok(actionIdx >= 0, "messageAction( not found in subagent-message handler");
+    assert.ok(
+      addrIdx < actionIdx,
+      "subagentAddressable( must be checked before messageAction( is ever called",
+    );
+  });
+
+  test('the 409 uses the imported SUBAGENT_UNADDRESSABLE constant — "subagent context not addressable" is not retyped in the route', () => {
+    assert.match(handler, /SUBAGENT_UNADDRESSABLE/);
+    assert.doesNotMatch(handler, /"subagent context not addressable"/);
+  });
+
+  test("the relay entry is built by commsEntries( with relaySubagentId — the [relay from prefix is not hand-built in the route", () => {
+    assert.match(handler, /commsEntries\(/);
+    assert.match(handler, /relaySubagentId:\s*subagentId/);
+    assert.doesNotMatch(handler, /\[relay from/);
+  });
+
+  test('returns 202 with delivery: "next-turn" and queued: true (wire contract field names, 08 §4.5)', () => {
+    assert.match(handler, /queued:\s*true/);
+    assert.match(handler, /delivery:\s*"next-turn"/);
+    assert.match(handler, /\b202\b/);
+  });
+});
+
+/* ========================================================================== *
+ * 17. both new handlers obey the file's error discipline (C20)
+ * ========================================================================== */
+
+describe("both new handlers obey the file's error discipline (C20)", () => {
+  const NEW_HANDLERS: Array<[string, string]> = [
+    ["resume-chat", sliceHandler(ROUTE, 'r.post("/:id/resume-chat"')],
+    ["subagent-message", sliceHandler(ROUTE, 'r.post("/:parentId/subagent-message"')],
+  ];
+
+  test("neither new handler has a try/catch — the only sanctioned swallow in the file is the c.req.json() body-parse idiom", () => {
+    for (const [name, handler] of NEW_HANDLERS) {
+      assert.doesNotMatch(handler, /\btry\s*\{/, `${name}: unexpected try/catch`);
+    }
+  });
+
+  test("every non-2xx c.json( response in both handlers carries an error field", () => {
+    for (const [name, handler] of NEW_HANDLERS) {
+      const calls: string[] = [];
+      let idx = handler.indexOf("c.json(");
+      while (idx >= 0) {
+        const close = handler.indexOf(");", idx);
+        assert.ok(close >= 0, `${name}: unterminated c.json( call at index ${idx}`);
+        calls.push(handler.slice(idx, close + 2));
+        idx = handler.indexOf("c.json(", close);
+      }
+      assert.ok(calls.length > 0, `${name}: no c.json( calls found`);
+      for (const call of calls) {
+        const is2xx = /\b202\b/.test(call);
+        if (!is2xx) {
+          assert.match(call, /error:/, `${name}: non-2xx c.json( call missing an error field: ${call}`);
+        }
+      }
+    }
+  });
+
+  test("both handlers validate the uuid with UUID_RE before touching the DB", () => {
+    for (const [name, handler] of NEW_HANDLERS) {
+      const uuidIdx = handler.indexOf("UUID_RE.test(");
+      const getRunIdx = handler.indexOf("getRun(");
+      assert.ok(uuidIdx >= 0, `${name}: UUID_RE.test( not found`);
+      assert.ok(getRunIdx >= 0, `${name}: getRun( not found`);
+      assert.ok(uuidIdx < getRunIdx, `${name}: UUID_RE.test( must precede getRun(`);
+    }
+  });
+});
+
+/* ========================================================================== *
+ * 18. echo discipline holds for the new verbs (C3)
+ * ========================================================================== */
+
+describe("echo discipline holds for the new verbs (C3)", () => {
+  const NEW_HANDLERS: Array<[string, string]> = [
+    ["resume-chat", sliceHandler(ROUTE, 'r.post("/:id/resume-chat"')],
+    ["subagent-message", sliceHandler(ROUTE, 'r.post("/:parentId/subagent-message"')],
+  ];
+
+  test("neither new handler's echo appendCommsEntry( call passes a setStatus or an eligible option — a sender must never be requeued or refused by its own outbound message", () => {
+    for (const [name, handler] of NEW_HANDLERS) {
+      const echoCallIdx = handler.indexOf("appendCommsEntry(senderId");
+      assert.ok(echoCallIdx >= 0, `${name}: echo call site (appendCommsEntry(senderId, ...)) not found`);
+      const echoCall = handler.slice(
+        echoCallIdx,
+        handler.indexOf(")", handler.indexOf(")", echoCallIdx) + 1) + 1,
+      );
+      assert.doesNotMatch(echoCall, /setStatus/, `${name}: echo call must not set status`);
+      assert.doesNotMatch(echoCall, /eligible/, `${name}: echo call must not carry an eligibility list`);
+    }
   });
 });
