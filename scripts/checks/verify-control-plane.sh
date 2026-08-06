@@ -1,23 +1,31 @@
 #!/usr/bin/env bash
 #
 # verify-control-plane.sh — the one command that proves the manager control
-# plane (contract §1/§3/§4; docs/plan/06-control-plane-requirements.md;
+# plane (contract §1/§2/§2b/§3/§4; docs/plan/06-control-plane-requirements.md;
 # docs/plan/07-control-plane-architecture.md §4/§8; docs/plan/08-control-plane-
 # quality.md §3b/§6) works end to end against a LIVE forge-control.
 #
-# WHAT IT PROVES. It exercises, against a real running server, exactly the
-# four verbs the contract's announcement table (05-control-plane-boundary.md
-# D3, "AI OS/Contract - Manager Control Plane API.md") tracks:
+# WHAT IT PROVES. It exercises, against a real running server, the verbs the
+# contract's announcement table (05-control-plane-boundary.md D3, "AI OS/
+# Contract - Manager Control Plane API.md") tracks:
 #
 #   endpoint | capabilities flag to flip | shipped on (branch/round) | proof (command + observed response) | flipped?
 #
 # A clean run of this script IS the "proof" column's content for the rows:
-#   POST /api/runs/:id/message      -> control_plane.message_into_session*
-#   POST /api/runs/:id/stop         -> control_plane.stop
-#   POST /api/runs/:id/terminate    -> control_plane.terminate
-#   GET  /api/runs/:id/comms        -> (additive extension, no flag of its own)
+#   POST /api/runs/:id/message              -> control_plane.message_into_session*
+#   POST /api/runs/:id/resume-chat          -> control_plane.resume_finished
+#   POST /api/runs/:parentId/subagent-message -> control_plane.subagent_message†
+#   POST /api/runs/:id/stop                 -> control_plane.stop
+#   POST /api/runs/:id/terminate            -> control_plane.terminate
+#   GET  /api/runs/:id/comms                -> (additive extension, no flag of its own)
 # (* message_into_session's RUNNING-target half is gated separately — see
-# --running below and 07 §8's executor-restart matrix.)
+# --running below and 07 §8's executor-restart matrix.
+# † subagent_message has no flag to flip yet — CAPABILITIES.control_plane on
+# main is missing it (05-control-plane-boundary.md "Defect to record, not to
+# fix"); that is their bug to fix, not ours, and this script does not invent
+# one. Its RUNNING-parent relay half carries the same executor-restart
+# caveat as message -> RUNNING target (07 §8); the honest-refusal halves that
+# ARE fully provable against a scratch run are steps 8 and 9 below.)
 #
 # It is NOT run as part of any build phase — running it here would violate
 # this project's worktree-only policy (docs/plan/05-control-plane-boundary.md;
@@ -30,17 +38,20 @@
 # scratch runs via POST /api/chat (budget_usd:0, a harmless no-op prompt) and
 # drives them through message -> stop -> message -> terminate -> message, plus
 # (step 6b) a message into a run the live executor actually finished, which is
-# the only way to prove the requeue clears `completed_at` (R906) -- asserting
-# the HTTP status code and response body the contract promises at
-# every step, then best-effort terminates whatever scratch runs are left
-# before it exits. Because these are real rows in a live `runs` table, the
-# live executor's own claim loop may pick one up and run it for real before
-# this script gets to stop/terminate it (budget_usd:0 does not prevent a
-# claim) — that is an accepted, documented cost of proving this live rather
-# than in the worktree, not a script bug.
+# the only way to prove the requeue clears `completed_at` (R906); (step 8)
+# resume-chat on that same now-cancelled run, in place, then the queued-target
+# refusal naming /message; and (step 9) subagent-message's honest-refusal
+# paths (unaddressable id, empty id) against a fresh scratch run that has
+# never spawned a sub-agent — asserting the HTTP status code and response
+# body the contract promises at every step, then best-effort terminates
+# whatever scratch runs are left before it exits. Because these are real rows
+# in a live `runs` table, the live executor's own claim loop may pick one up
+# and run it for real before this script gets to stop/terminate it
+# (budget_usd:0 does not prevent a claim) — that is an accepted, documented
+# cost of proving this live rather than in the worktree, not a script bug.
 #
 # USAGE
-#   scripts/checks/verify-control-plane.sh            # message/stop/terminate/comms only
+#   scripts/checks/verify-control-plane.sh            # message/resume-chat/subagent-message/stop/terminate/comms
 #   scripts/checks/verify-control-plane.sh --running   # also exercises message-into-RUNNING
 #   FORGE_URL=http://127.0.0.1:7700 scripts/checks/verify-control-plane.sh
 #
@@ -498,6 +509,114 @@ http GET "/api/runs/$RUN_B/comms"
 step_assert_code "200" "GET comms on run B"
 
 step_finish
+
+# --------------------------------------------------------------------------
+# Step 8: resume-chat on a settled run (RUN_A, terminated -> cancelled by
+# step 5). Proves C6 in place: same id back, queued, completed_at cleared
+# (the same R906 property step 6b proves for /message) -- then the other
+# half of step 6's sentence, the queued-target refusal naming /message.
+# --------------------------------------------------------------------------
+
+step_start 8 "resume-chat on a cancelled run -> 202 in place, queued, completed_at cleared; second resume-chat while queued -> 409 naming /message"
+
+http POST "/api/runs/$RUN_A/resume-chat" \
+  "$(jq -n '{text:"step 8 resume follow-up", from:"konrad"}')"
+step_assert_code "202" "resume-chat on cancelled run"
+step_assert_jq ".resumed_run_id == \"$RUN_A\"" "$HTTP_BODY" \
+  "resumed_run_id echoes the same id (C6: in place, never a new run)"
+
+STATUS_AFTER_RESUME="$(run_status "$RUN_A")"
+COMPLETED_AT_AFTER_RESUME="$(run_completed_at "$RUN_A")"
+echo "  status after resume-chat: '$STATUS_AFTER_RESUME', completed_at: '$COMPLETED_AT_AFTER_RESUME'"
+step_assert_eq "$STATUS_AFTER_RESUME" "queued" "status after resume-chat on cancelled run"
+step_assert_eq "$COMPLETED_AT_AFTER_RESUME" "" \
+  "completed_at must be CLEARED by resume-chat (same R906 property step 6b proves for /message)"
+
+http GET "/api/runs/$RUN_A/comms"
+step_assert_code "200" "GET comms on run A after resume-chat"
+step_assert_jq '.comms | any(.meta.comms.direction == "in")' "$HTTP_BODY" \
+  "comms entry with direction 'in' still present after resume-chat"
+step_assert_jq '.comms | any(.meta.comms.direction == "in" and (.content | test("step 8 resume follow-up")))' \
+  "$HTTP_BODY" "the new resume-chat entry is present in the thread"
+
+# The refusal direction. This second call can legitimately race the live
+# executor claiming RUN_A into `running` before this line runs (queued runs
+# get picked up) - either way the answer is a 409 naming /message
+# (resumeAction's "run is queued ... use POST /api/runs/:id/message"), which
+# is exactly what the assertion below checks, so the race does not make this
+# step flaky.
+http POST "/api/runs/$RUN_A/resume-chat" \
+  "$(jq -n '{text:"step 8 second resume attempt", from:"konrad"}')"
+step_assert_code "409" "second resume-chat while queued/running"
+step_assert_jq '.error | test("/message")' "$HTTP_BODY" \
+  "second resume-chat's refusal names /message"
+
+step_finish
+
+# --------------------------------------------------------------------------
+# Step 9: subagent-message with an unaddressable id, against a fresh scratch
+# run that has never spawned a sub-agent (C10's honest-refusal path, fully
+# provable live).
+# --------------------------------------------------------------------------
+
+step_start 9 "subagent-message with an unaddressable id -> 409; empty id -> 400; refused calls append nothing"
+
+RUN_D=""
+if ! RUN_D="$(create_scratch_run "subagent-parent")"; then
+  STEP_FAILS+=("could not create the subagent-parent scratch run")
+else
+  echo "  subagent-parent run id: $RUN_D"
+
+  http POST "/api/runs/$RUN_D/subagent-message" \
+    "$(jq -n '{subagent_id:"toolu_definitely_not_a_real_id", text:"step 9 relay"}')"
+  step_assert_code "409" "subagent-message with unaddressable id"
+  step_assert_jq '.error | test("not addressable")' "$HTTP_BODY" \
+    "error names the honest 'not addressable' refusal (C10)"
+
+  http POST "/api/runs/$RUN_D/subagent-message" \
+    "$(jq -n '{subagent_id:"", text:"step 9 relay with empty id"}')"
+  step_assert_code "400" "subagent-message with empty subagent_id"
+
+  http GET "/api/runs/$RUN_D/comms"
+  step_assert_code "200" "GET comms on subagent-parent"
+  step_assert_jq '.comms | length == 0' "$HTTP_BODY" \
+    "neither refused call appended anything to the parent's thread"
+fi
+
+echo
+echo "${YELLOW}step 9 note (no silent skips): the ADDRESSABLE relay path -- a${RESET}"
+echo "${YELLOW}subagent_id present in metadata.subagents_v2 -- cannot be exercised here.${RESET}"
+echo "${YELLOW}A scratch run created via POST /api/chat has never spawned a sub-agent, so${RESET}"
+echo "${YELLOW}there is no live id to address; fabricating metadata.subagents_v2 would mean${RESET}"
+echo "${YELLOW}writing to the live DB behind the API, which this script never does. That${RESET}"
+echo "${YELLOW}path IS proven: src/lib/run-control-rules.test.ts's 'subagentAddressable'${RESET}"
+echo "${YELLOW}table tests cover the address-space matching itself, and${RESET}"
+echo "${YELLOW}src/lib/run-control-surface.test.ts asserts the addressability-before-${RESET}"
+echo "${YELLOW}eligibility ordering in the route source. Its live proof -- an actual relay${RESET}"
+echo "${YELLOW}delivered to a real sub-agent -- belongs to CP4 against a real fleet run.${RESET}"
+echo "${YELLOW}This note is not counted as a pass.${RESET}"
+
+step_finish
+
+# --------------------------------------------------------------------------
+# Note (no silent skips): the C7 workspace-gone 409 cannot be provoked from
+# HTTP by this script. A scratch run created via POST /api/chat carries no
+# metadata.workspace_dir (plain Chat/Manager runs share CC_WORKSPACE), and
+# the only way to give one a workspace_dir that points nowhere would be
+# writing directly to the live DB behind the API -- which this script never
+# does. That path IS proven: run-control-rules.test.ts's `workspaceDirOf`
+# table tests, plus run-control-surface.test.ts's assertion that the
+# `existsSync` pre-flight in routes/run-control.ts runs BEFORE any write.
+# --------------------------------------------------------------------------
+
+echo
+echo "${YELLOW}note (no silent skips): the C7 workspace-gone 409 (resume-chat against a${RESET}"
+echo "${YELLOW}run whose metadata.workspace_dir no longer exists on disk) cannot be${RESET}"
+echo "${YELLOW}provoked from HTTP -- a scratch run has no workspace_dir, and fabricating${RESET}"
+echo "${YELLOW}one means writing to the live DB behind the API, which this script never${RESET}"
+echo "${YELLOW}does. It IS proven: run-control-rules.test.ts's workspaceDirOf table tests${RESET}"
+echo "${YELLOW}plus run-control-surface.test.ts's pre-flight-before-write ordering${RESET}"
+echo "${YELLOW}assertion. Not counted as a step or a pass.${RESET}"
 
 # --------------------------------------------------------------------------
 # --running: message into a RUNNING target. Only half-live until the
