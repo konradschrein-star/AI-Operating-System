@@ -112,6 +112,19 @@ STEP_FAILS=()
 # Scratch runs created along the way, terminated best-effort on exit.
 CREATED_RUNS=()
 
+# Out-parameters. create_scratch_run / run_status / run_completed_at return
+# their value HERE, not on stdout, because they call http() and http() writes
+# the whole pasteable transcript to stdout by design. A caller using
+# `id="$(create_scratch_run …)"` captures that transcript along with the value
+# (round 1202 shipped exactly that bug: RUN_A became a ~1.9 KB blob, every
+# later URL was malformed, and all 10 steps failed with HTTP_CODE=000 without
+# a single control-plane endpoint being reached). Out-parameters keep the
+# transcript whole and on stdout, which the header promises, and keep the
+# value clean.
+SCRATCH_RUN_ID=""
+RUN_STATUS=""
+RUN_COMPLETED_AT=""
+
 cleanup() {
   local rc=$?
   for id in "${CREATED_RUNS[@]:-}"; do
@@ -226,9 +239,11 @@ jq_field() {
 }
 
 create_scratch_run() {
-  # create_scratch_run <title-suffix> -> prints the new run id on stdout.
+  # create_scratch_run <title-suffix> -> sets SCRATCH_RUN_ID, returns 0/1.
+  # NEVER print the id on stdout — see the out-parameter comment above.
   local title="control-plane verify - $1"
   local body id
+  SCRATCH_RUN_ID=""
   body="$(jq -n --arg title "$title" '{
     title: $title,
     prompt: "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
@@ -246,24 +261,26 @@ create_scratch_run() {
     return 1
   fi
   CREATED_RUNS+=("$id")
-  printf '%s' "$id"
+  SCRATCH_RUN_ID="$id"
   return 0
 }
 
 run_status() {
-  # run_status <id> -> prints .run.status, empty on any failure.
+  # run_status <id> -> sets RUN_STATUS, empty on any failure.
+  RUN_STATUS=""
   http GET "/api/chat/$1"
   if [ "$HTTP_CODE" = "200" ]; then
-    jq_field '.run.status' "$HTTP_BODY"
+    RUN_STATUS="$(jq_field '.run.status' "$HTTP_BODY")"
   fi
   return 0
 }
 
 run_completed_at() {
-  # run_completed_at <id> -> prints .run.completed_at, empty if null/absent.
+  # run_completed_at <id> -> sets RUN_COMPLETED_AT, empty if null/absent.
+  RUN_COMPLETED_AT=""
   http GET "/api/chat/$1"
   if [ "$HTTP_CODE" = "200" ]; then
-    jq_field '.run.completed_at' "$HTTP_BODY"
+    RUN_COMPLETED_AT="$(jq_field '.run.completed_at' "$HTTP_BODY")"
   fi
   return 0
 }
@@ -282,18 +299,20 @@ echo "--- setup: creating scratch runs ---"
 
 RUN_A=""
 RUN_B=""
-if ! RUN_A="$(create_scratch_run "target")"; then
+if ! create_scratch_run "target"; then
   echo "${RED}setup failed: could not create target scratch run${RESET}" >&2
   FAILED_STEPS+=("setup: could not create target scratch run")
   STEP_TOTAL=$((STEP_TOTAL + 1))
 else
+  RUN_A="$SCRATCH_RUN_ID"
   echo "  target run id: $RUN_A"
 fi
-if ! RUN_B="$(create_scratch_run "sender")"; then
+if ! create_scratch_run "sender"; then
   echo "${RED}setup failed: could not create sender scratch run${RESET}" >&2
   FAILED_STEPS+=("setup: could not create sender scratch run")
   STEP_TOTAL=$((STEP_TOTAL + 1))
 else
+  RUN_B="$SCRATCH_RUN_ID"
   echo "  sender run id: $RUN_B"
 fi
 
@@ -304,7 +323,8 @@ if [ -z "$RUN_A" ] || [ -z "$RUN_B" ]; then
   exit 1
 fi
 
-RUN_B_STATUS_BEFORE="$(run_status "$RUN_B")"
+run_status "$RUN_B"
+RUN_B_STATUS_BEFORE="$RUN_STATUS"
 
 # --------------------------------------------------------------------------
 # Step 1: message to the fresh (queued) target -> 202, then GET comms shows
@@ -344,7 +364,8 @@ step_assert_code "200" "GET comms on sender"
 step_assert_jq '.comms | any(.meta.comms.direction == "out")' "$HTTP_BODY" \
   "echo entry with direction 'out' in sender's comms"
 
-RUN_B_STATUS_AFTER="$(run_status "$RUN_B")"
+run_status "$RUN_B"
+RUN_B_STATUS_AFTER="$RUN_STATUS"
 echo "  sender status before echo: '$RUN_B_STATUS_BEFORE', after: '$RUN_B_STATUS_AFTER'"
 step_assert_nonempty "$RUN_B_STATUS_BEFORE" "sender status readable before echo"
 step_assert_eq "$RUN_B_STATUS_AFTER" "$RUN_B_STATUS_BEFORE" \
@@ -363,7 +384,8 @@ http POST "/api/runs/$RUN_A/stop" ""
 step_assert_code "202" "stop"
 step_assert_jq '.stopping == true' "$HTTP_BODY" "stop body shape"
 
-STATUS_AFTER_STOP="$(run_status "$RUN_A")"
+run_status "$RUN_A"
+STATUS_AFTER_STOP="$RUN_STATUS"
 echo "  status after stop: '$STATUS_AFTER_STOP'"
 step_assert_eq "$STATUS_AFTER_STOP" "paused" "status after stop"
 
@@ -384,7 +406,8 @@ http POST "/api/runs/$RUN_A/message" \
 step_assert_code "202" "message to paused run"
 step_assert_jq '.queued == true' "$HTTP_BODY" "message to paused run body shape"
 
-STATUS_AFTER_WAKE="$(run_status "$RUN_A")"
+run_status "$RUN_A"
+STATUS_AFTER_WAKE="$RUN_STATUS"
 echo "  status after message-to-paused: '$STATUS_AFTER_WAKE'"
 step_assert_eq "$STATUS_AFTER_WAKE" "queued" "status after message to paused run"
 
@@ -401,8 +424,10 @@ http POST "/api/runs/$RUN_A/terminate" ""
 step_assert_code "202" "terminate"
 step_assert_jq '.terminating == true' "$HTTP_BODY" "terminate body shape"
 
-STATUS_AFTER_TERMINATE="$(run_status "$RUN_A")"
-COMPLETED_AT="$(run_completed_at "$RUN_A")"
+run_status "$RUN_A"
+STATUS_AFTER_TERMINATE="$RUN_STATUS"
+run_completed_at "$RUN_A"
+COMPLETED_AT="$RUN_COMPLETED_AT"
 echo "  status after terminate: '$STATUS_AFTER_TERMINATE', completed_at: '$COMPLETED_AT'"
 step_assert_eq "$STATUS_AFTER_TERMINATE" "cancelled" "status after terminate"
 step_assert_nonempty "$COMPLETED_AT" \
@@ -451,7 +476,8 @@ step_start "6b" "message to a completed run -> 202, status queued, completed_at 
 
 RUN_B_COMPLETED=0
 for _ in $(seq 1 60); do
-  s="$(run_status "$RUN_B")"
+  run_status "$RUN_B"
+  s="$RUN_STATUS"
   if [ "$s" = "completed" ]; then
     RUN_B_COMPLETED=1
     break
@@ -463,10 +489,12 @@ for _ in $(seq 1 60); do
 done
 
 if [ "$RUN_B_COMPLETED" -ne 1 ]; then
-  step_assert_eq "$(run_status "$RUN_B")" "completed" \
+  run_status "$RUN_B"
+  step_assert_eq "$RUN_STATUS" "completed" \
     "run B must reach 'completed' within 180s for this step to be meaningful (executor draining?)"
 else
-  COMPLETED_AT_BEFORE="$(run_completed_at "$RUN_B")"
+  run_completed_at "$RUN_B"
+  COMPLETED_AT_BEFORE="$RUN_COMPLETED_AT"
   echo "  run B completed_at before the message: '$COMPLETED_AT_BEFORE'"
   step_assert_nonempty "$COMPLETED_AT_BEFORE" \
     "a completed run must carry completed_at before we message it (else this step proves nothing)"
@@ -477,8 +505,10 @@ else
   step_assert_jq '.queued == true and .delivery == "next-turn"' "$HTTP_BODY" \
     "message to completed run body shape"
 
-  STATUS_AFTER_REQUEUE="$(run_status "$RUN_B")"
-  COMPLETED_AT_AFTER="$(run_completed_at "$RUN_B")"
+  run_status "$RUN_B"
+  STATUS_AFTER_REQUEUE="$RUN_STATUS"
+  run_completed_at "$RUN_B"
+  COMPLETED_AT_AFTER="$RUN_COMPLETED_AT"
   echo "  run B after the message: status '$STATUS_AFTER_REQUEUE', completed_at '$COMPLETED_AT_AFTER'"
   # The executor may already have re-claimed it (queued -> running); both are
   # live states and both must be free of a completion stamp.
@@ -525,8 +555,10 @@ step_assert_code "202" "resume-chat on cancelled run"
 step_assert_jq ".resumed_run_id == \"$RUN_A\"" "$HTTP_BODY" \
   "resumed_run_id echoes the same id (C6: in place, never a new run)"
 
-STATUS_AFTER_RESUME="$(run_status "$RUN_A")"
-COMPLETED_AT_AFTER_RESUME="$(run_completed_at "$RUN_A")"
+run_status "$RUN_A"
+STATUS_AFTER_RESUME="$RUN_STATUS"
+run_completed_at "$RUN_A"
+COMPLETED_AT_AFTER_RESUME="$RUN_COMPLETED_AT"
 echo "  status after resume-chat: '$STATUS_AFTER_RESUME', completed_at: '$COMPLETED_AT_AFTER_RESUME'"
 step_assert_eq "$STATUS_AFTER_RESUME" "queued" "status after resume-chat on cancelled run"
 step_assert_eq "$COMPLETED_AT_AFTER_RESUME" "" \
@@ -562,9 +594,10 @@ step_finish
 step_start 9 "subagent-message with an unaddressable id -> 409; empty id -> 400; refused calls append nothing"
 
 RUN_D=""
-if ! RUN_D="$(create_scratch_run "subagent-parent")"; then
+if ! create_scratch_run "subagent-parent"; then
   STEP_FAILS+=("could not create the subagent-parent scratch run")
 else
+  RUN_D="$SCRATCH_RUN_ID"
   echo "  subagent-parent run id: $RUN_D"
 
   http POST "/api/runs/$RUN_D/subagent-message" \
@@ -635,14 +668,16 @@ if [ "$RUNNING_MODE" -eq 1 ]; then
   step_start "R1" "wait for a scratch run to reach status=running, then message it"
 
   RUN_C=""
-  if ! RUN_C="$(create_scratch_run "running-target")"; then
+  if ! create_scratch_run "running-target"; then
     STEP_FAILS+=("could not create the running-target scratch run")
     step_finish "expected-pre-restart"
   else
+    RUN_C="$SCRATCH_RUN_ID"
     echo "  running-target run id: $RUN_C"
     OBSERVED_RUNNING=0
     for _ in $(seq 1 30); do
-      s="$(run_status "$RUN_C")"
+      run_status "$RUN_C"
+      s="$RUN_STATUS"
       if [ "$s" = "running" ]; then
         OBSERVED_RUNNING=1
         break

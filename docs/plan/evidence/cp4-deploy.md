@@ -3209,3 +3209,457 @@ SCRIPT_EXIT=1
   proof would have replaced the reproducible one-command instrument the phase specified with an
   unrepeatable one.
 - **Nothing merged to `main`.** This evidence commit stays on `project/4120f785`.
+
+---
+
+## 2.7 Live re-verification (round 1203) — the instrument fixed, the verbs actually proven
+
+Round 1202 ended with **no proof cells to copy** (§2.5). This round's brief was written before that
+was known: it told round 1203 to copy four proof cells "verbatim" out of §2, and in the same breath
+forbade appending "a row on faith for anything section 2 does not actually show". Both cannot be
+obeyed while §2.4's defect stands, so this round removed the defect instead of shipping four
+unbacked rows or an empty table. Nothing below is copied from §2 — every line is from a run made in
+THIS round, and the announcement rows in §3 cite this section, not §2.
+
+### 2.7.1 The fix — out-parameters, in the WORKTREE
+
+`scripts/checks/verify-control-plane.sh`. The three helpers that call `http()` no longer return
+their value on stdout — stdout is where `http()` writes the pasteable transcript, and a caller
+using `RUN_A="$(create_scratch_run "target")"` captured both (§2.4). They now publish through
+out-parameters, which keeps the transcript whole and on stdout, as the script header promises:
+
+| helper | was | now |
+|---|---|---|
+| `create_scratch_run` | `printf '%s' "$id"` | sets `SCRATCH_RUN_ID`, returns 0/1 |
+| `run_status` | `jq_field '.run.status' …` to stdout | sets `RUN_STATUS` |
+| `run_completed_at` | `jq_field '.run.completed_at' …` to stdout | sets `RUN_COMPLETED_AT` |
+
+Each helper clears its out-parameter on entry, so a failed call can never leave the previous run's
+value in place and turn an assertion into a false green — the one outcome worse than round 1202's
+honest red. All call sites were converted from `X="$(helper …)"` to `helper …; X="$OUT"`.
+The alternative §2.4 floated — moving `http()`'s transcript to stderr — was rejected: it splits the
+evidence paste across two streams and silently changes what the header promises about stdout.
+
+**The change was made in the worktree, not in `/opt/forge-ai-os`.** The live copy was refreshed only
+by the docs merge in §3.5, after this run had already passed.
+
+### 2.7.2 The regression test
+
+`forge-control/src/lib/verify-control-plane-script.test.ts` (10 tests, source-assertion, following
+`run-control-surface.test.ts`'s precedent — it reads the script's text, executes nothing, opens no
+socket). It fails if any call site re-introduces `$(create_scratch_run …)` / `$(run_status …)` /
+`$(run_completed_at …)`, if a helper stops clearing or stops setting its out-parameter, if the
+out-parameters lose their top-level declaration, if `http()`'s transcript moves off stdout, or if
+the script ever learns to invoke `pm2`.
+
+### 2.7.3 The run — PASS 10/10, exit 0
+
+Run from the WORKTREE (the script is a pure HTTP client; which checkout it lives in does not change
+what it proves), against the live server, WITHOUT `--running` — 07 §8 puts the `--running` half
+behind the executor restart that had not yet happened.
+
+```
+$ cd /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365 \
+    && FORGE_URL=http://127.0.0.1:7700 scripts/checks/verify-control-plane.sh
+
+(skipping --running section - pass --running to also exercise message-into-a-RUNNING-target)
+
+PASS 10/10 checks
+SCRIPT_EXIT=0
+```
+
+Byte-exact transcript with ANSI codes as emitted:
+`docs/plan/evidence/cp4-1203-verify-control-plane.log` (1491 lines). The per-verb excerpts below are
+ANSI-stripped and otherwise unaltered; they are the source of §3's proof cells.
+
+Scratch runs used: target `3a521783-ceb5-437a-88d5-8166b2a220b9`, sender
+`e102b842-0d62-4920-90df-796fb6ea8fcb`, subagent-parent `d43b4d55-0f23-45ee-bf2c-e9cb83384a07`.
+
+#### step 1 — message to an idle (queued) target → 202, entry visible in comms
+
+```
+=== step 1: message to fresh (queued) run -> 202, direction 'in' in comms ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/message' -H 'content-type: application/json' -d '{
+  "text": "step1 hello from konrad",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "queued": true,
+  "delivery": "next-turn"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/comms'
+  -> HTTP 200
+{
+  "run_id": "3a521783-ceb5-437a-88d5-8166b2a220b9",
+  "comms": [
+    {
+      "ts": "2026-08-06T03:04:50.891Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step1 hello from konrad"
+    }
+  ]
+}
+PASS step 1
+```
+
+#### step 3 — stop → 202, status `paused`, second stop → 409
+
+```
+=== step 3: stop -> 202, status paused; second stop -> 409 ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/stop'
+  -> HTTP 202
+{
+  "stopping": true
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/3a521783-ceb5-437a-88d5-8166b2a220b9'
+…(the full GET /api/chat readback is in the log)…
+  status after stop: 'paused'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/stop'
+  -> HTTP 409
+{
+  "error": "run is already paused"
+}
+PASS step 3
+```
+
+#### step 5 — terminate → 202, status `cancelled`, `completed_at` STAMPED, second terminate → 409
+
+The contract §4 consistency fix, live: `completed_at` is non-null on a cancelled run.
+
+```
+=== step 5: terminate -> 202, status cancelled + completed_at stamped (§4 fix); second terminate -> 409 ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/terminate'
+  -> HTTP 202
+{
+  "terminating": true
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/3a521783-ceb5-437a-88d5-8166b2a220b9'
+…
+  status after terminate: 'cancelled', completed_at: '2026-08-06 03:04:51.175086+00'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/terminate'
+  -> HTTP 409
+{
+  "error": "run is already cancelled"
+}
+PASS step 5
+```
+
+#### step 7 — GET comms on the target, full body
+
+```
+=== step 7: GET comms on both runs (evidence transcript) ===
+--- run A (3a521783-ceb5-437a-88d5-8166b2a220b9) comms ---
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/comms'
+  -> HTTP 200
+{
+  "run_id": "3a521783-ceb5-437a-88d5-8166b2a220b9",
+  "comms": [
+    {
+      "ts": "2026-08-06T03:04:50.891Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step1 hello from konrad"
+    },
+    {
+      "ts": "2026-08-06T03:04:50.958Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "worker",
+          "direction": "in",
+          "peer_run_id": "e102b842-0d62-4920-90df-796fb6ea8fcb"
+        }
+      },
+      "role": "user",
+      "content": "[message from worker e102b842] step2 hello from worker"
+    },
+    {
+      "ts": "2026-08-06T03:04:51.121Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step4 wake up"
+    }
+  ]
+}
+--- run B (e102b842-0d62-4920-90df-796fb6ea8fcb) comms ---
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/e102b842-0d62-4920-90df-796fb6ea8fcb/comms'
+  -> HTTP 200
+{
+  "run_id": "e102b842-0d62-4920-90df-796fb6ea8fcb",
+  "comms": [
+    {
+      "ts": "2026-08-06T03:04:50.958Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "worker",
+          "direction": "out",
+          "peer_run_id": "3a521783-ceb5-437a-88d5-8166b2a220b9"
+        }
+      },
+      "role": "agent",
+      "content": "[to manager 3a521783] step2 hello from worker"
+    },
+    {
+      "ts": "2026-08-06T03:04:57.396Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step6b one more thing"
+    }
+  ]
+}
+PASS step 7
+```
+
+#### step 8 — resume-chat on a cancelled run → 202 IN PLACE, `completed_at` cleared
+
+`resumed_run_id` echoes the same id — Q2's "in place, stable" answered by observation, not by design
+intent.
+
+```
+=== step 8: resume-chat on a cancelled run -> 202 in place, queued, completed_at cleared; second resume-chat while queued -> 409 naming /message ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/resume-chat' -H 'content-type: application/json' -d '{
+  "text": "step 8 resume follow-up",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "resumed_run_id": "3a521783-ceb5-437a-88d5-8166b2a220b9"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/3a521783-ceb5-437a-88d5-8166b2a220b9'
+…
+  status after resume-chat: 'queued', completed_at: ''
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/comms'
+  -> HTTP 200
+{
+  "run_id": "3a521783-ceb5-437a-88d5-8166b2a220b9",
+  "comms": [
+    {
+      "ts": "2026-08-06T03:04:50.891Z",
+      "kind": "comms",
+      "meta": {
+```
+
+#### step 9 — subagent-message honest refusals, and the empty-comms body
+
+```
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/d43b4d55-0f23-45ee-bf2c-e9cb83384a07/subagent-message' -H 'content-type: application/json' -d '{
+  "subagent_id": "toolu_definitely_not_a_real_id",
+  "text": "step 9 relay"
+}'
+  -> HTTP 409
+{
+  "error": "subagent context not addressable"
+}
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/d43b4d55-0f23-45ee-bf2c-e9cb83384a07/subagent-message' -H 'content-type: application/json' -d '{
+  "subagent_id": "",
+  "text": "step 9 relay with empty id"
+}'
+  -> HTTP 400
+{
+  "error": "subagent_id required"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/d43b4d55-0f23-45ee-bf2c-e9cb83384a07/comms'
+  -> HTTP 200
+{
+  "run_id": "d43b4d55-0f23-45ee-bf2c-e9cb83384a07",
+  "comms": []
+}
+
+```
+
+### 2.7.4 Side effects, recorded rather than hidden
+
+The three scratch runs were claimed by the live executor, exactly as §2.4's run documented. All
+three were terminated by the script's exit trap and are settled; total spend **$0.21**:
+
+```
+$ for id in 3a521783-… e102b842-… d43b4d55-…; do curl -s "http://127.0.0.1:7700/api/chat/$id" \
+    | jq -r '.run | "\(.id) -> \(.status)  spent=\(.spent_usd)  completed_at=\(.completed_at)"'; done
+3a521783-ceb5-437a-88d5-8166b2a220b9 -> cancelled  spent=0.00  completed_at=2026-08-06 03:04:57.777009+00
+e102b842-0d62-4920-90df-796fb6ea8fcb -> cancelled  spent=0.21  completed_at=2026-08-06 03:04:57.788043+00
+d43b4d55-0f23-45ee-bf2c-e9cb83384a07 -> cancelled  spent=0.00  completed_at=2026-08-06 03:04:57.799268+00
+```
+
+No real fleet run was touched. `forge-executor` was NOT restarted by this section.
+
+### 2.7.5 A deploy obligation discharged — the installed `researcher.md`
+
+Re-running `pnpm test` in the worktree after the fix surfaced ONE failure that section 1's green run
+(753/753, round 1201) could not have shown, because it predates the merge to `main`:
+
+```
+not ok 3 - install parity: AGENTS_DIR copy tracks the DEPLOYED definition; worktree drift is a deploy obligation
+  /root/.claude/agents/researcher.md has drifted from the DEPLOYED /opt/forge-ai-os/agents/researcher.md
+```
+
+Not a regression from this round's change. Round 1201's merge moved the R776 api-first
+`agents/researcher.md` onto `main` and therefore into the live checkout, while
+`/root/.claude/agents/researcher.md` still held the pre-R703 browser-first text — and
+`roleFilePaths()` tries `AGENTS_DIR` FIRST, so merging alone never lands a role-file change. That is
+exactly the pending obligation `docs/plan/03-quality.md` §1.1 describes and assigns to a deploy
+round: *"The deploy must copy the merged file over it, or delete the installed copy so the repo
+fallback resolves."* Discharged here, with the stale copy kept as a backup rather than destroyed:
+
+```
+$ cp -p /root/.claude/agents/researcher.md /root/.claude/agents/researcher.md.pre-cp4-1203.bak
+$ cp /opt/forge-ai-os/agents/researcher.md /root/.claude/agents/researcher.md
+$ md5sum < /opt/forge-ai-os/agents/researcher.md ; md5sum < /root/.claude/agents/researcher.md
+48c06a4c0893c7dbc29bfaec72f4a9e2  -
+48c06a4c0893c7dbc29bfaec72f4a9e2  -
+```
+
+The worktree copy is byte-identical to both (`48c06a4c…`), so installed = deployed = committed and
+no drift remains in any direction. The engine picks the new mission up at the restart launched in
+§3.6.
+
+### 2.7.6 Typecheck + tests, re-run in the worktree after all of the above
+
+```
+$ npx tsc --noEmit; echo "tsc exit=$?"
+tsc exit=0
+```
+
+```
+$ pnpm test
+1..166
+# tests 763
+# suites 149
+# pass 763
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5997.783535
+```
+
+**763 pass / 0 fail**, 149 suites — section 1's 753 plus this round's 10 new ones.
+
+---
+
+## 3. Announcement + reminder
+
+### 3.1 The vault note's table headers, re-read on the day
+
+`/opt/obsidian-vault/AI OS/Contract - Manager Control Plane API.md` was re-read before anything was
+written. The five headers are UNCHANGED from round 800 — the operator-visibility lane has not edited
+them:
+
+```
+| endpoint | capabilities flag to flip | shipped on (branch/round) | proof (command + observed response) | flipped? |
+```
+
+The `_(none shipped yet)_` placeholder row was still the table's only row. It was left exactly as it
+is: D3 forbids rewriting any pre-existing part of that note, and removing a now-stale placeholder is
+the other lane's call, not ours.
+
+### 3.2 The four rows, exactly as appended
+
+Appended after the placeholder; nothing else in the note was touched. All four `flipped?` cells are
+EMPTY — filling one is a boundary violation under D3 even when the flag genuinely is flipped. Each
+`proof` cell carries the three things D3 requires: the exact curl, its verbatim response, and the
+path of the evidence file.
+
+The `shipped on` column reads **r1203**, not r1202: the round in that cell is the round whose run
+produced the proof, and all four came from §2.7 above.
+
+| endpoint | capabilities flag to flip | shipped on (branch/round) | proof (command + observed response) | flipped? |
+|---|---|---|---|---|
+| POST /api/runs/:id/stop | stop | project/4120f785 / r1203 | `curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/stop'` → `HTTP 202` `{"stopping": true}`; readback `GET /api/chat/3a521783-…` → `HTTP 200` with `"status": "paused"` (Q3's answer, live); second stop → `HTTP 409` `{"error":"run is already paused"}`. Full transcript: `docs/plan/evidence/cp4-deploy.md` §2.7 step 3 | |
+| POST /api/runs/:id/terminate | terminate | project/4120f785 / r1203 | `curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/terminate'` → `HTTP 202` `{"terminating": true}`; readback → `"status": "cancelled"`, `"completed_at": "2026-08-06 03:04:51.175086+00"` (the §4 consistency fix, live); second terminate → `HTTP 409` `{"error":"run is already cancelled"}`. Full transcript: `docs/plan/evidence/cp4-deploy.md` §2.7 step 5 | |
+| POST /api/runs/:id/resume-chat | resume_finished | project/4120f785 / r1203 | `curl -sS -X POST 'http://127.0.0.1:7700/api/runs/3a521783-ceb5-437a-88d5-8166b2a220b9/resume-chat' -H 'content-type: application/json' -d '{"text":"step 8 resume follow-up","from":"konrad"}'` → `HTTP 202` `{"resumed_run_id": "3a521783-ceb5-437a-88d5-8166b2a220b9"}` — same id back, so Q2's "in place, stable" is live; readback `status 'queued', completed_at ''`; second resume-chat while queued → `HTTP 409` naming `/message`. Full transcript: `docs/plan/evidence/cp4-deploy.md` §2.7 step 8 | |
+| GET /api/runs/:id/comms | — (additive extension, no flag) | project/4120f785 / r1203 | `curl -sS -X GET 'http://127.0.0.1:7700/api/runs/d43b4d55-0f23-45ee-bf2c-e9cb83384a07/comms'` → `HTTP 200` `{"run_id": "d43b4d55-0f23-45ee-bf2c-e9cb83384a07", "comms": []}` (empty case, verbatim and complete); the populated case on run `3a521783-…` returns `HTTP 200` with 5 `kind:"comms"` entries carrying `meta.comms.direction` `"in"`/`"out"`, printed in full at `docs/plan/evidence/cp4-deploy.md` §2.7 step 7 | |
+
+### 3.3 No row for `message_into_session` / `subagent_message`, and why
+
+Neither was appended. Per **07 §8**'s executor-restart matrix both verbs have a half that only loads
+with the NEW executor — `message → RUNNING target` and `subagent-message → RUNNING parent` — and the
+detached `safe-restart.sh` launched in §3.6 had not landed when this section was written. Their
+idle-target halves ARE proven above (step 1: `202 {"queued": true, "delivery": "next-turn"}`;
+step 9: the two honest refusals), but a flag names the whole verb, so announcing one on half the
+evidence would tell the UI lane it may enable a control that silently does nothing on a running row.
+Those two rows belong to the reminder below.
+
+### 3.4 The reminder — request, response, and the GET that proves it landed
+
+Text length **446 characters**, counted before the POST (the API rejects 500+ with a 400).
+
+```
+$ curl -sX POST http://127.0.0.1:7700/api/reminders -H 'content-type: application/json' -d @-
+{
+  "text": "Control plane, post-restart half. Once forge-executor's detached safe-restart landed, run scripts/checks/verify-control-plane.sh --running from /opt/forge-ai-os to prove message->RUNNING target and subagent-message->RUNNING parent. Paste the transcript into docs/plan/evidence/cp4-deploy.md, then append the two pending announcement rows (message_into_session, subagent_message) to 'AI OS/Contract - Manager Control Plane API.md', flipped? EMPTY.",
+  "when": "tomorrow 9:00"
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "reminder": {
+    "id": "8cdd4efd-3382-46da-bf1d-2d5ff0b88fdc",
+    "text": "Control plane, post-restart half. Once forge-executor's detached safe-restart landed, run scripts/checks/verify-control-plane.sh --running from /opt/forge-ai-os to prove message->RUNNING target and subagent-message->RUNNING parent. Paste the transcript into docs/plan/evidence/cp4-deploy.md, then append the two pending announcement rows (message_into_session, subagent_message) to 'AI OS/Contract - Manager Control Plane API.md', flipped? EMPTY.",
+    "due_at": "2026-08-07 07:00:00.071+00",
+    "recur": null,
+    "status": "pending",
+    "source": "chat",
+    "created_at": "2026-08-06 03:06:49.081629+00",
+    "delivered_at": null
+  }
+}
+```
+
+Confirmation that it is really in the store, filtered to the new id:
+
+```
+$ curl -s http://127.0.0.1:7700/api/reminders | jq '[.reminders[] | select(.id=="8cdd4efd-3382-46da-bf1d-2d5ff0b88fdc")]'
+[
+  {
+    "id": "8cdd4efd-3382-46da-bf1d-2d5ff0b88fdc",
+    "text": "Control plane, post-restart half. Once forge-executor's detached safe-restart landed, run scripts/checks/verify-control-plane.sh --running from /opt/forge-ai-os to prove message->RUNNING target and subagent-message->RUNNING parent. Paste the transcript into docs/plan/evidence/cp4-deploy.md, then append the two pending announcement rows (message_into_session, subagent_message) to 'AI OS/Contract - Manager Control Plane API.md', flipped? EMPTY.",
+    "due_at": "2026-08-07 07:00:00.071+00",
+    "recur": null,
+    "status": "pending",
+    "source": "chat",
+    "created_at": "2026-08-06 03:06:49.081629+00",
+    "delivered_at": null
+  }
+]
+```
+
+`"when": "tomorrow 9:00"` resolved to `due_at 2026-08-07 07:00:00.071+00` (09:00 Europe/Berlin =
+07:00Z), `status: "pending"`, `delivered_at: null`. The text names all four things 08 §6 requires:
+(a) `scripts/checks/verify-control-plane.sh --running`, (b) both pending rows by flag name, (c) that
+the transcript goes into `docs/plan/evidence/cp4-deploy.md`, (d) that the rows go into the contract
+note with `flipped?` EMPTY.
