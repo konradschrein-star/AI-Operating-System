@@ -669,6 +669,37 @@ export interface RunWriteResult {
  * catches it first, a `stuck` row with a completion timestamp, which
  * completeRun's own invariant forbids. Two flags rather than one so the SET
  * clause says exactly what it does.
+ *
+ * WHY RESUME (C6) RIDES THIS HELPER TOO, AND NOT A `resumeRun` OF ITS OWN
+ * (CP2). `POST /:id/resume-chat` is IN PLACE: the same row goes back to
+ * `queued`, carrying `eligible: RESUME_ELIGIBLE, setStatus: 'queued',
+ * clearCompletedAt: true, clearWakeAfter: true, clearPendingInput: true`. The
+ * append and the status move MUST be the one statement they are here, because
+ * the project reconciler's optimistic-concurrency detector
+ * (`markVerdictTaskDone` in db/projects.ts, carrying `AND r.status =
+ * 'completed'`) is only an exact detector while the documented invariant of
+ * 07 §7 holds: *every write that can deliver a message to a settled run moves
+ * it out of `completed` in the SAME statement as the append*. resume-chat is a
+ * new such write. Split it in two — append first, flip status second — and a
+ * round consolidation landing in the gap reads the row as still `completed`,
+ * marks the reviewer task `done` (a `done` task is invisible to
+ * `listSettledRunningTasks` forever) and the verdict the resumed run is about
+ * to produce is honoured zero times, in silence. That is exactly the dropped
+ * verdict R906 fixed; it must not be reintroduced by a second helper.
+ *
+ * WHY RESUME CLEARS `pending_input`. A run can be `completed` WITH the flag
+ * still set: the executor died between E1 and E2 of the 07 §5 handshake.
+ * resume-chat requeues that very row, and the pending message is delivered by
+ * the next turn's `trailingUserBlock` along with the resume text — so the flag
+ * has been consumed and must not survive to requeue the run a second time at
+ * the end of that turn. `claimNextRun` (executor.ts ~line 156) strips the same
+ * key on claim for the same reason; belt and braces, as E2 does.
+ *
+ * `setPendingInput` and `clearPendingInput` are MUTUALLY EXCLUSIVE and passing
+ * both throws: they are two conflicting SET fragments on one `metadata` column
+ * in one statement, so the result would depend on fragment order rather than on
+ * anything the caller decided. C20 — a programming error surfaces, it does not
+ * get silently resolved.
  */
 export async function appendCommsEntry(
   id: string,
@@ -677,10 +708,19 @@ export async function appendCommsEntry(
     eligible?: readonly RunStatus[];
     setStatus?: RunStatus;
     setPendingInput?: boolean;
+    clearPendingInput?: boolean;
     clearCompletedAt?: boolean;
     clearWakeAfter?: boolean;
   } = {},
 ): Promise<RunWriteResult> {
+  if (opts.setPendingInput && opts.clearPendingInput) {
+    throw new Error(
+      `appendCommsEntry(${id}): setPendingInput and clearPendingInput are ` +
+        `mutually exclusive - one statement cannot both raise and strip ` +
+        `metadata.pending_input`,
+    );
+  }
+
   const params: unknown[] = [id, JSON.stringify([entry])];
   const sets = ["thread = thread || $2::jsonb"];
 
@@ -692,6 +732,9 @@ export async function appendCommsEntry(
     sets.push(
       `metadata = COALESCE(metadata, '{}'::jsonb) || '{"pending_input":true}'::jsonb`,
     );
+  }
+  if (opts.clearPendingInput) {
+    sets.push(`metadata = COALESCE(metadata, '{}'::jsonb) - 'pending_input'`);
   }
   if (opts.clearCompletedAt) sets.push("completed_at = NULL");
   if (opts.clearWakeAfter) sets.push("wake_after = NULL");

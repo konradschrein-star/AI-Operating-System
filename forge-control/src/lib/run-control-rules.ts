@@ -531,6 +531,53 @@ export function subagentAddressable(
 }
 
 /* ------------------------------------------------------------------------- *
+ * Resume pre-flight — the workspace directory (C7)
+ *
+ * C7: "if metadata.workspace_dir is set and the directory is gone from disk,
+ * 409 `workspace gone: <path>` — never spawn a CC child into a deleted
+ * worktree."
+ *
+ * The disk check is impure and stays in the route; the EXTRACTION is pure and
+ * lives here, because this module has no fs, no pg and no clock and that is
+ * what makes it table-testable without a database.
+ *
+ * `metadata.workspace_dir` is written by project-tick.ts (~line 671) into every
+ * project task run's metadata and read back by executor.ts (~line 841) as the
+ * child's `cwd`. So the string these two functions handle is the exact
+ * directory a resumed turn would be spawned into — which is why a resume that
+ * finds it missing must refuse rather than let the executor discover it.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The run's worktree path, or null when there is no pre-flight to do.
+ *
+ * NEVER throws, and returning null is NOT an error: runs that predate
+ * project-tick's workspace wiring — and every plain Chat/Manager run, which
+ * uses the shared CC_WORKSPACE — simply carry no such key. Null therefore means
+ * "nothing to check", and the route proceeds with the resume.
+ *
+ * Defensive in the same shape as `subagentAddressable` above: metadata comes
+ * out of a jsonb column, so it can be anything at all.
+ */
+export function workspaceDirOf(metadata: unknown): string | null {
+  if (typeof metadata !== "object" || metadata === null) return null;
+  if (Array.isArray(metadata)) return null;
+  const dir = (metadata as Record<string, unknown>).workspace_dir;
+  if (typeof dir !== "string") return null;
+  const trimmed = dir.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * C7's refusal wording, verbatim from the contract — the UI renders it as-is.
+ * A constant-producing function rather than a template at the call site so the
+ * route cannot paraphrase it into something the UI does not recognise.
+ */
+export function workspaceGoneReason(path: string): string {
+  return `workspace gone: ${path}`;
+}
+
+/* ------------------------------------------------------------------------- *
  * Project slug (C18 / boundary D6)
  * ------------------------------------------------------------------------- */
 

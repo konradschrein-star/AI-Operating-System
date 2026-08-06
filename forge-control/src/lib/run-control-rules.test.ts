@@ -34,6 +34,8 @@ import {
   completionTransition,
   commsEntries,
   subagentAddressable,
+  workspaceDirOf,
+  workspaceGoneReason,
   projectSlug,
   shortId,
   MESSAGE_ELIGIBLE,
@@ -742,5 +744,102 @@ describe("subagentAddressable", () => {
     assert.doesNotThrow(() => {
       assert.equal(subagentAddressable(metadata, "sub-real"), true);
     });
+  });
+});
+
+/* ========================================================================== *
+ * 7. workspaceDirOf / workspaceGoneReason — the pure half of C7's pre-flight
+ *
+ * The route's fs check is only as good as the path it is handed. Two failure
+ * modes are being excluded here:
+ *  - a THROW on odd metadata (jsonb can hold anything, and a run predating
+ *    project-tick's workspace wiring has no such key at all) would turn a
+ *    perfectly legal resume into a 500;
+ *  - a non-null return for junk (empty string, whitespace) would make the
+ *    route existsSync("") — false — and refuse a resume with
+ *    "workspace gone: " naming nothing.
+ * Null means "no pre-flight to do", which is a normal state, not an error.
+ * ========================================================================== */
+
+describe("workspaceDirOf", () => {
+  test("table — every input, and none of them throws", () => {
+    const cases: Array<{ label: string; metadata: unknown; expected: string | null }> = [
+      {
+        label: "valid absolute path",
+        metadata: { workspace_dir: "/opt/ai-os/workspace/projects/4120f785" },
+        expected: "/opt/ai-os/workspace/projects/4120f785",
+      },
+      {
+        label: "surrounding whitespace is trimmed",
+        metadata: { workspace_dir: "  /opt/ai-os/workspace/projects/4120f785\n" },
+        expected: "/opt/ai-os/workspace/projects/4120f785",
+      },
+      { label: "empty string", metadata: { workspace_dir: "" }, expected: null },
+      {
+        label: "whitespace-only string",
+        metadata: { workspace_dir: "   \t\n " },
+        expected: null,
+      },
+      {
+        label: "key absent (pre-wiring run, or a plain Chat run)",
+        metadata: { cc_session_id: "abc" },
+        expected: null,
+      },
+      { label: "empty metadata object", metadata: {}, expected: null },
+      { label: "value is a number", metadata: { workspace_dir: 42 }, expected: null },
+      { label: "value is null", metadata: { workspace_dir: null }, expected: null },
+      {
+        label: "value is an object",
+        metadata: { workspace_dir: { path: "/tmp" } },
+        expected: null,
+      },
+      { label: "metadata = null", metadata: null, expected: null },
+      { label: "metadata = undefined", metadata: undefined, expected: null },
+      { label: "metadata = an array", metadata: [{ workspace_dir: "/tmp" }], expected: null },
+      { label: "metadata = a string", metadata: "/tmp", expected: null },
+      { label: "metadata = a number", metadata: 7, expected: null },
+      { label: "metadata = a boolean", metadata: true, expected: null },
+    ];
+
+    for (const c of cases) {
+      assert.doesNotThrow(() => {
+        assert.equal(
+          workspaceDirOf(c.metadata),
+          c.expected,
+          `workspaceDirOf: ${c.label}`,
+        );
+      }, `workspaceDirOf must never throw: ${c.label}`);
+    }
+  });
+
+  test("a relative path is returned as-is — resolving is not this function's job", () => {
+    assert.equal(workspaceDirOf({ workspace_dir: "worktrees/x" }), "worktrees/x");
+  });
+});
+
+describe("workspaceGoneReason", () => {
+  test("byte-exact contract wording (C7) — the UI renders it verbatim", () => {
+    assert.equal(
+      workspaceGoneReason("/some/path"),
+      "workspace gone: /some/path",
+    );
+  });
+
+  test("the path is interpolated unaltered", () => {
+    for (const p of [
+      "/opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365",
+      "/tmp/a b/c",
+      "",
+    ]) {
+      assert.equal(workspaceGoneReason(p), `workspace gone: ${p}`);
+    }
+  });
+
+  test("what workspaceDirOf returns is what the reason names", () => {
+    // The two compose: the route extracts, checks disk, then reports. A trim
+    // in one and not the other would print a path the operator cannot paste.
+    const dir = workspaceDirOf({ workspace_dir: "  /var/tmp/gone  " });
+    assert.equal(dir, "/var/tmp/gone");
+    assert.equal(workspaceGoneReason(dir!), "workspace gone: /var/tmp/gone");
   });
 });
