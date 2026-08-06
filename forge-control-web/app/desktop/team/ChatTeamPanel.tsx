@@ -78,8 +78,17 @@ import { flattenTeam, responseNowMs, type FlatTeam } from "./teamRows";
 import { TeamRowView } from "./TeamRow";
 import { PlanKanban } from "./PlanKanban";
 
-/** NFU3: one poll, 5s, paused whenever the panel is not visible. */
-const TEAM_POLL_MS = 5_000;
+/** NFU3: one poll, 6s, paused whenever the panel is not visible.
+ *
+ *  ROUND 705 moved this out from 5s. Not because 5s was wrong on its own —
+ *  phase 500 measured and committed it — but because the plan zone added a
+ *  second poll to the same slot and the chat surface's TOTAL went 40 → 43-44
+ *  req/min, breaking `phase600/nav-walk.cjs`'s P3 (≤ 40/min). 6s here plus 30s
+ *  in ./PlanKanban.tsx puts the total back on exactly 40 while the panel's own
+ *  slot drops from 16 to 12 req/min. A team tree that refreshes every 6s
+ *  instead of every 5s is not a legibility loss; a surface that quietly
+ *  outgrows its own committed poll ceiling is. */
+const TEAM_POLL_MS = 6_000;
 
 /** Capabilities are a session-lifetime constant — the flags only move when the
  *  engine lane deploys, which reloads the page anyway. */
@@ -161,8 +170,8 @@ export function ChatTeamPanel({
     // react-query retries behind it, with a running row interpolating through
     // the whole window as if the data were current. A tree presented as fresh
     // when the server has stopped answering is precisely the failure this
-    // project exists to remove, and 8s is longer than the 5s poll it is
-    // covering for. One failure, one honest error state, next poll in 5s.
+    // project exists to remove, and 8s is longer than the 6s poll it is
+    // covering for. One failure, one honest error state, next poll in 6s.
     retry: 0,
   });
 

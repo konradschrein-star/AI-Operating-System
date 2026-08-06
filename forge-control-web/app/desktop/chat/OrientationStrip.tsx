@@ -390,8 +390,8 @@ export function readTeam(
  * That is the NFU6 line: a value that nobody is refreshing is not a value.
  *
  * The subscription re-renders the strip at the panel's own cadence (one team
- * response every 5s) and never more often — the filter below drops every
- * event for every other query in the app.
+ * response every 6s — ChatTeamPanel.tsx's `TEAM_POLL_MS`) and never more
+ * often — the filter below drops every event for every other query in the app.
  */
 function useTeamReading(runId: string, subagentId?: string): TeamReading {
   const queryClient = useQueryClient();

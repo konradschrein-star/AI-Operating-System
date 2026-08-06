@@ -57,8 +57,8 @@ const {
   API,
   BASE,
   GROUND,
-  OUT_DIR,
   PROJECT_ID,
+  SRC_DIR,
   finish,
   makeChecker,
   openChat,
@@ -195,7 +195,9 @@ async function main() {
   check("task chips on screen == tasks in the plan", panel.task_chips, legPlan.total);
 
   /* ── Drift against round 701 ─────────────────────────────────────────────── */
-  const prevPath = path.join(OUT_DIR, "ground-truth-701.json");
+  /* SRC_DIR, not OUT_DIR: this is the COMMITTED round-701 baseline being read.
+   * A rerun writing to /tmp must still diff against the real baseline. */
+  const prevPath = path.join(SRC_DIR, "ground-truth-701.json");
   let drift = null;
   try {
     const prev = JSON.parse(fs.readFileSync(prevPath, "utf8"));

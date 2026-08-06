@@ -59,6 +59,7 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
 
@@ -89,7 +90,16 @@ const COOKIE = process.env.FORGE_SESSION_COOKIE ?? "";
 // Part A default: chat 11dd264b — thread_scan-linked, 20 rows (manager + 11
 // workers + 8 sub-agents), all settled. Verified via curl 2026-08-05.
 const CHAT_TEXT = process.env.TEAM_CHAT_TEXT ?? "Okay this session is very important";
-const OUT = __dirname;
+/** Round 704 finding #4: a rerun must not overwrite the committed evidence a
+ *  reviewer is reading. README §2 names this script among the ones to re-run,
+ *  and it used to write `team-frozen.json` straight back into
+ *  `docs/plan/artifacts/phase500/` — so following the documented procedure
+ *  dirtied git and destroyed the record. Reruns now land in
+ *  `/tmp/phase500-out`; `--write` (or `PHASE500_WRITE=1`) re-records in place. */
+const WRITE_IN_PLACE = process.argv.includes("--write") || process.env.PHASE500_WRITE === "1";
+const OUT =
+  process.env.PHASE500_OUT_DIR ?? (WRITE_IN_PLACE ? __dirname : path.join(os.tmpdir(), "phase500-out"));
+if (OUT !== __dirname) fs.mkdirSync(OUT, { recursive: true });
 const GAP_MS = Number(process.env.TEAM_FROZEN_GAP_MS ?? "12000"); // U16: t and t+12s
 const READY_TIMEOUT_MS = Number(process.env.TEAM_READY_TIMEOUT_MS ?? "20000");
 /** The injected rail row's title. Unique enough to click by text, and loud
@@ -424,6 +434,10 @@ async function main() {
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
   for (const p of parts) p.failures.forEach((f) => console.log(`  FAIL [${p.part}]: ${f}`));
   console.log(`→ ${out}`);
+  if (OUT !== __dirname) {
+    console.log(`  committed evidence left untouched (${path.join(__dirname, "team-frozen.json")})`);
+    console.log(`  re-record in place with:  node ${process.argv[1]} --write`);
+  }
   console.log(`TEAM-FROZEN: ${verdict}`);
   if (verdict !== "PASS") process.exitCode = 1;
 }

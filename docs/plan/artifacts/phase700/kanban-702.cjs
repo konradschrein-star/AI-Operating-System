@@ -43,6 +43,7 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
 
@@ -69,7 +70,15 @@ const COOKIE = process.env.FORGE_SESSION_COOKIE ?? "";
 /** bfd1283a — the chat round 701 linked to project 8ea0cc08 (linkage-701.md §2).
  *  Resolved from its title at run time, never hard-coded as a uuid. */
 const CHAT_TEXT = process.env.PHASE700_CHAT ?? "Okay when I click the file section";
-const OUT_DIR = __dirname;
+/** Round 704 finding #4, same rule as lib-703.cjs: a rerun is non-destructive.
+ *  Writes go to /tmp/phase700-out unless `--write` (or PHASE700_WRITE=1) says
+ *  to re-record the committed evidence in place. This script predates
+ *  lib-703.cjs and keeps its own copy of the harness, so it keeps its own copy
+ *  of this rule rather than growing a dependency on the later file. */
+const WRITE_IN_PLACE = process.argv.includes("--write") || process.env.PHASE700_WRITE === "1";
+const OUT_DIR =
+  process.env.PHASE700_OUT_DIR ?? (WRITE_IN_PLACE ? __dirname : path.join(os.tmpdir(), "phase700-out"));
+if (OUT_DIR !== __dirname) fs.mkdirSync(OUT_DIR, { recursive: true });
 
 const results = [];
 let failures = 0;
@@ -289,6 +298,10 @@ async function main() {
   const out = path.join(OUT_DIR, "kanban-702.json");
   fs.writeFileSync(out, `${JSON.stringify({ base: BASE, api: API, results }, null, 2)}\n`);
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} → ${out}`);
+  if (OUT_DIR !== __dirname) {
+    console.log(`      committed evidence left untouched (${path.join(__dirname, "kanban-702.json")})`);
+    console.log(`      re-record in place with:  node ${process.argv[1]} --write`);
+  }
   process.exit(failures === 0 ? 0 : 1);
 }
 

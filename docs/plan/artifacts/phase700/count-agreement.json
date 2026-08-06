@@ -1,5 +1,5 @@
 {
-  "base": "http://127.0.0.1:7809",
+  "base": "http://127.0.0.1:7811",
   "api": "http://127.0.0.1:7798",
   "ground": "http://127.0.0.1:7700",
   "chat": {
@@ -8,58 +8,58 @@
   },
   "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
   "span": {
-    "started_at": "2026-08-06T01:36:32.856Z",
-    "finished_at": "2026-08-06T01:36:32.993Z",
-    "span_ms": 137,
+    "started_at": "2026-08-06T02:40:21.076Z",
+    "finished_at": "2026-08-06T02:40:21.218Z",
+    "span_ms": 142,
     "note": "all three legs were read inside this span; a disagreement is only a real disagreement if it survives a span this short — this project's task statuses move while the round runs"
   },
   "legs": {
     "rail_badge": {
-      "done": 55,
-      "total": 66,
+      "done": 57,
+      "total": 68,
       "source": "GET http://127.0.0.1:7798/api/chat",
       "at": [
-        "2026-08-06T01:36:32.860Z",
-        "2026-08-06T01:36:32.992Z"
+        "2026-08-06T02:40:21.081Z",
+        "2026-08-06T02:40:21.217Z"
       ]
     },
     "panel_bar": {
-      "done": 55,
-      "total": 66,
+      "done": 57,
+      "total": 68,
       "source": "[data-plan-kanban][data-plan-progress] in the rendered DOM",
-      "rendered": "55/66",
-      "rail_rendered": "55/66",
+      "rendered": "57/68",
+      "rail_rendered": "57/68",
       "at": [
-        "2026-08-06T01:36:32.856Z",
-        "2026-08-06T01:36:32.860Z"
+        "2026-08-06T02:40:21.076Z",
+        "2026-08-06T02:40:21.081Z"
       ]
     },
     "ground_truth": {
-      "done": 55,
-      "total": 66,
+      "done": 57,
+      "total": 68,
       "breakdown": {
-        "done": 55,
+        "done": 57,
         "running": 1,
         "pending": 10
       },
       "source": "GET http://127.0.0.1:7700/api/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838 (live, read-only)",
       "at": [
-        "2026-08-06T01:36:32.861Z",
-        "2026-08-06T01:36:32.871Z"
+        "2026-08-06T02:40:21.082Z",
+        "2026-08-06T02:40:21.105Z"
       ]
     },
     "plan_endpoint": {
-      "done": 55,
-      "total": 66,
+      "done": 57,
+      "total": 68,
       "breakdown": {
-        "done": 55,
+        "done": 57,
         "running": 1,
         "pending": 10
       },
       "source": "GET http://127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan",
       "at": [
-        "2026-08-06T01:36:32.862Z",
-        "2026-08-06T01:36:32.870Z"
+        "2026-08-06T02:40:21.083Z",
+        "2026-08-06T02:40:21.089Z"
       ]
     }
   },
@@ -94,7 +94,7 @@
     },
     {
       "round_base": 700,
-      "progress": "5/7"
+      "progress": "7/9"
     },
     {
       "round_base": 800,
@@ -136,11 +136,11 @@
       "total": 66
     },
     "round_703": {
-      "done": 55,
-      "total": 66
+      "done": 57,
+      "total": 68
     },
-    "delta_done": 4,
-    "delta_total": 0,
+    "delta_done": 6,
+    "delta_total": 2,
     "new_phase_blocks": [],
     "per_phase": [
       {
@@ -188,7 +188,7 @@
       {
         "round_base": 700,
         "then": "1/7",
-        "now": "5/7",
+        "now": "7/9",
         "moved": true
       },
       {
@@ -253,30 +253,30 @@
     {
       "name": "timing",
       "note": {
-        "span_ms": 137,
+        "span_ms": 142,
         "span": [
-          "2026-08-06T01:36:32.856Z",
-          "2026-08-06T01:36:32.993Z"
+          "2026-08-06T02:40:21.076Z",
+          "2026-08-06T02:40:21.218Z"
         ],
         "legs": {
           "panel_dom": [
-            "2026-08-06T01:36:32.856Z",
-            "2026-08-06T01:36:32.860Z"
+            "2026-08-06T02:40:21.076Z",
+            "2026-08-06T02:40:21.081Z"
           ],
           "rail_api": [
-            "2026-08-06T01:36:32.860Z",
-            "2026-08-06T01:36:32.992Z",
-            "132ms"
+            "2026-08-06T02:40:21.081Z",
+            "2026-08-06T02:40:21.217Z",
+            "136ms"
           ],
           "ground_live": [
-            "2026-08-06T01:36:32.861Z",
-            "2026-08-06T01:36:32.871Z",
-            "10ms"
+            "2026-08-06T02:40:21.082Z",
+            "2026-08-06T02:40:21.105Z",
+            "23ms"
           ],
           "plan_api": [
-            "2026-08-06T01:36:32.862Z",
-            "2026-08-06T01:36:32.870Z",
-            "8ms"
+            "2026-08-06T02:40:21.083Z",
+            "2026-08-06T02:40:21.089Z",
+            "6ms"
           ]
         }
       }
@@ -284,25 +284,25 @@
     {
       "name": "leg 1 — rail badge (:7798 SQL)",
       "note": {
-        "done": 55,
-        "total": 66
+        "done": 57,
+        "total": 68
       }
     },
     {
       "name": "leg 2 — panel bar (DOM, planStore)",
       "note": {
-        "done": 55,
-        "total": 66,
-        "rendered": "55/66"
+        "done": 57,
+        "total": 68,
+        "rendered": "57/68"
       }
     },
     {
       "name": "leg 3 — ground truth (:7700 live rows)",
       "note": {
-        "done": 55,
-        "total": 66,
+        "done": 57,
+        "total": 68,
         "breakdown": {
-          "done": 55,
+          "done": 57,
           "running": 1,
           "pending": 10
         }
@@ -311,10 +311,10 @@
     {
       "name": "plan endpoint (leg 2's input)",
       "note": {
-        "done": 55,
-        "total": 66,
+        "done": 57,
+        "total": 68,
         "breakdown": {
-          "done": 55,
+          "done": 57,
           "running": 1,
           "pending": 10
         }
@@ -323,7 +323,7 @@
     {
       "name": "ground truth status breakdown",
       "note": {
-        "done": 55,
+        "done": 57,
         "running": 1,
         "pending": 10
       }
@@ -343,38 +343,38 @@
     {
       "name": "leg2 panel bar == leg1 rail badge",
       "ok": true,
-      "actual": "55/66",
-      "expected": "55/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "leg2 panel bar == leg3 ground truth",
       "ok": true,
-      "actual": "55/66",
-      "expected": "55/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "leg1 rail badge == leg3 ground truth",
       "ok": true,
-      "actual": "55/66",
-      "expected": "55/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "the rendered rail string == the rendered panel string",
       "ok": true,
-      "actual": "55/66",
-      "expected": "55/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "plan endpoint agrees with ground truth",
       "ok": true,
-      "actual": "55/66",
-      "expected": "55/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "task chips on screen == tasks in the plan",
       "ok": true,
-      "actual": 66,
-      "expected": 66
+      "actual": 68,
+      "expected": 68
     },
     {
       "name": "drift vs ground-truth-701.json",
@@ -384,13 +384,13 @@
           "total": 66
         },
         "now": {
-          "done": 55,
-          "total": 66
+          "done": 57,
+          "total": 68
         },
-        "delta_done": 4,
-        "delta_total": 0,
+        "delta_done": 6,
+        "delta_total": 2,
         "phases_moved": [
-          "700: 1/7→5/7"
+          "700: 1/7→7/9"
         ],
         "new_phase_blocks": []
       }
@@ -408,7 +408,7 @@
     {
       "name": "ignored console lines (pre-existing — see lib-703.cjs:watchErrors)",
       "note": [
-        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7809/favicon.ico"
+        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7811/favicon.ico"
       ]
     },
     {

@@ -1,5 +1,5 @@
 {
-  "base": "http://127.0.0.1:7809",
+  "base": "http://127.0.0.1:7811",
   "api": "http://127.0.0.1:7798",
   "results": [
     {
@@ -13,24 +13,24 @@
       "name": "plan endpoint",
       "note": {
         "phases": 16,
-        "tasks": 66,
-        "done": 54
+        "tasks": 68,
+        "done": 57
       }
     },
     {
       "name": "rail endpoint",
       "note": {
-        "done": 54,
-        "total": 66
+        "done": 57,
+        "total": 68
       }
     },
     {
       "name": "rendered",
       "note": {
         "state": "ready",
-        "progress": "54/66",
+        "progress": "57/68",
         "cards": 16,
-        "chips": 66,
+        "chips": 68,
         "docs": 12
       }
     },
@@ -49,8 +49,8 @@
     {
       "name": "task chips == endpoint tasks",
       "ok": true,
-      "actual": 66,
-      "expected": 66
+      "actual": 68,
+      "expected": 68
     },
     {
       "name": "doc links == endpoint docs[]",
@@ -87,20 +87,20 @@
     {
       "name": "panel x/y == plan endpoint",
       "ok": true,
-      "actual": "54/66",
-      "expected": "54/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "panel x/y == rail badge (server-computed)",
       "ok": true,
-      "actual": "54/66",
-      "expected": "54/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "panel x/y == rail badge (as rendered)",
       "ok": true,
-      "actual": "54/66",
-      "expected": "54/66"
+      "actual": "57/68",
+      "expected": "57/68"
     },
     {
       "name": "team zone still ready",
@@ -110,7 +110,7 @@
     },
     {
       "name": "team rows beside the plan zone",
-      "note": 66
+      "note": 69
     },
     {
       "name": "card progress",
@@ -145,7 +145,7 @@
         },
         {
           "base": 700,
-          "progress": "4/7"
+          "progress": "7/9"
         },
         {
           "base": 800,
@@ -246,7 +246,7 @@
     {
       "name": "ignored console lines (pre-existing, see the listener)",
       "note": [
-        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7809/favicon.ico"
+        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7811/favicon.ico"
       ]
     },
     {

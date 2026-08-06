@@ -40,6 +40,7 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
 
@@ -73,7 +74,21 @@ const COOKIE = process.env.FORGE_SESSION_COOKIE ?? "";
  *  8 sub-agents. Round 601B and phase 500 both used it, for the same reason. */
 const CHAT_TEXT = process.env.PHASE600_CHAT ?? "Okay this session is very important";
 
-const OUT_DIR = __dirname;
+/** Where the COMMITTED evidence lives — baselines are always READ from here. */
+const SRC_DIR = __dirname;
+
+/**
+ * Where a rerun WRITES. Round 704 finding #4 was raised against phase 700's
+ * `lib-703.cjs`, but this file has the same defect and phase 600's `nav-walk.cjs`
+ * is one of the scripts a reviewer is told to re-run: writing back into
+ * `docs/plan/artifacts/` means the documented reproduce procedure destroys the
+ * record it is meant to confirm. A rerun now goes to `/tmp/phase600-out`;
+ * `--write` (or `PHASE600_WRITE=1`) re-records in place, deliberately.
+ */
+const WRITE_IN_PLACE = process.argv.includes("--write") || process.env.PHASE600_WRITE === "1";
+const OUT_DIR =
+  process.env.PHASE600_OUT_DIR ?? (WRITE_IN_PLACE ? SRC_DIR : path.join(os.tmpdir(), "phase600-out"));
+if (OUT_DIR !== SRC_DIR) fs.mkdirSync(OUT_DIR, { recursive: true });
 
 /* ── A tiny assertion harness, shared so every JSON has the same shape ────── */
 
@@ -271,6 +286,11 @@ function finish(fileName, payload, failures) {
   const out = path.join(OUT_DIR, fileName);
   fs.writeFileSync(out, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} → ${out}`);
+  if (OUT_DIR !== SRC_DIR) {
+    console.log(`      committed evidence left untouched (${path.join(SRC_DIR, fileName)})`);
+    console.log(`      diff -u "${path.join(SRC_DIR, fileName)}" "${out}"`);
+    console.log(`      re-record in place with:  node ${process.argv[1]} --write`);
+  }
   process.exit(failures === 0 ? 0 : 1);
 }
 
@@ -280,6 +300,7 @@ module.exports = {
   CHAT_TEXT,
   COOKIE,
   OUT_DIR,
+  SRC_DIR,
   api,
   apiRun,
   finish,

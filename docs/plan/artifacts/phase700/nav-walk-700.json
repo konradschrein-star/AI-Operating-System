@@ -1,5 +1,5 @@
 {
-  "base": "http://127.0.0.1:7809",
+  "base": "http://127.0.0.1:7811",
   "api": "http://127.0.0.1:7798",
   "chat": {
     "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
@@ -43,7 +43,7 @@
     },
     {
       "round_base": 700,
-      "progress": "5/7"
+      "progress": "7/9"
     },
     {
       "round_base": 800,
@@ -88,7 +88,7 @@
     },
     {
       "name": "endpoint blocks",
-      "note": "0:1/1 100:5/5 200:6/6 300:13/13 400:6/6 500:10/10 600:9/9 700:5/7 800:0/1 900:0/1 1200:0/1 1300:0/1 1400:0/1 1500:0/1 1600:0/1 1700:0/2"
+      "note": "0:1/1 100:5/5 200:6/6 300:13/13 400:6/6 500:10/10 600:9/9 700:7/9 800:0/1 900:0/1 1200:0/1 1300:0/1 1400:0/1 1500:0/1 1600:0/1 1700:0/2"
     },
     {
       "name": "fixture doc",
@@ -103,10 +103,10 @@
       "name": "on open",
       "note": {
         "plan_state": "ready",
-        "progress": "55/66",
+        "progress": "57/68",
         "cards": 16,
         "docs": 12,
-        "team_rows": 67
+        "team_rows": 69
       }
     },
     {
@@ -143,7 +143,7 @@
         },
         {
           "round_base": 700,
-          "progress": "5/7"
+          "progress": "7/9"
         },
         {
           "round_base": 800,
@@ -209,7 +209,7 @@
         },
         {
           "round_base": 700,
-          "progress": "5/7"
+          "progress": "7/9"
         },
         {
           "round_base": 800,
@@ -424,8 +424,8 @@
     {
       "name": "team row churn across the walk",
       "note": {
-        "before": 67,
-        "after": 67,
+        "before": 69,
+        "after": 69,
         "gained": []
       }
     },
@@ -516,13 +516,13 @@
     {
       "name": "failed requests",
       "note": [
-        "404 http://127.0.0.1:7809/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=zz-no-such-plan-doc-703.md"
+        "404 http://127.0.0.1:7811/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=zz-no-such-plan-doc-703.md"
       ]
     },
     {
       "name": "ignored console lines (pre-existing — see lib-703.cjs:watchErrors)",
       "note": [
-        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7809/favicon.ico"
+        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7811/favicon.ico"
       ]
     },
     {

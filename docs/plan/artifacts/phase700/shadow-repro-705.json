@@ -1,0 +1,103 @@
+{
+  "what": "Round 704 finding #3: hover-700.cjs's shadow gate did not reproduce. Round 705 replaced the bare `attribution_shadow_pct < 40` with a ceiling argued from the re-render storm it must not hide (< 60) plus a bound derived from the poll load each run actually observed. This file is three consecutive runs of the SAME build against the same server, so reproducibility is measured rather than asserted.",
+  "build": "isolated Next build of this worktree, /tmp/phase705-web served on :7811 against the :7798 API harness",
+  "ceiling_pct": 60,
+  "old_threshold_pct": 40,
+  "runs": [
+    {
+      "label": "committed (--write, docs/plan/artifacts/phase700/hover-700.json)",
+      "verdict": "ALL PASS",
+      "checks": 20,
+      "failed_checks": [],
+      "shadow_pct": {
+        "idle": 41.1,
+        "scroll_only": 38.6,
+        "hover": 38.2,
+        "coverage": 43.9
+      },
+      "shadow_budget_pct": {
+        "idle": 51.4,
+        "scroll_only": 52.4,
+        "hover": 46.3,
+        "coverage": 48.6
+      },
+      "commits_unattributed": {
+        "idle": 0,
+        "scroll_only": 0,
+        "hover": 0,
+        "coverage": 0
+      }
+    },
+    {
+      "label": "rerun 2 (PHASE700_OUT_DIR=/tmp/phase705-repro-2)",
+      "verdict": "ALL PASS",
+      "checks": 20,
+      "failed_checks": [],
+      "shadow_pct": {
+        "idle": 39.9,
+        "scroll_only": 38,
+        "hover": 38.9,
+        "coverage": 44
+      },
+      "shadow_budget_pct": {
+        "idle": 50.9,
+        "scroll_only": 52.2,
+        "hover": 46.7,
+        "coverage": 48.6
+      },
+      "commits_unattributed": {
+        "idle": 0,
+        "scroll_only": 0,
+        "hover": 0,
+        "coverage": 0
+      }
+    },
+    {
+      "label": "rerun 3 (PHASE700_OUT_DIR=/tmp/phase705-repro-3)",
+      "verdict": "ALL PASS",
+      "checks": 20,
+      "failed_checks": [],
+      "shadow_pct": {
+        "idle": 41.6,
+        "scroll_only": 38.4,
+        "hover": 37.7,
+        "coverage": 44.4
+      },
+      "shadow_budget_pct": {
+        "idle": 51.3,
+        "scroll_only": 52.2,
+        "hover": 46.8,
+        "coverage": 49.1
+      },
+      "commits_unattributed": {
+        "idle": 0,
+        "scroll_only": 0,
+        "hover": 0,
+        "coverage": 0
+      }
+    }
+  ],
+  "gated_windows_observed": {
+    "n": 9,
+    "min": 37.7,
+    "max": 44.4,
+    "headroom_to_ceiling_pp": 15.6,
+    "would_have_failed_the_old_40_threshold": [
+      41.1,
+      41.6,
+      43.9,
+      44,
+      44.4
+    ]
+  },
+  "round704_reported": {
+    "committed_run_idle_pct": 38.3,
+    "reviewer_reruns_pct": [
+      38.0,
+      29.3,
+      40.8,
+      41.3
+    ],
+    "note": "round 704 reran the protocol and saw 40.8 -> FAIL 15/16, non-zero exit"
+  }
+}

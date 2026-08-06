@@ -1,5 +1,5 @@
 {
-  "base": "http://127.0.0.1:7809",
+  "base": "http://127.0.0.1:7811",
   "viewport": {
     "width": 1440,
     "height": 900
@@ -90,10 +90,10 @@
       "name": "both zones at capture time",
       "note": {
         "plan_state": "ready",
-        "progress": "55/66",
+        "progress": "57/68",
         "cards": 16,
-        "chips": 66,
-        "team_rows": 67
+        "chips": 68,
+        "team_rows": 69
       }
     },
     {
@@ -125,7 +125,7 @@
       "note": [
         "500 (10/10)",
         "600 (9/9)",
-        "700 (5/7)"
+        "700 (7/9)"
       ]
     },
     {
@@ -178,7 +178,7 @@
     {
       "name": "failed requests",
       "note": [
-        "404 http://127.0.0.1:7809/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=zz-no-such-plan-doc-703.md"
+        "404 http://127.0.0.1:7811/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=zz-no-such-plan-doc-703.md"
       ]
     },
     {

@@ -40,6 +40,7 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
 
@@ -82,7 +83,31 @@ const PROJECT_ID =
  *  narrower panel is the harder case, so it is the one measured. */
 const VIEWPORT = { width: 1440, height: 900 };
 
-const OUT_DIR = __dirname;
+/** Where the COMMITTED evidence lives. Baselines are READ from here, always —
+ *  `SRC_DIR` never moves, whatever `OUT_DIR` is doing. */
+const SRC_DIR = __dirname;
+
+/**
+ * Where a rerun WRITES. Round 704 finding #4: this used to be `__dirname` too,
+ * so following README §2 step E — the documented reproduce procedure, aimed at
+ * a reviewer — overwrote the very JSONs the reviewer was in the middle of
+ * reading. The record and the rerun were the same file, and
+ * `git checkout -- docs/plan/artifacts/` was the only way back; round 704 had
+ * to do that three times.
+ *
+ * So a rerun is now NON-DESTRUCTIVE by default: it writes to
+ * `/tmp/phase700-out`, prints the path, and prints the `diff` line that
+ * compares it against the committed copy. The round that PRODUCES the evidence
+ * passes `--write` (or `PHASE700_WRITE=1`) and re-records in place, which is an
+ * explicit act rather than a side effect of reading the docs.
+ *
+ * `PHASE700_OUT_DIR` overrides both, for a reviewer who wants two reruns side
+ * by side.
+ */
+const WRITE_IN_PLACE = process.argv.includes("--write") || process.env.PHASE700_WRITE === "1";
+const OUT_DIR =
+  process.env.PHASE700_OUT_DIR ?? (WRITE_IN_PLACE ? SRC_DIR : path.join(os.tmpdir(), "phase700-out"));
+if (OUT_DIR !== SRC_DIR) fs.mkdirSync(OUT_DIR, { recursive: true });
 
 /* ── A tiny assertion harness, shared so every JSON has the same shape ────── */
 
@@ -243,11 +268,18 @@ async function waitForAttr(page, selector, attr, want, timeout = 30_000) {
     });
 }
 
-/** Write the verdict beside the script and exit with the right code. */
+/** Write the verdict into OUT_DIR and exit with the right code. */
 function finish(fileName, payload, failures) {
   const out = path.join(OUT_DIR, fileName);
   fs.writeFileSync(out, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} → ${out}`);
+  if (OUT_DIR !== SRC_DIR) {
+    /* Say it out loud rather than letting a reviewer wonder why git is clean:
+     * a rerun did NOT touch the committed artifact, and here is how to compare. */
+    console.log(`      committed evidence left untouched (${path.join(SRC_DIR, fileName)})`);
+    console.log(`      diff -u "${path.join(SRC_DIR, fileName)}" "${out}"`);
+    console.log(`      re-record in place with:  node ${process.argv[1]} --write`);
+  }
   process.exit(failures === 0 ? 0 : 1);
 }
 
@@ -259,6 +291,7 @@ module.exports = {
   GROUND,
   OUT_DIR,
   PROJECT_ID,
+  SRC_DIR,
   VIEWPORT,
   api,
   finish,

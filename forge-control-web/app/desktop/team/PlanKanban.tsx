@@ -13,17 +13,26 @@
  * implement).
  *
  * ── The poll budget, stated up front (NFU3) ───────────────────────────────
- * This zone adds the panel's SECOND poll, at 15s. The plan is near-static —
- * a task changes status when a round lands, minutes apart — so 15s is a
- * deliberate choice, not a default: three plan requests per minute buys
- * nothing over four per minute of the team tree, which is the surface that
- * actually moves. With the team zone's 5s poll the panel now costs 2 polls,
- * against the pre-v3 baseline of 2 (`/api/agents` every 4s + `/api/projects/
- * board` every 6s — ChatSurface.tsx's SidePanel comment records what was
- * replaced). Same count, lower rate. Round 703 measures it against the HAR
- * baseline; this comment is the claim it checks, not a substitute for it.
- * `enabled` is gated on `visible`, so a collapsed panel or the Files tab
- * costs zero requests and zero timers.
+ * This zone adds the panel's SECOND poll, at 30s. The plan is near-static —
+ * a task changes status when a round lands, minutes apart — so 30s is a
+ * deliberate choice, not a default: polling it faster buys nothing over the
+ * team tree, which is the surface that actually moves. With the team zone's
+ * 6s poll the panel costs 2 polls = 12 req/min, against the pre-v3 baseline
+ * of 2 polls = 24.8 req/min (`/api/agents` every 4s + `/api/projects/board`
+ * every 6s — ChatSurface.tsx's SidePanel comment records what was replaced).
+ * Same count, less than half the rate. `enabled` is gated on `visible`, so a
+ * collapsed panel or the Files tab costs zero requests and zero timers.
+ *
+ * ROUND 705, why these two numbers and not the ones round 702 shipped. 702
+ * chose 5s/15s, which measured 43-44 req/min for the whole chat surface and
+ * broke a gate this project had already committed: `phase600/nav-walk.cjs`'s
+ * P3 asserts the drilled total stays inside phase 500's recorded 40/min, and
+ * round 704 caught it failing. 6s + 30s puts the surface back on exactly 40
+ * (28 for everything outside the panel + 10 + 2) and the panel's own slot
+ * down from 16 to 12. The ceiling was not amended to fit the build; the build
+ * was moved back under the ceiling. `phase700/network-700.cjs` now asserts
+ * the total, not just the per-endpoint rates — that omission is what let 702
+ * ship over its own gate.
  *
  * ── Hover is CSS, exactly as everywhere else in this directory (NFU2) ─────
  * No pointer-enter handler, no pointer-leave handler, no hover state. The
@@ -62,9 +71,10 @@ import {
   type StatusTokenName,
 } from "./planStore";
 
-/** NFU3: one poll, 15s, paused whenever the zone is not visible. See the
- *  header comment for why this is slower than the team tree's 5s. */
-const PLAN_POLL_MS = 15_000;
+/** NFU3: one poll, 30s, paused whenever the zone is not visible. See the
+ *  header comment for why this is slower than the team tree's 6s, and for why
+ *  round 705 moved it out from 15s. */
+const PLAN_POLL_MS = 30_000;
 
 /** The "no response yet" projections. Module-level singletons so the memos
  *  below return stable identities while loading and nothing re-renders for it.
@@ -346,7 +356,7 @@ export function PlanKanban({ chatId, onOpenDoc, visible }: PlanKanbanProps) {
     // `retry: 2` with exponential backoff (app/Providers.tsx) — on this query
     // that would keep the LAST GOOD PLAN on screen, unmarked, while react-query
     // retried a dead API behind it. One failure, one honest error state, next
-    // poll in 15s.
+    // poll in 30s.
     retry: 0,
   });
 

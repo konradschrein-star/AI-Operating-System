@@ -3,9 +3,20 @@
  * mounted. 14-ui-v3-quality.md schedules this for this phase explicitly.
  *
  * THE CLAIM UNDER TEST, as `PlanKanban.tsx`'s own header comment states it:
- * the v3 panel's slot costs a 5s team poll plus a 15s plan poll = 16 req/min,
+ * the v3 panel's slot costs a 6s team poll plus a 30s plan poll = 12 req/min,
  * against the pre-v3 panel's `/agents` every 4s plus `/projects/board` every
- * 6s = 25 req/min. Same slot, two polls either way, lower rate now.
+ * 6s = 25 req/min. Same slot, two polls either way, less than half the rate.
+ *
+ * ── Round 705: the assertion this script was missing ─────────────────────
+ * Round 704 found that the panel-slot claim above was true while the number
+ * that actually mattered had regressed: the WHOLE-SURFACE total went from
+ * phase 500's recorded 40 req/min to 43-44, breaking
+ * `phase600/nav-walk.cjs:310` (P3, ≤ 40/min). This script printed 43 in a
+ * `note()` beside phase 500's 40 and never compared them, so it reported PASS
+ * over a regression that was visible in its own output. The total is now a
+ * `check()` against phase 500's recorded figure — see the block that computes
+ * `p500Total`. The build was moved back under the ceiling (team 5s → 6s, plan
+ * 15s → 30s); the ceiling was not moved to fit the build.
  *
  * ── A correction to the brief, stated up front ───────────────────────────
  * The brief says "compare against phase 500's recorded baseline HAR". THERE IS
@@ -41,7 +52,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { BASE, OUT_DIR, finish, makeChecker, openChat, resolveChat, withBrowser } =
+const { BASE, OUT_DIR, SRC_DIR, finish, makeChecker, openChat, resolveChat, withBrowser } =
   require("./lib-703.cjs");
 
 const { results, check, note, failed } = makeChecker();
@@ -56,14 +67,17 @@ const ABORT_SSE = process.env.ABORT_SSE !== "0";
 
 const TEAM_ENDPOINT = "/chat/:id/team";
 const PLAN_ENDPOINT = "/chat/:id/plan";
-/** 5s and 15s, with one request of slack each for a window boundary landing
- *  mid-period. 12/min and 4/min are the nominal rates. */
-const TEAM_CAP = 13;
-const PLAN_CAP = 5;
+/** 6s and 30s (round 705), with one request of slack each for a window boundary
+ *  landing mid-period. 10/min and 2/min are the nominal rates. */
+const TEAM_CAP = 11;
+const PLAN_CAP = 3;
 
 const HAR_PATH = path.join(OUT_DIR, "network-700.har");
-const PRE_V3 = path.resolve(OUT_DIR, "../phase400/managers-network-baseline.json");
-const PHASE500 = path.resolve(OUT_DIR, "../phase500/team-network-after.json");
+/* SRC_DIR, not OUT_DIR: these are COMMITTED baselines being read. When a rerun
+ * writes to /tmp (lib-703.cjs's default since round 705), the baselines it
+ * compares against must still come out of the repo. */
+const PRE_V3 = path.resolve(SRC_DIR, "../phase400/managers-network-baseline.json");
+const PHASE500 = path.resolve(SRC_DIR, "../phase500/team-network-after.json");
 
 /** uuid → `:id`, so a per-path count is a per-ENDPOINT count. Copied from
  *  phase400/network-watch.cjs, which every baseline here was summarised with —
@@ -177,8 +191,8 @@ async function main() {
   note("window 3 — Files tab", { total_per_minute: filesTab.total_per_minute, per_minute: filesTab.per_minute });
   note("the two zone polls", { team: teamPerMin, plan: planPerMin, sum: zonePerMin });
 
-  check(`${TEAM_ENDPOINT} <= ${TEAM_CAP}/min (5s poll)`, teamPerMin <= TEAM_CAP, true);
-  check(`${PLAN_ENDPOINT} <= ${PLAN_CAP}/min (15s poll)`, planPerMin <= PLAN_CAP, true);
+  check(`${TEAM_ENDPOINT} <= ${TEAM_CAP}/min (6s poll)`, teamPerMin <= TEAM_CAP, true);
+  check(`${PLAN_ENDPOINT} <= ${PLAN_CAP}/min (30s poll)`, planPerMin <= PLAN_CAP, true);
 
   /* ── The claim: 16/min for the slot, against 25/min pre-v3 ──────────────── */
   const preV3 = loadBaseline(PRE_V3);
@@ -193,12 +207,38 @@ async function main() {
   });
   check("the v3 panel slot costs less than the pre-v3 slot it replaced", zonePerMin < preV3Slot, true);
 
+  /* ── The WHOLE-SURFACE total, asserted — round 704 finding #2 ───────────── */
+  /* This block used to be three `note()`s. That is exactly how round 702 shipped
+   * a 43 req/min surface over a 40 req/min ceiling and still printed PASS: the
+   * per-endpoint caps above were satisfied, the panel-slot comparison below was
+   * satisfied, and the one number that regressed was printed beside phase 500's
+   * and never compared to it. A quantity a protocol prints but never checks is
+   * decoration. So the total is a `check()` now, against phase 500's RECORDED
+   * total read out of its own committed JSON — the same number
+   * `phase600/nav-walk.cjs:310` (P3) gates on, so the two cannot drift apart
+   * silently again. If this ceiling is ever to move, it moves here, in
+   * nav-walk.cjs and in NFU3 together, with sign-off — never by one of them
+   * quietly not looking. */
   const p500 = loadBaseline(PHASE500);
+  check("the phase 500 baseline file is readable", p500.__error ?? null, null);
+  const p500Total = p500.__error ? null : (p500.panel_visible?.total_per_minute ?? null);
+  const p500Team = p500.__error ? null : (p500.panel_visible?.per_minute?.[TEAM_ENDPOINT] ?? null);
   note("phase 500 (one zone, same slot)", {
     file: PHASE500,
-    team_per_minute: p500.__error ? null : p500.panel_visible?.per_minute?.[TEAM_ENDPOINT],
-    total_per_minute: p500.__error ? null : p500.panel_visible?.total_per_minute,
+    team_per_minute: p500Team,
+    total_per_minute: p500Total,
   });
+  check("phase 500 recorded a whole-surface total to compare against", typeof p500Total, "number");
+  note("whole-surface total, this build vs phase 500", {
+    phase700: visible.total_per_minute,
+    phase500_recorded: p500Total,
+    delta: p500Total === null ? null : +(visible.total_per_minute - p500Total).toFixed(2),
+  });
+  check(
+    `whole-surface total <= phase 500's recorded total (${p500Total}/min) — same ceiling as nav-walk.cjs P3`,
+    p500Total !== null && visible.total_per_minute <= p500Total,
+    true,
+  );
 
   /* ── The two silence proofs ─────────────────────────────────────────────── */
   const zoneReqs = (w) =>

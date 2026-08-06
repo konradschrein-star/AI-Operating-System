@@ -1,0 +1,124 @@
+=== gates-705.txt — round 705 (fix cycle 1 for round 704) ===
+generated 2026-08-06T02:47:30Z
+
+--- 1) npx tsc --noEmit — forge-control
+exit=0
+
+--- 2) npx tsc --noEmit — forge-control-web
+exit=0
+
+--- 3) NODE_ENV=production next build — forge-control-web
+built from an rsync'd identical-source copy at /tmp/rev705-build, NOT in place:
+  pids 1882801 / 1882827 are live next-server processes with cwd in forge-control-web/.
+  Same command, same sources — round 704 used the same method for the same reason.
+┌ ƒ /                                    7.1 kB          320 kB
+├ ○ /_not-found                          985 B           109 kB
+├ ƒ /api/auth/[...nextauth]              147 B           108 kB
+├ ƒ /api/events/[id]                     147 B           108 kB
+├ ○ /canvas                              513 B           171 kB
+├ ○ /desktop                             207 B           313 kB
+├ ○ /settings                            3.11 kB         115 kB
+├ ○ /settings/secrets                    2.35 kB         118 kB
+└ ƒ /signin                              147 B           108 kB
++ First Load JS shared by all            108 kB
+  ├ chunks/351-a0520a86c38c3f19.js       50.8 kB
+  ├ chunks/dc458b9b-1e78796da404a5ac.js  53 kB
+  └ other shared chunks (total)          4.32 kB
+
+
+ƒ Middleware                             83.2 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+exit=0
+
+--- 4) scripts/checks/dollar-sweep.sh
+── 2. REVIEWER'S LITERAL §6 COMMAND ── grep -rniE "usd|spend" forge-control-web/app --include="*.tsx" -l
+
+ALLOWLISTED  forge-control-web/app/Providers.tsx
+ALLOWLISTED  forge-control-web/app/MobileApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/SkillsSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ProjectsSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/MoneySurface.tsx
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+exit=0
+
+--- 5) forbidden-file diff over ec2c799..HEAD (plus the working tree)
+committed grep exit=1 (1 = no forbidden file)
+worktree grep exit=1 (1 = no forbidden file)
+
+--- 6) token purity over app/desktop/team/ and the files round 705 touched
+team/ grep exit=1 (1 = clean)
+added-lines grep exit=1 (1 = round 705 added no colour)
+
+--- 7) forge-control diff (must be EMPTY — engine lane owns it this cycle)
+(both empty above = untouched)
+
+--- 8) unit checks (no browser, no server)
+PASS  a node with 3 deps yields 3 edges, one per dep
+PASS  no deps → no edges
+PASS  empty plan → no edges
+PASS  empty phases[] → no edges
+
+ALL PASS — U27 plan store
+check-plan-store exit=0
+PASS  12_345 → '12.3k'
+PASS  204_700 → '205k'
+PASS  1_200_000 → '1.20M'
+PASS  12_300_000 → '12.3M'
+
+ALL PASS — team row model
+check-team-rows exit=0
+
+--- 9) protocol verdicts, round 705 (all re-recorded against the 6s/30s build)
+  count-agreement       10/10  PASS
+  nav-walk-700          33/33  PASS
+  hover-700             20/20  PASS
+  network-700           13/13  PASS
+  capture-700           12/12  PASS
+  kanban-702            17/17  PASS
+  nav-walk-p3-705       38/38  PASS
+  shadow-repro-705     3 runs: ALL PASS (20 checks), ALL PASS (20 checks), ALL PASS (20 checks)
+  shadow gated windows: {'n': 9, 'min': 37.7, 'max': 44.4, 'headroom_to_ceiling_pp': 15.6, 'would_have_failed_the_old_40_threshold': [41.1, 41.6, 43.9, 44, 44.4]}
+
+--- 10) ROUND 704 FINDING #4: the documented reproduce steps no longer dirty git
+Running FOUR protocols exactly as README §2 step E prints them — no --write:
+  $ docs/plan/artifacts/phase700/count-agreement.cjs
+    ->       re-record in place with:  node /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase700/count-agreement.cjs --write
+  $ docs/plan/artifacts/phase700/kanban-702.cjs
+    ->       re-record in place with:  node /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase700/kanban-702.cjs --write
+  $ docs/plan/artifacts/phase600/nav-walk.cjs
+    ->       re-record in place with:  node /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase600/nav-walk.cjs --write
+  $ docs/plan/artifacts/phase500/team-frozen.cjs
+    -> TEAM-FROZEN: PASS
+
+  $ git status --porcelain  (identical before and after the four runs)
+    before md5: 328724a142e7e56c109060181c1c8742  -
+    after  md5: 328724a142e7e56c109060181c1c8742  -
+    verdict: PASS — no committed artifact was touched
+
+--- 11) scripts/checks/api-diff.sh --control  — STILL RED, unchanged and unchangeable by this round
+exit=1. The one FAIL block, verbatim:
+FAIL  agents — declared additive field(s) NOT PRESENT in the current capture:
+        ? agents.[].agent_kind
+        ? agents.[].cron_name
+        ? agents.[].project_id
+        ? agents.[].role
+        ? agents.[].settled
+        ? agents.[].settled_at
+        ? agents.[].subagents.[].description
+        ? agents.[].subagents.[].ended_at
+        (the field is unreachable through this fixture — the gate proves nothing about it)
+
+Same failure, same fields, same diagnosis as round 703 §5(a) and round 704.
+Round 705 touched NO forge-control file — see gate 7 above, both diffs empty —
+so it cannot have moved the read-side API. The script says of every one of
+those fields: 'the field is unreachable through this fixture'. The /api/agents
+baseline in docs/plan/artifacts/phase300/baseline/ needs re-pinning against a
+fixture that contains a project worker; that is a read-side-API decision and
+belongs to a briefed round, not to a UI fix cycle.
