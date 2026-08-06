@@ -1,0 +1,325 @@
+{
+  "base": "http://127.0.0.1:7786",
+  "api": "http://127.0.0.1:7798",
+  "chat": "Okay this session is very important",
+  "lineage": {
+    "worker": "58096061-803e-43c5-827a-e618d2a9c33e",
+    "sub": "toolu_01KAFV63fapZ6DXAAU2adfww"
+  },
+  "expanded_row_index": 8,
+  "cases": [
+    {
+      "case": "manager",
+      "theme": "dark",
+      "file": "phase600-604-manager-dark.png",
+      "painted": {
+        "topbar": "rgb(0, 0, 0)",
+        "rail": "rgb(0, 0, 0)",
+        "centre": "rgb(11, 11, 12)",
+        "panel": "rgb(0, 0, 0)"
+      }
+    },
+    {
+      "case": "manager",
+      "theme": "light",
+      "file": "phase600-604-manager-light.png",
+      "painted": {
+        "topbar": "rgb(247, 247, 245)",
+        "rail": "rgb(247, 247, 245)",
+        "centre": "rgb(255, 255, 255)",
+        "panel": "rgb(247, 247, 245)"
+      }
+    },
+    {
+      "case": "worker",
+      "theme": "dark",
+      "file": "phase600-604-worker-dark.png",
+      "painted": {
+        "topbar": "rgb(0, 0, 0)",
+        "rail": "rgb(0, 0, 0)",
+        "centre": "rgb(11, 11, 12)",
+        "panel": "rgb(0, 0, 0)"
+      }
+    },
+    {
+      "case": "worker",
+      "theme": "light",
+      "file": "phase600-604-worker-light.png",
+      "painted": {
+        "topbar": "rgb(247, 247, 245)",
+        "rail": "rgb(247, 247, 245)",
+        "centre": "rgb(255, 255, 255)",
+        "panel": "rgb(247, 247, 245)"
+      }
+    },
+    {
+      "case": "expanded",
+      "theme": "dark",
+      "file": "phase600-604-expanded-dark.png",
+      "painted": {
+        "topbar": "rgb(0, 0, 0)",
+        "rail": "rgb(0, 0, 0)",
+        "centre": "rgb(11, 11, 12)",
+        "panel": "rgb(0, 0, 0)"
+      }
+    },
+    {
+      "case": "expanded",
+      "theme": "light",
+      "file": "phase600-604-expanded-light.png",
+      "painted": {
+        "topbar": "rgb(247, 247, 245)",
+        "rail": "rgb(247, 247, 245)",
+        "centre": "rgb(255, 255, 255)",
+        "panel": "rgb(247, 247, 245)"
+      }
+    },
+    {
+      "case": "subagent",
+      "theme": "dark",
+      "file": "phase600-604-subagent-dark.png",
+      "painted": {
+        "topbar": "rgb(0, 0, 0)",
+        "rail": "rgb(0, 0, 0)",
+        "centre": "rgb(0, 0, 0)",
+        "panel": "rgb(0, 0, 0)"
+      }
+    },
+    {
+      "case": "subagent",
+      "theme": "light",
+      "file": "phase600-604-subagent-light.png",
+      "painted": {
+        "topbar": "rgb(247, 247, 245)",
+        "rail": "rgb(247, 247, 245)",
+        "centre": "rgb(247, 247, 245)",
+        "panel": "rgb(247, 247, 245)"
+      }
+    },
+    {
+      "case": "degraded",
+      "theme": "dark",
+      "file": "phase600-604-degraded-dark.png",
+      "painted": {
+        "topbar": "rgb(0, 0, 0)",
+        "rail": "rgb(0, 0, 0)",
+        "centre": "rgb(0, 0, 0)",
+        "panel": "rgb(0, 0, 0)"
+      }
+    },
+    {
+      "case": "degraded",
+      "theme": "light",
+      "file": "phase600-604-degraded-light.png",
+      "painted": {
+        "topbar": "rgb(247, 247, 245)",
+        "rail": "rgb(247, 247, 245)",
+        "centre": "rgb(247, 247, 245)",
+        "panel": "rgb(247, 247, 245)"
+      }
+    },
+    {
+      "case": "plandoc",
+      "theme": "dark",
+      "file": "phase600-plandoc-dark.png",
+      "render": "offline-static"
+    },
+    {
+      "case": "plandoc",
+      "theme": "light",
+      "file": "phase600-plandoc-light.png",
+      "render": "offline-static"
+    }
+  ],
+  "render_note": "every case is a real chat rendered by the app EXCEPT plandoc, which no navigation can reach this round — see capture-plandoc.ts",
+  "failures": 0,
+  "results": [
+    {
+      "name": "manager: the chat is open with its team beside it",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "manager: no drilled view",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "manager: topbar repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "manager: rail repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "manager: centre repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "manager: panel repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "lineage photographed",
+      "note": {
+        "worker": "58096061-803e-43c5-827a-e618d2a9c33e",
+        "sub": "toolu_01KAFV63fapZ6DXAAU2adfww"
+      }
+    },
+    {
+      "name": "worker: the orientation strip is mounted",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "worker: the story-so-far digest is mounted",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "worker: the transcript renders in summary mode",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "worker: topbar repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "worker: rail repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "worker: centre repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "worker: panel repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "expanded: the row opened to ARGS + RESULT",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "expanded: topbar repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "expanded: rail repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "expanded: centre repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "expanded: panel repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "subagent: the view is at depth 2 on the clicked sub-agent",
+      "ok": true,
+      "actual": "toolu_01KAFV63fapZ6DXAAU2adfww",
+      "expected": "toolu_01KAFV63fapZ6DXAAU2adfww"
+    },
+    {
+      "name": "subagent: it is labelled a sub-agent, not a session",
+      "ok": true,
+      "actual": "sub-agent",
+      "expected": "sub-agent"
+    },
+    {
+      "name": "subagent: topbar repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "subagent: rail repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "subagent: centre repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "subagent: panel repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "degraded: collapsing the panel degrades the strip, with a reason",
+      "ok": true,
+      "actual": "team-not-polling",
+      "expected": "team-not-polling"
+    },
+    {
+      "name": "degraded: topbar repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "degraded: rail repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "degraded: centre repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "degraded: panel repaints between themes and light is lighter",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "twelve PNGs, six cases x two themes",
+      "ok": true,
+      "actual": 12,
+      "expected": 12
+    }
+  ]
+}

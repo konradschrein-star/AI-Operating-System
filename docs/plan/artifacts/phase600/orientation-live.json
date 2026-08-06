@@ -1,0 +1,555 @@
+{
+  "base": "http://127.0.0.1:7786",
+  "api": "http://127.0.0.1:7798",
+  "chat": "Okay this session is very important",
+  "navigation": "injected-team-row",
+  "injected_node": {
+    "id": "e07bc570-270c-40fa-b2f1-9c0538213b93",
+    "kind": "worker",
+    "role": "planner",
+    "model": "claude-opus-5",
+    "status": "running",
+    "tokens": {
+      "input": 4,
+      "output": 8,
+      "cache_read": 128951,
+      "cache_creation": 32519,
+      "total": 161482
+    },
+    "working_ms": 331526,
+    "working_ms_source": null,
+    "started_at": "2026-08-05 23:33:39.686354+00",
+    "settled": false,
+    "description": "engine-v2-research-lane · CP1: control-plane verbs core + delivery handshake",
+    "parent_id": null,
+    "subagents": [],
+    "task": null
+  },
+  "target": {
+    "id": "e07bc570-270c-40fa-b2f1-9c0538213b93",
+    "role": "planner",
+    "model": "claude-opus-5",
+    "title": "engine-v2-research-lane · CP1: control-plane verbs core + delivery handshake",
+    "status_at_discovery": "running"
+  },
+  "gap_ms": 25007,
+  "reading_changed": false,
+  "samples": [
+    {
+      "n": 1,
+      "dom": {
+        "verb": "currently:",
+        "kind": "assistant_text",
+        "line": "writing Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "ts": "2026-08-05T23:38:10.486Z",
+        "degraded": "no-task",
+        "role": "planner",
+        "model": "opus-5"
+      },
+      "matched_api_sample": {
+        "at": 1785973151277,
+        "status": "running",
+        "activity": {
+          "kind": "assistant_text",
+          "tool": null,
+          "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+          "parent_tool_use_id": null,
+          "model": null,
+          "ts": "2026-08-05T23:38:10.486Z"
+        }
+      },
+      "activity_age_at_read_ms": 14077,
+      "shows_the_newest_api_activity": true,
+      "newest_api_activity_at_read": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      },
+      "expected_from_matched": "writing Corpus and code scouted. Creating the CP1 task fan-out now.",
+      "api_detail_at_dom_read": {
+        "status": "running",
+        "activity": {
+          "kind": "assistant_text",
+          "tool": null,
+          "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+          "ts": "2026-08-05T23:38:10.486Z"
+        },
+        "expected_line": "writing Corpus and code scouted. Creating the CP1 task fan-out now."
+      }
+    },
+    {
+      "n": 2,
+      "dom": {
+        "verb": "currently:",
+        "kind": "assistant_text",
+        "line": "writing Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "ts": "2026-08-05T23:38:10.486Z",
+        "degraded": "no-task",
+        "role": "planner",
+        "model": "opus-5"
+      },
+      "matched_api_sample": {
+        "at": 1785973151277,
+        "status": "running",
+        "activity": {
+          "kind": "assistant_text",
+          "tool": null,
+          "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+          "parent_tool_use_id": null,
+          "model": null,
+          "ts": "2026-08-05T23:38:10.486Z"
+        }
+      },
+      "activity_age_at_read_ms": 39084,
+      "shows_the_newest_api_activity": true,
+      "newest_api_activity_at_read": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      },
+      "expected_from_matched": "writing Corpus and code scouted. Creating the CP1 task fan-out now.",
+      "api_detail_at_dom_read": {
+        "status": "running",
+        "activity": {
+          "kind": "assistant_text",
+          "tool": null,
+          "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+          "ts": "2026-08-05T23:38:10.486Z"
+        },
+        "expected_line": "writing Corpus and code scouted. Creating the CP1 task fan-out now."
+      }
+    }
+  ],
+  "api_sample_count": 26,
+  "api_samples": [
+    {
+      "at": 1785973151277,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973152783,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973154290,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973155798,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973157304,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973158812,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973160325,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973161841,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973163351,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973164857,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973166363,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973167869,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973169376,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973170882,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973172387,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973173895,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973175402,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973176909,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973178420,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973179929,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973181437,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973182942,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973184448,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973185954,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973187458,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973188964,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    },
+    {
+      "at": 1785973190479,
+      "status": "running",
+      "activity": {
+        "kind": "assistant_text",
+        "tool": null,
+        "text": "Corpus and code scouted. Creating the CP1 task fan-out now.",
+        "parent_tool_use_id": null,
+        "model": null,
+        "ts": "2026-08-05T23:38:10.486Z"
+      }
+    }
+  ],
+  "failures": 0,
+  "results": [
+    {
+      "name": "the live worker is on screen as a team row",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "the two samples are >=20s apart",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "actual gap (ms)",
+      "note": 25007
+    },
+    {
+      "name": "S1 the strip shows an activity at all (not \"not recorded\")",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "S1 the verb matches the run's liveness at that moment",
+      "ok": true,
+      "actual": "currently:",
+      "expected": "currently:"
+    },
+    {
+      "name": "S1 the reading is an activity the API actually reported (matched by ts)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "S1 the rendered line == that activity, re-derived here",
+      "ok": true,
+      "actual": "writing Corpus and code scouted. Creating the CP1 task fan-out now.",
+      "expected": "writing Corpus and code scouted. Creating the CP1 task fan-out now."
+    },
+    {
+      "name": "S1 the activity kind on screen == the API's kind",
+      "ok": true,
+      "actual": "assistant_text",
+      "expected": "assistant_text"
+    },
+    {
+      "name": "S1 the strip is NOT stale — the newest activity the API had, or one 3s poll behind",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "S2 the strip shows an activity at all (not \"not recorded\")",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "S2 the verb matches the run's liveness at that moment",
+      "ok": true,
+      "actual": "currently:",
+      "expected": "currently:"
+    },
+    {
+      "name": "S2 the reading is an activity the API actually reported (matched by ts)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "S2 the rendered line == that activity, re-derived here",
+      "ok": true,
+      "actual": "writing Corpus and code scouted. Creating the CP1 task fan-out now.",
+      "expected": "writing Corpus and code scouted. Creating the CP1 task fan-out now."
+    },
+    {
+      "name": "S2 the activity kind on screen == the API's kind",
+      "ok": true,
+      "actual": "assistant_text",
+      "expected": "assistant_text"
+    },
+    {
+      "name": "S2 the strip is NOT stale — the newest activity the API had, or one 3s poll behind",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the reading moved between the two samples",
+      "note": false
+    },
+    {
+      "name": "degraded (the injected node carries no task — see the header)",
+      "note": "no-task"
+    }
+  ]
+}

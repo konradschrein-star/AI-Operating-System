@@ -1,0 +1,363 @@
+==============================================================================
+ gates-604.txt — round 604 universal gates, verbatim
+ 2026-08-06T00:11:29Z  worktree /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838  branch project/8ea0cc08
+ phase base: ec2c799   HEAD: bb10abb
+==============================================================================
+
+### 1. npx tsc --noEmit — forge-control
+exit=0
+
+### 2. npx tsc --noEmit — forge-control-web
+exit=0
+
+### 3. NODE_ENV=production pnpm build — forge-control-web
+    (this re-bakes the :7700 proxy target into forge-control-web/.next —
+     which is why every browser protocol above ran BEFORE this point,
+     against the isolated /tmp/phase600-web build pointed at :7798)
+
+> forge-control-web@0.1.0 build /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/forge-control-web
+> next build
+
+   ▲ Next.js 15.1.3
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+   Collecting page data ...
+   Generating static pages (0/9) ...
+   Generating static pages (2/9) 
+   Generating static pages (4/9) 
+   Generating static pages (6/9) 
+ ✓ Generating static pages (9/9)
+   Finalizing page optimization ...
+   Collecting build traces ...
+
+Route (app)                              Size     First Load JS
+┌ ƒ /                                    7.1 kB          317 kB
+├ ○ /_not-found                          987 B           109 kB
+├ ƒ /api/auth/[...nextauth]              149 B           108 kB
+├ ƒ /api/events/[id]                     149 B           108 kB
+├ ○ /canvas                              519 B           171 kB
+├ ○ /desktop                             205 B           310 kB
+├ ○ /settings                            3.12 kB         115 kB
+├ ○ /settings/secrets                    2.35 kB         118 kB
+└ ƒ /signin                              149 B           108 kB
++ First Load JS shared by all            108 kB
+  ├ chunks/2459-a3dce4e15287c848.js      50.7 kB
+  ├ chunks/91de8857-abcaef63123b6515.js  53 kB
+  └ other shared chunks (total)          4.32 kB
+
+
+ƒ Middleware                             83.2 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+exit=0
+
+### 4. bash scripts/checks/dollar-sweep.sh
+── 1. PRIMARY GATE ── grep -rniE '\$[0-9]|€|_usd|\busd\b|\bspen[dt]|toFixed\(2\)' forge-control-web/app --include='*.tsx' --include='*.ts'
+
+ALLOW   forge-control-web/app/Providers.tsx:10
+         * query in the app — chat list, file tree, memory, skills, projects, spend —
+        → react-query key list in a comment enumerating cached domains ("chat list, file tree, memory, skills, projects, spend"); not a rendered value.
+ALLOW   forge-control-web/app/api.ts:169
+          spend: { value: string; cap: string };
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:176
+         * Spend (Money surface) — mirrors routes/spend.ts GET /summary
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:178
+        export interface SpendWindow {
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:179
+          /** Real spend — every provider except claude-code (flat-rate subscription). */
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:188
+        export interface SpendArea {
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:196
+        export interface SpendDay {
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:202
+        export interface SpendSummaryResponse {
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:203
+          today: SpendWindow;
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:204
+          d7: SpendWindow;
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:205
+          d30: SpendWindow;
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:206
+          by_area: SpendArea[];
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:207
+          daily: SpendDay[];
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:211
+          getJson<SpendSummaryResponse>("/spend/summary");
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:225
+            `/spend/limit-hits?days=${days}`,
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:602
+          budget_usd: string;
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:603
+          spent_usd: string;
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:698
+          budget_usd?: number;
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/api.ts:1092
+          spend: { value: "€0.00", cap: "of €50 cap" },
+        → Spend* interfaces + fetchSpendSummary feed the dedicated MONEY destination (MoneySurface.tsx); RunSummary.budget_usd/spent_usd and TodayResponse.spend (incl. emptyToday's "€0.00" literal) are wire-compat leftovers no surface renders after this round (MobileApp's SPEND TODAY card is gone) — kept per NFU4 additive-API, not owned by this task's file list.
+ALLOW   forge-control-web/app/desktop/MemorySurface.tsx:598
+                                {h.score.toFixed(2)}
+        → toFixed(2) here formats a relevance SCORE, not currency.
+ALLOW   forge-control-web/app/desktop/team/teamApi.ts:195
+          return `${M < 10 ? M.toFixed(2) : M.toFixed(1)}M`;
+        → toFixed(2) inside fmtTokens()'s "M" suffix — the same token-magnitude formatter as AgentActivity.tsx's humanTokens(), ported in round 501a (teamApi.ts:154-156 says so). Same false positive, same reason.
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:4
+         * Money surface (v2.3) — the AI spend cockpit.
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:8
+         * trend drifting up. Data = spend_log via GET /api/spend/summary; every
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:19
+          type SpendSummaryResponse,
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:23
+        /** €15/day is the watchdog's alert line — mirror it here so the surface
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:28
+          `€${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:52
+            queryKey: ["spend-summary"],
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:57
+            queryKey: ["spend-limit-hits"],
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:63
+          const data: SpendSummaryResponse = q.data ?? {
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:75
+                  Money · AI Spend
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:78
+                  spend_log · gateway estimates, not invoices
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:87
+                the totals below are real spend only — images, TTS, video, everything
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:92
+                {eur(DAILY_ALERT_EUR)}/day of real spend.
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:139
+                    DAILY SPEND · 30 DAYS
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:314
+         *  the €15 alert line is drawn as a dashed rule when any day gets close. */
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:318
+          daily: SpendSummaryResponse["daily"];
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:334
+                no spend recorded in the last 30 days.
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/MoneySurface.tsx:414
+          areas: SpendSummaryResponse["by_area"];
+        → The dedicated MONEY destination — renders € on purpose. It reports real metered provider spend OUTSIDE the flat-rate Claude Code subscription (already labels claude-code cost as notional), a business number, not the agent-cost noise Konrad rejected. Phase 400 deliberately leaves it alone. OPEN QUESTION for Konrad: kill the MONEY destination too?
+ALLOW   forge-control-web/app/desktop/live/AgentActivity.tsx:97
+          return `${M < 10 ? M.toFixed(2) : M.toFixed(1)}M`;
+        → toFixed(2) inside humanTokens()'s "M" suffix (e.g. "1.23M" tokens) — a token-magnitude formatter, not currency; a false positive of the naive toFixed(2) pattern.
+ALLOW   forge-control-web/app/desktop/live/agentsApi.ts:13
+          cost_usd?: number;
+        → Wire types (spent_usd, cost_usd, spent_usd_last_hour) — types stay (NFU4 additive API); AgentActivity.tsx no longer renders any of them after this round.
+ALLOW   forge-control-web/app/desktop/live/agentsApi.ts:28
+         *  the backend has less to hand out for them (no run UUID, no spend row, no
+        → Wire types (spent_usd, cost_usd, spent_usd_last_hour) — types stay (NFU4 additive API); AgentActivity.tsx no longer renders any of them after this round.
+ALLOW   forge-control-web/app/desktop/live/agentsApi.ts:86
+          spent_usd: number;
+        → Wire types (spent_usd, cost_usd, spent_usd_last_hour) — types stay (NFU4 additive API); AgentActivity.tsx no longer renders any of them after this round.
+ALLOW   forge-control-web/app/desktop/live/agentsApi.ts:119
+            spent_usd_last_hour: number;
+        → Wire types (spent_usd, cost_usd, spent_usd_last_hour) — types stay (NFU4 additive API); AgentActivity.tsx no longer renders any of them after this round.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:68
+          /** GET /api/autonomy — guardrail rules (spend caps, kill switches). */
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:242
+            help: "list guardrails (spend caps, kill switches) and their current values",
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:259
+            help: "change a spend-cap guardrail · /cap spend.per_run_cap 75",
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:263
+                ctx.sys('usage: /cap <rule_id> <euros> — e.g. "/cap spend.per_run_cap 75". Run /rules to see rule ids.');
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+
+primary gate: 47 hit(s), all allowlisted.
+
+── 2. REVIEWER'S LITERAL §6 COMMAND ── grep -rniE "usd|spend" forge-control-web/app --include="*.tsx" -l
+
+ALLOWLISTED  forge-control-web/app/Providers.tsx
+ALLOWLISTED  forge-control-web/app/MobileApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/SkillsSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ProjectsSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/MoneySurface.tsx
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+exit=0
+
+### 5. every round-601/602/603 check script under scripts/checks/
+  check-nav-stack                ALL PASS — nav stack (U20/U21)
+                           exit=0
+  check-thread-mapping           ALL PASS — scoped thread mapping (U23)
+                           exit=0
+  check-subagent-slice           ALL PASS — sub-agent slicing
+                           exit=0
+  check-tool-summary             ALL PASS — tool summary table
+                           exit=0
+  check-story-digest             ALL PASS — story-so-far digest
+                           exit=0
+  check-orientation              ALL PASS — orientation strip derivation
+                           exit=0
+  check-team-rows                ALL PASS — team row model
+                           exit=0
+  check-team-confirm             ALL PASS — team confirm machine
+                           exit=0
+  check-duration                 ALL PASS — duration helpers
+                           exit=0
+  check-classify                 ALL PASS — agent-kind classifier + panel kind grammar
+                           exit=0
+  check-working-time             ALL PASS — working-time (U5)
+                           exit=0
+  check-working-sql-agreement    ALL PASS — JS/SQL working-time agreement (U5)
+                           exit=0
+  check-project-metadata         ALL PASS — project metadata builder
+                           exit=0
+
+### 6. token purity over EVERY file round 604 touched
+    (round 604 wrote no component; the files are protocols, an oracle, a
+     capture harness and this README)
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(' docs/plan/artifacts/phase600/{*.cjs,*.ts,README.md}
+docs/plan/artifacts/phase600/capture-600.cjs:64:/** Mean channel value of an `rgb(...)`/`rgba(...)` string, or null. */
+    → 1 hit, RESOLVED: capture-600.cjs:64 is a JSDoc line above luma(),
+      which PARSES a computed rgb() string read back out of the browser.
+      It defines no colour. Round 604 declares no colour of any notation.
+
+### 7. forbidden-file grep over ec2c799..HEAD
+$ git diff --name-only ec2c799..HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|FileExplorerPanel|VaultFileList|routes/files'
+    → empty (grep exit 1 = no match). Files changed since the phase base:
+      docs/plan/artifacts/phase600/README-601b.md
+      docs/plan/artifacts/phase600/README-603.md
+      docs/plan/artifacts/phase600/capture-nav.cjs
+      docs/plan/artifacts/phase600/capture-nav.json
+      docs/plan/artifacts/phase600/capture-orientation.html
+      docs/plan/artifacts/phase600/capture-orientation.ts
+      docs/plan/artifacts/phase600/digest-gap.md
+      docs/plan/artifacts/phase600/fixtures/run-3853c154-chat.json
+      docs/plan/artifacts/phase600/gates-601b.txt
+      docs/plan/artifacts/phase600/nav-stack-e2e.cjs
+      docs/plan/artifacts/phase600/nav-stack-e2e.json
+      docs/plan/artifacts/phase600/phase600-backhover-dark.png
+      docs/plan/artifacts/phase600/phase600-backhover-light.png
+      docs/plan/artifacts/phase600/phase600-depth1-dark.png
+      docs/plan/artifacts/phase600/phase600-depth1-light.png
+      docs/plan/artifacts/phase600/phase600-depth2-dark.png
+      docs/plan/artifacts/phase600/phase600-depth2-light.png
+      docs/plan/artifacts/phase600/phase600-digest-dark.png
+      docs/plan/artifacts/phase600/phase600-digest-light.png
+      docs/plan/artifacts/phase600/phase600-manager-dark.png
+      docs/plan/artifacts/phase600/phase600-manager-light.png
+      docs/plan/artifacts/phase600/phase600-orientation-dark.png
+      docs/plan/artifacts/phase600/phase600-orientation-light.png
+      forge-control-web/app/desktop/ChatSurface.tsx
+      forge-control-web/app/desktop/chat/AgentChatView.tsx
+      forge-control-web/app/desktop/chat/AssistantThread.tsx
+      forge-control-web/app/desktop/chat/OrientationStrip.tsx
+      forge-control-web/app/desktop/chat/PlanDocView.tsx
+      forge-control-web/app/desktop/chat/StorySoFar.tsx
+      forge-control-web/app/desktop/chat/nav-stack.ts
+      forge-control-web/app/desktop/chat/story-digest.ts
+      forge-control-web/app/desktop/chat/subagent-slice.ts
+      forge-control-web/app/desktop/chat/thread-mapping.ts
+      forge-control-web/app/desktop/chat/tool-summary.ts
+      forge-control-web/app/desktop/team/ChatTeamPanel.tsx
+      forge-control-web/app/desktop/team/TeamRow.tsx
+      forge-control-web/app/globals.css
+      scripts/checks/check-nav-stack.ts
+      scripts/checks/check-orientation.ts
+      scripts/checks/check-story-digest.ts
+      scripts/checks/check-subagent-slice.ts
+      scripts/checks/check-thread-mapping.ts
+      scripts/checks/check-tool-summary.ts
+
+### 8. NFU8 — playwright is a dependency of neither repo
+$ git diff ec2c799..HEAD -- '*/package.json'
+    → empty: no package.json changed in this phase at all.
+$ grep -n playwright forge-control/package.json forge-control-web/package.json
+    → empty (no match in either manifest).
+$ grep -rn "require(.*playwright" docs/plan/artifacts/phase600/*.cjs | head -3
+docs/plan/artifacts/phase600/lib-604.cjs:37: * NFU8: playwright is loaded by ABSOLUTE PATH from /opt/hermes-workspace and is
+docs/plan/artifacts/phase600/lib-604.cjs:44:const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
+docs/plan/artifacts/phase600/lib-604.cjs:48:  const cache = process.env.PLAYWRIGHT_BROWSERS_PATH ?? "/root/.cache/ms-playwright";
+docs/plan/artifacts/phase600/capture-plandoc.ts:49:const { chromium } = requireFromWeb("/opt/hermes-workspace/node_modules/playwright") as {
+    → loaded by ABSOLUTE PATH from /opt/hermes-workspace/node_modules.
+
+### 9. ROUND 604 CHANGED NO APPLICATION CODE
+$ git status --porcelain
+?? docs/plan/artifacts/phase600/README.md
+?? docs/plan/artifacts/phase600/capture-600.cjs
+?? docs/plan/artifacts/phase600/capture-600.json
+?? docs/plan/artifacts/phase600/capture-plandoc.html
+?? docs/plan/artifacts/phase600/capture-plandoc.ts
+?? docs/plan/artifacts/phase600/digest-honesty.cjs
+?? docs/plan/artifacts/phase600/digest-honesty.json
+?? docs/plan/artifacts/phase600/gates-604.txt
+?? docs/plan/artifacts/phase600/lib-604.cjs
+?? docs/plan/artifacts/phase600/nav-walk.cjs
+?? docs/plan/artifacts/phase600/nav-walk.json
+?? docs/plan/artifacts/phase600/oracle-604.ts
+?? docs/plan/artifacts/phase600/orientation-live.cjs
+?? docs/plan/artifacts/phase600/orientation-live.json
+?? docs/plan/artifacts/phase600/phase600-604-degraded-dark.png
+?? docs/plan/artifacts/phase600/phase600-604-degraded-light.png
+?? docs/plan/artifacts/phase600/phase600-604-expanded-dark.png
+?? docs/plan/artifacts/phase600/phase600-604-expanded-light.png
+?? docs/plan/artifacts/phase600/phase600-604-manager-dark.png
+?? docs/plan/artifacts/phase600/phase600-604-manager-light.png
+?? docs/plan/artifacts/phase600/phase600-604-plandoc-dark.png
+?? docs/plan/artifacts/phase600/phase600-604-plandoc-light.png
+?? docs/plan/artifacts/phase600/phase600-604-subagent-dark.png
+?? docs/plan/artifacts/phase600/phase600-604-subagent-light.png
+?? docs/plan/artifacts/phase600/phase600-604-worker-dark.png
+?? docs/plan/artifacts/phase600/phase600-604-worker-light.png
+?? docs/plan/artifacts/phase600/rail-hover-round604.json
+?? docs/plan/artifacts/phase600/team-hover-round604.json
+?? docs/plan/artifacts/phase600/team-network-round604.json
+?? docs/plan/artifacts/phase600/transcript-expand.cjs
+?? docs/plan/artifacts/phase600/transcript-expand.json
+
+$ git status --porcelain | grep -v '^?? docs/plan/artifacts/phase600/'
+    → empty: every entry is an UNTRACKED file under docs/plan/artifacts/phase600/.
+      No tracked file is modified anywhere in the worktree — not in
+      forge-control, not in forge-control-web, not in scripts/, and not
+      even among rounds 601b/603's own artifacts in this same directory.
+
+### 10. non-regression, this build (full JSON beside this file)
+  team-hover-round604.json     NFU2  20 rows, 75 crossings, 0 commits attributable, 0 mutations, no layout shift
+  rail-hover-round604.json     NFU2  7 rows, 76 crossings, 0 commits attributable, 0 mutations
+  team-network-round604.json   NFU3  40.0 req/min visible (== phase 500 after), 28.0 collapsed, 0 team reqs while collapsed
+  nav-walk.json poll_budget    NFU3  at rest 40/min · depth 1 40/min · depth 2 38/min — drilling adds nothing
+
+==============================================================================
+ ALL GATES PASS
+==============================================================================

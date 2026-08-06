@@ -1,0 +1,68 @@
+{
+  "label": "phase600-round604",
+  "base": "http://127.0.0.1:7786",
+  "chat": "Okay this session is very important",
+  "rows_on_screen": 20,
+  "rows_total": 20,
+  "window_ms": 10000,
+  "crossings": 75,
+  "idle": {
+    "commits": 2,
+    "mutations": 0
+  },
+  "hover": {
+    "commits": 2,
+    "mutations": 0
+  },
+  "attributable_to_hover": {
+    "commits": 0,
+    "mutations": 0
+  },
+  "layout_shift": false,
+  "geom_before": [
+    "11dd264b-f173-44d7-ada4-f1eb39fb4abd:137x43x259",
+    "toolu_01S2khB7D19HjSMJzgjGQGMH:180x43x259",
+    "toolu_01Y4sqZV13WbD8kyMvcBsTWR:223x43x259",
+    "toolu_01QGy1DqgyzJB77Atbn8Qtxa:266x43x259",
+    "toolu_01A6w5PFqqhW6RM1MKxFntv9:309x43x259",
+    "toolu_0144pAn9i6dbJADy3D436FQF:352x43x259",
+    "toolu_01FdvbHcUee1ZojJ2B3QZcBT:395x43x259",
+    "toolu_01KBfYmPTDgEmEgfQVNArpB9:438x43x259",
+    "58096061-803e-43c5-827a-e618d2a9c33e:481x43x259",
+    "toolu_01KAFV63fapZ6DXAAU2adfww:524x43x259",
+    "339e39bd-9f7b-4588-a0f0-ab910aedce9d:567x43x259",
+    "d935b0ef-1c0e-44a3-b14c-c9c3536134fa:610x43x259",
+    "923d3ccb-3cc7-474e-8be9-eba7b5ab0289:653x43x259",
+    "7ccdb728-4199-4e86-9d01-2eb1880720d7:696x43x259",
+    "0c154684-da69-409e-a5a1-4d3c137c721c:739x43x259",
+    "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc:782x43x259",
+    "3635ee7e-f132-4735-abc3-415691146a32:825x43x259",
+    "3b292dc1-6198-4671-a3b5-98fc9041af61:868x43x259",
+    "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5:911x43x259",
+    "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede:954x43x259"
+  ],
+  "geom_during": [
+    "11dd264b-f173-44d7-ada4-f1eb39fb4abd:137x43x259",
+    "toolu_01S2khB7D19HjSMJzgjGQGMH:180x43x259",
+    "toolu_01Y4sqZV13WbD8kyMvcBsTWR:223x43x259",
+    "toolu_01QGy1DqgyzJB77Atbn8Qtxa:266x43x259",
+    "toolu_01A6w5PFqqhW6RM1MKxFntv9:309x43x259",
+    "toolu_0144pAn9i6dbJADy3D436FQF:352x43x259",
+    "toolu_01FdvbHcUee1ZojJ2B3QZcBT:395x43x259",
+    "toolu_01KBfYmPTDgEmEgfQVNArpB9:438x43x259",
+    "58096061-803e-43c5-827a-e618d2a9c33e:481x43x259",
+    "toolu_01KAFV63fapZ6DXAAU2adfww:524x43x259",
+    "339e39bd-9f7b-4588-a0f0-ab910aedce9d:567x43x259",
+    "d935b0ef-1c0e-44a3-b14c-c9c3536134fa:610x43x259",
+    "923d3ccb-3cc7-474e-8be9-eba7b5ab0289:653x43x259",
+    "7ccdb728-4199-4e86-9d01-2eb1880720d7:696x43x259",
+    "0c154684-da69-409e-a5a1-4d3c137c721c:739x43x259",
+    "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc:782x43x259",
+    "3635ee7e-f132-4735-abc3-415691146a32:825x43x259",
+    "3b292dc1-6198-4671-a3b5-98fc9041af61:868x43x259",
+    "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5:911x43x259",
+    "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede:954x43x259"
+  ],
+  "gate": "zero commits attributable to hover, and zero layout shift",
+  "verdict": "PASS"
+}

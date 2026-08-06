@@ -1,0 +1,581 @@
+{
+  "base": "http://127.0.0.1:7786",
+  "api": "http://127.0.0.1:7798",
+  "chat": "Okay this session is very important",
+  "fixtures": {
+    "big": {
+      "id": "406ef179-3183-4af0-9d41-888e7620e66c",
+      "entries": 327,
+      "status": "completed",
+      "role": "builder",
+      "navigation": "injected-team-row",
+      "injected_node": {
+        "id": "406ef179-3183-4af0-9d41-888e7620e66c",
+        "kind": "worker",
+        "role": "builder",
+        "model": "claude-opus-5",
+        "status": "completed",
+        "tokens": {
+          "input": 65,
+          "output": 116,
+          "cache_read": 5858457,
+          "cache_creation": 64199,
+          "total": 5922837
+        },
+        "working_ms": 1646141,
+        "working_ms_source": null,
+        "started_at": "2026-08-05 19:52:03.068547+00",
+        "settled": true,
+        "description": "engine-v2-research-lane · Fix cycle 1",
+        "parent_id": null,
+        "subagents": [],
+        "task": null
+      }
+    },
+    "roster": {
+      "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "navigation": "real — clicked in the tree"
+    }
+  },
+  "reports": [
+    {
+      "run_id": "406ef179-3183-4af0-9d41-888e7620e66c",
+      "label": "[big]",
+      "rederived": {
+        "entry_count": 327,
+        "top_level_count": 327,
+        "subagent_entry_count": 0,
+        "tool_call_count": 145,
+        "error_count": 8,
+        "subagent_count": 0,
+        "subagent_roles": [],
+        "prose_scope": "top-level",
+        "prose_turns": 36,
+        "snippets": [
+          {
+            "ts": "2026-08-05T20:17:45.054Z",
+            "text": "The state dir I deleted was the teardown record, so those two survived. Killing my probe's own processes by exact match:",
+            "clipped": false
+          },
+          {
+            "ts": "2026-08-05T20:18:11.155Z",
+            "text": "All probe artifacts gone. Final verification gates:",
+            "clipped": false
+          },
+          {
+            "ts": "2026-08-05T20:19:28.115Z",
+            "text": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` n…",
+            "clipped": true
+          }
+        ],
+        "outcome": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` not LIKE, `ORDER BY created_at DESC`\n- `forge-control/src/routes/reminders.ts` —…",
+        "outcome_source_entry": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` not LIKE, `ORDER BY created_at DESC`\n- `forge-control/src/routes/reminders.ts` — `GET ?contains=`, echoes `filter` on both branches\n- `scripts/research-browser.mjs` — marker query + version handshake + pruning; signal/crash handlers; `reapOrphanedTakeover`; pid-stamped `start.lock` with conditional release\n- `scripts/gemini-qa.mjs` — `assertModelAvailable` before the upload, `--no-model-check`\n- `docs/tools/gemini-qa.md` (§3.2, discrepancies, closing paragraph), `docs/tools/research-browser.md` (§9.1, §11.1)\n- Tests: new `reminder-dedup.test.ts` (16), R705 model validation (13), three new pure-function blocks (20)\n\n**Verification — 466 tests pass (was 416), `tsc --noEmit` clean.** Beyond the suite, run out of the worktree with nothing live touched:\n\n- Booted the reminders route on port 7791 against a stubbed db: filter echo, 400 on empty `contains`, `truncated` flag, and the full queue → prune → re-dedup cycle over real HTTP. Marker URL-encoding survives the `[ ] = space` characters. After the prune the marker set held exactly one row.\n- Reaper against three real detached processes carrying the tokens `readTakeover` matches: all three terminated, `takeover.json` removed. Both negative cases too — an unowned (`takeover`-raised) stack survives, and a dead-supervisor/dead-stack clears the record without signalling anything.\n- All four `start.lock` paths: dead holder → broken; pid-less inside grace → waits; pid-less past grace → broken; and the race that mattered — a waiter timing out against a **live** holder reported `lock is held by live pid 2406928; leaving it alone` and left it in place.\n- Launched a real supervisor and SIGTERMed it: `shutting down (signal SIGTERM)`, and Xvfb, openbox, x11vnc and websockify all died with it. Probe artifacts, display slots and screenshots cleaned up; `ps` and `ss` confirm nothing of mine remains.\n\nTwo things worth your attention:\n\n**Still yours to act on:** websockify pid 2015117 is *still* binding `0.0.0.0:6082` → the passwordless Windows-11 qemu VNC console, reachable from the public internet. Unchanged since R705 flagged it; not from this diff. Drop the iptables ACCEPT on 6082 and tunnel over SSH.\n\n**One honest gap:** the gemini-qa model gate has never run against a real key — there is no Gemini key on this box, so it is proved only against a stubbed `fetch`. Its whole point is that the first real `api` invocation is now a free GET rather than a paid upload. That is documented in §3.2 as still open.",
+        "settled": true,
+        "elapsed_ms": 1646141,
+        "status": "completed",
+        "title": "engine-v2-research-lane · Fix cycle 1"
+      },
+      "dom": {
+        "open": "1",
+        "header": [
+          "story so far",
+          "327 entries",
+          "145 tool calls",
+          "8 tool errors",
+          "▾"
+        ],
+        "work": [
+          "327 entries",
+          "327 its own",
+          "0 delegated",
+          "145 tool calls",
+          "8 tool errors",
+          "0 sub-agents"
+        ],
+        "task": "engine-v2-research-lane · Fix cycle 1 (title)",
+        "time": "2026-08-05 19:52:03.068547+00  ·  ran 27m 26s",
+        "elapsedMarker": "frozen",
+        "elapsedText": "ran 27m 26s",
+        "snippets": [
+          {
+            "clipped": "whole",
+            "ts": "20:17:45",
+            "text": "The state dir I deleted was the teardown record, so those two survived. Killing my probe's own processes by exact match:"
+          },
+          {
+            "clipped": "whole",
+            "ts": "20:18:11",
+            "text": "All probe artifacts gone. Final verification gates:"
+          },
+          {
+            "clipped": "clipped",
+            "ts": "20:19:28",
+            "text": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` n… [clipped]"
+          }
+        ],
+        "outcomeLabel": "WHERE IT STANDS (assistant prose)",
+        "outcome": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` not LIKE, `ORDER BY created_at DESC`\n- `forge-control/src/routes/reminders.ts` —…",
+        "gapDoc": "docs/plan/artifacts/phase600/digest-gap.md"
+      },
+      "duration": {
+        "rendered": "ran 27m 26s",
+        "parsed": {
+          "ms": 1646000,
+          "tolerance": 1000
+        },
+        "expected_ms": 1646141
+      },
+      "quotes": [
+        {
+          "shown_len": 120,
+          "clipped": "whole",
+          "verbatim_substring_of_a_real_entry": true,
+          "entry_ts": "2026-08-05T20:17:45.054Z",
+          "ts_on_screen": "20:17:45"
+        },
+        {
+          "shown_len": 51,
+          "clipped": "whole",
+          "verbatim_substring_of_a_real_entry": true,
+          "entry_ts": "2026-08-05T20:18:11.155Z",
+          "ts_on_screen": "20:18:11"
+        },
+        {
+          "shown_len": 161,
+          "clipped": "clipped",
+          "verbatim_substring_of_a_real_entry": true,
+          "entry_ts": "2026-08-05T20:19:28.115Z",
+          "ts_on_screen": "20:19:28"
+        }
+      ]
+    },
+    {
+      "run_id": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "label": "[roster]",
+      "rederived": {
+        "entry_count": 72,
+        "top_level_count": 28,
+        "subagent_entry_count": 44,
+        "tool_call_count": 33,
+        "error_count": 0,
+        "subagent_count": 1,
+        "subagent_roles": [
+          "unknown"
+        ],
+        "prose_scope": "top-level",
+        "prose_turns": 5,
+        "snippets": [
+          {
+            "ts": "2026-07-30T15:47:13.174Z",
+            "text": "Plan written. Now I'll submit the builder tasks.",
+            "clipped": false
+          },
+          {
+            "ts": "2026-07-30T15:48:58.062Z",
+            "text": "Tasks are being created. Submitting the remaining three.",
+            "clipped": false
+          },
+          {
+            "ts": "2026-07-30T15:49:10.915Z",
+            "text": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### R…",
+            "clipped": true
+          }
+        ],
+        "outcome": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### Round 1 — three parallel builders\n\n| Task | What it does |\n|------|-------------|…",
+        "outcome_source_entry": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### Round 1 — three parallel builders\n\n| Task | What it does |\n|------|-------------|\n| **1a** Backend | `setRunCanvas()` in `runs.ts` + `POST /api/chat/:id/canvas` route + `?q=` filter on `GET /api/canvas/list` |\n| **1b** Frontend (ChatSurface) | Rip out `localStorage.forge.canvasByRun`, derive `canvasOpen`/`canvasPath` from `detailQ.data?.metadata`, POST to new endpoint on change. Plus compact chat rows when canvas is open (F5). |\n| **1c** Frontend (CanvasPane) | Replace flat picker with search-as-you-type input, add `onDrop` handler that accepts `.excalidraw.md` from the file explorer (F3 + F4a). Image drop is explicitly deferred — too much Excalidraw-API fiddly work for marginal value. |\n\n### Round 2 — reviewer checks the full diff against the 15-item checklist in the plan\n\n### Agent curl (F2 — once 1a lands)\n```sh\ncurl -sX POST http://127.0.0.1:7700/api/chat/<RUN_ID>/canvas \\\n  -H 'content-type: application/json' \\\n  -d '{\"path\":\"Excalidraw/Directory Engine - Scraper System Map.excalidraw.md\",\"open\":true}'\n```\nThe UI picks it up within 3 s via the existing `detailQ` poll.",
+        "settled": true,
+        "elapsed_ms": 331502,
+        "status": "completed",
+        "title": "canvas-ux · Plan: canvas-ux"
+      },
+      "dom": {
+        "open": "1",
+        "header": [
+          "story so far",
+          "72 entries",
+          "33 tool calls",
+          "1 sub-agents (unknown)",
+          "▾"
+        ],
+        "work": [
+          "72 entries",
+          "28 its own",
+          "44 delegated",
+          "33 tool calls",
+          "0 tool errors",
+          "1 sub-agents",
+          "unknown"
+        ],
+        "task": "canvas-ux · Plan: canvas-ux (title)",
+        "time": "2026-07-30 15:43:39.783071+00  ·  ran 5m 31s",
+        "elapsedMarker": "frozen",
+        "elapsedText": "ran 5m 31s",
+        "snippets": [
+          {
+            "clipped": "whole",
+            "ts": "15:47:13",
+            "text": "Plan written. Now I'll submit the builder tasks."
+          },
+          {
+            "clipped": "whole",
+            "ts": "15:48:58",
+            "text": "Tasks are being created. Submitting the remaining three."
+          },
+          {
+            "clipped": "clipped",
+            "ts": "15:49:10",
+            "text": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### R… [clipped]"
+          }
+        ],
+        "outcomeLabel": "WHERE IT STANDS (assistant prose)",
+        "outcome": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### Round 1 — three parallel builders\n\n| Task | What it does |\n|------|-------------|…",
+        "gapDoc": "docs/plan/artifacts/phase600/digest-gap.md"
+      },
+      "duration": {
+        "rendered": "ran 5m 31s",
+        "parsed": {
+          "ms": 331000,
+          "tolerance": 1000
+        },
+        "expected_ms": 331502
+      },
+      "quotes": [
+        {
+          "shown_len": 48,
+          "clipped": "whole",
+          "verbatim_substring_of_a_real_entry": true,
+          "entry_ts": "2026-07-30T15:47:13.174Z",
+          "ts_on_screen": "15:47:13"
+        },
+        {
+          "shown_len": 56,
+          "clipped": "whole",
+          "verbatim_substring_of_a_real_entry": true,
+          "entry_ts": "2026-07-30T15:48:58.062Z",
+          "ts_on_screen": "15:48:58"
+        },
+        {
+          "shown_len": 161,
+          "clipped": "clipped",
+          "verbatim_substring_of_a_real_entry": true,
+          "entry_ts": "2026-07-30T15:49:10.915Z",
+          "ts_on_screen": "15:49:10"
+        }
+      ]
+    }
+  ],
+  "cross_surface_finding": {
+    "parent_run": "58096061-803e-43c5-827a-e618d2a9c33e",
+    "team_panel_rows": [
+      {
+        "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+        "role": "scout"
+      }
+    ],
+    "digest_roles": [
+      "unknown"
+    ],
+    "agrees": false,
+    "verdict": "FINDING — the team panel and the digest name the same sub-agent differently",
+    "why": "story-digest.ts reads roles from metadata.subagents_v2 only; agents-shared.ts foldSubagents and AgentChatView.findSpawnFacts also read the spawn call's input.subagent_type. This run's subagents_v2 is empty, so only the digest says 'unknown'."
+  },
+  "failures": 0,
+  "results": [
+    {
+      "name": "[big] the digest opens collapsed (U24)",
+      "ok": true,
+      "actual": "0",
+      "expected": "0"
+    },
+    {
+      "name": "[big] it expands",
+      "ok": true,
+      "actual": "1",
+      "expected": "1"
+    },
+    {
+      "name": "[big] WORK \"entries\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 327,
+      "expected": 327
+    },
+    {
+      "name": "[big] WORK \"tool calls\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 145,
+      "expected": 145
+    },
+    {
+      "name": "[big] WORK \"tool errors\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 8,
+      "expected": 8
+    },
+    {
+      "name": "[big] WORK \"sub-agents\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "[big] WORK \"its own\" == entries with no parent_tool_use_id",
+      "ok": true,
+      "actual": 327,
+      "expected": 327
+    },
+    {
+      "name": "[big] WORK \"delegated\" == entries that have one",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "[big] the collapsed header's entry count matches the expanded block",
+      "ok": true,
+      "actual": 327,
+      "expected": 327
+    },
+    {
+      "name": "[big] the collapsed header's tool-call count matches too",
+      "ok": true,
+      "actual": 145,
+      "expected": 145
+    },
+    {
+      "name": "[big] a settled run's duration is marked FROZEN",
+      "ok": true,
+      "actual": "frozen",
+      "expected": "frozen"
+    },
+    {
+      "name": "[big] the rendered duration == completed_at − started_at (±the printed unit)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[big] the TIME line carries the run's own started_at",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[big] every quoted snippet is a verbatim substring of a real prose entry",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "[big] the snippets are the LAST 3 prose turns, in order",
+      "ok": true,
+      "actual": [
+        "The state dir I deleted was the teardown record, so those two survived. Killing my probe's own processes by exact match:",
+        "All probe artifacts gone. Final verification gates:",
+        "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` n…"
+      ],
+      "expected": [
+        "The state dir I deleted was the teardown record, so those two survived. Killing my probe's own processes by exact match:",
+        "All probe artifacts gone. Final verification gates:",
+        "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` n…"
+      ]
+    },
+    {
+      "name": "[big] each snippet's timestamp is its entry's own ts",
+      "ok": true,
+      "actual": [
+        "20:17:45",
+        "20:18:11",
+        "20:19:28"
+      ],
+      "expected": [
+        "20:17:45",
+        "20:18:11",
+        "20:19:28"
+      ]
+    },
+    {
+      "name": "[big] WHERE IT STANDS is verbatim from the last prose turn",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[big] …and it is the exact string the digest rule produces",
+      "ok": true,
+      "actual": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` not LIKE, `ORDER BY created_at DESC`\n- `forge-control/src/routes/reminders.ts` —…",
+      "expected": "All four findings fixed, committed as `b0d0f4b`.\n\n**Files changed**\n- `forge-control/src/db/reminders.ts` — `findRemindersByText`: marker-scoped, `position()` not LIKE, `ORDER BY created_at DESC`\n- `forge-control/src/routes/reminders.ts` —…"
+    },
+    {
+      "name": "[big] the block names its own limits doc",
+      "ok": true,
+      "actual": "docs/plan/artifacts/phase600/digest-gap.md",
+      "expected": "docs/plan/artifacts/phase600/digest-gap.md"
+    },
+    {
+      "name": "[big] the fixture really is >=200 entries",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[roster] the digest opens collapsed (U24)",
+      "ok": true,
+      "actual": "0",
+      "expected": "0"
+    },
+    {
+      "name": "[roster] it expands",
+      "ok": true,
+      "actual": "1",
+      "expected": "1"
+    },
+    {
+      "name": "[roster] WORK \"entries\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 72,
+      "expected": 72
+    },
+    {
+      "name": "[roster] WORK \"tool calls\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 33,
+      "expected": 33
+    },
+    {
+      "name": "[roster] WORK \"tool errors\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "[roster] WORK \"sub-agents\" == re-derived from the API thread",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "[roster] WORK \"its own\" == entries with no parent_tool_use_id",
+      "ok": true,
+      "actual": 28,
+      "expected": 28
+    },
+    {
+      "name": "[roster] WORK \"delegated\" == entries that have one",
+      "ok": true,
+      "actual": 44,
+      "expected": 44
+    },
+    {
+      "name": "[roster] the collapsed header's entry count matches the expanded block",
+      "ok": true,
+      "actual": 72,
+      "expected": 72
+    },
+    {
+      "name": "[roster] the collapsed header's tool-call count matches too",
+      "ok": true,
+      "actual": 33,
+      "expected": 33
+    },
+    {
+      "name": "[roster] the sub-agent roles listed are the roles the thread/rollup name",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[roster] a settled run's duration is marked FROZEN",
+      "ok": true,
+      "actual": "frozen",
+      "expected": "frozen"
+    },
+    {
+      "name": "[roster] the rendered duration == completed_at − started_at (±the printed unit)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[roster] the TIME line carries the run's own started_at",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[roster] every quoted snippet is a verbatim substring of a real prose entry",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "[roster] the snippets are the LAST 3 prose turns, in order",
+      "ok": true,
+      "actual": [
+        "Plan written. Now I'll submit the builder tasks.",
+        "Tasks are being created. Submitting the remaining three.",
+        "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### R…"
+      ],
+      "expected": [
+        "Plan written. Now I'll submit the builder tasks.",
+        "Tasks are being created. Submitting the remaining three.",
+        "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### R…"
+      ]
+    },
+    {
+      "name": "[roster] each snippet's timestamp is its entry's own ts",
+      "ok": true,
+      "actual": [
+        "15:47:13",
+        "15:48:58",
+        "15:49:10"
+      ],
+      "expected": [
+        "15:47:13",
+        "15:48:58",
+        "15:49:10"
+      ]
+    },
+    {
+      "name": "[roster] WHERE IT STANDS is verbatim from the last prose turn",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[roster] …and it is the exact string the digest rule produces",
+      "ok": true,
+      "actual": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### Round 1 — three parallel builders\n\n| Task | What it does |\n|------|-------------|…",
+      "expected": "All four tasks created. Here's the plan summary:\n\n---\n\n## canvas-ux — plan complete\n\n**PLAN.md** written to `/opt/forge-ai-os/forge-control-web/PLAN.md`.\n\n### Round 1 — three parallel builders\n\n| Task | What it does |\n|------|-------------|…"
+    },
+    {
+      "name": "[roster] the block names its own limits doc",
+      "ok": true,
+      "actual": "docs/plan/artifacts/phase600/digest-gap.md",
+      "expected": "docs/plan/artifacts/phase600/digest-gap.md"
+    },
+    {
+      "name": "[roster] the roster fixture actually has a sub-agent",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "CROSS-SURFACE sub-agent role agreement (finding, not a verdict)",
+      "note": {
+        "parent_run": "58096061-803e-43c5-827a-e618d2a9c33e",
+        "team_panel_rows": [
+          {
+            "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+            "role": "scout"
+          }
+        ],
+        "digest_roles": [
+          "unknown"
+        ],
+        "agrees": false,
+        "verdict": "FINDING — the team panel and the digest name the same sub-agent differently",
+        "why": "story-digest.ts reads roles from metadata.subagents_v2 only; agents-shared.ts foldSubagents and AgentChatView.findSpawnFacts also read the spawn call's input.subagent_type. This run's subagents_v2 is empty, so only the digest says 'unknown'."
+      }
+    }
+  ]
+}

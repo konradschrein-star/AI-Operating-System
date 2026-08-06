@@ -1,0 +1,559 @@
+{
+  "label": "phase600-round604",
+  "base": "http://127.0.0.1:7786",
+  "chat": "phase300 round-304 linkage fixture",
+  "sse": "aborted",
+  "caps": {
+    "total_per_minute": 52,
+    "team_per_minute": 12
+  },
+  "baseline_file": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase400/managers-network-after.json",
+  "baseline_error": null,
+  "panel_visible": {
+    "window_ms": 75003,
+    "total_requests": 50,
+    "total_per_minute": 40,
+    "counts": {
+      "/chat/:id/team": 15,
+      "/chat": 10,
+      "/chat/:id": 25
+    },
+    "per_minute": {
+      "/chat/:id/team": 12,
+      "/chat": 8,
+      "/chat/:id": 20
+    }
+  },
+  "panel_collapsed": {
+    "window_ms": 75005,
+    "total_requests": 35,
+    "total_per_minute": 28,
+    "counts": {
+      "/chat/:id": 25,
+      "/chat": 9,
+      "/usage/quota": 1
+    },
+    "per_minute": {
+      "/chat/:id": 20,
+      "/chat": 7.2,
+      "/usage/quota": 0.8
+    }
+  },
+  "team_requests_while_collapsed": 0,
+  "failures": [],
+  "verdict": "PASS",
+  "raw_visible": [
+    {
+      "ms": 11546,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 11565,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 12551,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 15566,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 16566,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 18576,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 19702,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 21578,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 21587,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 24597,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 26591,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 27605,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 27839,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 30616,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 31604,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 33625,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 35979,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 36616,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 36644,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 39659,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 41628,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 42668,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 44115,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 45676,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 46657,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 48685,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 51687,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 51694,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 52257,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 54705,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 56703,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 57713,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 60380,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 60723,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 61715,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 63740,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 66729,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 66758,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 68510,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 69769,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 71755,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 72778,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 75788,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 76649,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 76769,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 78799,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 81795,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304/team",
+      "endpoint": "/chat/:id/team"
+    },
+    {
+      "ms": 81809,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 84784,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 84816,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    }
+  ],
+  "raw_collapsed": [
+    {
+      "ms": 87826,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 90852,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 92915,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 93863,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 96872,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 99882,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 101068,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 102892,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 105901,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 108912,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 109197,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 111922,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 114937,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 117322,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 117956,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 120769,
+      "method": "GET",
+      "url": "/usage/quota",
+      "endpoint": "/usage/quota"
+    },
+    {
+      "ms": 120967,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 123977,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 125453,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 126985,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 129994,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 133003,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 133602,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 136011,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 139020,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 141725,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 142028,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 145050,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 148066,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 149894,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 151075,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 154085,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 157097,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    },
+    {
+      "ms": 158026,
+      "method": "GET",
+      "url": "/chat?limit=30",
+      "endpoint": "/chat"
+    },
+    {
+      "ms": 160110,
+      "method": "GET",
+      "url": "/chat/c0de0304-0000-4000-8000-000000000304",
+      "endpoint": "/chat/:id"
+    }
+  ]
+}

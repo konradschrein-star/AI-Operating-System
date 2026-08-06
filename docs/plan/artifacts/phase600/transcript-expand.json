@@ -1,0 +1,1083 @@
+{
+  "base": "http://127.0.0.1:7786",
+  "api": "http://127.0.0.1:7798",
+  "chat": "Okay this session is very important",
+  "navigation": "real — both workers reached by clicking their team row",
+  "runs": [
+    {
+      "run_id": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "status": "completed",
+      "thread_length": 72,
+      "tools": [
+        "Read",
+        "Agent",
+        "Write",
+        "Bash"
+      ],
+      "tool_rows": 11,
+      "coverage": {
+        "total": 72,
+        "visible": 28,
+        "silent": 0,
+        "folded": 44,
+        "above": 0,
+        "deeper": 0,
+        "deeperParents": [],
+        "ok": true
+      },
+      "folds": [
+        {
+          "subagent_id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "chip_event_count": 44,
+          "api_entries_with_this_parent": 44,
+          "envelope_entries": 2,
+          "chip_on_screen": "spawn scout · Scout canvas-ux existing code 44 events → 2.5k chars",
+          "child_view": {
+            "coverage": {
+              "total": 72,
+              "visible": 46,
+              "silent": 0,
+              "folded": 0,
+              "above": 26,
+              "deeper": 0,
+              "deeperParents": [],
+              "ok": true
+            },
+            "slice_note_on_screen": "46 entries — 44 of this sub-agent’s own, plus the spawn call and result that framed it.",
+            "tool_rows": 23,
+            "naive_sum_with_envelope_double_counted": 74,
+            "conserved_sum": 72,
+            "thread_length": 72
+          }
+        }
+      ],
+      "bytes": [
+        {
+          "index": 0,
+          "tool": "Read",
+          "args_len": 67,
+          "args_sha": "0cd9f10a2895",
+          "dom_args_len": 67,
+          "result_len": 2514,
+          "result_sha": "ea24bbbe4f0f",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 1,
+          "tool": "Agent",
+          "args_len": 1364,
+          "args_sha": "acb951dc82c0",
+          "dom_args_len": 1364,
+          "result_len": 2514,
+          "result_sha": "f6ad5d31a6c1",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 2,
+          "tool": "Write",
+          "args_len": 1501,
+          "args_sha": "8432df5eec59",
+          "dom_args_len": 1501,
+          "result_len": 138,
+          "result_sha": "4be86d2e85ae",
+          "dom_result_len": 138,
+          "multiple_results": 1
+        },
+        {
+          "index": 3,
+          "tool": "Bash",
+          "args_len": 1501,
+          "args_sha": "7e31eb9f1771",
+          "dom_args_len": 1501,
+          "result_len": 307,
+          "result_sha": "8b5851200da7",
+          "dom_result_len": 307,
+          "multiple_results": 1
+        },
+        {
+          "index": 4,
+          "tool": "Write",
+          "args_len": 1501,
+          "args_sha": "e9fd44a79ca8",
+          "dom_args_len": 1501,
+          "result_len": 112,
+          "result_sha": "e5496ac3fa30",
+          "dom_result_len": 112,
+          "multiple_results": 1
+        },
+        {
+          "index": 5,
+          "tool": "Write",
+          "args_len": 1501,
+          "args_sha": "e2074587666f",
+          "dom_args_len": 1501,
+          "result_len": 112,
+          "result_sha": "3d74a2d5be20",
+          "dom_result_len": 112,
+          "multiple_results": 1
+        },
+        {
+          "index": 6,
+          "tool": "Write",
+          "args_len": 1501,
+          "args_sha": "691e2a6092fa",
+          "dom_args_len": 1501,
+          "result_len": 112,
+          "result_sha": "0359baa1c716",
+          "dom_result_len": 112,
+          "multiple_results": 1
+        },
+        {
+          "index": 7,
+          "tool": "Write",
+          "args_len": 1501,
+          "args_sha": "1fbcdd00dc3f",
+          "dom_args_len": 1501,
+          "result_len": 120,
+          "result_sha": "83dcdae6c9ab",
+          "dom_result_len": 120,
+          "multiple_results": 1
+        },
+        {
+          "index": 8,
+          "tool": "Bash",
+          "args_len": 714,
+          "args_sha": "0f3945a65975",
+          "dom_args_len": 714,
+          "result_len": 243,
+          "result_sha": "8ccc7a7992b4",
+          "dom_result_len": 243,
+          "multiple_results": 1
+        },
+        {
+          "index": 9,
+          "tool": "Bash",
+          "args_len": 204,
+          "args_sha": "6f9676b63e5d",
+          "dom_args_len": 204,
+          "result_len": 2514,
+          "result_sha": "7478ae0473f1",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 10,
+          "tool": "Bash",
+          "args_len": 491,
+          "args_sha": "215eeefaf714",
+          "dom_args_len": 491,
+          "result_len": 399,
+          "result_sha": "ae8111bae84d",
+          "dom_result_len": 399,
+          "multiple_results": 1
+        }
+      ],
+      "pre_clipped_at_source": 6
+    },
+    {
+      "run_id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+      "status": "completed",
+      "thread_length": 160,
+      "tools": [
+        "Read",
+        "Grep",
+        "Edit",
+        "Bash",
+        "Write"
+      ],
+      "tool_rows": 62,
+      "coverage": {
+        "total": 160,
+        "visible": 160,
+        "silent": 0,
+        "folded": 0,
+        "above": 0,
+        "deeper": 0,
+        "deeperParents": [],
+        "ok": true
+      },
+      "folds": [],
+      "bytes": [
+        {
+          "index": 0,
+          "tool": "Read",
+          "args_len": 58,
+          "args_sha": "8717b3c1b9b3",
+          "dom_args_len": 58,
+          "result_len": 2514,
+          "result_sha": "52db175faa50",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 1,
+          "tool": "Read",
+          "args_len": 77,
+          "args_sha": "8215e451e914",
+          "dom_args_len": 77,
+          "result_len": 2514,
+          "result_sha": "ef7afa1e738a",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 2,
+          "tool": "Grep",
+          "args_len": 127,
+          "args_sha": "274e33d36718",
+          "dom_args_len": 127,
+          "result_len": 270,
+          "result_sha": "eec68795aa9b",
+          "dom_result_len": 270,
+          "multiple_results": 1
+        },
+        {
+          "index": 3,
+          "tool": "Grep",
+          "args_len": 120,
+          "args_sha": "66bf7054b05c",
+          "dom_args_len": 120,
+          "result_len": 132,
+          "result_sha": "aded37f4a4dc",
+          "dom_result_len": 132,
+          "multiple_results": 1
+        },
+        {
+          "index": 4,
+          "tool": "Read",
+          "args_len": 84,
+          "args_sha": "56eb724d7f03",
+          "dom_args_len": 84,
+          "result_len": 1352,
+          "result_sha": "25e6d00318b5",
+          "dom_result_len": 1352,
+          "multiple_results": 1
+        },
+        {
+          "index": 5,
+          "tool": "Grep",
+          "args_len": 104,
+          "args_sha": "b1bee61ea218",
+          "dom_args_len": 104,
+          "result_len": 510,
+          "result_sha": "abb828e07a62",
+          "dom_result_len": 510,
+          "multiple_results": 1
+        },
+        {
+          "index": 6,
+          "tool": "Edit",
+          "args_len": 633,
+          "args_sha": "c2c8626646a8",
+          "dom_args_len": 633,
+          "result_len": 167,
+          "result_sha": "77f6058162e3",
+          "dom_result_len": 167,
+          "multiple_results": 1
+        },
+        {
+          "index": 7,
+          "tool": "Edit",
+          "args_len": 687,
+          "args_sha": "e3b5a7703757",
+          "dom_args_len": 687,
+          "result_len": 167,
+          "result_sha": "77f6058162e3",
+          "dom_result_len": 167,
+          "multiple_results": 1
+        },
+        {
+          "index": 8,
+          "tool": "Edit",
+          "args_len": 475,
+          "args_sha": "87ebe9f5e670",
+          "dom_args_len": 475,
+          "result_len": 167,
+          "result_sha": "77f6058162e3",
+          "dom_result_len": 167,
+          "multiple_results": 1
+        },
+        {
+          "index": 9,
+          "tool": "Edit",
+          "args_len": 1501,
+          "args_sha": "840d1a7185b2",
+          "dom_args_len": 1501,
+          "result_len": 167,
+          "result_sha": "77f6058162e3",
+          "dom_result_len": 167,
+          "multiple_results": 1
+        },
+        {
+          "index": 10,
+          "tool": "Read",
+          "args_len": 100,
+          "args_sha": "4371b620eadf",
+          "dom_args_len": 100,
+          "result_len": 1157,
+          "result_sha": "2ef2d479d657",
+          "dom_result_len": 1157,
+          "multiple_results": 1
+        },
+        {
+          "index": 11,
+          "tool": "Read",
+          "args_len": 101,
+          "args_sha": "063d91aa8432",
+          "dom_args_len": 101,
+          "result_len": 1271,
+          "result_sha": "a9d95e261259",
+          "dom_result_len": 1271,
+          "multiple_results": 1
+        },
+        {
+          "index": 12,
+          "tool": "Read",
+          "args_len": 101,
+          "args_sha": "39e1f4e1ae5c",
+          "dom_args_len": 101,
+          "result_len": 1270,
+          "result_sha": "3738689242a3",
+          "dom_result_len": 1270,
+          "multiple_results": 1
+        },
+        {
+          "index": 13,
+          "tool": "Bash",
+          "args_len": 92,
+          "args_sha": "873b94c4dfdf",
+          "dom_args_len": 92,
+          "result_len": 89,
+          "result_sha": "500d24dd48e9",
+          "dom_result_len": 89,
+          "multiple_results": 1
+        },
+        {
+          "index": 14,
+          "tool": "Bash",
+          "args_len": 110,
+          "args_sha": "2d3afbf91739",
+          "dom_args_len": 110,
+          "result_len": 1223,
+          "result_sha": "b78e358eee87",
+          "dom_result_len": 1223,
+          "multiple_results": 1
+        },
+        {
+          "index": 15,
+          "tool": "Read",
+          "args_len": 102,
+          "args_sha": "a7af51a9eaae",
+          "dom_args_len": 102,
+          "result_len": 1168,
+          "result_sha": "0bfb5aea882b",
+          "dom_result_len": 1168,
+          "multiple_results": 1
+        },
+        {
+          "index": 16,
+          "tool": "Bash",
+          "args_len": 96,
+          "args_sha": "d7ae793edbe5",
+          "dom_args_len": 96,
+          "result_len": 486,
+          "result_sha": "e64d55fb4494",
+          "dom_result_len": 486,
+          "multiple_results": 1
+        },
+        {
+          "index": 17,
+          "tool": "Bash",
+          "args_len": 154,
+          "args_sha": "9b2fbe288cfb",
+          "dom_args_len": 154,
+          "result_len": 2514,
+          "result_sha": "cb0655219776",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 18,
+          "tool": "Bash",
+          "args_len": 134,
+          "args_sha": "0e8211a8726c",
+          "dom_args_len": 134,
+          "result_len": 726,
+          "result_sha": "0f20338f993c",
+          "dom_result_len": 726,
+          "multiple_results": 1
+        },
+        {
+          "index": 19,
+          "tool": "Bash",
+          "args_len": 122,
+          "args_sha": "0c884f29f6f4",
+          "dom_args_len": 122,
+          "result_len": 410,
+          "result_sha": "dfbaef39d637",
+          "dom_result_len": 410,
+          "multiple_results": 1
+        },
+        {
+          "index": 20,
+          "tool": "Bash",
+          "args_len": 75,
+          "args_sha": "650001991100",
+          "dom_args_len": 75,
+          "result_len": 457,
+          "result_sha": "02acd89f7cbc",
+          "dom_result_len": 457,
+          "multiple_results": 1
+        },
+        {
+          "index": 21,
+          "tool": "Bash",
+          "args_len": 116,
+          "args_sha": "927f054279da",
+          "dom_args_len": 116,
+          "result_len": 148,
+          "result_sha": "f67549098bc9",
+          "dom_result_len": 148,
+          "multiple_results": 1
+        },
+        {
+          "index": 22,
+          "tool": "Bash",
+          "args_len": 135,
+          "args_sha": "4f35497fdceb",
+          "dom_args_len": 135,
+          "result_len": 197,
+          "result_sha": "b8dbd9639acb",
+          "dom_result_len": 197,
+          "multiple_results": 1
+        },
+        {
+          "index": 23,
+          "tool": "Bash",
+          "args_len": 239,
+          "args_sha": "802ee4e9ca4f",
+          "dom_args_len": 239,
+          "result_len": 320,
+          "result_sha": "3f9469f5b00b",
+          "dom_result_len": 320,
+          "multiple_results": 1
+        },
+        {
+          "index": 24,
+          "tool": "Bash",
+          "args_len": 114,
+          "args_sha": "5296cb159bee",
+          "dom_args_len": 114,
+          "result_len": 97,
+          "result_sha": "617ac4225f94",
+          "dom_result_len": 97,
+          "multiple_results": 1
+        },
+        {
+          "index": 25,
+          "tool": "Bash",
+          "args_len": 125,
+          "args_sha": "4ed1aad18a85",
+          "dom_args_len": 125,
+          "result_len": 208,
+          "result_sha": "2625c7360bb8",
+          "dom_result_len": 208,
+          "multiple_results": 1
+        },
+        {
+          "index": 26,
+          "tool": "Bash",
+          "args_len": 120,
+          "args_sha": "16bb623ed774",
+          "dom_args_len": 120,
+          "result_len": 31,
+          "result_sha": "cac168558559",
+          "dom_result_len": 31,
+          "multiple_results": 1
+        },
+        {
+          "index": 27,
+          "tool": "Bash",
+          "args_len": 127,
+          "args_sha": "041a14e3820d",
+          "dom_args_len": 127,
+          "result_len": 146,
+          "result_sha": "c993c9b4a14c",
+          "dom_result_len": 146,
+          "multiple_results": 1
+        },
+        {
+          "index": 28,
+          "tool": "Read",
+          "args_len": 84,
+          "args_sha": "83d5cf722dfc",
+          "dom_args_len": 84,
+          "result_len": 2266,
+          "result_sha": "492bf9bbd3cf",
+          "dom_result_len": 2266,
+          "multiple_results": 1
+        },
+        {
+          "index": 29,
+          "tool": "Read",
+          "args_len": 85,
+          "args_sha": "b266171f4e21",
+          "dom_args_len": 85,
+          "result_len": 1105,
+          "result_sha": "1ddfddb3c2f5",
+          "dom_result_len": 1105,
+          "multiple_results": 1
+        },
+        {
+          "index": 30,
+          "tool": "Read",
+          "args_len": 111,
+          "args_sha": "82b31c4caad9",
+          "dom_args_len": 111,
+          "result_len": 2514,
+          "result_sha": "75eb6520c0fc",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 31,
+          "tool": "Bash",
+          "args_len": 88,
+          "args_sha": "81359802608d",
+          "dom_args_len": 88,
+          "result_len": 31,
+          "result_sha": "cac168558559",
+          "dom_result_len": 31,
+          "multiple_results": 1
+        },
+        {
+          "index": 32,
+          "tool": "Bash",
+          "args_len": 64,
+          "args_sha": "cf6eb0295e3a",
+          "dom_args_len": 64,
+          "result_len": 947,
+          "result_sha": "fc61c5f7e98a",
+          "dom_result_len": 947,
+          "multiple_results": 1
+        },
+        {
+          "index": 33,
+          "tool": "Bash",
+          "args_len": 99,
+          "args_sha": "bb828f3ec8f1",
+          "dom_args_len": 99,
+          "result_len": 39,
+          "result_sha": "303155432859",
+          "dom_result_len": 39,
+          "multiple_results": 1
+        },
+        {
+          "index": 34,
+          "tool": "Bash",
+          "args_len": 131,
+          "args_sha": "454beb2ccf26",
+          "dom_args_len": 131,
+          "result_len": 130,
+          "result_sha": "3b5538aa092a",
+          "dom_result_len": 130,
+          "multiple_results": 1
+        },
+        {
+          "index": 35,
+          "tool": "Bash",
+          "args_len": 81,
+          "args_sha": "2d13f74c95e0",
+          "dom_args_len": 81,
+          "result_len": 31,
+          "result_sha": "cac168558559",
+          "dom_result_len": 31,
+          "multiple_results": 1
+        },
+        {
+          "index": 36,
+          "tool": "Bash",
+          "args_len": 98,
+          "args_sha": "b41dfb366fcd",
+          "dom_args_len": 98,
+          "result_len": 31,
+          "result_sha": "cac168558559",
+          "dom_result_len": 31,
+          "multiple_results": 1
+        },
+        {
+          "index": 37,
+          "tool": "Bash",
+          "args_len": 103,
+          "args_sha": "b2c774aa5465",
+          "dom_args_len": 103,
+          "result_len": 31,
+          "result_sha": "cac168558559",
+          "dom_result_len": 31,
+          "multiple_results": 1
+        },
+        {
+          "index": 38,
+          "tool": "Read",
+          "args_len": 64,
+          "args_sha": "aa3089948cc5",
+          "dom_args_len": 64,
+          "result_len": 1835,
+          "result_sha": "17a85f9031c7",
+          "dom_result_len": 1835,
+          "multiple_results": 1
+        },
+        {
+          "index": 39,
+          "tool": "Edit",
+          "args_len": 1501,
+          "args_sha": "a471f7b5a8c6",
+          "dom_args_len": 1501,
+          "result_len": 201,
+          "result_sha": "760e3fb9e0df",
+          "dom_result_len": 201,
+          "multiple_results": 1
+        },
+        {
+          "index": 40,
+          "tool": "Bash",
+          "args_len": 210,
+          "args_sha": "281eba9ef615",
+          "dom_args_len": 210,
+          "result_len": 525,
+          "result_sha": "1db6e0b0da8a",
+          "dom_result_len": 525,
+          "multiple_results": 1
+        },
+        {
+          "index": 41,
+          "tool": "Read",
+          "args_len": 77,
+          "args_sha": "8215e451e914",
+          "dom_args_len": 77,
+          "result_len": 2514,
+          "result_sha": "fb1dde613b9a",
+          "dom_result_len": 2514,
+          "multiple_results": 1
+        },
+        {
+          "index": 42,
+          "tool": "Write",
+          "args_len": 1501,
+          "args_sha": "f4e0a2718961",
+          "dom_args_len": 1501,
+          "result_len": 207,
+          "result_sha": "bccbdee8c247",
+          "dom_result_len": 207,
+          "multiple_results": 1
+        },
+        {
+          "index": 43,
+          "tool": "Bash",
+          "args_len": 84,
+          "args_sha": "1e631fa20133",
+          "dom_args_len": 84,
+          "result_len": 8,
+          "result_sha": "8f0ba0a0afb5",
+          "dom_result_len": 8,
+          "multiple_results": 1
+        },
+        {
+          "index": 44,
+          "tool": "Read",
+          "args_len": 70,
+          "args_sha": "82e1d1c5f437",
+          "dom_args_len": 70,
+          "result_len": 1303,
+          "result_sha": "5bc8cf3a351d",
+          "dom_result_len": 1303,
+          "multiple_results": 1
+        },
+        {
+          "index": 45,
+          "tool": "Bash",
+          "args_len": 134,
+          "args_sha": "7a803243e9b7",
+          "dom_args_len": 134,
+          "result_len": 31,
+          "result_sha": "cac168558559",
+          "dom_result_len": 31,
+          "multiple_results": 1
+        },
+        {
+          "index": 46,
+          "tool": "Write",
+          "args_len": 1374,
+          "args_sha": "d8cef7af34f6",
+          "dom_args_len": 1374,
+          "result_len": 200,
+          "result_sha": "61a3839c1b55",
+          "dom_result_len": 200,
+          "multiple_results": 1
+        },
+        {
+          "index": 47,
+          "tool": "Bash",
+          "args_len": 117,
+          "args_sha": "4a37f061439e",
+          "dom_args_len": 117,
+          "result_len": 101,
+          "result_sha": "f86cd5391d7f",
+          "dom_result_len": 101,
+          "multiple_results": 1
+        },
+        {
+          "index": 48,
+          "tool": "Bash",
+          "args_len": 135,
+          "args_sha": "0b7117f40106",
+          "dom_args_len": 135,
+          "result_len": 180,
+          "result_sha": "93f5b725413d",
+          "dom_result_len": 180,
+          "multiple_results": 1
+        },
+        {
+          "index": 49,
+          "tool": "Bash",
+          "args_len": 194,
+          "args_sha": "c918ba5063b7",
+          "dom_args_len": 194,
+          "result_len": 146,
+          "result_sha": "c993c9b4a14c",
+          "dom_result_len": 146,
+          "multiple_results": 1
+        },
+        {
+          "index": 50,
+          "tool": "Bash",
+          "args_len": 69,
+          "args_sha": "c5c189f45761",
+          "dom_args_len": 69,
+          "result_len": 6,
+          "result_sha": "38fb7919f334",
+          "dom_result_len": 6,
+          "multiple_results": 1
+        },
+        {
+          "index": 51,
+          "tool": "Bash",
+          "args_len": 73,
+          "args_sha": "0d48965fdc1d",
+          "dom_args_len": 73,
+          "result_len": 585,
+          "result_sha": "2cc962a0bb78",
+          "dom_result_len": 585,
+          "multiple_results": 1
+        },
+        {
+          "index": 52,
+          "tool": "Bash",
+          "args_len": 73,
+          "args_sha": "0d48965fdc1d",
+          "dom_args_len": 73,
+          "result_len": 599,
+          "result_sha": "e803f3f53e27",
+          "dom_result_len": 599,
+          "multiple_results": 1
+        },
+        {
+          "index": 53,
+          "tool": "Bash",
+          "args_len": 262,
+          "args_sha": "194698ee4f54",
+          "dom_args_len": 262,
+          "result_len": 358,
+          "result_sha": "1c943edef782",
+          "dom_result_len": 358,
+          "multiple_results": 1
+        },
+        {
+          "index": 54,
+          "tool": "Bash",
+          "args_len": 174,
+          "args_sha": "1e078935832a",
+          "dom_args_len": 174,
+          "result_len": 1309,
+          "result_sha": "3a922a7a62c6",
+          "dom_result_len": 1309,
+          "multiple_results": 1
+        },
+        {
+          "index": 55,
+          "tool": "Bash",
+          "args_len": 121,
+          "args_sha": "9a298a799ac2",
+          "dom_args_len": 121,
+          "result_len": 231,
+          "result_sha": "fcebe6bdd6b6",
+          "dom_result_len": 231,
+          "multiple_results": 1
+        },
+        {
+          "index": 56,
+          "tool": "Bash",
+          "args_len": 227,
+          "args_sha": "3c10771a1a39",
+          "dom_args_len": 227,
+          "result_len": 190,
+          "result_sha": "648f1719d15f",
+          "dom_result_len": 190,
+          "multiple_results": 1
+        },
+        {
+          "index": 57,
+          "tool": "Bash",
+          "args_len": 59,
+          "args_sha": "bbe094053056",
+          "dom_args_len": 59,
+          "result_len": 175,
+          "result_sha": "183eda4091ff",
+          "dom_result_len": 175,
+          "multiple_results": 1
+        },
+        {
+          "index": 58,
+          "tool": "Bash",
+          "args_len": 86,
+          "args_sha": "af054f58aa2e",
+          "dom_args_len": 86,
+          "result_len": 64,
+          "result_sha": "abf364eb0193",
+          "dom_result_len": 64,
+          "multiple_results": 1
+        },
+        {
+          "index": 59,
+          "tool": "Bash",
+          "args_len": 1063,
+          "args_sha": "f583359e9842",
+          "dom_args_len": 1063,
+          "result_len": 250,
+          "result_sha": "9d11bfbde180",
+          "dom_result_len": 250,
+          "multiple_results": 1
+        },
+        {
+          "index": 60,
+          "tool": "Bash",
+          "args_len": 108,
+          "args_sha": "5cb31c3be941",
+          "dom_args_len": 108,
+          "result_len": 775,
+          "result_sha": "684d5d71a177",
+          "dom_result_len": 775,
+          "multiple_results": 1
+        },
+        {
+          "index": 61,
+          "tool": "Bash",
+          "args_len": 159,
+          "args_sha": "9ab5e3acc43d",
+          "dom_args_len": 159,
+          "result_len": 5,
+          "result_sha": "53e028634c5a",
+          "dom_result_len": 5,
+          "multiple_results": 1
+        }
+      ],
+      "pre_clipped_at_source": 3
+    }
+  ],
+  "totals": {
+    "rows": 73,
+    "tools": [
+      "Read",
+      "Agent",
+      "Write",
+      "Bash",
+      "Grep",
+      "Edit"
+    ]
+  },
+  "failures": 0,
+  "results": [
+    {
+      "name": "fixture: fold/conservation worker",
+      "note": "58096061-803e-43c5-827a-e618d2a9c33e"
+    },
+    {
+      "name": "fixture: widest tool mix",
+      "note": {
+        "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+        "tools": 5,
+        "calls": 62
+      }
+    },
+    {
+      "name": "[fold] every tool row renders in SUMMARY mode",
+      "ok": true,
+      "actual": [
+        "summary"
+      ],
+      "expected": [
+        "summary"
+      ]
+    },
+    {
+      "name": "[fold] the DOM has exactly the mapper's tool-call parts",
+      "ok": true,
+      "actual": 11,
+      "expected": 11
+    },
+    {
+      "name": "[fold] distinct tools",
+      "note": [
+        "Read",
+        "Agent",
+        "Write",
+        "Bash"
+      ]
+    },
+    {
+      "name": "[fold] collapsed line == summarizeTool's one-liner, all 11 rows",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "[fold] expanded ARGS/RESULT are byte-identical to the API payload",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "[fold] bytes compared",
+      "note": {
+        "rows": 11,
+        "args_bytes": 11846,
+        "result_bytes": 9085,
+        "rows_whose_meta_input_the_EXECUTOR_clipped_before_storage": 6
+      }
+    },
+    {
+      "name": "[fold] coverage arithmetic holds (visible+folded+above+deeper===total)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[fold] the thread this view accounts for is the whole run",
+      "ok": true,
+      "actual": 72,
+      "expected": 72
+    },
+    {
+      "name": "[fold] fold chip toolu_01KAFV == the API's own count",
+      "ok": true,
+      "actual": 44,
+      "expected": 44
+    },
+    {
+      "name": "[fold] descending on the chip reaches that sub-agent",
+      "ok": true,
+      "actual": "toolu_01KAFV63fapZ6DXAAU2adfww",
+      "expected": "toolu_01KAFV63fapZ6DXAAU2adfww"
+    },
+    {
+      "name": "[fold] the child view sees its slice plus the envelope, and nothing else",
+      "ok": true,
+      "actual": 46,
+      "expected": 46
+    },
+    {
+      "name": "[fold] CONSERVED: parent visible + this slice === the run's thread length",
+      "ok": true,
+      "actual": 72,
+      "expected": 72
+    },
+    {
+      "name": "[wide] every tool row renders in SUMMARY mode",
+      "ok": true,
+      "actual": [
+        "summary"
+      ],
+      "expected": [
+        "summary"
+      ]
+    },
+    {
+      "name": "[wide] the DOM has exactly the mapper's tool-call parts",
+      "ok": true,
+      "actual": 62,
+      "expected": 62
+    },
+    {
+      "name": "[wide] distinct tools",
+      "note": [
+        "Read",
+        "Grep",
+        "Edit",
+        "Bash",
+        "Write"
+      ]
+    },
+    {
+      "name": "[wide] collapsed line == summarizeTool's one-liner, all 62 rows",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "[wide] expanded ARGS/RESULT are byte-identical to the API payload",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "[wide] bytes compared",
+      "note": {
+        "rows": 62,
+        "args_bytes": 14908,
+        "result_bytes": 38801,
+        "rows_whose_meta_input_the_EXECUTOR_clipped_before_storage": 3
+      }
+    },
+    {
+      "name": "[wide] coverage arithmetic holds (visible+folded+above+deeper===total)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "[wide] the thread this view accounts for is the whole run",
+      "ok": true,
+      "actual": 160,
+      "expected": 160
+    },
+    {
+      "name": ">=10 tool rows measured in total",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": ">=3 distinct tools measured in total",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "total rows measured",
+      "note": 73
+    },
+    {
+      "name": "total distinct tools",
+      "note": [
+        "Read",
+        "Agent",
+        "Write",
+        "Bash",
+        "Grep",
+        "Edit"
+      ]
+    }
+  ]
+}

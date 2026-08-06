@@ -1,0 +1,19 @@
+{
+  "label": "phase600-round604",
+  "base": "http://127.0.0.1:7786",
+  "rows_on_screen": 7,
+  "window_ms": 10000,
+  "crossings": 76,
+  "idle": {
+    "commits": 2,
+    "mutations": 0
+  },
+  "hover": {
+    "commits": 2,
+    "mutations": 0
+  },
+  "attributable_to_hover": {
+    "commits": 0,
+    "mutations": 0
+  }
+}
