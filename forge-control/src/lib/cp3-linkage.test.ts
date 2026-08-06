@@ -10,12 +10,14 @@
  * under forge-control/src, so it sits inside the diff that 08 §4.3's
  * boundary grep scans:
  *
- *     git diff main...HEAD -- forge-control/src | grep -in origin_chat_id
+ *     git diff main...HEAD -- forge-control/src | grep -in <the key>
  *
- * That grep must match ONLY lib/cc-runner.ts and db/projects.ts — the two
- * files boundary D5 names as the sole owners of the metadata key. Spelling
- * the key literally anywhere in this file, including in a comment or inside
- * a regex source string, would fail the phase gate. So the key is built once
+ * where <the key> is the metadata key spelled out in db/projects.ts. That
+ * grep must match ONLY lib/cc-runner.ts and db/projects.ts — the two files
+ * boundary D5 names as the sole owners of the key. Spelling it literally
+ * anywhere in this file, including in a comment (even inside a reproduced
+ * copy of the grep itself, which is how round 1105 failed the gate) or
+ * inside a regex source string, fails the phase gate. So the key is built once
  * from two halves and reused everywhere below — in metadata objects
  * (`{ [KEY]: uuid }`) and in source-text assertions
  * (`assert.match(SRC, new RegExp(KEY))`) alike. Do not "clean this up" into
@@ -165,7 +167,13 @@ describe("CP3 C17 — MANAGER COMMS gating", () => {
     }
   });
 
-  test("no-drift: an unlinked project's prompt is byte-identical to pre-CP3 shape — ends exactly with ESCALATION_POLICY, carries no comms text", () => {
+  // Deliberately NOT titled "byte-identical to pre-CP3": it is not, and this is
+  // the test a future reader would cite as evidence for that claim. CP3 also
+  // slugs the goal-mode corpus paths (C18), so a goal-mode project's prompt DID
+  // change text without any linkage. What this test does carry is the narrower
+  // and true claim the comms gate needs: without linkage the prompt ends exactly
+  // where it ended before — at ESCALATION_POLICY — and no comms text appears.
+  test("an unlinked project's prompt ends exactly with ESCALATION_POLICY and carries no comms text", () => {
     const unlinkedRepo = project({ repo: "ai-os", metadata: {} });
     const unlinkedScratch = project({ repo: "scratch", metadata: {} });
 
@@ -208,6 +216,56 @@ describe("CP3 C18 — slugged planning-corpus paths", () => {
 
     const plannerPrompt = buildPrompt(task({ role: "planner" }), goalProject);
     assert.ok(plannerPrompt.includes(slugPath), "planner prompt missing the same slugged corpus path");
+  });
+
+  /** Round 1105 finding 2. Slugging a path that a prompt READS is not the same
+   *  change as slugging one it CREATES. `buildPrompt` runs at every task spawn,
+   *  so the moment this work deploys, a project planned BEFORE it — flat corpus,
+   *  and boundary D6 forbids moving it — gets the new text on its next task. If
+   *  the reading branches offered only the slug, that project's reviewer would
+   *  be pointed at a directory that cannot exist and (under the old "if it
+   *  exists" hedge) would quietly review with no quality gate. So the reading
+   *  branches must name BOTH layouts, for a flat-corpus project as much as for
+   *  a slugged one. */
+  for (const [label, proj] of [
+    ["goal-mode (slugged corpus)", goalProject],
+    ["flat-corpus project planned before the slug landed", project({ id: GOAL_ID, name: GOAL_NAME, repo: "ai-os" })],
+  ] as const) {
+    test(`reading references name BOTH the slugged and the flat corpus path — ${label}`, () => {
+      const reviewerPrompt = buildPrompt(task({ role: "reviewer" }), proj);
+      assert.ok(
+        reviewerPrompt.includes(`${slugPath}03-quality.md`),
+        "reviewer prompt lost the slugged quality-gate path",
+      );
+      assert.ok(
+        reviewerPrompt.includes("docs/plan/03-quality.md"),
+        "reviewer prompt does not name the FLAT quality-gate path — an in-flight project's reviewer " +
+          "would be sent to a directory that does not exist and cannot be created (boundary D6)",
+      );
+      assert.doesNotMatch(
+        reviewerPrompt,
+        /03-quality\.md if it\s+exists/,
+        "the silent 'if it exists' hedge is back — the reviewer must say which corpus it read, not fall through",
+      );
+
+      const plannerPrompt = buildPrompt(task({ role: "planner" }), proj);
+      assert.ok(plannerPrompt.includes(slugPath), "planner prompt lost the slugged corpus path");
+      assert.ok(
+        plannerPrompt.includes("flat docs/plan/"),
+        "planner prompt does not name the flat corpus layout an in-flight project still uses",
+      );
+    });
+  }
+
+  test("the CREATING sites stay slug-only: the architect is never offered a flat corpus to write into", () => {
+    const architectPrompt = buildPrompt(task({ role: "architect" }), goalProject);
+    for (const doc of ["00-vision.md", "01-requirements.md", "02-architecture.md", "03-quality.md", "04-phases.md"]) {
+      assert.ok(architectPrompt.includes(`${slugPath}${doc}`), `architect prompt lost the slugged ${doc}`);
+      assert.ok(
+        !architectPrompt.includes(`docs/plan/${doc}`),
+        `architect prompt offers the FLAT docs/plan/${doc} — a corpus must be born under its slug, never in the flat dir`,
+      );
+    }
   });
 
   test("non-regression: the real flat file docs/plan/10-policy-agent-autonomy-and-escalation.md still appears unslugged in every role's prompt", () => {

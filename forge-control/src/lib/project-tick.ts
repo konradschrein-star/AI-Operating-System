@@ -515,15 +515,32 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   // would be worse than saying nothing).
   const live = liveCheckoutPath(project.repo);
   // C17. null when the project has no manager-chat linkage, which is the whole
-  // gate: no linkage -> no block, and the prompt of an unlinked project stays
-  // byte-identical to what it was before CP3 (08 §4 acceptance). The key name
+  // gate: no linkage -> no block, and an unlinked project's prompt still ends
+  // exactly where it ended before CP3, at ESCALATION_POLICY (08 §4 acceptance).
+  // Not "byte-identical": C18 below changes the goal-mode corpus paths
+  // independently of linkage. The key name
   // itself lives in db/projects.ts and is deliberately never spelled here —
   // 08 §4.3's boundary grep must keep matching only cc-runner.ts and
   // db/projects.ts, so this file asks the accessor instead.
   const managerRun = managerChatRunId(project);
-  // C18. One slug per prompt build, interpolated into every corpus path below
-  // so a FUTURE project's planning corpus is born under its own directory
-  // instead of colliding in the flat docs/plan/ this repo still uses.
+  // C18. One slug per prompt build, so a FUTURE project's planning corpus is
+  // born under its own directory instead of colliding in the flat docs/plan/
+  // this repo still uses.
+  //
+  // CREATING vs READING — the distinction that round 1105 caught. Where a
+  // prompt CREATES or seeds a corpus (the goal-mode architect's five paths, the
+  // "Plan phase k per …/04-phases.md" brief template, "commit nothing outside
+  // …"), the slugged path is the only path: it decides where the corpus lands.
+  // Where a prompt READS an existing corpus (planner, reviewer), the slug must
+  // NOT be the only path offered. buildPrompt runs at EVERY task spawn, not at
+  // project creation, so a project already in flight — planned into the flat
+  // docs/plan/ and forbidden by boundary D6 from moving until the merge recipe
+  // runs — gets the new prompt text for its very next task. Pointing such a
+  // reviewer at ${corpus}/03-quality.md alone would send it to a directory that
+  // does not exist and cannot be created, and the old "if it exists" hedge let
+  // it fall through and review with no quality gate at all: exactly the silent
+  // degradation this project exists to remove. The reading branches therefore
+  // name both paths and require the role to say which one it used.
   const slug = projectSlug(project.name, project.id);
   const corpus = `docs/plan/${slug}`;
   // Wrap EVERY return through this rather than pasting the block into eight
@@ -608,7 +625,9 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   if (task.role === "planner") {
     return withPolicy(
       header +
-      `\nRead the planning corpus under ${corpus}/ (if present) and the current state of the worktree, then ` +
+      `\nRead the planning corpus — at ${corpus}/ for a project planned under the per-project layout, or at ` +
+      `the flat docs/plan/ for a project whose corpus predates it. Both paths are real in this fleet; look at ` +
+      `both and read whichever exists. Then, with the current state of the worktree, ` +
       `break YOUR assigned scope into concrete builder tasks by calling forge-control:\n` +
       `${taskCurl(project.id)}\n` +
       `Your round is ${task.round}. Create builder tasks at round ${task.round + 1} (and ${task.round + 2}, ` +
@@ -650,8 +669,12 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
     return withPolicy(
       header +
       `\nReview the actual diff (git diff ${project.base_branch}...HEAD) and the code itself, not just the ` +
-      `plan or commit messages. Run the tests and checks named in your brief (or ${corpus}/03-quality.md if it ` +
-      `exists) — a review without executed checks is not a review. End your final message with a line starting ` +
+      `plan or commit messages. Run the tests and checks named in your brief, plus the project's quality gates ` +
+      `— at ${corpus}/03-quality.md for a project planned under the per-project layout, or at ` +
+      `docs/plan/03-quality.md for a project whose corpus predates it. Look at BOTH paths, read whichever ` +
+      `exists, and name in your review which one you used; if neither exists, say so explicitly rather than ` +
+      `reviewing without gates and staying quiet about it. ` +
+      `A review without executed checks is not a review. End your final message with a line starting ` +
       `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
       `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.` +
       // R13 + R16: the reviewer is the round's gate, so both the cleanliness

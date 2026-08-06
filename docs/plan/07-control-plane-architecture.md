@@ -256,9 +256,17 @@ circularity is structural, so the plan routes around it instead of pretending.
   (`POST /api/runs/<origin_chat_id>/message` with `from:"worker"`, `sender_run_id:$FORGE_RUN_UUID`),
   and the rule that reports are for findings/blockers, not chatter.
 - `projectSlug()` in `run-control-rules.ts` (pure, tested): the goal-mode architect branch's five
-  hardcoded `docs/plan/0*.md` strings and the planner-corpus references
-  (`project-tick.ts:413-419, 455`) interpolate `docs/plan/${slug}/…`. Affects only projects planned
-  after deploy; this project's flat corpus is untouched until the D6 merge recipe.
+  hardcoded `docs/plan/0*.md` strings and the planner-brief template it writes
+  (`project-tick.ts:413-419, 455`) interpolate `docs/plan/${slug}/…`. No file is moved; this
+  project's flat corpus is untouched until the D6 merge recipe.
+  **Corrected in round 1106 — the earlier claim "affects only projects planned after deploy" was
+  false.** It holds only for the *creating* sites above, where the slug decides where a corpus is
+  written. It does NOT hold for the sites that *read* a corpus (the planner's "read the planning
+  corpus under …" line and the reviewer's `03-quality.md` reference), because `buildPrompt` runs at
+  every task spawn, not at project creation: a project planned before deploy gets the new prompt
+  text on its very next task, while its corpus is still flat and D6 forbids moving it. Those two
+  reading references therefore name both the slugged and the flat path and make the role state
+  which one it read, instead of hedging with "if it exists" and silently reviewing without gates.
 
 ## 10. Failure modes, enumerated
 
