@@ -1,0 +1,2544 @@
+verify-control-plane.sh - proving the manager control plane against http://127.0.0.1:7700
+(contract: /opt/obsidian-vault/AI OS/Contract - Manager Control Plane API.md §1/§3/§4)
+
+--- setup: creating scratch runs ---
+  target run id: $ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332
+  sender run id: $ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757
+
+=== step 1: message to fresh (queued) run -> 202, direction 'in' in comms ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/message' -H 'content-type: application/json' -d '{
+  "text": "step1 hello from konrad",
+  "from": "konrad"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/comms'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+[31mFAIL[0m step 1: message to fresh run: expected HTTP 202, got 000; message to fresh run body shape: jq filter [.queued == true and .delivery == "next-turn"] did not hold for body: ; GET comms on target: expected HTTP 200, got 000; comms entry with direction 'in': jq filter [.comms | any(.meta.comms.direction == "in")] did not hold for body: ; 
+
+=== step 2: message with sender_run_id -> echo in sender comms (direction 'out'), sender status unchanged (C3) ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/message' -H 'content-type: application/json' -d '{
+  "text": "step2 hello from worker",
+  "from": "worker",
+  "sender_run_id": "$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{\n  \"title\": \"control-plane verify - sender\",\n  \"prompt\": \"Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \\\"ack\\\" and stop.\",\n  \"budget_usd\": 0,\n  \"metadata\": {\n    \"verify_control_plane\": true\n  }\n}'\n  -> HTTP 201\n{\n  \"run\": {\n    \"id\": \"3700ce1a-3101-49f4-bdae-c19f7c002757\",\n    \"title\": \"control-plane verify - sender\",\n    \"prompt\": \"Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \\\"ack\\\" and stop.\",\n    \"status\": \"queued\",\n    \"worker\": null,\n    \"budget_usd\": \"0.00\",\n    \"spent_usd\": \"0.00\",\n    \"thread\": [\n      {\n        \"ts\": \"2026-08-06T02:51:12.341Z\",\n        \"kind\": \"text\",\n        \"role\": \"user\",\n        \"content\": \"Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \\\"ack\\\" and stop.\"\n      }\n    ],\n    \"metadata\": {\n      \"verify_control_plane\": true\n    },\n    \"parent_run_id\": null,\n    \"stuck_signal\": null,\n    \"created_at\": \"2026-08-06 02:51:12.3415+00\",\n    \"updated_at\": \"2026-08-06 02:51:12.3415+00\",\n    \"started_at\": null,\n    \"completed_at\": null,\n    \"last_heartbeat_at\": null,\n    \"message_count\": 1,\n    \"last_message_preview\": \"Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \\\"ack\\\" and stop.\",\n    \"last_role\": \"user\",\n    \"archived\": false\n  }\n}\n3700ce1a-3101-49f4-bdae-c19f7c002757"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757/comms'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title
+  sender status before echo: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title', after: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title'
+[31mFAIL[0m step 2: message with sender_run_id: expected HTTP 202, got 000; message with sender_run_id body shape: jq filter [.queued == true and .delivery == "next-turn"] did not hold for body: ; GET comms on sender: expected HTTP 200, got 000; echo entry with direction 'out' in sender's comms: jq filter [.comms | any(.meta.comms.direction == "out")] did not hold for body: ; 
+
+=== step 3: stop -> 202, status paused; second stop -> 409 ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/stop'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+  status after stop: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/stop'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+[31mFAIL[0m step 3: stop: expected HTTP 202, got 000; stop body shape: jq filter [.stopping == true] did not hold for body: ; status after stop: expected 'paused', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; second stop: expected HTTP 409, got 000; second stop carries a reason: jq filter [.error | length > 0] did not hold for body: ; 
+
+=== step 4: message to paused run -> 202, status back to queued ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/message' -H 'content-type: application/json' -d '{
+  "text": "step4 wake up",
+  "from": "konrad"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+  status after message-to-paused: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'
+[31mFAIL[0m step 4: message to paused run: expected HTTP 202, got 000; message to paused run body shape: jq filter [.queued == true] did not hold for body: ; status after message to paused run: expected 'queued', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; 
+
+=== step 5: terminate -> 202, status cancelled + completed_at stamped (§4 fix); second terminate -> 409 ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/terminate'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+  status after terminate: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title', completed_at: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/terminate'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+[31mFAIL[0m step 5: terminate: expected HTTP 202, got 000; terminate body shape: jq filter [.terminating == true] did not hold for body: ; status after terminate: expected 'cancelled', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; second terminate: expected HTTP 409, got 000; second terminate carries a reason: jq filter [.error | length > 0] did not hold for body: ; 
+
+=== step 6: message to cancelled run -> 409 naming /resume-chat ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/message' -H 'content-type: application/json' -d '{
+  "text": "step6 are you there",
+  "from": "konrad"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+[31mFAIL[0m step 6: message to cancelled run: expected HTTP 409, got 000; error names /resume-chat: jq filter [.error | test("resume-chat")] did not hold for body: ; 
+
+=== step 6b: message to a completed run -> 202, status queued, completed_at cleared ===
+[31mFAIL[0m step 6b: run B must reach 'completed' within 180s for this step to be meaningful (executor draining?): expected 'completed', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title'; 
+
+=== step 7: GET comms on both runs (evidence transcript) ===
+--- run A ($ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332) comms ---
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/comms'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+--- run B ($ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757) comms ---
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757/comms'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title
+[31mFAIL[0m step 7: GET comms on run A: expected HTTP 200, got 000; GET comms on run B: expected HTTP 200, got 000; 
+
+=== step 8: resume-chat on a cancelled run -> 202 in place, queued, completed_at cleared; second resume-chat while queued -> 409 naming /message ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/resume-chat' -H 'content-type: application/json' -d '{
+  "text": "step 8 resume follow-up",
+  "from": "konrad"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+  status after resume-chat: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title', completed_at: '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/comms'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332/resume-chat' -H 'content-type: application/json' -d '{
+  "text": "step 8 second resume attempt",
+  "from": "konrad"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title
+[31mFAIL[0m step 8: resume-chat on cancelled run: expected HTTP 202, got 000; resumed_run_id echoes the same id (C6: in place, never a new run): jq filter [.resumed_run_id == "$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332"] did not hold for body: ; status after resume-chat on cancelled run: expected 'queued', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; completed_at must be CLEARED by resume-chat (same R906 property step 6b proves for /message): expected '', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; GET comms on run A after resume-chat: expected HTTP 200, got 000; comms entry with direction 'in' still present after resume-chat: jq filter [.comms | any(.meta.comms.direction == "in")] did not hold for body: ; the new resume-chat entry is present in the thread: jq filter [.comms | any(.meta.comms.direction == "in" and (.content | test("step 8 resume follow-up")))] did not hold for body: ; second resume-chat while queued/running: expected HTTP 409, got 000; second resume-chat's refusal names /message: jq filter [.error | test("/message")] did not hold for body: ; 
+
+=== step 9: subagent-message with an unaddressable id -> 409; empty id -> 400; refused calls append nothing ===
+  subagent-parent run id: $ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+    "title": "control-plane verify - subagent-parent",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:54:14.065Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:54:14.065695+00",
+    "updated_at": "2026-08-06 02:54:14.065695+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+79881984-258b-4a32-9bc1-ffc191b7a596
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+    "title": "control-plane verify - subagent-parent",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:54:14.065Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:54:14.065695+00",
+    "updated_at": "2026-08-06 02:54:14.065695+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+79881984-258b-4a32-9bc1-ffc191b7a596/subagent-message' -H 'content-type: application/json' -d '{
+  "subagent_id": "toolu_definitely_not_a_real_id",
+  "text": "step 9 relay"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 358:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+ 
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+    "title": "control-plane verify - subagent-parent",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:54:14.065Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:54:14.065695+00",
+    "updated_at": "2026-08-06 02:54:14.065695+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+79881984-258b-4a32-9bc1-ffc191b7a596/subagent-message' -H 'content-type: application/json' -d '{
+  "subagent_id": "",
+  "text": "step 9 relay with empty id"
+}'
+  -> connection failed: curl: (3) nested brace in URL position 358:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+ 
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+    "title": "control-plane verify - subagent-parent",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:54:14.065Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:54:14.065695+00",
+    "updated_at": "2026-08-06 02:54:14.065695+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+79881984-258b-4a32-9bc1-ffc191b7a596/comms'
+  -> connection failed: curl: (3) nested brace in URL position 358:
+http://127.0.0.1:7700/api/runs/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "79881984-258b-4a32-9bc1-ffc191b7a596",
+ 
+
+[33mstep 9 note (no silent skips): the ADDRESSABLE relay path -- a[0m
+[33msubagent_id present in metadata.subagents_v2 -- cannot be exercised here.[0m
+[33mA scratch run created via POST /api/chat has never spawned a sub-agent, so[0m
+[33mthere is no live id to address; fabricating metadata.subagents_v2 would mean[0m
+[33mwriting to the live DB behind the API, which this script never does. That[0m
+[33mpath IS proven: src/lib/run-control-rules.test.ts's 'subagentAddressable'[0m
+[33mtable tests cover the address-space matching itself, and[0m
+[33msrc/lib/run-control-surface.test.ts asserts the addressability-before-[0m
+[33meligibility ordering in the route source. Its live proof -- an actual relay[0m
+[33mdelivered to a real sub-agent -- belongs to CP4 against a real fleet run.[0m
+[33mThis note is not counted as a pass.[0m
+[31mFAIL[0m step 9: subagent-message with unaddressable id: expected HTTP 409, got 000; error names the honest 'not addressable' refusal (C10): jq filter [.error | test("not addressable")] did not hold for body: ; subagent-message with empty subagent_id: expected HTTP 400, got 000; GET comms on subagent-parent: expected HTTP 200, got 000; neither refused call appended anything to the parent's thread: jq filter [.comms | length == 0] did not hold for body: ; 
+
+[33mnote (no silent skips): the C7 workspace-gone 409 (resume-chat against a[0m
+[33mrun whose metadata.workspace_dir no longer exists on disk) cannot be[0m
+[33mprovoked from HTTP -- a scratch run has no workspace_dir, and fabricating[0m
+[33mone means writing to the live DB behind the API, which this script never[0m
+[33mdoes. It IS proven: run-control-rules.test.ts's workspaceDirOf table tests[0m
+[33mplus run-control-surface.test.ts's pre-flight-before-write ordering[0m
+[33massertion. Not counted as a step or a pass.[0m
+
+(skipping --running section - pass --running to also exercise message-into-a-RUNNING-target)
+
+[31mFAILED steps (10/10):[0m
+  - 1: message to fresh run: expected HTTP 202, got 000; message to fresh run body shape: jq filter [.queued == true and .delivery == "next-turn"] did not hold for body: ; GET comms on target: expected HTTP 200, got 000; comms entry with direction 'in': jq filter [.comms | any(.meta.comms.direction == "in")] did not hold for body: ; 
+  - 2: message with sender_run_id: expected HTTP 202, got 000; message with sender_run_id body shape: jq filter [.queued == true and .delivery == "next-turn"] did not hold for body: ; GET comms on sender: expected HTTP 200, got 000; echo entry with direction 'out' in sender's comms: jq filter [.comms | any(.meta.comms.direction == "out")] did not hold for body: ; 
+  - 3: stop: expected HTTP 202, got 000; stop body shape: jq filter [.stopping == true] did not hold for body: ; status after stop: expected 'paused', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; second stop: expected HTTP 409, got 000; second stop carries a reason: jq filter [.error | length > 0] did not hold for body: ; 
+  - 4: message to paused run: expected HTTP 202, got 000; message to paused run body shape: jq filter [.queued == true] did not hold for body: ; status after message to paused run: expected 'queued', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; 
+  - 5: terminate: expected HTTP 202, got 000; terminate body shape: jq filter [.terminating == true] did not hold for body: ; status after terminate: expected 'cancelled', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; second terminate: expected HTTP 409, got 000; second terminate carries a reason: jq filter [.error | length > 0] did not hold for body: ; 
+  - 6: message to cancelled run: expected HTTP 409, got 000; error names /resume-chat: jq filter [.error | test("resume-chat")] did not hold for body: ; 
+  - 6b: run B must reach 'completed' within 180s for this step to be meaningful (executor draining?): expected 'completed', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.341Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.3415+00",
+    "updated_at": "2026-08-06 02:51:12.3415+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+3700ce1a-3101-49f4-bdae-c19f7c002757'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "3700ce1a-3101-49f4-bdae-c19f7c002757",
+    "title'; 
+  - 7: GET comms on run A: expected HTTP 200, got 000; GET comms on run B: expected HTTP 200, got 000; 
+  - 8: resume-chat on cancelled run: expected HTTP 202, got 000; resumed_run_id echoes the same id (C6: in place, never a new run): jq filter [.resumed_run_id == "$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332"] did not hold for body: ; status after resume-chat on cancelled run: expected 'queued', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; completed_at must be CLEARED by resume-chat (same R906 property step 6b proves for /message): expected '', got '$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-06T02:51:12.298Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-06 02:51:12.298458+00",
+    "updated_at": "2026-08-06 02:51:12.298458+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+f8c13a7e-40bd-46dd-a609-1195d7692332'
+  -> connection failed: curl: (3) nested brace in URL position 349:
+http://127.0.0.1:7700/api/chat/$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "f8c13a7e-40bd-46dd-a609-1195d7692332",
+    "title'; GET comms on run A after resume-chat: expected HTTP 200, got 000; comms entry with direction 'in' still present after resume-chat: jq filter [.comms | any(.meta.comms.direction == "in")] did not hold for body: ; the new resume-chat entry is present in the thread: jq filter [.comms | any(.meta.comms.direction == "in" and (.content | test("step 8 resume follow-up")))] did not hold for body: ; second resume-chat while queued/running: expected HTTP 409, got 000; second resume-chat's refusal names /message: jq filter [.error | test("/message")] did not hold for body: ; 
+  - 9: subagent-message with unaddressable id: expected HTTP 409, got 000; error names the honest 'not addressable' refusal (C10): jq filter [.error | test("not addressable")] did not hold for body: ; subagent-message with empty subagent_id: expected HTTP 400, got 000; GET comms on subagent-parent: expected HTTP 200, got 000; neither refused call appended anything to the parent's thread: jq filter [.comms | length == 0] did not hold for body: ; 
+SCRIPT_EXIT=1
