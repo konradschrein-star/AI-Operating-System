@@ -1,0 +1,198 @@
+{
+  "base": "http://127.0.0.1:7809",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "chat": {
+    "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+  },
+  "bogus_doc": "zz-no-such-plan-doc-703.md",
+  "shots": [
+    {
+      "name": "surface",
+      "theme": "dark",
+      "file": "phase700-703-surface-dark.png",
+      "sampled_background": "rgb(0, 0, 0)"
+    },
+    {
+      "name": "surface",
+      "theme": "light",
+      "file": "phase700-703-surface-light.png",
+      "sampled_background": "rgb(247, 247, 245)"
+    },
+    {
+      "name": "kanban",
+      "theme": "dark",
+      "file": "phase700-703-kanban-dark.png",
+      "sampled_background": "rgb(0, 0, 0)"
+    },
+    {
+      "name": "kanban",
+      "theme": "light",
+      "file": "phase700-703-kanban-light.png",
+      "sampled_background": "rgb(247, 247, 245)"
+    },
+    {
+      "name": "card",
+      "theme": "dark",
+      "file": "phase700-703-card-dark.png",
+      "sampled_background": "rgb(0, 0, 0)"
+    },
+    {
+      "name": "card",
+      "theme": "light",
+      "file": "phase700-703-card-light.png",
+      "sampled_background": "rgb(247, 247, 245)"
+    },
+    {
+      "name": "plandoc",
+      "theme": "dark",
+      "file": "phase700-703-plandoc-dark.png",
+      "sampled_background": "rgb(0, 0, 0)"
+    },
+    {
+      "name": "plandoc",
+      "theme": "light",
+      "file": "phase700-703-plandoc-light.png",
+      "sampled_background": "rgb(247, 247, 245)"
+    },
+    {
+      "name": "docerror",
+      "theme": "dark",
+      "file": "phase700-703-docerror-dark.png",
+      "sampled_background": "rgb(0, 0, 0)"
+    },
+    {
+      "name": "docerror",
+      "theme": "light",
+      "file": "phase700-703-docerror-light.png",
+      "sampled_background": "rgb(247, 247, 245)"
+    }
+  ],
+  "results": [
+    {
+      "name": "chat",
+      "note": {
+        "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+      }
+    },
+    {
+      "name": "viewport",
+      "note": {
+        "width": 1440,
+        "height": 900
+      }
+    },
+    {
+      "name": "both zones at capture time",
+      "note": {
+        "plan_state": "ready",
+        "progress": "55/66",
+        "cards": 16,
+        "chips": 66,
+        "team_rows": 67
+      }
+    },
+    {
+      "name": "the plan zone is populated for the shot",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the team zone is populated for the shot",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "surface: the two themes render different backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "kanban: the two themes render different backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "blocks on screen in the scrolled shot",
+      "note": [
+        "500 (10/10)",
+        "600 (9/9)",
+        "700 (5/7)"
+      ]
+    },
+    {
+      "name": "the scrolled shot is not still showing the first block",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "card: the two themes render different backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "plan doc shot",
+      "note": {
+        "name": "16-ui-v3-graph-research.md",
+        "headings": 7
+      }
+    },
+    {
+      "name": "the doc shot has rendered markdown headings in it",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "plandoc: the two themes render different backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "error state text in the shot",
+      "note": "no such plan document: zz-no-such-plan-doc-703.md"
+    },
+    {
+      "name": "the shot shows the server's own sentence",
+      "ok": true,
+      "actual": "no such plan document: zz-no-such-plan-doc-703.md",
+      "expected": "no such plan document: zz-no-such-plan-doc-703.md"
+    },
+    {
+      "name": "docerror: the two themes render different backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "failed requests",
+      "note": [
+        "404 http://127.0.0.1:7809/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan/doc?name=zz-no-such-plan-doc-703.md"
+      ]
+    },
+    {
+      "name": "console errors other than the deliberate 404",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "ten PNGs were written (5 views x 2 themes)",
+      "ok": true,
+      "actual": 10,
+      "expected": 10
+    }
+  ],
+  "verdict": "PASS"
+}

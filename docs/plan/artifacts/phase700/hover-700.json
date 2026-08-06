@@ -1,0 +1,909 @@
+{
+  "base": "http://127.0.0.1:7809",
+  "chat": {
+    "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+  },
+  "protocol": {
+    "window_ms": 10000,
+    "sweep_step_ms": 90,
+    "poll_lead_ms": 60,
+    "poll_tail_ms": 400,
+    "gate": "zero React commits unattributable to a poll in the pointer-only window, zero DOM mutations in either zone, zero layout shift"
+  },
+  "census": {
+    "team-row": 67,
+    "phase-card": 16,
+    "task-chip": 66,
+    "doc-link": 12
+  },
+  "layout_shift": false,
+  "geom_before": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2:85x43x259",
+    "3853c154-e07b-4378-9313-2b34f4a33342:128x43x259",
+    "toolu_014raMUrJcAiXV61BerokrjN:171x43x259",
+    "toolu_012sWh2xagb6t8J11pTV5oMT:214x43x259",
+    "6eeec7bf-1ccd-49fa-b8dd-b95eefc70f63:257x43x259",
+    "51694164-8697-4134-9b22-fc2859825bde:300x43x259",
+    "b4d241ea-7bd2-4bd2-834d-db0b930cb938:343x43x259",
+    "3d26461f-8e89-4928-9dda-9df62ad50e3b:386x43x259",
+    "20bb47eb-e2ce-4d6a-a451-700d871de90a:429x43x259",
+    "fdc1eacf-4257-44a7-a5ba-c6198b7db688:472x43x259",
+    "9a937009-4beb-48c0-983c-36dd43e56c9d:515x43x259",
+    "1110e146-1de3-4d92-bc07-d05c60ebdcdc:558x43x259",
+    "ab331865-dc4d-4e68-94d7-cabff6688681:601x43x259",
+    "toolu_01AeuQskZPyHpsYrHayvrqrT:644x43x259",
+    "toolu_01CaVhCxZ9ysaCrPVKWv7YuX:687x43x259",
+    "toolu_01U21ApZZJS2ykMCnDZ9tXM6:730x43x259",
+    "toolu_014exr6WECYL3iKbP7Wh83bW:773x43x259",
+    "0ed80848-2cad-4047-94dd-1544cfc08214:816x43x259",
+    "2c535643-6632-42ec-9743-0fc58327017e:859x43x259",
+    "a59d2cf8-e28d-4f01-a906-b460ecc1863f:902x43x259",
+    "5f359463-2df7-4645-93e4-f371dd899c6c:945x43x259",
+    "03e54ad6-bbab-4bc5-bf26-5a431973d7c0:988x43x259",
+    "0faca9b9-0357-439e-bd29-4f465771ee3c:1031x43x259",
+    "8e036e52-8346-4822-8ff8-68629e2b7af2:1074x43x259",
+    "2598ec14-541d-4149-b128-2490cb5db16c:1117x43x259",
+    "9d6c0782-1a2c-431f-bdcb-5a3ca7c88304:1160x43x259",
+    "01b820d1-9d46-4c6f-94da-525c5994dfd9:1203x43x259",
+    "5dccbcf1-e571-42ab-9ba5-70620dd2317a:1246x43x259",
+    "453410f8-d235-4af5-8c02-82555dc67df3:1289x43x259",
+    "dd0ed28d-98bd-4654-9978-82c27af04ae2:1332x43x259",
+    "04643b75-1f85-4442-a09e-9aba0f3560d2:1375x43x259",
+    "5d5d192d-abae-45f8-b0f7-6be76688595b:1418x43x259",
+    "35860f15-5449-4052-a1cb-1f274ef21445:1461x43x259",
+    "62db80ee-a7a8-48c5-933a-28c0d4e340f4:1504x43x259",
+    "de458924-ee75-4cfa-8448-5ba990c7d444:1547x43x259",
+    "855cc0d4-25cd-482f-b87a-92f923caa4ce:1590x43x259",
+    "5bf8ca6d-3324-467c-a3e0-7760758005f0:1633x43x259",
+    "ac777679-44fa-4a8f-a681-ecabd7b31e71:1676x43x259",
+    "8b82347a-cc0f-4cc4-878f-4223948a1257:1719x43x259",
+    "105cf305-ca43-4615-bf75-74825cf8af01:1762x43x259",
+    "cf91bcb3-199c-4188-adc2-3b7f1f595aab:1805x43x259",
+    "790c74ab-614c-49a7-a86a-1c3023e1e37b:1848x43x259",
+    "841dad26-2b2f-4c9d-ad06-291a15c690d5:1891x43x259",
+    "d333bfbe-9bce-46d2-beb4-ca74d2df8972:1934x43x259",
+    "bbc9cedb-b04a-434c-aa00-762ba6cc7a5f:1977x43x259",
+    "f799007c-f1f3-4710-a3e7-0e5988fd6324:2020x43x259",
+    "3673e418-aeb0-4a65-be8d-693ca762556d:2063x43x259",
+    "e5cc35d7-9855-4380-abdc-dd723f14af52:2106x43x259",
+    "7c6a6e57-0697-4600-ba29-e1a57ecd52e3:2149x43x259",
+    "9c620d6a-5269-4113-8c8f-889338f31aa5:2192x43x259",
+    "b55b1056-1b0a-4fa2-a77c-9ab13d0fafc3:2235x43x259",
+    "740ef40d-cbb0-4851-9eea-ca6bc21fb1ca:2278x43x259",
+    "c1056919-a2b1-4103-8412-aad508b6ff52:2321x43x259",
+    "c4368eda-b1ee-447c-b3d0-59e32682024b:2364x43x259",
+    "a24ebdd1-5c15-4178-bf36-606026e1cdd5:2407x43x259",
+    "43fd8ef3-e41c-4a80-8f9c-a57cd2ee614d:2450x43x259",
+    "4d5d5a58-f7f2-4e3d-9512-29a1f0424492:2493x43x259",
+    "125b48af-de77-4447-9fdb-732cbd13e598:2536x43x259",
+    "41952b27-d538-43ab-b049-f7ca4f0743ff:2579x43x259",
+    "0832de50-bdee-43f2-9e6c-3977defff5b6:2622x43x259",
+    "8fea3b75-a4d9-44f3-a82f-1b3d713db27b:2665x43x259",
+    "c7d12478-b4a7-4064-9147-d314c8bbdb35:2708x43x259",
+    "eded75b2-2abf-4205-9c42-218ae6665897:2751x43x259",
+    "f35822bd-4f9e-4f77-8e04-09bdde3b936d:2794x43x259",
+    "6f531464-5023-4a8e-b9e7-8e361c3339d3:2837x43x259",
+    "04e5292a-372c-4c8a-8b59-013517ee45bf:2880x43x259",
+    "32c2703a-fb99-4599-8e43-97f2ed0f1286:2923x43x259",
+    "0:590x54x259",
+    "4a896cc1-d461-42f8-a6b9-3a0c26e4c5c6:620x16x239",
+    "100:644x126x259",
+    "62f5a8ea-2bee-4cdb-b787-0f81be7e2d26:674x16x239",
+    "3943ac51-b0a1-49da-9f73-1eb83c8d263b:692x16x239",
+    "420f1be6-fb92-4bcb-a444-8a42fa58c72b:710x16x239",
+    "0506528d-e285-4366-99c4-226e8a754a3d:728x16x239",
+    "503189ab-7a4c-4ee3-8938-abbc70d2e92b:746x16x239",
+    "200:770x144x259",
+    "23d9852b-c78e-401f-ab63-4ecd8ad8463c:800x16x239",
+    "e4acd605-249d-4251-8eee-b4f62a511962:818x16x239",
+    "88f48056-4cf4-4cdd-98d6-593c0cc8a174:836x16x239",
+    "94aacf9f-435e-4ccc-97af-4c1dbe469875:854x16x239",
+    "bd9eff2e-4f63-4d01-825f-7a5feb1dd212:872x16x239",
+    "0814edf2-2137-46f1-b5dc-c04fea889831:890x16x239",
+    "300:914x270x259",
+    "9fc6f24e-fc7d-4239-b65a-03d2d3722d14:944x16x239",
+    "d5024345-3a51-4b58-bf9b-ddaf946f8b27:962x16x239",
+    "b66cc1bd-b754-49be-9d78-b12373aa6fff:980x16x239",
+    "5bda2ae6-3c61-4ba6-bab0-3f9102ae090f:998x16x239",
+    "6bed98a8-0468-4d63-b684-ea95eb697320:1016x16x239",
+    "9bdbc2b4-04ea-47d1-89e0-903bc563e13d:1034x16x239",
+    "2a274501-dc89-47f5-af03-ff644bad13f4:1052x16x239",
+    "04872671-5225-4876-a906-eaa3cbb8664d:1070x16x239",
+    "79f6bd8d-792b-4d24-b7f8-3a898c81bda2:1088x16x239",
+    "f9d4928f-ffc1-4052-88d3-3d1657796b44:1106x16x239",
+    "d8287834-0ec4-4084-93fb-6108546db1aa:1124x16x239",
+    "d93d1077-e186-457a-b256-c353feac291f:1142x16x239",
+    "658268f7-d6c0-4a34-b27d-f100a7a289ec:1160x16x239",
+    "400:1184x144x259",
+    "ee3af4d8-5a7e-4605-916b-e05d7858604d:1214x16x239",
+    "832fc1d3-588d-475b-aff2-35aaead2439e:1232x16x239",
+    "f43d8dbd-f05a-40cb-8476-8c23fc6b5909:1250x16x239",
+    "a0a1a3f5-d234-405b-8445-0f988f17b882:1268x16x239",
+    "15d2a866-be55-429b-bf75-42c53170cb8d:1286x16x239",
+    "17b599a5-e7fb-45e1-b4da-77cdfb69bb25:1304x16x239",
+    "500:1328x216x259",
+    "8d1e6014-f95b-4d32-bed9-3ff7b6d48f9d:1358x16x239",
+    "6be0f8ce-68e6-4d69-abb4-9018224779f8:1376x16x239",
+    "cef4975a-80fa-4176-a186-f5bd98debac6:1394x16x239",
+    "bfbde2bf-c791-4e6f-8fe5-165656bebed0:1412x16x239",
+    "102099fb-b974-4b34-8eac-c6973e3e6d19:1430x16x239",
+    "d3ff7990-8527-4c23-a41e-276a58d22e5a:1448x16x239",
+    "69b77144-079f-454f-8ac7-d7dabc7b47ba:1466x16x239",
+    "b39ddae8-db9a-48ba-9878-67143f453ea0:1484x16x239",
+    "507e5ab7-a4b8-46c6-8664-44c50b1c6938:1502x16x239",
+    "4d8679b2-1b7e-490a-8779-62a89803077b:1520x16x239",
+    "600:1544x198x259",
+    "cbc58c3c-6643-496a-8dfb-5904629a667b:1574x16x239",
+    "ff86877a-cabe-41c3-afbb-3b105b406abb:1592x16x239",
+    "a7a1bb12-f05e-433d-bcad-ca4e9dd02f0b:1610x16x239",
+    "72776adb-9ef7-4b38-a3b3-1af8b03541b3:1628x16x239",
+    "24a4fb9b-55c8-4f77-ba9f-87e68fcf98dc:1646x16x239",
+    "fc417d84-f988-48ab-8721-1e9e2fcae580:1664x16x239",
+    "413d7de0-85e7-40a2-9bd5-307f0cba85e8:1682x16x239",
+    "e5accd34-a3dc-446f-a027-3f9e2807e54a:1700x16x239",
+    "c68226e8-9918-45d1-b3ec-d98989cc6cba:1718x16x239",
+    "700:1742x162x259",
+    "1e473174-10c6-4fdb-97f7-51b8aed896f1:1772x16x239",
+    "27a80af5-110a-49ab-9eae-1ed81918e88b:1790x16x239",
+    "04498cdd-2c34-4055-afe5-85e2a3ce8178:1808x16x239",
+    "70f9d125-ce5c-477a-bb2f-53841f618672:1826x16x239",
+    "333a8a1a-18e6-4fba-9b74-1b2533f53484:1844x16x239",
+    "a333a6b7-7ef8-4744-afb0-23b3715b065e:1862x16x239",
+    "4ff945e4-ba3f-43b3-ae74-4f7291ce4695:1880x16x239",
+    "800:1904x54x259",
+    "d89f8dc1-ec65-47d8-9c72-01617e5f72ae:1934x16x239",
+    "900:1958x54x259",
+    "ed30414d-2ba9-42b9-9089-b27f127a4b70:1988x16x239",
+    "1200:2012x54x259",
+    "11ca0cb4-2bda-4cf4-a44a-0798c9777098:2042x16x239",
+    "1300:2066x54x259",
+    "f76ad579-c8fd-4c2a-9810-e746f04134bc:2096x16x239",
+    "1400:2120x54x259",
+    "1c5ffa1f-3ff9-440f-ac7d-ba5ddc0696d1:2150x16x239",
+    "1500:2174x54x259",
+    "9f5462c7-c529-4369-9773-4d9d731443f4:2204x16x239",
+    "1600:2228x54x259",
+    "90c0a7fe-697c-4a44-a307-d3c404ee575f:2258x16x239",
+    "1700:2282x72x259",
+    "9aa2d7b5-cbb4-455d-9938-282b6c800f38:2312x16x239",
+    "6e210bfa-0f33-4e36-a857-f3cb1ff8b54e:2330x16x239"
+  ],
+  "geom_during": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2:85x43x259",
+    "3853c154-e07b-4378-9313-2b34f4a33342:128x43x259",
+    "toolu_014raMUrJcAiXV61BerokrjN:171x43x259",
+    "toolu_012sWh2xagb6t8J11pTV5oMT:214x43x259",
+    "6eeec7bf-1ccd-49fa-b8dd-b95eefc70f63:257x43x259",
+    "51694164-8697-4134-9b22-fc2859825bde:300x43x259",
+    "b4d241ea-7bd2-4bd2-834d-db0b930cb938:343x43x259",
+    "3d26461f-8e89-4928-9dda-9df62ad50e3b:386x43x259",
+    "20bb47eb-e2ce-4d6a-a451-700d871de90a:429x43x259",
+    "fdc1eacf-4257-44a7-a5ba-c6198b7db688:472x43x259",
+    "9a937009-4beb-48c0-983c-36dd43e56c9d:515x43x259",
+    "1110e146-1de3-4d92-bc07-d05c60ebdcdc:558x43x259",
+    "ab331865-dc4d-4e68-94d7-cabff6688681:601x43x259",
+    "toolu_01AeuQskZPyHpsYrHayvrqrT:644x43x259",
+    "toolu_01CaVhCxZ9ysaCrPVKWv7YuX:687x43x259",
+    "toolu_01U21ApZZJS2ykMCnDZ9tXM6:730x43x259",
+    "toolu_014exr6WECYL3iKbP7Wh83bW:773x43x259",
+    "0ed80848-2cad-4047-94dd-1544cfc08214:816x43x259",
+    "2c535643-6632-42ec-9743-0fc58327017e:859x43x259",
+    "a59d2cf8-e28d-4f01-a906-b460ecc1863f:902x43x259",
+    "5f359463-2df7-4645-93e4-f371dd899c6c:945x43x259",
+    "03e54ad6-bbab-4bc5-bf26-5a431973d7c0:988x43x259",
+    "0faca9b9-0357-439e-bd29-4f465771ee3c:1031x43x259",
+    "8e036e52-8346-4822-8ff8-68629e2b7af2:1074x43x259",
+    "2598ec14-541d-4149-b128-2490cb5db16c:1117x43x259",
+    "9d6c0782-1a2c-431f-bdcb-5a3ca7c88304:1160x43x259",
+    "01b820d1-9d46-4c6f-94da-525c5994dfd9:1203x43x259",
+    "5dccbcf1-e571-42ab-9ba5-70620dd2317a:1246x43x259",
+    "453410f8-d235-4af5-8c02-82555dc67df3:1289x43x259",
+    "dd0ed28d-98bd-4654-9978-82c27af04ae2:1332x43x259",
+    "04643b75-1f85-4442-a09e-9aba0f3560d2:1375x43x259",
+    "5d5d192d-abae-45f8-b0f7-6be76688595b:1418x43x259",
+    "35860f15-5449-4052-a1cb-1f274ef21445:1461x43x259",
+    "62db80ee-a7a8-48c5-933a-28c0d4e340f4:1504x43x259",
+    "de458924-ee75-4cfa-8448-5ba990c7d444:1547x43x259",
+    "855cc0d4-25cd-482f-b87a-92f923caa4ce:1590x43x259",
+    "5bf8ca6d-3324-467c-a3e0-7760758005f0:1633x43x259",
+    "ac777679-44fa-4a8f-a681-ecabd7b31e71:1676x43x259",
+    "8b82347a-cc0f-4cc4-878f-4223948a1257:1719x43x259",
+    "105cf305-ca43-4615-bf75-74825cf8af01:1762x43x259",
+    "cf91bcb3-199c-4188-adc2-3b7f1f595aab:1805x43x259",
+    "790c74ab-614c-49a7-a86a-1c3023e1e37b:1848x43x259",
+    "841dad26-2b2f-4c9d-ad06-291a15c690d5:1891x43x259",
+    "d333bfbe-9bce-46d2-beb4-ca74d2df8972:1934x43x259",
+    "bbc9cedb-b04a-434c-aa00-762ba6cc7a5f:1977x43x259",
+    "f799007c-f1f3-4710-a3e7-0e5988fd6324:2020x43x259",
+    "3673e418-aeb0-4a65-be8d-693ca762556d:2063x43x259",
+    "e5cc35d7-9855-4380-abdc-dd723f14af52:2106x43x259",
+    "7c6a6e57-0697-4600-ba29-e1a57ecd52e3:2149x43x259",
+    "9c620d6a-5269-4113-8c8f-889338f31aa5:2192x43x259",
+    "b55b1056-1b0a-4fa2-a77c-9ab13d0fafc3:2235x43x259",
+    "740ef40d-cbb0-4851-9eea-ca6bc21fb1ca:2278x43x259",
+    "c1056919-a2b1-4103-8412-aad508b6ff52:2321x43x259",
+    "c4368eda-b1ee-447c-b3d0-59e32682024b:2364x43x259",
+    "a24ebdd1-5c15-4178-bf36-606026e1cdd5:2407x43x259",
+    "43fd8ef3-e41c-4a80-8f9c-a57cd2ee614d:2450x43x259",
+    "4d5d5a58-f7f2-4e3d-9512-29a1f0424492:2493x43x259",
+    "125b48af-de77-4447-9fdb-732cbd13e598:2536x43x259",
+    "41952b27-d538-43ab-b049-f7ca4f0743ff:2579x43x259",
+    "0832de50-bdee-43f2-9e6c-3977defff5b6:2622x43x259",
+    "8fea3b75-a4d9-44f3-a82f-1b3d713db27b:2665x43x259",
+    "c7d12478-b4a7-4064-9147-d314c8bbdb35:2708x43x259",
+    "eded75b2-2abf-4205-9c42-218ae6665897:2751x43x259",
+    "f35822bd-4f9e-4f77-8e04-09bdde3b936d:2794x43x259",
+    "6f531464-5023-4a8e-b9e7-8e361c3339d3:2837x43x259",
+    "04e5292a-372c-4c8a-8b59-013517ee45bf:2880x43x259",
+    "32c2703a-fb99-4599-8e43-97f2ed0f1286:2923x43x259",
+    "0:590x54x259",
+    "4a896cc1-d461-42f8-a6b9-3a0c26e4c5c6:620x16x239",
+    "100:644x126x259",
+    "62f5a8ea-2bee-4cdb-b787-0f81be7e2d26:674x16x239",
+    "3943ac51-b0a1-49da-9f73-1eb83c8d263b:692x16x239",
+    "420f1be6-fb92-4bcb-a444-8a42fa58c72b:710x16x239",
+    "0506528d-e285-4366-99c4-226e8a754a3d:728x16x239",
+    "503189ab-7a4c-4ee3-8938-abbc70d2e92b:746x16x239",
+    "200:770x144x259",
+    "23d9852b-c78e-401f-ab63-4ecd8ad8463c:800x16x239",
+    "e4acd605-249d-4251-8eee-b4f62a511962:818x16x239",
+    "88f48056-4cf4-4cdd-98d6-593c0cc8a174:836x16x239",
+    "94aacf9f-435e-4ccc-97af-4c1dbe469875:854x16x239",
+    "bd9eff2e-4f63-4d01-825f-7a5feb1dd212:872x16x239",
+    "0814edf2-2137-46f1-b5dc-c04fea889831:890x16x239",
+    "300:914x270x259",
+    "9fc6f24e-fc7d-4239-b65a-03d2d3722d14:944x16x239",
+    "d5024345-3a51-4b58-bf9b-ddaf946f8b27:962x16x239",
+    "b66cc1bd-b754-49be-9d78-b12373aa6fff:980x16x239",
+    "5bda2ae6-3c61-4ba6-bab0-3f9102ae090f:998x16x239",
+    "6bed98a8-0468-4d63-b684-ea95eb697320:1016x16x239",
+    "9bdbc2b4-04ea-47d1-89e0-903bc563e13d:1034x16x239",
+    "2a274501-dc89-47f5-af03-ff644bad13f4:1052x16x239",
+    "04872671-5225-4876-a906-eaa3cbb8664d:1070x16x239",
+    "79f6bd8d-792b-4d24-b7f8-3a898c81bda2:1088x16x239",
+    "f9d4928f-ffc1-4052-88d3-3d1657796b44:1106x16x239",
+    "d8287834-0ec4-4084-93fb-6108546db1aa:1124x16x239",
+    "d93d1077-e186-457a-b256-c353feac291f:1142x16x239",
+    "658268f7-d6c0-4a34-b27d-f100a7a289ec:1160x16x239",
+    "400:1184x144x259",
+    "ee3af4d8-5a7e-4605-916b-e05d7858604d:1214x16x239",
+    "832fc1d3-588d-475b-aff2-35aaead2439e:1232x16x239",
+    "f43d8dbd-f05a-40cb-8476-8c23fc6b5909:1250x16x239",
+    "a0a1a3f5-d234-405b-8445-0f988f17b882:1268x16x239",
+    "15d2a866-be55-429b-bf75-42c53170cb8d:1286x16x239",
+    "17b599a5-e7fb-45e1-b4da-77cdfb69bb25:1304x16x239",
+    "500:1328x216x259",
+    "8d1e6014-f95b-4d32-bed9-3ff7b6d48f9d:1358x16x239",
+    "6be0f8ce-68e6-4d69-abb4-9018224779f8:1376x16x239",
+    "cef4975a-80fa-4176-a186-f5bd98debac6:1394x16x239",
+    "bfbde2bf-c791-4e6f-8fe5-165656bebed0:1412x16x239",
+    "102099fb-b974-4b34-8eac-c6973e3e6d19:1430x16x239",
+    "d3ff7990-8527-4c23-a41e-276a58d22e5a:1448x16x239",
+    "69b77144-079f-454f-8ac7-d7dabc7b47ba:1466x16x239",
+    "b39ddae8-db9a-48ba-9878-67143f453ea0:1484x16x239",
+    "507e5ab7-a4b8-46c6-8664-44c50b1c6938:1502x16x239",
+    "4d8679b2-1b7e-490a-8779-62a89803077b:1520x16x239",
+    "600:1544x198x259",
+    "cbc58c3c-6643-496a-8dfb-5904629a667b:1574x16x239",
+    "ff86877a-cabe-41c3-afbb-3b105b406abb:1592x16x239",
+    "a7a1bb12-f05e-433d-bcad-ca4e9dd02f0b:1610x16x239",
+    "72776adb-9ef7-4b38-a3b3-1af8b03541b3:1628x16x239",
+    "24a4fb9b-55c8-4f77-ba9f-87e68fcf98dc:1646x16x239",
+    "fc417d84-f988-48ab-8721-1e9e2fcae580:1664x16x239",
+    "413d7de0-85e7-40a2-9bd5-307f0cba85e8:1682x16x239",
+    "e5accd34-a3dc-446f-a027-3f9e2807e54a:1700x16x239",
+    "c68226e8-9918-45d1-b3ec-d98989cc6cba:1718x16x239",
+    "700:1742x162x259",
+    "1e473174-10c6-4fdb-97f7-51b8aed896f1:1772x16x239",
+    "27a80af5-110a-49ab-9eae-1ed81918e88b:1790x16x239",
+    "04498cdd-2c34-4055-afe5-85e2a3ce8178:1808x16x239",
+    "70f9d125-ce5c-477a-bb2f-53841f618672:1826x16x239",
+    "333a8a1a-18e6-4fba-9b74-1b2533f53484:1844x16x239",
+    "a333a6b7-7ef8-4744-afb0-23b3715b065e:1862x16x239",
+    "4ff945e4-ba3f-43b3-ae74-4f7291ce4695:1880x16x239",
+    "800:1904x54x259",
+    "d89f8dc1-ec65-47d8-9c72-01617e5f72ae:1934x16x239",
+    "900:1958x54x259",
+    "ed30414d-2ba9-42b9-9089-b27f127a4b70:1988x16x239",
+    "1200:2012x54x259",
+    "11ca0cb4-2bda-4cf4-a44a-0798c9777098:2042x16x239",
+    "1300:2066x54x259",
+    "f76ad579-c8fd-4c2a-9810-e746f04134bc:2096x16x239",
+    "1400:2120x54x259",
+    "1c5ffa1f-3ff9-440f-ac7d-ba5ddc0696d1:2150x16x239",
+    "1500:2174x54x259",
+    "9f5462c7-c529-4369-9773-4d9d731443f4:2204x16x239",
+    "1600:2228x54x259",
+    "90c0a7fe-697c-4a44-a307-d3c404ee575f:2258x16x239",
+    "1700:2282x72x259",
+    "9aa2d7b5-cbb4-455d-9938-282b6c800f38:2312x16x239",
+    "6e210bfa-0f33-4e36-a857-f3cb1ff8b54e:2330x16x239"
+  ],
+  "windows": {
+    "idle": {
+      "window": "idle",
+      "elapsed_ms": 10002,
+      "commits_total": 11,
+      "commits_attributed": 11,
+      "commits_unattributed": 0,
+      "commits_by_cause": {
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 4,
+        "timer 1000ms": 6,
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 1
+      },
+      "unattributed_at_ms": [],
+      "attribution_shadow_pct": 38.3,
+      "polls_observed": [
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 19
+        },
+        {
+          "url": "/api/proxy/chat?limit=30",
+          "ms": 119
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 23
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+          "ms": 200
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 32
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan",
+          "ms": 11
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 19
+        }
+      ],
+      "timer_fires": 18,
+      "timer_periods_ms": [
+        1000,
+        3000,
+        5000,
+        8000,
+        15000
+      ],
+      "dom_mutations_live_clock": 10,
+      "dom_mutations_other": 0,
+      "dom_mutation_sample": []
+    },
+    "scroll_only": {
+      "window": "scroll-only",
+      "elapsed_ms": 10049,
+      "commits_total": 12,
+      "commits_attributed": 12,
+      "commits_unattributed": 0,
+      "commits_by_cause": {
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 2,
+        "timer 1000ms": 6,
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 3,
+        "poll /api/proxy/chat?limit=30": 1
+      },
+      "unattributed_at_ms": [],
+      "attribution_shadow_pct": 27.6,
+      "polls_observed": [
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+          "ms": 213
+        },
+        {
+          "url": "/api/proxy/chat?limit=30",
+          "ms": 137
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 20
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 22
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+          "ms": 202
+        },
+        {
+          "url": "/api/proxy/chat?limit=30",
+          "ms": 131
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 20
+        }
+      ],
+      "timer_fires": 16,
+      "timer_periods_ms": [
+        1000,
+        3000,
+        5000,
+        8000
+      ],
+      "dom_mutations_live_clock": 10,
+      "dom_mutations_other": 0,
+      "dom_mutation_sample": []
+    },
+    "hover": {
+      "window": "hover",
+      "elapsed_ms": 10020,
+      "commits_total": 11,
+      "commits_attributed": 11,
+      "commits_unattributed": 0,
+      "commits_by_cause": {
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 4,
+        "timer 1000ms": 5,
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 1,
+        "poll /api/proxy/chat?limit=30": 1
+      },
+      "unattributed_at_ms": [],
+      "attribution_shadow_pct": 36.8,
+      "polls_observed": [
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 23
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan",
+          "ms": 9
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 20
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+          "ms": 200
+        },
+        {
+          "url": "/api/proxy/chat?limit=30",
+          "ms": 138
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 34
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 20
+        }
+      ],
+      "timer_fires": 17,
+      "timer_periods_ms": [
+        1000,
+        3000,
+        5000,
+        8000,
+        15000
+      ],
+      "dom_mutations_live_clock": 10,
+      "dom_mutations_other": 0,
+      "dom_mutation_sample": []
+    },
+    "coverage": {
+      "window": "coverage",
+      "elapsed_ms": 7696,
+      "commits_total": 9,
+      "commits_attributed": 9,
+      "commits_unattributed": 0,
+      "commits_by_cause": {
+        "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 3,
+        "timer 1000ms": 5,
+        "poll /api/proxy/chat?limit=30": 1
+      },
+      "unattributed_at_ms": [],
+      "attribution_shadow_pct": 41.4,
+      "polls_observed": [
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+          "ms": 203
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 28
+        },
+        {
+          "url": "/api/proxy/chat?limit=30",
+          "ms": 147
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+          "ms": 205
+        },
+        {
+          "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "ms": 21
+        }
+      ],
+      "timer_fires": 12,
+      "timer_periods_ms": [
+        1000,
+        3000,
+        5000,
+        8000
+      ],
+      "dom_mutations_live_clock": 7,
+      "dom_mutations_other": 0,
+      "dom_mutation_sample": []
+    }
+  },
+  "gated_sweep": {
+    "crossings": 100,
+    "targets_on_screen": 34
+  },
+  "coverage_sweep": {
+    "crossings": 127,
+    "hovered": 161,
+    "census": 161,
+    "missed": []
+  },
+  "results": [
+    {
+      "name": "chat",
+      "note": {
+        "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+      }
+    },
+    {
+      "name": "panel census (every hoverable target, on screen or not)",
+      "note": {
+        "team-row": 67,
+        "phase-card": 16,
+        "task-chip": 66,
+        "doc-link": 12
+      }
+    },
+    {
+      "name": "team rows >= 20 (NFU2's sweep floor)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the plan zone has cards to sweep",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the plan zone has chips to sweep",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "no layout shift under the pointer",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "window 1 — idle",
+      "note": {
+        "window": "idle",
+        "elapsed_ms": 10002,
+        "commits_total": 11,
+        "commits_attributed": 11,
+        "commits_unattributed": 0,
+        "commits_by_cause": {
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 4,
+          "timer 1000ms": 6,
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 1
+        },
+        "unattributed_at_ms": [],
+        "attribution_shadow_pct": 38.3,
+        "polls_observed": [
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 19
+          },
+          {
+            "url": "/api/proxy/chat?limit=30",
+            "ms": 119
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 23
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+            "ms": 200
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 32
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan",
+            "ms": 11
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 19
+          }
+        ],
+        "timer_fires": 18,
+        "timer_periods_ms": [
+          1000,
+          3000,
+          5000,
+          8000,
+          15000
+        ],
+        "dom_mutations_live_clock": 10,
+        "dom_mutations_other": 0,
+        "dom_mutation_sample": []
+      }
+    },
+    {
+      "name": "the attribution machinery explains every idle commit (instrument sanity)",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "the attribution shadow leaves most of the window exposed",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "no DOM mutation in either zone except the live clock, at idle",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "window 2 — scroll only, pointer parked",
+      "note": {
+        "window": "scroll-only",
+        "elapsed_ms": 10049,
+        "commits_total": 12,
+        "commits_attributed": 12,
+        "commits_unattributed": 0,
+        "commits_by_cause": {
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 2,
+          "timer 1000ms": 6,
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 3,
+          "poll /api/proxy/chat?limit=30": 1
+        },
+        "unattributed_at_ms": [],
+        "attribution_shadow_pct": 27.6,
+        "polls_observed": [
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+            "ms": 213
+          },
+          {
+            "url": "/api/proxy/chat?limit=30",
+            "ms": 137
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 20
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 22
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+            "ms": 202
+          },
+          {
+            "url": "/api/proxy/chat?limit=30",
+            "ms": 131
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 20
+          }
+        ],
+        "timer_fires": 16,
+        "timer_periods_ms": [
+          1000,
+          3000,
+          5000,
+          8000
+        ],
+        "dom_mutations_live_clock": 10,
+        "dom_mutations_other": 0,
+        "dom_mutation_sample": []
+      }
+    },
+    {
+      "name": "scrolling alone commits nothing either",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "scrolling mutates nothing but the live clock",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "targets on screen for the gated sweep",
+      "note": {
+        "total": 34,
+        "by_group": {
+          "team-row": 19,
+          "phase-card": 3,
+          "task-chip": 12
+        }
+      }
+    },
+    {
+      "name": "window 3 — hover sweep",
+      "note": {
+        "crossings": 100,
+        "window": "hover",
+        "elapsed_ms": 10020,
+        "commits_total": 11,
+        "commits_attributed": 11,
+        "commits_unattributed": 0,
+        "commits_by_cause": {
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 4,
+          "timer 1000ms": 5,
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 1,
+          "poll /api/proxy/chat?limit=30": 1
+        },
+        "unattributed_at_ms": [],
+        "attribution_shadow_pct": 36.8,
+        "polls_observed": [
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 23
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan",
+            "ms": 9
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 20
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+            "ms": 200
+          },
+          {
+            "url": "/api/proxy/chat?limit=30",
+            "ms": 138
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 34
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 20
+          }
+        ],
+        "timer_fires": 17,
+        "timer_periods_ms": [
+          1000,
+          3000,
+          5000,
+          8000,
+          15000
+        ],
+        "dom_mutations_live_clock": 10,
+        "dom_mutations_other": 0,
+        "dom_mutation_sample": []
+      }
+    },
+    {
+      "name": "ZERO commits attributable to pointer events (NFU2 gate)",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "zero DOM mutations in either zone during the sweep, other than the live clock",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "the gate had teeth — most of the sweep window was unshadowed",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "window 4 — coverage sweep",
+      "note": {
+        "crossings": 127,
+        "hovered": 161,
+        "census": 161,
+        "window": "coverage",
+        "elapsed_ms": 7696,
+        "commits_total": 9,
+        "commits_attributed": 9,
+        "commits_unattributed": 0,
+        "commits_by_cause": {
+          "poll /api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 3,
+          "timer 1000ms": 5,
+          "poll /api/proxy/chat?limit=30": 1
+        },
+        "unattributed_at_ms": [],
+        "attribution_shadow_pct": 41.4,
+        "polls_observed": [
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+            "ms": 203
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 28
+          },
+          {
+            "url": "/api/proxy/chat?limit=30",
+            "ms": 147
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+            "ms": 205
+          },
+          {
+            "url": "/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2",
+            "ms": 21
+          }
+        ],
+        "timer_fires": 12,
+        "timer_periods_ms": [
+          1000,
+          3000,
+          5000,
+          8000
+        ],
+        "dom_mutations_live_clock": 7,
+        "dom_mutations_other": 0,
+        "dom_mutation_sample": []
+      }
+    },
+    {
+      "name": "targets never hovered",
+      "note": []
+    },
+    {
+      "name": "every card, chip, doc link and team row was hovered at least once",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "zero commits attributable to the pointer across the coverage sweep either",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "zero non-clock DOM mutations across the coverage sweep",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "failed requests",
+      "note": []
+    },
+    {
+      "name": "console errors",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    }
+  ],
+  "verdict": "PASS"
+}

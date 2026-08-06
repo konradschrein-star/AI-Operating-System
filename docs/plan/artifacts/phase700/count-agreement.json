@@ -1,0 +1,422 @@
+{
+  "base": "http://127.0.0.1:7809",
+  "api": "http://127.0.0.1:7798",
+  "ground": "http://127.0.0.1:7700",
+  "chat": {
+    "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+  },
+  "project_id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+  "span": {
+    "started_at": "2026-08-06T01:36:32.856Z",
+    "finished_at": "2026-08-06T01:36:32.993Z",
+    "span_ms": 137,
+    "note": "all three legs were read inside this span; a disagreement is only a real disagreement if it survives a span this short — this project's task statuses move while the round runs"
+  },
+  "legs": {
+    "rail_badge": {
+      "done": 55,
+      "total": 66,
+      "source": "GET http://127.0.0.1:7798/api/chat",
+      "at": [
+        "2026-08-06T01:36:32.860Z",
+        "2026-08-06T01:36:32.992Z"
+      ]
+    },
+    "panel_bar": {
+      "done": 55,
+      "total": 66,
+      "source": "[data-plan-kanban][data-plan-progress] in the rendered DOM",
+      "rendered": "55/66",
+      "rail_rendered": "55/66",
+      "at": [
+        "2026-08-06T01:36:32.856Z",
+        "2026-08-06T01:36:32.860Z"
+      ]
+    },
+    "ground_truth": {
+      "done": 55,
+      "total": 66,
+      "breakdown": {
+        "done": 55,
+        "running": 1,
+        "pending": 10
+      },
+      "source": "GET http://127.0.0.1:7700/api/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838 (live, read-only)",
+      "at": [
+        "2026-08-06T01:36:32.861Z",
+        "2026-08-06T01:36:32.871Z"
+      ]
+    },
+    "plan_endpoint": {
+      "done": 55,
+      "total": 66,
+      "breakdown": {
+        "done": 55,
+        "running": 1,
+        "pending": 10
+      },
+      "source": "GET http://127.0.0.1:7798/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan",
+      "at": [
+        "2026-08-06T01:36:32.862Z",
+        "2026-08-06T01:36:32.870Z"
+      ]
+    }
+  },
+  "phase_cards": [
+    {
+      "round_base": 0,
+      "progress": "1/1"
+    },
+    {
+      "round_base": 100,
+      "progress": "5/5"
+    },
+    {
+      "round_base": 200,
+      "progress": "6/6"
+    },
+    {
+      "round_base": 300,
+      "progress": "13/13"
+    },
+    {
+      "round_base": 400,
+      "progress": "6/6"
+    },
+    {
+      "round_base": 500,
+      "progress": "10/10"
+    },
+    {
+      "round_base": 600,
+      "progress": "9/9"
+    },
+    {
+      "round_base": 700,
+      "progress": "5/7"
+    },
+    {
+      "round_base": 800,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 900,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 1200,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 1300,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 1400,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 1500,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 1600,
+      "progress": "0/1"
+    },
+    {
+      "round_base": 1700,
+      "progress": "0/2"
+    }
+  ],
+  "drift_vs_701": {
+    "round_701_captured_at": "2026-08-06T01:08:50Z",
+    "round_701": {
+      "done": 51,
+      "total": 66
+    },
+    "round_703": {
+      "done": 55,
+      "total": 66
+    },
+    "delta_done": 4,
+    "delta_total": 0,
+    "new_phase_blocks": [],
+    "per_phase": [
+      {
+        "round_base": 0,
+        "then": "1/1",
+        "now": "1/1",
+        "moved": false
+      },
+      {
+        "round_base": 100,
+        "then": "5/5",
+        "now": "5/5",
+        "moved": false
+      },
+      {
+        "round_base": 200,
+        "then": "6/6",
+        "now": "6/6",
+        "moved": false
+      },
+      {
+        "round_base": 300,
+        "then": "13/13",
+        "now": "13/13",
+        "moved": false
+      },
+      {
+        "round_base": 400,
+        "then": "6/6",
+        "now": "6/6",
+        "moved": false
+      },
+      {
+        "round_base": 500,
+        "then": "10/10",
+        "now": "10/10",
+        "moved": false
+      },
+      {
+        "round_base": 600,
+        "then": "9/9",
+        "now": "9/9",
+        "moved": false
+      },
+      {
+        "round_base": 700,
+        "then": "1/7",
+        "now": "5/7",
+        "moved": true
+      },
+      {
+        "round_base": 800,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 900,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 1200,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 1300,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 1400,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 1500,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 1600,
+        "then": "0/1",
+        "now": "0/1",
+        "moved": false
+      },
+      {
+        "round_base": 1700,
+        "then": "0/2",
+        "now": "0/2",
+        "moved": false
+      }
+    ],
+    "verdict": "informational"
+  },
+  "results": [
+    {
+      "name": "chat",
+      "note": {
+        "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+      }
+    },
+    {
+      "name": "timing",
+      "note": {
+        "span_ms": 137,
+        "span": [
+          "2026-08-06T01:36:32.856Z",
+          "2026-08-06T01:36:32.993Z"
+        ],
+        "legs": {
+          "panel_dom": [
+            "2026-08-06T01:36:32.856Z",
+            "2026-08-06T01:36:32.860Z"
+          ],
+          "rail_api": [
+            "2026-08-06T01:36:32.860Z",
+            "2026-08-06T01:36:32.992Z",
+            "132ms"
+          ],
+          "ground_live": [
+            "2026-08-06T01:36:32.861Z",
+            "2026-08-06T01:36:32.871Z",
+            "10ms"
+          ],
+          "plan_api": [
+            "2026-08-06T01:36:32.862Z",
+            "2026-08-06T01:36:32.870Z",
+            "8ms"
+          ]
+        }
+      }
+    },
+    {
+      "name": "leg 1 — rail badge (:7798 SQL)",
+      "note": {
+        "done": 55,
+        "total": 66
+      }
+    },
+    {
+      "name": "leg 2 — panel bar (DOM, planStore)",
+      "note": {
+        "done": 55,
+        "total": 66,
+        "rendered": "55/66"
+      }
+    },
+    {
+      "name": "leg 3 — ground truth (:7700 live rows)",
+      "note": {
+        "done": 55,
+        "total": 66,
+        "breakdown": {
+          "done": 55,
+          "running": 1,
+          "pending": 10
+        }
+      }
+    },
+    {
+      "name": "plan endpoint (leg 2's input)",
+      "note": {
+        "done": 55,
+        "total": 66,
+        "breakdown": {
+          "done": 55,
+          "running": 1,
+          "pending": 10
+        }
+      }
+    },
+    {
+      "name": "ground truth status breakdown",
+      "note": {
+        "done": 55,
+        "running": 1,
+        "pending": 10
+      }
+    },
+    {
+      "name": "project under test is the chat's own project",
+      "ok": true,
+      "actual": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+      "expected": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838"
+    },
+    {
+      "name": "plan zone reached ready",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "leg2 panel bar == leg1 rail badge",
+      "ok": true,
+      "actual": "55/66",
+      "expected": "55/66"
+    },
+    {
+      "name": "leg2 panel bar == leg3 ground truth",
+      "ok": true,
+      "actual": "55/66",
+      "expected": "55/66"
+    },
+    {
+      "name": "leg1 rail badge == leg3 ground truth",
+      "ok": true,
+      "actual": "55/66",
+      "expected": "55/66"
+    },
+    {
+      "name": "the rendered rail string == the rendered panel string",
+      "ok": true,
+      "actual": "55/66",
+      "expected": "55/66"
+    },
+    {
+      "name": "plan endpoint agrees with ground truth",
+      "ok": true,
+      "actual": "55/66",
+      "expected": "55/66"
+    },
+    {
+      "name": "task chips on screen == tasks in the plan",
+      "ok": true,
+      "actual": 66,
+      "expected": 66
+    },
+    {
+      "name": "drift vs ground-truth-701.json",
+      "note": {
+        "then": {
+          "done": 51,
+          "total": 66
+        },
+        "now": {
+          "done": 55,
+          "total": 66
+        },
+        "delta_done": 4,
+        "delta_total": 0,
+        "phases_moved": [
+          "700: 1/7→5/7"
+        ],
+        "new_phase_blocks": []
+      }
+    },
+    {
+      "name": "no task un-did itself since round 701 (done count is monotonic)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "failed requests during the capture",
+      "note": []
+    },
+    {
+      "name": "ignored console lines (pre-existing — see lib-703.cjs:watchErrors)",
+      "note": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7809/favicon.ico"
+      ]
+    },
+    {
+      "name": "console errors",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    }
+  ],
+  "verdict": "PASS"
+}
