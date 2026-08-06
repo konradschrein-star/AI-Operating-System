@@ -103,8 +103,13 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   every invocation, flag and exit code the prompt quotes on their behalf still exists in the
   shipped output (`open <profile>`, `--probe`, `ask "<question>"`, `--backend browser|api`,
   `--backend pool|api`, `4  LOGIN REQUIRED`, `4  NEEDS LOGIN`, `default: pool`,
-  `Default backend: browser`). Rounds 701/702 own those scripts; if a subcommand is renamed,
+  `Default backend: api`). Rounds 701/702 own those scripts; if a subcommand is renamed,
   this test is what notices instead of a confused researcher at 3am.
+  **T16's perplexity default AMENDED at R776** — see §1.2. The asserted literal was
+  `Default backend: browser` until R776 re-ranked the backends; the shipped assertions are now
+  `Default backend: api` (`perplexity-cli.test.ts:415`, `project-tick.test.ts:665`), and
+  `--help` no longer emits the old string at all. Do not "restore" it: that reads as a
+  regression against correct code.
 - **T17 the run id reaches the child process** (added in P7, R703), new file
   `forge-control/src/lib/cc-runner.test.ts`: `uploadsRunId()` maps a `runs.id` UUID to its
   first 12 hex characters (the only shape `GET /api/uploads/:id/:name` serves — it gates on
@@ -115,6 +120,52 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   assertion is about a real child process, which is the only thing that was ever in doubt.
   Also asserts the negative (no `runId` ⇒ both variables *deleted*, never inherited from the
   parent) and that `executor.ts` passes `runId: run.id`.
+- **T18 escalation protocol reaches every role** (added at R870),
+  `forge-control/src/lib/project-tick.test.ts`: `ESCALATION_POLICY` — the condensed form of
+  Konrad's 2026-08-05 autonomy rule, whose verbatim source is committed at
+  `docs/plan/10-policy-agent-autonomy-and-escalation.md` — appears in the built prompt of
+  **every member of `TaskRole`**, on `ai-os`, `content-forge` *and* `scratch`. The role list is
+  built through `satisfies Record<TaskRole, true>`, so adding a role to the union is a compile
+  error in the test rather than an unchecked role at 3am; it deliberately includes `steward`,
+  which has no branch in `buildPrompt()` and falls through to the bare header. The scratch case
+  is its own test: `withPolicy()` gates `WORKTREE_POLICY` on a live checkout and reusing that
+  gate for R870 would have been the easy mistake — a scratch project can still spend money or
+  burn Konrad's attention. All four clauses are asserted through a RENDERED prompt (autonomy
+  default + the browser named, every category-1 trigger Konrad listed, the build-once-use-many
+  wording with the "restate in 2-3 sentences / state your default" shape, and the reminders
+  curl with its 500-char cap and the keep-working clause). `BROWSER_FIRST` is scoped to scout
+  and builder — the researcher has the fuller `RESEARCH_INSTRUMENTS` plus a first-resort clause
+  in its own branch — its example invocation is checked against the shipped
+  `research-browser.mjs --help`, and `agents/scout.md` / `agents/builder.md` must name the
+  browser too, since the interactive Task-tool subagents read those files and never run
+  `buildPrompt()`. Note the T-number: T17 was already taken twice (R703's `cc-runner` suite and
+  R850's tester verdicts), so this suite is T18.
+  **Deviation from the vault note, deliberate:** the note says "playwright / auto-browser"; the
+  auto-browser controller is not installed on this host (`docs/tools/research-browser.md` §2.1),
+  so `ESCALATION_POLICY` names `scripts/research-browser.mjs` and `playwright-skill` instead,
+  and T18 asserts the string `auto-browser` never appears — pointing the fleet at a dead end
+  would defeat clause 1.
+
+- **T19 consolidation precondition** (added at R905, red-team S4),
+  `forge-control/src/lib/project-tick.test.ts`: registered here at R1005 so the number cannot be
+  taken twice the way T17 was. Source-assertion — the R906 optimistic-concurrency SQL and the
+  control flow that applies it (mark-done reports refusals, `pass` aborts before any side effect,
+  `block`/`fix` pre-check before their irreversible step).
+- **T20 `verdictMemberSettled`** (added at R1005, review findings 1 and 2),
+  `forge-control/src/lib/project-reconcile.test.ts`: the settlement rule, extracted from
+  project-tick's inline `settled:` mapping into a pure function precisely so it could be driven
+  instead of asserted as a source string. The first test is the WHOLE cross product — 6 task
+  statuses × 8 run statuses (7 + `null`) × `pendingInput`, 96 cells, with a count assertion so the
+  loops cannot silently stop covering it — because both defects it closes were single cells nobody
+  had enumerated: a `done` member judged by its run's CURRENT status (wedges its round forever,
+  silently) and a `completed` run still carrying `pending_input` (closes the round on a verdict a
+  message is about to revise). Two named-interleaving tests carry the R1005 scenarios end to end
+  through `consolidateVerdictRound`, including the accepted trade-off — a resumed `done` member
+  whose follow-up omits `VERDICT:` yields `block(no_verdict)`, loud and `/unwedge`-recoverable,
+  which C20 prefers over a silent wedge. The SQL mirrors in `db/projects.ts` are asserted to be
+  the predicate's EXACT complements, term for term, in
+  `forge-control/src/lib/cp2-reconciler-interaction.test.ts` — a term in one and not the other is a
+  round that half-closes or one that never closes.
 
 ### 1.1 T13's install-parity case, amended at R703
 
@@ -138,6 +189,30 @@ new mission — `/root/.claude/agents/researcher.md` (installed 2026-08-05 17:26
 to the pre-R703 file) would keep winning after the restart. The deploy must copy the merged file
 over it, or delete the installed copy so the repo fallback resolves. Konrad may have to do that
 one `cp` by hand if the harness refuses the path.
+
+### 1.2 T16's perplexity anti-drift literal, amended at R776
+
+R702 shipped `perplexity.mjs` browser-first, and T16 pinned that by asserting the literal
+`Default backend: browser` in the shipped `--help`. R776 re-ranked the backends on measured
+evidence — `POST api.perplexity.ai/search` answers **401** (reachable, no key) while
+`GET www.perplexity.ai/` answers **403** (Cloudflare edge block on this VPS's egress IP), so
+the API path is the reachable one and the browser path is a documented fallback. See
+`docs/tools/perplexity.md` §12.1.
+
+What T16 asserts now, and why each half is load-bearing:
+
+| Assertion | Where | What it protects |
+|---|---|---|
+| `Default backend: api` | `perplexity-cli.test.ts:415`, `project-tick.test.ts:665` | the re-rank actually reached the shipped `--help`, not only the docs |
+| `--backend browser\|api` in `--help` | `perplexity-cli.test.ts:418`, `project-tick.test.ts:631` (token list), `:671` | demoted is not deleted — a bare "api" would read as "the browser backend is gone" |
+| `--backend browser` parses, with `--allow-uncited`, `--keep-open`, `--label` | `perplexity-cli.test.ts:299-315` | the whole browser flag surface is still wired to the backend, not just the string |
+| `--backend browser` present in `RESEARCH_INSTRUMENTS` | `project-tick.test.ts:676` | the researcher prompt still names the fallback for logged-in work |
+| `research-browser and gemini-qa need no key on their default path, perplexity does` | `project-tick.test.ts:654` | R702's blanket "none of them needs a key" became false at R776; a researcher told otherwise would read exit 2 as a broken tool |
+| `FALLBACK` and `403` in `--help` | `perplexity-cli.test.ts:419-420` | the demotion states its own reason, so a future round can tell whether the reason still holds |
+
+The ranking is a property of **this host's egress**, not of Perplexity: on a box Cloudflare
+scores differently it could reasonably flip back. If it does, this table and the literals move
+together — a round that changes one without the other is the drift T16 exists to catch.
 
 ## 2. Integration checks (real DB, careful scope)
 

@@ -25,8 +25,15 @@
  *            so both guarantees above silently evaporated on any payload big enough to matter.
  *   R405-3 — accessSync(dir, W_OK) succeeds on a directory, so `--out /tmp` used to reach the
  *            (billed) request and fail at writeFileSync with EISDIR.
- *   R702   — the browser backend became the default, so every API-backend case below must now
- *            say `--backend api` explicitly. A test that forgot to would launch Chrome.
+ *   R702   — the browser backend became the default, so every API-backend case below had to say
+ *            `--backend api` explicitly. A test that forgot to would launch Chrome.
+ *   R776   — the ranking flipped back: `api` is the default for BOTH modes, because
+ *            perplexity.ai answers this host with 403 while api.perplexity.ai answers 401.
+ *            The explicit `--backend api` injection from R702 STAYS — it is a structural guard,
+ *            not a consequence of the default, and it must survive any future re-rank. What
+ *            changed here is the mirror image: every case that exercises BROWSER behaviour now
+ *            says `--backend browser` explicitly, and the browser path is asserted to be still
+ *            reachable rather than assumed because it was the default.
  */
 
 import { test, describe, before, after } from "node:test";
@@ -214,9 +221,11 @@ type Run = { status: number; stdout: string; stderr: string; requested: boolean 
 /**
  * Spawn the CLI with a stubbed fetch. `body` is what the fake API returns.
  *
- * R702: `--backend api` is injected for every `ask` case. The default backend is now the
- * browser, and an ask case that reached it would try to launch Chrome instead of calling the
- * stub — a spawned test must never be one forgotten flag away from starting a browser.
+ * SACRED (R702, reaffirmed R776): `--backend api` is injected for every `ask` case. `api` is the
+ * default again, so this injection is currently redundant — KEEP IT ANYWAY. It is the structural
+ * reason no spawned test can start Chrome, and it must not depend on which way the default
+ * happens to point. A spawned test must never be one forgotten flag away from launching a
+ * browser. Cases that genuinely want the browser path pass `raw: true` and say so explicitly.
  */
 function run(
   args: string[],
@@ -266,15 +275,17 @@ const MESSAGE_ITEM = {
 /* ========================================================================== *
  * R702-A — backend selection and defaulting
  *
- * This is the behavioural centre of R702: Konrad has no Perplexity API key and will not buy
- * one, so `ask` must reach the browser without anyone typing a flag, and the API path must
- * still be reachable, unchanged, for whoever does have a key.
+ * R702 made `ask` reach the browser without anyone typing a flag, because Konrad has no
+ * Perplexity API key and will not buy one. R776 re-ranked the two on new evidence: the consumer
+ * site 403s this host's egress IP while the API host answers 401, so the R702 default was the
+ * only path that cannot complete from here. `api` is now the default for BOTH modes; the browser
+ * backend is unchanged, still fully reachable, and still the only path for logged-in work.
  * ========================================================================== */
 
 describe("R702-A backend selection", () => {
-  test("ask defaults to the browser backend", () => {
+  test("ask defaults to the api backend (R776 re-rank)", () => {
     const opts = px.parseArgs(["ask", "what changed in node 22"]);
-    assert.equal(opts.backend, "browser");
+    assert.equal(opts.backend, "api");
     assert.equal(opts.backendExplicit, false);
     assert.equal(opts.profile, px.DEFAULT_PROFILE, "the shared research profile from R701");
   });
@@ -285,8 +296,23 @@ describe("R702-A backend selection", () => {
     assert.equal(opts.backendExplicit, true);
   });
 
-  test("--backend browser is accepted explicitly (same as the default)", () => {
-    assert.equal(px.parseArgs(["ask", "q", "--backend", "browser"]).backend, "browser");
+  test("--backend browser is still accepted and still resolves to the browser path", () => {
+    // R776 demoted the browser backend to a documented fallback. Demoted is not removed: this is
+    // the guard that the re-rank did not quietly amputate the path it stopped defaulting to.
+    const opts = px.parseArgs(["ask", "q", "--backend", "browser"]);
+    assert.equal(opts.backend, "browser");
+    assert.equal(opts.backendExplicit, true, "an explicit choice must be recorded as one");
+    assert.equal(opts.profile, px.DEFAULT_PROFILE, "it still routes through the shared profile");
+    // Browser-only flags are accepted here and nowhere else — proof the whole browser flag
+    // surface is still wired to this backend, not just the string.
+    const full = px.parseArgs([
+      "ask", "q", "--backend", "browser",
+      "--allow-uncited", "--keep-open", "--label", "fallback-check",
+    ]);
+    assert.equal(full.backend, "browser");
+    assert.equal(full.allowUncited, true);
+    assert.equal(full.keepOpen, true);
+    assert.equal(full.label, "fallback-check");
   });
 
   test("an unknown backend is a usage error naming the valid ones", () => {
@@ -305,10 +331,13 @@ describe("R702-A backend selection", () => {
   test("api-only flags are rejected on the browser backend instead of silently ignored", () => {
     // The danger this guards: a caller passes --model, believes they chose a model, and gets a
     // browser answer from whatever Perplexity's web UI felt like using.
-    const err = throwsWith(() => px.parseArgs(["ask", "q", "--model", "perplexity/sonar"]));
+    // R776: --backend browser is explicit now that api is the default.
+    const err = throwsWith(() =>
+      px.parseArgs(["ask", "q", "--backend", "browser", "--model", "perplexity/sonar"]),
+    );
     assert.equal(err.code, px.EXIT.USAGE);
     assert.match(err.message, /--model only appl/);
-    assert.match(err.message, /--backend api/);
+    assert.match(err.message, /--backend browser/);
   });
 
   test("browser-only flags are rejected on the api backend", () => {
@@ -327,13 +356,15 @@ describe("R702-A backend selection", () => {
   });
 
   test("--answer-timeout is bounded, not silently clamped", () => {
-    assert.equal(px.parseArgs(["ask", "q", "--answer-timeout", "30000"]).answerTimeoutMs, 30_000);
+    // R776: browser-only flag, so the backend is explicit now that api is the default.
+    const B = ["ask", "q", "--backend", "browser"];
+    assert.equal(px.parseArgs([...B, "--answer-timeout", "30000"]).answerTimeoutMs, 30_000);
     assert.match(
-      throwsWith(() => px.parseArgs(["ask", "q", "--answer-timeout", "1"])).message,
+      throwsWith(() => px.parseArgs([...B, "--answer-timeout", "1"])).message,
       /must be between 5000 and 900000/,
     );
     assert.match(
-      throwsWith(() => px.parseArgs(["ask", "q", "--answer-timeout", "10s"])).message,
+      throwsWith(() => px.parseArgs([...B, "--answer-timeout", "10s"])).message,
       /non-negative integer/,
     );
   });
@@ -342,14 +373,15 @@ describe("R702-A backend selection", () => {
     // Added after the first real run (2026-08-05) found perplexity.ai edge-blocking this host:
     // the interstitial wait had to become an operator lever rather than a constant. It is still
     // browser-only — on --backend api there is no page to be challenged.
+    const B = ["ask", "q", "--backend", "browser"];
     assert.equal(
-      px.parseArgs(["ask", "q"]).challengeTimeoutMs,
+      px.parseArgs(B).challengeTimeoutMs,
       px.BOT_CHALLENGE_TIMEOUT_MS,
       "the default must come from the exported constant, not a second literal",
     );
-    assert.equal(px.parseArgs(["ask", "q", "--challenge-timeout", "20000"]).challengeTimeoutMs, 20_000);
+    assert.equal(px.parseArgs([...B, "--challenge-timeout", "20000"]).challengeTimeoutMs, 20_000);
     assert.match(
-      throwsWith(() => px.parseArgs(["ask", "q", "--challenge-timeout", "600001"])).message,
+      throwsWith(() => px.parseArgs([...B, "--challenge-timeout", "600001"])).message,
       /must be between 5000 and 600000/,
     );
     const onApi = throwsWith(() =>
@@ -377,10 +409,15 @@ describe("R702-B argv and exit-code contract", () => {
     assert.deepEqual(px.EXIT, { OK: 0, API: 1, PREREQ: 2, USAGE: 3, NEEDS_LOGIN: 4 });
   });
 
-  test("--help exits 0 and documents the browser-first default and the needs-login code", () => {
+  test("--help exits 0 and documents the api-first default, the fallback and the needs-login code", () => {
     const r = run(["--help"], {}, { raw: true });
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /Default backend: browser/);
+    assert.match(r.stdout, /Default backend: api/);
+    // The re-rank is only honest if --help says the browser path still exists and why it is not
+    // the default — a bare "Default backend: api" would read as "the browser backend is gone".
+    assert.match(r.stdout, /--backend browser\|api\s+Default: api/);
+    assert.match(r.stdout, /FALLBACK/);
+    assert.match(r.stdout, /403/, "--help must name the edge block that demoted the browser path");
     assert.match(r.stdout, /4\s+NEEDS LOGIN/);
     assert.match(r.stdout, /No password is stored anywhere/);
     assert.equal(r.requested, false, "--help must not send anything");
@@ -405,8 +442,13 @@ describe("R702-B argv and exit-code contract", () => {
   test("a browser-backend run never reaches the API even with a key present", () => {
     // `--dump-capture` into an unwritable directory fails the pre-flight, which happens after
     // the key gate and before any launch. If the browser path were secretly calling fetch, the
-    // stub touch file would exist.
-    const r = run(["ask", "q", "--dump-capture", join(dir, "no-such-dir", "cap.json")], {}, { raw: true });
+    // stub touch file would exist. R776: `--backend browser` is explicit now that api defaults —
+    // without it this would exercise the api path and prove nothing about the browser one.
+    const r = run(
+      ["ask", "q", "--backend", "browser", "--dump-capture", join(dir, "no-such-dir", "cap.json")],
+      {},
+      { raw: true },
+    );
     assert.equal(r.status, 3);
     assert.equal(r.requested, false, "the browser backend must not call the Perplexity API");
     assert.match(r.stderr, /--dump-capture directory is not usable/);
@@ -832,8 +874,17 @@ describe("R404-2 --out handling", () => {
     assert.equal(r.status, 2);
     assert.equal(r.requested, false);
     assert.match(r.stderr, /No Perplexity API key found/);
-    // R702: the keyless message must point at the backend that needs no key at all.
-    assert.match(r.stderr, /Drop --backend api/);
+    // R776: the keyless message used to send the caller to `--backend browser` as the free way
+    // out. It is not one — that path 403s from this host. The message must now name BOTH key
+    // locations and say why the fallback is not a substitute for the key.
+    assert.match(r.stderr, /PERPLEXITY_API_KEY/);
+    assert.match(r.stderr, /\/opt\/ai-os\/\.secrets\/store\/perplexity-api-key/);
+    assert.match(r.stderr, /403/);
+    assert.doesNotMatch(
+      r.stderr,
+      /Drop --backend api/,
+      "the old hint pointed at the blocked path — it must not come back",
+    );
   });
 
   test("usage errors still precede everything (exit 3, no request)", () => {

@@ -1,10 +1,22 @@
 #!/usr/bin/env node
-// perplexity.mjs — the researcher lane's Perplexity helper. BROWSER-FIRST since R702.
+// perplexity.mjs — the researcher lane's Perplexity helper. API-FIRST since R776
+// (browser-first from R702 to R776; the browser backend is intact and is the documented fallback).
 //
-// WHY BROWSER-FIRST (Konrad, 2026-08-05 ~09:30): he has no Perplexity API key and will not buy
-// one. Perplexity is a browser service for him. So the authenticated browser profile owned by
-// scripts/research-browser.mjs is the PRIMARY path; the R22/R23 API path is still here, byte-for-
-// byte unchanged in behaviour, behind `--backend api`.
+// WHY BROWSER-FIRST AT R702 (Konrad, 2026-08-05 ~09:30): he has no Perplexity API key and will
+// not buy one. Perplexity is a browser service for him. That constraint made the authenticated
+// browser profile owned by scripts/research-browser.mjs the primary path.
+//
+// WHY API-FIRST FROM R776 — a RE-RANK on new evidence, not a reversal of that reasoning. Probed
+// from this host (65.108.6.149) at R775 and re-probed at R776:
+//   POST https://api.perplexity.ai/search           => HTTP 401 invalid_api_key  (host reachable)
+//   GET  https://www.perplexity.ai/                 => HTTP 403  (Cloudflare "Just a moment")
+// The API host answers us; the CONSUMER site refuses us at the edge, upstream of anything a
+// browser flag can change (docs/tools/perplexity.md §12.1). R702 therefore made the ONE path that
+// cannot work at all from this box the default, while the path that needs nothing but a key sat
+// behind a flag. So `ask` and `search` both default to `api`, and Konrad's constraint now has a
+// visible price: without a key this tool has no working path from this host. `--backend browser`
+// keeps every browser code path reachable and unchanged — it is the fallback for logged-in work,
+// and the fix that makes it work unattended is an egress change, not a code change.
 //
 // This DELIBERATELY CONTRADICTS docs/plan/02-architecture.md §10, which rejected "building
 // Perplexity browser scraping" as "fragile, bot-defended, unmaintainable". That judgement was
@@ -247,7 +259,7 @@ if (RB_EXIT.LOGIN_REQUIRED !== EXIT_NEEDS_LOGIN) {
   );
 }
 
-const USAGE = `${SELF} — Perplexity for the researcher lane (browser-first, zero-dependency, node >= 22)
+const USAGE = `${SELF} — Perplexity for the researcher lane (api-first, zero-dependency, node >= 22)
 
 USAGE
   scripts/perplexity.mjs ask "<question>" [options]
@@ -255,11 +267,13 @@ USAGE
   scripts/perplexity.mjs --help
 
 MODES
-  ask       Ask a question. Default backend: browser.
-            browser — drives perplexity.ai in the authenticated Chrome profile owned by
+  ask       Ask a question. Default backend: api.
+            api     — POST ${AGENT_URL} (needs PERPLEXITY_API_KEY). The default since R776:
+                      the API host answers this box, the consumer site does not (see FALLBACK).
+            browser — the documented FALLBACK, and the only path for logged-in work: drives
+                      perplexity.ai in the authenticated Chrome profile owned by
                       scripts/research-browser.mjs, waits for the answer to finish streaming,
                       and extracts the answer text AND the cited source URLs.
-            api     — POST ${AGENT_URL} (needs PERPLEXITY_API_KEY).
             stdout JSON: { "backend", "question", "answer", "citations", "sources",
                            "search_results", "screenshots", ... }
 
@@ -267,8 +281,25 @@ MODES
             API ONLY — there is no browser equivalent, and inventing one would be scraping
             a second surface. stdout JSON: { "backend", "search_results" }
 
-OPTIONS FOR ask (browser backend)
-  --backend browser|api   Default: browser
+FALLBACK — WHY api IS THE DEFAULT AND browser IS NOT
+  Probed from this host: POST ${SEARCH_URL} returns 401 invalid_api_key (reachable — it just
+  wants a key), while GET https://www.perplexity.ai/ returns 403, a Cloudflare edge block on
+  this box's IP. So the browser backend cannot complete a run from here no matter what you
+  pass it; every browser code path is intact and reachable via --backend browser, and making
+  it work unattended needs a different egress (proxy/VPN), not a flag. See
+  docs/tools/perplexity.md §12.
+
+OPTIONS FOR ask (api backend — the default)
+  --model <slug>          Default: ${DEFAULT_MODEL}. Mutually exclusive with --preset.
+  --preset <name>         One of: ${PRESETS.join(' | ')}. Mutually exclusive with --model.
+  --instructions "<text>" System instructions. With --preset this REPLACES the preset's prompt.
+  --max-steps <n>         Research loop steps, 1-100. Default: ${DEFAULT_MAX_STEPS}
+  --max-tool-calls <n>    Tool-call ceiling, 0-100. Default: ${DEFAULT_MAX_TOOL_CALLS}
+                          0 disables all tool calls and requires --no-force-search.
+  --no-force-search       Relax tool_choice from {"type":"web_search"} to "auto".
+
+OPTIONS FOR ask (browser backend — pass --backend browser)
+  --backend browser|api   Default: api
   --profile <name>        Chrome profile to use. Default: ${DEFAULT_PROFILE}
                           (the shared research profile; see docs/tools/research-browser.md)
   --run-id <id>           Screenshot directory under ${UPLOADS_ROOT}/
@@ -287,15 +318,6 @@ OPTIONS FOR ask (browser backend)
                           selectors rot — see docs/tools/perplexity.md §7.
   --keep-open             Leave the browser session running after the answer (for debugging).
 
-OPTIONS FOR ask (api backend)
-  --model <slug>          Default: ${DEFAULT_MODEL}. Mutually exclusive with --preset.
-  --preset <name>         One of: ${PRESETS.join(' | ')}. Mutually exclusive with --model.
-  --instructions "<text>" System instructions. With --preset this REPLACES the preset's prompt.
-  --max-steps <n>         Research loop steps, 1-100. Default: ${DEFAULT_MAX_STEPS}
-  --max-tool-calls <n>    Tool-call ceiling, 0-100. Default: ${DEFAULT_MAX_TOOL_CALLS}
-                          0 disables all tool calls and requires --no-force-search.
-  --no-force-search       Relax tool_choice from {"type":"web_search"} to "auto".
-
 OPTIONS FOR search
   --max-results <n>       1-${MAX_RESULTS_CAP}. Default: ${DEFAULT_MAX_RESULTS}
 
@@ -304,7 +326,7 @@ OPTIONS FOR EVERYTHING
                           unaffected, so a completed run survives a write failure. The target
                           is pre-flighted before any work (exit 3, nothing sent/launched).
 
-THE FIRST RUN WILL STOP AT A LOGIN WALL — THAT IS NORMAL
+A --backend browser RUN WILL STOP AT A LOGIN WALL — THAT IS NORMAL
   The browser backend needs a logged-in Perplexity session in the profile. Until Konrad has
   logged in ONCE by hand, every browser run exits ${EXIT_NEEDS_LOGIN} and tells him exactly what to do:
   the harness screenshots the wall, queues a reminder, brings up a loopback-only noVNC session
@@ -312,7 +334,7 @@ THE FIRST RUN WILL STOP AT A LOGIN WALL — THAT IS NORMAL
   NEVER prompts for credentials. No password is stored anywhere; the only thing that persists
   is Chrome's own cookie jar inside the profile directory.
 
-API KEY (api backend only — the browser backend needs no key at all)
+API KEY (api backend — the default, so this is the key the tool normally wants)
   Resolved in this order, and no HTTP request is attempted unless one of them yields a key:
     1. environment variable  PERPLEXITY_API_KEY
     2. secret-store file     /opt/ai-os/.secrets/store/perplexity-api-key
@@ -415,12 +437,18 @@ function resolveApiKey() {
   die(
     EXIT_NO_KEY,
     `No Perplexity API key found. Nothing was sent.\n` +
-      `Konrad has no Perplexity API key and does not intend to buy one — that is why the browser\n` +
-      `backend is the default. Drop --backend api and this run needs no key at all.\n` +
-      `If you really want the API path, set the key named ${KEY_ENV_NAME} in ONE of:\n` +
+      `Set the key named ${KEY_ENV_NAME} in ONE of:\n` +
       `  1. environment variable: ${KEY_ENV_NAME}\n` +
       `  2. secret-store file:    ${KEY_FILE_PATH}\n` +
-      `The file must contain the raw key and nothing else; surrounding whitespace is trimmed.`,
+      `The file must contain the raw key and nothing else; surrounding whitespace is trimmed.\n` +
+      `\n` +
+      `Konrad has no Perplexity API key and did not intend to buy one, which is why R702 made the\n` +
+      `browser backend the default. R776 reversed the RANKING on new evidence: --backend browser\n` +
+      `still exists and still works as code, but https://www.perplexity.ai/ answers this host with\n` +
+      `HTTP 403 (Cloudflare edge block on the egress IP), while ${SEARCH_URL}\n` +
+      `answers 401 — reachable, it only wants a key. So --backend browser is NOT the cheap way out\n` +
+      `of this message: a key is the real unblock, and the only alternative that makes the browser\n` +
+      `path work unattended is a different egress (proxy/VPN). See docs/tools/perplexity.md §12.`,
   );
 }
 // -------------------------------------------------------------------------------------------------
@@ -464,10 +492,13 @@ export function parseArgs(argv) {
     help: false,
     mode,
     subject,
-    // BACKEND DEFAULTING: browser for ask (Konrad has no key), api for search (there is no
-    // browser search surface this tool is willing to scrape). Both are overridable, and an
-    // explicit --backend browser on `search` is a usage error rather than a silent downgrade.
-    backend: mode === 'ask' ? 'browser' : 'api',
+    // BACKEND DEFAULTING (R776): api for BOTH modes. `search` has never had a browser surface
+    // this tool is willing to scrape; `ask` moved to api because perplexity.ai 403s this host's
+    // egress IP while api.perplexity.ai answers (401 without a key) — the R702 default was the
+    // one path that cannot complete from here. --backend browser stays fully supported for
+    // logged-in work; an explicit --backend browser on `search` is still a usage error rather
+    // than a silent downgrade.
+    backend: 'api',
     backendExplicit: false,
     profile: DEFAULT_PROFILE,
     runId: undefined,
@@ -636,8 +667,8 @@ export function parseArgs(argv) {
   if (opts.backend === 'browser' && apiOnlyUsed.length > 0) {
     throw new CliError(
       EXIT_USAGE,
-      `${onlyApplies(apiOnlyUsed)} to the api backend, and the default backend is ` +
-        `browser. Add --backend api, or drop the flag(s).`,
+      `${onlyApplies(apiOnlyUsed)} to the api backend, and you selected the browser one. ` +
+        `Drop --backend browser (api is the default), or drop the flag(s).`,
     );
   }
   if (opts.backend === 'api' && opts.mode === 'ask' && browserOnlyUsed.length > 0) {

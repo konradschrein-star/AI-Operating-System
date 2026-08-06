@@ -1,5 +1,5 @@
 /**
- * Tests for the reviewer-round consolidation module.
+ * Tests for the verdict-round consolidation module.
  *
  * Run: pnpm test   (node --test via tsx, no test framework dependency)
  *
@@ -8,9 +8,10 @@
  *
  * The most important test in this file is T3 "dual NEEDS_FIXES" — it is the
  * direct regression guard for the first-night bug: two reviewers each firing
- * their own fix chain. `consolidateReviewerRound()` returns a single
+ * their own fix chain. `consolidateVerdictRound()` returns a single
  * `RoundDecision`, not an array, which makes a duplicate chain a type error
- * as much as a logic error.
+ * as much as a logic error. T17 extends the same guarantee across ROLES: a
+ * reviewer and a tester in one round are one group, one decision, one builder.
  */
 
 import { test, describe } from "node:test";
@@ -20,22 +21,38 @@ import { readFileSync } from "node:fs";
 import {
   parseVerdict,
   projectAcceptsWork,
-  consolidateReviewerRound,
+  consolidateVerdictRound,
+  verdictMemberSettled,
+  isVerdictRole,
   chainKeys,
   noteGroupFailure,
   clearGroupFailures,
-  type ReviewerInput,
+  RECHECK_TASK_TITLE,
+  recheckBrief,
+  VERDICT_ROLES,
+  type VerdictInput,
 } from "./project-reconcile.ts";
+// Type-only, like the module under test: a value import of db/* would open a
+// pg Pool in the test process.
+import type { TaskStatus } from "../db/projects.ts";
+import type { RunStatus } from "../db/runs.ts";
 
-function rv(over: Partial<ReviewerInput> = {}): ReviewerInput {
+/** A reviewer row. `tv()` below is its tester twin — both default to a settled
+ *  PASS so each test only states the field it is actually about. */
+function rv(over: Partial<VerdictInput> = {}): VerdictInput {
   return {
     taskId: "t1",
+    role: "reviewer",
     title: "Review",
     fixCycle: 0,
     settled: true,
     lastText: "VERDICT: PASS",
     ...over,
   };
+}
+
+function tv(over: Partial<VerdictInput> = {}): VerdictInput {
+  return rv({ taskId: "t2", role: "tester", title: "Test", ...over });
 }
 
 /* ========================================================================== *
@@ -96,12 +113,12 @@ describe("T1 parseVerdict", () => {
 
 describe("T2 single reviewer", () => {
   test("one settled PASS => {action: 'pass'}", () => {
-    const decision = consolidateReviewerRound(1, [rv({ lastText: "VERDICT: PASS" })], 3);
+    const decision = consolidateVerdictRound(1, [rv({ lastText: "VERDICT: PASS" })], 3);
     assert.deepEqual(decision, { action: "pass" });
   });
 
   test("one settled NEEDS_FIXES at fixCycle 0 => fix cycle 1 with title, feedback, and chain keys", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       1,
       [
         rv({
@@ -118,7 +135,10 @@ describe("T2 single reviewer", () => {
     assert.match(decision.mergedBrief, /Reviewer A/);
     assert.match(decision.mergedBrief, /The error handling is missing\./);
     assert.equal(decision.builderChainKey, "fix:1:1");
-    assert.equal(decision.reviewerChainKey, "rereview:1:1");
+    // One dissenter, one re-check, and it speaks the dissenter's role.
+    assert.deepEqual(decision.checkers, [
+      { role: "reviewer", chainKey: "rereview:1:1" },
+    ]);
   });
 });
 
@@ -128,7 +148,7 @@ describe("T2 single reviewer", () => {
 
 describe("T3 dual NEEDS_FIXES", () => {
   test("two settled NEEDS_FIXES reviewers fold into exactly ONE fix decision carrying both", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       5,
       [
         rv({
@@ -147,7 +167,7 @@ describe("T3 dual NEEDS_FIXES", () => {
       3,
     );
 
-    // `consolidateReviewerRound` returns a single `RoundDecision`, not an
+    // `consolidateVerdictRound` returns a single `RoundDecision`, not an
     // array of decisions — that return type is itself what makes duplicate
     // fix/re-review chains impossible: there is no second slot to put one in.
     assert.equal(typeof decision, "object");
@@ -162,7 +182,12 @@ describe("T3 dual NEEDS_FIXES", () => {
     assert.match(decision.mergedBrief, /The migration is not idempotent\./);
 
     assert.equal(decision.builderChainKey, "fix:5:1");
-    assert.equal(decision.reviewerChainKey, "rereview:5:1");
+    // TWO dissenters of the SAME role collapse to ONE re-review — the dedupe is
+    // per role, not per task, which is the property that keeps two unhappy
+    // reviewers from forking the chain again.
+    assert.deepEqual(decision.checkers, [
+      { role: "reviewer", chainKey: "rereview:5:1" },
+    ]);
   });
 });
 
@@ -172,7 +197,7 @@ describe("T3 dual NEEDS_FIXES", () => {
 
 describe("T4 mixed and all-PASS", () => {
   test("settled PASS + settled NEEDS_FIXES => fix (NEEDS_FIXES wins), PASS text excluded from mergedBrief", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       2,
       [
         rv({
@@ -198,7 +223,7 @@ describe("T4 mixed and all-PASS", () => {
   });
 
   test("two settled PASS (N=2) => pass", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       2,
       [
         rv({ taskId: "p1", title: "Reviewer 1", lastText: "VERDICT: PASS" }),
@@ -216,7 +241,7 @@ describe("T4 mixed and all-PASS", () => {
 
 describe("T5 unsettled sibling", () => {
   test("settled PASS + unsettled sibling => wait", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       3,
       [
         rv({ taskId: "p1", settled: true, lastText: "VERDICT: PASS" }),
@@ -228,7 +253,7 @@ describe("T5 unsettled sibling", () => {
   });
 
   test("settled NEEDS_FIXES + unsettled sibling => wait", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       3,
       [
         rv({ taskId: "f1", settled: true, lastText: "VERDICT: NEEDS_FIXES" }),
@@ -240,7 +265,7 @@ describe("T5 unsettled sibling", () => {
   });
 
   test("empty array => wait", () => {
-    const decision = consolidateReviewerRound(3, [], 3);
+    const decision = consolidateVerdictRound(3, [], 3);
     assert.deepEqual(decision, { action: "wait" });
   });
 });
@@ -251,7 +276,7 @@ describe("T5 unsettled sibling", () => {
 
 describe("T6 unparseable verdict", () => {
   test("one settled reviewer with no VERDICT line (sibling PASS) => block(no_verdict) naming the offending task", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       4,
       [
         rv({ taskId: "u1", title: "Silent Reviewer", lastText: "Looks okay I guess." }),
@@ -266,7 +291,7 @@ describe("T6 unparseable verdict", () => {
   });
 
   test("no_verdict takes precedence over a sibling's NEEDS_FIXES (rule order c before d)", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       4,
       [
         rv({ taskId: "u1", title: "Silent Reviewer", lastText: "No verdict declared here." }),
@@ -287,7 +312,7 @@ describe("T6 unparseable verdict", () => {
 
 describe("T7 max cycles and cycle arithmetic", () => {
   test("max fixCycle 3 and a NEEDS_FIXES at maxFixCycles=3 => block(max_cycles)", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       6,
       [rv({ taskId: "f1", fixCycle: 3, lastText: "VERDICT: NEEDS_FIXES" })],
       3,
@@ -298,7 +323,7 @@ describe("T7 max cycles and cycle arithmetic", () => {
   });
 
   test("same group at max fixCycle 2 (below ceiling) => fix at cycle 3", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       6,
       [rv({ taskId: "f1", fixCycle: 2, lastText: "VERDICT: NEEDS_FIXES" })],
       3,
@@ -309,7 +334,7 @@ describe("T7 max cycles and cycle arithmetic", () => {
   });
 
   test("mixed fixCycles in one group (0 and 2, one NEEDS_FIXES) => cycle = max+1 = 3, not 1", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       6,
       [
         rv({ taskId: "old", title: "Stale Reviewer", fixCycle: 0, lastText: "VERDICT: PASS" }),
@@ -323,7 +348,7 @@ describe("T7 max cycles and cycle arithmetic", () => {
   });
 
   test("all-PASS group at fixCycle 3 => pass, NOT blocked — the ceiling only bites when fixes are still needed", () => {
-    const decision = consolidateReviewerRound(
+    const decision = consolidateVerdictRound(
       6,
       [rv({ taskId: "p1", fixCycle: 3, lastText: "VERDICT: PASS" })],
       3,
@@ -373,20 +398,34 @@ describe("T9 chainKeys determinism", () => {
     const a = chainKeys(7, 2);
     const b = chainKeys(8, 2);
     assert.notEqual(a.builder, b.builder);
-    assert.notEqual(a.reviewer, b.reviewer);
+    for (const role of VERDICT_ROLES) assert.notEqual(a[role], b[role]);
   });
 
   test("different cycles => different strings", () => {
     const a = chainKeys(7, 2);
     const b = chainKeys(7, 3);
     assert.notEqual(a.builder, b.builder);
-    assert.notEqual(a.reviewer, b.reviewer);
+    for (const role of VERDICT_ROLES) assert.notEqual(a[role], b[role]);
   });
 
-  test("literal formats fix:7:2 / rereview:7:2 — the DB partial unique index depends on these exact strings", () => {
+  test("literal formats fix:7:2 / rereview:7:2 / retest:7:2 — the DB partial unique index depends on these exact strings", () => {
     const keys = chainKeys(7, 2);
     assert.equal(keys.builder, "fix:7:2");
+    // FROZEN: rows written since migration 0039 carry "rereview:R:c". Changing
+    // it would make a replayed consolidation miss its own chain and write a
+    // second one — the duplicate-chain bug, re-entered through the back door.
     assert.equal(keys.reviewer, "rereview:7:2");
+    assert.equal(keys.tester, "retest:7:2");
+  });
+
+  test("every verdict role has a key, and no two roles share one", () => {
+    const keys = chainKeys(7, 2);
+    const all = [keys.builder, ...VERDICT_ROLES.map((role) => keys[role])];
+    assert.equal(
+      new Set(all).size,
+      all.length,
+      "two roles sharing a chain key would make the second insert look like the first's replay",
+    );
   });
 });
 
@@ -495,13 +534,27 @@ describe("T15 createFixChain conflict arbitration", () => {
     assert.equal(
       (insertRowSrc.match(/INSERT INTO project_tasks/g) ?? []).length,
       1,
-      "one parameterised insert, called twice — builder and re-reviewer",
+      "one parameterised insert, called for the builder and for each re-checker",
     );
     assert.equal((insertRowSrc.match(/ON CONFLICT DO NOTHING/g) ?? []).length, 1);
+    // Two call sites since R850, not two calls: the builder, then a loop over
+    // `checkers` (one entry per dissenting role). Asserting on call sites keeps
+    // the guard meaningful — a third hand-written insert would be a third
+    // chain row nothing consolidates.
     assert.equal(
       (fixChainSrc.match(/await insertChainRow\(/g) ?? []).length,
       2,
-      "createFixChain must still write exactly the builder and the re-reviewer",
+      "createFixChain must write exactly the builder and the checker loop",
+    );
+    assert.match(
+      fixChainSrc,
+      /for \(const c of input\.checkers\)/,
+      "the re-checkers must all be written, not just the first",
+    );
+    assert.match(
+      fixChainSrc,
+      /input\.checkers\.length === 0/,
+      "a fix builder with no re-checker would close the round unverified — it must throw",
     );
   });
 
@@ -583,5 +636,391 @@ describe("T15 createFixChain conflict arbitration", () => {
       /ON CONFLICT \(project_id, round, role, title\) DO NOTHING/,
       "createTask keeps main's identity arbitration — it is the fan-out path, not a chain path",
     );
+  });
+});
+
+/* ========================================================================== *
+ * T17 — the tester gates a round exactly like the reviewer (R850)
+ *
+ * agents/tester.md closes with the identical `VERDICT: PASS / NEEDS_FIXES`
+ * contract, but reconciliation parsed verdicts only for role='reviewer', so a
+ * settled tester fell through the per-task path in reconcileSettledTasks() and
+ * was marked 'done' with its verdict never read. A customer-facing
+ * NEEDS_FIXES therefore became a silent approval — the same failure `no_verdict`
+ * exists to prevent for reviewers, only quieter, because nothing was logged and
+ * nothing was pushed.
+ *
+ * The tests below pin the three cases the wiring has to get right: a tester
+ * alone passes a round, a tester alone opens a fix cycle that is RE-TESTED (not
+ * re-reviewed — a code reviewer cannot confirm a broken checkout flow is
+ * fixed), and a tester next to a reviewer is ONE group with ONE builder.
+ * ========================================================================== */
+
+describe("T17 tester verdicts", () => {
+  test("isVerdictRole gates exactly the two roles that end in a VERDICT line", () => {
+    assert.equal(isVerdictRole("reviewer"), true);
+    assert.equal(isVerdictRole("tester"), true);
+    for (const role of ["architect", "planner", "scout", "researcher", "builder", "steward"] as const) {
+      assert.equal(isVerdictRole(role), false, `${role} must keep the per-task path`);
+    }
+    assert.deepEqual([...VERDICT_ROLES], ["reviewer", "tester"]);
+  });
+
+  test("tester PASS alone => pass (a tester can close a round on its own)", () => {
+    const decision = consolidateVerdictRound(
+      100,
+      [tv({ title: "Customer journey sweep", lastText: "Everything worked.\nVERDICT: PASS" })],
+      3,
+    );
+    assert.deepEqual(decision, { action: "pass" });
+  });
+
+  test("tester NEEDS_FIXES alone => ONE fix builder re-checked by a TESTER, not a reviewer", () => {
+    const decision = consolidateVerdictRound(
+      100,
+      [
+        tv({
+          title: "Customer journey sweep",
+          fixCycle: 0,
+          lastText:
+            "1. Checkout: the Pay button does nothing on mobile (blocker).\nVERDICT: NEEDS_FIXES",
+        }),
+      ],
+      3,
+    );
+
+    assert.equal(decision.action, "fix");
+    if (decision.action !== "fix") return;
+    assert.equal(decision.cycle, 1);
+    assert.equal(decision.builderChainKey, "fix:100:1");
+    // The re-check role is the whole point: only the tester can walk the
+    // journey again and see the button work.
+    assert.deepEqual(decision.checkers, [{ role: "tester", chainKey: "retest:100:1" }]);
+    assert.match(decision.mergedBrief, /## Feedback from tester: Customer journey sweep/);
+    assert.match(decision.mergedBrief, /the Pay button does nothing on mobile/);
+  });
+
+  test("tester with no parseable VERDICT => block(no_verdict), never a silent done", () => {
+    const decision = consolidateVerdictRound(
+      100,
+      [tv({ title: "Customer journey sweep", lastText: "Tried a few things, felt okay." })],
+      3,
+    );
+    assert.equal(decision.action, "block");
+    if (decision.action !== "block") return;
+    assert.equal(decision.reason, "no_verdict");
+    assert.match(decision.detail, /tester "Customer journey sweep"/);
+  });
+
+  test("tester is capped by the same fix-cycle ceiling as a reviewer", () => {
+    const decision = consolidateVerdictRound(
+      100,
+      [tv({ fixCycle: 3, lastText: "VERDICT: NEEDS_FIXES" })],
+      3,
+    );
+    assert.equal(decision.action, "block");
+    if (decision.action !== "block") return;
+    assert.equal(decision.reason, "max_cycles");
+    assert.match(decision.detail, /tester "Test"/);
+  });
+
+  test("tester + reviewer, BOTH NEEDS_FIXES => one builder, one merged brief, one re-check EACH", () => {
+    const decision = consolidateVerdictRound(
+      200,
+      [
+        rv({
+          taskId: "r1",
+          title: "Diff review",
+          lastText: "The catch swallows the error.\nVERDICT: NEEDS_FIXES",
+        }),
+        tv({
+          taskId: "t1",
+          title: "Customer sweep",
+          lastText: "The empty state shows a raw stack trace.\nVERDICT: NEEDS_FIXES",
+        }),
+      ],
+      3,
+    );
+
+    assert.equal(decision.action, "fix");
+    if (decision.action !== "fix") return;
+
+    // ONE builder — the regression guard from T3, now across roles. Two fix
+    // builders in one round would land in the same worktree with half a brief
+    // each, which is bug 1 wearing a different hat.
+    assert.equal(decision.builderChainKey, "fix:200:1");
+    // One re-check per dissenting role, in VERDICT_ROLES order so a replayed
+    // decision is byte-identical to the one already in the DB.
+    assert.deepEqual(decision.checkers, [
+      { role: "reviewer", chainKey: "rereview:200:1" },
+      { role: "tester", chainKey: "retest:200:1" },
+    ]);
+    // Nothing merged away: the builder gets both voices, each labelled with the
+    // role that raised it, because they are answered in different places.
+    assert.match(decision.mergedBrief, /## Feedback from reviewer: Diff review/);
+    assert.match(decision.mergedBrief, /## Feedback from tester: Customer sweep/);
+    assert.match(decision.mergedBrief, /The catch swallows the error\./);
+    assert.match(decision.mergedBrief, /The empty state shows a raw stack trace\./);
+  });
+
+  test("reviewer PASS + tester NEEDS_FIXES => fix; a reviewer's PASS cannot outvote the customer", () => {
+    const decision = consolidateVerdictRound(
+      200,
+      [
+        rv({ taskId: "r1", title: "Diff review", lastText: "Clean diff.\nVERDICT: PASS" }),
+        tv({
+          taskId: "t1",
+          title: "Customer sweep",
+          lastText: "The upload silently drops files over 2 MB.\nVERDICT: NEEDS_FIXES",
+        }),
+      ],
+      3,
+    );
+
+    assert.equal(decision.action, "fix");
+    if (decision.action !== "fix") return;
+    // Only the DISSENTER re-checks. Re-running the reviewer that already passed
+    // would spend a run to re-confirm what it just said.
+    assert.deepEqual(decision.checkers, [{ role: "tester", chainKey: "retest:200:1" }]);
+    assert.doesNotMatch(decision.mergedBrief, /Diff review/);
+  });
+
+  test("reviewer NEEDS_FIXES + tester PASS => fix re-checked by the reviewer only", () => {
+    const decision = consolidateVerdictRound(
+      200,
+      [
+        rv({
+          taskId: "r1",
+          title: "Diff review",
+          lastText: "Unbounded retry loop.\nVERDICT: NEEDS_FIXES",
+        }),
+        tv({ taskId: "t1", title: "Customer sweep", lastText: "VERDICT: PASS" }),
+      ],
+      3,
+    );
+    assert.equal(decision.action, "fix");
+    if (decision.action !== "fix") return;
+    assert.deepEqual(decision.checkers, [{ role: "reviewer", chainKey: "rereview:200:1" }]);
+  });
+
+  test("an unsettled tester freezes the round even when the reviewer already PASSED", () => {
+    // The cross-role half of rule (b). Without it, the reviewer's PASS would
+    // close a round whose tester is still walking the product — the exact race
+    // the round-level decision exists to remove.
+    const decision = consolidateVerdictRound(
+      200,
+      [
+        rv({ taskId: "r1", lastText: "VERDICT: PASS" }),
+        tv({ taskId: "t1", settled: false, lastText: null }),
+      ],
+      3,
+    );
+    assert.deepEqual(decision, { action: "wait" });
+  });
+
+  test("a tester's no_verdict outranks a reviewer's NEEDS_FIXES (rule order c before d)", () => {
+    const decision = consolidateVerdictRound(
+      200,
+      [
+        rv({ taskId: "r1", title: "Diff review", lastText: "VERDICT: NEEDS_FIXES" }),
+        tv({ taskId: "t1", title: "Customer sweep", lastText: "No verdict here." }),
+      ],
+      3,
+    );
+    assert.equal(decision.action, "block");
+    if (decision.action !== "block") return;
+    assert.equal(decision.reason, "no_verdict");
+    assert.match(decision.detail, /tester "Customer sweep"/);
+  });
+
+  test("the same group decided twice is byte-identical — replays must not fork the chain", () => {
+    const group = () => [
+      rv({ taskId: "r1", title: "Diff review", lastText: "Nope.\nVERDICT: NEEDS_FIXES" }),
+      tv({ taskId: "t1", title: "Customer sweep", lastText: "Also nope.\nVERDICT: NEEDS_FIXES" }),
+    ];
+    assert.deepEqual(
+      consolidateVerdictRound(200, group(), 3),
+      consolidateVerdictRound(200, group(), 3),
+    );
+  });
+
+  test("re-check titles and briefs are role-specific — a re-test is not a second review", () => {
+    assert.equal(RECHECK_TASK_TITLE("reviewer", 2), "Re-review after fix cycle 2");
+    assert.equal(RECHECK_TASK_TITLE("tester", 2), "Re-test after fix cycle 2");
+    assert.notEqual(RECHECK_TASK_TITLE("reviewer", 2), RECHECK_TASK_TITLE("tester", 2));
+
+    const merged = "## Feedback from tester: Customer sweep\nThe Pay button does nothing.";
+    const testerBrief = recheckBrief("tester", merged);
+    const reviewerBrief = recheckBrief("reviewer", merged);
+
+    // Both carry the original feedback verbatim — a re-checker that only sees
+    // the current state starts from scratch and finds a different set of
+    // problems, which is how a fix cycle becomes an endless one.
+    for (const brief of [testerBrief, reviewerBrief]) {
+      assert.ok(brief.includes(merged), "the merged feedback must survive verbatim");
+      assert.match(brief, /VERDICT: PASS/);
+      assert.match(brief, /VERDICT: NEEDS_FIXES/);
+    }
+    assert.match(testerBrief, /Re-test the product/);
+    assert.match(testerBrief, /as a customer would/);
+    assert.match(reviewerBrief, /Re-review the work/);
+    assert.match(reviewerBrief, /against the new diff/);
+  });
+});
+
+/* ========================================================================== *
+ * T20 — verdictMemberSettled (added at R1005, findings 1 and 2)
+ *
+ * The settlement rule, extracted from project-tick's inline mapping so it can
+ * be driven exhaustively instead of asserted as a source string. Three layers
+ * consume it — the decision here, the pre-check `unsettledVerdictTasks` and the
+ * commit `markVerdictTaskDone` — and the two SQL halves are its mirror
+ * (pinned structurally in cp2-reconciler-interaction.test.ts).
+ *
+ * The table below is the WHOLE cross product: 6 task statuses × 8 run statuses
+ * (7 + null) × pendingInput. 96 cases, no sampling — the two defects it closes
+ * were both single cells nobody had enumerated.
+ * ========================================================================== */
+
+describe("T20 verdictMemberSettled", () => {
+  const TASK_STATUSES: TaskStatus[] = [
+    "pending",
+    "ready",
+    "running",
+    "done",
+    "failed",
+    "blocked",
+  ];
+  const RUN_STATUSES: Array<RunStatus | null> = [
+    null,
+    "queued",
+    "running",
+    "paused",
+    "stuck",
+    "completed",
+    "failed",
+    "cancelled",
+  ];
+
+  test("the full cross product matches the documented rule, cell for cell", () => {
+    let done = 0;
+    let clean = 0;
+    let unsettled = 0;
+    for (const taskStatus of TASK_STATUSES) {
+      for (const runStatus of RUN_STATUSES) {
+        for (const pendingInput of [false, true]) {
+          const actual = verdictMemberSettled({ taskStatus, runStatus, pendingInput });
+          const expected =
+            taskStatus === "done" || (runStatus === "completed" && !pendingInput);
+          assert.equal(
+            actual,
+            expected,
+            `task=${taskStatus} run=${runStatus} pending=${pendingInput}`,
+          );
+          if (taskStatus === "done") done++;
+          else if (expected) clean++;
+          else unsettled++;
+        }
+      }
+    }
+    // Guards the guard: if the loops ever stop covering the cross product, the
+    // assertion above passes vacuously. 6 × 8 × 2 = 96.
+    assert.equal(done + clean + unsettled, 96);
+    assert.equal(done, 16); // one task status × 8 run statuses × 2 flags
+    assert.equal(clean, 5); // the other 5 task statuses, completed, no flag
+  });
+
+  test("a 'done' member is settled whatever its run has done since (finding 2)", () => {
+    // R1005 finding 2, the wedge: a partially-refused markGroupDone leaves
+    // member A 'done' and member B 'running'; A's run is then resumed and its
+    // follow-up turn fails/pauses/is cancelled. Judged by run status alone, A
+    // reported unsettled forever, its round returned `wait` on every tick, and
+    // — because a 'done' task is invisible to listSettledRunningTasks — no
+    // per-task failure path could ever fire. Silent, indefinite, project still
+    // 'active'.
+    for (const runStatus of RUN_STATUSES) {
+      for (const pendingInput of [false, true]) {
+        assert.equal(
+          verdictMemberSettled({ taskStatus: "done", runStatus, pendingInput }),
+          true,
+          `a 'done' member must stay settled with run=${runStatus} pending=${pendingInput}`,
+        );
+      }
+    }
+  });
+
+  test("a `completed` run that still owes a turn is NOT settled (finding 1)", () => {
+    // R1005 finding 1: completeRun is E1 (complete + RETURN the flag) then E2
+    // (requeue). A /message to a RUNNING reviewer sets the flag; if the
+    // executor dies between the statements the row sits `completed` +
+    // pending_input for ≥60s and unboundedly while it is down. Deciding there
+    // closes the round on a verdict the operator has already moved to withdraw.
+    assert.equal(
+      verdictMemberSettled({
+        taskStatus: "running",
+        runStatus: "completed",
+        pendingInput: true,
+      }),
+      false,
+    );
+    assert.equal(
+      verdictMemberSettled({
+        taskStatus: "running",
+        runStatus: "completed",
+        pendingInput: false,
+      }),
+      true,
+    );
+  });
+
+  test("a round wedged by a resumed 'done' member now decides instead of waiting", () => {
+    // The end-to-end shape of finding 2, through the decision function: A is
+    // 'done' (its run resumed and failed), B is 'running' with a settled PASS.
+    // Before the fix this was `wait` on every tick, forever.
+    const a = rv({
+      taskId: "a",
+      title: "Diff review",
+      settled: verdictMemberSettled({
+        taskStatus: "done",
+        runStatus: "failed",
+        pendingInput: false,
+      }),
+      lastText: "VERDICT: PASS",
+    });
+    const b = tv({
+      taskId: "b",
+      title: "Customer sweep",
+      settled: verdictMemberSettled({
+        taskStatus: "running",
+        runStatus: "completed",
+        pendingInput: false,
+      }),
+      lastText: "VERDICT: PASS",
+    });
+    assert.deepEqual(consolidateVerdictRound(7, [a, b], 3), { action: "pass" });
+  });
+
+  test("the accepted trade-off: a resumed 'done' member with no verdict line blocks, loudly", () => {
+    // Settled-by-bookkeeping means the member's CURRENT last message re-enters
+    // parseVerdict on a re-consolidation, and a follow-up answer rarely
+    // restates `VERDICT:`. The outcome is block(no_verdict) — pushed, and
+    // recoverable with /unwedge — which C20 prefers over the silent wedge it
+    // replaces. CP3's MANAGER COMMS block closes it at the prompt level
+    // (docs/plan/09, F3).
+    const a = rv({
+      taskId: "a",
+      title: "Diff review",
+      settled: verdictMemberSettled({
+        taskStatus: "done",
+        runStatus: "completed",
+        pendingInput: false,
+      }),
+      lastText: "Yes — I checked the migration, it is idempotent.",
+    });
+    const decision = consolidateVerdictRound(7, [a], 3);
+    assert.equal(decision.action, "block");
+    if (decision.action !== "block") return;
+    assert.equal(decision.reason, "no_verdict");
+    assert.match(decision.detail, /reviewer "Diff review"/);
   });
 });

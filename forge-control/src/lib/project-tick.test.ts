@@ -24,6 +24,8 @@ import {
   DEPLOY_GUIDE,
   GITHUB_PUSH_GUIDE,
   RESEARCH_INSTRUMENTS,
+  ESCALATION_POLICY,
+  BROWSER_FIRST,
   parseRoleFile,
   roleFilePaths,
   readRoleFile,
@@ -69,7 +71,18 @@ function task(over: Partial<ProjectTask> = {}): ProjectTask {
   };
 }
 
-const ROLES = ["architect", "planner", "builder", "reviewer", "researcher", "scout"] as const;
+/** Every role the engine builds a prompt for. `tester` joined at R850, when it
+ *  started gating rounds like the reviewer — a gating role that silently lost
+ *  the worktree policy would be a build-phase agent loose in the live checkout. */
+const ROLES = [
+  "architect",
+  "planner",
+  "builder",
+  "reviewer",
+  "tester",
+  "researcher",
+  "scout",
+] as const;
 
 describe("T10 prompt policy", () => {
   test("worktree policy present for every role on repo 'ai-os'", () => {
@@ -138,6 +151,43 @@ describe("T10 prompt policy", () => {
     assert.ok(!plannerPrompt.includes("status --porcelain"), "planner prompt leaked the live check");
   });
 
+  test("tester prompt states the VERDICT contract and its blocking consequence (R850)", () => {
+    // The tester's verdict is now parsed, consolidated and capped exactly like a
+    // reviewer's, so a tester that ends without a VERDICT line BLOCKS the
+    // project. That consequence has to be in the engine's own prompt, not left
+    // to agents/tester.md — which is also read by the interactive Task-tool
+    // tester, where no orchestrator is parsing anything.
+    const prompt = buildPrompt(task({ role: "tester" }), project({ repo: "ai-os" }));
+    assert.match(prompt, /VERDICT: PASS/);
+    assert.match(prompt, /VERDICT: NEEDS_FIXES/);
+    assert.match(
+      prompt,
+      /missing verdict blocks the whole project/,
+      "the tester must be told what silence costs",
+    );
+    assert.match(
+      prompt,
+      /never start, patch or restart a live service/,
+      "a tester needs a running surface — say plainly it may not create one itself",
+    );
+  });
+
+  test("the live-checkout cleanliness gate stays the reviewer's alone", () => {
+    // Deliberate asymmetry: the tester never judges code, so handing it the
+    // git-status gate would duplicate the reviewer's finding and produce two
+    // NEEDS_FIXES verdicts for one dirty file.
+    const proj = project({ repo: "ai-os" });
+    const testerPrompt = buildPrompt(task({ role: "tester" }), proj);
+    assert.ok(
+      !testerPrompt.includes("status --porcelain"),
+      "tester prompt leaked the reviewer's live-checkout check",
+    );
+    assert.ok(
+      testerPrompt.includes(WORKTREE_POLICY("/opt/forge-ai-os")),
+      "the tester still gets the worktree policy — it must not edit the live checkout either",
+    );
+  });
+
   test("goal-mode architect prompt carries DEPLOY_GUIDE with the detached-restart contract", () => {
     const proj = project({ repo: "ai-os", metadata: { mode: "goal" } });
     const prompt = buildPrompt(task({ role: "architect" }), proj);
@@ -193,7 +243,7 @@ describe("T10 prompt policy", () => {
     );
   });
 
-  test("force-free contract: none of the four policy constants ever teach a force push", () => {
+  test("force-free contract: no policy constant ever teaches a force push", () => {
     // GITHUB_PUSH_GUIDE legitimately names "--force" and "--force-with-lease"
     // in order to PROHIBIT them ("NEVER force-push, never `--force`, never
     // `--force-with-lease`") — a blanket substring-absence check would fail
@@ -202,12 +252,17 @@ describe("T10 prompt policy", () => {
     // parenthetical, "the guidance must never teach a force push") is that no
     // constant ever instructs RUNNING one: no "push --force", "push -f", or
     // "--force-with-lease" appearing as part of an actual command to execute.
+    //
+    // ESCALATION_POLICY joined the list at R870: it names force-pushing over
+    // shared history as an escalation trigger, which is a prohibition of the
+    // same family — it must never read as an instruction either.
     const FORCE_COMMAND_RE = /push\s+(--force(-with-lease)?|-f\b)/i;
     const texts = [
       WORKTREE_POLICY("/opt/forge-ai-os"),
       REVIEWER_LIVE_CHECK("/opt/forge-ai-os"),
       DEPLOY_GUIDE,
       GITHUB_PUSH_GUIDE,
+      ESCALATION_POLICY,
     ];
     for (const text of texts) {
       assert.ok(!FORCE_COMMAND_RE.test(text), `policy text must never instruct running a force push: ${text}`);
@@ -644,22 +699,414 @@ describe("T16 researcher browser lane", () => {
     }
   });
 
-  test("the pool/browser default is stated as key-free — the whole point of R702", () => {
+  test("each instrument's key requirement is stated as it actually is", () => {
+    // R702 could say "none of them needs a key by default". R776 re-ranked perplexity's backends
+    // — api is now its default for both modes — so that blanket sentence became a lie, and a
+    // researcher told "no keys needed" would read perplexity's exit 2 as a broken tool rather
+    // than a missing key. The prompt must draw the line where it really falls.
     assert.match(
       RESEARCH_INSTRUMENTS,
-      /none of them needs a key by default/,
-      "a researcher that believes it needs keys will not try the instruments at all",
+      /research-browser and gemini-qa need no key on their default path, perplexity does/,
+      "the prompt must say which instruments are key-free and which is not",
     );
     // gemini-qa's default backend really is the free pool.
     assert.ok(
       help(SCRIPTS.geminiQa).includes("default: pool"),
       "gemini-qa's default backend is no longer the pool",
     );
-    // perplexity's ask really does default to the browser.
+    // perplexity's ask really does default to the api backend.
     assert.match(
       help(SCRIPTS.perplexity),
-      /Default backend: browser/,
-      "perplexity ask no longer defaults to the browser backend",
+      /Default backend: api/,
+      "perplexity ask no longer defaults to the api backend",
     );
+    // ...and the browser backend it demoted is still offered, not deleted.
+    assert.match(
+      help(SCRIPTS.perplexity),
+      /--backend browser\|api/,
+      "perplexity --help no longer offers the browser fallback the prompt points researchers at",
+    );
+    assert.match(
+      RESEARCH_INSTRUMENTS,
+      /--backend browser/,
+      "the prompt must still name the fallback for logged-in work",
+    );
+  });
+});
+
+/**
+ * T18 — the escalation protocol reaches every role (R870).
+ *
+ * Konrad set the fleet-wide autonomy rule on 2026-08-05: autonomous by default,
+ * escalate on exactly two things (irreversible/boundary-crossing actions, and
+ * preference decisions on build-once-use-many work). A policy that reaches six
+ * of eight roles is not a fleet-wide policy, so the interesting assertion is the
+ * exhaustive one: ESCALATION_POLICY must appear in the prompt of EVERY member of
+ * TaskRole, on a repo-backed project and on a scratch one alike.
+ *
+ * ROLES above deliberately lists only the roles with a prompt branch of their
+ * own. This suite uses ALL_TASK_ROLES instead — built through a
+ * `satisfies Record<TaskRole, true>` so that adding a role to the union is a
+ * COMPILE error here, not a silently unchecked role at 3am.
+ */
+const ALL_TASK_ROLES = Object.keys({
+  architect: true,
+  planner: true,
+  scout: true,
+  researcher: true,
+  builder: true,
+  reviewer: true,
+  steward: true,
+  tester: true,
+} satisfies Record<TaskRole, true>) as TaskRole[];
+
+describe("T18 escalation protocol", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const POLICY_DOC = "docs/plan/10-policy-agent-autonomy-and-escalation.md";
+  const VAULT_DOC = "/opt/obsidian-vault/AI OS/Policy - Agent Autonomy and Escalation.md";
+
+  test("the premise: ALL_TASK_ROLES really is every role, including the branchless ones", () => {
+    // steward has no branch in buildPrompt and falls through to the bare
+    // header — exactly the kind of role a hand-maintained list forgets.
+    assert.equal(ALL_TASK_ROLES.length, 8);
+    for (const role of ROLES) {
+      assert.ok(ALL_TASK_ROLES.includes(role), `ALL_TASK_ROLES is missing ${role}`);
+    }
+    assert.ok(ALL_TASK_ROLES.includes("steward"), "steward has no prompt branch — it is the point");
+  });
+
+  test("every role on every repo carries ESCALATION_POLICY", () => {
+    for (const repo of ["ai-os", "content-forge", "scratch"] as const) {
+      const proj = project({ repo });
+      for (const role of ALL_TASK_ROLES) {
+        const prompt = buildPrompt(task({ role }), proj);
+        assert.ok(
+          prompt.includes(ESCALATION_POLICY),
+          `role ${role} on repo '${repo}' is missing ESCALATION_POLICY`,
+        );
+      }
+    }
+  });
+
+  test("scratch projects get the escalation policy even though they get no worktree policy", () => {
+    // The wrapper gates WORKTREE_POLICY on a live checkout. Reusing that gate
+    // for R870 would have been the easy mistake: a scratch project can still
+    // spend real money, mail someone as Konrad, or burn his attention on a
+    // question a browser would have answered.
+    const proj = project({ repo: "scratch" });
+    for (const role of ALL_TASK_ROLES) {
+      const prompt = buildPrompt(task({ role }), proj);
+      assert.ok(prompt.includes(ESCALATION_POLICY), `scratch ${role} lost ESCALATION_POLICY`);
+      assert.ok(
+        !prompt.includes(WORKTREE_POLICY("/opt/forge-ai-os")),
+        `scratch ${role} gained a worktree policy it has no checkout for`,
+      );
+    }
+  });
+
+  test("all four clauses of the policy survive into the rendered prompt", () => {
+    // Asserted through a real prompt, not against the constant, so a future
+    // wrapper change that drops or truncates the block fails here too.
+    const prompt = buildPrompt(task({ role: "builder" }), project({ repo: "ai-os" }));
+    // 1) autonomy by default, with a browser named as the way to resolve unknowns.
+    assert.match(prompt, /AUTONOMY IS THE DEFAULT/);
+    assert.match(
+      prompt,
+      /NEVER ask Konrad something research would have answered/,
+      "the failure mode has to be named, or 'be autonomous' reads as encouragement",
+    );
+    assert.ok(
+      ESCALATION_POLICY.includes("scripts/research-browser.mjs"),
+      "clause 1 must name a browser that actually exists on this host",
+    );
+    assert.ok(
+      existsSync(`${repoRoot}scripts/research-browser.mjs`),
+      "ESCALATION_POLICY names scripts/research-browser.mjs but it is not in this checkout",
+    );
+    // The vault note says "playwright / auto-browser"; auto-browser's controller
+    // is not installed here (docs/tools/research-browser.md §2.1), so the
+    // condensed policy must not send agents at it.
+    assert.ok(
+      ESCALATION_POLICY.includes("playwright-skill"),
+      "clause 1 must name the skill-based browser path for roles holding Skill",
+    );
+    assert.ok(
+      !ESCALATION_POLICY.includes("auto-browser"),
+      "auto-browser does not work on this host — naming it would send agents at a dead end",
+    );
+    // 2) irreversible / boundary-crossing actions, each trigger Konrad named.
+    for (const trigger of [
+      "SSH keys",
+      "deleting accounts",
+      "force-pushing over shared history",
+      "outbound communication as Konrad",
+      "spending real money",
+      "business system in production",
+      "third party",
+    ]) {
+      assert.ok(prompt.includes(trigger), `clause 2 is missing the trigger "${trigger}"`);
+    }
+    assert.match(
+      ESCALATION_POLICY,
+      /ESCALATE BEFORE an irreversible or boundary-crossing action/,
+      "clause 2 must be BEFORE-worded — asking afterwards is a report, not an escalation",
+    );
+    // 3) preference/design decisions on build-once-use-many work.
+    assert.match(prompt, /build-once-use-many/);
+    for (const kind of ["interaction models", "schemas", "naming conventions", "workflow shapes"]) {
+      assert.ok(prompt.includes(kind), `clause 3 is missing the decision kind "${kind}"`);
+    }
+    assert.match(
+      prompt,
+      /Restate the model in 2-3 sentences/,
+      "clause 3 must specify the SHAPE of the ask, not just that one is owed",
+    );
+    assert.match(
+      prompt,
+      /state the default you will take if he does not answer/,
+      "an ask with no stated default blocks the task on a reply",
+    );
+    // 4) the mechanism.
+    assert.ok(
+      prompt.includes("http://127.0.0.1:7700/api/reminders"),
+      "clause 4 must give the real endpoint",
+    );
+    assert.match(prompt, /"when":"in 1m"/, "clause 4 must give a `when` the API accepts");
+    assert.match(
+      prompt,
+      /Max 500 chars per reminder/,
+      "the 500-char cap is a hard 400 from the API — an agent that does not know it loses the ask",
+    );
+    assert.match(
+      prompt,
+      /KEEP WORKING on everything that does not depend on the answer/,
+      "without this an escalation becomes an early exit",
+    );
+  });
+
+  test("the policy doc is committed for agents without vault access, verbatim", (t) => {
+    const committed = readFileSync(`${repoRoot}${POLICY_DOC}`, "utf8");
+    assert.ok(committed.length > 0, `${POLICY_DOC} is empty`);
+    assert.ok(
+      ESCALATION_POLICY.includes(POLICY_DOC),
+      "the prompt must point at the committed copy, or the full policy is unreachable from a run",
+    );
+    // The condensed prompt and the doc must agree on the two escalation
+    // categories; the doc is the authority the prompt defers to.
+    assert.match(committed, /irreversible or boundary-crossing actions/);
+    assert.match(committed, /preference and design decisions on load-bearing work/);
+    assert.ok(
+      committed.includes("http://127.0.0.1:7700/api/reminders"),
+      "the doc must carry the same mechanism the prompt does",
+    );
+
+    // Verbatim against the vault original where the vault is readable. A run
+    // inside a container without the vault mount says so out loud rather than
+    // passing quietly on an unchecked claim.
+    if (!existsSync(VAULT_DOC)) {
+      t.diagnostic(`${VAULT_DOC} not readable here — verbatim-ness unchecked this run`);
+      return;
+    }
+    assert.equal(
+      committed,
+      readFileSync(VAULT_DOC, "utf8"),
+      `${POLICY_DOC} has drifted from the vault note it copies — it is meant to be verbatim`,
+    );
+  });
+
+  test("BROWSER_FIRST reaches scout and builder; the researcher has its own instrument block", () => {
+    // Scope is the contract, exactly as for RESEARCH_INSTRUMENTS: these are the
+    // roles that meet unknowns while working. A reviewer or planner that grew
+    // the block would be prompt bloat with no matching behaviour.
+    const proj = project({ repo: "ai-os" });
+    for (const role of ["scout", "builder"] as const) {
+      assert.ok(
+        buildPrompt(task({ role }), proj).includes(BROWSER_FIRST),
+        `role ${role} is missing BROWSER_FIRST`,
+      );
+    }
+    for (const role of ALL_TASK_ROLES.filter((r) => r !== "scout" && r !== "builder")) {
+      assert.ok(
+        !buildPrompt(task({ role }), proj).includes(BROWSER_FIRST),
+        `role ${role} carries BROWSER_FIRST — it belongs to the roles that meet unknowns hands-on`,
+      );
+    }
+    // The researcher's equivalent is the fuller RESEARCH_INSTRUMENTS block plus
+    // an explicit first-resort clause in its own branch.
+    const researcherPrompt = buildPrompt(task({ role: "researcher" }), proj);
+    assert.ok(researcherPrompt.includes(RESEARCH_INSTRUMENTS));
+    assert.match(
+      researcherPrompt,
+      /is the FIRST resort, not the last/,
+      "the researcher must be told the browser is a first move, not a last-ditch one",
+    );
+  });
+
+  test("BROWSER_FIRST quotes a real invocation and forbids credential attempts", () => {
+    assert.ok(
+      BROWSER_FIRST.includes("scripts/research-browser.mjs open scratch --url"),
+      "an unrunnable example is worse than none",
+    );
+    const help = execFileSync(
+      process.execPath,
+      [`${repoRoot}scripts/research-browser.mjs`, "--help"],
+      { encoding: "utf8", timeout: 30_000 },
+    );
+    for (const token of ["open <profile>", "--url", "--label", "scratch"]) {
+      assert.ok(
+        help.includes(token),
+        `research-browser --help no longer contains ${JSON.stringify(token)}, quoted by BROWSER_FIRST`,
+      );
+    }
+    assert.match(
+      BROWSER_FIRST,
+      /never attempt credentials/i,
+      "the login-wall boundary applies to every role that can open a browser",
+    );
+  });
+
+  test("the committed scout and builder role files name the browser too", () => {
+    // The engine's prompt is only half the surface: agents/*.md is what the
+    // interactive Task-tool subagents read, where no buildPrompt runs at all.
+    for (const role of ["scout", "builder"] as const) {
+      const mission = parseRoleFile(readFileSync(`${REPO_AGENTS_DIR}/${role}.md`, "utf8")).mission;
+      assert.ok(
+        mission.includes("scripts/research-browser.mjs"),
+        `agents/${role}.md does not name the browser as a way to resolve unknowns`,
+      );
+    }
+  });
+});
+
+/* ========================================================================== *
+ * T19 consolidation is preconditioned on the gating runs still being settled
+ *
+ * SOURCE-ASSERTION, like executor-completion-guard.test.ts and for the same
+ * reason: project-tick.ts and db/projects.ts both reach a pg Pool, and there is
+ * no test database in this suite. The DECISION half of consolidation is pure
+ * and table-tested in project-reconcile.test.ts; what is asserted here is the
+ * SQL and the control flow that apply it.
+ *
+ * The defect (R905 red-team S4): `listVerdictRound` reads the round, then
+ * several DB round trips later the decision is applied. In that window the
+ * control plane can requeue a settled reviewer — `POST /api/runs/:id/message`
+ * against a `completed` target appends and flips it to `queued` in ONE
+ * statement — so the run owes another turn whose verdict may contradict the
+ * snapshot. Mark-done was unconditional, and a 'done' task is invisible to
+ * listSettledRunningTasks() forever: the flip was honoured zero times, in
+ * silence. That is the one outcome this module exists to prevent.
+ * ========================================================================== */
+
+describe("T19 consolidation precondition (red-team S4)", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const TICK = readFileSync(`${repoRoot}forge-control/src/lib/project-tick.ts`, "utf8");
+  const PROJECTS_DB = readFileSync(`${repoRoot}forge-control/src/db/projects.ts`, "utf8");
+
+  test("markVerdictTaskDone carries the settlement predicate into the UPDATE", () => {
+    const body = PROJECTS_DB.slice(
+      PROJECTS_DB.indexOf("export async function markVerdictTaskDone"),
+      PROJECTS_DB.indexOf("/**", PROJECTS_DB.indexOf("export async function markVerdictTaskDone")),
+    );
+    assert.ok(body.length > 0, "markVerdictTaskDone not found in db/projects.ts");
+    assert.match(body, /UPDATE project_tasks pt/);
+    assert.match(body, /WHERE r\.id = pt\.run_id/);
+    assert.match(body, /AND r\.status = 'completed'/);
+    // R1005: the SQL mirror of verdictMemberSettled. 'done' re-confirms itself
+    // (finding 2), and a `completed` run that still owes an undelivered turn
+    // does NOT count as settled (finding 1).
+    assert.match(body, /AND \(pt\.status = 'done'/);
+    assert.match(body, /AND \(r\.metadata->>'pending_input'\) IS DISTINCT FROM 'true'/);
+    // The caller has to be able to tell "did not move" from "moved".
+    assert.match(body, /return \(r\.rowCount \?\? 0\) > 0;/);
+  });
+
+  test("unsettledVerdictTasks counts a run-less task as unsettled", () => {
+    const body = PROJECTS_DB.slice(
+      PROJECTS_DB.indexOf("export async function unsettledVerdictTasks"),
+      PROJECTS_DB.indexOf("export async function unsettledVerdictTasks") + 1200,
+    );
+    // LEFT JOIN + IS DISTINCT FROM, not `<>`: a NULL run_status must count as
+    // unsettled, and `NULL <> 'completed'` is NULL, i.e. not matched.
+    assert.match(body, /LEFT JOIN runs r ON r\.id = pt\.run_id/);
+    assert.match(body, /r\.status IS DISTINCT FROM 'completed'/);
+    // ...and the exact complement of the mark-done predicate above, or the
+    // pre-check and the commit disagree about which member is settled.
+    assert.match(body, /AND pt\.status IS DISTINCT FROM 'done'/);
+    assert.match(body, /OR r\.metadata->>'pending_input' = 'true'/);
+  });
+
+  test("markGroupDone reports refusals instead of swallowing them", () => {
+    const body = TICK.slice(
+      TICK.indexOf("async function markGroupDone("),
+      TICK.indexOf("function logGroupNotReleased("),
+    );
+    assert.ok(body.length > 0, "markGroupDone not found");
+    assert.match(body, /markVerdictTaskDone\(r\.taskId\)/);
+    assert.match(body, /refused\.push\(r\)/);
+    assert.doesNotMatch(body, /setTaskStatus\(/);
+  });
+
+  test("the pass branch aborts before any side effect when a member refuses", () => {
+    const branch = TICK.slice(
+      TICK.indexOf('case "pass": {'),
+      TICK.indexOf('case "block": {'),
+    );
+    // Mark-done first, and the early return must precede the notifications —
+    // a PASS is the decision with no undo: it releases the next phase.
+    const refusalReturn = branch.indexOf("logGroupNotReleased");
+    assert.ok(refusalReturn > 0, "pass branch does not handle a refusal");
+    assert.ok(
+      refusalReturn < branch.indexOf("queueNotification"),
+      "the refusal check must come before the round's notifications",
+    );
+    assert.ok(
+      refusalReturn < branch.indexOf("roundIsComplete"),
+      "the refusal check must come before the round-complete push",
+    );
+  });
+
+  test("the irreversible branches pre-check before their side effect", () => {
+    const block = TICK.slice(
+      TICK.indexOf('case "block": {'),
+      TICK.indexOf('case "fix": {'),
+    );
+    // Blocking a project and pushing to Konrad's phone cannot be undone by a
+    // later refusal, so the window is closed from the front too.
+    assert.ok(
+      block.indexOf("unsettledVerdictTasks") < block.indexOf("setProjectStatus"),
+      "block must pre-check before it blocks the project",
+    );
+
+    const fix = TICK.slice(TICK.indexOf('case "fix": {'));
+    assert.ok(
+      fix.indexOf("unsettledVerdictTasks") < fix.indexOf("await createFixChain("),
+      "fix must pre-check before it inserts the chain",
+    );
+    // ...and the conditional mark-done is still the backstop for the
+    // milliseconds a pre-check cannot cover: a refusal after the chain exists
+    // must stop the round closing and must not announce the fix cycle.
+    const afterChain = fix.slice(fix.indexOf("const refused = await markGroupDone(inputs);"));
+    assert.ok(afterChain.length > 0, "fix branch does not check markGroupDone's result");
+    assert.ok(
+      afterChain.indexOf("return;") < afterChain.indexOf("queueNotification"),
+      "a refused fix round must not push a fix-cycle announcement",
+    );
+  });
+
+  test("no branch marks a gating task done unconditionally any more", () => {
+    const consolidate = TICK.slice(
+      TICK.indexOf("async function consolidateVerdictGroup("),
+      TICK.indexOf("async function markGroupDone("),
+    );
+    assert.doesNotMatch(
+      consolidate,
+      /setTaskStatus\([^)]*"done"\)/,
+      "consolidation must route every mark-done through the preconditioned helper",
+    );
+    // Every markGroupDone call site captures the result; a bare `await
+    // markGroupDone(inputs);` would be the old, silent behaviour wearing the
+    // new helper's name.
+    const bare = consolidate.match(/^\s*await markGroupDone\(inputs\);\s*$/gm) ?? [];
+    assert.deepEqual(bare, [], "markGroupDone's return value must never be discarded");
   });
 });

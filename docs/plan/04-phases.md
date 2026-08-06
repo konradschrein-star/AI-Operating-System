@@ -27,7 +27,8 @@ hard errors, no silent fallbacks; commit per task with clear messages.
 - **Scope (files):** `forge-control/src/lib/project-reconcile.ts` (new),
   `forge-control/src/lib/project-reconcile.test.ts` (new),
   `forge-control/src/lib/project-tick.ts` (reconcile + spawn paths),
-  `forge-control/src/db/projects.ts` (promote/claim SQL, `listReviewerRound`,
+  `forge-control/src/db/projects.ts` (promote/claim SQL, `listVerdictRound` — named
+  `listReviewerRound` until R850 widened it to reviewer + tester,
   fix-chain transaction), `db/migrations/0039_reviewer_chain_key.sql` (new).
 - **Deliverables:** pure module + tests T1–T9; group consolidation wired into
   `reconcileSettledTasks()`; gated promote/claim; migration 0039 (NOT applied to live DB —

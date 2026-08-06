@@ -43,6 +43,9 @@ import { prefetchMemoryForUserTurn } from "./lib/memory-prefetch.ts";
 import { queueNotification } from "./db/notifications.ts";
 import { reminderCardTitle, reminderCardAsk } from "./lib/reminder-text.ts";
 import { projectTick } from "./lib/project-tick.ts";
+// The completion decision is NOT re-derived here: route and executor import the
+// same pure rule so the two can never drift (06 C5, 07 §5/§6).
+import { completionTransition } from "./lib/run-control-rules.ts";
 
 const { Pool } = pg;
 
@@ -131,6 +134,10 @@ async function claimNextRun(): Promise<ClaimedRun | null> {
   // wake_after (migration 0036) parks a re-queued run for a backoff interval;
   // until it passes, the run is queued but not claimable. Cleared on claim so
   // it never delays a later turn of the same run.
+  // pending_input is cleared here too (07 §5, the belt to E2's braces): a
+  // claimed run has consumed its pending input by definition — the tail of its
+  // thread goes into this very prompt — so leaving the flag set would requeue
+  // it a second time at the end of the turn.
   const r = await pool.query<ClaimedRun>(
     `WITH claimed AS (
        SELECT id
@@ -146,6 +153,7 @@ async function claimNextRun(): Promise<ClaimedRun | null> {
             started_at = COALESCE(r.started_at, now()),
             last_heartbeat_at = now(),
             wake_after = NULL,
+            metadata = COALESCE(r.metadata, '{}'::jsonb) - 'pending_input',
             updated_at = now(),
             worker = COALESCE(r.worker, 'forge-executor')
        FROM claimed
@@ -322,12 +330,30 @@ async function callClaudePool(
   }
 }
 
+/**
+ * What the completion write actually did.
+ *
+ * `applied: false` means the row was NOT ours to finish — an operator's
+ * stop/terminate landed in the window between the child's last event and this
+ * write (07 §6). Callers MUST then skip notifyRunOutcome: a run Konrad
+ * terminated does not push a "completed" notification.
+ *
+ * `requeued: true` means the run is not finished at all — it consumed a
+ * pending message and goes back to `queued` for one more turn (07 §5).
+ * Callers skip notifyRunOutcome for that too.
+ */
+interface CompletionWrite {
+  applied: boolean;
+  requeued: boolean;
+}
+
 async function completeRun(
   id: string,
   entry: ThreadEntry | null,
   status: "completed" | "failed" | "stuck",
   stuckSignal: string | null = null,
-): Promise<void> {
+  opts: { guardRunning?: boolean } = {},
+): Promise<CompletionWrite> {
   // 'stuck' is a resumable terminal — leave completed_at NULL so the UI can
   // still distinguish "ended" runs from a parked one. failed/completed write
   // completed_at = now(). Split into two queries because Postgres can't
@@ -335,23 +361,33 @@ async function completeRun(
   // in a CASE expression (deduces conflicting types for the parameter).
   // entry === null: the CC engine already streamed its turns into the
   // thread — only flip status.
+  //
+  // guardRunning (07 §6, C13): the control-plane path carries its precondition
+  // into SQL. `AND status = 'running'` makes an operator's paused/cancelled
+  // win the race with a clean exit, and the RETURNING clause hands the
+  // handshake flag (07 §5) to completionTransition in the same round trip.
   const threadConcat = entry ? `thread = thread || $2::jsonb,` : "";
+  const guard = opts.guardRunning ? `\n           AND status = 'running'` : "";
+  const returning = opts.guardRunning
+    ? `\n      RETURNING status, metadata->>'pending_input' AS pending_input`
+    : "";
   const params: unknown[] = entry ? [id, JSON.stringify([entry])] : [id];
+  let res;
   if (status === "stuck") {
     params.push(status, stuckSignal);
-    await pool.query(
+    res = await pool.query<{ status: string; pending_input: string | null }>(
       `UPDATE runs
           SET ${threadConcat}
               status = $${params.length - 1},
               stuck_signal = $${params.length},
               updated_at = now(),
               last_heartbeat_at = now()
-        WHERE id = $1`,
+        WHERE id = $1${guard}${returning}`,
       params,
     );
   } else {
     params.push(status);
-    await pool.query(
+    res = await pool.query<{ status: string; pending_input: string | null }>(
       `UPDATE runs
           SET ${threadConcat}
               status = $${params.length},
@@ -359,10 +395,59 @@ async function completeRun(
               completed_at = now(),
               updated_at = now(),
               last_heartbeat_at = now()
-        WHERE id = $1`,
+        WHERE id = $1${guard}${returning}`,
       params,
     );
   }
+
+  // Legacy (claude-pool) path: unchanged behaviour, no guard, no handshake.
+  // 07 §6 is explicit that the pool branch is not on this control plane.
+  if (!opts.guardRunning) return { applied: true, requeued: false };
+
+  if (res.rowCount === 0) {
+    // The precondition was gone: stop/terminate landed first. Write nothing
+    // else — the operator's verb already stamped what it needed.
+    const actual = await getRunStatus(id);
+    console.log(
+      `[executor] run ${id}: completion yielded to operator status ${actual}`,
+    );
+    return { applied: false, requeued: false };
+  }
+
+  const decision = completionTransition({
+    outcome: status,
+    // The guard proved it: rowCount 1 means the row WAS 'running'.
+    rowStatus: "running",
+    pendingInput: res.rows[0].pending_input === "true",
+  });
+  if (!(decision.status === "queued" && decision.clearPendingInput)) {
+    return { applied: true, requeued: false };
+  }
+
+  // E2 of the 07 §5 diagram. completed_at must be cleared: the first statement
+  // stamped it and this run is going back to work. `AND status = 'completed'`
+  // means an operator who terminated between the two statements still wins.
+  const requeue = await pool.query(
+    `UPDATE runs
+        SET status = 'queued',
+            completed_at = NULL,
+            wake_after = NULL,
+            metadata = metadata - 'pending_input',
+            updated_at = now()
+      WHERE id = $1 AND status = 'completed'`,
+    [id],
+  );
+  if (requeue.rowCount === 0) {
+    const actual = await getRunStatus(id);
+    console.log(
+      `[executor] run ${id}: completion yielded to operator status ${actual}`,
+    );
+    return { applied: false, requeued: false };
+  }
+  console.log(
+    `[executor] run ${id}: pending input consumed - requeued for next turn`,
+  );
+  return { applied: true, requeued: true };
 }
 
 /**
@@ -473,6 +558,13 @@ async function sessionProcessAlive(sessionId: string): Promise<boolean> {
 async function processRun(run: ClaimedRun): Promise<void> {
   console.log(`[executor] claimed run ${run.id} (${run.title.slice(0, 60)})`);
 
+  // Hoisted above the guardrail pre-flight (R905): the guard is the control
+  // plane's and the control plane is the CC engine only (07 §6), and the
+  // pre-flight below is itself a completion path — so it needs to know which
+  // engine this run is on BEFORE it writes anything.
+  const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
+  const guardRunning = engine === "claude-code";
+
   // Guardrail pre-flight: spend cap + runtime kill switch on the chat path.
   // Rough thread-char → EUR estimate so spend.per_run_cap can bite before a
   // long burn (real spend is recorded by claude-pool; this is preemptive).
@@ -507,7 +599,14 @@ async function processRun(run: ClaimedRun): Promise<void> {
     console.warn(
       `[executor] run ${run.id} blocked by ${guard.blocked_by}: ${guard.reason}`,
     );
-    await completeRun(
+    // GUARDED like every other CC completion write (C13, 07 §6). This path is
+    // reached AFTER two awaited round trips (todaySpendRollup +
+    // evaluateGuardrails), which is a wide-open window for an operator's
+    // stop/terminate to land on a row this code is about to flip to 'failed'.
+    // Unguarded, Konrad's terminate — already stamped `cancelled` +
+    // `completed_at` — was silently overwritten, and his phone was pushed about
+    // a run he had just killed.
+    const written = await completeRun(
       run.id,
       {
         role: "system",
@@ -521,15 +620,21 @@ async function processRun(run: ClaimedRun): Promise<void> {
         },
       },
       "failed",
+      null,
+      { guardRunning },
     );
     // A guardrail trip is exactly the "you're not looking at the screen
     // right now" case — push it regardless of run source (unlike
     // notifyRunOutcome, which only pings for telegram/cron so a normal
-    // web-chat reply doesn't also buzz the phone).
-    await queueNotification(
-      `🚫 "${run.title}" blocked — ${guard.rule_label}: ${guard.reason}\n/rules to see current caps, /cap <rule_id> <euros> to raise one.`,
-      "guardrail",
-    ).catch(() => {});
+    // web-chat reply doesn't also buzz the phone). Gated on the write actually
+    // landing: a run whose status the operator already owns must not generate a
+    // notification about a block that never applied to it.
+    if (written.applied) {
+      await queueNotification(
+        `🚫 "${run.title}" blocked — ${guard.rule_label}: ${guard.reason}\n/rules to see current caps, /cap <rule_id> <euros> to raise one.`,
+        "guardrail",
+      ).catch(() => {});
+    }
     return;
   }
 
@@ -548,7 +653,6 @@ async function processRun(run: ClaimedRun): Promise<void> {
       (memory.block ? ` (${memory.block.length}ch block)` : ""),
   );
 
-  const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
   const timeoutMs = getTimeoutFor(run.metadata);
   const hb = setInterval(() => heartbeat(run.id), 5_000);
   try {
@@ -604,11 +708,15 @@ async function processRun(run: ClaimedRun): Promise<void> {
       msg.includes("AbortError") ||
       msg.includes("aborted") ||
       msg.includes("timeout");
+    // `guardRunning` (= engine === "claude-code") is decided once at the top of
+    // processRun: the guard is the control plane's, and the control plane is
+    // the CC engine only (07 §6). A run the operator terminated must not be
+    // flipped to `stuck` by a timeout that was already moot.
     if (isTimeout) {
       console.warn(
         `[executor] run ${run.id} timed out after ${timeoutMs}ms — marking stuck`,
       );
-      await completeRun(
+      const written = await completeRun(
         run.id,
         {
           role: "system",
@@ -621,11 +729,14 @@ async function processRun(run: ClaimedRun): Promise<void> {
         },
         "stuck",
         "timeout",
+        { guardRunning },
       );
-      await notifyRunOutcome(run, "stuck", `timed out after ${Math.round(timeoutMs / 1000)}s`);
+      if (written.applied && !written.requeued) {
+        await notifyRunOutcome(run, "stuck", `timed out after ${Math.round(timeoutMs / 1000)}s`);
+      }
     } else {
       console.error(`[executor] run ${run.id} failed: ${msg}`);
-      await completeRun(
+      const written = await completeRun(
         run.id,
         {
           role: "system",
@@ -635,8 +746,12 @@ async function processRun(run: ClaimedRun): Promise<void> {
           meta: { error: msg, engine },
         },
         "failed",
+        null,
+        { guardRunning },
       );
-      await notifyRunOutcome(run, "failed", msg);
+      if (written.applied && !written.requeued) {
+        await notifyRunOutcome(run, "failed", msg);
+      }
     }
   } finally {
     clearInterval(hb);
@@ -766,18 +881,36 @@ async function processWithClaudeCode(
         `${priorSession} — refusing to start a second one; re-queued for ` +
         `${delayMs / 1000}s (attempt ${attempts + 1})`,
     );
-    await pool
-      .query(
-        `UPDATE runs
-            SET status = 'queued',
-                wake_after = now() + ($2::int * interval '1 millisecond'),
-                metadata = COALESCE(metadata, '{}'::jsonb) ||
-                           jsonb_build_object('session_wait_attempts', $3::int),
-                updated_at = now()
-          WHERE id = $1`,
-        [run.id, delayMs, attempts + 1],
-      )
-      .catch((e) => console.error("[executor] requeue failed:", e.message));
+    // `AND status = 'running'` is the same guard the completion writes carry
+    // (07 §6), and it is load-bearing here for a sharper reason: the procfs
+    // scan above is an awaited syscall walk, and the runs it fires on are
+    // exactly the wedged ones an operator terminates. Unguarded, a terminate
+    // landing in that window was overwritten — `cancelled` flipped back to
+    // `queued`, and the run Konrad killed came back on the next claim and kept
+    // spending. The E10 backoff loop re-opens the window every cycle, so this
+    // was not a one-shot race but a recurring one. A stop's `paused` was
+    // overwritten the same way.
+    //
+    // No .catch: a pg failure here must surface (C20). It propagates to
+    // processRun's handler, which marks the run failed with the message in the
+    // thread, rather than silently leaving a `running` row for the watchdog.
+    const requeued = await pool.query(
+      `UPDATE runs
+          SET status = 'queued',
+              wake_after = now() + ($2::int * interval '1 millisecond'),
+              metadata = COALESCE(metadata, '{}'::jsonb) ||
+                         jsonb_build_object('session_wait_attempts', $3::int),
+              updated_at = now()
+        WHERE id = $1
+          AND status = 'running'`,
+      [run.id, delayMs, attempts + 1],
+    );
+    if (requeued.rowCount === 0) {
+      const actual = await getRunStatus(run.id);
+      console.log(
+        `[executor] run ${run.id}: session-wait requeue yielded to operator status ${actual}`,
+      );
+    }
     return;
   }
 
@@ -1036,7 +1169,13 @@ async function processWithClaudeCode(
   // "recent" section reflects the final subagent statuses instead of a
   // stale mid-run snapshot.
   await finalizeRollup(run.id);
-  await completeRun(run.id, finalEntry, "completed");
+  const written = await completeRun(run.id, finalEntry, "completed", null, {
+    guardRunning: true,
+  });
+  // Yielded to an operator verb, or requeued to consume a pending message:
+  // either way this run did not just finish, so it must not push a
+  // "completed" notification (07 §5/§6).
+  if (!written.applied || written.requeued) return;
   await notifyRunOutcome(
     run,
     "completed",
@@ -1431,6 +1570,72 @@ async function reminderTick(): Promise<void> {
   }
 }
 
+/**
+ * How long a `completed` row may carry `metadata.pending_input` before the
+ * sweep below treats it as stranded. Generous on purpose: E2 follows E1 by one
+ * statement, so anything still in that shape a minute later is not in flight.
+ */
+const PENDING_INPUT_STRANDED_MS = 60_000;
+
+/**
+ * Rescue messages stranded by an executor restart between E1 and E2 (07 §5,
+ * red-team S6).
+ *
+ * The handshake is two statements: E1 completes the run and RETURNs the flag,
+ * E2 requeues it. Between them the row is `completed` + `pending_input=true`,
+ * and E2 lives only in an in-flight promise — a crash, an OOM kill, or this
+ * project's own DETACHED safe-restart drops it. Nothing else consumes the flag:
+ * its only two readers are `claimNextRun` (which touches `queued` rows only)
+ * and E2 itself (`WHERE status='completed'`, never re-run). So the message sat
+ * in the thread forever behind a 202 that had already promised "delivery:
+ * next-turn".
+ *
+ * This is E2, replayed from durable state instead of from memory — the whole
+ * point of C23 keeping every byte of delivery state in the `runs` row. It is
+ * byte-for-byte the same UPDATE, so a row it and E2 both reach is written once
+ * and the loser logs a yield.
+ *
+ * Scope is deliberately narrow: `completed` only. A `failed`/`stuck` run keeps
+ * its flag by design (07 §5, last bullet) — a message must never convert a
+ * failure into a silent retry loop — and resume-chat is what delivers it there.
+ *
+ * It is engine-agnostic, which 07 §6's "the pool branch is not on this control
+ * plane" does NOT contradict: §6 is about the pool branch's completion WRITE,
+ * which is untouched. A legacy `claude-pool` run messaged while running takes
+ * the unguarded completion path, so nothing ever reads its flag and the message
+ * would strand exactly as an E1/E2 crash strands a CC one — the same defect,
+ * and this repairs it the same way (one extra turn, ≤60s late), rather than
+ * leaving a silently undelivered 202 behind an engine distinction the caller
+ * never saw.
+ */
+async function pendingInputSweepTick(): Promise<void> {
+  try {
+    const r = await pool.query<{ id: string }>(
+      `UPDATE runs
+          SET status = 'queued',
+              completed_at = NULL,
+              wake_after = NULL,
+              metadata = metadata - 'pending_input',
+              updated_at = now()
+        WHERE status = 'completed'
+          AND metadata->>'pending_input' = 'true'
+          AND updated_at < now() - (interval '1 millisecond' * $1)
+        RETURNING id::text`,
+      [PENDING_INPUT_STRANDED_MS],
+    );
+    for (const row of r.rows) {
+      console.warn(
+        `[executor] run ${row.id}: stranded pending input swept - requeued for next turn`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      "[pending-input sweep] tick failed:",
+      e instanceof Error ? e.message : e,
+    );
+  }
+}
+
 async function managerLoop(): Promise<void> {
   console.log(`[manager] starting · hcp=${HCP_URL.replace(/:.+@/, ":***@")}`);
   // Stagger first tick to avoid hammering the DB at startup with the executor.
@@ -1438,6 +1643,10 @@ async function managerLoop(): Promise<void> {
   while (running) {
     await managerTick();
     await stuckWatchdogTick();
+    // Rescues messages stranded by a restart between E1 and E2 (07 §5). Beside
+    // the stuck watchdog on purpose: both are cheap, idempotent UPDATEs that
+    // repair rows no in-memory owner is left for.
+    await pendingInputSweepTick();
     await reminderTick();
     // v2.5: coding-project stage advancement — same tick cadence as
     // everything else here, gated on fleet_state internally like cron-tick.

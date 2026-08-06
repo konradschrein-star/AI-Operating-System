@@ -41,6 +41,7 @@ import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
 import mentor from "./routes/mentor.ts";
+import runControl from "./routes/run-control.ts";
 
 const app = new Hono();
 
@@ -190,6 +191,7 @@ app.route("/api/tasks", tasks);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);
+app.route("/api/runs", runControl);
 
 const port = Number(process.env.PORT ?? 7700);
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });

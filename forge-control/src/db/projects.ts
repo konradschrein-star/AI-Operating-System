@@ -104,10 +104,28 @@ const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.ti
   pt.chain_key, pt.created_at::text, pt.updated_at::text`;
 /** Last assistant message of the joined run `r`, by thread timestamp — the
  *  text every verdict parse reads. Shared by listSettledRunningTasks() and
- *  listReviewerRound() so the two can never drift apart. */
+ *  listVerdictRound() so the two can never drift apart. */
 const LAST_ASSISTANT_TEXT = `(SELECT elem->>'content'
                FROM jsonb_array_elements(r.thread) elem
               WHERE elem->>'role' = 'assistant'
+              ORDER BY (elem->>'ts')::timestamptz DESC
+              LIMIT 1)`;
+/** Last failure entry of the joined run `r` — what the executor's catch block
+ *  wrote when the run died ("Executor failed: claude-code exit 1: You've hit
+ *  your session limit · resets 1:10pm (Europe/Berlin)").
+ *
+ *  Separate from LAST_ASSISTANT_TEXT because they are different messages with
+ *  different authors: the verdict is the AGENT's last word, this is the
+ *  EXECUTOR's. Reusing the assistant text for failure classification would have
+ *  read whatever the agent happened to say before it was killed — on 2026-08-05
+ *  a half-finished tool narration — and never seen the wall at all.
+ *
+ *  'stuck_notice' is included alongside 'error' so a timeout's text is
+ *  available to the same classifier; matching on it is the classifier's
+ *  business, not this query's. */
+const LAST_ERROR_TEXT = `(SELECT elem->>'content'
+               FROM jsonb_array_elements(r.thread) elem
+              WHERE elem->>'kind' IN ('error','stuck_notice')
               ORDER BY (elem->>'ts')::timestamptz DESC
               LIMIT 1)`;
 
@@ -532,6 +550,118 @@ export async function setTaskStatus(
   );
 }
 
+/**
+ * Mark ONE gating task 'done', but only while the round's view of it still
+ * holds — the optimistic-concurrency half of consolidation (red-team S4, R905;
+ * predicate widened by R1005 findings 1 and 2).
+ *
+ * The verdict a round is judged on is read by listVerdictRound() and acted on
+ * several DB round trips later. In between, the control plane can requeue a
+ * settled reviewer run: `POST /api/runs/:id/message` against a `completed`
+ * target appends and flips it to `queued` in one statement, so the run owes one
+ * more turn — and that turn may say NEEDS_FIXES where the snapshot said PASS.
+ * An unconditional mark-done wrote 'done' anyway, and a 'done' task is
+ * invisible to listSettledRunningTasks() forever: the flipped verdict was
+ * honoured zero times, silently, which is the one outcome this whole module
+ * exists to prevent.
+ *
+ * The predicate is the SQL mirror of verdictMemberSettled() in
+ * lib/project-reconcile.ts — the same three-term rule the decision layer uses,
+ * so the two halves cannot disagree about which member is settled:
+ *
+ *  - `pt.status = 'done'` — already marked by an earlier tick. For a VERDICT
+ *    role that write can only have come from this function: project-tick's
+ *    per-task branch marks 'done' for non-verdict roles only (`isVerdictRole`
+ *    defers the rest to consolidation), and no API route writes a task status
+ *    at all — so the branch re-confirms THIS module's own earlier decision, it
+ *    does not trust a stranger. Re-marking is
+ *    the no-op it is meant to be, and it must NOT be conditioned on the run:
+ *    that row's verdict was consumed by bookkeeping and its run is free to be
+ *    resumed, stopped or to fail afterwards. Requiring `completed` here was
+ *    R1005 finding 2's other half — the round would be refused release forever
+ *    instead of merely waiting forever.
+ *  - `r.status = 'completed'` — the settled snapshot the decision was computed
+ *    from. Every write that delivers a message to a settled run moves it out of
+ *    `completed` in the SAME statement as the append, so a move is visible here.
+ *  - `pending_input IS DISTINCT FROM 'true'` — R1005 finding 1. `completed`
+ *    alone is NOT an exact detector: completeRun's handshake is two statements
+ *    (executor.ts E1/E2), and a `/message` to a RUNNING reviewer sets the flag
+ *    and leaves the row `running` for E1 to complete. If the executor dies
+ *    between E1 and E2 — OOM, pm2 restart, or this project's own DETACHED
+ *    safe-restart — the row sits `completed` carrying an undelivered message
+ *    for ≥PENDING_INPUT_STRANDED_MS and unboundedly while the executor is down.
+ *    Closing the round in that window buries the revised verdict in a 'done'
+ *    task nothing ever reads again: the exact silent outcome R906 exists to
+ *    prevent, arriving through the `running`-target door. NULL-safe by
+ *    construction — a run with no flag yields NULL, which IS DISTINCT FROM
+ *    'true'.
+ *
+ * EXISTS rather than `FROM runs r`: an UPDATE ... FROM is an inner join, so a
+ * 'done' task whose run reference was dropped (retryTask clears run_id) could
+ * never re-confirm itself. The done branch must not depend on a run row at all.
+ *
+ * Returns whether the task moved. `false` means the round must NOT be treated
+ * as decided — the caller re-consolidates on the next tick, by which time the
+ * requeued run has either settled again with a fresh verdict or is plainly
+ * unsettled (→ `wait`), and the stranded-input sweep has requeued whatever the
+ * flag was guarding.
+ */
+export async function markVerdictTaskDone(taskId: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE project_tasks pt
+        SET status = 'done', updated_at = now()
+      WHERE pt.id = $1
+        AND (pt.status = 'done'
+             OR EXISTS (SELECT 1
+                          FROM runs r
+                         WHERE r.id = pt.run_id
+                           AND r.status = 'completed'
+                           AND (r.metadata->>'pending_input') IS DISTINCT FROM 'true'))`,
+    [taskId],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Which of these gating tasks are NOT settled — the exact complement of
+ * markVerdictTaskDone()'s predicate, term for term.
+ *
+ * The cheap pre-check that keeps markVerdictTaskDone()'s refusal from arriving
+ * AFTER an irreversible side effect. consolidateVerdictGroup creates the fix
+ * chain and blocks the project before it marks the group done — that order is
+ * deliberate and crash-safe — so the same window is closed from the front here:
+ * one query immediately before the side effect, and the conditional mark-done
+ * behind it as the backstop for whatever slips through the remaining
+ * milliseconds.
+ *
+ * The two predicates being exact complements is the property that matters, and
+ * it is pinned in cp2-reconciler-interaction.test.ts: a pre-check that let
+ * through what the mark-done then refuses turns every consolidation into a
+ * partially-applied round, and one that refuses what mark-done would accept
+ * wedges the round instead.
+ *
+ * A task with no run (`run_id IS NULL`) counts as unsettled unless it is
+ * already 'done': it cannot have produced the verdict the decision was computed
+ * from. A run still carrying `pending_input` counts as unsettled for the reason
+ * spelled out above — it owes a turn nobody has delivered yet.
+ */
+export async function unsettledVerdictTasks(
+  taskIds: readonly string[],
+): Promise<string[]> {
+  if (taskIds.length === 0) return [];
+  const r = await pool.query<{ id: string }>(
+    `SELECT pt.id::text AS id
+       FROM project_tasks pt
+       LEFT JOIN runs r ON r.id = pt.run_id
+      WHERE pt.id = ANY($1::uuid[])
+        AND pt.status IS DISTINCT FROM 'done'
+        AND (r.status IS DISTINCT FROM 'completed'
+             OR r.metadata->>'pending_input' = 'true')`,
+    [[...taskIds]],
+  );
+  return r.rows.map((row) => row.id);
+}
+
 /** Automatic-retry ceiling (E3). Two retries, then the task stays put until
  *  an operator forces it — an infinitely-retried task is just a slower way of
  *  burning money on the same failure. */
@@ -647,15 +777,24 @@ export async function roundIsComplete(
  *  after 90s without a heartbeat, i.e. the engine process is gone or hung.
  *  Before this, such a task sat 'running' forever with no owner and the
  *  project could never close or wedge — it just went quiet (E4). */
-export async function listSettledRunningTasks(): Promise<
-  Array<ProjectTask & { run_status: RunStatus; last_text: string | null }>
-> {
-  const r = await pool.query<
-    ProjectTask & { run_status: RunStatus; last_text: string | null }
-  >(
+export interface SettledRunningTask extends ProjectTask {
+  run_status: RunStatus;
+  /** Last ASSISTANT message — the verdict text. */
+  last_text: string | null;
+  /** Last EXECUTOR failure entry — what the run died of (R860). */
+  last_error: string | null;
+  /** Times this run has already been parked behind a usage wall. 0 for every
+   *  run that never was, which is almost all of them. */
+  usage_wall_attempts: number;
+}
+
+export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
+  const r = await pool.query<SettledRunningTask>(
     `SELECT ${TASK_COLS_PT},
             r.status AS run_status,
-            ${LAST_ASSISTANT_TEXT} AS last_text
+            ${LAST_ASSISTANT_TEXT} AS last_text,
+            ${LAST_ERROR_TEXT} AS last_error,
+            COALESCE((r.metadata->>'usage_wall_attempts')::int, 0) AS usage_wall_attempts
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'
@@ -664,35 +803,62 @@ export async function listSettledRunningTasks(): Promise<
   return r.rows;
 }
 
-/** Every reviewer task of one project+round, with its run settlement — the
+/** Every gating task of one project+round, with its run settlement — the
  *  input to project-tick's group consolidation, which must decide on the
  *  ROUND as a whole rather than per settled task (two reviewers each firing
  *  their own fix chain was bug 1 of the first goal-mode night).
  *
- *  LEFT JOIN, not JOIN: a reviewer whose run has not been created yet has
+ *  `roles` is passed in rather than hardcoded so lib/project-reconcile.ts's
+ *  VERDICT_ROLES stays the single definition of "which roles end in a VERDICT
+ *  line" (R850 added 'tester' to it). A value import of that constant here
+ *  would close an import cycle around the pg pool, which the module's
+ *  type-only import of ProjectStatus deliberately avoids.
+ *
+ *  LEFT JOIN, not JOIN: a task whose run has not been created yet has
  *  `run_id IS NULL` and surfaces here as `run_status: null`, which the caller
  *  maps to `settled: false` — a group with any such member must wait, never
  *  decide. Task status is deliberately NOT filtered: a reviewer already marked
  *  'done' still belongs to the group's history and the caller decides what
- *  that means. ORDER BY created_at ASC is load-bearing — it is what makes the
- *  merged fix brief byte-identical across replays of the same round. */
-export async function listReviewerRound(
+ *  that means (verdictMemberSettled: it is settled BY BOOKKEEPING, whatever
+ *  its run has done since).
+ *
+ *  `pending_input` rides along for the same reason markVerdictTaskDone reads it
+ *  (R1005 finding 1): a `completed` run still carrying the flag owes an
+ *  undelivered turn, so the decision layer must call it unsettled and `wait`
+ *  rather than compute a decision from text a message is about to revise. The
+ *  column is projected as a boolean here so lib/project-reconcile.ts's pure
+ *  predicate never has to know about jsonb.
+ *
+ *  ORDER BY created_at ASC is load-bearing — it is what makes the
+ *  merged fix brief byte-identical across replays of the same round; the id
+ *  tiebreak covers the two-rows-same-timestamp case, which a single-statement
+ *  insert of a reviewer and a tester makes reachable. */
+export interface VerdictRoundRow extends ProjectTask {
+  /** NULL when the task has no run yet (LEFT JOIN). */
+  run_status: RunStatus | null;
+  /** `metadata.pending_input === 'true'` — the run owes an undelivered turn. */
+  pending_input: boolean;
+  /** Last ASSISTANT message — the verdict text. */
+  last_text: string | null;
+}
+
+export async function listVerdictRound(
   projectId: string,
   round: number,
-): Promise<Array<ProjectTask & { run_status: RunStatus | null; last_text: string | null }>> {
-  const r = await pool.query<
-    ProjectTask & { run_status: RunStatus | null; last_text: string | null }
-  >(
+  roles: readonly TaskRole[],
+): Promise<VerdictRoundRow[]> {
+  const r = await pool.query<VerdictRoundRow>(
     `SELECT ${TASK_COLS_PT},
             r.status AS run_status,
+            COALESCE(r.metadata->>'pending_input' = 'true', false) AS pending_input,
             ${LAST_ASSISTANT_TEXT} AS last_text
        FROM project_tasks pt
        LEFT JOIN runs r ON r.id = pt.run_id
       WHERE pt.project_id = $1
         AND pt.round = $2
-        AND pt.role = 'reviewer'
-      ORDER BY pt.created_at ASC`,
-    [projectId, round],
+        AND pt.role = ANY($3::text[])
+      ORDER BY pt.created_at ASC, pt.id ASC`,
+    [projectId, round, [...roles]],
   );
   return r.rows;
 }
@@ -785,12 +951,19 @@ async function insertChainRow(
   );
 }
 
-/** Insert a fix builder (round + 1) and its re-reviewer (round + 2) in ONE
- *  transaction, keyed by chain_key so the pair is idempotent (R7).
+/** Insert a fix builder (round + 1) and its re-checkers (round + 2) in ONE
+ *  transaction, keyed by chain_key so the whole chain is idempotent (R7).
  *
- *  `round` is the REVIEWER round R that produced the NEEDS_FIXES verdicts. A
- *  tick that crashes after COMMIT but before marking the reviewers 'done'
- *  replays harmlessly: the second attempt inserts nothing and both rows come
+ *  `checkers` is one row per DISSENTING ROLE (R850) — a re-reviewer, a
+ *  re-tester, or one of each when a reviewer and a tester both returned
+ *  NEEDS_FIXES in the same round. Never one per dissenting TASK: two unhappy
+ *  reviewers still produce exactly one re-review, which is the whole point of
+ *  consolidation. They all land in the same round+2 and are therefore
+ *  consolidated together in turn, exactly like the round that spawned them.
+ *
+ *  `round` is the gating round R that produced the NEEDS_FIXES verdicts. A
+ *  tick that crashes after COMMIT but before marking the group 'done'
+ *  replays harmlessly: the second attempt inserts nothing and every row comes
  *  back `replay`. The outcomes are returned rather than swallowed so the
  *  caller can log the replay instead of silently believing it created fresh
  *  work — and, for `occupied`, so it can refuse to drop a verdict on the floor.
@@ -827,11 +1000,29 @@ export async function createFixChain(input: {
   builderTitle: string;
   builderBrief: string;
   builderChainKey: string;
-  reviewerTitle: string;
-  reviewerBrief: string;
-  reviewerChainKey: string;
+  checkers: Array<{
+    role: TaskRole;
+    title: string;
+    brief: string;
+    chainKey: string;
+  }>;
   tier?: TaskTier;
-}): Promise<{ builder: ChainRowOutcome; reviewer: ChainRowOutcome }> {
+}): Promise<{
+  builder: ChainRowOutcome;
+  /** Parallel to `input.checkers`, role carried through so the caller can name
+   *  the offending row in a collision without re-deriving it from the key. */
+  checkers: Array<ChainRowOutcome & { role: TaskRole }>;
+}> {
+  // A fix builder with nobody to check it would close the round on the next
+  // tick with the merged feedback unverified. Refuse loudly rather than write
+  // half a chain — the caller's decision type guarantees a non-empty list, so
+  // reaching this means the decision was built by hand or by a future caller.
+  if (input.checkers.length === 0) {
+    throw new Error(
+      `createFixChain: no re-checkers for project ${input.project_id} round ${input.round} ` +
+        `cycle ${input.cycle} — a fix cycle must be re-checked by at least one verdict role`,
+    );
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -845,24 +1036,53 @@ export async function createFixChain(input: {
       tier: input.tier ?? null,
       chain_key: input.builderChainKey,
     });
-    const reviewer = await insertChainRow(client, {
-      project_id: input.project_id,
-      round: input.round + 2,
-      role: "reviewer",
-      title: input.reviewerTitle.slice(0, 200),
-      brief: input.reviewerBrief,
-      fix_cycle: input.cycle,
-      tier: null,
-      chain_key: input.reviewerChainKey,
-    });
+    const checkers: Array<ChainRowOutcome & { role: TaskRole }> = [];
+    // Sequential, not Promise.all: they share one client, and one transaction
+    // cannot have two statements in flight.
+    for (const c of input.checkers) {
+      const outcome = await insertChainRow(client, {
+        project_id: input.project_id,
+        round: input.round + 2,
+        role: c.role,
+        title: c.title.slice(0, 200),
+        brief: c.brief,
+        fix_cycle: input.cycle,
+        tier: null,
+        chain_key: c.chainKey,
+      });
+      checkers.push({ ...outcome, role: c.role });
+    }
     await client.query("COMMIT");
-    return { builder, reviewer };
+    return { builder, checkers };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
   } finally {
     client.release();
   }
+}
+
+/** The project-metadata key that names the manager chat run a project came out
+ *  of. Written by the OTHER lane's `POST /api/projects` (boundary F8); read
+ *  here and nowhere else in this file's callers — see `managerChatRunId`. */
+const ORIGIN_CHAT_KEY = "origin_chat_id";
+
+/** The manager chat run a project was created from, or null when it has none.
+ *
+ *  Exists so `project-tick.ts` can gate a prompt block on the linkage (C17)
+ *  without ever spelling the key: 08 §4.3's boundary grep requires the literal
+ *  `origin_chat_id` to appear only in `lib/cc-runner.ts` and this file, so the
+ *  key name stays sealed here and callers ask a function instead.
+ *
+ *  This is a metadata getter, NOT the linkage resolver / thread scanner /
+ *  rollup that boundary D5 forbids: it runs no query, scans no thread, and
+ *  resolves nothing. It also does not validate the id (D5 again) — a
+ *  non-empty string is all it claims. */
+export function managerChatRunId(project: Pick<Project, "metadata">): string | null {
+  const raw = project.metadata?.[ORIGIN_CHAT_KEY];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /** Convenience wrapper so project-tick doesn't import db/runs.ts directly
@@ -878,7 +1098,19 @@ export async function createRunForTask(input: {
   effort?: string;
   allowed_tools?: string[];
   vault_access?: boolean;
+  /** The owning project's `metadata`, so the run can inherit the manager-chat
+   *  linkage (C16). Optional: a caller that omits it just gets no linkage. */
+  project_metadata?: Record<string, unknown>;
 }) {
+  // C16: copy the project's manager-chat linkage onto the run so a worker run
+  // is self-describing without a resolver JOIN. Presence + non-empty string is
+  // the WHOLE check by design — boundary D5 forbids origin_chat_id validation
+  // on this branch (the other lane's POST /api/projects already uuid-checks it
+  // on the way in), so the missing uuid check here is deliberate, not an
+  // oversight. Additive only: no reader anywhere else changes.
+  const originChat = input.project_metadata
+    ? managerChatRunId({ metadata: input.project_metadata })
+    : null;
   return createRun({
     title: input.title,
     prompt: input.prompt,
@@ -892,6 +1124,7 @@ export async function createRunForTask(input: {
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.allowed_tools ? { allowed_tools: input.allowed_tools } : {}),
       ...(input.vault_access !== undefined ? { vault_access: input.vault_access } : {}),
+      ...(originChat ? { [ORIGIN_CHAT_KEY]: originChat } : {}),
     },
   });
 }
