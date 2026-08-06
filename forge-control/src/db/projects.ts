@@ -1062,6 +1062,29 @@ export async function createFixChain(input: {
   }
 }
 
+/** The project-metadata key that names the manager chat run a project came out
+ *  of. Written by the OTHER lane's `POST /api/projects` (boundary F8); read
+ *  here and nowhere else in this file's callers — see `managerChatRunId`. */
+const ORIGIN_CHAT_KEY = "origin_chat_id";
+
+/** The manager chat run a project was created from, or null when it has none.
+ *
+ *  Exists so `project-tick.ts` can gate a prompt block on the linkage (C17)
+ *  without ever spelling the key: 08 §4.3's boundary grep requires the literal
+ *  `origin_chat_id` to appear only in `lib/cc-runner.ts` and this file, so the
+ *  key name stays sealed here and callers ask a function instead.
+ *
+ *  This is a metadata getter, NOT the linkage resolver / thread scanner /
+ *  rollup that boundary D5 forbids: it runs no query, scans no thread, and
+ *  resolves nothing. It also does not validate the id (D5 again) — a
+ *  non-empty string is all it claims. */
+export function managerChatRunId(project: Pick<Project, "metadata">): string | null {
+  const raw = project.metadata?.[ORIGIN_CHAT_KEY];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 /** Convenience wrapper so project-tick doesn't import db/runs.ts directly
  *  for the one call it needs. */
 export async function createRunForTask(input: {
@@ -1075,7 +1098,19 @@ export async function createRunForTask(input: {
   effort?: string;
   allowed_tools?: string[];
   vault_access?: boolean;
+  /** The owning project's `metadata`, so the run can inherit the manager-chat
+   *  linkage (C16). Optional: a caller that omits it just gets no linkage. */
+  project_metadata?: Record<string, unknown>;
 }) {
+  // C16: copy the project's manager-chat linkage onto the run so a worker run
+  // is self-describing without a resolver JOIN. Presence + non-empty string is
+  // the WHOLE check by design — boundary D5 forbids origin_chat_id validation
+  // on this branch (the other lane's POST /api/projects already uuid-checks it
+  // on the way in), so the missing uuid check here is deliberate, not an
+  // oversight. Additive only: no reader anywhere else changes.
+  const originChat = input.project_metadata
+    ? managerChatRunId({ metadata: input.project_metadata })
+    : null;
   return createRun({
     title: input.title,
     prompt: input.prompt,
@@ -1089,6 +1124,7 @@ export async function createRunForTask(input: {
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.allowed_tools ? { allowed_tools: input.allowed_tools } : {}),
       ...(input.vault_access !== undefined ? { vault_access: input.vault_access } : {}),
+      ...(originChat ? { [ORIGIN_CHAT_KEY]: originChat } : {}),
     },
   });
 }

@@ -670,6 +670,9 @@ async function spawnTaskRuns(): Promise<void> {
         project_id: task.project_id,
         task_id: task.id,
         workspace_dir: task.project.workspace_dir,
+        // C16: the run inherits the project's manager-chat linkage, if any.
+        // createRunForTask owns the key and the presence check.
+        project_metadata: task.project.metadata,
         ...(cfg.tools ? { allowed_tools: cfg.tools } : {}),
         ...(tierCfg?.model ?? cfg.model ? { model: tierCfg?.model ?? cfg.model! } : {}),
         ...(tierCfg?.effort ?? cfg.effort ? { effort: tierCfg?.effort ?? cfg.effort! } : {}),
