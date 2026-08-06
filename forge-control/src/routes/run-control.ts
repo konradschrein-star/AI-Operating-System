@@ -2,8 +2,15 @@
  * Manager control plane — the HTTP surface (07 §4).
  *
  * Mounted at `/api/runs` (index.ts, boundary D2: two appended lines and nothing
- * else). This is the ONLY new route file the control plane gets; CP2 adds
- * `POST /:id/resume-chat` and `POST /:parentId/subagent-message` here too.
+ * else). This is the ONLY new route file the control plane gets, and with CP2
+ * it is complete — six endpoints, no more planned:
+ *
+ *   POST /:id/message            talk to a live-ish run          §1, C1–C5
+ *   POST /:id/resume-chat        reopen a settled run IN PLACE   §2, C6–C8
+ *   POST /:parentId/subagent-message  relay to a sub-agent       §2b, C10
+ *   POST /:id/stop               graceful stop → `paused`        §3, C11
+ *   POST /:id/terminate          hard stop → `cancelled`         §4, C12
+ *   GET  /:id/comms              read a run's comms traffic      C14
  *
  * Every handler is the same four moves and nothing more (07 §4, "shared handler
  * skeleton"): uuid-validate → `getRun` → a pure decision function from
@@ -28,11 +35,13 @@
  *    why nothing here loops or retries.
  *
  * Contract: /opt/obsidian-vault/AI OS/Contract - Manager Control Plane API.md
- * §1 (message), §3 (stop), §4 (terminate); requirements 06 C1–C5, C11–C14, C20,
- * C24; architecture 07 §4 (the endpoint table this file implements literally).
+ * §1 (message), §2 + §2b (resume-chat, subagent-message), §3 (stop), §4
+ * (terminate); requirements 06 C1–C14, C20, C24; architecture 07 §4 (the
+ * endpoint table this file implements literally).
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { existsSync } from "node:fs";
 import {
   getRun,
   appendCommsEntry,
@@ -44,9 +53,15 @@ import {
 } from "../db/runs.ts";
 import {
   messageAction,
+  resumeAction,
   stopAction,
   terminateAction,
   commsEntries,
+  subagentAddressable,
+  workspaceDirOf,
+  workspaceGoneReason,
+  RESUME_ELIGIBLE,
+  SUBAGENT_UNADDRESSABLE,
   type CommsFrom,
   type CommsThreadEntry,
   type MessageAction,
@@ -141,6 +156,35 @@ function toThreadEntry(e: CommsThreadEntry): ThreadEntry {
   };
 }
 
+/**
+ * The raw request body of the three POSTs that carry text. Every field is
+ * `unknown`: it arrives from the wire, and each handler narrows it itself with
+ * the checks its own contract section specifies (which is why the validation
+ * below is written out per handler rather than shared — the orders and the
+ * required/optional split differ, and 08 §1 wants each 400's reason to be
+ * readable next to the check that produces it).
+ */
+type CommsBody = {
+  text?: unknown;
+  from?: unknown;
+  manager_run_id?: unknown;
+  sender_run_id?: unknown;
+  subagent_id?: unknown;
+};
+
+/**
+ * The ONE sanctioned swallowed error in this file (C20): a malformed JSON body
+ * is a 400 produced by the validation below, not a 500 from the parser. It
+ * lives in a function rather than being inlined three times so the file has
+ * exactly one place where a parse failure is tolerated — CP1's surface test
+ * asserts that count, and it should keep being able to.
+ *
+ * Nothing else is caught here or anywhere else in this file.
+ */
+async function readCommsBody(c: Context): Promise<CommsBody> {
+  return (await c.req.json().catch(() => ({}))) as CommsBody;
+}
+
 /* ------------------------------------------------------------------------- *
  * POST /:id/message  (contract §1; C1–C5)
  * ------------------------------------------------------------------------- */
@@ -149,12 +193,7 @@ r.post("/:id/message", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
 
-  const body = (await c.req.json().catch(() => ({}))) as {
-    text?: unknown;
-    from?: unknown;
-    manager_run_id?: unknown;
-    sender_run_id?: unknown;
-  };
+  const body = await readCommsBody(c);
 
   const text = typeof body.text === "string" ? body.text.trim() : "";
   if (!text) return c.json({ error: "text required" }, 400);
@@ -363,6 +402,353 @@ r.get("/:id/comms", async (c) => {
   const out = await listComms(id);
   if (!out) return c.json({ error: "unknown run" }, 404);
   return c.json(out);
+});
+
+/* ------------------------------------------------------------------------- *
+ * POST /:id/resume-chat  (contract §2; C6, C7, C8)
+ *
+ * Reopen a settled run IN PLACE with a follow-up. Same row, same id, stable
+ * across any number of resumes (contract Q2) — this handler NEVER creates a
+ * run, and `resumed_run_id` is always the `:id` it was called with.
+ *
+ * `text` IS REQUIRED. Resume-chat means "reopen it WITH something to say";
+ * waking a run with nothing to say is `/message`'s job against a paused or
+ * completed target, which requeues it exactly the same way. A resume carrying
+ * no text would spend a CC turn on an empty prompt, so it is a 400 here rather
+ * than a silently accepted no-op (C20).
+ *
+ * C8 NEEDS NO CODE, AND NO `allow_fresh` FLAG SHOULD EVER BE ADDED. If the CC
+ * session file for this run is gone, the executor's existing `CcResumeError`
+ * path already handles it: it retries once with the FULL transcript plus a loud
+ * in-thread marker. That is context-preserving, so the contract's opt-in
+ * fresh-start fallback is unnecessary and was withdrawn in the note itself
+ * (Q2). There is no silent-fresh path in this system and adding one here would
+ * be exactly the "pretending" the contract bans.
+ * ------------------------------------------------------------------------- */
+
+r.post("/:id/resume-chat", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+
+  const body = await readCommsBody(c);
+
+  // Validated in the same order, with the same reasons, as /message: the two
+  // endpoints take the same body (contract §2), and an operator switching verbs
+  // must not meet a different vocabulary of 400s.
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) return c.json({ error: "text required" }, 400);
+
+  if (typeof body.from !== "string" || !COMMS_FROM.has(body.from)) {
+    return c.json(
+      { error: "from must be one of: konrad, manager, worker" },
+      400,
+    );
+  }
+  const from = body.from as CommsFrom;
+
+  const senderRaw = body.sender_run_id ?? body.manager_run_id ?? null;
+  if (senderRaw !== null && senderRaw !== undefined) {
+    if (typeof senderRaw !== "string" || !UUID_RE.test(senderRaw)) {
+      return c.json({ error: "invalid sender run id" }, 400);
+    }
+  }
+  const senderId =
+    typeof senderRaw === "string" && senderRaw.length > 0 ? senderRaw : null;
+
+  const run = await getRun(id);
+  if (!run) return c.json({ error: "unknown run" }, 404);
+
+  const action = resumeAction(run.status);
+  if (action.kind === "reject") {
+    // running/queued → 409 pointing at /message, worded by the rules module.
+    return c.json({ error: action.reason }, action.status);
+  }
+
+  // C7 PRE-FLIGHT, BEFORE ANY WRITE. A resumed turn is spawned with
+  // `metadata.workspace_dir` as its cwd (executor.ts), so a run whose worktree
+  // was deleted can only fail — noisily, mid-turn, after the thread already
+  // holds a message nobody will ever act on. Refusing here leaves the row
+  // exactly as it was: nothing appended, no status moved.
+  //
+  // The EXTRACTION is pure and lives in run-control-rules.ts; the `existsSync`
+  // does not, and must not: that module has no fs, no pg and no clock, which is
+  // what makes the whole rule surface table-testable without a database. So the
+  // impure half stays here, in the one process that owns the request.
+  //
+  // No `workspace_dir` → nothing to check. That is normal, not an error: plain
+  // Chat and Manager runs share CC_WORKSPACE and carry no such key.
+  const ws = workspaceDirOf(run.metadata);
+  if (ws !== null && !existsSync(ws)) {
+    return c.json({ error: workspaceGoneReason(ws) }, 409);
+  }
+
+  // Same builder, same clock discipline as /message: `ts` is minted here and
+  // shared by delivery and echo. No relay id — this is a message to the run
+  // itself, not to one of its sub-agents.
+  const ts = new Date().toISOString();
+  const { receiver, echo } = commsEntries({
+    text,
+    from,
+    targetRunId: id,
+    senderRunId: senderId,
+    ts,
+  });
+  const entry = toThreadEntry(receiver);
+
+  // THIS MUST STAY ONE STATEMENT — append and status move together, never two
+  // writes. db/projects.ts `markVerdictTaskDone` detects "nobody has touched
+  // this settled run" with `AND r.status = 'completed'`, and that detector is
+  // only exact because every delivery write moves the row out of `completed` in
+  // the SAME statement as the append (07 §7, R905 red-team S4). Split it and a
+  // round consolidation landing in the gap marks the reviewer task `done` while
+  // the resumed run is about to produce a flipped verdict — which is then
+  // honoured zero times, in silence.
+  //
+  // The two cleared stamps are `/message`'s append_and_queue reasons verbatim:
+  // a requeued row carrying `completed_at` makes every duration in the UI lie
+  // and can leave the watchdog a `stuck` row with a completion timestamp, which
+  // completeRun's invariant forbids; a `wake_after` left over from a usage-wall
+  // backoff would delay a resume Konrad just asked for. `clearPendingInput`
+  // because a run can be `completed` with the flag still raised (the executor
+  // died between E1 and E2 of the 07 §5 handshake) — the next turn delivers
+  // that message along with this one, so the flag has been consumed and must
+  // not requeue the run a second time at the end of it.
+  //
+  // One const, used by the attempt and the re-dispatch below, so the two can
+  // never drift into being different writes. LOCAL, not hoisted next to
+  // MESSAGE_WRITE: that table describes EFFECTS only and CP1's surface test
+  // asserts it declares no eligibility (R905 finding 4), while resume's
+  // precondition is a single fixed list that belongs with the write it guards.
+  const RESUME_WRITE = {
+    eligible: RESUME_ELIGIBLE,
+    setStatus: "queued",
+    clearCompletedAt: true,
+    clearWakeAfter: true,
+    clearPendingInput: true,
+  } as const;
+
+  let delivered = await appendCommsEntry(id, entry, RESUME_WRITE);
+
+  // ONE bounded re-dispatch, exactly as /message's — same reasoning (07 §5,
+  // R905 red-team finding 5) and safe for the same reason: rowcount 0 means
+  // NOTHING was appended, so the retry is a first delivery against a freshly
+  // read status, not a second one.
+  if (!delivered.applied && delivered.status) {
+    const current = resumeAction(delivered.status);
+    if (current.kind !== "reject") {
+      console.log(
+        `[run-control] resume-chat ${id} lost the write race to '${delivered.status}' - one re-dispatch`,
+      );
+      delivered = await appendCommsEntry(id, entry, RESUME_WRITE);
+    }
+  }
+
+  if (!delivered.applied) {
+    if (!delivered.status) return c.json({ error: "unknown run" }, 404);
+    const current = resumeAction(delivered.status);
+    return c.json(
+      {
+        error:
+          current.kind === "reject"
+            ? current.reason
+            : raceReason(delivered.status, "resume-chat"),
+      },
+      409,
+    );
+  }
+
+  // C3, identical to /message: the sender's echo carries no status change and
+  // no eligibility list, and a missing echo target never retracts a delivery
+  // that already happened — it is reported in the 202 body and the log.
+  let echoed: boolean | null = null;
+  if (echo && senderId) {
+    const echoWrite = await appendCommsEntry(senderId, toThreadEntry(echo));
+    echoed = echoWrite.applied;
+    if (!echoed) {
+      console.warn(
+        `[run-control] resume-chat ${id} echo target ${senderId} not found - resumed anyway`,
+      );
+    }
+  }
+
+  console.log(
+    `[run-control] resume-chat ${id} -> ${delivered.status} (from ${from}` +
+      `${senderId ? `, sender ${senderId}` : ""}` +
+      `${echoed === null ? "" : `, echo ${echoed}`})`,
+  );
+
+  return c.json(
+    {
+      // The contract's field name (C6, §2). Not `queued`, not `delivery` — a
+      // resume answers with the id it reopened, and it is the id that came in.
+      resumed_run_id: id,
+      ...(echoed === null ? {} : { echo: echoed }),
+    },
+    202,
+  );
+});
+
+/* ------------------------------------------------------------------------- *
+ * POST /:parentId/subagent-message  (contract §2b; C10)
+ *
+ * A sub-agent has NO session of its own outside its parent, so the only honest
+ * mechanism is a relay: a `kind:"comms"` entry appended to the PARENT's thread
+ * instructing it to hand the text over via its harness (SendMessage) and report
+ * the reply back. That prefix and the `meta.comms.subagent_id` key are built by
+ * `commsEntries({relaySubagentId})` — never assembled here.
+ *
+ * The request shape is the contract's own §2b body verbatim: `{subagent_id,
+ * text}`. §2b declares no response shape ("202 / 409 / 404 as above"), so the
+ * 202 body is §1's, plus the `subagent_id` the relay was addressed to.
+ *
+ * `from` is OPTIONAL and defaults to `"manager"`: a relay comes by definition
+ * from whoever holds the parent's manager role, and the contract's own body
+ * does not carry the field. Present-but-invalid is still a 400 — a default is
+ * not a licence to accept nonsense (C20).
+ * ------------------------------------------------------------------------- */
+
+r.post("/:parentId/subagent-message", async (c) => {
+  const parentId = c.req.param("parentId");
+  if (!UUID_RE.test(parentId)) return c.json({ error: "invalid run id" }, 400);
+
+  const body = await readCommsBody(c);
+
+  const text = typeof body.text === "string" ? body.text.trim() : "";
+  if (!text) return c.json({ error: "text required" }, 400);
+
+  // The address space is opaque (a Task tool_use_id), so the only shape check
+  // possible is "a non-empty string".
+  const subagentId =
+    typeof body.subagent_id === "string" ? body.subagent_id.trim() : "";
+  if (!subagentId) return c.json({ error: "subagent_id required" }, 400);
+
+  let from: CommsFrom = "manager";
+  if (body.from !== undefined && body.from !== null) {
+    if (typeof body.from !== "string" || !COMMS_FROM.has(body.from)) {
+      return c.json(
+        { error: "from must be one of: konrad, manager, worker" },
+        400,
+      );
+    }
+    from = body.from as CommsFrom;
+  }
+
+  const senderRaw = body.sender_run_id ?? body.manager_run_id ?? null;
+  if (senderRaw !== null && senderRaw !== undefined) {
+    if (typeof senderRaw !== "string" || !UUID_RE.test(senderRaw)) {
+      return c.json({ error: "invalid sender run id" }, 400);
+    }
+  }
+  const senderId =
+    typeof senderRaw === "string" && senderRaw.length > 0 ? senderRaw : null;
+
+  const run = await getRun(parentId);
+  if (!run) return c.json({ error: "unknown run" }, 404);
+
+  // ADDRESSABILITY BEFORE ELIGIBILITY, and the order is a decision, not an
+  // accident: addressability is a property of the ADDRESS, not of timing. An
+  // unknown `subagent_id` must produce the same honest refusal whether the
+  // parent happens to be `running` or `completed` at that instant — otherwise
+  // the UI shows "run failed - use resume-chat" for an id that never existed,
+  // and an operator retries a relay that can never be delivered.
+  //
+  // `subagentAddressable` never throws: a run predating the sub-agent rollup
+  // simply has no `subagents_v2` key, and the correct answer for that is this
+  // 409, not a 500.
+  if (!subagentAddressable(run.metadata, subagentId)) {
+    return c.json({ error: SUBAGENT_UNADDRESSABLE }, 409);
+  }
+
+  // The relay is delivered under /message's rules, applied to the PARENT (C10,
+  // 07 §4): the parent is the run that has to act on it. A failed/cancelled
+  // parent therefore 409s naming /resume-chat — S8's honest refusal. There is
+  // no path below that answers 2xx without an entry having been appended to the
+  // parent's thread; if a parent's session has evaporated, the visible outcome
+  // is that parent's own next-turn transcript reporting the relay undelivered,
+  // never a silently swallowed one.
+  //
+  // Named `parentAction`/`currentParent` rather than /message's
+  // `action`/`current` because they gate a DIFFERENT row's status than the one
+  // the request is addressed to; the shape is deliberately the same.
+  const parentAction = messageAction(run.status);
+  if (parentAction.kind === "reject") {
+    return c.json({ error: parentAction.reason }, parentAction.status);
+  }
+
+  const ts = new Date().toISOString();
+  const { receiver, echo } = commsEntries({
+    text,
+    from,
+    targetRunId: parentId,
+    senderRunId: senderId,
+    ts,
+    relaySubagentId: subagentId,
+  });
+  const entry = toThreadEntry(receiver);
+
+  let delivered = await appendCommsEntry(parentId, entry, {
+    ...MESSAGE_WRITE[parentAction.kind],
+    eligible: parentAction.eligible,
+  });
+
+  // The same ONE bounded re-dispatch as /message, for the same reason: the
+  // relay's payload is text, which means the same thing in every status that
+  // accepts it, so a lost race deserves a second first-delivery rather than a
+  // 409 the plan never asked managers to retry.
+  if (!delivered.applied && delivered.status) {
+    const currentParent = messageAction(delivered.status);
+    if (currentParent.kind !== "reject") {
+      console.log(
+        `[run-control] subagent-message ${parentId} lost the write race to '${delivered.status}' - one re-dispatch`,
+      );
+      delivered = await appendCommsEntry(parentId, entry, {
+        ...MESSAGE_WRITE[currentParent.kind],
+        eligible: currentParent.eligible,
+      });
+    }
+  }
+
+  if (!delivered.applied) {
+    if (!delivered.status) return c.json({ error: "unknown run" }, 404);
+    const currentParent = messageAction(delivered.status);
+    return c.json(
+      {
+        error:
+          currentParent.kind === "reject"
+            ? currentParent.reason
+            : raceReason(delivered.status, "subagent-message"),
+      },
+      409,
+    );
+  }
+
+  let echoed: boolean | null = null;
+  if (echo && senderId) {
+    const echoWrite = await appendCommsEntry(senderId, toThreadEntry(echo));
+    echoed = echoWrite.applied;
+    if (!echoed) {
+      console.warn(
+        `[run-control] subagent-message ${parentId} echo target ${senderId} not found - relayed anyway`,
+      );
+    }
+  }
+
+  console.log(
+    `[run-control] subagent-message ${parentId} -> ${delivered.status} ` +
+      `(subagent ${subagentId}, from ${from}` +
+      `${senderId ? `, sender ${senderId}` : ""}` +
+      `${echoed === null ? "" : `, echo ${echoed}`})`,
+  );
+
+  return c.json(
+    {
+      queued: true,
+      delivery: "next-turn",
+      subagent_id: subagentId,
+      ...(echoed === null ? {} : { echo: echoed }),
+    },
+    202,
+  );
 });
 
 export default r;
