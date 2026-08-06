@@ -100,6 +100,7 @@ function SidePanel({
   tab,
   onTab,
   onOpenNode,
+  onOpenDoc,
   fileAtt,
   chatId,
 }: {
@@ -108,6 +109,7 @@ function SidePanel({
   tab: "team" | "files";
   onTab: (t: "team" | "files") => void;
   onOpenNode: (node: TeamNode) => void;
+  onOpenDoc: (name: string) => void;
   fileAtt: ReturnType<typeof useAttachments> | null;
   /** The OPEN chat (U14: no selector of the panel's own — the chat decides what
    *  the panel shows). `null` = nothing open, so there is no team to fetch. */
@@ -224,14 +226,17 @@ function SidePanel({
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {tab === "team" ? (
           chatId ? (
-            // One panel, full height, one poll, scoped to THIS chat. `visible`
-            // gates the query's `enabled` (ChatTeamPanel.tsx:126); the mount is
-            // conditional on the same facts, so a collapsed panel or the Files
-            // tab stops the team poll twice over — by `enabled: false` and by
-            // there being no observer at all (NFU3).
+            // One panel, full height, scoped to THIS chat — two zones since
+            // phase 700 (team tree over plan Kanban) and therefore two polls,
+            // 5s and 15s, against the two the pre-v3 panel ran at 4s and 6s.
+            // `visible` gates both queries' `enabled`; the mount is conditional
+            // on the same facts, so a collapsed panel or the Files tab stops
+            // both polls twice over — by `enabled: false` and by there being no
+            // observer at all (NFU3).
             <ChatTeamPanel
               chatId={chatId}
               onOpenNode={onOpenNode}
+              onOpenDoc={onOpenDoc}
               visible={!collapsed && tab === "team"}
             />
           ) : (
@@ -254,7 +259,6 @@ function SidePanel({
         ) : (
           <FileExplorerPanel onAttach={fileAtt ? fileAtt.addExisting : null} />
         )}
-        {/* PlanKanban (U25) lands in this panel's bottom zone in phase 700 */}
       </div>
     </div>
   );
@@ -326,6 +330,23 @@ export function ChatSurface({
         ? { kind: "agent", runId: node.parent_id ?? node.id, subagentId: node.id }
         : { kind: "agent", runId: node.id };
     setNavStack((s) => push(s, frame));
+  }, []);
+
+  /** Open a plan document from the panel's plan zone (U26).
+   *
+   *  The same three lines as `openNode` above, onto the other frame kind:
+   *  `plandoc` already has its `crumbs` entry, its `frameKey` and its `pop`
+   *  behaviour in nav-stack.ts, and PlanDocView is already wired below. This
+   *  callback is the caller those pieces were built for — nothing new is added
+   *  to the stack to support it.
+   *
+   *  Stable identity (empty deps) for the same NFU2 reason as `openNode`:
+   *  PlanKanban holds it in a ref so that every memoized phase card keeps the
+   *  same callback prop, and a fresh arrow per render here would leak straight
+   *  through that ref's effect. */
+  const openPlanDoc = useCallback((name: string) => {
+    setComposing(false);
+    setNavStack((s) => push(s, { kind: "plandoc", name }));
   }, []);
 
   /** Climb one level. At depth 1 that is the manager chat (`pop` says so). */
@@ -875,6 +896,7 @@ export function ChatSurface({
         tab={panelTab}
         onTab={setPanelTab}
         onOpenNode={openNode}
+        onOpenDoc={openPlanDoc}
         fileAtt={composing ? null : threadAtt}
         // The SAME id the detail query and the header run on — one open chat,
         // one scope, no third source of "which chat is this".

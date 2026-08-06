@@ -44,9 +44,12 @@
  *  lives inline in the parent run's thread. That is why both ids travel in
  *  one frame — the fetch is always the RUN, the slice is the sub-agent.
  *
- *  `plandoc` — a phase plan document by file name (U26). Nothing pushes this
- *  frame yet; the U6 doc endpoint is phase 700's. The frame exists now so the
- *  stack's shape is settled before there are two callers to migrate. */
+ *  `plandoc` — a phase plan document by file name (U26). The frame shipped in
+ *  phase 600 with no caller, so the stack's shape was settled before there
+ *  were two callers to migrate; phase 700's plan zone is that second caller —
+ *  `ChatSurface.openPlanDoc` pushes it from a click in `PlanKanban`, on either
+ *  a phase card's `doc_path` or the flat `docs[]` list. The U6 doc endpoint it
+ *  reads (`GET /api/chat/:id/plan/doc?name=`) shipped in phase 300. */
 export type NavFrame =
   | { kind: "agent"; runId: string; subagentId?: string }
   | { kind: "plandoc"; name: string };

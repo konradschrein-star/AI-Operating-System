@@ -121,6 +121,20 @@ body {
   opacity: 1;
 }
 
+/* v3 phase 700 (U26/NFU2): plan-zone doc affordance, CSS-only — the same
+ * bargain `.chat-row` and `.team-row` above make. A plan doc is a link, so it
+ * behaves like one under the pointer and under keyboard focus; the change is
+ * `text-decoration` alone, which paints and never lays out. No colour appears
+ * here either: the buttons carry theirs from app/tokens.ts at the call site in
+ * PlanKanban.tsx (NFU1), and no React hover state exists in that file. */
+.plan-doc-link {
+  text-decoration: none;
+}
+.plan-doc-link:hover,
+.plan-doc-link:focus-visible {
+  text-decoration: underline;
+}
+
 /* v3 phase 600 (U20/NFU8): in-chat drill-in navigation. CSS only — there is
  * no animation dependency in this app and none is being added; transform and
  * opacity are the only properties touched, so the browser composites both and

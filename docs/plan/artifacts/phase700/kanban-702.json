@@ -1,0 +1,259 @@
+{
+  "base": "http://127.0.0.1:7809",
+  "api": "http://127.0.0.1:7798",
+  "results": [
+    {
+      "name": "chat",
+      "note": {
+        "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        "title": "Okay when I click the file section, things still lag and they still don't work in light mode. The ov"
+      }
+    },
+    {
+      "name": "plan endpoint",
+      "note": {
+        "phases": 16,
+        "tasks": 66,
+        "done": 54
+      }
+    },
+    {
+      "name": "rail endpoint",
+      "note": {
+        "done": 54,
+        "total": 66
+      }
+    },
+    {
+      "name": "rendered",
+      "note": {
+        "state": "ready",
+        "progress": "54/66",
+        "cards": 16,
+        "chips": 66,
+        "docs": 12
+      }
+    },
+    {
+      "name": "plan zone state",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "phase cards == endpoint phases",
+      "ok": true,
+      "actual": 16,
+      "expected": 16
+    },
+    {
+      "name": "task chips == endpoint tasks",
+      "ok": true,
+      "actual": 66,
+      "expected": 66
+    },
+    {
+      "name": "doc links == endpoint docs[]",
+      "ok": true,
+      "actual": [
+        "00-vision.md",
+        "01-requirements.md",
+        "02-architecture.md",
+        "03-quality.md",
+        "04-phases.md",
+        "10-ui-v3-spec.md",
+        "11-ui-v3-vision.md",
+        "12-ui-v3-requirements.md",
+        "13-ui-v3-architecture.md",
+        "14-ui-v3-quality.md",
+        "15-ui-v3-phases.md",
+        "16-ui-v3-graph-research.md"
+      ],
+      "expected": [
+        "00-vision.md",
+        "01-requirements.md",
+        "02-architecture.md",
+        "03-quality.md",
+        "04-phases.md",
+        "10-ui-v3-spec.md",
+        "11-ui-v3-vision.md",
+        "12-ui-v3-requirements.md",
+        "13-ui-v3-architecture.md",
+        "14-ui-v3-quality.md",
+        "15-ui-v3-phases.md",
+        "16-ui-v3-graph-research.md"
+      ]
+    },
+    {
+      "name": "panel x/y == plan endpoint",
+      "ok": true,
+      "actual": "54/66",
+      "expected": "54/66"
+    },
+    {
+      "name": "panel x/y == rail badge (server-computed)",
+      "ok": true,
+      "actual": "54/66",
+      "expected": "54/66"
+    },
+    {
+      "name": "panel x/y == rail badge (as rendered)",
+      "ok": true,
+      "actual": "54/66",
+      "expected": "54/66"
+    },
+    {
+      "name": "team zone still ready",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "team rows beside the plan zone",
+      "note": 66
+    },
+    {
+      "name": "card progress",
+      "note": [
+        {
+          "base": 0,
+          "progress": "1/1"
+        },
+        {
+          "base": 100,
+          "progress": "5/5"
+        },
+        {
+          "base": 200,
+          "progress": "6/6"
+        },
+        {
+          "base": 300,
+          "progress": "13/13"
+        },
+        {
+          "base": 400,
+          "progress": "6/6"
+        },
+        {
+          "base": 500,
+          "progress": "10/10"
+        },
+        {
+          "base": 600,
+          "progress": "9/9"
+        },
+        {
+          "base": 700,
+          "progress": "4/7"
+        },
+        {
+          "base": 800,
+          "progress": "0/1"
+        },
+        {
+          "base": 900,
+          "progress": "0/1"
+        },
+        {
+          "base": 1200,
+          "progress": "0/1"
+        },
+        {
+          "base": 1300,
+          "progress": "0/1"
+        },
+        {
+          "base": 1400,
+          "progress": "0/1"
+        },
+        {
+          "base": 1500,
+          "progress": "0/1"
+        },
+        {
+          "base": 1600,
+          "progress": "0/1"
+        },
+        {
+          "base": 1700,
+          "progress": "0/2"
+        }
+      ]
+    },
+    {
+      "name": "zone geometry",
+      "note": {
+        "panelH": 887,
+        "zoneH": 355,
+        "zonePct": 40,
+        "scrollOverflows": true,
+        "headerOutsideScroller": true
+      }
+    },
+    {
+      "name": "zone respects its 40% cap",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "card body scrolls inside the zone",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "x/y header is outside the scroller (cannot scroll away)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "plandoc frame opened the clicked file",
+      "ok": true,
+      "actual": "16-ui-v3-graph-research.md",
+      "expected": "16-ui-v3-graph-research.md"
+    },
+    {
+      "name": "team zone unmoved by the drill-in",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "plan zone unmoved by the drill-in",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "back returns to the manager chat",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "plan zone survives the pop",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "failed requests",
+      "note": []
+    },
+    {
+      "name": "ignored console lines (pre-existing, see the listener)",
+      "note": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found) — http://127.0.0.1:7809/favicon.ico"
+      ]
+    },
+    {
+      "name": "console errors",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    }
+  ]
+}

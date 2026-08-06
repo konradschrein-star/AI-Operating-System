@@ -1,7 +1,14 @@
 "use client";
 
 /**
- * ChatTeamPanel — the team zone of the v3 right panel (U14–U19).
+ * ChatTeamPanel — the v3 right panel (U14–U19), in two zones.
+ *
+ * Since phase 700 this component is the PANEL, not one zone of it: the team
+ * tree below plus `./PlanKanban` under it (13 §1 — ChatTeamPanel = TeamTree +
+ * PlanKanban). Everything this file says about queries, hover and state is
+ * about the TEAM zone; the plan zone owns its own poll, its own states and its
+ * own error line, and this file's only involvement with it is threading
+ * `chatId`/`onOpenDoc`/`visible` through.
  *
  * One panel, scoped to the open chat, with no selector of its own: the chat
  * decides which project it is looking at, and `GET /api/chat/:id/team` answers
@@ -69,6 +76,7 @@ import {
 } from "./teamApi";
 import { flattenTeam, responseNowMs, type FlatTeam } from "./teamRows";
 import { TeamRowView } from "./TeamRow";
+import { PlanKanban } from "./PlanKanban";
 
 /** NFU3: one poll, 5s, paused whenever the panel is not visible. */
 const TEAM_POLL_MS = 5_000;
@@ -105,6 +113,9 @@ export interface ChatTeamPanelProps {
    *  the middle surface goes is ChatSurface's business, and the panel's whole
    *  contract is "this row was clicked". */
   onOpenNode: (node: TeamNode) => void;
+  /** Open a plan document in the middle surface (U26). Threaded straight
+   *  through to the plan zone — the team zone never calls it. */
+  onOpenDoc: (name: string) => void;
   /** False when the Team tab is closed or the side panel is collapsed. Gates
    *  the poll — a hidden panel costs zero requests and zero timers. */
   visible: boolean;
@@ -130,7 +141,12 @@ function Note({ children, color }: { children: React.ReactNode; color?: string }
   );
 }
 
-export function ChatTeamPanel({ chatId, onOpenNode, visible }: ChatTeamPanelProps) {
+export function ChatTeamPanel({
+  chatId,
+  onOpenNode,
+  onOpenDoc,
+  visible,
+}: ChatTeamPanelProps) {
   const enabled = visible && Boolean(chatId);
 
   const team = useQuery<TeamResponse, Error>({
@@ -296,129 +312,139 @@ export function ChatTeamPanel({ chatId, onOpenNode, visible }: ChatTeamPanelProp
           ? "empty"
           : "ready";
 
+  /* Two zones, one panel (13 §1: ChatTeamPanel = TeamTree + PlanKanban).
+   * The team tree keeps `flex: 1, minHeight: 0` and therefore keeps every
+   * pixel the plan zone does not claim; PlanKanban caps itself at 40% and
+   * scrolls its own cards. Nothing inside the team zone moved — the row
+   * list, the armed-state machine and the dismissal wiring are byte-identical
+   * to round 506's reviewed version, which is the point: this is a wrapper,
+   * not a restructure. */
   return (
-    <div
-      data-team-panel
-      data-team-state={state}
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        flex: 1,
-        minHeight: 0,
-        borderBottom: `1px solid ${tokens.borderSoft}`,
-      }}
-    >
-      {state === "error" ? (
-        /* NFU6: the cached tree is NOT rendered next to this. Stale rows beside
-         * an error read as fresh rows, which is the exact failure the whole
-         * project exists to remove. */
-        <div
-          className="mono"
-          style={{
-            padding: "8px 10px",
-            fontSize: 10,
-            color: tokens.bleed,
-            lineHeight: 1.5,
-          }}
-        >
-          team unavailable — {team.error?.message ?? "unknown error"}
-        </div>
-      ) : (
-        <>
-          {data?.link_source === "thread_scan" && (
-            <div style={{ padding: "6px 10px 0" }}>
-              <span
-                data-link-marker="thread_scan"
-                className="mono"
-                title={
-                  "This chat has no recorded project link; the project was " +
-                  "inferred by scanning the thread for a project id (U2). " +
-                  "Accurate in practice, but it is a guess, and it says so."
-                }
-                style={{ fontSize: 9, color: tokens.textMuted2, letterSpacing: "0.04em" }}
-              >
-                linked heuristically
-              </span>
-            </div>
-          )}
-          {data?.link_ambiguous && (
-            <div style={{ padding: "6px 10px 0" }}>
-              <span
-                data-link-marker="ambiguous"
-                className="mono"
-                title={
-                  "The thread scan found more than one project id — the tree " +
-                  "below may belong to a different one."
-                }
-                style={{ fontSize: 9, color: tokens.warn, letterSpacing: "0.04em" }}
-              >
-                linkage ambiguous
-              </span>
-            </div>
-          )}
-          {data && !data.complete && (
-            <Note color={tokens.warn}>
-              partial data — {data.errors.map((e) => e.scope).join(", ") || "unnamed step"}{" "}
-              failed; affected cells show “—”, not 0
-            </Note>
-          )}
-          {capabilities.isError && (
-            <Note color={tokens.warn}>
-              capabilities unreadable — every control stays disabled
-            </Note>
-          )}
-
-          <div data-team-scroll style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-            {rows.map((row) => (
-              <TeamRowView
-                key={row.node.id}
-                row={row}
-                responseNow={responseNow}
-                armed={armedId === row.node.id}
-                canStop={caps.stop}
-                canTerminate={caps.terminate}
-                degradedTime={degradedTime}
-                degradedTasks={degradedTasks}
-                onOpenNode={handleOpenNode}
-                onStop={handleStop}
-                onX={handleX}
-              />
-            ))}
-
-            {state === "loading" && (
-              <Note>{enabled ? "loading team…" : "no chat open"}</Note>
-            )}
-            {state === "unlinked" && <Note>no project linked to this chat</Note>}
-            {state === "empty" && <Note>no agents yet</Note>}
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div
+        data-team-panel
+        data-team-state={state}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          minHeight: 0,
+          borderBottom: `1px solid ${tokens.borderSoft}`,
+        }}
+      >
+        {state === "error" ? (
+          /* NFU6: the cached tree is NOT rendered next to this. Stale rows beside
+           * an error read as fresh rows, which is the exact failure the whole
+           * project exists to remove. */
+          <div
+            className="mono"
+            style={{
+              padding: "8px 10px",
+              fontSize: 10,
+              color: tokens.bleed,
+              lineHeight: 1.5,
+            }}
+          >
+            team unavailable — {team.error?.message ?? "unknown error"}
           </div>
+        ) : (
+          <>
+            {data?.link_source === "thread_scan" && (
+              <div style={{ padding: "6px 10px 0" }}>
+                <span
+                  data-link-marker="thread_scan"
+                  className="mono"
+                  title={
+                    "This chat has no recorded project link; the project was " +
+                    "inferred by scanning the thread for a project id (U2). " +
+                    "Accurate in practice, but it is a guess, and it says so."
+                  }
+                  style={{ fontSize: 9, color: tokens.textMuted2, letterSpacing: "0.04em" }}
+                >
+                  linked heuristically
+                </span>
+              </div>
+            )}
+            {data?.link_ambiguous && (
+              <div style={{ padding: "6px 10px 0" }}>
+                <span
+                  data-link-marker="ambiguous"
+                  className="mono"
+                  title={
+                    "The thread scan found more than one project id — the tree " +
+                    "below may belong to a different one."
+                  }
+                  style={{ fontSize: 9, color: tokens.warn, letterSpacing: "0.04em" }}
+                >
+                  linkage ambiguous
+                </span>
+              </div>
+            )}
+            {data && !data.complete && (
+              <Note color={tokens.warn}>
+                partial data — {data.errors.map((e) => e.scope).join(", ") || "unnamed step"}{" "}
+                failed; affected cells show “—”, not 0
+              </Note>
+            )}
+            {capabilities.isError && (
+              <Note color={tokens.warn}>
+                capabilities unreadable — every control stays disabled
+              </Note>
+            )}
 
-          {/* Driven by rows actually withheld from THIS tree, so the label
-              cannot claim hidden rows that do not exist (junk in localStorage)
-              nor undercount a dismissed parent's sub-agents. */}
-          {hiddenCount > 0 && (
-            <div style={{ padding: "4px 10px", borderTop: `1px solid ${tokens.borderDivider}` }}>
-              <button
-                data-team-restore
-                type="button"
-                onClick={restoreAll}
-                title="Bring every hidden row back. Dismissing hides rows; it never deletes anything."
-                className="mono"
-                style={{
-                  background: "transparent",
-                  border: "none",
-                  padding: 0,
-                  fontSize: 9.5,
-                  fontFamily: "inherit",
-                  color: tokens.textMuted,
-                  cursor: "pointer",
-                }}
-              >
-                {hiddenCount} hidden · show
-              </button>
+            <div data-team-scroll style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              {rows.map((row) => (
+                <TeamRowView
+                  key={row.node.id}
+                  row={row}
+                  responseNow={responseNow}
+                  armed={armedId === row.node.id}
+                  canStop={caps.stop}
+                  canTerminate={caps.terminate}
+                  degradedTime={degradedTime}
+                  degradedTasks={degradedTasks}
+                  onOpenNode={handleOpenNode}
+                  onStop={handleStop}
+                  onX={handleX}
+                />
+              ))}
+
+              {state === "loading" && (
+                <Note>{enabled ? "loading team…" : "no chat open"}</Note>
+              )}
+              {state === "unlinked" && <Note>no project linked to this chat</Note>}
+              {state === "empty" && <Note>no agents yet</Note>}
             </div>
-          )}
-        </>
-      )}
+
+            {/* Driven by rows actually withheld from THIS tree, so the label
+                cannot claim hidden rows that do not exist (junk in localStorage)
+                nor undercount a dismissed parent's sub-agents. */}
+            {hiddenCount > 0 && (
+              <div style={{ padding: "4px 10px", borderTop: `1px solid ${tokens.borderDivider}` }}>
+                <button
+                  data-team-restore
+                  type="button"
+                  onClick={restoreAll}
+                  title="Bring every hidden row back. Dismissing hides rows; it never deletes anything."
+                  className="mono"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    fontSize: 9.5,
+                    fontFamily: "inherit",
+                    color: tokens.textMuted,
+                    cursor: "pointer",
+                  }}
+                >
+                  {hiddenCount} hidden · show
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <PlanKanban chatId={chatId} onOpenDoc={onOpenDoc} visible={visible} />
     </div>
   );
 }
