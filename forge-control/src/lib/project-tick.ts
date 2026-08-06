@@ -38,6 +38,7 @@ import {
   setProjectWorkspace,
   closeFinishedProjects,
   getProject,
+  managerChatRunId,
   type ProjectTask,
   type Project,
   type SettledRunningTask,
@@ -71,6 +72,7 @@ import {
   formatDelay,
   USAGE_WALL_NOTIFICATION_SOURCE,
 } from "./usage-wall.ts";
+import { projectSlug } from "./run-control-rules.ts";
 import { provisionWorkspace, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
@@ -461,21 +463,86 @@ export const ESCALATION_POLICY =
   `WORKING on everything that does not depend on the answer. Never idle waiting for a reply, and never ` +
   `end a task early because you asked a question.`;
 
+/** C17 — the MANAGER COMMS block, appended to every worker prompt of a project
+ *  that came out of a manager chat. Three things a worker cannot derive on its
+ *  own: which run is the manager, the exact curl that reaches it, and what is
+ *  worth sending.
+ *
+ *  Field names (`text`, `from`, `sender_run_id`) are the ones
+ *  `routes/run-control.ts`'s POST /:id/message actually validates — a prompt
+ *  that taught `content` or `message` would produce a 400 the agent would have
+ *  to debug mid-task. `$FORGE_RUN_UUID` stays a literal shell variable: it is
+ *  exported into every run's environment by cc-runner (T17), so the agent
+ *  passes it through rather than pasting an id it would have to look up.
+ *
+ *  The verdict-role paragraph closes F3 of docs/plan/evidence/cp2-c9-reconciler.md
+ *  at prompt level. It is gated on `isVerdictRole` — the same predicate the
+ *  reconciler gates on — rather than a second hand-written role list, so the
+ *  set of roles that gets the instruction cannot drift from the set of roles
+ *  whose verdict is parsed. */
+export function MANAGER_COMMS(managerRunId: string, role: TaskRole): string {
+  const base =
+    `MANAGER COMMS. This project was started from a manager chat, and that chat is run ` +
+    `${managerRunId}. It is the one place your findings reach Konrad while you are still working.\n` +
+    `- To report, one curl:\n` +
+    `    curl -sX POST http://127.0.0.1:7700/api/runs/${managerRunId}/message ` +
+    `-H 'content-type: application/json' ` +
+    `-d '{"text":"<what you found>","from":"worker","sender_run_id":"'"$FORGE_RUN_UUID"'"}'\n` +
+    `  \`$FORGE_RUN_UUID\` is your OWN run id, already exported into your environment — pass the shell ` +
+    `variable through exactly as written above; never paste an id you looked up by hand.\n` +
+    `- Report FINDINGS, BLOCKERS and DECISIONS the manager must know: something that changes what the ` +
+    `next task should do, something you are stuck on, a call you had to make that the brief did not ` +
+    `cover. Not chatter, not progress narration, not "starting now" or "still working". One report ` +
+    `that matters beats five status pings.`;
+
+  if (!isVerdictRole(role)) return base;
+
+  return (
+    base +
+    `\n- YOUR VERDICT IS READ FROM YOUR LAST MESSAGE. Any reply you send AFTER you have already ` +
+    `declared your verdict MUST end with a \`VERDICT:\` line again — restate the unchanged verdict ` +
+    `verbatim if nothing has changed. The parser reads only the LAST assistant message, by design ` +
+    `(first-match parsing used to read reviewers' rehearsals instead of their verdicts), so a verdict ` +
+    `role that is messaged, answers in prose and stops leaves its round with NO parseable verdict — ` +
+    `and the round then blocks the whole project with \`no_verdict\`.`
+  );
+}
+
 export function buildPrompt(task: ProjectTask, project: Project): string {
   const mission = roleConfig(task.role).mission;
   // null for scratch projects: no live checkout exists, so none of the
   // live-checkout policy blocks apply (and interpolating "null" into a path
   // would be worse than saying nothing).
   const live = liveCheckoutPath(project.repo);
+  // C17. null when the project has no manager-chat linkage, which is the whole
+  // gate: no linkage -> no block, and the prompt of an unlinked project stays
+  // byte-identical to what it was before CP3 (08 §4 acceptance). The key name
+  // itself lives in db/projects.ts and is deliberately never spelled here —
+  // 08 §4.3's boundary grep must keep matching only cc-runner.ts and
+  // db/projects.ts, so this file asks the accessor instead.
+  const managerRun = managerChatRunId(project);
+  // C18. One slug per prompt build, interpolated into every corpus path below
+  // so a FUTURE project's planning corpus is born under its own directory
+  // instead of colliding in the flat docs/plan/ this repo still uses.
+  const slug = projectSlug(project.name, project.id);
+  const corpus = `docs/plan/${slug}`;
   // Wrap EVERY return through this rather than pasting the block into eight
   // branches — a new role branch that forgets the policy is exactly the kind
   // of omission bug 3 was. R870 rides the same wrapper for the same reason,
   // but unconditionally: WORKTREE_POLICY is meaningless without a live
   // checkout, whereas the escalation rule binds a scratch project just as hard.
-  const withPolicy = (body: string): string =>
-    live
+  // C17's MANAGER COMMS block is folded into the SAME funnel (the `withComms`
+  // of 09 CP3) for the third time over the same argument: nine `return
+  // withPolicy(...)` branches, and a tenth one added at 3am must not be able to
+  // silently lose the only channel a worker has back to its manager.
+  const withPolicy = (body: string): string => {
+    const policed = live
       ? `${body}\n\n${WORKTREE_POLICY(live)}\n\n${ESCALATION_POLICY}`
       : `${body}\n\n${ESCALATION_POLICY}`;
+    return managerRun
+      ? `${policed}\n\n${MANAGER_COMMS(managerRun, task.role)}`
+      : policed;
+  };
   const header =
     `${mission}\n\n---\n\n` +
     `Project: ${project.name}\n` +
@@ -490,18 +557,27 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
         `\nThis is a GOAL-MODE project: a long-horizon goal that may take many hours or days of autonomous ` +
         `multi-agent work. You are the architect; your job tonight is the waterfall plan, done so thoroughly ` +
         `that implementation never has to loop back to re-litigate scope.\n\n` +
-        `1) PLANNING CORPUS. Write an exhaustive set of planning documents under docs/plan/ in the worktree ` +
+        // C18. Every path in this branch is slugged: this is where a corpus is
+        // CREATED, so it is the one place that decides where future corpora
+        // live. Deliberately NOT slugged, here or anywhere else in this file:
+        // ESCALATION_POLICY's pointer to
+        // docs/plan/10-policy-agent-autonomy-and-escalation.md and every
+        // docs/plan/... path inside a code comment. Those name files that
+        // really exist at those flat paths in THIS repo, and boundary 05 D6
+        // forbids relocating this project's own corpus now — D6's merge recipe
+        // is what eventually moves existing corpora under their slugs.
+        `1) PLANNING CORPUS. Write an exhaustive set of planning documents under ${corpus}/ in the worktree ` +
         `and commit them:\n` +
-        `   - docs/plan/00-vision.md — the goal restated precisely, definition of done, measurable success criteria, explicit non-goals.\n` +
-        `   - docs/plan/01-requirements.md — every functional and non-functional requirement, numbered (R1, R2, ...), each testable.\n` +
-        `   - docs/plan/02-architecture.md — system design: components, data models, interfaces, technology choices with one-line rationale, failure modes, how progress/state is observable.\n` +
-        `   - docs/plan/03-quality.md — test strategy (unit, integration, end-to-end), QA gates per phase, what the reviewer must run and check.\n` +
-        `   - docs/plan/04-phases.md — the waterfall itself: numbered phases, each with scope, deliverables, acceptance criteria, and which requirement IDs it covers. Every requirement maps to exactly one phase.\n` +
+        `   - ${corpus}/00-vision.md — the goal restated precisely, definition of done, measurable success criteria, explicit non-goals.\n` +
+        `   - ${corpus}/01-requirements.md — every functional and non-functional requirement, numbered (R1, R2, ...), each testable.\n` +
+        `   - ${corpus}/02-architecture.md — system design: components, data models, interfaces, technology choices with one-line rationale, failure modes, how progress/state is observable.\n` +
+        `   - ${corpus}/03-quality.md — test strategy (unit, integration, end-to-end), QA gates per phase, what the reviewer must run and check.\n` +
+        `   - ${corpus}/04-phases.md — the waterfall itself: numbered phases, each with scope, deliverables, acceptance criteria, and which requirement IDs it covers. Every requirement maps to exactly one phase.\n` +
         `   Depth beats brevity here — thousands of lines across the corpus is normal for a real goal. ` +
         `Research with your tools (codebase, vault, web) before deciding; never plan from guesswork.\n\n` +
         `2) SEED THE PIPELINE. Create ONE planner task per phase via the API:\n${taskCurl(project.id)}\n` +
         `   Phase k's planner goes at round k*100 (100, 200, 300, ...) — the gaps leave room for fix cycles ` +
-        `without colliding with the next phase. Each planner brief: "Plan phase k per docs/plan/04-phases.md" ` +
+        `without colliding with the next phase. Each planner brief: "Plan phase k per ${corpus}/04-phases.md" ` +
         `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
         `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
         `reviewer briefed to attack, not just check).\n` +
@@ -515,7 +591,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
             `${DEPLOY_GUIDE}\n\n` +
             `${GITHUB_PUSH_GUIDE}\n\n`
           : "") +
-        `Do not write implementation code or commit anything outside docs/plan/ — that's the builders' job.`
+        `Do not write implementation code or commit anything outside ${corpus}/ — that's the builders' job.`
       );
     }
     return withPolicy(
@@ -532,7 +608,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   if (task.role === "planner") {
     return withPolicy(
       header +
-      `\nRead the planning corpus under docs/plan/ (if present) and the current state of the worktree, then ` +
+      `\nRead the planning corpus under ${corpus}/ (if present) and the current state of the worktree, then ` +
       `break YOUR assigned scope into concrete builder tasks by calling forge-control:\n` +
       `${taskCurl(project.id)}\n` +
       `Your round is ${task.round}. Create builder tasks at round ${task.round + 1} (and ${task.round + 2}, ` +
@@ -574,7 +650,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
     return withPolicy(
       header +
       `\nReview the actual diff (git diff ${project.base_branch}...HEAD) and the code itself, not just the ` +
-      `plan or commit messages. Run the tests and checks named in your brief (or docs/plan/03-quality.md if it ` +
+      `plan or commit messages. Run the tests and checks named in your brief (or ${corpus}/03-quality.md if it ` +
       `exists) — a review without executed checks is not a review. End your final message with a line starting ` +
       `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
       `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.` +
