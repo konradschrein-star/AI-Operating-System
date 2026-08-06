@@ -92,6 +92,16 @@ Three labelling decisions, all of them about not over-claiming:
   Every entry in a slice carries `parent_tool_use_id` by construction, so
   `top_level_count` is 0 — "0 its own, 118 delegated" over a scout's own 118
   entries is a mislabel produced by a definition, not by the data.
+  > **Superseded in round 606.** The reasoning was right and the mechanism was
+  > wrong, in a way that made it fire on the wrong input. The drilled view does
+  > not render a pure slice: it renders `subagentTranscript`, the sub-agent's
+  > entries **plus the spawn/result envelope**, and those two are top-level, so
+  > the label branched on `prose_scope` and picked the split anyway — printing
+  > "2 its own, 118 delegated" for the same scout. `deriveDigest` is now *told*
+  > the owner id and computes the split from it: the scout reads
+  > **120 entries · all its own · 0 delegated**. "All its own" is now what the
+  > arithmetic says rather than a label chosen to cover for it, and it steps
+  > aside if a sub-agent ever does delegate. See [README-606.md](README-606.md).
 - A sub-agent gets **no time line**. `synthesizeSubagentRun` hands it the
   parent's timestamps deliberately (an in-process Task call has no run row);
   restating them under the child's name would read as the child's duration.

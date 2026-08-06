@@ -130,11 +130,16 @@ async function main(): Promise<void> {
   const { StorySoFar } = await import(
     "../../../../forge-control-web/app/desktop/chat/StorySoFar.tsx"
   );
-  const { subagentEntries } = await import(
+  const { subagentTranscript } = await import(
     "../../../../forge-control-web/app/desktop/chat/subagent-slice.ts"
   );
 
-  const SLICE: ThreadEntry[] = subagentEntries(REAL.thread, SUB_ID);
+  /* The REAL drilled-view input, not a hand-cut pure slice: `AgentChatView`
+   * renders `subagentTranscript`, which is the sub-agent's own entries plus the
+   * spawn/result envelope. Round 606 switched this capture over after round 605
+   * found the digest mis-reading exactly that shape — a picture of an input the
+   * app never builds proves nothing about the app. */
+  const SLICE: ThreadEntry[] = subagentTranscript(REAL.thread, SUB_ID);
 
   const cases: Array<{ title: string; node: unknown }> = [
     {
@@ -236,23 +241,23 @@ async function main(): Promise<void> {
   const digests: Array<{ title: string; node: unknown }> = [
     {
       title: "collapsed — the default, and the only state the app opens in",
-      node: h(StorySoFar, { run: REAL, thread: REAL.thread, scope: "session" }),
+      node: h(StorySoFar, { run: REAL, thread: REAL.thread, scope: { kind: "session" } }),
     },
     {
       title: "expanded — 285 entries, 136 tool calls, 3 tool errors, 2 sub-agents",
       node: h(StorySoFar, {
         run: REAL,
         thread: REAL.thread,
-        scope: "session",
+        scope: { kind: "session" },
         defaultOpen: true,
       }),
     },
     {
-      title: `expanded, sub-agent scope — the scout's own ${SLICE.length}-entry slice, no borrowed clock`,
+      title: `expanded, sub-agent scope — the scout's ${SLICE.length}-entry transcript (its own work plus the envelope), all its own, no borrowed clock`,
       node: h(StorySoFar, {
         run: { ...REAL, title: "Recon chat Bash block rendering", status: "completed" },
         thread: SLICE,
-        scope: "subagent",
+        scope: { kind: "subagent", subagentId: SUB_ID },
         defaultOpen: true,
       }),
     },

@@ -138,9 +138,16 @@ grep -rn "agentViewFrom" forge-control-web/app          # → 0
 3. **`PlanDocView` fetches nothing** and nothing pushes a `plandoc` frame. The
    U6 doc endpoint is phase 700's; the frame kind exists now so the stack's
    shape is settled before there are two callers to migrate.
-4. **A refresh lands on the manager chat.** Memory-only by design (13 §2) —
-   a persisted frame would have to be validated against a tree that may have
-   changed under it, and an invalid restored frame is a worse lie than a reset.
+4. **A refresh restores no frame at all — it lands on TODAY, not on the chat
+   you were in.** `DesktopApp.tsx` holds `surface` in `useState<Surface>("today")`
+   and persists it nowhere; clicking CHAT afterwards auto-opens the rail's most
+   recent chat, which need not be the one you drilled from. Memory-only by
+   design (13 §2) — a persisted frame would have to be validated against a tree
+   that may have changed under it, and an invalid restored frame is a worse lie
+   than a reset. *(Corrected in round 606. The original sentence read "A refresh
+   lands on the manager chat"; round 604 measured the real behaviour and filed
+   it as [README.md §6.2](README.md#62-round-601bs-readme-says-a-refresh-lands-on-the-manager-chat-it-lands-on-today),
+   since an evidence round may not edit another round's document.)*
 5. **`globals.css` lines 11–12** carry `#000` / `#ededee` in the `html, body`
    rule. Pre-existing, untouched: `git diff` on the file shows zero added
    colour literals.

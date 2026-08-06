@@ -23,8 +23,9 @@
 import type { RunDetail, RunStatus, ThreadEntry } from "../../api";
 import {
   mergeSubagentMeta,
+  parentToolUseId,
   sliceOwnerId,
-  spawnToolUseIds,
+  spawnRoles,
   subagentIndex,
   topLevelEntries,
 } from "./subagent-slice";
@@ -79,9 +80,16 @@ export interface StoryDigest {
 
   /** Every entry handed to `deriveDigest`. */
   entry_count: number;
-  /** Entries belonging to this run itself (no `meta.parent_tool_use_id`). */
+  /**
+   * Entries belonging to the agent this digest is ABOUT.
+   *
+   * For a session that is "no `meta.parent_tool_use_id`". For a sub-agent view
+   * it is that PLUS everything stamped with the owner's id — a scout's own 118
+   * steps are its own work, not work it delegated. See `owner_tool_use_id`.
+   */
   top_level_count: number;
-  /** `entry_count − top_level_count` — work done by in-process sub-agents. */
+  /** `entry_count − top_level_count` — work this agent delegated to in-process
+   *  sub-agents of its own. Zero on a sub-agent view that spawned nothing. */
   subagent_entry_count: number;
   /** tool_call entries across the whole thread, sub-agents included. */
   tool_call_count: number;
@@ -95,6 +103,10 @@ export interface StoryDigest {
 
   /** Which entries the prose layer was read from — see `deriveDigest`. */
   prose_scope: "top-level" | "slice";
+  /** The sub-agent this digest is about, when it is about one. Null for a
+   *  whole session. Reported so the own/delegated split is checkable against
+   *  the input rather than inferred from it. */
+  owner_tool_use_id: string | null;
   /** The last few prose turns, oldest first. */
   snippets: DigestSnippet[];
   outcome: string | null;
@@ -183,18 +195,29 @@ function currentActivityText(metadata: Record<string, unknown> | undefined): str
  *
  * `thread` is passed separately from `run.thread` on purpose — that is what
  * lets a sub-agent view derive its OWN digest from
- * `subagentEntries(run.thread, toolUseId)` without a second endpoint (there is
- * no sub-agent run row to fetch; see subagent-slice.ts).
+ * `subagentTranscript(run.thread, toolUseId)` without a second endpoint (there
+ * is no sub-agent run row to fetch; see subagent-slice.ts).
  *
- * PROSE SCOPE, stated so it is never a surprise: the prose layer reads
- * `topLevelEntries(thread)` — a parent's story must not quote its sub-agents'
- * chatter as its own. When that set is empty the caller has handed us a pure
- * sub-agent slice (every entry carries `parent_tool_use_id`), so the whole
- * thread is the scope. The choice taken is reported as `prose_scope`.
+ * `ownerToolUseId` IS NOT OPTIONAL DECORATION. Pass it whenever the thread is
+ * a sub-agent's, and the digest is then about that sub-agent: its own entries
+ * are the ones stamped with the owner's id (plus the envelope the parent
+ * recorded), it is excluded from its own roster, and "delegated" means what
+ * IT delegated. Round 605's defect is what happens without it — a
+ * `subagentTranscript` has top-level entries (the spawn call and its result),
+ * so `sliceOwnerId` cannot recognise it as a slice, and a scout was listed as
+ * its own sub-agent with "2 its own, 118 delegated" over 118 entries that were
+ * all its own. Inference is the fallback for callers that genuinely cannot
+ * know; every caller in this app knows.
+ *
+ * PROSE SCOPE, stated so it is never a surprise: the prose layer reads the
+ * agent's OWN entries — a parent's story must not quote its sub-agents'
+ * chatter as its own, and a sub-agent's must not quote a grandchild's.
+ * `prose_scope` reports which of the two shapes was read.
  */
 export function deriveDigest(
   run: RunDetail,
   thread: readonly ThreadEntry[],
+  ownerToolUseId: string | null = null,
 ): StoryDigest {
   const entries: readonly ThreadEntry[] = Array.isArray(thread) ? thread : [];
   const metadata =
@@ -202,10 +225,26 @@ export function deriveDigest(
       ? (run.metadata as Record<string, unknown>)
       : undefined;
 
-  const topLevel = topLevelEntries(entries);
-  const proseScope: StoryDigest["prose_scope"] =
-    topLevel.length > 0 ? "top-level" : "slice";
-  const scope = proseScope === "top-level" ? topLevel : entries;
+  /* Who this digest is about. Told, or — for a caller that hands over a pure
+   * slice and nothing else — inferred from the slice itself. */
+  const owner =
+    typeof ownerToolUseId === "string" && ownerToolUseId !== ""
+      ? ownerToolUseId
+      : sliceOwnerId(entries);
+
+  /* This agent's own work vs work it handed to a sub-agent. With `owner ===
+   * null` (a session) this is exactly `topLevelEntries`; with an owner it also
+   * keeps the entries stamped to that owner, which are the sub-agent's own
+   * steps, and the envelope, which is the only record of its brief and its
+   * report. What is left over is delegated — a grandchild's, never its. */
+  const own =
+    owner === null
+      ? topLevelEntries(entries)
+      : entries.filter((e) => {
+          const parent = parentToolUseId(e);
+          return parent === null || parent === owner;
+        });
+  const proseScope: StoryDigest["prose_scope"] = owner === null ? "top-level" : "slice";
 
   const settled = SETTLED.has(run.status);
   const startedMs = parseMs(run.started_at);
@@ -218,13 +257,21 @@ export function deriveDigest(
   /* Sub-agents OF THIS THREAD: the ones with entries here, plus the ones this
    * thread spawned that have not produced any yet. Both halves matter — a
    * sub-agent spawned one second ago belongs in the org chart, and a slice
-   * must never inherit its parent's roster (hence `spawnToolUseIds`, not
-   * "every tool_use_id present"). */
+   * must never inherit its parent's roster (hence `spawnRoles`, keyed on the
+   * Agent/Task calls made here, not "every tool_use_id present"). */
   const index = subagentIndex(entries);
-  const spawnedHere = spawnToolUseIds(entries);
-  // A slice's own id appears in its index; it is this view's identity, not a
-  // child of it. Excluding it is what keeps a scout from being its own scout.
-  const owner = sliceOwnerId(entries);
+  /* Roles from the spawn calls IN this thread — `subagents_v2` is a rollup the
+   * executor writes for some runs and not others (round 601B measured it empty
+   * on both operator chats), while the spawn call carries
+   * `input.subagent_type` on every run a reader can click. Reading only the
+   * rollup is why round 604 caught the digest printing "unknown" one line
+   * above a team panel printing "scout" for the same sub-agent
+   * (`docs/plan/artifacts/phase600/README.md §6.1`). */
+  const spawnedHere = spawnRoles(entries);
+  // The owner's own id appears in its index AND, for a `subagentTranscript`,
+  // in its spawn map — the envelope contains the very Agent call that started
+  // it. It is this view's identity, not a child of it. Excluding it from both
+  // is what keeps a scout from being its own scout.
   const merged = mergeSubagentMeta(metadata?.subagents_v2, index).filter(
     (s) =>
       s.tool_use_id !== owner &&
@@ -233,20 +280,23 @@ export function deriveDigest(
   const known = new Set(merged.map((s) => s.tool_use_id));
   const roster: Array<{ id: string; role: string | null }> = merged.map((s) => ({
     id: s.tool_use_id,
-    role: s.role,
+    role: s.role ?? spawnedHere.get(s.tool_use_id) ?? null,
   }));
-  for (const id of spawnedHere) {
-    if (!known.has(id)) roster.push({ id, role: null });
+  for (const [id, role] of spawnedHere) {
+    if (id === owner || known.has(id)) continue;
+    roster.push({ id, role });
   }
   const roles: string[] = [];
   for (const s of roster) {
-    // A role the executor has not stamped yet reads "unknown" — the sub-agent
-    // is real either way, and inventing a role would be worse than saying so.
+    // A role NEITHER the rollup nor the spawn call names reads "unknown" — the
+    // sub-agent is real either way, and inventing a role would be worse than
+    // saying so.
     const role = s.role ?? "unknown";
     if (!roles.includes(role)) roles.push(role);
   }
 
-  const prose = scope.filter(isProse);
+  /* The agent's own words: its own entries, never a child's. */
+  const prose = own.filter(isProse);
   const snippets: DigestSnippet[] = prose
     .slice(-DIGEST_SNIPPETS)
     .map((e) => {
@@ -282,8 +332,8 @@ export function deriveDigest(
     model: metaString(metadata, "model_resolved"),
 
     entry_count: entries.length,
-    top_level_count: topLevel.length,
-    subagent_entry_count: entries.length - topLevel.length,
+    top_level_count: own.length,
+    subagent_entry_count: entries.length - own.length,
     tool_call_count: entries.filter((e) => e.kind === "tool_call").length,
     error_count: entries.filter(isError).length,
 
@@ -291,6 +341,7 @@ export function deriveDigest(
     subagent_roles: roles,
 
     prose_scope: proseScope,
+    owner_tool_use_id: owner,
     snippets,
     outcome,
     outcome_source: outcomeSource,

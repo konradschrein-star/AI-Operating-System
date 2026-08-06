@@ -22,12 +22,15 @@ import type { ThreadEntry } from "../../forge-control-web/app/api.ts";
 import {
   mergeSubagentMeta,
   parentToolUseId,
+  parseSpawnInput,
   parseSubagentsV2,
   partitionCheck,
   sliceOwnerId,
+  spawnRoles,
   spawnToolUseIds,
   subagentEntries,
   subagentIndex,
+  subagentTranscript,
   toolUseId,
   topLevelEntries,
 } from "../../forge-control-web/app/desktop/chat/subagent-slice.ts";
@@ -155,6 +158,78 @@ console.log("\n── spawnToolUseIds ──────────────
   );
 }
 
+console.log("\n── parseSpawnInput ─────────────────────────────────────────");
+/* The ONE reader of the spawn call's `input` on the client. The drilled header
+ * and the digest roster both go through it — round 604 measured what two
+ * readers of the same field produce: `scout` on one surface, `unknown` on
+ * another (`phase600/README.md §6.1`). */
+{
+  const ok = JSON.stringify({ subagent_type: "scout", description: "Recon the API" });
+  check("subagent_type is the role", parseSpawnInput(ok).role, "scout");
+  check("…and description comes along", parseSpawnInput(ok).description, "Recon the API");
+  check("a non-string input is nulls", parseSpawnInput({ subagent_type: "scout" }).role, null);
+  check("an absent input is nulls", parseSpawnInput(undefined).role, null);
+  check("an empty string is nulls", parseSpawnInput("").role, null);
+  check("a JSON array is nulls, not a crash", parseSpawnInput("[1,2]").role, null);
+  check("an empty subagent_type is null, not ''", parseSpawnInput('{"subagent_type":""}').role, null);
+  check(
+    "a TRUNCATED input is nulls — the fixture's own shape, 1500 chars and cut mid-string",
+    parseSpawnInput('{"subagent_type":"scout","prompt":"aaaa').role,
+    null,
+  );
+}
+
+console.log("\n── spawnRoles ──────────────────────────────────────────────");
+{
+  const roles = spawnRoles([
+    entry({ ts: "t0", meta: { tool: "Agent", tool_use_id: "A", input: '{"subagent_type":"scout"}' } }),
+    entry({
+      ts: "t1",
+      meta: { tool: "Task", tool_use_id: "B", spawns_subagent_role: "builder", input: '{"subagent_type":"scout"}' },
+    }),
+    entry({ ts: "t2", meta: { tool: "Agent", tool_use_id: "C" } }),
+    entry({ ts: "t3", meta: { tool: "Bash", tool_use_id: "c1", input: '{"subagent_type":"nope"}' } }),
+  ]);
+  check("one entry per spawn, Bash excluded", roles.size, 3);
+  check("the input's subagent_type", roles.get("A"), "scout");
+  check("an explicit stamp beats the input", roles.get("B"), "builder");
+  check("a spawn with no input maps to null, and is still present", roles.get("C"), null);
+  check("…present, i.e. the sub-agent is not dropped", roles.has("C"), true);
+  check(
+    "spawnToolUseIds is exactly its key set — the two cannot drift",
+    [...spawnToolUseIds(THREAD)].join(","),
+    [...spawnRoles(THREAD).keys()].join(","),
+  );
+}
+
+console.log("\n── subagentTranscript: what the drilled view actually renders ");
+{
+  const thread: ThreadEntry[] = [
+    entry({ ts: "t0" }),
+    entry({ ts: "t1", meta: { tool: "Agent", tool_use_id: A, input: '{"subagent_type":"scout"}' } }),
+    sub(A, "t2"),
+    sub(A, "t3"),
+    entry({ ts: "t4", kind: "tool_result", meta: { tool_use_id: A } }),
+    entry({ ts: "t5" }),
+  ];
+  const t = subagentTranscript(thread, A);
+  check("its own entries plus the envelope", t.length, 4);
+  check("…opening with the spawn call", t[0].ts, "t1");
+  check("…closing with its result", t[3].ts, "t4");
+  check("…and nothing of the parent's", t.some((e) => e.ts === "t0" || e.ts === "t5"), false);
+  check(
+    "it is a superset of the pure slice, by exactly the envelope",
+    t.length - subagentEntries(thread, A).length,
+    2,
+  );
+  check("an unknown id yields nothing at all", subagentTranscript(thread, "nope").length, 0);
+  check(
+    "a run with no envelope recorded degrades to the pure slice",
+    subagentTranscript([sub(A, "t0"), sub(A, "t1")], A).length,
+    2,
+  );
+}
+
 console.log("\n── sliceOwnerId ────────────────────────────────────────────");
 check("a whole run has no slice owner", sliceOwnerId(THREAD), null);
 check("an empty thread has none either", sliceOwnerId([]), null);
@@ -162,6 +237,15 @@ check("a pure slice names its owner", sliceOwnerId(subagentEntries(THREAD, A)), 
 check(
   "one top-level entry is enough to make it a run, not a slice",
   sliceOwnerId([sub(A, "t0"), entry({ ts: "t1" })]),
+  null,
+);
+/* The documented blind spot, pinned so nobody re-derives an owner from shape:
+ * a `subagentTranscript` HAS top-level entries (the envelope), so this returns
+ * null on the very input the drilled view renders. `deriveDigest` is told the
+ * owner instead — round 605's defect was exactly this inference. */
+check(
+  "it CANNOT see the owner of a transcript — the envelope is top-level",
+  sliceOwnerId(subagentTranscript(THREAD, A)),
   null,
 );
 

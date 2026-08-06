@@ -9,7 +9,10 @@
  * entries is not a story; this is the block you read instead of scrolling.
  *
  * ── It is a RENDERER. All of it. ──────────────────────────────────────────
- * The derivation is round 601A's `deriveDigest(run, thread)`, which is pure.
+ * The derivation is round 601A's `deriveDigest(run, thread, owner)`, which is
+ * pure — `owner` comes straight off the `scope` prop, so a sub-agent's block
+ * is derived as that sub-agent's rather than inferred from the shape of what
+ * it was handed (round 606; see `StoryScope`).
  * This file adds no data: no request, no query hook, no import of anything that
  * talks to the network, and no model in the render path —
  * `13-ui-v3-architecture.md §8` names a summariser in the render path as an
@@ -63,10 +66,14 @@ const COUNT_TITLE = {
   entries:
     "Every thread entry handed to the digest — prose, tool calls, tool results, " +
     "errors, heartbeats.",
-  own: "Entries belonging to this agent itself: no meta.parent_tool_use_id on them.",
+  own:
+    "Entries belonging to this agent itself. In a session: the ones with no " +
+    "meta.parent_tool_use_id. In a sub-agent view: the ones stamped with its " +
+    "own id, plus the spawn call and result its parent recorded around them.",
   delegated:
-    "Entries written by in-process sub-agents, stamped meta.parent_tool_use_id. " +
-    "They are inline in this thread, not a separate run.",
+    "Entries written by in-process sub-agents OF THIS AGENT, stamped with " +
+    "their own meta.parent_tool_use_id. They are inline in this thread, not a " +
+    "separate run.",
   tools: "Entries with kind = 'tool_call', sub-agents included.",
   errors:
     "Entries flagged meta.is_error, plus kind = 'error' entries. That is " +
@@ -74,8 +81,10 @@ const COUNT_TITLE = {
     "A run can complete successfully with several of these.",
   subagents:
     "Sub-agents with entries in this thread, plus ones spawned here that have " +
-    "not produced any yet. A role the executor has not stamped reads 'unknown' " +
-    "rather than being guessed.",
+    "not produced any yet — never this agent itself. The role is the rollup's " +
+    "when there is one, else the spawn call's subagent_type: the same two " +
+    "sources, in the same order, as the team panel and the header above. Only " +
+    "a sub-agent neither of them names reads 'unknown'.",
 } as const;
 
 const TASK_SOURCE_TITLE: Record<StoryDigest["task_source"], string> = {
@@ -130,6 +139,18 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Which of the two things is being digested. A discriminated union rather than
+ * a string, because the sub-agent case CANNOT be rendered honestly without the
+ * id: `deriveDigest` needs it to tell the sub-agent's own work from work it
+ * delegated, and round 605 caught what a missing owner id produces — a scout
+ * listed as its own sub-agent, "2 its own / 118 delegated" over 118 entries
+ * that were all its own. The type now makes that omission unspellable.
+ */
+export type StoryScope =
+  | { kind: "session" }
+  | { kind: "subagent"; subagentId: string };
+
 export interface StorySoFarProps {
   /** The run the digest describes. For a sub-agent view this is the
    *  synthesized one AgentChatView built — its title and status are the
@@ -138,9 +159,9 @@ export interface StorySoFarProps {
   run: RunDetail;
   /** The entries in scope. Already narrowed by the caller for a sub-agent. */
   thread: readonly ThreadEntry[];
-  /** Which of the two things is being digested. Decides one thing only: the
-   *  time line. */
-  scope: "session" | "subagent";
+  /** Who the digest is about. Decides the time line, and — through the id it
+   *  carries — the own/delegated split and the roster. */
+  scope: StoryScope;
   /** Starts expanded. Off everywhere in the app — U24 says collapsed by
    *  default — and used by the offline capture harness, which renders to static
    *  HTML and therefore cannot click. */
@@ -150,9 +171,11 @@ export interface StorySoFarProps {
 export function StorySoFar({ run, thread, scope, defaultOpen = false }: StorySoFarProps) {
   const [open, setOpen] = useState(defaultOpen);
 
+  const owner = scope.kind === "subagent" ? scope.subagentId : null;
+
   /* The one derivation. Pure, so memoising it is an optimisation and never a
-   * correctness question — same (run, thread) in, same digest out. */
-  const digest = useMemo(() => deriveDigest(run, thread), [run, thread]);
+   * correctness question — same (run, thread, owner) in, same digest out. */
+  const digest = useMemo(() => deriveDigest(run, thread, owner), [run, thread, owner]);
 
   /* U24: below the bar there is nothing to summarise, and a digest of a
    * twelve-entry thread is noise sitting on top of the thread it summarises. */
@@ -247,7 +270,7 @@ export function StorySoFar({ run, thread, scope, defaultOpen = false }: StorySoF
           <div>
             <SectionLabel>TIME</SectionLabel>
             <div className="mono" style={{ fontSize: 10.5, color: tokens.textMuted }}>
-              {scope === "subagent" ? (
+              {scope.kind === "subagent" ? (
                 <span
                   title={
                     "A sub-agent is a Task call inside its parent's process — it has " +
@@ -305,13 +328,13 @@ export function StorySoFar({ run, thread, scope, defaultOpen = false }: StorySoF
               }}
             >
               <Count value={digest.entry_count} label="entries" title={COUNT_TITLE.entries} />
-              {/* The own/delegated split is only meaningful for a thread that
-                  HAS both halves. In a sub-agent slice every entry carries a
-                  `parent_tool_use_id` by construction, so `top_level_count` is
-                  0 and `delegated` is the whole slice — rendering "0 its own,
-                  118 delegated" over a scout's own 118 entries would be a
-                  mislabel produced by a definition, not by the data. */}
-              {digest.prose_scope === "top-level" ? (
+              {/* The split is shown when there are two halves to split: always
+                  for a session, and for a sub-agent only if it delegated to a
+                  sub-agent of its own. A scout that ran 118 steps itself reads
+                  "all its own" — with the owner id threaded through
+                  `deriveDigest`, that is now what the arithmetic says rather
+                  than a label pasted over it. */}
+              {scope.kind === "session" || digest.subagent_entry_count > 0 ? (
                 <>
                   <Count
                     value={digest.top_level_count}
@@ -324,9 +347,9 @@ export function StorySoFar({ run, thread, scope, defaultOpen = false }: StorySoF
                 <span
                   className="mono"
                   title={
-                    "Every entry in this slice is stamped with this sub-agent's " +
-                    "parent_tool_use_id, so the own-vs-delegated split has nothing to " +
-                    "split. It is the parent's to make, and its block makes it."
+                    "Nothing in this view was delegated further: every entry is this " +
+                    "sub-agent's own step, stamped with its parent_tool_use_id, plus " +
+                    "the spawn call and result its parent recorded around it."
                   }
                   style={{ flex: "none", color: tokens.textGhost }}
                 >

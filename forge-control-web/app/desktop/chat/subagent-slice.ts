@@ -57,6 +57,71 @@ export function subagentEntries(
 /** The tool names that spawn an in-process sub-agent. */
 const SPAWN_TOOLS: ReadonlySet<string> = new Set(["Agent", "Task"]);
 
+/** What a spawn call's own `input` declares about the sub-agent it starts. */
+export interface SpawnInput {
+  role: string | null;
+  description: string | null;
+}
+
+/**
+ * Read an Agent/Task `tool_call`'s `meta.input`, which is a JSON STRING on the
+ * wire: `{"description":"…","subagent_type":"architect",…}`.
+ *
+ * This is THE reader for that field on the client — `AgentChatView` (the
+ * drilled header) and `spawnRoles` (the digest roster) both call it, because
+ * round 604 measured what happens when two surfaces read the same fact from
+ * different places: the panel said `scout` and the digest said `unknown`
+ * (`docs/plan/artifacts/phase600/README.md §6.1`). Server-side the same read
+ * lives in `agents-shared.ts:243-256`.
+ *
+ * An unparsable input yields nulls rather than a guess. Note what is NOT done
+ * here: `foldSubagents` falls back to the description and then to the literal
+ * `"agent"` so a panel row always has a label. A digest roster is a list of
+ * ROLES, and a one-sentence description or a filler word in it is worse than
+ * saying the role is unknown, so that fallback stops at the server.
+ */
+export function parseSpawnInput(input: unknown): SpawnInput {
+  if (typeof input !== "string" || input === "") return { role: null, description: null };
+  try {
+    const parsed: unknown = JSON.parse(input);
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { role: null, description: null };
+    }
+    const o = parsed as Record<string, unknown>;
+    return {
+      role: typeof o.subagent_type === "string" && o.subagent_type ? o.subagent_type : null,
+      description: typeof o.description === "string" && o.description ? o.description : null,
+    };
+  } catch {
+    return { role: null, description: null };
+  }
+}
+
+/**
+ * Every Agent/Task call made IN this thread, mapped to the role it declared —
+ * `meta.spawns_subagent_role` when the executor stamped one, else the spawn's
+ * own `input.subagent_type`, else null for "the spawn exists but named no
+ * role". Same two sources in the same order as `foldSubagents` and the drilled
+ * header, so the three surfaces cannot disagree about a fact all three have.
+ */
+export function spawnRoles(thread: readonly ThreadEntry[]): Map<string, string | null> {
+  const roles = new Map<string, string | null>();
+  for (const entry of thread) {
+    if (entry.kind !== "tool_call") continue;
+    const tool = entry.meta?.tool;
+    if (typeof tool !== "string" || !SPAWN_TOOLS.has(tool)) continue;
+    const id = toolUseId(entry);
+    if (id === null) continue;
+    const stamped = entry.meta?.spawns_subagent_role;
+    const role =
+      typeof stamped === "string" && stamped !== ""
+        ? stamped
+        : parseSpawnInput(entry.meta?.input).role;
+    roles.set(id, role);
+  }
+  return roles;
+}
+
 /**
  * The `tool_use_id`s of the Agent/Task calls made IN this thread — i.e. the
  * sub-agents this thread is the parent of, whether or not they have produced
@@ -65,28 +130,59 @@ const SPAWN_TOOLS: ReadonlySet<string> = new Set(["Agent", "Task"]);
  * Necessarily narrower than "every tool_use_id present": a sub-agent's slice
  * carries its own inner tool ids, and one of them can collide with the spawn
  * id, which would make a slice look like the parent of its own spawner.
+ *
+ * Derived from `spawnRoles` rather than walking the thread a second time: the
+ * set of spawns and the roles of those spawns must never be able to drift.
  */
 export function spawnToolUseIds(thread: readonly ThreadEntry[]): Set<string> {
-  const ids = new Set<string>();
-  for (const entry of thread) {
-    if (entry.kind !== "tool_call") continue;
-    const tool = entry.meta?.tool;
-    if (typeof tool !== "string" || !SPAWN_TOOLS.has(tool)) continue;
-    const id = toolUseId(entry);
-    if (id !== null) ids.add(id);
-  }
-  return ids;
+  return new Set(spawnRoles(thread).keys());
 }
 
 /**
- * When `thread` is a sub-agent SLICE rather than a whole run, this is the
+ * A sub-agent's transcript: its own entries PLUS the envelope that framed it.
+ *
+ * `subagentEntries` gives the inner steps — the entries stamped
+ * `meta.parent_tool_use_id`. On runs the executor stamped, that is the whole
+ * story and there are hundreds of them. On older runs there are ZERO, and the
+ * only two entries attributable to the sub-agent with certainty are the spawn
+ * `tool_call` (the brief it was given) and its `tool_result` (what it reported
+ * back) — both carrying `meta.tool_use_id === id`.
+ *
+ * Those two are the envelope. Including them is derivation, not invention:
+ * every entry here is one the executor wrote and tagged with THIS id. Order is
+ * thread order, so the brief opens and the report closes, whatever lies
+ * between.
+ *
+ * It lives here rather than in `AgentChatView` (round 603's home for it)
+ * because it is pure thread arithmetic with no React in it, and because a
+ * check script must be able to feed the REAL drilled-view input to
+ * `deriveDigest` — round 605 caught a defect that a hand-built pure slice
+ * could not have caught, precisely because it was not this function's output.
+ */
+export function subagentTranscript(
+  thread: readonly ThreadEntry[],
+  toolUseIdValue: string,
+): ThreadEntry[] {
+  const inner = new Set(subagentEntries(thread, toolUseIdValue));
+  return thread.filter((e) => inner.has(e) || e.meta?.tool_use_id === toolUseIdValue);
+}
+
+/**
+ * When `thread` is a PURE sub-agent slice rather than a whole run, this is the
  * `tool_use_id` that slice belongs to — its owner, not one of its children.
  *
- * A whole run has top-level entries and returns null. A slice has none, and
- * its first entry is the sub-agent's own opening move, so that entry's
+ * A whole run has top-level entries and returns null. A pure slice has none,
+ * and its first entry is the sub-agent's own opening move, so that entry's
  * `parent_tool_use_id` names the owner. Callers need this because a slice's
  * own id shows up in `subagentIndex(slice)`, where it would otherwise read as
  * a sub-agent of itself.
+ *
+ * LIMIT, and it is not a small one: it CANNOT see the owner of a
+ * `subagentTranscript` — the envelope entries are top-level by construction,
+ * so this returns null and the sub-agent reads as its own child. That is the
+ * round-605 defect. Anything that knows the owner id must pass it explicitly
+ * (`deriveDigest`'s third argument); this function is the last resort for a
+ * caller that does not.
  */
 export function sliceOwnerId(thread: readonly ThreadEntry[]): string | null {
   if (thread.length === 0) return null;

@@ -54,8 +54,10 @@ import { AssistantThread } from "./AssistantThread";
 import { OrientationStrip } from "./OrientationStrip";
 import { StorySoFar } from "./StorySoFar";
 import {
+  parseSpawnInput,
   parseSubagentsV2,
   subagentEntries,
+  subagentTranscript,
   type SubagentMeta,
 } from "./subagent-slice";
 import { crumbs, type NavFrame, type NavStack } from "./nav-stack";
@@ -135,25 +137,9 @@ interface SpawnFacts {
 
 /** Role and description live inside the spawn's `input`, which is a JSON
  *  STRING on the wire: `{"description":"…","subagent_type":"architect",…}`.
- *  Mirrors the reads in agents-shared.ts:243-256 — an unparsable input yields
- *  nulls rather than a guess. */
-function parseSpawnInput(input: unknown): { role: string | null; description: string | null } {
-  if (typeof input !== "string" || !input) return { role: null, description: null };
-  try {
-    const parsed: unknown = JSON.parse(input);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return { role: null, description: null };
-    }
-    const o = parsed as Record<string, unknown>;
-    return {
-      role: typeof o.subagent_type === "string" && o.subagent_type ? o.subagent_type : null,
-      description: typeof o.description === "string" && o.description ? o.description : null,
-    };
-  } catch {
-    return { role: null, description: null };
-  }
-}
-
+ *  The reader is `subagent-slice.parseSpawnInput` — round 606 moved it there so
+ *  this header and the digest's roster read that field through the same
+ *  function. They disagreed when they did not (README.md §6.1). */
 function findSpawnFacts(thread: readonly ThreadEntry[], toolUseIdValue: string): SpawnFacts {
   const facts: SpawnFacts = {
     found: false,
@@ -181,38 +167,31 @@ function findSpawnFacts(thread: readonly ThreadEntry[], toolUseIdValue: string):
   return facts;
 }
 
-/**
- * A sub-agent's transcript: its own entries PLUS the envelope that framed it.
- *
- * `subagentEntries` (round 601A) gives the inner steps — the entries stamped
- * `meta.parent_tool_use_id`. On runs the executor stamped, that is the whole
- * story and there are hundreds of them. On the older runs above there are
- * ZERO, and the only two entries attributable to the sub-agent with certainty
- * are the spawn `tool_call` (the brief it was given) and its `tool_result`
- * (what it reported back) — both carrying `meta.tool_use_id === id`.
- *
- * Those two are the envelope. Including them is derivation, not invention:
- * every entry here is one the executor wrote and tagged with THIS id. Order is
- * thread order, so the brief opens and the report closes, whatever lies
- * between.
- */
-function subagentTranscript(
-  thread: readonly ThreadEntry[],
-  toolUseIdValue: string,
-): ThreadEntry[] {
-  const inner = new Set(subagentEntries(thread, toolUseIdValue));
-  return thread.filter((e) => inner.has(e) || e.meta?.tool_use_id === toolUseIdValue);
-}
+/* `subagentTranscript` — a sub-agent's own entries plus the spawn/result
+ * envelope that framed it — lives in `subagent-slice.ts` as of round 606. It is
+ * pure thread arithmetic, and `check-story-digest.ts` has to be able to feed
+ * the REAL drilled-view input to `deriveDigest`: round 605's defect survived a
+ * unit check that built a pure slice by hand, because a pure slice is not what
+ * this view ever renders. */
 
 /** `subagents_v2.status` is a two-word vocabulary (and may be absent);
  *  `RunStatus` is seven. Map it explicitly.
  *
  *  `AssistantThread` branches on `running`/`queued` to decide whether to hold
- *  up its "engine working" strip, so an absent or unrecognised status must NOT
- *  resolve to `running`: a finished sub-agent flying a live activity strip is
- *  the same "still counting when it's done" lie Konrad opened this project
- *  with. Unknown resolves to settled — and when the rollup is silent, the
- *  spawn's own `tool_result` is the more reliable witness anyway. */
+ *  up its "engine working" strip, so an absent or unrecognised status must not
+ *  resolve to `running` on a sub-agent that has already returned: a finished
+ *  sub-agent flying a live activity strip is the same "still counting when it's
+ *  done" lie Konrad opened this project with.
+ *
+ *  So an unrecognised status defers to the spawn's own `tool_result`, which is
+ *  the more reliable witness when the rollup is silent — and it IS silent on
+ *  almost every run a reader can click. Note the honest consequence, stated
+ *  because it is the one case this function cannot settle: a sub-agent with no
+ *  rollup status and no result yet reads `running`. That is the correct reading
+ *  of "spawned, nothing came back" while the parent is alive; on a parent that
+ *  has itself settled it would be wrong, and nothing here can tell the two
+ *  apart from the sub-agent's own evidence. Round 605's review measured the
+ *  branch against the fleet: 0 of 58 settled runs reach it today. */
 function subagentRunStatus(status: string | null, spawnDone: boolean): RunStatus {
   if (status === "done") return "completed";
   if (status === "running") return "running";
@@ -548,11 +527,19 @@ export function AgentChatView({
           />
           {/* U24. Collapsed, and absent entirely below 50 entries — which is
               most sub-agent slices, and all of the two-entry ones the note
-              below explains. `view.thread` is the scope in both cases. */}
+              below explains. `view.thread` is the scope in both cases, and for
+              a sub-agent the scope carries the id: the digest must be told
+              WHOSE thread this is, because `view.thread` includes the spawn
+              call and result, which are top-level entries and make the slice
+              undetectable from its shape alone (round 605's defect). */}
           <StorySoFar
             run={view}
             thread={view.thread}
-            scope={isSubagent ? "subagent" : "session"}
+            scope={
+              subagentId === undefined
+                ? { kind: "session" }
+                : { kind: "subagent", subagentId }
+            }
           />
           {isSubagent && (
             /* How much of this transcript is the sub-agent's own work vs the

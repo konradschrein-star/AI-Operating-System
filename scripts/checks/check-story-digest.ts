@@ -26,7 +26,15 @@ import {
   DIGEST_MIN_ENTRIES,
   DIGEST_SNIPPETS,
 } from "../../forge-control-web/app/desktop/chat/story-digest.ts";
-import { subagentEntries } from "../../forge-control-web/app/desktop/chat/subagent-slice.ts";
+import {
+  subagentEntries,
+  subagentTranscript,
+} from "../../forge-control-web/app/desktop/chat/subagent-slice.ts";
+/* The SERVER's own sub-agent folder, imported unmodified for the cross-surface
+ * section below. `agents-shared.ts` is the pure half of `routes/agents.ts`: no
+ * pool, no route, no side effect at import. */
+import { foldSubagents } from "../../forge-control/src/routes/agents-shared.ts";
+import type { ThreadEntry as ServerThreadEntry } from "../../forge-control/src/db/runs.ts";
 
 let failures = 0;
 
@@ -80,6 +88,26 @@ function call(ts: string, tool: string, id: string, parent?: string): ThreadEntr
       ? { tool, tool_use_id: id }
       : { tool, tool_use_id: id, parent_tool_use_id: parent },
   };
+}
+
+/** An Agent spawn whose `input` is the JSON STRING the wire actually carries.
+ *  A string `input` lets a case hand over a malformed or truncated one.
+ *
+ *  Typed with forge-control's `ThreadEntry` — the NARROWER of the two, since
+ *  the client's `kind` union also carries `stuck_notice` / `continue_marker`.
+ *  That makes one fixture assignable to both `foldSubagents` (server) and
+ *  `deriveDigest` (client), which is what the cross-surface section needs: two
+ *  surfaces reading one object, not two objects hoped to be equal. */
+function spawn(
+  ts: string,
+  id: string,
+  input: Record<string, unknown> | string | null,
+  stampedRole?: string,
+): ServerThreadEntry {
+  const meta: Record<string, unknown> = { tool: "Agent", tool_use_id: id };
+  if (input !== null) meta.input = typeof input === "string" ? input : JSON.stringify(input);
+  if (stampedRole !== undefined) meta.spawns_subagent_role = stampedRole;
+  return { role: "tool", kind: "tool_call", content: "Agent", ts, meta };
 }
 
 function result(ts: string, id: string, isError: boolean, parent?: string): ThreadEntry {
@@ -235,6 +263,97 @@ console.log("\n── sub-agent roles ──────────────
   check("a thread that never mentions them reports none", d.subagent_count, 0);
 }
 
+console.log("\n── roles: the SPAWN CALL, not only the rollup (round 605 #2) ");
+/* Round 604 measured the digest printing "unknown" one line above a team panel
+ * printing "scout" for the same sub-agent, because the digest read
+ * `subagents_v2` and nothing else while `foldSubagents` (agents-shared.ts:243)
+ * and the drilled header (AgentChatView.tsx:157) also read the spawn call's
+ * `input.subagent_type`. Same two sources, same order, on all three now. */
+{
+  const d = deriveDigest(run(), [spawn("t0", "A", { subagent_type: "scout" })]);
+  check("no rollup at all: the role comes from input.subagent_type", d.subagent_roles.join(","), "scout");
+  check("…and it is one sub-agent, not zero", d.subagent_count, 1);
+}
+{
+  // The rollup is the executor's considered answer; the spawn is the request.
+  const d = deriveDigest(
+    run({ metadata: { subagents_v2: [{ tool_use_id: "A", role: "Explore" }] } }),
+    [spawn("t0", "A", { subagent_type: "scout" })],
+  );
+  check("the rollup wins when both name a role", d.subagent_roles.join(","), "Explore");
+}
+{
+  // A declared entry with a null role is exactly the gap the spawn call fills.
+  const d = deriveDigest(
+    run({ metadata: { subagents_v2: [{ tool_use_id: "A", status: "running" }] } }),
+    [spawn("t0", "A", { subagent_type: "scout" })],
+  );
+  check("a rollup entry with no role falls through to the spawn", d.subagent_roles.join(","), "scout");
+}
+{
+  const d = deriveDigest(run(), [spawn("t0", "A", { subagent_type: "scout" }, "builder")]);
+  check("an explicitly stamped role beats the spawn input", d.subagent_roles.join(","), "builder");
+}
+{
+  const d = deriveDigest(run(), [spawn("t0", "A", { description: "Recon the API" })]);
+  check(
+    "a description is NOT a role — 'unknown' rather than a sentence in the roster",
+    d.subagent_roles.join(","),
+    "unknown",
+  );
+}
+{
+  /* THE CASE THE FIXTURE ACTUALLY HAS. `meta.input` is stored truncated —
+   * measured at exactly 1500 characters on both Agent calls in
+   * run-3853c154 — so `JSON.parse` throws and no role can be read from it.
+   * Every surface hits this identically (they all call JSON.parse on the same
+   * string), so they still agree; the digest says "unknown" and does not
+   * regex a role out of a broken payload. */
+  const truncated = `{"description":"Recon","subagent_type":"scout","prompt":"${"x".repeat(40)}`;
+  const d = deriveDigest(run(), [spawn("t0", "A", truncated)]);
+  check("a truncated input JSON yields 'unknown', never a guess", d.subagent_roles.join(","), "unknown");
+  check("…and the sub-agent is still counted", d.subagent_count, 1);
+}
+{
+  const d = deriveDigest(run(), [spawn("t0", "A", null)]);
+  check("a spawn with no input at all is 'unknown'", d.subagent_roles.join(","), "unknown");
+}
+
+console.log("\n── CROSS-SURFACE: the panel and the digest, same thread ────");
+/* The defect class §6.1 named was never "the digest is wrong" — it was "two
+ * surfaces on one screen answer the same question differently". A comment
+ * cannot hold that; this can. `foldSubagents` is what the SERVER builds team
+ * rows from (`agents-shared.ts`, a pure module — no pool, no route), and it is
+ * imported here unmodified. The drilled header reads the same two sources in
+ * the same order through the same `parseSpawnInput`. */
+for (const [name, thread] of [
+  ["the spawn input names it", [spawn("t0", "A", { subagent_type: "scout" })]],
+  ["an explicit stamp names it", [spawn("t0", "A", { subagent_type: "scout" }, "builder")]],
+  [
+    "the rollup names it and the spawn agrees",
+    [spawn("t0", "A", { subagent_type: "scout" })],
+  ],
+] as const) {
+  const rows = foldSubagents([...thread]);
+  const d = deriveDigest(run(), thread);
+  check(`[${name}] the panel and the digest agree`, d.subagent_roles.join(","), rows.map((r) => r.role).join(","));
+}
+{
+  /* The one place they still differ, and it is a vocabulary difference in the
+   * DEFAULT, not a disagreement about a fact: with nothing to read, the server
+   * labels a row "agent" so the panel has a word, and the digest says
+   * "unknown" so a roster does not assert a role nobody stamped. Pinned here
+   * so it stays a choice rather than becoming a surprise. */
+  const thread = [spawn("t0", "A", null)];
+  check("neither source names a role: the panel's default", foldSubagents([...thread])[0].role, "agent");
+  check("…and the digest's", deriveDigest(run(), thread).subagent_roles.join(","), "unknown");
+  check(
+    "both still see exactly one sub-agent — they never disagree about THAT",
+    foldSubagents([...thread]).length,
+    deriveDigest(run(), thread).subagent_count,
+  );
+}
+
 console.log("\n── VERBATIM prose: clipped, never paraphrased ──────────────");
 {
   const thread = [
@@ -304,6 +423,85 @@ console.log("\n── prose scope: parent story vs sub-agent slice ────�
   check("a pure slice reads its own prose", d.snippets.map((s) => s.text).join(","), "sub speaking,sub closing");
   check("…flagged as a slice", d.prose_scope, "slice");
   check("…with the slice's own counts", d.entry_count, 2);
+  check("…and infers whose it is", d.owner_tool_use_id, "A");
+}
+
+console.log("\n── THE OWNER IS TOLD, NOT INFERRED (round 605 #1) ──────────");
+/* `AgentChatView` renders `subagentTranscript`, NOT a pure slice: the
+ * sub-agent's own entries plus the spawn call and its result. Those two are
+ * top-level by construction, so `sliceOwnerId` sees a whole run, the sub-agent
+ * appears in its own roster, and the own/delegated split inverts. The third
+ * argument is the fix; these cases use the real function's output so the input
+ * shape cannot drift away from what the app builds. */
+{
+  const parentThread: ThreadEntry[] = [
+    prose("t0", "parent speaking"),
+    spawn("t1", "A", { subagent_type: "scout" }),
+    { role: "assistant", kind: "text", content: "sub speaking", ts: "t2", meta: { parent_tool_use_id: "A" } },
+    call("t3", "Bash", "c1", "A"),
+    result("t4", "c1", false, "A"),
+    { role: "assistant", kind: "text", content: "sub closing", ts: "t5", meta: { parent_tool_use_id: "A" } },
+    result("t6", "A", false),
+    prose("t7", "parent closing"),
+  ];
+  const transcript = subagentTranscript(parentThread, "A");
+  check("the drilled view's input is 4 own entries + the envelope", transcript.length, 6);
+
+  const told = deriveDigest(run(), transcript, "A");
+  check("told the owner: it is a slice", told.prose_scope, "slice");
+  check("…and says whose", told.owner_tool_use_id, "A");
+  check("…it is NOT its own sub-agent", told.subagent_count, 0);
+  check("…no role roster to print", told.subagent_roles.length, 0);
+  check("…all six entries are its own", told.top_level_count, 6);
+  check("…nothing was delegated", told.subagent_entry_count, 0);
+  check(
+    "…and the prose is the sub-agent's, not the parent's",
+    told.snippets.map((s) => s.text).join(","),
+    "sub speaking,sub closing",
+  );
+
+  /* The same input WITHOUT the owner, to pin why the argument exists — this is
+   * verbatim round 605's defect, and `sliceOwnerId`'s documented blind spot. */
+  const inferred = deriveDigest(run(), transcript);
+  check("[blind spot] left to infer, the envelope hides the slice", inferred.prose_scope, "top-level");
+  check("[blind spot] …the sub-agent becomes its own sub-agent", inferred.subagent_count, 1);
+  check("[blind spot] …under its own role", inferred.subagent_roles.join(","), "scout");
+  check("[blind spot] …with the split inverted", `${inferred.top_level_count}/${inferred.subagent_entry_count}`, "2/4");
+
+  /* A pure slice and the transcript must tell the SAME story about the
+   * sub-agent — the envelope adds two entries and no prose, nothing else. */
+  const pure = deriveDigest(run(), subagentEntries(parentThread, "A"), "A");
+  check("pure slice and transcript agree on the prose", pure.snippets.map((s) => s.text).join(","), told.snippets.map((s) => s.text).join(","));
+  check("…and differ only by the envelope's two entries", told.entry_count - pure.entry_count, 2);
+
+  /* The parent's own digest is unchanged by any of this. */
+  const parentDigest = deriveDigest(run(), parentThread);
+  check("the parent still counts its own 4", parentDigest.top_level_count, 4);
+  check("…and the 4 it delegated", parentDigest.subagent_entry_count, 4);
+  check("…and lists one sub-agent", parentDigest.subagent_count, 1);
+  check("…named from the spawn call", parentDigest.subagent_roles.join(","), "scout");
+  check("…quoting only itself", parentDigest.snippets.map((s) => s.text).join(","), "parent speaking,parent closing");
+}
+{
+  /* An owner that DID delegate: entries stamped to a grandchild are not the
+   * owner's own work, and the grandchild is a real row in its roster. */
+  const mixed: ThreadEntry[] = [
+    spawn("t0", "A", { subagent_type: "scout" }),
+    { role: "assistant", kind: "text", content: "sub speaking", ts: "t1", meta: { parent_tool_use_id: "A" } },
+    spawn("t2", "G", { subagent_type: "researcher" }),
+    { role: "assistant", kind: "text", content: "grandchild speaking", ts: "t3", meta: { parent_tool_use_id: "G" } },
+  ];
+  const d = deriveDigest(run(), mixed, "A");
+  check("an owner's own entries exclude a grandchild's", d.top_level_count, 3);
+  check("…which are counted as delegated", d.subagent_entry_count, 1);
+  check("…the grandchild is in the roster", d.subagent_count, 1);
+  check("…under its own role", d.subagent_roles.join(","), "researcher");
+  check("…and the owner does not quote it", d.snippets.map((s) => s.text).join(","), "sub speaking");
+}
+{
+  const d = deriveDigest(run(), [prose("t0", "x")], "");
+  check("an empty owner id is not an owner", d.owner_tool_use_id, null);
+  check("…and the digest reads as a session", d.prose_scope, "top-level");
 }
 
 console.log("\n── task derivation ─────────────────────────────────────────");
@@ -384,20 +582,44 @@ console.log("\n── REAL FIXTURE: run 3853c154 (the architect's own session) �
     JSON.stringify(d),
   );
 
-  // A sub-agent's own digest, derived from its slice with no extra fetch —
-  // there is no sub-agent run row to fetch, which is the whole point.
-  const slice = subagentEntries(real.thread, "toolu_014raMUrJcAiXV61BerokrjN");
-  const sd = deriveDigest(real, slice);
-  check("the scout's slice is 118 entries", sd.entry_count, 118);
+  // A sub-agent's own digest, derived from its transcript with no extra fetch
+  // — there is no sub-agent run row to fetch, which is the whole point.
+  //
+  // THE INPUT IS `subagentTranscript`, the function AgentChatView renders.
+  // Round 605 caught this check validating a pure `subagentEntries` slice, a
+  // shape the product never builds, which is why it passed while the screen
+  // was wrong.
+  const SUB = "toolu_014raMUrJcAiXV61BerokrjN";
+  const transcript = subagentTranscript(real.thread, SUB);
+  const sd = deriveDigest(real, transcript, SUB);
+  check("the scout's transcript is its 118 entries plus the envelope", sd.entry_count, 120);
   check("…read as a slice", sd.prose_scope, "slice");
-  check("…with its own top_level_count of 0", sd.top_level_count, 0);
+  check("…owned by the scout", sd.owner_tool_use_id, SUB);
+  check("…all 120 of them its own", sd.top_level_count, 120);
+  check("…none of them delegated", sd.subagent_entry_count, 0);
   check("…and no sub-agents of its own", sd.subagent_count, 0);
+  check("…so the roster is empty, not a list containing itself", sd.subagent_roles.length, 0);
   check("…it still clears the digest bar", sd.show, true);
   check(
     "…and its closing turn is the report it handed back",
     sd.snippets[sd.snippets.length - 1].text.startsWith("# Recon Report"),
     true,
   );
+
+  // The envelope is exactly two entries and contributes no prose, so the
+  // sub-agent's story is the same whichever way its thread was cut.
+  const pure = deriveDigest(real, subagentEntries(real.thread, SUB), SUB);
+  check("the pure slice is 118", pure.entry_count, 118);
+  check(
+    "…and tells the same story, verbatim",
+    JSON.stringify(pure.snippets),
+    JSON.stringify(sd.snippets),
+  );
+
+  // Round 605's defect, on the phase's own committed fixture.
+  const inferred = deriveDigest(real, transcript);
+  check("[blind spot] inferring on the real transcript inverts the split", `${inferred.top_level_count}/${inferred.subagent_entry_count}`, "2/118");
+  check("[blind spot] …and lists the scout as its own sub-agent", inferred.subagent_count, 1);
 }
 
 console.log(

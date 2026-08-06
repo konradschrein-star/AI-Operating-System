@@ -23,6 +23,8 @@ reader could be misled:
   can push a `plandoc` frame. [§3.5](#35-both-theme-capture-capture600cjs--pass).
 - **The digest calls a sub-agent "unknown" that the team panel calls "scout".**
   Same sub-agent, three surfaces, two answers. [§6.1](#61-the-same-sub-agent-is-scout-in-two-places-and-unknown-in-a-third).
+  *(Fixed in round 606 — [README-606.md](README-606.md). The numbers and
+  screenshots in this file are round 604's and are left exactly as measured.)*
 
 ---
 
@@ -562,6 +564,15 @@ makes about itself. Suggested repair (one source change in `story-digest.ts`'s
 roster derivation, plus a case in `check-story-digest.ts`) left to the reviewer,
 because an evidence round may not change application code.
 
+> **FIXED in round 606** ([README-606.md](README-606.md)). The digest now reads
+> the spawn call through the same `parseSpawnInput` the header uses, in the same
+> order (rollup first). `check-story-digest.ts` gained a cross-surface section
+> that imports the server's own `foldSubagents` and asserts the two name the
+> same role on the same thread, so the disagreement cannot come back silently.
+> One deliberate difference survives, in the DEFAULT rather than in a fact: with
+> nothing to read the panel says `agent` and the digest says `unknown`. Both are
+> pinned by a check.
+
 ### 6.2 Round 601B's README says a refresh "lands on the manager chat". It lands on TODAY.
 
 `README-601b.md` §6 deviation 4 reads: "A refresh lands on the manager chat.
@@ -577,6 +588,10 @@ errors. But a reviewer following 601B's sentence would expect to land back on th
 fixture chat and would read a correct app as broken. A one-sentence correction in
 `README-601b.md` is the repair; round 604 may not edit another round's document
 any more than it may edit code, so it is recorded here.
+
+> **FIXED in round 606.** `README-601b.md` §6 deviation 4 now states the real
+> behaviour — a refresh lands on TODAY and restores no frame — and points back
+> here for the measurement.
 
 ### 6.3 No ≥200-entry session in this database has a sub-agent
 
