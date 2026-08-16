@@ -73,9 +73,18 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
-const OUT_DIR = __dirname;
+/* Round 705's non-destructive rule, as in lib-804.cjs: without `--write` a
+ * rerun writes to /tmp and leaves `git status --porcelain` untouched. Restated
+ * here rather than imported, so this stays runnable with no browser. */
+const SRC_DIR = __dirname;
+const WRITE_IN_PLACE = process.argv.includes("--write") || process.env.PHASE800_WRITE === "1";
+const OUT_DIR =
+  process.env.PHASE800_OUT_DIR ?? (WRITE_IN_PLACE ? SRC_DIR : path.join(os.tmpdir(), "phase800-out"));
+if (OUT_DIR !== SRC_DIR) fs.mkdirSync(OUT_DIR, { recursive: true });
+
 const WINDOW_MS = 30_000;
 
 /* A seeded PRNG: a flake analysis a reviewer cannot reproduce exactly is
@@ -343,9 +352,14 @@ function main() {
     failures: failed(),
     results,
   };
-  const out = path.join(OUT_DIR, "nav-walk-sampling.json");
+  const fileName = "nav-walk-sampling.json";
+  const out = path.join(OUT_DIR, fileName);
   fs.writeFileSync(out, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`\n${failed() === 0 ? "ALL PASS" : `${failed()} FAILURE(S)`} — ${payload.checks} checks → ${out}`);
+  if (OUT_DIR !== SRC_DIR) {
+    console.log(`      committed evidence left untouched (${path.join(SRC_DIR, fileName)})`);
+    console.log(`      re-record in place with:  node ${process.argv[1]} --write`);
+  }
   process.exit(failed() === 0 ? 0 : 1);
 }
 

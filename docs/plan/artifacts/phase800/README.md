@@ -728,6 +728,26 @@ was deleted.
 
 #### The fix, measured in a real browser — three runs
 
+**WHICH RIG, because an unlabelled request-rate number is worthless.** These
+three runs are on **`serve-v3-7798.ts`** — the *non-SSE* harness. A sibling task
+of this same round established (and the vault Operator Log now records as a
+standing rule) that this harness buffers responses through `arrayBuffer()` and
+**cannot serve SSE**, so `ChatSurface` falls back to its 3 s emergency poll and
+the rig manufactures much of the traffic it is measuring. Two consequences,
+both of which matter to how this table should be read:
+
+1. The **absolute** numbers below describe the rig, not production. On the
+   SSE-capable rig the same tree idles at 21–22/min, not 38.
+2. The **fix** does not depend on them. The tolerance is not a constant — it is
+   `Object.keys(pRest.per_minute).length`, read off the at-rest window at
+   runtime — so it re-derives itself from whatever poll set the rig actually
+   presents. A rig with fewer polls yields a *smaller* tolerance and a
+   *stricter* gate, which is the correct direction. §8.4a re-runs it on the SSE
+   rig to show exactly that.
+
+The flake, and the fix, reproduce on either rig because the arithmetic is a
+property of sampling, not of transport.
+
 Against the isolated round-808 harness (§8.6), `phase600/nav-walk.cjs` three
 times, back to back:
 
@@ -752,6 +772,40 @@ in another is not measuring the application at all. `distinct_polled_paths` was
 three times the margin it needed, and still far inside P3's ceiling.
 
 P3 passed in all three runs at 38/min against the 40/min bound.
+
+### 8.4a The same fix on the SSE rig — the one that measures production
+
+The table above is on the rig that manufactures traffic. This is the same gate
+on **`serve-sse-808.ts`**, the streaming harness, built from branch HEAD
+(`a55d01a`, which carries both round 808's nav-walk fix and the sibling task's
+SSE harness) and served on :7834 against an API on :7833 with its own empty
+store. Evidence: `nav-walk-808-sse-rig.json`, `nav-walk-808-sse-rig.log`.
+
+| | at rest | depth 1 | depth 2 |
+|---|---|---|---|
+| requests / 30 s window | 10 | 10 | 10 |
+| **requests / min** | **20** | **20** | **20** |
+| `/chat/:id` | 2 | 2 | 2 |
+| `/chat/:id/team` | 10 | 10 | 10 |
+| `/chat` | 6 | 6 | 6 |
+| `/chat/:id/plan` | 2 | 2 | 2 |
+| excess over at-rest | — | **0** | **0** |
+
+**P1, P2, P3 all PASS.** `distinct_polled_paths` = 4, so the tolerance was 4 and
+the observed excess was 0 — the gate had four samples of room and needed none.
+
+Two things this settles:
+
+1. **The tolerance is not a fudge factor that hides a regression.** On the rig
+   where the surface actually behaves, the drilled windows are *exactly* equal
+   to the at-rest window and the assertion passes with zero slack used. The
+   tolerance only ever absorbs sampling phase, which is what it is for.
+2. **The absolute numbers confirm the sibling's rig finding independently.**
+   `/chat/:id` collapses from 20/min to **2/min** once SSE actually streams —
+   the 3 s emergency poll disappears — and the whole surface idles at **20/min
+   against a 40/min ceiling**. There is ~2× headroom, not the 1 request/min
+   that rounds 802 and 804 were budgeting against. Every poll-period
+   optimisation this phase argued over was tuning against a broken ruler.
 
 ### 8.5 Finding 5 — the gate set is a committed script now
 

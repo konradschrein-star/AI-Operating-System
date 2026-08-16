@@ -47,10 +47,20 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
-const OUT_DIR = __dirname;
+/* Round 705's non-destructive rule, the same shape lib-804.cjs uses: without
+ * `--write` a rerun writes to /tmp and leaves `git status --porcelain`
+ * untouched. This probe is deliberately standalone — it must run with no
+ * browser, no server and no database — so the convention is restated here
+ * rather than imported from lib-804, which pulls in playwright. */
+const SRC_DIR = __dirname;
+const WRITE_IN_PLACE = process.argv.includes("--write") || process.env.PHASE800_WRITE === "1";
+const OUT_DIR =
+  process.env.PHASE800_OUT_DIR ?? (WRITE_IN_PLACE ? SRC_DIR : path.join(os.tmpdir(), "phase800-out"));
+if (OUT_DIR !== SRC_DIR) fs.mkdirSync(OUT_DIR, { recursive: true });
 const REPO = path.resolve(__dirname, "../../../..");
 
 /* ── A checker in the shape phase 700/800 already use ─────────────────────── */
@@ -241,9 +251,14 @@ function main() {
     failures: failed(),
     results,
   };
-  const out = path.join(OUT_DIR, "psql-argv-leak.json");
+  const fileName = "psql-argv-leak.json";
+  const out = path.join(OUT_DIR, fileName);
   fs.writeFileSync(out, `${JSON.stringify(payload, null, 2)}\n`);
   console.log(`\n${failed() === 0 ? "ALL PASS" : `${failed()} FAILURE(S)`} — ${payload.checks} checks → ${out}`);
+  if (OUT_DIR !== SRC_DIR) {
+    console.log(`      committed evidence left untouched (${path.join(SRC_DIR, fileName)})`);
+    console.log(`      re-record in place with:  node ${process.argv[1]} --write`);
+  }
   process.exit(failed() === 0 ? 0 : 1);
 }
 

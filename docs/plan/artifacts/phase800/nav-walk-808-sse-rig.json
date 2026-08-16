@@ -1,0 +1,2597 @@
+{
+  "poll_budget": {
+    "at_rest": {
+      "label": "at rest (manager chat)",
+      "requests": 10,
+      "per_minute": {
+        "/api/proxy/chat": 6,
+        "/api/proxy/chat/:id/team": 10,
+        "/api/proxy/chat/:id/plan": 2,
+        "/api/proxy/chat/:id": 2
+      },
+      "total_per_minute": 20
+    },
+    "depth_1": {
+      "label": "drilled, depth 1 (worker)",
+      "requests": 10,
+      "per_minute": {
+        "/api/proxy/chat/:id/team": 10,
+        "/api/proxy/chat": 6,
+        "/api/proxy/chat/:id/plan": 2,
+        "/api/proxy/chat/:id": 2
+      },
+      "total_per_minute": 20
+    },
+    "depth_2": {
+      "label": "drilled, depth 2 (sub-agent)",
+      "requests": 10,
+      "per_minute": {
+        "/api/proxy/chat/:id/team": 10,
+        "/api/proxy/chat": 6,
+        "/api/proxy/chat/:id/plan": 2,
+        "/api/proxy/chat/:id": 2
+      },
+      "total_per_minute": 20
+    },
+    "phase500_after_budget_per_min": 40,
+    "sample_tolerance": {
+      "samples": 4,
+      "basis": "one sample per distinct polled path in the at-rest window",
+      "derivation": "docs/plan/artifacts/phase800/nav-walk-sampling.cjs",
+      "applies_to": [
+        "P1",
+        "P2"
+      ],
+      "note": "P3's absolute 40/min ceiling takes no tolerance — it is not a comparison of two samples"
+    }
+  },
+  "base": "http://127.0.0.1:7834",
+  "api": "http://127.0.0.1:7833",
+  "chat": {
+    "text": "Okay this session is very important",
+    "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd"
+  },
+  "navigation": "real — every level reached by clicking a real team row",
+  "target": {
+    "worker": "58096061-803e-43c5-827a-e618d2a9c33e",
+    "sub": "toolu_01KAFV63fapZ6DXAAU2adfww"
+  },
+  "identity": {
+    "level1": {
+      "kind": "session",
+      "raw": {
+        "role": "architect",
+        "model": "claude-sonnet-4-6"
+      },
+      "rendered": {
+        "role": "architect",
+        "model": "sonnet-4-6"
+      },
+      "title": "canvas-ux · Plan: canvas-ux"
+    },
+    "level2": {
+      "kind": "subagent",
+      "source": "spawn_call",
+      "raw": {
+        "role": "scout",
+        "model": "claude-sonnet-4-6"
+      },
+      "rendered": {
+        "role": "scout",
+        "model": "sonnet-4-6"
+      },
+      "description": "Scout canvas-ux existing code"
+    }
+  },
+  "console_errors_during_reload": [],
+  "page_errors_during_reload": [],
+  "levels": {
+    "d0": {
+      "teamRows": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": null,
+      "drilledSubagentId": null,
+      "depth": 0,
+      "crumbs": null,
+      "kind": null,
+      "role": null,
+      "model": null,
+      "backLabel": null,
+      "strip": false,
+      "degraded": null
+    },
+    "d1": {
+      "teamRows": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "drilledSubagentId": null,
+      "depth": 1,
+      "crumbs": "manager chat › session 58096061",
+      "kind": "session",
+      "role": "architect",
+      "model": "sonnet-4-6",
+      "backLabel": "← manager chat",
+      "strip": true,
+      "degraded": ""
+    },
+    "d2": {
+      "teamRows": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "drilledSubagentId": "toolu_01KAFV63fapZ6DXAAU2adfww",
+      "depth": 2,
+      "crumbs": "manager chat › session 58096061 › sub-agent toolu_01",
+      "kind": "sub-agent",
+      "role": "scout",
+      "model": "sonnet-4-6",
+      "backLabel": "← session 58096061",
+      "strip": true,
+      "degraded": "no-task"
+    },
+    "landing": {
+      "path": "/desktop",
+      "drilled": false,
+      "teamPanel": false,
+      "strip": false,
+      "navLabels": [
+        "TODAY",
+        "CHAT",
+        "PROJECTS",
+        "LIVE",
+        "TODAY",
+        "CHAT",
+        "PROJECTS",
+        "LIVE"
+      ]
+    },
+    "afterChat": {
+      "teamRows": [
+        {
+          "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "3853c154-e07b-4378-9313-2b34f4a33342",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_014raMUrJcAiXV61BerokrjN",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "toolu_012sWh2xagb6t8J11pTV5oMT",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "6eeec7bf-1ccd-49fa-b8dd-b95eefc70f63",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "51694164-8697-4134-9b22-fc2859825bde",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "b4d241ea-7bd2-4bd2-834d-db0b930cb938",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3d26461f-8e89-4928-9dda-9df62ad50e3b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "20bb47eb-e2ce-4d6a-a451-700d871de90a",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "fdc1eacf-4257-44a7-a5ba-c6198b7db688",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "9a937009-4beb-48c0-983c-36dd43e56c9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "1110e146-1de3-4d92-bc07-d05c60ebdcdc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ab331865-dc4d-4e68-94d7-cabff6688681",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01AeuQskZPyHpsYrHayvrqrT",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "toolu_01CaVhCxZ9ysaCrPVKWv7YuX",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "toolu_01U21ApZZJS2ykMCnDZ9tXM6",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "toolu_014exr6WECYL3iKbP7Wh83bW",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "0ed80848-2cad-4047-94dd-1544cfc08214",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "2c535643-6632-42ec-9743-0fc58327017e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "a59d2cf8-e28d-4f01-a906-b460ecc1863f",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "5f359463-2df7-4645-93e4-f371dd899c6c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "03e54ad6-bbab-4bc5-bf26-5a431973d7c0",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0faca9b9-0357-439e-bd29-4f465771ee3c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "8e036e52-8346-4822-8ff8-68629e2b7af2",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "2598ec14-541d-4149-b128-2490cb5db16c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "9d6c0782-1a2c-431f-bdcb-5a3ca7c88304",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "01b820d1-9d46-4c6f-94da-525c5994dfd9",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "5dccbcf1-e571-42ab-9ba5-70620dd2317a",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "453410f8-d235-4af5-8c02-82555dc67df3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "dd0ed28d-98bd-4654-9978-82c27af04ae2",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "04643b75-1f85-4442-a09e-9aba0f3560d2",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "5d5d192d-abae-45f8-b0f7-6be76688595b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "35860f15-5449-4052-a1cb-1f274ef21445",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "62db80ee-a7a8-48c5-933a-28c0d4e340f4",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "de458924-ee75-4cfa-8448-5ba990c7d444",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "855cc0d4-25cd-482f-b87a-92f923caa4ce",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "5bf8ca6d-3324-467c-a3e0-7760758005f0",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ac777679-44fa-4a8f-a681-ecabd7b31e71",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "8b82347a-cc0f-4cc4-878f-4223948a1257",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "105cf305-ca43-4615-bf75-74825cf8af01",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "cf91bcb3-199c-4188-adc2-3b7f1f595aab",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "790c74ab-614c-49a7-a86a-1c3023e1e37b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "841dad26-2b2f-4c9d-ad06-291a15c690d5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d333bfbe-9bce-46d2-beb4-ca74d2df8972",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "bbc9cedb-b04a-434c-aa00-762ba6cc7a5f",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "f799007c-f1f3-4710-a3e7-0e5988fd6324",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3673e418-aeb0-4a65-be8d-693ca762556d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e5cc35d7-9855-4380-abdc-dd723f14af52",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7c6a6e57-0697-4600-ba29-e1a57ecd52e3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "9c620d6a-5269-4113-8c8f-889338f31aa5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "b55b1056-1b0a-4fa2-a77c-9ab13d0fafc3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "740ef40d-cbb0-4851-9eea-ca6bc21fb1ca",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "c1056919-a2b1-4103-8412-aad508b6ff52",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "c4368eda-b1ee-447c-b3d0-59e32682024b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "a24ebdd1-5c15-4178-bf36-606026e1cdd5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "43fd8ef3-e41c-4a80-8f9c-a57cd2ee614d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "4d5d5a58-f7f2-4e3d-9512-29a1f0424492",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "125b48af-de77-4447-9fdb-732cbd13e598",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "41952b27-d538-43ab-b049-f7ca4f0743ff",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0832de50-bdee-43f2-9e6c-3977defff5b6",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "8fea3b75-a4d9-44f3-a82f-1b3d713db27b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "c7d12478-b4a7-4064-9147-d314c8bbdb35",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "eded75b2-2abf-4205-9c42-218ae6665897",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "f35822bd-4f9e-4f77-8e04-09bdde3b936d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "6f531464-5023-4a8e-b9e7-8e361c3339d3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "04e5292a-372c-4c8a-8b59-013517ee45bf",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "32c2703a-fb99-4599-8e43-97f2ed0f1286",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ac45cc94-c153-4bc6-b310-752702fa9f9b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "165ccdf6-c0f6-4305-a1ea-d78000883fc2",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "eddc4f5d-4fbf-4a4a-beda-4921e194dbd3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "87701269-3a7d-4f52-bac7-a946536cfdfb",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "65e6b100-64fe-4c9c-b990-bffb0d2b0ee3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d9bf4dbe-90fa-4803-920f-1d1e1f0156a3",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "c8bc5ffa-f63e-4f11-af27-39e3c8fb9e2f",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "4e842cc8-bab9-4e9b-9d34-0523b1931419",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e69ea9a8-232c-4b3f-aa9a-f1b2c6fb334f",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "f6a2ee75-99ef-48d0-93c9-2ab6c14fe51c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "fa2a1775-e394-48bd-af2f-da86e6fcf869",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "9ee2083b-533b-42af-bc1c-08a8c49d1f4b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "51d10066-5cb2-4811-b66d-f1ed48f3bd01",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "8fb9e868-18a6-48c2-abeb-28a894fc4b47",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "dd011036-9cc8-4703-9913-223cff3f53ee",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "5163e7fa-a0da-4689-9d39-093916c6832f",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0105dec6-e79d-4da7-aacc-8294edc5227b",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "1fcbf632-7338-462c-b087-205a6595c714",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "362cbd1d-a3c4-4585-96f8-1eb0ae98d7d1",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d4f4cdf6-29f4-4345-8058-50ee88ee0baf",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "5c5a7d07-136c-42bb-bd4f-d387f583c178",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": null,
+      "drilledSubagentId": null,
+      "depth": 0,
+      "crumbs": null,
+      "kind": null,
+      "role": null,
+      "model": null,
+      "backLabel": null,
+      "strip": false,
+      "degraded": null
+    },
+    "reloaded": {
+      "teamRows": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": null,
+      "drilledSubagentId": null,
+      "depth": 0,
+      "crumbs": null,
+      "kind": null,
+      "role": null,
+      "model": null,
+      "backLabel": null,
+      "strip": false,
+      "degraded": null
+    },
+    "b1": {
+      "teamRows": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "drilledSubagentId": null,
+      "depth": 1,
+      "crumbs": "manager chat › session 58096061",
+      "kind": "session",
+      "role": "architect",
+      "model": "sonnet-4-6",
+      "backLabel": "← manager chat",
+      "strip": true,
+      "degraded": ""
+    },
+    "b0": {
+      "teamRows": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "teamState": "ready",
+      "drilledRunId": null,
+      "drilledSubagentId": null,
+      "depth": 0,
+      "crumbs": null,
+      "kind": null,
+      "role": null,
+      "model": null,
+      "backLabel": null,
+      "strip": false,
+      "degraded": null
+    }
+  },
+  "failures": 0,
+  "results": [
+    {
+      "name": "L0 no drilled view is open",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "L0 the team tree is ready",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "L0 team rows",
+      "note": 20
+    },
+    {
+      "name": "target worker / sub-agent",
+      "note": {
+        "worker": "58096061-803e-43c5-827a-e618d2a9c33e",
+        "sub": "toolu_01KAFV63fapZ6DXAAU2adfww"
+      }
+    },
+    {
+      "name": "L1 the drilled view is the clicked worker",
+      "ok": true,
+      "actual": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "expected": "58096061-803e-43c5-827a-e618d2a9c33e"
+    },
+    {
+      "name": "L1 depth is 1",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "L1 it is classified as a whole session",
+      "ok": true,
+      "actual": "session",
+      "expected": "session"
+    },
+    {
+      "name": "L1 header role == the API's metadata.role, rendered",
+      "ok": true,
+      "actual": "architect",
+      "expected": "architect"
+    },
+    {
+      "name": "L1 header model == the API's model_resolved, rendered",
+      "ok": true,
+      "actual": "sonnet-4-6",
+      "expected": "sonnet-4-6"
+    },
+    {
+      "name": "L1 back points at the manager chat",
+      "ok": true,
+      "actual": "← manager chat",
+      "expected": "← manager chat"
+    },
+    {
+      "name": "L1a the team panel still shows the MANAGER's tree (selId did not move)",
+      "ok": true,
+      "actual": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "expected": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ]
+    },
+    {
+      "name": "L1a the panel's state did not change either",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "L1 raw wire identity",
+      "note": {
+        "role": "architect",
+        "model": "claude-sonnet-4-6",
+        "status": "completed",
+        "title": "canvas-ux · Plan: canvas-ux"
+      }
+    },
+    {
+      "name": "L1 crumbs",
+      "note": "manager chat › session 58096061"
+    },
+    {
+      "name": "L2 depth is 2",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "L2 the frame carries the sub-agent's tool_use_id",
+      "ok": true,
+      "actual": "toolu_01KAFV63fapZ6DXAAU2adfww",
+      "expected": "toolu_01KAFV63fapZ6DXAAU2adfww"
+    },
+    {
+      "name": "L2 the frame still FETCHES the parent worker",
+      "ok": true,
+      "actual": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "expected": "58096061-803e-43c5-827a-e618d2a9c33e"
+    },
+    {
+      "name": "L2 it is classified as an in-process sub-agent",
+      "ok": true,
+      "actual": "sub-agent",
+      "expected": "sub-agent"
+    },
+    {
+      "name": "L2 header role == the sub-agent's own, rendered",
+      "ok": true,
+      "actual": "scout",
+      "expected": "scout"
+    },
+    {
+      "name": "L2 header model == the sub-agent's own, rendered",
+      "ok": true,
+      "actual": "sonnet-4-6",
+      "expected": "sonnet-4-6"
+    },
+    {
+      "name": "L2a the team panel STILL shows the MANAGER's tree",
+      "ok": true,
+      "actual": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "expected": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ]
+    },
+    {
+      "name": "L2 back no longer points at the manager",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "L2 raw wire identity",
+      "note": {
+        "role": "scout",
+        "model": "claude-sonnet-4-6",
+        "source": "spawn_call",
+        "description": "Scout canvas-ux existing code"
+      }
+    },
+    {
+      "name": "L2 crumbs",
+      "note": "manager chat › session 58096061 › sub-agent toolu_01"
+    },
+    {
+      "name": "L1/L2 identity is NOT inherited — the two levels differ in role or model",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "R1 the drilled frame does NOT survive a reload",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "R1 …and neither does its orientation strip",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "R1 where the reload actually lands",
+      "note": {
+        "path": "/desktop",
+        "drilled": false,
+        "teamPanel": false,
+        "strip": false,
+        "navLabels": [
+          "TODAY",
+          "CHAT",
+          "PROJECTS",
+          "LIVE",
+          "TODAY",
+          "CHAT",
+          "PROJECTS",
+          "LIVE"
+        ]
+      }
+    },
+    {
+      "name": "R2 returning to CHAT opens a MANAGER chat, never a worker",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "R2 …with no drilled run id anywhere",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "R2 the chat auto-opened after reload",
+      "note": {
+        "rows": 88,
+        "state": "ready"
+      }
+    },
+    {
+      "name": "R3 re-opening the fixture chat gives the same tree back",
+      "ok": true,
+      "actual": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "expected": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ]
+    },
+    {
+      "name": "R3 …still with nothing drilled",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "R4 ZERO console errors across reload + re-navigation",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "R4 ZERO uncaught page errors across reload + re-navigation",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "W1 back at depth 2",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "B1 first pop lands at depth 1",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "B1 …on the worker below it, not a rebuilt frame",
+      "ok": true,
+      "actual": "58096061-803e-43c5-827a-e618d2a9c33e",
+      "expected": "58096061-803e-43c5-827a-e618d2a9c33e"
+    },
+    {
+      "name": "B1 …with no sub-agent selected any more",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "B1 …and the team panel unmoved",
+      "ok": true,
+      "actual": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "expected": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ]
+    },
+    {
+      "name": "B2 second pop returns to the manager chat",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "B2 …with the same team still on screen",
+      "ok": true,
+      "actual": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ],
+      "expected": [
+        {
+          "id": "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+          "kind": "operator",
+          "depth": "0"
+        },
+        {
+          "id": "toolu_01S2khB7D19HjSMJzgjGQGMH",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01Y4sqZV13WbD8kyMvcBsTWR",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01QGy1DqgyzJB77Atbn8Qtxa",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01A6w5PFqqhW6RM1MKxFntv9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_0144pAn9i6dbJADy3D436FQF",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01FdvbHcUee1ZojJ2B3QZcBT",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KBfYmPTDgEmEgfQVNArpB9",
+          "kind": "subagent",
+          "depth": "1"
+        },
+        {
+          "id": "58096061-803e-43c5-827a-e618d2a9c33e",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "toolu_01KAFV63fapZ6DXAAU2adfww",
+          "kind": "subagent",
+          "depth": "2"
+        },
+        {
+          "id": "339e39bd-9f7b-4588-a0f0-ab910aedce9d",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "d935b0ef-1c0e-44a3-b14c-c9c3536134fa",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "923d3ccb-3cc7-474e-8be9-eba7b5ab0289",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "7ccdb728-4199-4e86-9d01-2eb1880720d7",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "0c154684-da69-409e-a5a1-4d3c137c721c",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "ca54e5ae-3f0b-40e0-ac12-84bbeee3fadc",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3635ee7e-f132-4735-abc3-415691146a32",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "3b292dc1-6198-4671-a3b5-98fc9041af61",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e80e81c3-f2b2-4dcd-bd4f-53cec9c6d8a5",
+          "kind": "worker",
+          "depth": "1"
+        },
+        {
+          "id": "e0e2b109-33b2-4a88-ab4d-0ff1ead1bede",
+          "kind": "worker",
+          "depth": "1"
+        }
+      ]
+    },
+    {
+      "name": "B2 …and no orientation strip (there is no drilled node)",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "P at rest (manager chat): requests/min",
+      "note": {
+        "/api/proxy/chat": 6,
+        "/api/proxy/chat/:id/team": 10,
+        "/api/proxy/chat/:id/plan": 2,
+        "/api/proxy/chat/:id": 2,
+        "TOTAL": 20
+      }
+    },
+    {
+      "name": "P drilled, depth 1 (worker): requests/min",
+      "note": {
+        "/api/proxy/chat/:id/team": 10,
+        "/api/proxy/chat": 6,
+        "/api/proxy/chat/:id/plan": 2,
+        "/api/proxy/chat/:id": 2,
+        "TOTAL": 20
+      }
+    },
+    {
+      "name": "P drilled, depth 2 (sub-agent): requests/min",
+      "note": {
+        "/api/proxy/chat/:id/team": 10,
+        "/api/proxy/chat": 6,
+        "/api/proxy/chat/:id/plan": 2,
+        "/api/proxy/chat/:id": 2,
+        "TOTAL": 20
+      }
+    },
+    {
+      "name": "P sampling tolerance (one sample per distinct polled path, measured at rest)",
+      "note": {
+        "distinct_polled_paths": 4,
+        "at_rest_requests": 10,
+        "depth_1_requests": 10,
+        "depth_2_requests": 10,
+        "depth_1_excess": 0,
+        "depth_2_excess": 0,
+        "derivation": "docs/plan/artifacts/phase800/nav-walk-sampling.cjs"
+      }
+    },
+    {
+      "name": "P1 drilling to depth 1 does not raise the request total (within the instrument's own ±N-sample resolution)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "P2 drilling to depth 2 does not raise it either (same tolerance)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "P3 the drilled total stays within phase 500's 'after' budget (40/min)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    }
+  ]
+}
