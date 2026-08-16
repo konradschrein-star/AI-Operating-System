@@ -357,7 +357,28 @@ export function ChatSurface({
   const listQ = useQuery({
     queryKey: ["chat", "list", visibleCount],
     queryFn: () => fetchChatList({ limit: visibleCount }),
-    refetchInterval: 8000,
+    // 8s → 10s, ROUND 802: this is where U30's secrets poll is PAID FOR.
+    //
+    // The arithmetic, because rounding hid it. Steady state was 20 (chat
+    // detail, 3s) + 10 (team, 6s) + 7.5 (this list, 8s) + 2 (plan, 30s) =
+    // 39.5/min; SECRETS_POLL_MS adds 1, which is 40.5 — OVER phase 600
+    // `nav-walk.cjs:310`'s ≤40 ceiling, even though both instruments printed
+    // exactly 40. They print 40 because they count whole requests in a window
+    // and 7.5 lands on 7 or 8 by luck of phase, which is a coin flip to hand a
+    // reviewer, not a pass. At 10s this list costs 6/min and the surface sits
+    // at 39 with a real request of headroom.
+    //
+    // Why here and not PlanKanban's PLAN_POLL_MS, which the brief nominated:
+    // 30s → 60s was tried and measured, and it FAILS P1 ("drilling to depth 1
+    // does not raise the request total"). nav-walk samples 30s windows and
+    // doubles them, so any period ≥ 30s lands 0 or 2 requests depending on
+    // phase and the three windows stop agreeing — at_rest 38 vs depth_1 40.
+    // Only a poll faster than that window stays uniform, so the buy-back had
+    // to come from a sub-30s poll, and this is the cheapest one: the rail is a
+    // list of chat titles that changes when a chat is created, renamed or
+    // archived, and every one of those already invalidates ["chat","list"]
+    // directly. The ceiling was not raised and no gate was deleted.
+    refetchInterval: 10_000,
   });
   /* ── selId and navStack: two different questions (U21, 13 §2) ───────────
    *

@@ -85,7 +85,35 @@ import projects from "../../forge-control/src/routes/projects.ts";
 import capabilities from "../../forge-control/src/routes/capabilities.ts";
 import secrets from "../../forge-control/src/routes/secrets.ts";
 
-const PORT = 7798;
+/**
+ * 7798 by default, overridable so a round can run its OWN instance instead of
+ * borrowing whichever one is already up (round 802).
+ *
+ * This matters specifically because of the /api/secrets note above. A harness
+ * started by an earlier round inherited that round's `SECRET_STORE_DIR` — very
+ * possibly the default, i.e. Konrad's real credentials. A later round that
+ * needs the WRITE paths cannot tell from the outside which store it would be
+ * writing into, and must not kill someone else's server to find out. So it
+ * starts its own on a free port with `SECRET_STORE_DIR` pointed at /tmp:
+ *
+ *   export SECRET_STORE_DIR=/tmp/p800-store-802
+ *   SERVE_V3_PORT=7813 ./node_modules/.bin/tsx ../scripts/checks/serve-v3-7798.ts
+ *
+ * A non-numeric or out-of-range value is a hard error rather than a silent
+ * fall back to 7798 — falling back would quietly point the writes at the very
+ * server this override exists to avoid.
+ */
+const PORT = ((): number => {
+  const raw = process.env.SERVE_V3_PORT;
+  if (raw === undefined || raw === "") return 7798;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1024 || n > 65535) {
+    throw new Error(
+      `SERVE_V3_PORT must be an integer in [1024, 65535]; got ${JSON.stringify(raw)}`,
+    );
+  }
+  return n;
+})();
 const HOST = "127.0.0.1";
 const UPSTREAM = process.env.FORGE_CONTROL_URL ?? "http://127.0.0.1:7700";
 
