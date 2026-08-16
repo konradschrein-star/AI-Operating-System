@@ -8,7 +8,7 @@
  * poll of `GET /api/secrets`. That is wrong twice over. Konrad asked for the
  * panel to open "automatically ... and there should be text appearing in
  * there" the moment an agent asks — a 60s poll makes him wait up to a minute
- * for an agent that is BLOCKED on him. And it spent 1 req/min out of a surface
+ * for an agent that is BLOCKED on him. And it took 1 req/min out of a surface
  * measured at 39/min against phase 600's ≤40 ceiling (`nav-walk.cjs:310`),
  * which had to be bought back by slowing an unrelated poll. Server push costs
  * neither: one connection, zero requests at rest, arrival in ~50ms.

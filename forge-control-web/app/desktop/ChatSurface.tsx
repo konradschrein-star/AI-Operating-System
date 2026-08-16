@@ -82,8 +82,8 @@ import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
 /* ---------------------------------------------------------------------------
  * U30 — the two-way secret sharer's composer-side wiring.
  *
- * ROUND 808: THE POLL IS GONE. Phase 800 spent 1 req/min on a 60s poll of
- * `GET /api/secrets` and had to buy it back by slowing the chat-list poll,
+ * ROUND 808: THE POLL IS GONE. Phase 800 gave 1 req/min of the request budget
+ * to a 60s poll of `GET /api/secrets`, bought back by slowing the chat-list poll,
  * because the surface sits at 39/min against phase 600's ≤40 ceiling
  * (`nav-walk.cjs:310`). It also made Konrad wait up to a minute for a panel he
  * asked to open the moment an agent asks. Both are fixed by the same move
