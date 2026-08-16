@@ -111,8 +111,16 @@ gate_sh "token purity — round 808's own files" \
 
 gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 
+# OPERATOR WAIVER 2026-08-16 — FileExplorerPanel.tsx removed from this list.
+# The Files ban existed only to avoid colliding with project files-pane-fast-light,
+# which COMPLETED 2026-08-05. Konrad asked for open-document-in-a-new-tab; FilePreview
+# is defined inside FileExplorerPanel.tsx with no injection slot, so the feature is
+# impossible without touching it. The operator authorised the exact approach (extract
+# FilePreview verbatim + two-line panel edit) BEFORE it was written; landed in fc842d3.
+# Scope of the waiver: FileExplorerPanel.tsx ONLY. VaultFileList* and routes/files
+# remain forbidden, as do all engine files.
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
-  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects|FileExplorerPanel|VaultFileList|routes/files' \
+  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects|VaultFileList|routes/files' \
    && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }"
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
