@@ -587,3 +587,18 @@ app, not just this one.
    `phase800-canvas-theme-light.png`.
 4. **`canvas-open.cjs` records the worktree's `head_sha`, not the build's.**
    Fix before anyone cites it as provenance.
+
+## 8.7 A collision, and the fix
+
+Round 806's first evidence commit **overwrote round 801's committed
+`canvas-open-before-run2.json`**: the instrument's default output name is
+derived from `PHASE800_OUT_FILE`, and "before-run2" is a name two different
+rounds will both reach for. Round 801's file has been restored from `7549b13`
+and verified byte-identical; every round-806 output is re-filed under a
+`canvas-open-806-*` prefix.
+
+The instrument is *designed* to be non-destructive — it writes to
+`/tmp/phase800-out` unless `--write` — and it was run that way. The clobber
+happened afterwards, in the copy-into-the-repo step, which has no such guard.
+Worth a `--write`-style refusal on the copy path before the next round trips
+over it.

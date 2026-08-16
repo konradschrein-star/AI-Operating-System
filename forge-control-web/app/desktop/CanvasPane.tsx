@@ -60,7 +60,7 @@ import { statCanvas, subscribeCanvas } from "./canvasLive";
  * measurement outranks my reasoning."
  *
  * Evidence: throttled-tradeoff.json, desktop-load-{before,after}-run{1,2}.json,
- * canvas-open-{before,after}-run{1..4}.json, all in
+ * canvas-open-806-*.json, all in
  * docs/plan/artifacts/phase800/, written up in canvas-perf.md §8.
  */
 import "@excalidraw/excalidraw/index.css";
