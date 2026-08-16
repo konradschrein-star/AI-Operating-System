@@ -1,0 +1,638 @@
+{
+  "protocol": "PROTOCOL 4 — both themes + the state matrix",
+  "started_at": "2026-08-16T17:12:10.203Z",
+  "finished_at": "2026-08-16T17:13:28.648Z",
+  "base_url": "http://127.0.0.1:7817",
+  "api_url": "http://127.0.0.1:7814",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "theme_mechanism": "document.documentElement.dataset.theme — the app's own (app/theme.css:85)",
+  "shots": [
+    {
+      "view": "secret-answer",
+      "theme": "dark",
+      "file": "phase800-secret-answer-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 326791
+    },
+    {
+      "view": "secret-badge",
+      "theme": "dark",
+      "file": "phase800-secret-badge-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 355445
+    },
+    {
+      "view": "composer-min",
+      "theme": "dark",
+      "file": "phase800-composer-min-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 354971
+    },
+    {
+      "view": "composer-cap",
+      "theme": "dark",
+      "file": "phase800-composer-cap-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 341628
+    },
+    {
+      "view": "engine-ramp",
+      "theme": "dark",
+      "file": "phase800-engine-ramp-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 358907
+    },
+    {
+      "view": "secret-freeform",
+      "theme": "dark",
+      "file": "phase800-secret-freeform-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 323865
+    },
+    {
+      "view": "canvas",
+      "theme": "dark",
+      "file": "phase800-canvas-dark.png",
+      "background": "rgb(0, 0, 0)",
+      "theme_attr": "dark",
+      "bytes": 311098
+    },
+    {
+      "view": "secret-answer",
+      "theme": "light",
+      "file": "phase800-secret-answer-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 328996
+    },
+    {
+      "view": "secret-badge",
+      "theme": "light",
+      "file": "phase800-secret-badge-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 359594
+    },
+    {
+      "view": "composer-min",
+      "theme": "light",
+      "file": "phase800-composer-min-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 359020
+    },
+    {
+      "view": "composer-cap",
+      "theme": "light",
+      "file": "phase800-composer-cap-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 345484
+    },
+    {
+      "view": "engine-ramp",
+      "theme": "light",
+      "file": "phase800-engine-ramp-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 362714
+    },
+    {
+      "view": "secret-freeform",
+      "theme": "light",
+      "file": "phase800-secret-freeform-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 325671
+    },
+    {
+      "view": "canvas",
+      "theme": "light",
+      "file": "phase800-canvas-light.png",
+      "background": "rgb(247, 247, 245)",
+      "theme_attr": "light",
+      "bytes": 313265
+    }
+  ],
+  "effort_ramp_by_theme": {
+    "dark": {
+      "low": {
+        "color": "rgb(138, 138, 144)",
+        "borderColor": "rgb(138, 138, 144)",
+        "background": "rgba(0, 0, 0, 0)"
+      },
+      "medium": {
+        "color": "rgb(138, 138, 144)",
+        "borderColor": "rgb(79, 176, 196)",
+        "background": "rgba(0, 0, 0, 0)"
+      },
+      "high": {
+        "color": "rgb(216, 194, 74)",
+        "borderColor": "rgb(216, 194, 74)",
+        "background": "rgb(20, 14, 8)"
+      },
+      "xhigh": {
+        "color": "rgb(138, 138, 144)",
+        "borderColor": "rgb(207, 99, 96)",
+        "background": "rgba(0, 0, 0, 0)"
+      }
+    },
+    "light": {
+      "low": {
+        "color": "rgb(108, 108, 116)",
+        "borderColor": "rgb(108, 108, 116)",
+        "background": "rgba(0, 0, 0, 0)"
+      },
+      "medium": {
+        "color": "rgb(108, 108, 116)",
+        "borderColor": "rgb(31, 127, 147)",
+        "background": "rgba(0, 0, 0, 0)"
+      },
+      "high": {
+        "color": "rgb(138, 117, 19)",
+        "borderColor": "rgb(138, 117, 19)",
+        "background": "rgb(251, 243, 232)"
+      },
+      "xhigh": {
+        "color": "rgb(108, 108, 116)",
+        "borderColor": "rgb(178, 60, 57)",
+        "background": "rgba(0, 0, 0, 0)"
+      }
+    }
+  },
+  "checks": [
+    {
+      "name": "secret-answer/dark — the panel is in ANSWER mode",
+      "ok": true,
+      "actual": "answer request",
+      "expected": "answer request"
+    },
+    {
+      "name": "secret-answer/dark — the agent's note is on screen",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-answer/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-answer/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "secret-badge/dark — the badge survives closing the panel",
+      "ok": true,
+      "actual": "secret1",
+      "expected": "secret1"
+    },
+    {
+      "name": "secret-badge/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-badge/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "composer-min/dark — the composer is at its resting height",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "composer-min/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-min/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "composer-cap/dark — the composer is at the 10-row cap",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "composer-cap/dark — and it is scrolling internally",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-cap/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-cap/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "engine-ramp/dark — all four effort levels are on screen",
+      "ok": true,
+      "actual": [
+        "high",
+        "low",
+        "medium",
+        "xhigh"
+      ],
+      "expected": [
+        "high",
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "name": "engine-ramp/dark — all four ramp BORDER colours are DISTINCT",
+      "ok": true,
+      "actual": 4,
+      "expected": 4
+    },
+    {
+      "name": "engine-ramp/dark — chip text colours (one ramped, three muted by design)",
+      "note": [
+        "rgb(138, 138, 144)",
+        "rgb(138, 138, 144)",
+        "rgb(216, 194, 74)",
+        "rgb(138, 138, 144)"
+      ]
+    },
+    {
+      "name": "engine-ramp/dark — exactly one chip wears the ramp in its text (the selected one)",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "engine-ramp/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "engine-ramp/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "secret-freeform/dark — no badge is showing",
+      "ok": true,
+      "actual": "secret",
+      "expected": "secret"
+    },
+    {
+      "name": "secret-freeform/dark — the panel is in FREE-FORM mode",
+      "ok": true,
+      "actual": "store secret",
+      "expected": "store secret"
+    },
+    {
+      "name": "secret-freeform/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-freeform/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "canvas/dark — the Excalidraw editor is mounted",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "canvas/dark — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "canvas/dark — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "dark",
+      "expected": "dark"
+    },
+    {
+      "name": "secret-answer/light — the panel is in ANSWER mode",
+      "ok": true,
+      "actual": "answer request",
+      "expected": "answer request"
+    },
+    {
+      "name": "secret-answer/light — the agent's note is on screen",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-answer/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-answer/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "secret-badge/light — the badge survives closing the panel",
+      "ok": true,
+      "actual": "secret1",
+      "expected": "secret1"
+    },
+    {
+      "name": "secret-badge/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-badge/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "composer-min/light — the composer is at its resting height",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "composer-min/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-min/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "composer-cap/light — the composer is at the 10-row cap",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "composer-cap/light — and it is scrolling internally",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-cap/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-cap/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "engine-ramp/light — all four effort levels are on screen",
+      "ok": true,
+      "actual": [
+        "high",
+        "low",
+        "medium",
+        "xhigh"
+      ],
+      "expected": [
+        "high",
+        "low",
+        "medium",
+        "xhigh"
+      ]
+    },
+    {
+      "name": "engine-ramp/light — all four ramp BORDER colours are DISTINCT",
+      "ok": true,
+      "actual": 4,
+      "expected": 4
+    },
+    {
+      "name": "engine-ramp/light — chip text colours (one ramped, three muted by design)",
+      "note": [
+        "rgb(108, 108, 116)",
+        "rgb(108, 108, 116)",
+        "rgb(138, 117, 19)",
+        "rgb(108, 108, 116)"
+      ]
+    },
+    {
+      "name": "engine-ramp/light — exactly one chip wears the ramp in its text (the selected one)",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "engine-ramp/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "engine-ramp/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "secret-freeform/light — no badge is showing",
+      "ok": true,
+      "actual": "secret",
+      "expected": "secret"
+    },
+    {
+      "name": "secret-freeform/light — the panel is in FREE-FORM mode",
+      "ok": true,
+      "actual": "store secret",
+      "expected": "store secret"
+    },
+    {
+      "name": "secret-freeform/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-freeform/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "canvas/light — the Excalidraw editor is mounted",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "canvas/light — the PNG was written and is non-trivial",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "canvas/light — the app's own theme attribute is set",
+      "ok": true,
+      "actual": "light",
+      "expected": "light"
+    },
+    {
+      "name": "console errors",
+      "note": []
+    },
+    {
+      "name": "no console error across the whole capture",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "secret-answer — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-badge — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-min — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "composer-cap — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "engine-ramp — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "secret-freeform — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "canvas — dark and light sample DIFFERENT backgrounds",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the effort ramp is not one hardcoded palette in both themes",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "effort ramp, measured per theme",
+      "note": {
+        "dark": {
+          "low": {
+            "color": "rgb(138, 138, 144)",
+            "borderColor": "rgb(138, 138, 144)",
+            "background": "rgba(0, 0, 0, 0)"
+          },
+          "medium": {
+            "color": "rgb(138, 138, 144)",
+            "borderColor": "rgb(79, 176, 196)",
+            "background": "rgba(0, 0, 0, 0)"
+          },
+          "high": {
+            "color": "rgb(216, 194, 74)",
+            "borderColor": "rgb(216, 194, 74)",
+            "background": "rgb(20, 14, 8)"
+          },
+          "xhigh": {
+            "color": "rgb(138, 138, 144)",
+            "borderColor": "rgb(207, 99, 96)",
+            "background": "rgba(0, 0, 0, 0)"
+          }
+        },
+        "light": {
+          "low": {
+            "color": "rgb(108, 108, 116)",
+            "borderColor": "rgb(108, 108, 116)",
+            "background": "rgba(0, 0, 0, 0)"
+          },
+          "medium": {
+            "color": "rgb(108, 108, 116)",
+            "borderColor": "rgb(31, 127, 147)",
+            "background": "rgba(0, 0, 0, 0)"
+          },
+          "high": {
+            "color": "rgb(138, 117, 19)",
+            "borderColor": "rgb(138, 117, 19)",
+            "background": "rgb(251, 243, 232)"
+          },
+          "xhigh": {
+            "color": "rgb(108, 108, 116)",
+            "borderColor": "rgb(178, 60, 57)",
+            "background": "rgba(0, 0, 0, 0)"
+          }
+        }
+      }
+    },
+    {
+      "name": "14 PNGs were written",
+      "ok": true,
+      "actual": 14,
+      "expected": 14
+    }
+  ],
+  "failures": 0
+}

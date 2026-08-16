@@ -1,0 +1,618 @@
+{
+  "protocol": "PROTOCOL 1 — composer autogrow, numeric (U28/U32)",
+  "started_at": "2026-08-16T16:57:04.048Z",
+  "finished_at": "2026-08-16T16:57:26.597Z",
+  "base_url": "http://127.0.0.1:7817",
+  "api_url": "http://127.0.0.1:7814",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "config": {
+    "minRows": 2,
+    "maxRows": 10
+  },
+  "hypothesis_r801": {
+    "fontSizePx": 13,
+    "lineHeightPx": 19.5,
+    "paddingPx": 20,
+    "borderPx": 2,
+    "boxSizing": "border-box",
+    "restingPx": 61,
+    "capPx": 217
+  },
+  "measured_metrics": {
+    "fontSizePx": 13,
+    "lineHeightPx": 19.5,
+    "lineHeightRaw": "19.5px",
+    "paddingTopPx": 10,
+    "paddingBottomPx": 10,
+    "borderTopPx": 1,
+    "borderBottomPx": 1,
+    "boxSizing": "border-box",
+    "rowsAttr": 2
+  },
+  "measured_boxes": {
+    "rows_1": {
+      "offsetHeight": 61,
+      "clientHeight": 59,
+      "scrollHeight": 59,
+      "styleHeight": "61px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 61,
+      "rectWidth": 393.219
+    },
+    "rows_2": {
+      "offsetHeight": 61,
+      "clientHeight": 59,
+      "scrollHeight": 59,
+      "styleHeight": "61px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 61,
+      "rectWidth": 393.219
+    },
+    "rows_5": {
+      "offsetHeight": 120,
+      "clientHeight": 118,
+      "scrollHeight": 118,
+      "styleHeight": "120px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 120,
+      "rectWidth": 393.219
+    },
+    "rows_10": {
+      "offsetHeight": 217,
+      "clientHeight": 215,
+      "scrollHeight": 215,
+      "styleHeight": "217px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 217,
+      "rectWidth": 393.219
+    },
+    "rows_11": {
+      "offsetHeight": 217,
+      "clientHeight": 215,
+      "scrollHeight": 235,
+      "styleHeight": "217px",
+      "overflowY": "auto",
+      "scrollbarPresent": true,
+      "rectHeight": 217,
+      "rectWidth": 393.219
+    },
+    "rows_25": {
+      "offsetHeight": 217,
+      "clientHeight": 215,
+      "scrollHeight": 508,
+      "styleHeight": "217px",
+      "overflowY": "auto",
+      "scrollbarPresent": true,
+      "rectHeight": 217,
+      "rectWidth": 393.219
+    },
+    "after_clear": {
+      "offsetHeight": 61,
+      "clientHeight": 59,
+      "scrollHeight": 59,
+      "styleHeight": "61px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 61,
+      "rectWidth": 393.219
+    },
+    "after_shift_enter": {
+      "offsetHeight": 61,
+      "clientHeight": 59,
+      "scrollHeight": 59,
+      "styleHeight": "61px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 61,
+      "rectWidth": 393.219
+    },
+    "after_send": {
+      "offsetHeight": 61,
+      "clientHeight": 59,
+      "scrollHeight": 59,
+      "styleHeight": "61px",
+      "overflowY": "hidden",
+      "scrollbarPresent": false,
+      "rectHeight": 61,
+      "rectWidth": 393.219
+    }
+  },
+  "send_button_u32": {
+    "at_open_box": {
+      "x": 1103.390625,
+      "y": 823,
+      "width": 57.609375,
+      "height": 37
+    },
+    "at_open_style": {
+      "color": "rgb(86, 86, 92)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "border": "1px solid rgb(28, 28, 31)",
+      "padding": "10px 14px 10px 14px",
+      "fontSize": "11.5px",
+      "text": "send"
+    },
+    "at_min_box": {
+      "x": 1103.390625,
+      "y": 823,
+      "width": 57.609375,
+      "height": 37
+    },
+    "at_min_style": {
+      "color": "rgb(91, 141, 239)",
+      "backgroundColor": "rgb(14, 19, 32)",
+      "border": "1px solid rgb(91, 141, 239)",
+      "padding": "10px 14px 10px 14px",
+      "fontSize": "11.5px",
+      "text": "send"
+    },
+    "at_cap_box": {
+      "x": 1103.390625,
+      "y": 823,
+      "width": 57.609375,
+      "height": 37
+    },
+    "at_cap_style": {
+      "color": "rgb(91, 141, 239)",
+      "backgroundColor": "rgb(14, 19, 32)",
+      "border": "1px solid rgb(91, 141, 239)",
+      "padding": "10px 14px 10px 14px",
+      "fontSize": "11.5px",
+      "text": "send"
+    },
+    "after_send_box": {
+      "x": 1103.390625,
+      "y": 823,
+      "width": 57.609375,
+      "height": 37
+    },
+    "after_send_style": {
+      "color": "rgb(86, 86, 92)",
+      "backgroundColor": "rgba(0, 0, 0, 0)",
+      "border": "1px solid rgb(28, 28, 31)",
+      "padding": "10px 14px 10px 14px",
+      "fontSize": "11.5px",
+      "text": "send"
+    },
+    "pixel_diffs": {
+      "noise_control": {
+        "sameSize": true,
+        "differingPixels": 0,
+        "totalPixels": 2146,
+        "maxChannelDelta": 0
+      },
+      "min_vs_cap": {
+        "sameSize": true,
+        "differingPixels": 40,
+        "totalPixels": 2146,
+        "maxChannelDelta": 2
+      },
+      "empty_vs_typed_SENSITIVITY": {
+        "sameSize": true,
+        "differingPixels": 2122,
+        "totalPixels": 2146,
+        "maxChannelDelta": 208
+      },
+      "open_vs_after_send": {
+        "sameSize": true,
+        "differingPixels": 1982,
+        "totalPixels": 2146,
+        "maxChannelDelta": 238
+      }
+    }
+  },
+  "send_interception": {
+    "declared": true,
+    "why": "the fixture chat is Konrad's real manager chat; a delivered POST would write a test message into his production thread and wake its executor",
+    "what": "POST /api/proxy/chat/:id/message routed and aborted; the request itself is the assertion",
+    "captured": {
+      "method": "POST",
+      "url": "http://127.0.0.1:7817/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/message",
+      "postData": "{\"content\":\"sendtest0\\nsendtest1\\nsendtest2\\nsendtest3\\nsendtest4\\nsendtest5\\nsendtest6\\nsendtest7\\nsendtest8\\nsendtest9\\nsendtest10\\nsendtest11\\nsendtest12\\nsendtest13\\nsendtest14\\nsendtest15\\nsendtest16\\nsendtest17\\nsendtest18\\nsendtest19\\nsendtest20\\nsendtest21\\nsendtest22\\nsendtest23\\nsendtest24\"}"
+    }
+  },
+  "checks": [
+    {
+      "name": "hook composer-input resolved to exactly 1 node",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "hook composer-send resolved to exactly 1 node",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "composer-input selector used",
+      "note": "textarea[placeholder*=\"Enter to send\"]"
+    },
+    {
+      "name": "composer-send selector used",
+      "note": "button:text-is(\"send\")"
+    },
+    {
+      "name": "measured metrics",
+      "note": {
+        "fontSizePx": 13,
+        "lineHeightPx": 19.5,
+        "lineHeightRaw": "19.5px",
+        "paddingTopPx": 10,
+        "paddingBottomPx": 10,
+        "borderTopPx": 1,
+        "borderBottomPx": 1,
+        "boxSizing": "border-box",
+        "rowsAttr": 2
+      }
+    },
+    {
+      "name": "the textarea's rows attribute is minRows",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "line-height is a usable number (not `normal`)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "box-sizing is border-box",
+      "ok": true,
+      "actual": "border-box",
+      "expected": "border-box"
+    },
+    {
+      "name": "MEASURED font-size == r801 hypothesis",
+      "ok": true,
+      "actual": 13,
+      "expected": 13
+    },
+    {
+      "name": "MEASURED line-height == r801 hypothesis",
+      "ok": true,
+      "actual": 19.5,
+      "expected": 19.5
+    },
+    {
+      "name": "MEASURED padding (top+bottom) == r801 hypothesis",
+      "ok": true,
+      "actual": 20,
+      "expected": 20
+    },
+    {
+      "name": "MEASURED border (top+bottom) == r801 hypothesis",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "MEASURED 2-row minimum == r801's 61px",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "MEASURED 10-row cap == r801's 217px",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "1 line rests at the 2-row minimum (px)",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "1 line does not scroll",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "2 lines == the 2-row minimum (px)",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "5 lines is STRICTLY taller than 1 line",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "5 lines is below the cap",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "5 lines does not scroll",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "10 lines == the cap (px)",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "10 lines does NOT scroll (exactly at the cap)",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "11 lines == the cap (px)",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "11 lines DOES scroll (one row over the cap)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "25 lines == the cap (px)",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "25 lines scrolls internally (scrollHeight > clientHeight)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "25 lines sets overflow-y auto",
+      "ok": true,
+      "actual": "auto",
+      "expected": "auto"
+    },
+    {
+      "name": "the cap equals 10*line-height + padding + border within 1px",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "clearing returns to the EXACT 2-row minimum",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "cleared composer does not scroll",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "cleared composer's overflow-y is hidden",
+      "ok": true,
+      "actual": "hidden",
+      "expected": "hidden"
+    },
+    {
+      "name": "Shift+Enter inserted a newline",
+      "ok": true,
+      "actual": "line one\nline two",
+      "expected": "line one\nline two"
+    },
+    {
+      "name": "Shift+Enter did NOT send",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "two lines still rest at the 2-row minimum",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "composer is at the cap immediately before sending",
+      "ok": true,
+      "actual": 217,
+      "expected": 217
+    },
+    {
+      "name": "Enter attempted exactly one send",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "the send was a POST",
+      "ok": true,
+      "actual": "POST",
+      "expected": "POST"
+    },
+    {
+      "name": "the send carried the typed text",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the composer is empty after sending",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "sending returns to the EXACT 2-row minimum",
+      "ok": true,
+      "actual": 61,
+      "expected": 61
+    },
+    {
+      "name": "the composer does not scroll after sending",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "U32 — send button box is unchanged at the cap",
+      "ok": true,
+      "actual": {
+        "x": 1103.390625,
+        "y": 823,
+        "width": 57.609375,
+        "height": 37
+      },
+      "expected": {
+        "x": 1103.390625,
+        "y": 823,
+        "width": 57.609375,
+        "height": 37
+      }
+    },
+    {
+      "name": "U32 — send button box is unchanged after the send reset",
+      "ok": true,
+      "actual": {
+        "x": 1103.390625,
+        "y": 823,
+        "width": 57.609375,
+        "height": 37
+      },
+      "expected": {
+        "x": 1103.390625,
+        "y": 823,
+        "width": 57.609375,
+        "height": 37
+      }
+    },
+    {
+      "name": "U32 — send button box is unchanged at open",
+      "ok": true,
+      "actual": {
+        "x": 1103.390625,
+        "y": 823,
+        "width": 57.609375,
+        "height": 37
+      },
+      "expected": {
+        "x": 1103.390625,
+        "y": 823,
+        "width": 57.609375,
+        "height": 37
+      }
+    },
+    {
+      "name": "U32 — send button computed style is unchanged from rest to cap",
+      "ok": true,
+      "actual": {
+        "color": "rgb(91, 141, 239)",
+        "backgroundColor": "rgb(14, 19, 32)",
+        "border": "1px solid rgb(91, 141, 239)",
+        "padding": "10px 14px 10px 14px",
+        "fontSize": "11.5px",
+        "text": "send"
+      },
+      "expected": {
+        "color": "rgb(91, 141, 239)",
+        "backgroundColor": "rgb(14, 19, 32)",
+        "border": "1px solid rgb(91, 141, 239)",
+        "padding": "10px 14px 10px 14px",
+        "fontSize": "11.5px",
+        "text": "send"
+      }
+    },
+    {
+      "name": "U32 — min-vs-cap pixel delta is within this run's own noise floor",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "U32 — the instrument can still SEE a real change (empty vs typed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the aborted send raised the app's own 'Message not sent' toast",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "post-send button style is identical to at-open (the box is unaffected by the toast)",
+      "ok": true,
+      "actual": {
+        "color": "rgb(86, 86, 92)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "border": "1px solid rgb(28, 28, 31)",
+        "padding": "10px 14px 10px 14px",
+        "fontSize": "11.5px",
+        "text": "send"
+      },
+      "expected": {
+        "color": "rgb(86, 86, 92)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "border": "1px solid rgb(28, 28, 31)",
+        "padding": "10px 14px 10px 14px",
+        "fontSize": "11.5px",
+        "text": "send"
+      }
+    },
+    {
+      "name": "post-send pixel delta, CONTAMINATED by the declared abort's toast",
+      "note": {
+        "sameSize": true,
+        "differingPixels": 1982,
+        "totalPixels": 2146,
+        "maxChannelDelta": 238
+      }
+    },
+    {
+      "name": "the toast's rect",
+      "note": {
+        "x": 1019,
+        "y": 798,
+        "width": 392,
+        "height": 30
+      }
+    },
+    {
+      "name": "FINDING — the error toast overlaps the send button's rect",
+      "note": true
+    },
+    {
+      "name": "console errors (excluding the declared send abort)",
+      "note": []
+    },
+    {
+      "name": "expected_send_abort",
+      "note": [
+        "(abort surfaced as a request failure, not a 4xx)"
+      ]
+    },
+    {
+      "name": "no unexpected console error",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    }
+  ],
+  "failures": 0
+}

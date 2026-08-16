@@ -1,0 +1,349 @@
+================================================================================
+ ROUND 804 — UNIVERSAL GATES, verbatim
+ tree: worktree WORKING COPY of project/8ea0cc08 @ 90700a1982efcf3b11823f894907ec9b40e77c51
+ NOTE: the working copy carries round 803's UNCOMMITTED CanvasPane.tsx +
+       ExcalidrawEditor.tsx. Everything below was run against that tree.
+ date: 2026-08-16T19:29:26+02:00
+================================================================================
+
+########## GATE 1 — npx tsc --noEmit, forge-control ##########
+EXIT=0
+
+########## GATE 2 — npx tsc --noEmit, forge-control-web ##########
+EXIT=0
+
+########## GATE 3 — NODE_ENV=production pnpm build, forge-control-web ##########
+   ▲ Next.js 15.1.3
+ ✓ Compiled successfully
+   Generating static pages (0/9) ...
+   Generating static pages (2/9) 
+   Generating static pages (4/9) 
+   Generating static pages (6/9) 
+ ✓ Generating static pages (9/9)
+Route (app)                              Size     First Load JS
+EXIT=0  (full log: /tmp/p800-804-gatebuild.log)
+
+########## GATE 4 — token purity over THIS ROUND'S touched files ##########
+# every file round 804 wrote lives under docs/plan/artifacts/phase800/
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' docs/plan/artifacts/phase800/*.cjs
+docs/plan/artifacts/phase800/lib-804.cjs:109: * no `rgba(`, no `flex`, no `min-width`, no pixel value. They are the
+
+# THE ONE HIT IS A COMMENT that names the forbidden pattern in order to
+# forbid it (lib-804.cjs:109, 'no `rgba(`, no `flex`...'). Same class as
+# phase 700's declared single-comment hit. The stricter grep, excluding
+# comment lines, is empty:
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(' docs/plan/artifacts/phase800/*.cjs | grep -vE ':[0-9]+: *\*'
+(no hits — CLEAN)
+
+########## GATE 5 — forbidden-file diff ##########
+$ git diff --name-only ec2c799..HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|FileExplorerPanel|VaultFileList|routes/files'
+forge-control/src/db/projects.ts
+forge-control/src/executor.ts
+forge-control/src/lib/cc-runner.test.ts
+forge-control/src/lib/cc-runner.ts
+forge-control/src/lib/project-tick.test.ts
+forge-control/src/lib/project-tick.ts
+
+# ^ RED, AND THE COMMAND IS THE WRONG INSTRUMENT — see README §5.2.
+# Round 802 merged main into this branch, so ec2c799..HEAD now contains
+# main's OWN engine work. Every commit above is reachable from main.
+# The correct question — does this BRANCH change them — is three-dot:
+$ git diff --name-only main...HEAD -- <the six forbidden paths>
+(empty above = the branch adds NO change of its own to any forbidden file)
+
+$ git status --porcelain | grep -E '<forbidden>'   # working tree
+(no hits — CLEAN)
+
+########## GATE 6 — forge-control/ untouched by round 804 ##########
+(empty = clean)
+
+########## GATE 7 — scripts/checks/dollar-sweep.sh ##########
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:242
+            help: "list guardrails (spend caps, kill switches) and their current values",
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:259
+            help: "change a spend-cap guardrail · /cap spend.per_run_cap 75",
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+ALLOW   forge-control-web/app/desktop/chat/slash-registry.ts:263
+                ctx.sys('usage: /cap <rule_id> <euros> — e.g. "/cap spend.per_run_cap 75". Run /rules to see rule ids.');
+        → /rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
+
+primary gate: 49 hit(s), one or more UNLISTED — see FAIL lines above.
+
+── 2. REVIEWER'S LITERAL §6 COMMAND ── grep -rniE "usd|spend" forge-control-web/app --include="*.tsx" -l
+
+ALLOWLISTED  forge-control-web/app/Providers.tsx
+ALLOWLISTED  forge-control-web/app/MobileApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/SkillsSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ProjectsSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/MoneySurface.tsx
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: FAIL — unlisted currency-shaped hit(s) in forge-control-web/app. See section 1 above.
+EXIT=1  — ** RED **
+
+# THE TWO UNLISTED HITS, DIAGNOSED (README §5.3). Both are COMMENTS; neither
+# renders a currency value anywhere:
+#   _ui/ResizableSplit.tsx:9  '…the chat surface SPENT 904px on chrome…'
+#      → pixels, not money. Introduced by 83f0c62, which is on MAIN.
+#   chat/effort-ramp.ts:9     '…it should read as "you are SPENDING real tokens"'
+#      → prose about tokens, not money. Introduced by 206323d — PHASE 800's
+#        OWN round 801. This gate has been red since r801 and no round
+#        noticed. It is phase 800's to fix, and it is a two-line allowlist
+#        entry, not a code change.
+# Proof it is not round 804's doing — the same gate on a clean export of
+# committed HEAD fails identically:
+FAIL    forge-control-web/app/desktop/_ui/ResizableSplit.tsx:9
+FAIL    forge-control-web/app/desktop/chat/effort-ramp.ts:9
+dollar-sweep.sh: FAIL — unlisted currency-shaped hit(s) in forge-control-web/app. See section 1 above.
+EXIT=1
+
+########## GATE 8 — check-composer-v3.ts ##########
+# operator correction: forge-control-web has NO tsx binary; use forge-control's.
+$ cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-composer-v3.ts
+PASS  rowsToPx: 2 rows (border-box)
+PASS  rowsToPx: 10 rows (border-box)
+PASS  rowsToPx: content-box excludes padding + border
+PASS  normaliseScrollHeight: border-box adds the border back
+PASS  normaliseScrollHeight: content-box subtracts the padding
+PASS  clampAutogrow: empty draft → exactly minPx, no scrollbar (reset-on-send)
+PASS  clampAutogrow: one line → still minPx (a 1-row box never renders)
+PASS  clampAutogrow: two lines → the resting height itself
+PASS  clampAutogrow: five lines → grown, still no scrollbar
+PASS  clampAutogrow: exactly at the cap → maxPx, NO scrollbar
+PASS  clampAutogrow: one px over the cap → maxPx WITH a scrollbar
+PASS  clampAutogrow: 25 lines → pinned at the cap, scrolls internally
+PASS  clampAutogrow: absurd paste (1000 lines) → still exactly the cap
+PASS  clampAutogrow: zero measurement (unlaid-out element) → minPx, never 0
+PASS  clampAutogrow: NaN measurement throws (clampAutogrow: non-finite input (measuredPx=NaN, minPx=61, maxPx=217))
+PASS  clampAutogrow: inverted bounds throw (clampAutogrow: maxPx (61) is below minPx (217))
+PASS  ramp order == ENGINE_EFFORT_CHOICES (no drift between api.ts and the ramp)
+PASS  ramp order is low < medium < high < xhigh (calm → hot)
+PASS  ramp table covers every choice exactly once (no extras, no gaps)
+PASS  ramp table has no duplicate keys
+PASS  ramp["low"] exists
+PASS  ramp["low"] has exactly {fg,border,bg}
+PASS  ramp["low"].fg is a token reference (NFU1)
+PASS  ramp["low"].border is a token reference (NFU1)
+PASS  ramp["low"].bg is a token reference (NFU1)
+PASS  effortRamp("low") returns that entry
+PASS  ramp["medium"] exists
+PASS  ramp["medium"] has exactly {fg,border,bg}
+PASS  ramp["medium"].fg is a token reference (NFU1)
+PASS  ramp["medium"].border is a token reference (NFU1)
+PASS  ramp["medium"].bg is a token reference (NFU1)
+PASS  effortRamp("medium") returns that entry
+PASS  ramp["high"] exists
+PASS  ramp["high"] has exactly {fg,border,bg}
+PASS  ramp["high"].fg is a token reference (NFU1)
+PASS  ramp["high"].border is a token reference (NFU1)
+PASS  ramp["high"].bg is a token reference (NFU1)
+PASS  effortRamp("high") returns that entry
+PASS  ramp["xhigh"] exists
+PASS  ramp["xhigh"] has exactly {fg,border,bg}
+PASS  ramp["xhigh"].fg is a token reference (NFU1)
+PASS  ramp["xhigh"].border is a token reference (NFU1)
+PASS  ramp["xhigh"].bg is a token reference (NFU1)
+PASS  effortRamp("xhigh") returns that entry
+PASS  every rung has a distinct fg
+PASS  every rung has a distinct selected fill
+PASS  effortRamp('max') falls to the calm rung
+PASS  effortRamp('') falls to the calm rung
+
+OK — 9 clamp cases + ramp table clean
+EXIT=0
+
+########## GATE 9 — check-secret-requests.ts ##########
+PASS  empty list → no requests
+PASS  empty list → no auto-open
+PASS  no pending rows → no requests
+PASS  no pending rows → no auto-open
+PASS  one pending → mapped shape (bytes dropped, no value anywhere)
+PASS  one pending → auto-open is that one
+PASS  several pending → most-recently-updated first
+PASS  identical timestamps → deterministic name-ascending tie-break
+PASS  several pending → auto-open is the newest
+PASS  input list is not mutated by sorting
+PASS  pending with null note → note stays null
+PASS  pending with the note key absent entirely → note null, no crash
+PASS  empty-string note → null, not ""
+PASS  newest dismissed → auto-open falls through to the next
+PASS  all dismissed → null
+PASS  a dismissed name stays dismissed when a NEWER request arrives
+PASS  dismissal of a name that isn't pending changes nothing
+PASS  malformed dismissed list (nulls, numbers) is tolerated
+PASS  non-array dismissed list is tolerated
+PASS  malformed rows: only well-formed pending survive, broken stamps sink last
+PASS  malformed row fields coerce to null, never undefined
+PASS  a missing updatedAt becomes "", not undefined
+PASS  pending: "yes" does NOT raise a credential prompt
+PASS  pending: 1 does NOT raise a credential prompt
+PASS  a non-array argument returns [] rather than throwing
+PASS  autoOpenTarget on a non-array returns null
+PASS  malformed list still auto-opens the one good row
+PASS  capNote(null) → empty, untruncated
+PASS  capNote(undefined) → empty, untruncated
+PASS  capNote of a non-string → empty, untruncated
+PASS  capNote of a short note → verbatim
+PASS  capNote of a huge note → cut to the cap
+PASS  capNote of a huge note → flags the cut
+PASS  capNote exactly at the cap → not flagged
+PASS  capNote honours an explicit smaller cap
+PASS  capNote with a nonsense cap falls back to the default
+PASS  capNote does not interpret markup — it returns the raw characters
+
+ALL PASS
+EXIT=0
+
+########## GATE 10 — phase700/network-700.cjs (NFU3 poll budget) ##########
+# non-destructive (no --write): wrote /tmp/phase700-out, committed copy untouched
+########## GATE 9 — phase700/network-700.cjs (NFU3 poll budget) ##########
+# non-destructive: no --write, writes to /tmp/phase700-out
+      chat: {"id":"bfd1283a-b71b-4f35-b577-7d09aad803f2","title":"Okay when I click the file section, things still lag and they still don't work in light mode. The ov"}
+  watching 60s — panel visible, Team tab, both zones …
+  watching 60s — panel collapsed …
+      with the Files tab open, the Team zones are: {"team_panel":false,"plan_zone":false}
+PASS  the team zone is unmounted on the Files tab
+PASS  the plan zone is unmounted on the Files tab
+  watching 60s — Files tab open …
+      window 1 — panel visible: {"total_per_minute":39,"per_minute":{"/chat/:id":20,"/chat/:id/team":10,"/chat":6,"/chat/:id/plan":2,"/secrets":1}}
+      window 2 — panel collapsed: {"total_per_minute":28,"per_minute":{"/chat/:id":20,"/chat":6,"/usage/quota":1,"/secrets":1}}
+      window 3 — Files tab: {"total_per_minute":27,"per_minute":{"/chat/:id":20,"/chat":6,"/secrets":1}}
+      the two zone polls: {"team":10,"plan":2,"sum":12}
+PASS  /chat/:id/team <= 11/min (6s poll)
+PASS  /chat/:id/plan <= 3/min (30s poll)
+PASS  the pre-v3 baseline file is readable
+      pre-v3 panel slot (/agents 4s + /projects/board 6s): {"file":"/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase400/managers-network-baseline.json","per_minute":{"agents":15.2,"board":9.6},"sum":24.8}
+PASS  the v3 panel slot costs less than the pre-v3 slot it replaced
+PASS  the phase 500 baseline file is readable
+      phase 500 (one zone, same slot): {"file":"/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase500/team-network-after.json","team_per_minute":12,"total_per_minute":40}
+PASS  phase 500 recorded a whole-surface total to compare against
+      whole-surface total, this build vs phase 500: {"phase700":39,"phase500_recorded":40,"delta":-1}
+PASS  whole-surface total <= phase 500's recorded total (40/min) — same ceiling as nav-walk.cjs P3
+      zone requests while collapsed: []
+      zone requests on the Files tab: []
+PASS  ZERO zone polls while the panel is collapsed
+PASS  ZERO zone polls while the Files tab is open
+      HAR: {"path":"/tmp/phase700-out/network-700.har","entries":196,"bytes":548311}
+PASS  the HAR was written
+PASS  the HAR has entries
+
+── per-endpoint, panel visible vs the two recorded baselines ──
+  endpoint                    pre-v3  phase500  phase700
+  /agents                      15.20      0.00      0.00
+  /chat                         8.00      8.00      6.00
+  /chat/:id                     2.40     20.00     20.00
+  /chat/:id/plan                0.00      0.00      2.00
+  /chat/:id/team                0.00     12.00     10.00
+  /projects/board               9.60      0.00      0.00
+  /projects/managers            7.20      0.00      0.00
+  /secrets                      0.00      0.00      1.00
+
+ALL PASS → /tmp/phase700-out/network-700.json
+      committed evidence left untouched (/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase700/network-700.json)
+      diff -u "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase700/network-700.json" "/tmp/phase700-out/network-700.json"
+      re-record in place with:  node /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase700/network-700.cjs --write
+EXIT=0
+
+########## GATE 10 — phase600/nav-walk.cjs (P3 <= 40 req/min) ##########
+PASS  L0 no drilled view is open
+PASS  L0 the team tree is ready
+      L0 team rows: 20
+      target worker / sub-agent: {"worker":"58096061-803e-43c5-827a-e618d2a9c33e","sub":"toolu_01KAFV63fapZ6DXAAU2adfww"}
+PASS  L1 the drilled view is the clicked worker
+PASS  L1 depth is 1
+PASS  L1 it is classified as a whole session
+PASS  L1 header role == the API's metadata.role, rendered
+PASS  L1 header model == the API's model_resolved, rendered
+PASS  L1 back points at the manager chat
+PASS  L1a the team panel still shows the MANAGER's tree (selId did not move)
+PASS  L1a the panel's state did not change either
+      L1 raw wire identity: {"role":"architect","model":"claude-sonnet-4-6","status":"completed","title":"canvas-ux · Plan: canvas-ux"}
+      L1 crumbs: "manager chat › session 58096061"
+PASS  L2 depth is 2
+PASS  L2 the frame carries the sub-agent's tool_use_id
+PASS  L2 the frame still FETCHES the parent worker
+PASS  L2 it is classified as an in-process sub-agent
+PASS  L2 header role == the sub-agent's own, rendered
+PASS  L2 header model == the sub-agent's own, rendered
+PASS  L2a the team panel STILL shows the MANAGER's tree
+PASS  L2 back no longer points at the manager
+      L2 raw wire identity: {"role":"scout","model":"claude-sonnet-4-6","source":"spawn_call","description":"Scout canvas-ux existing code"}
+      L2 crumbs: "manager chat › session 58096061 › sub-agent toolu_01"
+PASS  L1/L2 identity is NOT inherited — the two levels differ in role or model
+PASS  R1 the drilled frame does NOT survive a reload
+PASS  R1 …and neither does its orientation strip
+      R1 where the reload actually lands: {"path":"/desktop","drilled":false,"teamPanel":false,"strip":false,"navLabels":["TODAY","CHAT","PROJECTS","LIVE","TODAY","CHAT","PROJECTS","LIVE"]}
+PASS  R2 returning to CHAT opens a MANAGER chat, never a worker
+PASS  R2 …with no drilled run id anywhere
+      R2 the chat auto-opened after reload: {"rows":80,"state":"ready"}
+PASS  R3 re-opening the fixture chat gives the same tree back
+PASS  R3 …still with nothing drilled
+PASS  R4 ZERO console errors across reload + re-navigation
+PASS  R4 ZERO uncaught page errors across reload + re-navigation
+PASS  W1 back at depth 2
+PASS  B1 first pop lands at depth 1
+PASS  B1 …on the worker below it, not a rebuilt frame
+PASS  B1 …with no sub-agent selected any more
+PASS  B1 …and the team panel unmoved
+PASS  B2 second pop returns to the manager chat
+PASS  B2 …with the same team still on screen
+PASS  B2 …and no orientation strip (there is no drilled node)
+      P at rest (manager chat): requests/min: {"/api/proxy/chat":6,"/api/proxy/chat/:id":20,"/api/proxy/chat/:id/team":10,"/api/proxy/chat/:id/plan":2,"TOTAL":38}
+      P drilled, depth 1 (worker): requests/min: {"/api/proxy/chat/:id":20,"/api/proxy/chat/:id/team":10,"/api/proxy/chat":6,"/api/proxy/chat/:id/plan":2,"TOTAL":38}
+      P drilled, depth 2 (sub-agent): requests/min: {"/api/proxy/chat/:id":20,"/api/proxy/chat/:id/team":10,"/api/proxy/chat":6,"/api/proxy/chat/:id/plan":2,"TOTAL":38}
+PASS  P1 drilling to depth 1 does not raise the request total
+PASS  P2 drilling to depth 2 does not raise it either
+PASS  P3 the drilled total stays within phase 500's 'after' budget (40/min)
+
+ALL PASS → /tmp/phase600-out/nav-walk.json
+      committed evidence left untouched (/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase600/nav-walk.json)
+      diff -u "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase600/nav-walk.json" "/tmp/phase600-out/nav-walk.json"
+      re-record in place with:  node /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase600/nav-walk.cjs --write
+EXIT=0
+
+################################################################################
+# THE POLL BUDGET AS ARITHMETIC, not just as a measured integer
+# (round 802's lesson: never let a rounded integer be the only proof)
+################################################################################
+#   /chat/:id          refetchInterval 3 000 ms (ChatSurface.tsx:575, not live) = 20.0/min
+#   /chat/:id/team     TEAM_POLL_MS   6 000 ms (ChatTeamPanel.tsx:91)           = 10.0/min
+#   /chat              refetchInterval 10 000 ms (ChatSurface.tsx:381)          =  6.0/min
+#   /chat/:id/plan     PLAN_POLL_MS   30 000 ms (PlanKanban.tsx:77)             =  2.0/min
+#   /secrets           SECRETS_POLL_MS 60 000 ms (ChatSurface.tsx:93)           =  1.0/min
+#                                                              ARITHMETIC SUM  = 39.0/min
+#   ceiling (phase 500 'after', gated by phase600/nav-walk.cjs:310)             = 40/min
+#   headroom                                                                   =  1.0/min
+#
+# MEASURED: 38/38/38 at rest, depth 1, depth 2 — uniform across all three.
+# The 1/min gap is the 60 s secrets poll ALIASING to zero: nav-walk samples a
+# 30 s window and doubles it, so a 60 s period contributes 0 or 2 depending on
+# phase, and it contributed 0 in all three windows here. The arithmetic 39 is
+# the honest steady state; 38 is one sampling of it. Both are under 40.
+
+########## SUMMARY ##########
+  1  tsc forge-control ................................. PASS (exit 0)
+  2  tsc forge-control-web ............................. PASS (exit 0)
+  3  NODE_ENV=production pnpm build .................... PASS (exit 0)
+  4  token purity, round 804's own files ............... PASS (one declared comment hit)
+  5  forbidden-file diff ............................... PASS on the correct instrument
+                                                          (two-dot form is RED and wrong — README §5.2)
+  6  forge-control/ untouched .......................... PASS (empty)
+  7  dollar-sweep.sh ................................... ** RED ** — pre-existing, 2 comment
+                                                          hits, one of them phase 800's own (README §5.3)
+  8  check-composer-v3.ts .............................. PASS (exit 0)
+  9  check-secret-requests.ts .......................... PASS (exit 0)
+ 10  phase700/network-700.cjs (NFU3) .................... PASS
+ 11  phase600/nav-walk.cjs P1/P2/P3 ..................... PASS — 38/38/38 vs a 40/min ceiling
+ 12  reproduce-cleanliness ............................. PASS — git status md5 identical
+
+########## GATE 12 — reproduce-cleanliness (phase 700 round-704 finding 4) ##########
+# md5 of `git status --porcelain` before and after re-running a protocol
+# the documented way (no --write):
+  before: 3d2a9a6baa3ae8a6b9190d7c3a5cb816
+  after : 3d2a9a6baa3ae8a6b9190d7c3a5cb816
+  IDENTICAL — the rerun wrote to /tmp/phase800-out and left the committed
+  evidence untouched. PASS.
