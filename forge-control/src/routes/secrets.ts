@@ -161,10 +161,14 @@ r.get("/events", (c) => {
       alive = false;
     });
 
-    const send = async (event: string, data: string): Promise<boolean> => {
+    const send = async (
+      event: string,
+      data: string,
+      retry?: number,
+    ): Promise<boolean> => {
       if (!alive) return false;
       try {
-        await stream.writeSSE({ event, data });
+        await stream.writeSSE({ event, data, retry });
         return true;
       } catch {
         alive = false;
@@ -172,7 +176,18 @@ r.get("/events", (c) => {
       }
     };
 
-    if (!(await send("hello", JSON.stringify({ rev, ts: Date.now() })))) return;
+    /* The `retry` hint is a REQUEST-BUDGET decision, not a detail. EventSource
+     * reconnects on its own every ~3s by default; if forge-control were down,
+     * an open chat would therefore hammer the proxy at ~20 req/min — worse
+     * than the poll this round removes, and precisely when the surface is
+     * already unhealthy. 15s caps a total outage at 4 req/min, on top of the
+     * client's own 60s fallback poll. The browser remembers the value across
+     * reconnects of the same EventSource, so it only has to be sent once. */
+    if (
+      !(await send("hello", JSON.stringify({ rev, ts: Date.now() }), 15_000))
+    ) {
+      return;
+    }
 
     const queue: SecretEvent[] = [];
     let notify: (() => void) | null = null;

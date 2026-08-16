@@ -266,12 +266,22 @@ async function stageB(check, note) {
   const samples = [];
   await withBrowser(async (ctx) => {
     const page = await ctx.newPage();
-    await openChat(page);
-    // Settle: the composer's own mount fetch must be done before the clock
-    // starts, or the first sample would measure the mount, not the push.
-    await page.waitForTimeout(3_000);
 
     for (let i = 0; i < SAMPLES; i++) {
+      /* A FRESH PAGE PER SAMPLE, not a clever in-DOM reset.
+       *
+       * Round 808's first run tried "click not now, delete the fixture, next
+       * sample" and got 53 466 / 11 / 13 ms on the polled tree: the panel had
+       * simply never closed, so samples 1 and 2 timed an already-open panel
+       * and would have flattered the BEFORE tree by a factor of five thousand.
+       * Reloading is the only reset that is obviously total — it also clears
+       * ChatSurface's module-level "dismissed this session" set, which is
+       * exactly the state a later sample must not inherit. */
+      await openChat(page);
+      // Settle: the composer's own mount fetch must be done before the clock
+      // starts, or the sample would measure the mount, not the push.
+      await page.waitForTimeout(3_000);
+
       const name = NAME(`b${i}`);
       const note_i = NOTE(`b${i}`);
 
@@ -314,12 +324,12 @@ async function stageB(check, note) {
       note(`B${i} agent asked → panel open (ms)`, openedMs);
       samples.push({ sample: i, name, opened_ms: openedMs, note_rendered: shownNote !== null });
 
-      // Reset for the next sample: dismiss on the server, close in the DOM.
+      // Reset on the SERVER; the DOM is reset by the reload at the top of the
+      // next iteration. Both, because a leftover `.pending` marker would open
+      // the next sample's panel before its clock started.
       await apiJson("POST", `/api/secrets/${name}/clear-pending`);
       await apiJson("DELETE", `/api/secrets/${name}`);
-      const closeBtn = page.getByText("not now", { exact: false }).first();
-      if (await closeBtn.count()) await closeBtn.click().catch(() => {});
-      await page.waitForTimeout(2_000);
+      await page.waitForTimeout(1_000);
     }
   });
   return samples;
@@ -331,7 +341,18 @@ async function main() {
   note("servers", { BASE, API, chat: CHAT_TEXT });
   const preexisting = await assertIsolatedStore(note);
 
-  const a = await stageA(check, note);
+  /* Stage A measures the SERVER, and both runs of this protocol point at the
+   * same round-808 API harness (the BEFORE tree is a WEB build; there is no
+   * "before" forge-control to talk to that would still serve the chat). Running
+   * it under both labels would therefore file the same server measurement twice
+   * and invite a reader to believe the before/after pair says something about
+   * the wire. It does not: the wire is stage A, run once; the difference
+   * between the trees is stage B. */
+  const a =
+    LABEL === "after"
+      ? await stageA(check, note)
+      : { ran: false, reason: "stage A measures the API (same harness in both runs) — recorded under the AFTER label only" };
+  if (!a.ran) note("stage A", a.reason);
   const b = await stageB(check, note);
 
   const opened = b.map((s) => s.opened_ms).filter((v) => v !== null);

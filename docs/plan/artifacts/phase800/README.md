@@ -1020,3 +1020,169 @@ node scripts/checks/no-raw-colours.cjs
   control block today; the renderer is ready for the round that teaches the
   operator to write one. A reminder was raised to Konrad with the interaction
   model and the default taken (click → composer, never auto-send).
+
+---
+
+## 10. Round 808 (task: **secrets over SSE**) — the poll the ceiling could not afford
+
+A different round-808 task from §8/§9; same round number, different work. This
+one removes the credential poll phase 800 shipped and replaces it with a server
+push, which is both what Konrad asked for and the only change here that makes
+the request budget go **down** instead of sideways.
+
+Konrad, on the secret panel: *"when I ask for a secret this thing should
+automatically sort of open up and there should be text appearing in there."*
+Phase 800 satisfied that on a 60 s `refetchInterval`. The honest statement of
+what shipped was therefore "it opens up, in nought to sixty seconds" — and it
+took 1 req/min of a budget so tight that round 802 had to slow an unrelated
+poll to pay for it.
+
+### 10.1 What changed
+
+| File | What |
+|---|---|
+| `forge-control/src/routes/secrets.ts` | `GET /api/secrets/events` — SSE. `request` when an agent raises a `for_konrad` flag (either `mark-pending` or a store that carries it), `cleared` when one goes away (reveal, dismiss, delete, re-store without the flag). Metadata only. |
+| `forge-control-web/app/api/secret-events/route.ts` | Next pass-through, unbuffered, behind the same NextAuth middleware as everything else. Modelled on `canvas-events/route.ts`. |
+| `forge-control-web/app/desktop/chat/secretLive.ts` | EventSource client, plus the pure parts (frame parsing, the poll decision) so the claim is testable rather than asserted in a comment. |
+| `forge-control-web/app/desktop/ChatSurface.tsx` | The query's `refetchInterval` is now `secretsPollInterval(live)`: `false` while the stream is up, 60 s while it is down. One `useEffect` owns the subscription. |
+| `scripts/checks/check-secret-events.ts` | 32 assertions (below). |
+| `scripts/checks/serve-sse-808.ts` | A harness that can actually stream — see §10.5, which is the finding a reviewer should read first. |
+| `docs/plan/artifacts/phase800/secret-push-808.cjs`, `secret-budget-808.cjs` | The two protocols. |
+
+**The server model was not rebuilt.** The `.pending` marker, the note, and
+`requestedByRunId` are phase 300's (U7); this round only announces them. The
+stream keeps **no history**, deliberately: the durable state is on disk, and
+every client re-reads `GET /api/secrets` on reconnect, so an outage cannot lose
+a request and there is nothing to replay.
+
+### 10.2 What Konrad experiences — measured on both trees
+
+`secret-push-808.cjs`, stage B. An "agent" raises a request from **outside** the
+browser; the protocol times the wall clock until the composer's panel is open
+**with the agent's text rendered in it**. A fresh page per sample, because the
+first run of this protocol reset the panel in the DOM instead and produced
+`53 466 / 11 / 13 ms` — two samples that had simply never closed the panel and
+would have flattered the polled tree by three orders of magnitude.
+
+| tree | sample 0 | sample 1 | sample 2 | mean |
+|---|---|---|---|---|
+| BEFORE (`0b5eefd^`, 60 s poll) | 53 425 ms | 53 423 ms | 53 374 ms | **53.4 s** |
+| AFTER (`0b5eefd`, SSE) | 178 ms | 148 ms | 147 ms | **158 ms** |
+
+**Read the BEFORE column honestly.** The three samples agree at ~53.4 s because
+the protocol's phase is fixed (a fresh mount, then the request ~6.6 s later, so
+the first tick lands at 60 − 6.6). The real distribution is uniform on [0, 60 s]
+— mean 30 s, worst case 60 s. The AFTER column has no such caveat: 148–178 ms is
+the browser's own render, not a sampling artifact.
+
+At the wire (stage A, `--label after`): `mark-pending` → frame in **1 ms**,
+reveal → `cleared` in **4 ms**. The two silences that keep the panel from
+becoming hostile are asserted too — storing a secret **without** `for_konrad`
+pushes nothing, and **no frame of any kind ever carried a value** (checked over
+every frame in the stage, not just the ones the other assertions read).
+
+### 10.3 The request budget — before and after, with the arithmetic beside it
+
+`secret-budget-808.cjs`: the chat is opened, left **alone**, and every `/api/`
+request is counted for a 180 s window — long enough that a 60 s poll must appear
+three times or the claim that it exists is false. (nav-walk's 30 s windows
+cannot settle this: in the baseline run the secrets poll landed in **none** of
+the three, so the instrument guarding the ceiling could not see the request
+being argued about.)
+
+| | BEFORE | AFTER |
+|---|---|---|
+| `/api/proxy/secrets` in the window | **3** (1.0/min) | **0** |
+| `/api/proxy/secrets` since page load | 4 | **1** (the mount fetch) |
+| `/api/secret-events` connections | 0 (no such route) | **1**, for the whole session |
+| `/api/proxy/chat/:id/team` | 9.67/min | 9.67/min |
+| `/api/proxy/chat` (list) | 6.0/min | 6.33/min |
+| `/api/proxy/chat/:id` (detail) | 2.33/min | 2.67/min |
+| `/api/proxy/chat/:id/plan` | 2.0/min | 2.0/min |
+| **TOTAL** | **21.33/min** | **21.0/min** |
+
+Arithmetic steady state, per round 802's rule that a measured integer is never
+the only proof: detail 20 s = 3 + team 6 s = 10 + list 10 s = 6 + plan 30 s = 2,
+plus secrets 60 s = 1 **before** and 0 **after** → **22 before, 21 after**. The
+measurement agrees within the sampling resolution, and the difference between
+the columns is the one request this round set out to remove.
+
+`phase600/nav-walk.cjs`, run **twice per tree** (operator's rule), all three
+windows both times:
+
+| tree | run | at_rest | depth_1 | depth_2 | verdict |
+|---|---|---|---|---|---|
+| BEFORE | 1 | 20 | 20 | 20 | P1/P2/P3 **PASS** |
+| BEFORE | 2 | 20 | 20 | 20 | P1/P2/P3 **PASS** |
+| AFTER | 1 | 20 | 20 | 20 | P1/P2/P3 **PASS** |
+| AFTER | 2 | 20 | 20 | 20 | P1/P2/P3 **PASS** |
+
+### 10.4 The chat-list poll stays at 10 s — and why that is the restoration
+
+The brief asked for the phase-800 compensating lever to be restored. The lever
+it names (PlanKanban's `PLAN_POLL_MS` → 60 s) was already reverted by round 802
+and is at 30 s; the lever actually standing was the chat list, 8 s → 10 s.
+
+It is **left at 10 s**. Reverting it would put the surface back to 39.5/min on
+the degraded path — sideways, not down — and back to the 7.5/min that prints as
+7 or 8 depending on phase, which is the rounding ambiguity round 802 removed and
+round 807 spent a finding on. The debt is retired either way: the poll it was
+bought for no longer exists. `nav-walk.cjs` itself was **not touched** — the
+sampling analysis and its tolerance fix belong to the sibling task that owns
+`nav-walk-sampling.cjs`, and two tasks editing one instrument in one worktree is
+how evidence gets lost.
+
+### 10.5 THE FINDING A REVIEWER SHOULD READ FIRST — the harness cannot stream
+
+`scripts/checks/serve-v3-7798.ts` buffers every response through
+`arrayBuffer()` before writing a byte. It says so itself, and routes
+`/api/chat/:id/events` upstream to avoid hanging on it. The consequence nobody
+had drawn: **`ChatSurface`'s run-events stream is dead in that harness**, so
+`detailQ` falls back to its 3 s emergency interval (`live ? 20000 : 3000`) — 20
+req/min instead of 3.
+
+Every request-rate number this phase has argued about was taken there. The
+39/min "steady state", round 802's compensating lever, round 807's uniformity
+fight: all measured with a 3 s emergency poll running that production does not
+run. Against a streaming harness the same tree idles at **21 req/min**, with the
+detail poll at 2.3/min. The ≤40 ceiling was never close.
+
+This round therefore added `scripts/checks/serve-sse-808.ts` — same mount table,
+same isolate-the-store rule, built on `@hono/node-server`, which streams.
+`serve-v3-7798.ts` is untouched: other rounds were running against it while this
+one ran, and its buffering is load-bearing for what they measured. **Later
+rounds should say which harness a request-rate number came from**, or the number
+means two different things.
+
+### 10.6 Unit check — `check-secret-events.ts`, 32 assertions, ALL PASS
+
+```
+cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-secret-events.ts
+```
+
+The two that matter most are tripwires rather than tests:
+`secretsPollInterval(true) === false` (if a later change turns the fallback back
+into an unconditional number, the budget this round freed is silently spent
+again) and `secretsPollInterval(false) === 60_000` (a stream that is down must
+degrade to phase 800's behaviour, not to silence — an agent blocked on a
+credential is the one thing this surface may not lose). The rest are totality:
+bad JSON, a bare number, a missing name, a `note` that arrives as an object —
+all return `null` rather than throwing inside an EventSource listener, where
+nothing would catch it and the composer's panel would go with it.
+
+### 10.7 What this task did **not** establish
+
+- **U31 is untouched here** and remains *measured, not closed* — cold-open
+  scripting ~210–224 ms against a 100 ms gate, cause undiagnosed.
+- **A reconnect storm is capped, not eliminated.** The stream sends
+  `retry: 15000`, so a total forge-control outage costs 4 reconnects/min plus
+  the 60 s fallback poll instead of EventSource's default ~20/min. The very
+  first connection of a page cannot carry that hint; if forge-control is already
+  down at mount, the browser's 3 s default applies until one connection succeeds.
+- **The panel's behaviour under several simultaneous requests is unchanged** —
+  `autoOpenTarget` picks the newest undismissed one, exactly as in phase 800.
+  Pushing three requests in one second was not exercised; the store has never
+  seen two in the same minute.
+- **No production verification.** Everything above was measured in this worktree
+  against isolated builds and a throwaway secret store (`/tmp/p808-store-sse`);
+  the deploy phase owns anything touching `:7700` or `/opt/forge-ai-os`.
