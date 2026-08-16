@@ -1,11 +1,12 @@
 import { Hono } from "hono";
 /* phase 300i (U6) — the plan-doc endpoint reads ONE directory of the project's
- * own worktree. `realpath` is the load-bearing import: `resolve` alone cannot
- * see a symlink escape. See `resolvePlanDoc`. */
-import type { Stats } from "node:fs";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import path from "node:path";
+ * own worktree; round 906 moved the choosing and the guarding of that directory
+ * into lib/plan-corpus.ts so the listing and the reader cannot disagree about
+ * which directory the corpus is. `realpath` is still load-bearing over there:
+ * `resolve` alone cannot see a symlink escape. */
+import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
+import { resolvePlanDoc, selectPlanCorpus } from "../lib/plan-corpus.ts";
 import {
   loadCanvas,
   renderDelta,
@@ -642,9 +643,14 @@ r.get("/:id/team", async (c) => {
  *
  * `/plan/doc` streams one markdown file out of the project's own worktree.
  * routes/files.ts is off-limits this cycle AND its configured roots do not
- * cover per-project worktrees, so the restriction is implemented here, from
- * scratch, against one directory: `<workspace_dir>/docs/plan/`. Everything
- * about that is spelled out at `resolvePlanDoc` below.
+ * cover per-project worktrees, so the restriction is implemented from scratch,
+ * against ONE directory per project. Round 906: which directory that is is no
+ * longer a constant — a project created since C18 (or relocated, as this one
+ * was in round 901) keeps its corpus in `<workspace_dir>/docs/plan/<slug>/`,
+ * while everything older is still flat in `<workspace_dir>/docs/plan/`. Both
+ * endpoints below ask `selectPlanCorpus` (lib/plan-corpus.ts) which one it is
+ * and then behave exactly as before against that single directory; the
+ * restriction itself is unchanged and spelled out at `resolvePlanDoc` there.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /** One task, in the shape 13 §7 names as the client store's `PlanNode`. */
@@ -668,7 +674,8 @@ interface PlanPhase {
    *  base round — a phase label is not worth inventing. */
   title?: string;
   tasks: PlanTask[];
-  /** Present ONLY when a file in docs/plan/ carries this block's number. See
+  /** Present ONLY when a file in the project's corpus carries this block's
+   *  number (see `corpus` on the response for which directory that is). See
    *  `matchPhaseDoc`. Absent is the honest answer; a guessed path would 404 in
    *  the reader's face one click later. */
   doc_path?: string;
@@ -680,8 +687,17 @@ interface PlanResponse {
   link_source: "metadata" | "thread_scan" | null;
   link_ambiguous: boolean;
   phases: PlanPhase[];
-  /** File names (not paths) of `<workspace_dir>/docs/plan/*.md`, sorted. */
+  /** File names (not paths) of the project corpus's `*.md`, sorted. Names, not
+   *  paths, is what makes `/plan/doc?name=` safe to keep bare: the client
+   *  never learns — and never needs to send — the directory. */
   docs: string[];
+  /** Which directory `docs` was listed from, and whether it is the project's
+   *  own namespaced corpus (`docs/plan/<slug>/`) or the flat legacy
+   *  `docs/plan/`. Round 906: the flat directory of a namespaced project's
+   *  worktree holds ANOTHER project's corpus, so "which one did you read"
+   *  stopped being a detail an operator can be expected to assume. Absent only
+   *  when no directory could be derived at all (`error` says why). */
+  corpus?: { dir: string; namespaced: boolean };
   /** Set when the docs listing failed — U6/NFU6: `docs: []` on its own would
    *  read as "this project has no plan corpus", which is a different fact from
    *  "the corpus could not be read, and here is why". The phases are unaffected
@@ -697,8 +713,19 @@ const PLAN_TASKS_SQL = `SELECT id::text, round, role, title, status, tier
  WHERE project_id = $1
  ORDER BY round, created_at`;
 
-/** The one column `/plan` needs beyond what the linkage resolver returns. */
-const PLAN_PROJECT_SQL = `SELECT workspace_dir, status FROM projects WHERE id = $1`;
+/** The columns `/plan` needs beyond what the linkage resolver returns. `name`
+ *  joined round 906: it is the input to `projectSlug`, and the slug is what
+ *  says whether this project's corpus is its own `docs/plan/<slug>/` or the
+ *  flat one. Reading the name here rather than slugging the project id keeps
+ *  ONE derivation shared with project-tick.ts, which is what creates the
+ *  directory in the first place. */
+const PLAN_PROJECT_SQL = `SELECT name, workspace_dir, status FROM projects WHERE id = $1`;
+
+interface PlanProjectRow {
+  name: string;
+  workspace_dir: string | null;
+  status: string;
+}
 
 interface PlanTaskRow {
   id: string;
@@ -708,12 +735,6 @@ interface PlanTaskRow {
   status: string;
   tier: string | null;
 }
-
-/** 2 MB. A plan doc in this corpus is 4–30 kB; the largest file that has ever
- *  lived in a docs/plan tree here is under 200 kB. The guard exists so a stray
- *  multi-megabyte log dropped into the directory cannot be pushed through the
- *  chat surface — the reader gets a named refusal, not a frozen tab. */
-const PLAN_DOC_MAX_BYTES = 2 * 1024 * 1024;
 
 /**
  * Group tasks into hundreds-blocks and attach `deps`.
@@ -802,21 +823,6 @@ function matchPhaseDoc(roundBase: number, docs: string[]): string | undefined {
   );
 }
 
-/** `<workspace_dir>/docs/plan` — or a named reason why there is no such path.
- *  An absolute `workspace_dir` is required: a relative one would resolve
- *  against forge-control's cwd, which is a different machine-state entirely
- *  from "the project's worktree", and silently serving files from it is the
- *  exact class of bug the rest of this endpoint exists to prevent. */
-function planDirFor(workspaceDir: string | null): { dir: string } | { error: string } {
-  if (!workspaceDir) {
-    return { error: "project has no workspace_dir — plan docs cannot be located" };
-  }
-  if (!path.isAbsolute(workspaceDir)) {
-    return { error: `project workspace_dir is not an absolute path: ${workspaceDir}` };
-  }
-  return { dir: path.join(workspaceDir, "docs", "plan") };
-}
-
 /** A load-bearing plan query failed: 500, naming the step. Mirrors
  *  `teamFailure` rather than sharing it so each endpoint's log prefix names
  *  the endpoint that actually broke. */
@@ -862,12 +868,9 @@ r.get("/:id/plan", async (c) => {
     return c.json(empty);
   }
 
-  let projectRow: { workspace_dir: string | null; status: string } | undefined;
+  let projectRow: PlanProjectRow | undefined;
   try {
-    const res = await teamPool.query<{ workspace_dir: string | null; status: string }>(
-      PLAN_PROJECT_SQL,
-      [link.project_id],
-    );
+    const res = await teamPool.query<PlanProjectRow>(PLAN_PROJECT_SQL, [link.project_id]);
     projectRow = res.rows[0];
   } catch (e) {
     return c.json(planFailure("project query", e), 500);
@@ -891,12 +894,25 @@ r.get("/:id/plan", async (c) => {
 
   // The docs listing degrades on its own (NFU6): a project whose worktree was
   // moved still has a real plan to show.
+  //
+  // ONE directory, chosen from the project row (round 906). The listing reads
+  // the namespaced corpus when the project has one and the flat one only when
+  // it does not — never both. Merging them is what put engine-v2's
+  // `00-vision.md` in this project's panel, and a listing that offers a file
+  // the doc reader will refuse (or, worse, serve from elsewhere) is a broken
+  // contract between two endpoints that must agree by construction.
   let docs: string[] = [];
   let docsError: string | undefined;
-  const dir = planDirFor(projectRow.workspace_dir);
+  let corpus: { dir: string; namespaced: boolean } | undefined;
+  const dir = await selectPlanCorpus(
+    projectRow.workspace_dir,
+    projectRow.name,
+    link.project_id,
+  );
   if ("error" in dir) {
     docsError = dir.error;
   } else {
+    corpus = { dir: dir.dir, namespaced: dir.namespaced };
     try {
       const entries = await readdir(dir.dir, { withFileTypes: true });
       docs = entries
@@ -918,127 +934,17 @@ r.get("/:id/plan", async (c) => {
     phases: groupPlanPhases(taskRows, docs),
     docs,
   };
+  if (corpus) body.corpus = corpus;
   if (docsError) body.error = docsError;
   return c.json(body);
 });
 
-/** What `resolvePlanDoc` decided: a file to serve, or a rejection with the
- *  status the caller must answer with. */
-type DocDecision =
-  | { ok: true; file: string }
-  | { ok: false; status: 400 | 404 | 413 | 500; error: string };
-
-/**
- * Decide whether `name` may be served out of `planDir`. Four layers, in this
- * order, because each one only holds if the ones above it already ran:
- *
- *  1. LEXICAL. A path separator (`/` or `\`) or a NUL in `name` is refused
- *     outright — a plan doc is a FILE NAME, never a path. Hono has already
- *     percent-decoded the query, so `..%2f..%2fsecrets` arrives as
- *     `../../secrets` and dies here, on the same rule as `/etc/passwd`. NUL is
- *     checked because a truncating layer below (none today, but the check
- *     costs nothing) would see a different string than this one validated.
- *     `.md` is required here too: a name that cannot be a plan doc never
- *     reaches the filesystem.
- *  2. RESOLUTION. `path.resolve(planDir, name)` — with layer 1 passed this is
- *     always a direct child lexically, but resolve is what makes the string
- *     canonical before anything compares it.
- *  3. REALPATH, BOTH SIDES. The plan dir AND the candidate are resolved
- *     through symlinks. This is the layer that stops the attack `resolve`
- *     cannot see: a symlink sitting INSIDE the plan dir whose target is
- *     /etc/passwd is lexically a perfect child and physically an escape.
- *     Resolving the dir too is what keeps the comparison valid when the
- *     worktree path itself runs through a symlink (/tmp → /private/tmp and
- *     friends) — otherwise every request would fail closed for the wrong
- *     reason.
- *  4. CONTAINMENT. `resolved === dir + sep + …`, with the separator explicitly
- *     part of the prefix. A bare `startsWith(dir)` would accept
- *     `/…/docs/plan-evil/secrets.md` as living under `/…/docs/plan`. The dir
- *     itself is also not a file and is rejected by the same comparison.
- *
- * Then a stat: only a regular file (a directory named `x.md`, a fifo, a device
- * are all refusals) and only under the size cap.
- *
- * Every rejection names itself. A path-restriction that answers "400" with no
- * body teaches the operator nothing and teaches an attacker exactly as much.
- */
-async function resolvePlanDoc(planDir: string, name: string): Promise<DocDecision> {
-  if (!name) return { ok: false, status: 400, error: "missing ?name=" };
-  if (name.includes("/") || name.includes("\\")) {
-    return { ok: false, status: 400, error: `rejected: name must be a bare file name, got a path: ${name}` };
-  }
-  if (name.includes("\0")) {
-    return { ok: false, status: 400, error: "rejected: name contains a NUL byte" };
-  }
-  if (name === "." || name === "..") {
-    return { ok: false, status: 400, error: `rejected: name is a directory reference: ${name}` };
-  }
-  if (!name.toLowerCase().endsWith(".md")) {
-    return { ok: false, status: 400, error: `rejected: only .md documents are served, got: ${name}` };
-  }
-
-  let realDir: string;
-  try {
-    realDir = await realpath(planDir);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    const missing = (e as NodeJS.ErrnoException).code === "ENOENT" ||
-      (e as NodeJS.ErrnoException).code === "ENOTDIR";
-    return {
-      ok: false,
-      status: missing ? 404 : 500,
-      error: `plan directory unavailable at ${planDir}: ${message}`,
-    };
-  }
-
-  const candidate = path.resolve(realDir, name);
-  let realFile: string;
-  try {
-    realFile = await realpath(candidate);
-  } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    const message = e instanceof Error ? e.message : String(e);
-    // ENOENT covers both "no such file" and "dangling symlink"; both are 404 —
-    // the name was well-formed, the document is not there.
-    if (code === "ENOENT" || code === "ENOTDIR") {
-      return { ok: false, status: 404, error: `no such plan document: ${name}` };
-    }
-    return { ok: false, status: 500, error: `cannot resolve ${name}: ${message}` };
-  }
-
-  if (!realFile.startsWith(`${realDir}${path.sep}`)) {
-    return {
-      ok: false,
-      status: 400,
-      error: `rejected: ${name} resolves outside the plan directory (${realFile} is not under ${realDir})`,
-    };
-  }
-
-  let info: Stats;
-  try {
-    info = await stat(realFile);
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return { ok: false, status: 500, error: `cannot stat ${name}: ${message}` };
-  }
-  if (!info.isFile()) {
-    return { ok: false, status: 400, error: `rejected: ${name} is not a regular file` };
-  }
-  if (info.size > PLAN_DOC_MAX_BYTES) {
-    return {
-      ok: false,
-      status: 413,
-      error: `refused: ${name} is ${info.size} bytes, over the ${PLAN_DOC_MAX_BYTES}-byte plan-doc limit`,
-    };
-  }
-  return { ok: true, file: realFile };
-}
-
 /**
  * GET /api/chat/:id/plan/doc?name=<file> → one plan document as markdown.
  *
- * Status codes: 400 malformed id / rejected name, 404 chat owns no project or
- * no such document, 413 over the size cap, 500 a query or an unexpected fs
+ * Status codes: 400 malformed id / rejected name / a corpus directory that
+ * failed a safety check, 404 chat owns no project, no derivable plan directory,
+ * or no such document, 413 over the size cap, 500 a query or an unexpected fs
  * error. 200 carries `text/markdown` and nothing else — no JSON envelope, so
  * the web surface can hand the body straight to `MessageMarkdown` (U26).
  *
@@ -1061,11 +967,9 @@ r.get("/:id/plan/doc", async (c) => {
     return c.json({ error: "chat is not linked to a project — no plan documents" }, 404);
   }
 
-  let workspaceDir: string | null;
+  let projectRow: PlanProjectRow;
   try {
-    const res = await teamPool.query<{ workspace_dir: string | null }>(PLAN_PROJECT_SQL, [
-      link.project_id,
-    ]);
+    const res = await teamPool.query<PlanProjectRow>(PLAN_PROJECT_SQL, [link.project_id]);
     const row = res.rows[0];
     if (!row) {
       return c.json(
@@ -1073,13 +977,24 @@ r.get("/:id/plan/doc", async (c) => {
         500,
       );
     }
-    workspaceDir = row.workspace_dir;
+    projectRow = row;
   } catch (e) {
     return c.json(planFailure("project query", e), 500);
   }
 
-  const dir = planDirFor(workspaceDir);
-  if ("error" in dir) return c.json({ error: dir.error }, 404);
+  // The SAME choice `/plan` listed from — one call, one directory. If this
+  // project has a namespaced corpus, a name that is not in it is a 404 and NOT
+  // a second look in the flat directory: that second look is precisely how
+  // engine-v2's `00-vision.md` was served under this project's plan panel in
+  // round 904.
+  const dir = await selectPlanCorpus(projectRow.workspace_dir, projectRow.name, link.project_id);
+  if ("error" in dir) {
+    // no-dir → 404 (nowhere to look, as before), refused → 400 (a safety check
+    // said no, and the operator gets told which), fs → 500.
+    const status = dir.kind === "no-dir" ? 404 : dir.kind === "refused" ? 400 : 500;
+    if (dir.kind !== "no-dir") console.warn(`[chat plan doc] ${dir.error}`);
+    return c.json({ error: dir.error, name }, status);
+  }
 
   const decision = await resolvePlanDoc(dir.dir, name);
   if (!decision.ok) {

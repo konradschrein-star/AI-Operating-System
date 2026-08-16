@@ -45,8 +45,9 @@ export interface PlanPhase {
    *  to invent a phase label and so must the client. */
   title?: string;
   tasks: PlanTask[];
-  /** Present ONLY when a file in the project's docs/plan/ carries this block's
-   *  number. Absent means no document, not "look one up yourself". */
+  /** Present ONLY when a file in the project's corpus (see `corpus` on the
+   *  response) carries this block's number. Absent means no document, not
+   *  "look one up yourself". */
   doc_path?: string;
 }
 
@@ -59,8 +60,17 @@ export interface PlanResponse {
   link_source: "metadata" | "thread_scan" | null;
   link_ambiguous: boolean;
   phases: PlanPhase[];
-  /** File names (not paths) of `<workspace_dir>/docs/plan/*.md`, sorted. */
+  /** File names (not paths) of the project's own plan corpus, sorted. Bare
+   *  names on purpose: `fetchPlanDoc` sends one back verbatim and the server
+   *  refuses anything containing a directory, so the client never needs — and
+   *  is never told — the path. */
   docs: string[];
+  /** Round 906: WHICH directory those names came from. A project created since
+   *  C18 (or relocated, as this one was) keeps its corpus in
+   *  `docs/plan/<slug>/`; older projects are still flat in `docs/plan/`. Before
+   *  the server started choosing, this panel listed the flat directory of a
+   *  namespaced project's worktree — which holds ANOTHER project's corpus. */
+  corpus?: { dir: string; namespaced: boolean };
   /** Set when the docs listing failed. `docs: []` on its own would read as
    *  "this project has no plan corpus", which is a different fact from "the
    *  corpus could not be read, and here is why" (NFU6). The phases are
