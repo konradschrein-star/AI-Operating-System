@@ -68,6 +68,7 @@ import {
   pendingRequests,
   type SecretRequest,
 } from "./chat/secret-requests";
+import { secretsPollInterval, subscribeSecretRequests } from "./chat/secretLive";
 import { useRunEvents } from "./chat/useRunEvents";
 import {
   ResizeHandle,
@@ -81,16 +82,18 @@ import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
 /* ---------------------------------------------------------------------------
  * U30 — the two-way secret sharer's composer-side wiring.
  *
- * POLL BUDGET FIRST, because this is the constraint that has already broken a
- * phase. The chat surface sits at 39–40 req/min and phase 600's
- * `nav-walk.cjs:310` (P3) FAILS above 40 — round 704 caught exactly that
- * regression and round 705 had to buy the budget back by slowing two other
- * polls. 60 s costs 1 req/min, which is what the measured headroom affords.
- * A pending credential request is an agent BLOCKED waiting for Konrad; it is
- * measured in minutes, not seconds, so a faster poll would buy nothing real.
- * Do not lower this number without re-running both gates.
+ * ROUND 808: THE POLL IS GONE. Phase 800 spent 1 req/min on a 60s poll of
+ * `GET /api/secrets` and had to buy it back by slowing the chat-list poll,
+ * because the surface sits at 39/min against phase 600's ≤40 ceiling
+ * (`nav-walk.cjs:310`). It also made Konrad wait up to a minute for a panel he
+ * asked to open the moment an agent asks. Both are fixed by the same move
+ * `canvas.ts` already made for the drawing pane: the server pushes.
+ *
+ * What is left of the poll is a FALLBACK that runs only while the stream is
+ * down (`secretsPollInterval`, in secretLive.ts). Live cost: one connection,
+ * zero requests per minute. Do not reintroduce an unconditional interval here
+ * without re-running phase 600's nav-walk and phase 700's network gate.
  * -------------------------------------------------------------------------*/
-const SECRETS_POLL_MS = 60_000;
 
 /** How many pending names the secret button's tooltip spells out before it
  *  summarises. Six is already more than has ever been pending at once; the cap
@@ -378,6 +381,14 @@ export function ChatSurface({
     // list of chat titles that changes when a chat is created, renamed or
     // archived, and every one of those already invalidates ["chat","list"]
     // directly. The ceiling was not raised and no gate was deleted.
+    //
+    // ROUND 808 — THE DEBT THIS PAID IS RETIRED, AND 10s STAYS ANYWAY. The
+    // secrets poll it was bought for is gone (server push, see the U30 block
+    // at the top of this file), so the surface now sits at 20 + 10 + 6 + 2 =
+    // 38/min by arithmetic. Reverting to 8s would put it back to 39.5 —
+    // sideways, not down, and back to the 7.5 that prints as 7 or 8 and made
+    // the last two rounds argue about a rounded integer. A poll nobody needs
+    // faster is not worth 1.5 req/min of the ceiling.
     refetchInterval: 10_000,
   });
   /* ── selId and navStack: two different questions (U21, 13 §2) ───────────
@@ -1515,13 +1526,59 @@ function ChatThread({
    * metadata only — no value is on the wire — and the only field this file
    * reads out of it is `name`. The agent's `note` is passed straight to
    * SecretField for display and is never put into a message, a system line, a
-   * title attribute, or a log. */
+   * title attribute, or a log.
+   *
+   * ROUND 808: the interval is now the FALLBACK, not the mechanism. While the
+   * event stream below is connected this query does not poll at all (`false`);
+   * it refetches when the stream says the pending set moved. The interval only
+   * comes back if the stream drops, so a dead stream degrades to phase 800's
+   * behaviour instead of to silence. */
+  const [secretsLive, setSecretsLive] = useState(false);
   const secretsQ = useQuery({
     queryKey: ["secrets", "list"],
     queryFn: fetchSecrets,
-    refetchInterval: SECRETS_POLL_MS,
+    refetchInterval: secretsPollInterval(secretsLive),
     refetchOnWindowFocus: true,
   });
+
+  /* The stream itself. Mounted with the composer, exactly like the query above:
+   * ChatThread exists only while a manager chat is on screen, so a backgrounded
+   * surface holds no connection.
+   *
+   * `qc.invalidateQueries` rather than writing the frame into the cache: the
+   * list endpoint stays the single source of truth (see secretLive.ts), so the
+   * panel can never open on a request the server would not confirm. The frame's
+   * own note is deliberately NOT rendered from here — it arrives with the
+   * refetch, through the same `pendingRequests` reducer every other path uses,
+   * with its caps and its ordering intact.
+   *
+   * Empty deps: one connection per mounted composer, never re-opened on a
+   * re-render. `qc` is stable for the app's lifetime (QueryClientProvider). */
+  useEffect(() => {
+    const refetch = () => {
+      void qc.invalidateQueries({ queryKey: ["secrets", "list"] });
+    };
+    // The query above fetches once on mount by itself, and the first `hello`
+    // lands at about that moment — refetching on it would buy the same list
+    // twice. Every LATER hello is a RECONNECT, and that one must refetch: it
+    // is how a request filed while the stream was down gets picked up.
+    let helloes = 0;
+    const sub = subscribeSecretRequests({
+      onLive: setSecretsLive,
+      onHello: () => {
+        helloes += 1;
+        if (helloes > 1) refetch();
+      },
+      onMoved: refetch,
+    });
+    return () => {
+      sub.close();
+      // The stream is gone with the component; say so, so nothing reads a
+      // stale "live" if this instance is somehow observed during teardown.
+      setSecretsLive(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* NFU6 — a failed fetch must not leave a stale badge standing there looking
    * fresh. react-query keeps the last good `data` through an error, which is
@@ -1540,15 +1597,20 @@ function ChatThread({
   const pendingKey = JSON.stringify(pending.map((r) => r.name));
 
   const closeSecret = () => {
-    // Closing IS the dismissal. Without this the next 60 s tick would re-open
-    // the panel Konrad just closed, which is the precise failure mode the
-    // requirement calls out. "not now" also lands here (SecretField's decline
-    // clears the server flag and then calls onClose), so both exits agree.
+    // Closing IS the dismissal. Without this the next refetch would re-open the
+    // panel Konrad just closed, which is the precise failure mode the
+    // requirement calls out — and round 808 made that refetch arrive in
+    // milliseconds rather than up to a minute, so the session memory below
+    // matters MORE now, not less. "not now" also lands here (SecretField's
+    // decline clears the server flag and then calls onClose), so both exits
+    // agree.
     if (answering) dismissedSecretRequests.add(answering.name);
     setAnswering(null);
     setSecretOpen(false);
-    // Refresh now rather than up to 60 s from now: a "not now" already cleared
-    // the pending flag server-side and the badge must follow immediately.
+    // Refresh now, without waiting for the server's own `cleared` frame to come
+    // back around: a "not now" already cleared the pending flag server-side and
+    // the badge must follow immediately. The frame lands too, and finds nothing
+    // to change — invalidating twice is one wasted request at worst.
     void qc.invalidateQueries({ queryKey: ["secrets", "list"] });
   };
 
