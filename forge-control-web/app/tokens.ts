@@ -79,6 +79,34 @@ export const tokens = {
   rowSelected: v("rowSelected"),
   toolBg: v("toolBg"),
   scrollbar: v("scrollbar"),
+
+  /* Chat transcript role identities (round 808). Two per role: `roleBg*` is
+   * the message card's tint, `roleInk*` is its header line and left rule.
+   * Both palettes live in theme.css, where the ink is a var() pointing at the
+   * status token agentsApi's ROLE_TOKEN already assigns that role — so this
+   * is a second NAME for one colour, never a second colour.
+   *
+   * Consumed through `app/desktop/chat/comms-identity.ts`, which is the only
+   * module that maps a role string onto these; do not index them by hand. */
+  roleBgArchitect: v("roleBgArchitect"),
+  roleBgPlanner: v("roleBgPlanner"),
+  roleBgBuilder: v("roleBgBuilder"),
+  roleBgReviewer: v("roleBgReviewer"),
+  roleBgResearcher: v("roleBgResearcher"),
+  roleBgScout: v("roleBgScout"),
+  roleBgSteward: v("roleBgSteward"),
+  roleBgTester: v("roleBgTester"),
+  roleBgUnknown: v("roleBgUnknown"),
+
+  roleInkArchitect: v("roleInkArchitect"),
+  roleInkPlanner: v("roleInkPlanner"),
+  roleInkBuilder: v("roleInkBuilder"),
+  roleInkReviewer: v("roleInkReviewer"),
+  roleInkResearcher: v("roleInkResearcher"),
+  roleInkScout: v("roleInkScout"),
+  roleInkSteward: v("roleInkSteward"),
+  roleInkTester: v("roleInkTester"),
+  roleInkUnknown: v("roleInkUnknown"),
 } as const;
 
 /** Resolve a token to its computed hex/rgb — for the few consumers that can't

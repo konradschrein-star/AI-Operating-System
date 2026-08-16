@@ -618,6 +618,82 @@ describe("commsEntries", () => {
       );
     }
   });
+
+  /* ── peer_role (round 808) ─────────────────────────────────────────────
+   * The console colours relayed traffic by the PEER's role. Each side's
+   * entry therefore carries the other side's: the receiver learns who sent
+   * it, the sender's echo learns who it went to. */
+
+  test("each side's entry carries the OTHER side's role", () => {
+    const { receiver, echo } = commsEntries({
+      text: "round 808 done",
+      from: "worker",
+      targetRunId: "manager-run-1",
+      senderRunId: "worker-run-1",
+      ts: TS,
+      senderRole: "builder",
+      targetRole: "manager",
+    });
+    assert.deepEqual(receiver.meta, {
+      comms: {
+        direction: "in",
+        from: "worker",
+        peer_run_id: "worker-run-1",
+        peer_role: "builder",
+      },
+    });
+    assert.deepEqual(echo!.meta, {
+      comms: {
+        direction: "out",
+        from: "worker",
+        peer_run_id: "manager-run-1",
+        peer_role: "manager",
+      },
+    });
+  });
+
+  test("an absent, blank or non-string role writes NO key at all", () => {
+    /* Three shapes for "nobody knows" is how a client ends up rendering a
+     * role called "". Pre-808 entries have no key; so must these. */
+    for (const role of [undefined, null, "", "   "]) {
+      const { receiver, echo } = commsEntries({
+        text: "x",
+        from: "manager",
+        targetRunId: "target-1",
+        senderRunId: "sender-1",
+        ts: TS,
+        senderRole: role,
+        targetRole: role,
+      });
+      assert.deepEqual(receiver.meta, {
+        comms: { direction: "in", from: "manager", peer_run_id: "sender-1" },
+      });
+      assert.deepEqual(echo!.meta, {
+        comms: { direction: "out", from: "manager", peer_run_id: "target-1" },
+      });
+    }
+  });
+
+  test("a role is trimmed, and coexists with a relay's subagent_id", () => {
+    const { receiver } = commsEntries({
+      text: "hand this over",
+      from: "manager",
+      targetRunId: "parent-run-1",
+      senderRunId: "manager-run-1",
+      ts: TS,
+      relaySubagentId: "toolu_01abc",
+      senderRole: "  reviewer  ",
+    });
+    assert.deepEqual(receiver.meta, {
+      comms: {
+        direction: "in",
+        from: "manager",
+        peer_run_id: "manager-run-1",
+        peer_role: "reviewer",
+        subagent_id: "toolu_01abc",
+      },
+    });
+  });
 });
 
 /* ========================================================================== *

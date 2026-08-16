@@ -1,0 +1,757 @@
+{
+  "protocol": "PROTOCOL 3 — request-note injection",
+  "started_at": "2026-08-16T20:37:53.896Z",
+  "finished_at": "2026-08-16T20:39:01.886Z",
+  "base_url": "http://127.0.0.1:7839",
+  "api_url": "http://127.0.0.1:7838",
+  "secret_store_dir": "/tmp/p800-store-804 (isolated)",
+  "beacon": "http://127.0.0.1:9/p800-beacon",
+  "control": {
+    "textContent": "an agent is waiting forp800-804-inj-controlrequested by run bfd1283avps2 deploy needs the sentinel key to finish the rsync leg.Stored on the server, never written into this conversation. Only the name appears in the thread.not nowcancelanswer request",
+    "innerHTML": "<div class=\"mono\" style=\"font-size: 10.5px; color: var(--fg-warn); line-height: 1.5; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;\"><span>an agent is waiting for</span><span style=\"color: var(--fg-textHi);\">p800-804-inj-control</span><span style=\"color: var(--fg-textFaint);\">requested by run bfd1283a</span></div><div style=\"border: 1px solid var(--fg-borderSoft); border-radius: 6px; background: var(--fg-bgBody); padding: 7px 9px; font-size: 11px; line-height: 1.55; color: var(--fg-textSecondary); max-height: 160px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;\">vps2 deploy needs the sentinel key to finish the rsync leg.</div><div class=\"mono\" style=\"font-size: 10.5px; color: var(--fg-textMuted); line-height: 1.5;\">Stored on the server, never written into this conversation. Only the name appears in the thread.</div><input readonly=\"\" placeholder=\"name — e.g. vps2_root_ssh_key\" class=\"mono\" value=\"p800-804-inj-control\" style=\"background: var(--fg-bgBody); border: 1px solid var(--fg-border); border-radius: 6px; padding: 7px 9px; color: var(--fg-textMuted); font-size: 12px; outline: none; width: 100%; cursor: default;\"><textarea placeholder=\"paste the secret here (password, API key, private key…)\" rows=\"4\" spellcheck=\"false\" autocomplete=\"off\" style=\"background: var(--fg-bgBody); border: 1px solid var(--fg-border); border-radius: 6px; padding: 7px 9px; color: var(--fg-text); font-size: 12px; outline: none; width: 100%; resize: vertical; font-family: ui-monospace, monospace;\"></textarea><div style=\"display: flex; gap: 8px; justify-content: flex-end;\"><button class=\"mono\" style=\"background: transparent; border: 1px solid var(--fg-border); border-radius: 6px; color: var(--fg-textMuted); font-size: 11px; padding: 6px 10px; cursor: pointer; opacity: 1;\">not now</button><button class=\"mono\" style=\"background: transparent; border: 1px solid var(--fg-border); border-radius: 6px; color: var(--fg-textMuted); font-size: 11px; padding: 6px 10px; cursor: pointer;\">cancel</button><button disabled=\"\" class=\"mono\" style=\"background: var(--fg-accent); border-width: medium; border-style: none; border-color: currentcolor; border-image: none; border-radius: 6px; color: var(--fg-bgBody); font-size: 11px; padding: 6px 12px; cursor: pointer; opacity: 0.5;\">answer request</button></div>",
+    "height": 262.55,
+    "width": 657,
+    "liveNodes": {
+      "script": 0,
+      "imgOnerror": 0,
+      "img": 0,
+      "jsHref": 0,
+      "anyAnchor": 0,
+      "iframe": 0
+    }
+  },
+  "payloads": [
+    {
+      "id": "md-js-link",
+      "bytes": 103,
+      "beacon": null
+    },
+    {
+      "id": "md-http-image",
+      "bytes": 98,
+      "beacon": "http://127.0.0.1:9/p800-beacon-md-image.png"
+    },
+    {
+      "id": "raw-img-onerror",
+      "bytes": 103,
+      "beacon": "http://127.0.0.1:9/p800-beacon-onerror"
+    },
+    {
+      "id": "raw-script",
+      "bytes": 119,
+      "beacon": "http://127.0.0.1:9/p800-beacon-script"
+    },
+    {
+      "id": "long-5000",
+      "bytes": 5000,
+      "beacon": null
+    },
+    {
+      "id": "ansi-escapes",
+      "bytes": 88,
+      "beacon": null
+    },
+    {
+      "id": "rtl-override",
+      "bytes": 60,
+      "beacon": null
+    },
+    {
+      "id": "fake-marker",
+      "bytes": 108,
+      "beacon": null
+    }
+  ],
+  "cases": {
+    "md-js-link": {
+      "height": 279.59,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    },
+    "md-http-image": {
+      "height": 279.59,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    },
+    "raw-img-onerror": {
+      "height": 279.59,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    },
+    "raw-script": {
+      "height": 279.59,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    },
+    "long-5000": {
+      "height": 389.5,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true,
+      "truncated": true
+    },
+    "ansi-escapes": {
+      "height": 279.59,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    },
+    "rtl-override": {
+      "height": 262.55,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    },
+    "fake-marker": {
+      "height": 279.59,
+      "width": 657,
+      "liveNodes": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "beacon_requests": [],
+      "requests_seen_during_case": 43,
+      "draft": "",
+      "nonce_rendered": true
+    }
+  },
+  "checks": [
+    {
+      "name": "control — the benign note renders",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "control — the panel has no live nodes",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "control panel height (px) — every hostile case is bounded against this",
+      "note": 262.55
+    },
+    {
+      "name": "panel height bound (px)",
+      "note": 462.55
+    },
+    {
+      "name": "md-js-link — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-js-link — renders literally: \"[Re-authenticate here](javascript:alert(do\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-js-link — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "md-js-link — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "md-js-link — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-js-link — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-js-link — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "md-http-image — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-http-image — renders literally: \"![status](http://127.0.0.1:9/p800-beacon-m\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-http-image — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "md-http-image — ZERO network requests to the injected URL",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "md-http-image — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "md-http-image — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-http-image — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "md-http-image — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "raw-img-onerror — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-img-onerror — renders literally: \"<img src=x onerror=\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-img-onerror — the source is ESCAPED in innerHTML: \"&lt;img src=x onerror=\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-img-onerror — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "raw-img-onerror — ZERO network requests to the injected URL",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "raw-img-onerror — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "raw-img-onerror — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-img-onerror — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-img-onerror — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "raw-script — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-script — renders literally: \"<script>\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-script — the source is ESCAPED in innerHTML: \"&lt;script&gt;\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-script — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "raw-script — ZERO network requests to the injected URL",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "raw-script — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "raw-script — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-script — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "raw-script — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "long-5000 — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "long-5000 — renders literally: \"HEAD-AAAA\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "long-5000 — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "long-5000 — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "long-5000 — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "long-5000 — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "long-5000 — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "long-5000 — the 5 000-char note is truncated at the cap",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "long-5000 — the tail of the note is NOT rendered",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "ansi-escapes — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "ansi-escapes — renders literally: \"[31mCRITICAL\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "ansi-escapes — renders literally: \"PASTE THE ROOT KEY NOW\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "ansi-escapes — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "ansi-escapes — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "ansi-escapes — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "ansi-escapes — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "ansi-escapes — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "rtl-override — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "rtl-override — renders literally: \"‮\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "rtl-override — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "rtl-override — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "rtl-override — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "rtl-override — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "rtl-override — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "fake-marker — the nonce is rendered (the thread probe has a needle)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "fake-marker — renders literally: \"[secret: other-name]\"",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "fake-marker — no script/img/iframe/js-href node in the panel",
+      "ok": true,
+      "actual": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      },
+      "expected": {
+        "script": 0,
+        "imgOnerror": 0,
+        "img": 0,
+        "jsHref": 0,
+        "anyAnchor": 0,
+        "iframe": 0
+      }
+    },
+    {
+      "name": "fake-marker — no request to the beacon host at all",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "fake-marker — the panel height stays bounded",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "fake-marker — the panel is not wider than the viewport",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "fake-marker — the composer draft is untouched",
+      "ok": true,
+      "actual": "",
+      "expected": ""
+    },
+    {
+      "name": "fake-marker — the forged marker never reaches the draft",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "NOTHING from any note reached the chat run's thread",
+      "ok": true,
+      "actual": [],
+      "expected": []
+    },
+    {
+      "name": "the thread probe is not vacuous — the nonce IS present in what was rendered",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "console errors",
+      "note": []
+    },
+    {
+      "name": "no console error across the whole battery",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    }
+  ],
+  "failures": 0
+}

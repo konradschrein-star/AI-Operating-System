@@ -46,8 +46,6 @@ forge-control-web/app/desktop/SkillsSurface.tsx	.*	TODO: 4 hits — an amber `#f
 forge-control-web/app/MobileApp.tsx	.*	TODO: 3 hits — `#fff` text, `#000` background, and a white-alpha row wash. Mobile surface, outside this phase.
 forge-control-web/app/desktop/ProjectsSurface.tsx	.*	TODO: 2 hits — a white-alpha row wash and a `#0b0b0d` card background.
 forge-control-web/app/desktop/chat/SlashPopover.tsx	.*	TODO: 2 hits — the popover's drop shadow and its white-alpha inset highlight. Shadow-only; the least harmful of the set.
-forge-control-web/app/desktop/chat/MessageMarkdown.tsx	.*	TODO: 1 hit — `rgba(0, 0, 0, 0.45)` behind an element that stays dark in light mode.
-forge-control-web/app/desktop/chat/AssistantThread.tsx	.*	TODO: 1 hit — `rgba(79, 176, 196, 0.05)`, a hand-mixed 5% wash of the `info` hue. Wants an `infoWash` token in both palettes.
 forge-control-web/app/_components/GlassCard.tsx	.*	TODO: 2 hits — white-alpha fill and border. The whole glass effect assumes a dark backdrop; in light mode it washes out rather than breaking.
 forge-control-web/app/desktop/_ui/Toasts.tsx	.*	TODO: 1 hit — `rgba(0,0,0,0.35)` drop shadow. Shadow-only, cosmetic.
 forge-control-web/app/globals.css	.*	TODO: 2 hits — `background: #000` / `color: #ededee` on html,body. Currently INERT: theme.css re-declares both against `var(--fg-*)` and wins on order. Delete them when someone is in the file; they are a trap for the next reader, not a live bug.

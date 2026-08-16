@@ -590,7 +590,15 @@ export interface ThreadEntry {
     | "heartbeat"
     | "error"
     | "stuck_notice"
-    | "continue_marker";
+    | "continue_marker"
+    /** Relayed traffic between runs — a worker reporting up, a manager or
+     *  Konrad messaging down, and the sender's echo of it. Written by
+     *  `commsEntries` (forge-control/src/lib/run-control-rules.ts) since the
+     *  control plane shipped; this union simply had not caught up, so every
+     *  client read of `kind === "comms"` was a type error against data that
+     *  has been on the wire for weeks. `meta.comms` carries the direction,
+     *  the actor and the peer run id — see chat/comms-identity.ts. */
+    | "comms";
   meta?: Record<string, unknown>;
 }
 

@@ -1,0 +1,43 @@
+{
+  "//": [
+    "tsx's default JSX transform is the CLASSIC one (React.createElement), and",
+    "the app's own tsconfig says `jsx: preserve` because Next compiles it. A",
+    "check that renders a component therefore needs its own compiler options —",
+    "this file, passed with --tsconfig. It is NOT the app's build config and",
+    "must never be referenced by next.config or by tsc --noEmit.",
+    "",
+    "It lives at the REPO ROOT and not in scripts/checks/ for one reason: tsx",
+    "applies a --tsconfig only to files under that config's own directory, and",
+    "the check renders components that live in forge-control-web/app. A config",
+    "inside scripts/ left those on the classic transform and they crashed with",
+    "`React is not defined`. Root is the only directory above both trees.",
+    "",
+    "Run (from forge-control-web, whose node_modules holds react/react-dom):",
+    "  ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-rich.tsx"
+  ],
+  "//paths": [
+    "A check script lives in scripts/checks/, which has no node_modules — so a",
+    "bare `react` / `react-dom/server` import resolves nowhere, no matter which",
+    "directory the process was started from. These four mappings point at the",
+    "web app's installed copies (tsx honours tsconfig paths). Same physical",
+    "package the app itself loads; nothing is installed for the check."
+  ],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "react": ["forge-control-web/node_modules/react"],
+      "react/jsx-runtime": ["forge-control-web/node_modules/react/jsx-runtime"],
+      "react-dom": ["forge-control-web/node_modules/react-dom"],
+      "react-dom/server": ["forge-control-web/node_modules/react-dom/server"]
+    },
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
+  }
+}

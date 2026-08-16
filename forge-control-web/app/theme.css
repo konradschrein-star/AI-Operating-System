@@ -78,6 +78,54 @@
   --fg-rowHover: rgba(91, 141, 239, 0.06);
   --fg-rowSelected: rgba(91, 141, 239, 0.12);
   --fg-toolBg: #0a0a0c;
+
+  /* ── Chat transcript: one identity per agent role (round 808) ─────────────
+     Konrad, reading the manager chat: "pls colorcode the messages from the
+     builders in this chat so I can faster distinguish." A relayed worker
+     report used to land as an ordinary right-aligned user bubble — visually
+     identical to something Konrad typed himself.
+
+     TWO variables per role. `roleBg*` is the card's tint; `roleInk*` is the
+     header line AND the left accent rule, so a role has exactly one hue and
+     the rule can never disagree with the label above it.
+
+     `roleInk*` REFERENCES the status token the rest of the console already
+     uses for that role (agentsApi.ts `ROLE_TOKEN`: architect→decide,
+     planner→info, builder→accent, reviewer→warn, researcher→ok). It is a
+     var() and not a copied hex precisely so it cannot drift from the team
+     panel and the Live rail — `check-chat-rich.ts` asserts the two agree.
+
+     Two deliberate deviations, both for AA and both measured:
+       · scout/unknown ink is `textMuted`, not `textMuted2`. textMuted2 is the
+         panel's scout colour and measures 3.39:1 as TEXT on this tint —
+         below AA. The border can carry a 3:1 hue; a role NAME cannot.
+       · steward and tester have no entry in ROLE_TOKEN (no rows exist yet),
+         so they take `stuck` and `bleed` — the two status hues nothing else
+         in this transcript uses.
+
+     Tints are the role hue mixed 11% into bgCard (dark) / 9% into white
+     (light), opaque so the value is measurable without compositing. Numbers
+     in the comments are text/body/ink against the tint; the gate that keeps
+     them true is scripts/checks/contrast-role-tints.cjs. */
+  --fg-roleBgArchitect: #1b1925;   /* text 14.79  body 8.77  ink 6.10 */
+  --fg-roleBgPlanner: #121d20;     /* text 14.65  body 8.68  ink 6.81 */
+  --fg-roleBgBuilder: #141925;     /* text 14.99  body 8.88  ink 5.43 */
+  --fg-roleBgReviewer: #221f13;    /* text 14.10  body 8.36  ink 9.22 */
+  --fg-roleBgResearcher: #131b16;  /* text 14.95  body 8.86  ink 5.53 */
+  --fg-roleBgScout: #151517;       /* text 15.53  body 9.20  ink 5.29 */
+  --fg-roleBgSteward: #1f1722;     /* text 14.90  body 8.83  ink 5.76 */
+  --fg-roleBgTester: #211515;      /* text 15.22  body 9.02  ink 4.75 */
+  --fg-roleBgUnknown: #19191b;     /* text 15.01  body 8.90  ink 5.12 */
+
+  --fg-roleInkArchitect: var(--fg-decide);
+  --fg-roleInkPlanner: var(--fg-info);
+  --fg-roleInkBuilder: var(--fg-accent);
+  --fg-roleInkReviewer: var(--fg-warn);
+  --fg-roleInkResearcher: var(--fg-ok);
+  --fg-roleInkScout: var(--fg-textMuted);
+  --fg-roleInkSteward: var(--fg-stuck);
+  --fg-roleInkTester: var(--fg-bleed);
+  --fg-roleInkUnknown: var(--fg-textMuted);
 }
 
 /* html[...] rather than a bare attribute selector: this must outrank v2.css's
@@ -149,6 +197,31 @@ html[data-theme="light"] {
   --fg-rowHover: rgba(44, 98, 212, 0.06);
   --fg-rowSelected: rgba(44, 98, 212, 0.10);
   --fg-toolBg: #f2f2ee;
+
+  /* Role identities, light. Pale washes rather than near-black tints — the
+     same treatment `freezeBg*` and `primaryActionBg` already get. Only ONE
+     ink deviates from the dark block's var() chain:
+
+       roleInkPlanner. The shared `info` hue is #1f7f93 here, and on the
+       planner wash it measures 4.25:1 — under AA, for the same reason `warn`
+       had to be darkened to #7f6c11 two blocks up (that comment is the
+       precedent). #1c7385 is the same teal two steps darker: 5.00:1 on the
+       wash, 5.47:1 on white. Light-only; dark keeps var(--fg-info).
+
+     Everything else inherits its var() from :root and therefore follows
+     whatever the light block does to `decide`/`accent`/`warn`/`ok`/`stuck`/
+     `bleed`/`textMuted` — which is the point of writing them as references. */
+  --fg-roleBgArchitect: #f1effa;   /* text 15.77  body 7.74  ink 5.22 */
+  --fg-roleBgPlanner: #ebf3f5;     /* text 15.95  body 7.83  ink 4.88 */
+  --fg-roleBgBuilder: #ecf1fb;     /* text 15.78  body 7.74  ink 4.87 */
+  --fg-roleBgReviewer: #f3f2ea;    /* text 15.92  body 7.81  ink 4.61 */
+  --fg-roleBgResearcher: #ecf3ee;  /* text 15.88  body 7.79  ink 4.67 */
+  --fg-roleBgScout: #f3f3f4;       /* text 16.18  body 7.94  ink 4.71 */
+  --fg-roleBgSteward: #f5eef6;     /* text 15.75  body 7.73  ink 5.23 */
+  --fg-roleBgTester: #f8eded;      /* text 15.66  body 7.68  ink 5.11 */
+  --fg-roleBgUnknown: #f2f2f2;     /* text 15.95  body 7.83  ink 4.64 */
+
+  --fg-roleInkPlanner: #1c7385;
 
   /* v2.css declares its own surface scale and calls it "not theme-dependent".
      It is now. Same variable names, light values — otherwise every v2-styled

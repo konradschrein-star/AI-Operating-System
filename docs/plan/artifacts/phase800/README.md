@@ -13,6 +13,7 @@ reader could be misled:
   [§5.1](#51-round-803-did-not-land--the-tree-round-804-measured).
 - **`dollar-sweep.sh` is RED, and one of its two hits is phase 800's own** —
   red since round 801, unnoticed by three rounds. [§5.3](#53-dollar-sweepsh-is-red--and-phase-800-owns-half-of-it).
+  **CLOSED IN ROUND 808** — two allowlist entries, gate now exits 0. [§8.2](#82-finding-2--dollar-sweepsh-closed).
 - **The brief's own DB query cannot return 0** and never could.
   [§3.2](#32-protocol-2--secret-non-leakage-sentinel--pass-2626).
 - **The operator's `data-testid` instruction was not implemented**, because
@@ -578,3 +579,390 @@ or 2 depending on phase, and it contributed 0 in all three windows. **39 is the
 honest steady state; 38 is one sampling of it.** Both are under 40 — but the
 margin is one request per minute, and the next poll added to this surface
 breaks the gate.
+
+---
+
+## 8. Round 808 — round 807's fix cycle
+
+Round 807 returned **NEEDS_FIXES** with five items. All five are closed. Two of
+them are closed differently from how the review proposed, and both departures
+are argued below rather than quietly taken.
+
+Round 808 changed **no application code**: its commits touch `README.md`, two
+gate scripts, one allowlist, and `docs/plan/artifacts/`. `forge-control/` and
+`forge-control-web/app/` are untouched by this round.
+
+**A hazard a reviewer must know about before reading any number here.** Five
+sibling tasks of this project were writing into this same worktree while round
+808 ran, and one of them committed on top of round 808's commit mid-run. So the
+working copy is *not* a description of round 808. Everything measured below was
+measured against an isolated `git archive` of round 808's own commit
+(`b353afa`), extracted to `/tmp/p808-src`, built there and served there — never
+against the shared working copy. §8.6 records how.
+
+### 8.1 Finding 1 — the live checkout was dirty
+
+`git -C /opt/forge-ai-os status --porcelain` → ` M README.md`: a 54-line
+uncommitted rewrite of the root README sitting on `main`.
+
+It was **good content**, so it was not thrown away to satisfy a hygiene rule.
+The order was: copy it into this worktree, verify byte-identity by sha256
+(`db7ce98f…` on all three of the live working copy, the worktree file and a
+`/tmp` backup), commit it here, and only then `git checkout -- README.md` in
+the live checkout. `/opt/forge-ai-os` is now clean on `main`; the content lives
+in `b353afa`.
+
+### 8.2 Finding 2 — `dollar-sweep.sh`, closed
+
+Two entries in `scripts/checks/dollar-allowlist.txt`, exactly as §5.3 predicted:
+
+| file:line | hit | why it is not money |
+|---|---|---|
+| `chat/effort-ramp.ts:9` | "you are **spending** real tokens" | prose in the header comment explaining why `high` is amber; phase 800's own, unlisted since r801 |
+| `_ui/ResizableSplit.tsx:9` | "the chat surface **spent** 904px" | a **pixel** count in the header comment; inherited from `main` |
+
+Both patterns are **the sentence, not `.*`** — listing a file does not
+blanket-excuse it. Verified non-vacuous: reintroducing a literal `$5.00` into
+`effort-ramp.ts` still exits 1 (`FAIL … effort-ramp.ts:63`), and removing it
+returns the tree to clean. The gate now exits **0**, 57 hits, all allowlisted.
+
+### 8.3 Finding 3 — the credential leak, and the second file the review missed
+
+The review was right and the bug was worse than reported: **two** files had it,
+not one.
+
+`secret-sentinel.cjs` and `scripts/checks/check-working-sql-agreement.ts:86`
+both passed `DATABASE_URL` — `postgres://postgres:<PASSWORD>@…` — as psql's
+`argv[0]`. Node's failed-exec `Error.message` is `Command failed: <argv
+verbatim>`, so **any** psql failure printed the postgres superuser password
+into the transcript of whichever agent ran it, and from there into
+`runs.thread`. The `scrub()` beside it redacted only the LEAKCANARY.
+`check-working-sql-agreement.ts` is a **reviewer-run gate**, which makes it the
+wider hole of the two, and it was not in the review.
+
+Both now: parse the DSN; address psql with `-h/-p/-U/-d`; pass the password in
+`PGPASSWORD` on the **child environment** (`/proc/<pid>/environ` is
+uid-restricted, `/proc/<pid>/cmdline` — where argv lands — is world-readable);
+`delete` `DATABASE_URL` from that environment; and scrub the password from every
+diagnostic **unconditionally**, not only when a canary was passed.
+
+`psql-argv-leak.cjs` — **23/23** — proves it instead of asserting it. It runs
+both code paths against a closed port with a per-run synthetic password, and
+shows the difference verbatim:
+
+```
+before:  Command failed: psql postgres://p808probe:‹PASSWORD-WAS-HERE›@127.0.0.1:59997/p808_nosuchdb …
+after:   Command failed: psql -h 127.0.0.1 -p 59997 -U p808probe -d p808_nosuchdb …
+```
+
+It reads **no real credential**, so it stays re-runnable by anyone; it asserts
+both failures are the *same* libpq refusal, so the AFTER is not passing by
+falling over earlier; and half of it is a **drift guard** that reads both
+shipped files and fails if a connection URL ever returns to an `execFileSync`
+argv.
+
+**THE 33 ROWS: ALREADY CONTAINED BY THE OPERATOR, ROTATION STILL OPEN.** Round
+807 counted 33 existing `runs.thread` rows carrying the live password. Per the
+vault Operator Log (`AI OS/Operator Log.md`, 2026-08-16), the operator has
+already backed those rows up to `runs_thread_pw_redaction_20260816`, replaced
+the value with `[REDACTED-DB-PASSWORD]` across all 33 threads, and verified 0
+remaining in `thread` and 0 in `metadata`. **Rotation of the credential itself
+is escalated to Konrad and is still open** — a password that sat in a database
+the whole fleet reads should be treated as disclosed, whatever the redaction
+says. Round 808 touched neither: an `UPDATE` on the live database and a
+credential change are both outside a build task, and the first was already
+done. What round 808 owns is the root cause, which is fixed above.
+
+### 8.4 Finding 4 — the flake is real, the diagnosis in the review is backwards
+
+The review proposed moving the chat-list poll off "a divisor of the 30 s
+window". The arithmetic says the opposite, and `nav-walk-sampling.cjs` (11/11)
+derives it, checks the closed form against a 200 000-draw Monte-Carlo, and
+measures every candidate assertion over 20 000 simulated runs.
+
+For a free-running poll of period `p` sampled over a window `W = k·p + r`, with
+φ the time to the first firing uniform on `[0, p)`:
+
+```
+count(φ) = floor((W − φ)/p) + 1  →  k+1 with probability r/p, else k
+```
+
+So the count is deterministic **if and only if `r = 0`** — exact divisors are
+the *stable* periods, not the unstable ones. The current 10 s is stable; the
+proposed 11 s varies with probability **0.73**. Measured:
+
+| period | divides 30 s | possible counts | P(extra sample) |
+|---|---|---|---|
+| 3 000 ms | yes | {10} | 0 |
+| 8 000 ms | no | {3, 4} | 0.75 |
+| **10 000 ms** (current) | **yes** | **{3}** | **0** |
+| **11 000 ms** (proposed) | **no** | **{2, 3}** | **0.73** |
+
+What actually destabilises it: **react-query re-arms `refetchInterval` after
+the fetch *settles***, so the effective period is `interval + latency` — a hair
+*above* the divisor, the worst place on the number line. And the 3 s chat-detail
+poll varies for the same reason on its own, so **no chat-list period can rescue
+a zero-tolerance comparison of two independently sampled windows.**
+
+`ChatSurface.tsx` is therefore **deliberately not touched**: changing it would
+spend round 802's measured headroom and leave the flake in place.
+
+The fix is the review's *second* option — but **±1 is not enough either**, because
+four independent polls can drift by more than one sample between two windows.
+P1/P2 now tolerate **one sample per distinct polled path**, read off the at-rest
+window at runtime rather than hard-coded, so the tolerance tracks the surface
+instead of rotting. Simulated failure rates over 20 000 runs:
+
+| assertion | latency 50 ms | 150 ms | 300 ms |
+|---|---|---|---|
+| as written (no tolerance) | 21.0 % | **48.9 %** | 36.4 % |
+| round 807's proposed ±1 | 1.0 % | **7.6 %** | 6.5 % |
+| ±N (N = distinct polled paths) | **0** | **0** | **0** |
+
+and ±N is **tight, not slack**: the worst excess observed in 20 000 runs is 3 of
+a permitted 4.
+
+**P3's absolute 40/min ceiling is untouched and takes no tolerance** — it is an
+absolute bound, not a comparison of two samples. No budget was raised, no gate
+was deleted.
+
+#### The fix, measured in a real browser — three runs
+
+Against the isolated round-808 harness (§8.6), `phase600/nav-walk.cjs` three
+times, back to back:
+
+| run | at rest | depth 1 | depth 2 | excess | old assertion | new assertion |
+|---|---|---|---|---|---|---|
+| 1 | 18 (36/min) | 19 (38/min) | 19 (38/min) | +1 | **FAIL** (19 ≤ 18 is false) | **PASS** |
+| 2 | 18 (36/min) | 19 (38/min) | 19 (38/min) | +1 | **FAIL** | **PASS** |
+| 3 | 18 (36/min) | 19 (38/min) | 19 (38/min) | +1 | **FAIL** | **PASS** |
+
+Per-path, at rest: `/chat/:id` 20/min, `/chat/:id/team` 10/min, `/chat` **4/min**,
+`/chat/:id/plan` 2/min. At depth: the same, except `/chat` at **6/min**. The
+entire difference is the chat-list poll landing **2 samples in the at-rest
+window and 3 in the drilled ones** — precisely the ±1 the arithmetic predicts,
+on precisely the poll round 807 identified.
+
+Note this is *worse* than the 1-run-in-3 round 807 measured: here the old
+assertion fails **3 of 3**, because the at-rest window starts immediately after
+page load, so the list poll's phase is not random — it is systematically
+unfavourable. A gate that fails every run in one harness and one run in three
+in another is not measuring the application at all. `distinct_polled_paths` was
+**4** in all three runs, so the tolerance was 4 and the observed excess was 1 —
+three times the margin it needed, and still far inside P3's ceiling.
+
+P3 passed in all three runs at 38/min against the 40/min bound.
+
+### 8.5 Finding 5 — the gate set is a committed script now
+
+Round 807's finding was that `gates-806.txt` recorded 6 gates where
+`gates-804.txt` recorded 12, dropped the one known to be RED, and still
+reported "6/6 green". The failure mode is a gate list reassembled by hand every
+round.
+
+So the list is no longer assembled by hand: `scripts/checks/gates-808.sh` runs
+**every** gate in one command, prints each one's exit code whether it passed or
+not, never early-exits on a red one, and labels a genuinely unrunnable gate
+**SKIPPED** in the numbered output rather than omitting it. `gates-808.txt` is
+its verbatim output.
+
+### 8.6 How round 808's evidence was isolated from five concurrent siblings
+
+Five sibling tasks of this project were writing into this worktree throughout
+round 808, and one of them committed on top of round 808's commit while the
+browser gates were running. Measuring the shared working copy would have
+attributed their in-flight code to this round.
+
+So the browser evidence was captured against a snapshot of round 808's own
+commit and nothing else:
+
+```bash
+git archive b353afa | tar -x -C /tmp/p808-src          # round 808's commit, alone
+ln -s …/forge-control/node_modules      /tmp/p808-src/forge-control/node_modules
+ln -s …/forge-control-web/node_modules  /tmp/p808-src/forge-control-web/node_modules
+
+# API on its own port with its OWN, EMPTY secret store — never Konrad's
+SECRET_STORE_DIR=/tmp/p808-store SERVE_V3_PORT=7830 \
+  ./node_modules/.bin/tsx ../scripts/checks/serve-v3-7798.ts
+curl -s 127.0.0.1:7830/api/secrets    # → {"secrets":[]}   ← isolation, verified
+
+FORGE_CONTROL_URL=http://127.0.0.1:7830 NODE_ENV=production ./node_modules/.bin/next build
+grep -o '127.0.0.1:78[0-9][0-9]' .next/routes-manifest.json   # → 127.0.0.1:7830
+AUTH_URL=http://127.0.0.1:7832 … ./node_modules/.bin/next start -p 7832
+```
+
+Verified the snapshot carried round 808's work and *not* the siblings':
+`PGPASSWORD` present ×2, `SAMPLE_TOLERANCE` present ×5, and the sibling's
+`#141417` nav-rail fix **still present** in `DesktopApp.tsx` (i.e. excluded from
+this round's tree, as it should be — it is their commit, not round 808's).
+
+### 8.7 The additive-API gate — not triggered, and here is the proof
+
+`git diff --name-only 7b961b5..b353afa -- forge-control/` → **0 files**. Round
+808 changed no API code, so the gate cannot have anything to say about it. This
+matches round 807's own conclusion.
+
+It was nonetheless run, in its real `--control` form (worktree harness vs live
+`:7700`, both captured at the same moment so world-drift cancels), and the
+result is recorded rather than hidden. `chat-thread`, `health`,
+`projects-managers`, `agents-run`, `chat-list` and `projects` all come back
+**ok** — the last three with drift the control shows identically. Three rows
+report FAIL, and **all three are artefacts of the harness, not of the code**:
+
+- `secrets` — the harness runs an **empty isolated store** by design
+  (`{"secrets":[]}` vs 5 on the control), so every field under `secrets.[]` is
+  "missing". This is the isolation §8.6 exists to guarantee, working correctly.
+- `agents-project`, `agents` — declared additive fields unreachable *through the
+  pinned phase-300 fixture* (`agents.[].subagents.[].ended_at` and friends: the
+  fixture's rows carry no sub-agents). Pre-existing on the branch; round 808
+  changed no file that could affect it.
+
+Recording a red-looking run with its diagnosis is the point of finding 5. It is
+**not** claimed green.
+
+
+---
+
+# 9. Round 808 — chat transcript: colour-coded relays + rich rendering
+
+Konrad, reading the manager chat on 2026-08-16: *"pls colorcode the messages
+from the builders in this chat so I can faster distinguish. Also I thought it
+would make sense to render the messages as HTML, this way we can have more
+effective communication with selection elements, you telling me secrets and so
+on."*
+
+This section is that task's evidence. It ran in parallel with the other round
+808 tasks (nav chrome, canvas, secrets push) and touched none of their files.
+
+## 9.1 What the defect actually was
+
+A worker's report is delivered by `POST /api/runs/:id/message` and appended as
+**`role: "user"`** — deliberately, so both prompt builders hand it to the engine
+unchanged (`run-control-rules.ts:459`). The transcript therefore rendered it as
+an ordinary right-aligned Konrad bubble: **byte-identical treatment to something
+Konrad typed himself**, for all 19 worker reports in his chat. The only thing
+separating the two was `meta.comms`, which no client code read.
+
+## 9.2 Files
+
+| File | What |
+|---|---|
+| `app/theme.css`, `app/tokens.ts` | 9 `roleBg*` tints + 9 `roleInk*` inks, BOTH palettes. Five inks are `var()` references to the panel's own role tokens, so a role's colour cannot drift from the Live rail's |
+| `chat/comms-identity.ts` | reads `meta.comms`, lifts the in-band `[message from …]` label, maps role → tint/ink. Pure |
+| `chat/rich-blocks.ts` | the `forge:ui` fenced-block format: fence scanner + closed schema + caps. Pure |
+| `chat/rehype-forge-allowlist.ts` | the strict tag/attribute allowlist, the href scheme gate, and the image→text rewrite |
+| `chat/RichMessage.tsx` | prose + controls; the choice/secret/invalid renderers |
+| `chat/MessageMarkdown.tsx` | hardened: allowlist plugin, `urlTransform`, no `<img>`, refused links render as struck-through text |
+| `chat/AssistantThread.tsx` | the `CommsMessage` card — direction marker, role, short peer id |
+| `chat/thread-mapping.ts` | carries `meta.comms` to the renderer; splits an outbound echo into its own message |
+| `chat/ManagerThread.tsx` | the manager chat's wiring: peer roles from the team panel's existing cache, composer + secret-panel actions |
+| `forge-control/src/lib/run-control-rules.ts`, `routes/run-control.ts` | `meta.comms.peer_role`, stamped at write time from the peer run's `metadata.role` |
+
+## 9.3 The security work, and the hole that was already open
+
+`![x](http://host/beacon.png)` in ANY agent message made the console **fetch the
+URL** — measured on the pre-808 tree, react-markdown rendering an `<img>` plus a
+React `<link rel="preload" as="image">`. A beacon in a worker's report telling an
+attacker when Konrad read it, from his IP. Images are now inert text.
+
+Interactive controls are a **typed payload**, never markup: the agent emits a
+fenced `forge:ui` block of validated JSON and the UI renders components it owns.
+Clicking an option **writes into the composer and sends nothing**; the secret
+control opens the existing secure panel and carries no value.
+
+## 9.4 Results — every battery, re-run on this tree
+
+| Battery | Result |
+|---|---|
+| `scripts/checks/check-chat-rich.tsx` (new) — 14 payloads × 5 + schema + identity | **PASS 222/222** |
+| `chat-injection-808.cjs` (new) — the same payloads in a REAL browser, both themes, plus tool-block collapse | **PASS 140/140**, 51 requests issued, **0** to any injected host |
+| `note-injection.cjs` (round 804, unchanged) — the secrets panel | **PASS 70/70** (`note-injection-808-rerun.json`) |
+| `secret-sentinel.cjs` (round 804, unchanged) — LEAKCANARY | **PASS 26/26** (`secret-sentinel-808-rerun.json`) |
+| `contrast-role-tints.cjs` (new) | **PASS 54/54**, worst 4.61:1 (reviewer ink, light) |
+| `no-raw-colours.cjs` | PASS, 0 unlisted — and two TODO debt lines retired |
+| `npx tsc --noEmit` both repos, `pnpm build`, `npm test` (forge-control) | clean / pass / **766 pass** |
+
+The brief called the injection battery "42 assertions"; the committed battery is
+**70** (8 payloads × 5 assertions + 2 control + the thread/draft probes). The
+larger number is what was run — see `note-injection-808-rerun.json`.
+
+**Contrast, measured (`node scripts/checks/contrast-role-tints.cjs`).** Text /
+body / ink on each tint, both themes, all ≥ 4.5:1:
+
+| role | dark tint | text | ink | light tint | text | ink |
+|---|---|---|---|---|---|---|
+| architect | `#1b1925` | 14.81 | 6.11 | `#f1effa` | 15.73 | 5.20 |
+| planner | `#121d20` | 14.68 | 6.82 | `#ebf3f5` | 15.91 | 4.88 |
+| builder | `#141925` | 15.01 | 5.44 | `#ecf1fb` | 15.79 | 4.87 |
+| reviewer | `#221f13` | 14.10 | 9.22 | `#f3f2ea` | 15.93 | **4.61** |
+| researcher | `#131b16` | 15.01 | 5.56 | `#ecf3ee` | 15.86 | 4.67 |
+| scout | `#151517` | 15.59 | 5.31 | `#f3f3f4` | 16.13 | 4.71 |
+| steward | `#1f1722` | 14.91 | 5.76 | `#f5eef6` | 15.71 | 5.22 |
+| tester | `#211515` | 15.18 | **4.74** | `#f8eded` | 15.61 | 5.09 |
+| unknown | `#19191b` | 15.01 | 5.12 | `#f2f2f2` | 15.98 | 4.65 |
+
+Two inks deviate from the panel's `ROLE_TOKEN`, both for AA and both documented
+in `theme.css`: **scout** uses `textMuted` (the panel's `textMuted2` measures
+3.39:1 as text on that tint — fine for a 3px rule, not for a role name), and
+**light planner** uses `#1c7385` (the shared `info` is 4.25:1 there — the same
+correction `warn` already carries two blocks above it).
+
+## 9.5 Screenshots
+
+`phase800-808-roles-{dark,light}.png` — all eight role tints on one screen, plus
+the unstamped peer rendering as *"unknown role"*.
+`phase800-808-transcript-{dark,light}.png` — the hostile payloads, rendering as
+literal text.
+
+## 9.6 Reproducing (the fixture stack, and why it is a fixture)
+
+The transcript this round needed — one report per role, an outbound echo,
+fourteen hostile payloads, a control block — **does not exist in the live
+database**, and creating it would mean INSERTing runs into Konrad's chat list.
+So `fixture-api-808.cjs` serves it: node:http, no dependencies, no database, no
+writes. Any path it does not implement answers `{}` **and is recorded** —
+`fixture-api-808-generic.json` shows the two that were (both SSE streams, which
+is why the header reads "polling" in the screenshots).
+
+```bash
+cd /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838
+
+# A) the fixture API
+node docs/plan/artifacts/phase800/fixture-api-808.cjs --port 7834   --record /tmp/p808-fixture-api.json &
+
+# B) an isolated build against it, served on :7837 (cookie: §2 step C)
+rm -rf /tmp/p800-808-web && mkdir -p /tmp/p800-808-web
+rsync -a --exclude=.next --exclude=node_modules forge-control-web/ /tmp/p800-808-web/
+ln -s "$(pwd)/forge-control-web/node_modules" /tmp/p800-808-web/node_modules
+cd /tmp/p800-808-web && FORGE_CONTROL_URL=http://127.0.0.1:7834   NODE_ENV=production ./node_modules/.bin/next build
+AUTH_URL=http://127.0.0.1:7837 FORGE_CONTROL_URL=http://127.0.0.1:7834   AUTH_SECRET="$AUTH_SECRET" ./node_modules/.bin/next start -p 7837 &
+
+# C) the browser battery
+FORGE_SESSION_COOKIE=… PHASE700_BASE_URL=http://127.0.0.1:7837   node docs/plan/artifacts/phase800/chat-injection-808.cjs      # ~40s, 134 assertions
+
+# D) the unit battery (needs the JSX tsconfig — tsconfig.checks.json, repo root)
+cd forge-control-web && ../forge-control/node_modules/.bin/tsx   --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-rich.tsx
+
+# E) the 804 batteries, re-run UNCHANGED against this tree. These need the REAL
+#    routers, so: own port, own EMPTY secret store (§2 step A's rule).
+SECRET_STORE_DIR=/tmp/p800-store-808 SERVE_V3_PORT=7838   forge-control/node_modules/.bin/tsx scripts/checks/serve-v3-7798.ts &
+#    …build a second isolated copy against :7838, serve on :7839, then:
+PHASE700_BASE_URL=http://127.0.0.1:7839 PHASE700_API_URL=http://127.0.0.1:7838   node docs/plan/artifacts/phase800/note-injection.cjs
+PHASE700_BASE_URL=http://127.0.0.1:7839 PHASE700_API_URL=http://127.0.0.1:7838   node docs/plan/artifacts/phase800/secret-sentinel.cjs
+
+# F) contrast + the standing colour gate
+node scripts/checks/contrast-role-tints.cjs
+node scripts/checks/no-raw-colours.cjs
+```
+
+## 9.7 What is NOT covered
+
+- **Older messages have no `peer_role`.** The stamp is written from now on; the
+  19 already in Konrad's chat resolve through the team panel's cache, and only
+  while that panel has been opened this session. With neither source the card
+  says *"unknown role"* — it never guesses. A backfill was deliberately not
+  written: it would mean rewriting historical `thread` JSON.
+- **The `forge:ui` format is not yet in any agent's prompt.** Nothing emits a
+  control block today; the renderer is ready for the round that teaches the
+  operator to write one. A reminder was raised to Konrad with the interaction
+  model and the default taken (click → composer, never auto-send).

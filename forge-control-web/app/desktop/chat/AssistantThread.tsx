@@ -46,6 +46,12 @@ import {
 import { tokens, dot } from "../../tokens";
 import type { RunDetail } from "../../api";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { RichActionsProvider, RichMessage, type RichActions } from "./RichMessage";
+import {
+  commsHeader,
+  stripCommsPrefix,
+  type CommsFacts,
+} from "./comms-identity";
 import { summarizeTool, type ToolTone } from "./tool-summary";
 import {
   mapThreadToMessages,
@@ -58,6 +64,26 @@ import {
 export type ToolRenderMode = "raw" | "summary";
 
 const ToolRenderModeContext = createContext<ToolRenderMode>("raw");
+
+/**
+ * peer run id → that run's `metadata.role`, for comms entries written before
+ * round 808 started stamping `peer_role` server-side.
+ *
+ * NO FETCH BACKS THIS. ChatSurface fills it from the team panel's already
+ * polled `["chat-team", chatId]` cache; an empty map is the normal state when
+ * that panel has never been opened, and the header then says "unknown role"
+ * rather than inventing one. The context exists because message components are
+ * mounted by assistant-ui, which passes its own props and nothing of ours.
+ */
+const PeerRolesContext = createContext<ReadonlyMap<string, string>>(new Map());
+
+/** The `meta.comms` a message carries, when it is relayed traffic. */
+function useCommsFacts(): CommsFacts | null {
+  return useMessage((m) => {
+    const custom = m.metadata?.custom as { comms?: CommsFacts } | undefined;
+    return custom?.comms ?? null;
+  });
+}
 
 function humanAge(ts: Date | undefined): string {
   if (!ts) return "";
@@ -99,7 +125,114 @@ function RoleLabel({
   );
 }
 
+/* ── Relayed agent traffic (round 808) ────────────────────────────────────
+ *
+ * Konrad, reading this chat: "pls colorcode the messages from the builders in
+ * this chat so I can faster distinguish."
+ *
+ * Until this round a worker's report was appended with `role: "user"` (see
+ * comms-identity.ts for why the engine needs that) and therefore rendered as
+ * an ordinary right-aligned Konrad bubble. This card is the difference: full
+ * width, left-aligned like the machine's own output, a 3px rule and a tint in
+ * the ROLE's colour, and a header line naming what it is — direction, actor,
+ * role, and the eight characters of run id that every log line already
+ * prints.
+ *
+ * Both directions land here. `◂ from · worker · builder · 4e842cc8` is a
+ * report coming up; `▸ to · worker · reviewer · 1a2b3c4d` is the echo of what
+ * the operator sent down, which is the transcript half Konrad asked for when
+ * he said he wanted to see "that you sent them a message and that you received
+ * a message from them".
+ */
+function CommsMessage({ facts }: { facts: CommsFacts }) {
+  const peers = useContext(PeerRolesContext);
+  const fallbackRole = facts.peerRunId ? (peers.get(facts.peerRunId) ?? null) : null;
+  const header = commsHeader(facts, fallbackRole);
+  const { identity } = header;
+  return (
+    <MessagePrimitive.Root
+      data-comms-direction={facts.direction}
+      data-comms-role={identity.role ?? ""}
+      data-comms-peer={facts.peerRunId ?? ""}
+      style={{ display: "flex", flexDirection: "column", gap: 4 }}
+    >
+      <div
+        title={header.summary}
+        style={{
+          background: identity.bg,
+          border: `1px solid ${tokens.border}`,
+          borderLeft: `3px solid ${identity.ink}`,
+          borderRadius: 10,
+          padding: "9px 13px",
+          minWidth: 0,
+          overflowWrap: "anywhere",
+        }}
+      >
+        <div
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            flexWrap: "wrap",
+            fontSize: 9.5,
+            letterSpacing: "0.07em",
+            textTransform: "uppercase",
+            color: identity.ink,
+            marginBottom: 6,
+          }}
+        >
+          <span aria-hidden>{header.arrow}</span>
+          <span>
+            {header.preposition} {header.actor}
+          </span>
+          {facts.from !== "konrad" && (
+            <span style={{ fontWeight: 600 }}>{header.role}</span>
+          )}
+          <span style={{ color: tokens.textMuted, textTransform: "none" }}>
+            {header.peer}
+          </span>
+          {header.subagent !== null && (
+            <span style={{ color: tokens.textMuted, textTransform: "none" }}>
+              → sub-agent {header.subagent}
+            </span>
+          )}
+          <CommsAge />
+        </div>
+        <MessagePrimitive.Parts components={{ Text: CommsText }} />
+      </div>
+    </MessagePrimitive.Root>
+  );
+}
+
+/** Same age string the role labels print, in the card's own header. */
+function CommsAge() {
+  const createdAt = useMessage((m) => m.createdAt);
+  return (
+    <span style={{ color: tokens.textFaint, textTransform: "none" }}>
+      {humanAge(createdAt ?? undefined)}
+    </span>
+  );
+}
+
+/**
+ * The body. The in-band `[message from worker c8bc5ffa]` label is lifted out —
+ * the header above says the same thing, and printing it twice is how a card
+ * ends up looking like a quote of itself. It is only removed when it PARSES:
+ * an unrecognised prefix stays in the body where Konrad can see it.
+ *
+ * The rest goes through the same sanitised rich renderer the operator's own
+ * prose uses, which is the point of round 808 — a worker's report is markdown
+ * written by an agent, and it was being shown as a wall of pre-wrapped text.
+ */
+function CommsText({ text }: { text: string }) {
+  const { body } = stripCommsPrefix(text);
+  return <RichMessage source={body} />;
+}
+
 function UserMessage() {
+  const comms = useCommsFacts();
+  if (comms) return <CommsMessage facts={comms} />;
   return (
     <MessagePrimitive.Root
       style={{
@@ -139,6 +272,10 @@ function UserText({ text }: { text: string }) {
 }
 
 function AssistantMessage() {
+  /* An outbound comms echo arrives as its own assistant message (see
+   * thread-mapping) — same card, opposite arrow. */
+  const comms = useCommsFacts();
+  if (comms) return <CommsMessage facts={comms} />;
   return (
     <MessagePrimitive.Root
       style={{
@@ -183,7 +320,11 @@ function AssistantText({ text }: { text: string }) {
         overflowWrap: "anywhere",
       }}
     >
-      <MessageMarkdown source={text} />
+      {/* Round 808: the operator's own prose goes through the rich renderer
+          too, so `forge:ui` blocks it emits become real controls. Prose with
+          no control block takes the identical path it took before — see
+          RichMessage's single-segment shortcut. */}
+      <RichMessage source={text} />
     </div>
   );
 }
@@ -424,7 +565,11 @@ function SystemMessage() {
         style={{
           padding: "8px 12px",
           borderLeft: `2px solid ${color}`,
-          background: "rgba(79, 176, 196, 0.05)",
+          /* Was `rgba(79, 176, 196, 0.05)` — a hand-mixed 5% wash of the DARK
+           * theme's info hue, so a system line kept a cyan tint in light mode
+           * (raw-colour-allowlist.txt's TODO line for this file). `toolBg` is
+           * the theme-aware recessed panel; the left rule keeps the hue. */
+          background: tokens.toolBg,
           borderRadius: 6,
           fontSize: 12,
           color: tokens.textSecondary,
@@ -482,6 +627,12 @@ function ActivityStrip({ run }: { run: RunDetail }) {
   );
 }
 
+/** Nothing is actionable unless a caller says so. A drilled worker view has no
+ *  composer, and its controls must render disabled-with-a-reason rather than
+ *  appear live and do nothing (RichMessage.tsx). */
+const NO_ACTIONS: RichActions = {};
+const NO_PEERS: ReadonlyMap<string, string> = new Map();
+
 export interface AssistantThreadProps {
   run: RunDetail;
   /** Defaults to `raw` — the manager chat and ProjectsSurface are unchanged. */
@@ -489,9 +640,21 @@ export interface AssistantThreadProps {
   /** Whose story to tell. Defaults to `{ kind: "all" }`, i.e. every entry
    *  inline, which is what every caller got before round 602. */
   scope?: ThreadScope;
+  /** What an agent-emitted control may do here (round 808). Omitted → the
+   *  controls render disabled and say why. */
+  actions?: RichActions;
+  /** peer run id → role, for comms entries that predate the `peer_role`
+   *  stamp. Read-only, never fetched by this component. */
+  peers?: ReadonlyMap<string, string>;
 }
 
-export function AssistantThread({ run, mode = "raw", scope }: AssistantThreadProps) {
+export function AssistantThread({
+  run,
+  mode = "raw",
+  scope,
+  actions = NO_ACTIONS,
+  peers = NO_PEERS,
+}: AssistantThreadProps) {
   /* Deps are the scope's PRIMITIVES, not the object: callers build the scope
    * inline, so a fresh identity every render would re-map a 285-entry thread
    * on every poll tick. This surface is the one where hover cost is measured
@@ -523,45 +686,49 @@ export function AssistantThread({ run, mode = "raw", scope }: AssistantThreadPro
 
   return (
     <ToolRenderModeContext.Provider value={mode}>
-      <AssistantRuntimeProvider runtime={runtime}>
-        <ThreadPrimitive.Root
-          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
-        >
-          <ThreadPrimitive.Viewport
-            className="scroll-tinted"
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "20px 28px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
-            }}
-          >
-            {run.thread.length === 0 && (
-              <div
-                className="mono"
+      <PeerRolesContext.Provider value={peers}>
+        <RichActionsProvider actions={actions}>
+          <AssistantRuntimeProvider runtime={runtime}>
+            <ThreadPrimitive.Root
+              style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+            >
+              <ThreadPrimitive.Viewport
+                className="scroll-tinted"
                 style={{
-                  fontSize: 11,
-                  color: tokens.textFaint,
-                  textAlign: "center",
-                  padding: 24,
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "20px 28px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 16,
                 }}
               >
-                empty thread
-              </div>
-            )}
-            <ThreadPrimitive.Messages
-              components={{
-                UserMessage,
-                AssistantMessage,
-                SystemMessage,
-              }}
-            />
-            {isRunning && <ActivityStrip run={run} />}
-          </ThreadPrimitive.Viewport>
-        </ThreadPrimitive.Root>
-      </AssistantRuntimeProvider>
+                {run.thread.length === 0 && (
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 11,
+                      color: tokens.textFaint,
+                      textAlign: "center",
+                      padding: 24,
+                    }}
+                  >
+                    empty thread
+                  </div>
+                )}
+                <ThreadPrimitive.Messages
+                  components={{
+                    UserMessage,
+                    AssistantMessage,
+                    SystemMessage,
+                  }}
+                />
+                {isRunning && <ActivityStrip run={run} />}
+              </ThreadPrimitive.Viewport>
+            </ThreadPrimitive.Root>
+          </AssistantRuntimeProvider>
+        </RichActionsProvider>
+      </PeerRolesContext.Provider>
     </ToolRenderModeContext.Provider>
   );
 }

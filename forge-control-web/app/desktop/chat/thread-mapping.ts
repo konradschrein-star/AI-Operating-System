@@ -43,6 +43,7 @@
 
 import type { ThreadMessageLike } from "@assistant-ui/react";
 import type { ThreadEntry } from "../../api";
+import { readComms } from "./comms-identity";
 import { parentToolUseId, spawnToolUseIds, subagentIndex, toolUseId } from "./subagent-slice";
 
 /**
@@ -201,6 +202,20 @@ export function mapThreadView(
     if (!inScope(e)) return;
     visible++;
     const content = String(e.content ?? "");
+
+    /* ── Round 808: agent-to-agent traffic is its own kind of message ──────
+     * A `comms` entry is a message RELAYED between runs — a worker reporting
+     * up, or this run's echo of what it sent down. `commsEntries` writes the
+     * inbound one as `role: "user"` so both prompt builders deliver it
+     * unchanged, which is correct for the ENGINE and wrong for the READER:
+     * it made a builder's report render as an ordinary Konrad bubble.
+     *
+     * The meta travels to the renderer here, and nothing else about the walk
+     * changes. `metadata` is attached ONLY to comms entries, so a thread with
+     * none produces byte-identical output to round 602's — which is what
+     * check-thread-mapping.ts's "the default did not move" table asserts. */
+    const comms = e.kind === "comms" ? readComms(e.meta) : null;
+
     if (e.role === "user") {
       closeOpen();
       messages.push({
@@ -208,6 +223,7 @@ export function mapThreadView(
         content: [{ type: "text", text: content }],
         id: `t${i}`,
         createdAt: entryDate(e),
+        ...(comms ? { metadata: { custom: { comms } } } : {}),
       });
       return;
     }
@@ -222,6 +238,23 @@ export function mapThreadView(
       });
       return;
     }
+    /* The OUTBOUND echo (`role: "agent"`, direction "out"): what this run sent
+     * to another one. It gets its own message rather than being merged into
+     * whatever assistant turn happens to be open around it — merging would
+     * bury "you sent this to the builder" inside the operator's own prose,
+     * and the direction marker is the whole point of rendering it at all. */
+    if (comms && (e.role === "agent" || e.role === "assistant")) {
+      closeOpen();
+      messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: content }],
+        id: `t${i}`,
+        createdAt: entryDate(e),
+        metadata: { custom: { comms } },
+      } as ThreadMessageLike);
+      return;
+    }
+
     // assistant / tool / agent → accumulate into the open assistant message
     if (!openParts) {
       openParts = [];

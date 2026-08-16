@@ -374,6 +374,20 @@ export interface CommsMeta {
     direction: "in" | "out";
     from: CommsFrom;
     peer_run_id: string | null;
+    /**
+     * The PEER run's `metadata.role` — architect/planner/builder/reviewer/…
+     * Round 808, and the reason it exists: the console renders relayed traffic
+     * in the peer's role colour, and `peer_run_id` alone cannot answer "which
+     * of my six builders is this" without the client making a request per
+     * peer. Stamped at write time, in-band with the rest of the attribution,
+     * for exactly the reason `actorLabel` puts the sender in the content: it
+     * has to survive a full-transcript rebuild.
+     *
+     * OPTIONAL AND ABSENT ON EVERY ENTRY WRITTEN BEFORE ROUND 808 — 19 of them
+     * in Konrad's manager chat alone. A reader must treat "no key" as "nobody
+     * recorded it" and say so, never as a role of its own.
+     */
+    peer_role?: string;
     subagent_id?: string;
   };
 }
@@ -395,6 +409,12 @@ export interface CommsInput {
   ts: string;
   /** Non-empty → the relay variant for POST /:parentId/subagent-message (C10). */
   relaySubagentId?: string | null;
+  /** `metadata.role` of the SENDER run, stamped onto the receiver's entry —
+   *  that run is the receiver's peer. Null/absent → no `peer_role` key is
+   *  written at all, which is what every pre-808 entry looks like. */
+  senderRole?: string | null;
+  /** `metadata.role` of the TARGET run, stamped onto the sender's echo. */
+  targetRole?: string | null;
 }
 
 /**
@@ -432,6 +452,19 @@ function echoLabel(from: CommsFrom, targetRunId: string): string {
   }
 }
 
+/**
+ * `{ peer_role }` when there is one, `{}` when there is not.
+ *
+ * Spread into the meta so an unknown role writes NO KEY rather than a null or
+ * an empty string. Three shapes for "nobody knows" is how a reader ends up
+ * rendering a role called "". A blank or non-string role is the same as none.
+ */
+function roleKey(role: string | null | undefined): { peer_role?: string } {
+  if (typeof role !== "string") return {};
+  const trimmed = role.trim();
+  return trimmed === "" ? {} : { peer_role: trimmed };
+}
+
 export function commsEntries(i: CommsInput): {
   receiver: CommsThreadEntry;
   echo: CommsThreadEntry | null;
@@ -467,6 +500,7 @@ export function commsEntries(i: CommsInput): {
         direction: "in",
         from: i.from,
         peer_run_id: i.senderRunId ?? null,
+        ...roleKey(i.senderRole),
         ...(relayId ? { subagent_id: relayId } : {}),
       },
     },
@@ -494,6 +528,7 @@ export function commsEntries(i: CommsInput): {
           direction: "out",
           from: i.from,
           peer_run_id: i.targetRunId,
+          ...roleKey(i.targetRole),
         },
       },
     },

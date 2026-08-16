@@ -49,6 +49,7 @@ import {
 import { ChatTeamPanel } from "./team/ChatTeamPanel";
 import type { TeamNode } from "./team/teamApi";
 import { AssistantThread } from "./chat/AssistantThread";
+import { ManagerThread } from "./chat/ManagerThread";
 import { AgentChatView } from "./chat/AgentChatView";
 import { PlanDocView } from "./chat/PlanDocView";
 import {
@@ -1814,7 +1815,27 @@ function ChatThread({
             </button>
           )}
       </div>
-      <AssistantThread run={run} />
+      {/* Round 808. The transcript is the same one every other surface
+          mounts; ManagerThread adds the two things only THIS surface can
+          answer — who the comms peers are (from the team panel's existing
+          cache, no new request) and what an agent-offered control is allowed
+          to do here. Picking an option types into the composer; it never
+          sends, and it never carries a credential. */}
+      <ManagerThread
+        run={run}
+        onInsertDraft={(text) => {
+          setDraft((d) => (d ? `${d} ${text}` : text));
+          composerRef.current?.focus();
+        }}
+        onOpenSecret={(name) => {
+          /* Answer mode when the agent has actually raised the request
+             server-side, free-form otherwise — the same two states the
+             pending badge opens, decided by the same helper. */
+          const match = pending.find((r) => r.name === name) ?? null;
+          setAnswering(match);
+          setSecretOpen(true);
+        }}
+      />
       {localSys.length > 0 && (
         <div
           style={{

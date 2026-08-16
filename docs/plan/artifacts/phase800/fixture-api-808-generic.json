@@ -1,0 +1,8 @@
+{
+  "port": 7834,
+  "chat_id": "80808080-0808-4808-8808-080808080808",
+  "genericallyAnswered": [
+    "GET /api/chat/80808080-0808-4808-8808-080808080808/events",
+    "GET /api/secrets/events"
+  ]
+}

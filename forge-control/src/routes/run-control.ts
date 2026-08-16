@@ -185,6 +185,28 @@ async function readCommsBody(c: Context): Promise<CommsBody> {
   return (await c.req.json().catch(() => ({}))) as CommsBody;
 }
 
+/**
+ * `metadata.role` of a run, for the `peer_role` stamp (round 808).
+ *
+ * ONE extra SELECT per delivered message, and only when a sender named itself
+ * — messages are rare (38 in the fleet's whole history at the time of writing)
+ * and this is the same `getRun` the handler above it already uses. No new
+ * query, no new table, no join.
+ *
+ * NEVER THROWS ON A MISSING RUN. A sender id that does not resolve is already
+ * handled downstream (the echo write reports it and the delivery stands); this
+ * function's only job is to answer "what role, if any", and the honest answer
+ * for an unknown run is null. `metadata` is untyped JSONB, so anything that is
+ * not a non-empty string reads as null rather than as a role.
+ */
+async function runRole(runId: string | null): Promise<string | null> {
+  if (runId === null) return null;
+  const run = await getRun(runId);
+  if (!run) return null;
+  const role = run.metadata.role;
+  return typeof role === "string" && role.trim() !== "" ? role.trim() : null;
+}
+
 /* ------------------------------------------------------------------------- *
  * POST /:id/message  (contract §1; C1–C5)
  * ------------------------------------------------------------------------- */
@@ -230,12 +252,18 @@ r.post("/:id/message", async (c) => {
   // minted here and shared by both entries, which is what lets the UI pair an
   // echo with its delivery.
   const ts = new Date().toISOString();
+  /* Round 808: each side's entry carries the OTHER side's role, so the console
+   * can colour a builder's report as a builder's without asking the server one
+   * question per peer. The target's role is already in hand from `getRun`
+   * above; only the sender costs a lookup, and only when it named itself. */
   const { receiver, echo } = commsEntries({
     text,
     from,
     targetRunId: id,
     senderRunId: senderId,
     ts,
+    senderRole: await runRole(senderId),
+    targetRole: typeof run.metadata.role === "string" ? run.metadata.role : null,
   });
 
   const entry = toThreadEntry(receiver);
@@ -492,6 +520,8 @@ r.post("/:id/resume-chat", async (c) => {
     targetRunId: id,
     senderRunId: senderId,
     ts,
+    senderRole: await runRole(senderId),
+    targetRole: typeof run.metadata.role === "string" ? run.metadata.role : null,
   });
   const entry = toThreadEntry(receiver);
 
@@ -683,6 +713,8 @@ r.post("/:parentId/subagent-message", async (c) => {
     senderRunId: senderId,
     ts,
     relaySubagentId: subagentId,
+    senderRole: await runRole(senderId),
+    targetRole: typeof run.metadata.role === "string" ? run.metadata.role : null,
   });
   const entry = toThreadEntry(receiver);
 
