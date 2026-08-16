@@ -750,7 +750,7 @@ function LeftRail({
     padding: "0 16px",
     cursor: "pointer",
     borderLeft: `2px solid ${surface === key ? tokens.accent : "transparent"}`,
-    background: surface === key ? "#141417" : "transparent",
+    background: surface === key ? tokens.selectedBg : "transparent",
     color: surface === key ? tokens.text : tokens.textMuted,
   });
   const railGroups: { items: NavItem[]; badged?: boolean }[] = [
