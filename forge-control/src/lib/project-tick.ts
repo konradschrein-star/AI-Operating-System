@@ -475,6 +475,20 @@ export const ESCALATION_POLICY =
  *  exported into every run's environment by cc-runner (T17), so the agent
  *  passes it through rather than pasting an id it would have to look up.
  *
+ *  r950 folds the `forge:ui` control format in HERE rather than into
+ *  withPolicy(), and the reason is which surface actually renders one. Traced on
+ *  the deployed tree: a report arrives as a `user` message carrying `meta.comms`
+ *  and renders CommsMessage -> CommsText -> RichMessage, and ManagerThread is
+ *  the one caller that supplies RichActions ({insertDraft, openSecret}), so the
+ *  control is LIVE there. The drilled worker view (AgentChatView) hands
+ *  AssistantThread no actions, so the same block renders disabled; a reminder
+ *  has no `meta.comms` at all and falls to UserText, which is literally
+ *  `<>{text}</>` — raw fenced JSON in Konrad's face. withPolicy() also wraps
+ *  scratch projects that have NO manager chat, where a control block has no live
+ *  surface whatsoever. Gating the format on the same linkage that gates the
+ *  channel it renders in is therefore the only placement that cannot teach a
+ *  worker to emit a block nobody can click.
+ *
  *  The verdict-role paragraph closes F3 of docs/plan/evidence/cp2-c9-reconciler.md
  *  at prompt level. It is gated on `isVerdictRole` — the same predicate the
  *  reconciler gates on — rather than a second hand-written role list, so the
@@ -493,7 +507,30 @@ export function MANAGER_COMMS(managerRunId: string, role: TaskRole): string {
     `- Report FINDINGS, BLOCKERS and DECISIONS the manager must know: something that changes what the ` +
     `next task should do, something you are stuck on, a call you had to make that the brief did not ` +
     `cover. Not chatter, not progress narration, not "starting now" or "still working". One report ` +
-    `that matters beats five status pings.`;
+    `that matters beats five status pings.\n` +
+    `- A REPORT MAY CARRY ONE INTERACTIVE BLOCK — and this is the ONLY channel where one renders. The ` +
+    `text you send with the curl above goes through the manager chat's rich renderer, so it may include ` +
+    `one fenced \`forge:ui\` control block. A reminder (POST /api/reminders) is shown as PLAIN TEXT and ` +
+    `your own transcript renders the control DISABLED, so a block in either place is noise — put it in a ` +
+    `report or write the ask as prose. Use it for escalation rule 3) above: when you must ask Konrad to ` +
+    `pick between concrete options, attach the options instead of listing them in prose. Clicking writes ` +
+    `the value into his composer and sends nothing. For a credential use the secret variant; never ask ` +
+    `for one in prose. Keep the fence at the start of its line — indenting it four spaces stops it being ` +
+    `a block at all.\n` +
+    `\`\`\`forge:ui\n` +
+    `{"kind":"choice","prompt":"Which store should the migration write to?","options":[\n` +
+    `  {"value":"postgres","label":"PostgreSQL","hint":"the existing content_forge database"},\n` +
+    `  {"value":"sqlite","label":"SQLite","hint":"a new file, no server to run"}]}\n` +
+    `\`\`\`\n` +
+    `\`\`\`forge:ui\n` +
+    `{"kind":"secret","name":"STRIPE_API_KEY","why":"the billing probe cannot run without it"}\n` +
+    `\`\`\`\n` +
+    `  Exact shape, validated against a closed schema — a block that fails renders in Konrad's chat as a ` +
+    `visible "unreadable control block", so do not improvise fields. \`kind\` is "choice" or "secret" and ` +
+    `nothing else. A choice needs \`options\`: 1–12 entries, each a bare string or an object whose ` +
+    `\`value\` (required, max 400 chars) is what lands in the composer, with optional \`label\` (max 80) ` +
+    `and \`hint\` (max 160); optional \`prompt\` (max 400) and \`"multiple":true\` to pick several. A ` +
+    `secret needs \`name\` (max 64, characters [A-Za-z0-9._-] only) and optional \`why\` (max 400).`;
 
   if (!isVerdictRole(role)) return base;
 
