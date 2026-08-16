@@ -33,6 +33,8 @@ import {
   type ChatLinkage,
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
+import { useAutogrow } from "./chat/useAutogrow";
+import { effortRamp } from "./chat/effort-ramp";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
 import {
@@ -1152,7 +1154,10 @@ function EngineControls({ run }: { run: RunDetail }) {
           whiteSpace: "nowrap",
         }}
       >
-        {modelLabel} · {effort} ▾
+        {modelLabel} ·{" "}
+        {/* U29: the effort word carries its ramp colour even when collapsed,
+            so the cost setting is readable without opening the picker. */}
+        <span style={{ color: effortRamp(effort).fg }}>{effort}</span> ▾
       </button>
       {open && (
         <div
@@ -1213,8 +1218,13 @@ function EngineControls({ run }: { run: RunDetail }) {
               EFFORT
             </span>
             <div style={{ display: "flex", gap: 4 }}>
+              {/* U29: cheapest → hottest, coloured by the ramp. Unselected
+                  chips show the ramp in the border only, dimmed; the selected
+                  one fills, doubles its outline and takes the ramp text
+                  colour, which reads as "on" in both palettes. */}
               {ENGINE_EFFORT_CHOICES.map((e) => {
                 const on = e === effort;
+                const ramp = effortRamp(e);
                 return (
                   <button
                     key={e}
@@ -1225,9 +1235,12 @@ function EngineControls({ run }: { run: RunDetail }) {
                     className="mono"
                     style={{
                       fontSize: 10,
-                      color: on ? tokens.accent : tokens.textMuted,
-                      border: `1px solid ${on ? tokens.accent : tokens.border}`,
-                      background: on ? tokens.primaryActionBg : "transparent",
+                      color: on ? ramp.fg : tokens.textMuted,
+                      border: `1px solid ${ramp.border}`,
+                      background: on ? ramp.bg : "transparent",
+                      boxShadow: on ? `inset 0 0 0 1px ${ramp.border}` : "none",
+                      opacity: on ? 1 : 0.55,
+                      fontWeight: on ? 600 : 400,
                       borderRadius: 6,
                       padding: "3px 8px",
                       cursor: "pointer",
@@ -1244,6 +1257,13 @@ function EngineControls({ run }: { run: RunDetail }) {
     </div>
   );
 }
+
+/** U28 composer bounds. `COMPOSER_LINE_HEIGHT` is pinned in the textarea's
+ *  style because a textarea with no explicit line-height computes to `normal`,
+ *  which useAutogrow cannot convert into rows. Module-level so the hook's
+ *  effect deps stay referentially stable across renders. */
+const COMPOSER_LINE_HEIGHT = 1.5;
+const COMPOSER_ROWS = { minRows: 2, maxRows: 10 } as const;
 
 function ChatThread({
   run,
@@ -1287,6 +1307,9 @@ function ChatThread({
   >([]);
   const popoverRef = useRef<SlashPopoverHandle | null>(null);
   const [secretOpen, setSecretOpen] = useState(false);
+  // U28: the composer sizes itself to `draft`. No height state — see useAutogrow.
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  useAutogrow(composerRef, draft, COMPOSER_ROWS);
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
@@ -1478,7 +1501,11 @@ function ChatThread({
               style={{
                 padding: "8px 12px",
                 borderLeft: `2px solid ${tokens.info}`,
-                background: "rgba(79, 176, 196, 0.06)",
+                // Was a hardcoded translucent literal of the DARK theme's info
+                // hue, so it stayed a cyan wash in light mode (NFU1). The
+                // recessed-panel token flips with the theme; the left border
+                // keeps the hue.
+                background: tokens.toolBg,
                 borderRadius: 6,
                 fontSize: 12,
                 color: tokens.textSecondary,
@@ -1538,6 +1565,7 @@ function ChatThread({
             }}
           />
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onPaste={att.onPaste}
@@ -1574,7 +1602,7 @@ function ChatThread({
                 ? "engine working… Enter to queue a message · / for commands"
                 : "message · Enter to send · drop/paste files · /note /todo /remind · Shift+Enter newline"
             }
-            rows={2}
+            rows={COMPOSER_ROWS.minRows}
             style={{
               flex: 1,
               resize: "none",
@@ -1585,6 +1613,8 @@ function ChatThread({
               color: tokens.text,
               fontSize: 13,
               fontFamily: "Inter, system-ui",
+              // Pinned for useAutogrow: `normal` is unmeasurable (U28).
+              lineHeight: COMPOSER_LINE_HEIGHT,
               outline: "none",
             }}
           />
