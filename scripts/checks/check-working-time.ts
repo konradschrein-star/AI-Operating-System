@@ -1,6 +1,7 @@
 /**
  * check-working-time.ts — executable unit check for the working-time module
- * (U5 of docs/plan/12-ui-v3-requirements.md, model in 13-ui-v3-architecture.md §4).
+ * (U5 of docs/plan/operator-visibility/12-ui-v3-requirements.md, model in
+ * docs/plan/operator-visibility/13-ui-v3-architecture.md §4).
  *
  * vitest is not set up in either repo and NF4 forbids adding one, so pure
  * helpers get a plain tsx script instead: table-driven, zero dependencies,

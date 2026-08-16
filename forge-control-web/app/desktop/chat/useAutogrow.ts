@@ -12,7 +12,8 @@
  * written straight onto the element in `useLayoutEffect`, so it lands in the
  * same frame as the character and never causes a second render pass.
  *
- * Measurement protocol (docs/plan/14-ui-v3-quality.md, "Composer autogrow"):
+ * Measurement protocol (docs/plan/operator-visibility/14-ui-v3-quality.md,
+ * "Composer autogrow"):
  *   height = 'auto'  →  read scrollHeight ONCE  →  clamp  →  write height +
  *   overflowY. One forced reflow per keystroke, which is the irreducible cost
  *   of measuring wrapped text; nothing else in the effect touches layout.

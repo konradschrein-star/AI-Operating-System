@@ -1,6 +1,7 @@
 /**
  * composer-autogrow.cjs — PROTOCOL 1, round 804.
- * docs/plan/14-ui-v3-quality.md § "Composer autogrow" (U28), plus U32's
+ * docs/plan/operator-visibility/14-ui-v3-quality.md § "Composer autogrow"
+ * (U28), plus U32's
  * "the send button's box does not move".
  *
  * ── WHY THIS FILE EXISTS AT ALL ───────────────────────────────────────────

@@ -1,6 +1,6 @@
 /**
  * check-duration.ts — executable unit check for the Live panel's duration
- * helpers (R4, R5, R6 of docs/plan/01-requirements.md).
+ * helpers (R4, R5, R6 of docs/plan/operator-visibility/01-requirements.md).
  *
  * vitest is not set up in either repo and NF4 forbids adding one, so pure
  * helpers get a plain tsx script instead: table-driven, zero dependencies,

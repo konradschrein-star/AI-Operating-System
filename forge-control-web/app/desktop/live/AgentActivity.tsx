@@ -277,7 +277,8 @@ function AgentRunLine({ a, now }: RowProps) {
   const model = modelDisplay(a.model);
 
   return (
-    // Lineage lives on the row container (02-architecture §4.3): every part of
+    // Lineage lives on the row container (operator-visibility/02-architecture
+    // §4.3): every part of
     // the row that does not state something more specific — the dot, the
     // badge, the second line, the padding — answers "what is this and whose
     // child is it?" on hover, with zero JS.

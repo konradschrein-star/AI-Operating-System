@@ -586,7 +586,7 @@ and firing `onOpenRun` — cannot happen against a box that never changes.
 ### 8.5 Finding #5 (LOW) — settled manager rows showed a duration, against U15
 
 Ratified, in the direction the project brief requires, and written into the
-requirements corpus as **U15a** (`docs/plan/12-ui-v3-requirements.md`). U15 said
+requirements corpus as **U15a** (`docs/plan/operator-visibility/12-ui-v3-requirements.md`). U15 said
 "finished rows show tokens + model, NO time"; the phase-500 brief's Definition
 of Done #1 says "a settled run shows a FROZEN duration … **no exceptions
 anywhere in the panel**". The brief governs, and it is also the better answer:

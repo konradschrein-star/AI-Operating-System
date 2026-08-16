@@ -6,7 +6,8 @@ Extends `03-quality.md` (its preamble, ports, and harness conventions still appl
 
 1. `npx tsc --noEmit` in forge-control AND forge-control-web — zero errors.
 2. `NODE_ENV=production pnpm build` in forge-control-web — green.
-3. `git diff --name-only <phase-base>..HEAD` — assert none of: `project-tick.ts`, `cc-runner.ts`, `executor.ts`, `db/projects.ts`, `FileExplorerPanel*`, `VaultFileList*`, `routes/files.ts`. Any hit = automatic FAIL.
+3. `git diff --name-only <phase-base>..HEAD` — assert none of: `project-tick.ts`, `cc-runner.ts`, `executor.ts`, `db/projects.ts`, `VaultFileList*`, `routes/files.ts`. Any hit = automatic FAIL.
+   > **OPERATOR WAIVER 2026-08-16: FileExplorerPanel.tsx only; files-pane-fast-light completed 2026-08-05 so the collision this rule guarded against no longer exists.** The executable gate (`scripts/checks/gates-808.sh`, commit `c5bce64`) already carries this waiver; this prose now matches it. Scope is `FileExplorerPanel.tsx` and nothing else — `VaultFileList*`, `routes/files.ts` and every engine file above stay forbidden.
 4. Token purity: `grep -rnE "#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(" <files touched this phase>` — only tokens.ts itself may define colors.
 5. Both themes: dark + light screenshots of every surface the phase touched, attached to `docs/plan/artifacts/phase<NNN>/`.
 6. $-sweep regression (phases 400+): `grep -rniE "usd|spend" forge-control-web/app --include="*.tsx" -l` — every hit must be on the phase's documented allowlist (non-rendering types/comments); a new rendering hit = FAIL.

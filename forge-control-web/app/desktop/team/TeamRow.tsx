@@ -28,7 +28,7 @@
  * and "—" on every other settled row — an exception no round had ratified.
  *
  * Resolved in favour of the brief, and ratified in the requirements corpus as
- * U15a (docs/plan/12-ui-v3-requirements.md): **every settled row shows its
+ * U15a (docs/plan/operator-visibility/12-ui-v3-requirements.md): **every settled row shows its
  * working time, frozen, and no settled row ticks.** Konrad's complaint was
  * that finished agents kept COUNTING UP, not that they showed a number — and
  * "how long did the builder take" is exactly the question a finished row is

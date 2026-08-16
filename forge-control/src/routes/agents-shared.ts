@@ -466,7 +466,8 @@ export function metaStr(meta: Record<string, unknown>, key: string): string | nu
 }
 
 /**
- * Classify a run row into one of four kinds (R7, 02-architecture §4.1).
+ * Classify a run row into one of four kinds
+ * (R7, operator-visibility/02-architecture §4.1).
  *
  * Ordered precedence — FIRST MATCH WINS:
  *   1. `metadata.cron_id` present            → "cron"

@@ -1,7 +1,8 @@
 /**
  * check-project-metadata.ts — executable unit check for the metadata builder
- * behind `POST /api/projects` (U1 of docs/plan/12-ui-v3-requirements.md,
- * write path of docs/plan/13-ui-v3-architecture.md §5).
+ * behind `POST /api/projects` (U1 of
+ * docs/plan/operator-visibility/12-ui-v3-requirements.md, write path of
+ * docs/plan/operator-visibility/13-ui-v3-architecture.md §5).
  *
  * vitest is not set up in either repo and NF4 forbids adding one, so pure
  * helpers get a plain tsx script instead: table-driven, zero dependencies,

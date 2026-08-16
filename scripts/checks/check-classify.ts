@@ -1,6 +1,7 @@
 /**
  * check-classify.ts — executable unit check for the server-side agent-kind
- * classifier (R7 of docs/plan/01-requirements.md, 02-architecture.md §4.1).
+ * classifier (R7 of docs/plan/operator-visibility/01-requirements.md,
+ * docs/plan/operator-visibility/02-architecture.md §4.1).
  *
  * Same discipline as check-duration.ts: vitest is not set up in either repo
  * and NF4 forbids adding one, so a pure function gets a plain tsx script —

@@ -1,6 +1,6 @@
 /**
  * secret-sentinel.cjs — PROTOCOL 2, round 804.
- * docs/plan/14-ui-v3-quality.md § "Secret non-leakage" — the LEAKCANARY
+ * docs/plan/operator-visibility/14-ui-v3-quality.md § "Secret non-leakage" — the LEAKCANARY
  * protocol, end to end through the real UI.
  *
  * THE CLAIM UNDER TEST. A credential answered through SecretField reaches the

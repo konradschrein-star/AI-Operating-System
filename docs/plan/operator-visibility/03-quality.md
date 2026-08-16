@@ -37,7 +37,8 @@ Fixtures are verbatim thread entries captured from the live DB (samples already 
 Every phase gate includes, without exception:
 1. `npx tsc --noEmit` both repos — paste tail.
 2. `pnpm build` in forge-control-web — paste tail.
-3. `git diff --name-only main...HEAD` — confirm **no forbidden file** (`project-tick.ts|cc-runner.ts|executor.ts|db/projects.ts|FileExplorerPanel|VaultFileList|routes/files.ts`) and no file outside the phase's declared scope.
+3. `git diff --name-only main...HEAD` — confirm **no forbidden file** (`project-tick.ts|cc-runner.ts|executor.ts|db/projects.ts|VaultFileList|routes/files.ts`) and no file outside the phase's declared scope.
+   > **OPERATOR WAIVER 2026-08-16: FileExplorerPanel.tsx only; files-pane-fast-light completed 2026-08-05 so the collision this rule guarded against no longer exists.** The executable gate (`scripts/checks/gates-808.sh`, commit `c5bce64`) already carries this waiver; this prose now matches it. Scope is `FileExplorerPanel.tsx` and nothing else — `VaultFileList*`, `routes/files.ts` and every engine file above stay forbidden.
 4. `grep -nE '#[0-9a-fA-F]{3,8}|rgb\(|hsl\(' <touched .tsx/.ts>` — zero hits (NF1).
 5. Phase-specific checks below.
 

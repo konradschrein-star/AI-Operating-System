@@ -2,7 +2,8 @@
  * canvas-open.cjs — U31 BEFORE trace: what does opening the canvas cost?
  *
  * PHASE 800, round 801. This round MEASURES. It changes no application code;
- * round 803 fixes whatever this finds. `docs/plan/12-ui-v3-requirements.md`
+ * round 803 fixes whatever this finds.
+ * `docs/plan/operator-visibility/12-ui-v3-requirements.md`
  * U31 gates at **"open > 100ms scripting"**, so the number that decides the
  * gate is *scripting time on the renderer main thread between the click on the
  * CANVAS button and the frame that first paints the pane*. Everything below
