@@ -208,11 +208,40 @@ const SEED_PATH =
 
 const OUT_FILE = process.env.PHASE800_OUT_FILE ?? "canvas-open-before.json";
 
-/** The pane wrapper `ChatSurface.tsx:884` renders around <CanvasPane>. React
- *  emits the inline style verbatim, and `1 1 45%` appears nowhere else in the
- *  surface (the chat column next to it is `1 1 55%`). Asserted at run time by
- *  `check("pane selector matches exactly one node while open")`. */
-const PANE_SEL = 'div[style*="45%"]';
+/**
+ * The pane wrapper `ChatSurface.tsx:1065-1072` renders around <CanvasPane>.
+ * Asserted at run time by `check("pane selector matches exactly one node while
+ * open")`.
+ *
+ * ── ROUND 803 CHANGED THIS, AND WHY IT IS NOT FLATTERING THE FIX ──────────
+ *
+ * Round 801 used `div[style*="45%"]`, because the wrapper was then a fixed
+ * `flex: 1 1 45%`. Round 802 merged `main`, which replaced that with a
+ * DRAGGABLE chat/canvas split (`useResizablePanel`, `ChatSurface.tsx:482-488`),
+ * so the wrapper now renders grow factors against a zero basis:
+ *
+ *     flex: 0.45 1 0%; min-width: 320px; display: flex; min-height: 0px;
+ *
+ * There is no `45%` in that string. Measured, not assumed — on the merged tree
+ * `document.querySelectorAll('div[style*="45%"]').length` is **0**, and round
+ * 803's first BEFORE run died on `waitForSelector` after 20 s rather than
+ * reporting a wrong number. The old selector does not make the canvas look
+ * fast; it makes the protocol fail loudly, which is the behaviour this file
+ * was built for.
+ *
+ * `min-width: 320px` is the replacement because it is the ONE piece of this
+ * wrapper's style the split cannot move, and `minWidth: 320` appears exactly
+ * once in the whole app (`ChatSurface.tsx:1068`). Verified in the live DOM of
+ * the merged build: 1 match with the pane open, and the run-time check above
+ * fails if that ever stops being true.
+ *
+ * CONSEQUENCE FOR COMPARABILITY, stated rather than buried: this is a
+ * different instrument from the one round 801 ran, so round 801's absolute
+ * numbers and round 803's are NOT directly comparable. That is why round 803
+ * re-recorded a full BEFORE baseline against the merged tree with THIS
+ * selector, and compares merged-BEFORE to merged-AFTER only.
+ */
+const PANE_SEL = 'div[style*="min-width: 320px"]';
 
 /* ── the trace-event → DevTools bucket map ────────────────────────────────── */
 
