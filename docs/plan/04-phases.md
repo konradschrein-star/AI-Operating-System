@@ -1,114 +1,157 @@
 # 04 — Phases (the waterfall)
 
-Five phases, one planner task each at rounds 100/200/300/400/500. Gaps leave room for fix cycles (reviewer+1/+2) without colliding with the next phase's planner. Rounds gate ordering only: round N+1 starts when everything ≤ N is done. Phases are sequenced so no two phases edit the same file concurrently — phases 1 and 2 both touch `routes/agents.ts` + `AgentActivity.tsx` + `agentsApi.ts`, phases 3 and 4 both touch the chat surface; strict ordering removes every collision.
+Round scheduling per goal-mode convention: phase k's planner sits at round k·100; the
+99-round gap absorbs fix cycles (each costs rounds +1/+2 from its reviewer) without ever
+colliding with the next phase. Rounds only gate ordering; gaps are free. Tasks in the
+same round run in parallel in the SAME worktree — same-round tasks must touch disjoint
+files; anything that could collide goes in consecutive rounds.
 
-Every phase inherits: the QA gate preamble (03-quality §3 items 1–4), NF1–NF7 (01-requirements), the forbidden-files list, and per-unit commits to `project/8ea0cc08` (pushed to origin after green builds). Every planner should split into builder task(s) + one reviewer task (adversarial where marked), with fix cycles inside the phase's round gap.
+**File-collision note across phases:** P1 and P2 both edit
+`forge-control/src/lib/project-tick.ts`. That is safe because phases are strictly
+sequential (P2's planner cannot promote until P1's rounds — including its fix cycles —
+are all done). Within each phase, planners must keep same-round builders off shared files.
 
----
-
-## Phase 1 — Time truth (round 100)
-
-**Covers: R1 R2 R3 R4 R5 R6**
-
-**Scope.** `forge-control/src/routes/agents.ts` (SELECTs + `agentFromRow` + `subagentsFromRollup` + local wire interfaces); `forge-control-web/app/desktop/live/agentsApi.ts` (type mirror), `AgentActivity.tsx` (duration helpers + both row components). Nothing else.
-
-**Deliverables.**
-1. `completed_at` selected; `elapsed_ms` settled-aware; `settled`/`settled_at` on the wire (additive).
-2. Sub-agent `ended_at` + `description` projected.
-3. `runElapsedMs`/`subagentElapsedMs` helpers own all duration math; components contain none.
-4. `scripts/checks/check-duration.ts` (table-driven, exits nonzero on failure).
-5. Recorded pre-change `jq keys` snapshot (for the additivity check) in the task log.
-
-**Acceptance.** Phase gate + two-curl frozen check on :7798 + Playwright frozen-DOM check on :7799 + check-duration green + screenshots (dark/light) showing a settled run and a done sub-agent with frozen durations. Reviewer hunts for any still-ticking settled number anywhere in the panel.
-
-**Notes for the planner.** Worktree needs `pnpm install` in both repos first. The 4 legacy cancelled rows in the live DB are the natural fixture for the `updated_at` fallback — pin their ids in the builder brief (query in 02-architecture §2.3 recon; e.g. `310a6cdb`). Do not "fix" the cancel path in `db/runs.ts` — read around it (non-goal).
+**Standing constraints for every phase (planners: copy these into builder briefs):**
+worktree-only (never edit `/opt/forge-ai-os`; never `pm2 restart forge-executor` — not
+even "just to test"); no `forge-control-web/app/desktop/**`, no `src/routes/agents.ts`;
+pnpm only, `pnpm install --prod=false` first (worktree has no `node_modules`, and a bare
+install skips `tsx`/`typescript` under the executor's `NODE_ENV=production`); no new npm deps;
+hard errors, no silent fallbacks; commit per task with clear messages.
 
 ---
 
-## Phase 2 — Kind truth (round 200)
+## Phase 1 — Engine hardening: reviewer consolidation + status gating (round 100)
 
-**Covers: R7 R8 R9 R10 R11**
+- **Goal:** kill bugs 1 and 2 at the reconciler/DB layer, with the pure logic extracted
+  and unit-tested.
+- **Scope (files):** `forge-control/src/lib/project-reconcile.ts` (new),
+  `forge-control/src/lib/project-reconcile.test.ts` (new),
+  `forge-control/src/lib/project-tick.ts` (reconcile + spawn paths),
+  `forge-control/src/db/projects.ts` (promote/claim SQL, `listVerdictRound` — named
+  `listReviewerRound` until R850 widened it to reviewer + tester,
+  fix-chain transaction), `db/migrations/0039_reviewer_chain_key.sql` (new).
+- **Deliverables:** pure module + tests T1–T9; group consolidation wired into
+  `reconcileSettledTasks()`; gated promote/claim; migration 0039 (NOT applied to live DB —
+  dry-run only per 03-quality I2).
+- **Acceptance / gates:** T1–T9 green; `tsc --noEmit` clean; existing tests still green;
+  red-team review per 03-quality §4 (all 12 scenarios walked, three named failure-mode
+  paragraphs); I2 migration dry-run evidence.
+- **Requirements covered:** R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11.
+- **Risk: HIGH (this is the engine running us) → planner MUST add a red-team reviewer**
+  (attack brief, 03-quality §4) alongside the standard gating reviewer, same round —
+  which also live-exercises the new dedupe the moment both report.
 
-**Scope.** Same three files as phase 1 (sequential round — no collision), plus (if the planner chooses to centralize the role-color map) a small shared constant in the live module; `ManagersSection.tsx` read-only unless R11 needs a pin.
+## Phase 2 — Policy encoding + GitHub lane (round 200)
 
-**Deliverables.**
-1. `agent_kind` + `role` + `project_id` + `cron_name` projected with the ordered precedence (02-architecture §4.1), `unknown` rendered honestly.
-2. Panel row grammar per §4.2: kind badge, role label, model display mapping (pure fn), sub-agent `description` as title.
-3. Lineage via enriched native `title` attributes (§4.3 decision) — no JS hover state in the Live panel.
-4. `scripts/checks/check-classify.ts`.
+- **Goal:** kill bugs 3 and 4 where behavior is generated (prompts), and ship the boring
+  GitHub helper + guidance.
+- **Scope (files):** `forge-control/src/lib/project-tick.ts` (exported
+  `WORKTREE_POLICY` / `REVIEWER_LIVE_CHECK` / `DEPLOY_GUIDE` constants wired into
+  `buildPrompt()`, incl. push/PR guidance in planner/reviewer/architect branches),
+  prompt tests (T10) in `project-reconcile.test.ts` or a sibling test file,
+  `scripts/git-sync-branch.sh` (new), `docs/tools/deploy-playbook.md` (new).
+- **Deliverables:** policy constants + tests; helper script (push + `--pr`, force-free by
+  construction); deploy playbook doc; guidance text landed in all role branches.
+- **Acceptance / gates:** T10 green; helper pushes THIS work branch to origin (S6 proven);
+  `grep -c force scripts/git-sync-branch.sh` = 0; no-origin/no-auth exit codes proven in
+  a scratch dir; tsc + suite green.
+- **Requirements covered:** R12 R13 R14 R15 R16 R17.
 
-**Acceptance.** Phase gate + curl kind spot-checks against pinned DB rows + dark/light screenshots + the stranger test + `title` content dumps. Zero `onMouseEnter` in `app/desktop/live/` (grep).
+## Phase 3 — Researcher role + smoke (round 300)
 
-**Notes for the planner.** Reuse the visual idiom, don't redesign. The role set must include scout/researcher (new roles, no rows yet — code against the set in `routes/projects.ts:24–30`). Badge colors from tokens only; check both palettes actually differ enough (light theme faint colors — screenshot judgment).
+- **Goal:** the researcher lane exists and demonstrably works end-to-end.
+- **Scope (files):** `agents/researcher.md` (new, in-repo); `roleFilePaths()` repo
+  fallback + T13; T11 frontmatter-parse test; T14 allowlist robustness. No live-system
+  write at all — R308 struck the `/root/.claude/agents/` install step (R19).
+- **Deliverables:** role file (R18); the file resolves through the ENGINE's own path
+  order, proven by T13 against `REPO_AGENTS_DIR` rather than a hand-installed copy.
+- **Acceptance / gates:** T11 + T13 + T14 green; tsc + suite green.
+- **Requirements covered:** R18. (R19 struck, R20 moved to P6 — 03-quality §3.1.)
+
+## Phase 4 — External service tools: gemini-qa + perplexity (round 400)
+
+- **Round 399 scout (seeded by this corpus):** re-verify BOTH API surfaces against
+  official docs on build day (endpoints, model names, upload flow, response fields,
+  pricing) → `docs/research/` note; the 02-architecture §6 facts are from 2026-08-05 and
+  drift is expected. Planner folds any deltas into builder briefs.
+- **Goal:** both helpers exist, correct with AND without keys, documented, reminders queued.
+- **Scope (files):** `scripts/gemini-qa.mjs` (new), `scripts/perplexity.mjs` (new),
+  `docs/tools/gemini-qa.md` (new), `docs/tools/perplexity.md` (new). Disjoint pairs —
+  gemini and perplexity builders may share a round.
+- **Deliverables:** CLIs per 02-architecture §6 (rubric schema verbatim = the pipeline
+  contract); docs; one reminder per still-missing key via `POST /api/reminders`
+  (recon 2026-08-05: both `gemini-api-key` and `perplexity-api-key` missing from
+  `/opt/ai-os/.secrets/store/` — expect two reminders).
+- **Acceptance / gates:** I4 error-path proofs re-run by reviewer (exit 2 no-key naming
+  both locations; invalid-key surfaces API error, exit 1); live smoke IF a key appeared;
+  docs match `--help`; zero dependency changes; reminders visible via GET; tsc + suite green.
+- **Requirements covered:** R21 R22 R23 R24 R25.
+
+## Phase 5 — Integration sweep + knowledge capture (round 500)
+
+- **Goal:** the whole diff coheres; the system's own documentation knows what changed.
+- **Scope (files):** fixes surfaced by the sweep (any file already in scope above);
+  vault appends (`AI OS/Goal Mode Design.md`, `AI OS/Operator Log.md`); final branch push.
+- **Deliverables:** requirements matrix walked with evidence per R (checklist in the
+  reviewer brief); vault notes appended; branch pushed via the P2 helper.
+- **Acceptance / gates:** full-diff review of `git diff main...HEAD`; N2 boundary check
+  (`git diff --name-only` clean of forbidden paths); `pnpm install --prod=false && npx tsc
+  --noEmit && pnpm test` green from a clean state; vault notes appended, nothing truncated.
+- **Requirements covered:** R26 R27.
+
+## Phase 6 — Deploy (round 600, only after P5 PASS)
+
+- **Goal:** land it, restart safely, report.
+- **Scope:** `/opt/forge-ai-os` (the ONE phase allowed to touch it), live DB (migration
+  0039), pm2 (forge-control only), detached safe-restart for the executor.
+- **Deliverables / protocol (verbatim from the brief + R28):**
+  1. In `/opt/forge-ai-os`: `git merge main` into `project/4120f785` first if main moved;
+     re-run `pnpm install --prod=false && npx tsc --noEmit && pnpm test` in the WORKTREE; then merge
+     the branch to main. Conflicts ⇒ STOP, report the files, do not improvise.
+  2. Apply `db/migrations/0039_reviewer_chain_key.sql` (additive; safe under the running
+     old engine).
+  3. `pm2 restart forge-control` (API side — allowed).
+  4. `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`
+     — launch DETACHED and END; never wait, never `pm2 restart forge-executor`.
+  5. **R20 smoke, carried over from P3 (03-quality §3.1).** Only AFTER step 4's restart
+     has landed — the pre-restart engine has no repo fallback and would cache a bare
+     mission. Create a scratch-repo project whose brief tells its round-0 architect
+     (tier `fast`) to create exactly ONE researcher task (suggested topic: "current
+     Perplexity API surface + pricing, cited" — the output doubles as fresh input for P4)
+     and stop. The researcher run must complete and commit a `docs/research/*.md` with
+     ≥ 3 cited sources; the reviewer spot-checks ≥ 2 URLs against the claims made; the
+     scratch project is then closed. Executor logs must show no
+     `no agent definition for role researcher` warning.
+  6. Final message: what changed, test results, which keys/reminders Konrad owes the
+     system (expected: `gemini-api-key`, `perplexity-api-key` unless added meanwhile).
+- **Acceptance / gates:** 03-quality §3 P6 row (which now includes the R20 carry-over);
+  the deploy task's transcript is the evidence.
+- **Requirements covered:** R28, R20 (carried from P3).
 
 ---
 
-## Phase 3 — Hover performance (round 300) ⚠ high-risk: measurement rigor
+## Requirement → phase coverage matrix
 
-**Covers: R12 R13 R14 R15**
-
-**Scope.** Measurement scripts (`scripts/checks/hover-sweep.ts`), artifacts under `docs/plan/perf/` + `docs/plan/artifacts/phase3/`, and — depending on what the trace names — `ChatSurface.tsx` (ChatListItem, task list rows, memoization), possibly `Providers.tsx` (only with trace evidence). Poll cadences unchanged (honesty rule).
-
-**Deliverables.**
-1. `hover-sweep.ts` per protocol 03-quality §4 (both candidate sidebars swept: chat rail AND right SidePanel/Live rows).
-2. `docs/plan/perf/baseline.md` + raw traces (pre-fix, this worktree).
-3. `docs/plan/perf/findings.md` — the named mechanism with trace evidence.
-4. The fix (expected shape: memoized rail rows + CSS-`:hover` for the ✕ affordance, killing per-row `useState` — but the trace decides).
-5. `docs/plan/perf/after.md` + raw traces; before/after table.
-
-**Acceptance.** Phase gate + numeric gate (zero >50ms hover-attributed tasks; ≥50% scripting reduction vs baseline when baseline ≥120ms; the "lag lives elsewhere" branch per protocol otherwise) + R15 click-through + **adversarial red-team reviewer** (03-quality §5: attack with live SSE streaming, 60-row panel, rapid cross-surface hover; verify the sweep actually hovers rows; hunt stale-UI regressions from memoization).
-
-**Notes for the planner.** Seed TWO review tasks in sequence: a standard reviewer (gate + reproduce numbers) and a red-team reviewer briefed to break it — or one reviewer with an explicit attack brief; do NOT run two reviewers in the same round (known engine dedupe bug — Operator Log 2026-08-05). Baseline must be captured BEFORE any fix commit touches ChatSurface — enforce by commit order in the builder brief. Phases 1–2 changed the Live panel; that is fine — baseline is defined as this worktree pre-phase-3, and the protocol's "lag lives elsewhere" branch covers surprises.
-
----
-
-## Phase 4 — Agent comms in chat (round 400)
-
-**Covers: R16 R17 R18 R19 R20**
-
-**Scope.** `forge-control-web/app/desktop/chat/thread-mapping.ts`, `AssistantThread.tsx` (new sibling components `AgentSpawnRow`, `SendMessageRow` may live in a new file in the same dir), `app/api.ts` only if `ThreadEntry` typing needs the additive `kind` literals it already has. `docs/plan/notification-gap.md`. **No forge-control changes in this phase; `cc-runner.ts` untouched.**
-
-**Deliverables.**
-1. `parentToolUseId` + spawn-index attribution through the mapper (pure, fixture-tested via `check-thread-mapping.ts`).
-2. `by_name` renderers for Agent + SendMessage per 02-architecture §6.2 — visual grammar cloned from `ToolCallRow`, direction markers, defensive parsing, `UNPARSED PAYLOAD` visible fallback.
-3. Sub-agent attribution marker on transcript parts (R18) — low visual weight.
-4. `docs/plan/notification-gap.md` (R19) with pinned code quotes.
-
-**Acceptance.** Phase gate + check-thread-mapping green + Playwright on run `3853c154-e07b-4378-9313-2b34f4a33342` (2 Agent spawns, sub-agent Bash attribution) and a SendMessage-bearing run (`a86cf7b3…`, 2026-08-04) + malformed-fixture visible render + both themes + adversarial payload attacks (03-quality §5: truncated JSON, missing description, duplicated SendMessage fields, missing tool_result, very long prompts).
-
-**Notes for the planner.** The historical runs named above are the ground-truth fixtures — they exist in the live DB and render through the worktree UI at :7799 against the live API with zero setup. Collapse state stays local per-row (existing pattern). Do not restructure the assistant-message grouping algorithm (rejected alternative — 02-architecture §1).
-
----
-
-## Phase 5 — Deploy & production verification (round 500)
-
-**Covers: R21 R22**
-
-**Scope.** `/opt/forge-ai-os` live checkout (first time this project touches it), pm2 `forge-control-web` + `forge-control`. **Never forge-executor.**
-
-**Deliverables / runbook (in order, stop on any failure):**
-1. In the worktree: final `tsc` ×2 + `pnpm build` green; all phases' tasks done; push branch.
-2. In `/opt/forge-ai-os`: `git fetch` + check whether `main` moved since branch point; if yes, merge `main` INTO `project/8ea0cc08` in the worktree, re-run tsc + build there. **Any conflict → STOP, leave the branch, report exact files.**
-3. Merge `project/8ea0cc08` → `main` in `/opt/forge-ai-os` (fast-forward or clean merge only).
-4. `pnpm install --prod=false` if lockfile moved; rebuild forge-control-web; `pm2 restart forge-control-web`; `pm2 restart forge-control` (agents.ts changed).
-5. Verify: `pm2 jlist` both online; `curl :7700/api/health`; `:7701/desktop` serves (200/307); settled runs frozen in production (two-curl check against :7700); kind badges + agent-comm blocks spot-checked in production UI; hover sweep against :7701 within tolerance of phase-3 "after".
-6. Final summary to the project: changes shipped + the hover before/after numbers (the brief demands them in the final message).
-
-**Acceptance.** Every runbook step's output pasted. A deploy reviewer is optional; if seeded, it re-runs step 5 only.
-
-**Notes for the planner.** forge-executor keeps running old code until the engine-v2 lane deploys it — `/api/agents` reads whatever the executor wrote, and all phase-1/2 fields come from columns + rollup the old executor already writes, so no coordination is needed. If `docs/plan/` conflicts at merge (the previous project's corpus lives on main), resolution is: ours (this project's corpus) — that is the one foreseeable conflict and it is content-disjoint by design; anything else stops per rule 2.
-
----
-
-## Requirement → phase map (completeness check)
-
-| Phase | Requirements |
+| Phase | Requirements owned |
 |---|---|
-| 1 — Time truth | R1 R2 R3 R4 R5 R6 |
-| 2 — Kind truth | R7 R8 R9 R10 R11 |
-| 3 — Hover perf | R12 R13 R14 R15 |
-| 4 — Agent comms | R16 R17 R18 R19 R20 |
-| 5 — Deploy | R21 R22 |
-| (all) | NF1–NF7 |
+| P1 | R1 R2 R3 R4 R5 R6 R7 R8 R9 R10 R11 |
+| P2 | R12 R13 R14 R15 R16 R17 |
+| P3 | R18 (R19 struck at R308; R20 moved to P6) |
+| P4 | R21 R22 R23 R24 R25 |
+| P5 | R26 R27 |
+| P6 | R28 + R20 (carried from P3 at R308) |
 
-22 requirements, each in exactly one phase; no orphans.
+(N1–N5 are standing constraints enforced by every phase's gates, not owned by one phase.)
+
+## Round map
+
+| Round | Task | Tier |
+|---|---|---|
+| 0 | Architect: this corpus + seeding | flagship (done) |
+| 100 | Planner: Phase 1 (engine hardening; MUST add red-team reviewer) | standard |
+| 200 | Planner: Phase 2 (policy + GitHub) | standard |
+| 300 | Planner: Phase 3 (researcher) | standard |
+| 399 | Scout: re-verify Gemini + Perplexity API surfaces | (role default) |
+| 400 | Planner: Phase 4 (external tools) | standard |
+| 500 | Planner: Phase 5 (integration sweep) | standard |
+| 600 | Planner: Phase 6 (deploy) | standard |

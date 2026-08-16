@@ -1,202 +1,534 @@
 # 02 — Architecture
 
-## 1. Recommendation (first)
+State ownership is unchanged and remains the law of this system: **PostgreSQL owns state**
+(`projects`, `project_tasks`, `runs`), **the deterministic tick dispatches work**
+(`projectTick()` in `forge-control/src/lib/project-tick.ts`, called from the executor's
+manager loop every ~10s), **failure surfaces as blocked status + Telegram notification**
+(`queueNotification`), and **Konrad sees it on the Kanban board and heartbeats**. Every
+change below is a refinement of that machine, not a new machine.
 
-**Fix truth at the API boundary, legibility at the classification layer, speed at the component layer, and transparency at the renderer layer — all as additive changes over data that already exists.** Concretely: (a) `routes/agents.ts` starts selecting `completed_at` and projecting `settled_at`, `agent_kind`, `role`, `project_id`, `cron_name`, and per-sub-agent `ended_at`/`description`; (b) `AgentActivity.tsx` funnels all duration math through one settled-aware helper; (c) the hover fix is whatever the trace proves, with React.memo + CSS-`:hover` as the expected shape; (d) chat gains `tools.by_name` renderers for `Agent`/`SendMessage` over the existing thread pipeline, plus `parent_tool_use_id` threading in `thread-mapping.ts`. No migrations, no new dependencies, no engine files, no new state owners.
+## 1. Reviewer-round consolidation (bugs 1)
 
-Rejected alternatives, one line each:
+### 1.1 What is wrong today (read from the code, 2026-08-05)
 
-- *Compute settled durations client-side from `completed_at`* — pushes the truth rule into every consumer (web + mobile PWA); the API is the single choke point, fix it there.
-- *Add a `settled_at` column or backfill cancelled rows* — a migration for data that `COALESCE` already answers; engine's cancel path is not ours to fix this cycle.
-- *New `/api/agents/v2`* — versioning for an additive change; strictly-additive fields on v1 keep both consumers working.
-- *WebSocket/SSE for the Live panel* — polling isn't the proven problem; don't rebuild transport to fix a hover.
-- *Tooltip library (floating-ui etc.) for lineage* — a dependency and a mount cost to solve what CSS visibility solves; NF4 forbids it anyway.
-- *Nesting sub-agent transcript entries inside their Agent block* — requires restructuring the assistant-message grouping algorithm mid-cycle; marking attribution gets the legibility at a fraction of the risk (revisit later if Konrad wants full nesting).
-- *New notification plumbing so agent completions appear in chat* — dies inside `cc-runner.ts`, an engine file owned by engine-v2-research-lane; the brief's escape hatch says document, so we document (R19).
+`reconcileReviewer()` (project-tick.ts:290) fires once per settled reviewer task, with no
+awareness of sibling reviewers in the same round. Two reviewers in round R that both say
+NEEDS_FIXES each insert a `Fix cycle 1` builder at R+1 and a re-reviewer at R+2 — the
+first night produced exactly this, plus downstream duplicate deploy builders. A PASS is a
+no-op return, so ordering between a PASS and a sibling's NEEDS_FIXES is tick-arrival
+luck. Nothing is idempotent: a crash between the two `createTask` calls would replay one
+side on the next tick.
 
-## 2. System as it exists (recon summary, verified 2026-08-05)
+### 1.2 Target design
 
-### 2.1 Data flow, Live panel
-
-```
-Postgres runs (content_forge)                    forge-control :7700               forge-control-web :7701
-┌─────────────────────────────┐   4s poll   ┌──────────────────────────┐      ┌────────────────────────────┐
-│ columns: status, started_at,│◄────────────│ routes/agents.ts         │◄─────│ react-query                │
-│ completed_at, updated_at,   │             │  fetchActiveRows (≤60,   │      │  AgentActivity 4s          │
-│ parent_run_id, worker,      │             │   24h window)            │      │  ManagersSection 8s        │
-│ metadata jsonb:             │             │  agentFromRow            │      │ AgentActivity.tsx rows     │
-│  role, project_id, model,   │             │  subagentsFromRollup     │      │  AgentRunLine / SubagentLine│
-│  model_resolved, cron_id,   │             │  ← DROPS completed_at,   │      │  useSharedClock (1s, gated)│
-│  subagents_v2[] (ended_at!, │             │    role, project_id,     │      └────────────────────────────┘
-│  description!), rollup_v1   │             │    ended_at, description │
-└─────────────────────────────┘             └──────────────────────────┘
-```
-
-Executor (off-limits) writes `runs` + rollup every 2s. `elapsed_ms` is computed at agents.ts:537–538 as `now − started_at` unconditionally — the time-truth bug. `completed_at` is populated on all completed/failed rows; only cancelled rows (4 legacy) lack it and carry the settle time in `updated_at`.
-
-### 2.2 Data flow, chat transcript
-
-```
-runs.thread jsonb ──GET /api/chat/:id──► ChatSurface(detailQ) ──► AssistantThread.mapThreadToMessages
-  {role, content, ts, kind?, meta?}         + SSE snapshots           (thread-mapping.ts: dispatch on role/kind ONLY)
-  meta for tool_call: tool_use_id, tool,                                 │
-        input (≤1500 chars), parent_tool_use_id?                         ▼
-  meta for tool_result: tool_use_id, is_error,          MessagePrimitive.Parts { tools: { Fallback: ToolCallRow } }
-        parent_tool_use_id?                             ToolCallRow = the "Bash block": collapsible, tokens.toolBg,
-                                                        dot(color), preview 110 chars, ARGS/RESULT <pre> sections
-```
-
-Facts that gate design: there is no per-tool dispatch anywhere today (`tools.by_name` unused; verified supported by installed assistant-ui 0.14.24); `thread-mapping.ts` drops `parent_tool_use_id` and the call-side `is_error`; `Agent` (not `Task`) is the CLI's spawn tool name (63 occurrences vs 0); task-completion notifications never reach the thread (`cc-runner.ts:417–429` forwards only `tool_result` blocks; closed `CcEvent` union).
-
-### 2.3 Kind signals in `runs` (verified against live data, 245 rows)
-
-| kind | signature |
-|---|---|
-| operator chat | `worker='forge-executor'`, no `project_id`/`role`/`cron_id`, `parent_run_id` NULL |
-| project worker | `worker='project:<role>'`, `metadata.role`+`project_id`+`task_id` |
-| child run | `parent_run_id` NOT NULL (30 rows), same project metadata shape |
-| cron/watchdog | `metadata.cron_id`/`cron_name`, `source='cron'` (143 rows) |
-| in-process sub-agent | not a row — element of parent's `metadata.subagents_v2[]` with `role`, `model`, `description`, `started_at`, `ended_at`, `status` |
-
-## 3. Component design — Phase 1, time truth
-
-### 3.1 Server (`routes/agents.ts` only)
-
-- Add `completed_at::text` to both SELECTs (`fetchActiveRows`, `/:id`).
-- `agentFromRow`:
-  ```ts
-  const settled = ["completed", "failed", "cancelled"].includes(row.status);
-  const settledAtMs = settled ? Date.parse(row.completed_at ?? row.updated_at) : NaN;
-  const elapsed_ms = !Number.isFinite(startedMs) ? null
-    : settled && Number.isFinite(settledAtMs) ? Math.max(0, settledAtMs - startedMs)
-    : Math.max(0, nowMs - startedMs);
-  ```
-  plus `settled` and `settled_at` on the wire (R2). Hard rule: if `settled` but both timestamps unparsable → `elapsed_ms: null` (renders `—`), never a now-derived number.
-- `subagentsFromRollup`: pass through `ended_at ?? null`, `description ?? null` (R3). Types updated in the local interfaces (agents.ts owns its own response types — no shared engine types touched).
-
-Failure modes: NULL `started_at` (queued rows) → null elapsed, client renders `—`. Stuck→settled later: `completeRun` stamps `completed_at` whenever it settles, covered. Rollup lost on executor restart (rollup is in-process): sub-agents of runs spanning a restart may lack `ended_at` → client fallback chain (R5) ends in `—`, visibly.
-
-### 3.2 Client (`agentsApi.ts`, `AgentActivity.tsx`)
-
-One module-level helper pair (R6):
+**New pure module `forge-control/src/lib/project-reconcile.ts`** (no DB, no I/O — the
+unit-testable core, precedent `account-health.ts`):
 
 ```ts
-export function runElapsedMs(a: AgentRow, now: number): number | null   // settled → a.elapsed_ms verbatim; live → now − started_at; queued/unparsable → null
-export function subagentElapsedMs(s: SubagentRow, now: number): number | null  // running → now − started; done → ended_at − started; fallback updated_at − started; else null
+export type Verdict = "PASS" | "NEEDS_FIXES" | null;
+export function parseVerdict(text: string | null): Verdict;          // LAST occurrence wins
+export function projectAcceptsWork(status: ProjectStatus): boolean;  // status === 'active'
+
+// AMENDED R850: the unit is a VERDICT ROLE, not the reviewer role. agents/tester.md ends
+// with the identical VERDICT contract, so reviewer and tester of one round gate together.
+export const VERDICT_ROLES = ["reviewer", "tester"] as const;   // order = re-check order
+export type VerdictRole = (typeof VERDICT_ROLES)[number];
+export function isVerdictRole(role: TaskRole): role is VerdictRole;
+
+export interface VerdictInput {
+  taskId: string; role: VerdictRole; title: string; fixCycle: number;
+  settled: boolean;               // AMENDED R1005: verdictMemberSettled() — task 'done' by
+                                  //   bookkeeping, OR run 'completed' with no pending_input.
+                                  //   NOT run-status-only; see project-reconcile.ts.
+  lastText: string | null;
+}
+export interface CheckerChain { role: VerdictRole; chainKey: string }
+export type RoundDecision =
+  | { action: "wait" }                                   // some sibling not settled
+  | { action: "pass" }                                   // all settled, all PASS
+  | { action: "block"; reason: "no_verdict" | "max_cycles"; detail: string }
+  | { action: "fix"; cycle: number; mergedBrief: string; // ONE builder, one re-check
+      builderChainKey: string; checkers: CheckerChain[] }//   per DISSENTING role
+export function consolidateVerdictRound(
+  round: number, checks: VerdictInput[], maxFixCycles: number,
+): RoundDecision;
+export function chainKeys(round: number, cycle: number):
+  Record<VerdictRole, string> & { builder: string };     // "fix:R:c" / "rereview:R:c" / "retest:R:c"
+export const RECHECK_TASK_TITLE: (role: VerdictRole, cycle: number) => string;
+export function recheckBrief(role: VerdictRole, mergedBrief: string): string;
 ```
 
-`AgentRunLine`/`SubagentLine` call these and nothing else. `humanDuration(null)` already renders `—`. The `useSharedClock` gating stays; with settled rows frozen, the clock also stops sooner (side benefit: fewer 1s re-renders — note for phase 3's baseline interpretation).
+Decision rules (in order): any unsettled sibling → `wait`; any settled sibling with
+unparseable verdict → `block(no_verdict)`; any NEEDS_FIXES with
+`max(fixCycle) >= maxFixCycles` → `block(max_cycles)`; any NEEDS_FIXES →
+`fix(cycle = max(fixCycle)+1)` with `mergedBrief` = each dissenter's full text under a
+`## Feedback from <role>: <task title>` heading; else → `pass`.
 
-## 4. Component design — Phase 2, kind truth
+`checkers` holds one entry per DISSENTING ROLE, in `VERDICT_ROLES` order — never one per
+dissenting task. Two unhappy reviewers still yield exactly one re-review; a reviewer and a
+tester both unhappy yield one re-review AND one re-test, because a reviewer settles a
+concern by citing a file and line while a tester settles it by walking the journey again,
+and neither can stand in for the other. The re-checks share round R+2 and are therefore
+consolidated as one group in turn (`retest:R:c` is the tester's key; `rereview:R:c` is
+frozen for the reviewer's, since rows written since 0039 carry it and a replay must find
+its own chain). Splitting the round into one group per role was rejected: it would put two
+fix builders into the same round and the same worktree, each holding half the feedback —
+bug 1 with extra steps.
 
-### 4.1 Server classification (in `agentFromRow`)
+**Orchestration change in `reconcileSettledTasks()`:** settled tasks whose role passes
+`isVerdictRole()` are grouped by `(project_id, round)` — reviewer and tester of one round
+collapse onto the same key, which is what makes them one decision. For each group the tick
+loads ALL verdict tasks of that project+round (query `listVerdictRound(projectId, round,
+roles)` in db/projects.ts, returning task + run settlement + last_text; `roles` is passed
+in so `VERDICT_ROLES` stays the single definition and no import cycle forms around the pg
+pool), maps them to `VerdictInput[]`, and applies the decision:
 
-Ordered precedence, first match wins, `unknown` is a real value (§operability — never guess):
+- `wait` → do nothing this tick (tasks stay `running`; the group re-evaluates next tick).
+- `pass` → mark every task in the group `done`.
+- `block` → mark the group `done`, set project `blocked`, `queueNotification` with the
+  reason and the offending role + task title(s).
+- `fix` → **one transaction**: insert builder (round+1, `fix_cycle = cycle`,
+  `chain_key = fix:R:c`) and one re-checker per dissenting role (round+2,
+  `chain_key = rereview:R:c` / `retest:R:c`), all with a
+  **bare `ON CONFLICT DO NOTHING`** — no conflict target (amended R308). A chain row is
+  subject to TWO unique indexes, `project_tasks_chain_key_uniq` (ours, 0039) and
+  `project_tasks_identity_idx` (`main`'s, 0035, already live); naming either one leaves
+  the other as an unhandled `unique_violation` that aborts the transaction and freezes the
+  round. Commit; THEN mark all group reviewers `done`. Crash after commit but before
+  mark-done ⇒ next tick recomputes `fix`, the conflict guard absorbs the duplicate
+  inserts, mark-done proceeds. Order matters: creating tasks before marking reviewers done
+  means `promoteReadyTasks` can never see a fully-done round R with the fix round missing
+  (which would wrongly promote round-R+100 phase planners past an unfinished fix cycle).
+- Because `DO NOTHING` reports zero rows whichever index fired, `insertChainRow()` then
+  looks the row up and CLASSIFIES the conflict: `replay` (the existing row carries our
+  chain_key — our own chain, safe) vs `occupied` (a stranger holds our identity tuple, so
+  its brief is not the feedback we merged). On `occupied` the `fix` branch blocks the
+  project and names the offending task instead of reporting an absorbed replay — the
+  alternative drops a reviewer round's verdict in silence. Evidence:
+  `docs/plan/evidence/0039-conflict-target.md` §B.
 
-```ts
-const agent_kind =
-  meta.cron_id ? "cron"
-  : meta.project_id && meta.role ? "worker"
-  : row.worker === "forge-executor" ? "operator"
-  : "unknown";
+Settled tasks of every OTHER role keep the existing per-task path untouched: settled means
+done, no verdict is read. Adding a role to `VERDICT_ROLES` without giving its role file the
+VERDICT contract would block every round it sits in (`no_verdict`) — the safe direction to
+fail, and the reason `buildPrompt()` now states the contract itself for the tester rather
+than trusting `agents/tester.md` alone. R850 evidence (widened query, multi-checker chain,
+replay-safety, all against a throwaway database):
+`docs/plan/evidence/r850-tester-verdicts.md`.
+
+### 1.3 Data model — migration `db/migrations/0039_reviewer_chain_key.sql`
+
+```sql
+ALTER TABLE project_tasks ADD COLUMN chain_key text;   -- NULL for everything historical
+CREATE UNIQUE INDEX project_tasks_chain_key_uniq
+  ON project_tasks (project_id, chain_key) WHERE chain_key IS NOT NULL;
 ```
 
-Projected additively: `agent_kind`, `role`, `project_id`, `cron_name`. The `unknown` bucket is expected to be near-empty in practice (7 engine-less legacy rows); if it shows up in the panel, that is signal, which is the point.
+Additive-only; the running (old) engine never writes `chain_key`, so applying it live at
+deploy time is safe, and historical duplicate rows from the first night (all in
+terminal projects) are untouched because NULLs are excluded from the index. `chain_key` is
+written by `createFixChain()` and by NOTHING else — `createTask()` deliberately does not
+accept it (amended R308: a second writer arbitrating on identity alone would raise
+`unique_violation` on exactly the replay it was meant to absorb), and the API route does
+not expose it, so agents cannot forge chain keys.
 
-### 4.2 Panel rendering
+## 2. Project-status gating (bug 2)
 
-Row grammar extends the existing idiom (no redesign):
+`promoteReadyTasks()` gains
+`AND EXISTS (SELECT 1 FROM projects p WHERE p.id = pt.project_id AND p.status = 'active')`.
+`claimReadyTasks()`'s claim SELECT gains the same predicate (JOIN form). `spawnTaskRuns()`
+additionally filters claimed tasks through `projectAcceptsWork(task.project.status)` —
+defense in depth in code, and the thing unit tests pin down. Semantics decided:
 
-```
-● fable-5  operator   Chat: rework live panel            36m 52s · ↓ 204.7k     ← operator chat
-● opus-5   builder    Phase 1: time truth                 4m 12s · ↓ 88.1k     ← project worker (role from R7)
-  ○ Explore opus-5    Recon chat Bash block rendering     1m 47s · ↓ 132.1k    ← sub-agent: description as title (R3)
-● haiku    cron       watchdog: heartbeat check              12s · ↓ 3.2k      ← cron
-```
+- Pause/block stops NEW promotion and NEW claiming. In-flight runs finish and reconcile
+  (bookkeeping is not billable work; the FREEZE switch precedent in `projectTick()`
+  already draws this line for fleet-pause).
+- Reconciliation MAY create fix-chain tasks for a non-active project — they are inert
+  `pending` rows under the gate, and the project resumes exactly where it stopped when
+  Konrad flips it back to `active`. This beats dropping verdict outcomes on the floor.
 
-- Kind badge: small mono label colored by token (`operator` → `tokens.accent`, worker roles → per-role color already used in ChatSurface's `ROLE_COLOR` — reuse/centralize that map, `cron` → `tokens.textMuted`, `unknown` → `tokens.warn`). Both themes come free via tokens.
-- Model display mapping (R8): pure function, unit-tested, unknown ids verbatim.
-- Sub-agent title becomes `description || role` (today it shows latest-activity text; keep activity on the second line slot that already exists for parents, or as `title` attr — planner decides, spec: description must be visible without hover).
+## 3. Worktree-only policy + executor-safe deploy (bugs 3 + 4) — prompt architecture
 
-### 4.3 Lineage on hover (R10) — decision
+Policy lives where behavior is generated: `buildPrompt()`. Three new exported prompt
+constants (exported so unit tests assert on the same strings the engine emits):
 
-**Recommendation: enriched native `title` attributes** composed at render time from data already on the row (`parent run title` for sub-agents needs nothing new — the sub-agent renders under its parent; the title spells it out: `sub-agent of "<parent.title>" · <model> · started <t>`). Native titles cost zero JS, zero layout, zero state — they cannot regress phase 3.
-Rejected: CSS pseudo-tooltip (`::after`) — richer visuals but adds absolutely-positioned layout work inside an `overflowY: auto` scroller and risks clipping; not worth it for v1. If Konrad wants pretty tooltips later, that's a follow-up with the perf harness already in place to police it.
-Child runs (`parent_run_id` set, top-level rows): title includes `child of <parent_run_id ····8>`; full org-chart linking across top-level rows is out of scope (panel is flat + one nesting level today; a stranger still reads the org chart because workers carry role + project and sub-agents nest under parents).
+- **`WORKTREE_POLICY(liveCheckout: string)`** — appended to EVERY role prompt for
+  non-scratch projects: work only in the worktree; NEVER edit `<liveCheckout>` during
+  build phases; never `pm2 restart forge-executor`; live-endpoint verification happens
+  only via an explicitly-briefed deploy/verify task. Live checkout path derives from
+  `project.repo` (`ai-os` → `/opt/forge-ai-os`, `content-forge` → `/opt/content-forge`) —
+  mirror of `REPO_PATHS` in workspace.ts, moved/shared so there is one mapping.
+- **`REVIEWER_LIVE_CHECK(liveCheckout: string)`** — appended to reviewer prompts
+  (non-scratch): run `git -C <liveCheckout> status --porcelain`; ANY output ⇒ someone
+  hot-applied ⇒ that alone is a NEEDS_FIXES finding naming the dirty files.
+- **`DEPLOY_GUIDE`** — appended to the goal-mode architect prompt (and quoted in
+  `docs/tools/deploy-playbook.md`): executor-loaded code (`src/lib/project-tick.ts`,
+  `src/lib/cc-runner.ts`, `src/executor.ts`, `src/db/*`, `agents/*.md`) deploys via
+  `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`
+  launched detached, task ends without waiting; `pm2 restart forge-control` stays allowed
+  for API-side code. GitHub guidance (see §4) rides in the same constants.
 
-## 5. Component design — Phase 3, hover performance
+The role `.md` files in `agents/` are NOT the vehicle for this policy: they are shared
+with the interactive Task-tool subagents, which legitimately operate on live checkouts
+when Konrad asks. Project-context policy belongs in the project prompt builder.
 
-### 5.1 Protocol-first stance
+## 4. GitHub integration — helper + guidance, deliberately not engine code
 
-No fix lands without a baseline trace (R12) and a named mechanism found in that trace (R13). Protocol and numeric gates live in `03-quality.md` §4 so builder and reviewer run literally the same script.
+**`scripts/git-sync-branch.sh <worktree-dir> [--pr "<title>"]`** (bash, repo root):
 
-### 5.2 Candidate mechanisms (starting hypotheses for the trace, not conclusions)
+1. `git -C <dir> remote get-url origin` — missing ⇒ exit 3 "no origin remote".
+2. `gh auth status` — failing ⇒ exit 4 "gh not authenticated".
+3. `git -C <dir> push origin HEAD` — plain push; the string `--force` appears nowhere in
+   the file; a rejected push exits non-zero with git's stderr intact.
+4. With `--pr`: if `gh pr list --head <branch>` is empty, `gh pr create --base <base>
+   --title …` (base read from `--base` flag, default `main`); body links the project id.
 
-1. **Per-row `useState` hover in `ChatListItem`** (ChatSurface.tsx:961–966): each enter/leave commits a state update; if rows are unmemoized children of a large tree, one mouse move across N rows = N commits of nontrivial subtrees.
-2. **Poll-driven commit storms coinciding with hover**: three queries (agents 4s, managers 8s, chat 3s — plus 1s SSE snapshots when a run is live) re-render `ChatSurface` wholesale; `agents` responses are large (≤60 runs × full usage/rollup JSON) and `useMemo` keyed on `q.data` invalidates every poll because the object identity changes each fetch even when payload is equal.
-3. **Style-recalc churn from inline style objects**: every commit re-creates hundreds of style objects; cheap individually, measurable in aggregate on a re-render storm.
-4. **The side-panel task list's direct DOM style mutation** (ChatSurface.tsx:186–191) — cheap by itself; suspect only if the trace says so.
+Guidance (in the planner/reviewer prompt branches): on a gating reviewer's PASS for a
+repo with origin, run the helper to push the branch; at project completion, the brief
+decides merge vs `--pr`. Failures are reported in the reviewer's message (visible in the
+run thread + Kanban) — a push failure never blocks the verdict.
 
-### 5.3 Expected fix shapes (choose by evidence)
+## 5. Researcher lane
 
-- `React.memo` on `ChatListItem` (and rail siblings) with primitive props; move hover visual to a CSS class (`.chat-row:hover .close-x { … }`) killing the `useState` entirely — the ✕ affordance is pure presentation.
-- If polls are the storm: `structuralSharing` is on by default in react-query — verify it's not defeated (fresh object identities from `fetchAgents` mapping); memo row props to primitives so identical data → zero row re-renders.
-- Rate matters less than fan-out: do **not** slow the polls to pass the gate (that trades truthfulness for a benchmark); NF: cadence changes only if the trace proves cadence itself is the cause, and then with Konrad-visible justification in findings.md.
+### 5.1 Role file `agents/researcher.md`
 
-### 5.4 Failure modes
+Frontmatter per R18 (`model: claude-opus-5`, `effort: high`, tools incl. `Skill` for
+playwright/hermes browser skills — note the parser in `roleConfig()` is a plain
+`tools:` line regex, so the line stays single-line comma-separated). Mission core:
+research with real sources; steer a real browser for logged-in/web-app surfaces; every
+claim carries a citation (URL, title, access date, quoted snippet for load-bearing
+claims); output to `docs/research/*.md`; the Perplexity/gemini-qa helpers are named
+instruments with their key protocol; explicit refusals: no implementation, no task
+creation, no live-checkout edits.
 
-Fix regresses behavior (R15 click-through covers); memo hides a legit update (structural sharing + primitive props make staleness impossible by construction — reviewer checks status dot updates live); measurement flakes on a busy VPS (protocol pins CPU-noise handling: 3 runs, median, recorded machine load).
+**AMENDED at R502** (surfaced by `docs/plan/evidence/p5-integration-sweep.md` must-fix 7).
+The original text read: "Installed by copying to `/root/.claude/agents/` — additive;
+`roleConfig()`'s per-role cache only misses for never-loaded roles, so a NEW role needs no
+executor restart (verified in code, project-tick.ts:84-112)." That contradicts R19's strike
+and R306's repo fallback: the `cp` into `/root/.claude/agents/` is a path the agent harness
+guards, so no task of this project could ever perform it. **As shipped:** `roleFilePaths()`
+(`forge-control/src/lib/project-tick.ts:185-187`) resolves a role in order
+`${AGENTS_DIR}/<role>.md` then `${REPO_AGENTS_DIR}/<role>.md`, so a role file committed to
+`agents/` in the repo self-installs — no copy, no human step — at the first post-deploy
+executor restart. `roleConfig()`'s per-role cache still means the running executor keeps
+whatever it loaded first, which is why R20's smoke run is gated behind P6's restart.
 
-## 6. Component design — Phase 4, agent comms in chat
+### 5.2 The `researcher` prompt branch (already live, project-tick.ts:201) stays as-is
+this project only supplies the role file it reads.
 
-### 6.1 Mapping layer (`thread-mapping.ts`)
+**AMENDED at R703 (2026-08-05) — the branch no longer stays as-is.** As written it said only
+"use every research surface you have (web search/fetch, browser automation skills, external AI
+services named in your brief)", which is a surface an agent cannot act on: nothing in it names
+a command. It now appends the exported constant `RESEARCH_INSTRUMENTS`
+(`forge-control/src/lib/project-tick.ts`) — the three CLIs with real invocations, the screenshot
+convention, and the login-wall protocol (§5.3). It is deliberately terse: this text is prepended
+to *every* researcher run. The constant is exported so `project-tick.test.ts` (T16) asserts
+against the engine's own output rather than a hand-copied substring, and T16 additionally
+executes each named script's `--help` so a quoted invocation cannot drift from what shipped.
 
-- `ToolCallPart` gains `parentToolUseId?: string`; populate from `meta.parent_tool_use_id` (R16).
-- Build `spawnIndex: Map<tool_use_id, {description, subagentType}>` in the same single pass, from `Agent` tool_calls (parse `meta.input` JSON; on parse failure, store nothing — attribution then falls back to short id). Attach `agentLabel` to parts whose `parentToolUseId` hits the map (R18). Pure, fixture-tested.
-- No change to grouping/back-search logic.
+### 5.3 The browser research lane (R701–R703)
 
-### 6.2 Renderers (`AssistantThread.tsx`)
+Built in phase 7 after Konrad's constraint "no API keys": the way to reach a logged-in service
+is a real browser he has logged into once, by hand. Full reference:
+`docs/tools/research-browser.md` (and `docs/tools/perplexity.md` §browser backend). The design
+facts the rest of the corpus depends on:
 
-```tsx
-tools: {
-  by_name: { Agent: AgentSpawnRow, SendMessage: SendMessageRow },
-  Fallback: ToolCallRow,          // Bash & everything else — unchanged
+- **Profiles.** `/opt/ai-os/browser-profiles/<profile>/` is a Chrome `user-data-dir`, mode
+  0700, holding session cookies and Chrome's own profile state and **nothing else** — no
+  credential of any kind is written there or anywhere else. This tool's own bookkeeping (pids,
+  logs, the pinned display, the last login evaluation, the request/response queue) lives
+  *outside* the profile, in `/opt/ai-os/browser-profiles/.state/<profile>/`, so that sentence
+  stays literally true. Profile names match `/^[a-z0-9][a-z0-9-]{0,38}$/`; the dot is excluded
+  so a profile can never collide with `.state`. Profiles are SHARED and long-lived — one per
+  service (`perplexity`), plus `scratch` for one-off pages. A per-run profile would be a
+  per-run login wall.
+- **Takeover stack.** `Xvfb` → optional `openbox` → `x11vnc` → `websockify` serving
+  `/usr/share/novnc/vnc.html`, one display pinned per profile. **`x11vnc` binds `-localhost`
+  and `websockify` binds `127.0.0.1` explicitly; the VNC surface is NEVER exposed on a public
+  interface.** Konrad reaches it through an SSH tunnel the tool prints for him
+  (`ssh -N -L <port>:127.0.0.1:<port> root@65.108.6.149`). Rebinding it to `0.0.0.0` would put
+  an unauthenticated desktop that owns his logged-in sessions on the open internet; there is no
+  configuration flag for it and there must never be one.
+- **Login handshake.** A wall is detected from the `SERVICES` signal table, not guessed. On one,
+  the tool screenshots the wall, brings the takeover stack up, queues Konrad a reminder (deduped
+  — `docs/tools/research-browser.md` §9.1), leaves the browser running and exits **4**. Exit 4
+  means "needs Konrad", not "broke". The agent's contract is: report it, continue with what it
+  can still reach, and **never attempt credentials** — no password, no email code, no signup.
+  Konrad logs in ONCE per service; the cookie jar in the profile carries every later run.
+- **Screenshot convention (a contract with the operator-visibility project).**
+  `/opt/ai-os/uploads/<run_id>/<compact-ISO8601>-<label>.png`, served by forge-control at
+  `/api/uploads/<run_id>/<name>`, and referenced in `docs/research/*.md` by that URL so the
+  Console renders it inline. `<run_id>` resolves as `--run-id`, else `$FORGE_RUN_ID`, else the
+  12-hex sentinel `deadbeefcafe`. This project builds **no UI** for it — that repo is the
+  operator-visibility project's (`forge-control-web/**` is untouched here).
+- **The linchpin, fixed at R703: `FORGE_RUN_ID` did not exist.** Every screenshot path above
+  hangs off one environment variable, and `cc-runner.ts` never set it — verified by reading the
+  env of a live run's own child process, which had no `FORGE_*` at all. Every screenshot the
+  lane took would have landed in the shared `deadbeefcafe` bucket, untraceable to the run that
+  took it. `runClaudeCode()` now takes `runId` (passed by `executor.ts` from the claimed run)
+  and exports **`FORGE_RUN_ID`** = the run UUID's first 12 hex characters, plus
+  **`FORGE_RUN_UUID`** = the id verbatim. The truncation is not cosmetic: `GET /api/uploads/:id`
+  gates the id on `/^[a-f0-9]{12}$/` and 400s anything else, so exporting the raw UUID would
+  produce screenshots on disk whose URLs never resolve (`docs/tools/research-browser.md` §5.1
+  calls a UUID-shaped run id "the realistic case" and flags it `url_servable: false`). The
+  prefix is also what executor log lines already print (`run ece63bdb…`), so a directory stays
+  greppable back to its run. When a caller has no run, both variables are *deleted* from the
+  child env rather than inherited — a stale id would file one run's screenshots under another's.
+  Covered by T17 (`forge-control/src/lib/cc-runner.test.ts`), which spawns a stub `CC_BIN` and
+  reads what the child actually received.
+- **The `auto-browser` MCP controller does not exist on this host — settled, do not
+  re-litigate.** The `auto-browser` SKILL.md documents a controller on `http://127.0.0.1:8000`
+  with noVNC on `:6081`; that file lives inside a Hermes docker volume and describes a
+  *different machine*. Verified independently at R701 and again at R703 (2026-08-05): both
+  ports return connect-failure (`http_code 000`), there is no `/opt/auto-browser`, and
+  `mcpServers` in `/root/.claude.json` is `{}` — an empty object, i.e. no MCP server is
+  configured for this account at all. Anything that needs a browser here goes through
+  `scripts/research-browser.mjs`, which reimplements the skill's *semantics* (named profile,
+  save and reuse, takeover URL) on what is actually installed. One-line check before trusting
+  this paragraph: `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/docs`.
+
+## 6. External service helpers (zero-dependency node ≥ 22, built-in fetch)
+
+### 6.1 Key resolution (shared pattern, ~15 lines duplicated per script — no shared lib,
+these must stay standalone-copyable): env var → `/opt/ai-os/.secrets/store/<name>` file
+(trimmed) → hard exit 2 printing BOTH locations. Never a partial run. Secret names:
+`gemini-api-key`, `perplexity-api-key` (secret-store `NAME_RE`-compatible). As of
+2026-08-05 recon NEITHER exists; R24's reminders tell Konrad exactly this.
+
+### 6.2 `scripts/gemini-qa.mjs`
+
+**AMENDED at R702 (2026-08-05) — the Gemini Pool is now the PRIMARY backend; the official
+API below is retained as an optional SECONDARY.** Konrad has no personal Gemini key and does
+not want to buy one, so the default path must ride pool-account entitlements. The flow
+described in 1–3 below is unchanged but now sits behind `--backend api`; the new default is
+`--backend pool`:
+
+- **Pool path:** `POST http://127.0.0.1:8090/v1/analyze`, `multipart/form-data` with fields
+  `prompt` (string) + `file` (binary), header `x-api-key` → `{"text": string,
+  "account": string}`. Internal address only — the public route caps bodies at 200 MB and
+  reads at 120 s, and answers 413 with nginx **HTML**, which a real video analysis would hit.
+- **Credential, and the trap:** the pool token resolves env `GEMINI_POOL_API_KEY` →
+  `/opt/ai-os/.secrets/store/gemini-pool-api-key` → the `GEMINI_API_KEY=` line inside
+  `/opt/gemini-pool-api/.env`; exit 2 names all three. ⚠ That third location calls the pool's
+  own caller token `GEMINI_API_KEY` — **the same name §6.1's api path uses for a Google AI
+  Studio key, for an unrelated credential.** They are kept strictly apart: the pool is never
+  read from `process.env.GEMINI_API_KEY`.
+- **No structured output on the pool.** It returns free text, so the frozen rubric below is
+  requested in words and then *extracted* (fence-stripping, then a string-aware
+  brace-balanced scan) and validated. Unparseable, non-object, or missing a required key ⇒
+  exit 1 printing the model's raw text verbatim. **Extraction only — never repair.**
+- **No automatic fallback between backends, not even opt-in.** R702's brief permits one only
+  if pool failures are cleanly distinguishable; `docs/research/round-701-33d8cba3.md` §6
+  proves they are not (dead account, bad file and transient fault all return the same opaque
+  500 / code 1100). A fallback on an undiagnosable error would quietly ship a video to a
+  billed endpoint.
+- **Model is unselectable on the pool** (the wrapper never passes `model=`), so `--model` is
+  rejected there with exit 3 rather than accepted and ignored. QA verdicts consequently ride
+  whatever the pool account's web-UI default is — a stated property of the free path.
+- **New exit code 4** for pool 503 (no session inside the wrapper's own 60 s acquire window)
+  and 429 (~300 s account cooldown) — the only failures worth retrying later. No retry loop
+  in the tool. Timeout is `--timeout`, default 900 s.
+- **URL inputs are a usage error on the pool** (exit 3): `/v1/analyze` takes an upload, not a
+  URI, and a YouTube watch URL is an HTML page. Documented in `--help` and
+  `docs/tools/gemini-qa.md` §3.1; `--backend api` remains the URL path.
+
+**Status at amendment time — the pool cannot yet serve this tool.** Measured 2026-08-05
+between 19:00 and 20:44 CEST: `POST /v1/chat` (text) returned 200 at 19:00 but 500/code 1096
+about a quarter of an hour later, and again at 20:39 — the pool flaps on text — while
+`POST /v1/analyze` with a file returned 500/code 1100 on all three attempts (1.3 MB
+`video/mp4` twice, 1.5 h apart, and a 40-byte `text/plain` control) — so the
+**file-attachment path fails for every file type**, which is narrower than R701's "the
+account cannot generate at all" and independent of video. Six generation attempts this round,
+one success, text-only. `GET /health` reported `sessions_ready: 4` throughout. The backend is implemented and correct
+against the documented wire contract; what it needs is pool-side re-auth (see
+`docs/tools/gemini-qa.md` §1.2 and §9).
+
+Flow of the **api** backend (facts researched 2026-08-05 against ai.google.dev docs;
+re-verified by the phase scout at build time):
+
+1. Input local path → Files API resumable upload
+   (`POST https://generativelanguage.googleapis.com/upload/v1beta/files`,
+   `X-Goog-Upload-Protocol: resumable` start/upload/finalize), then poll
+   `GET /v1beta/{file.name}` until `state: ACTIVE` (timeout 10 min ⇒ hard error).
+   Input URL (incl. YouTube) → passed directly as `file_data.file_uri`.
+2. `POST /v1beta/models/{model}:generateContent` (`x-goog-api-key` header), default model
+   `gemini-3.6-flash` ($1.50/$7.50 per 1M; video ≈ 300 tok/s standard res) —
+   **AMENDED at R502 to `gemini-omni-flash` ($1.50/$9.00 per 1M; video 5,792 tok/sec),
+   per `docs/research/round-399-41e8757d.md`: `gemini-3.6-flash` does not accept video
+   input at all, so it cannot be this tool's default** — with
+   `generationConfig.responseMimeType = "application/json"` +
+   `generationConfig.responseSchema` = the rubric schema.
+3. Print parsed JSON; schema-invalid response ⇒ hard error with raw body (no repair loop).
+
+**QA rubric schema (the contract the video pipeline will consume later):**
+
+```jsonc
+{
+  "verdict": "pass | needs_work | reject",
+  "confidence": 0.0-1.0,
+  "hook": { "score": 0-10, "first_seconds_analysis": "...", "notes": "..." },
+  "pacing": { "score": 0-10, "dead_spots": [{ "start_s": n, "end_s": n, "note": "..." }] },
+  "audio": { "score": 0-10, "glitches": [{ "at_s": n, "type": "click|dropout|desync|clipping|other", "note": "..." }] },
+  "visual": { "score": 0-10, "artifacts": [{ "at_s": n, "type": "flicker|blur|caption_error|broken_asset|other", "note": "..." }] },
+  "factual": { "red_flags": [{ "at_s": n, "claim": "...", "concern": "..." }] },
+  "top_fixes": ["ordered, concrete, max 5"],
+  "summary": "2-3 sentences"
 }
 ```
 
-`AgentSpawnRow` / `SendMessageRow` are structural siblings of `ToolCallRow` (same collapse state, same tokens, same 110-char preview discipline):
+Timestamped findings are the point — a human (or later, a repair agent) must be able to
+jump to `at_s`. **This schema is unchanged at R702 and is identical on both backends** — the
+rubric is a frozen contract, not a per-backend shape, and it does not get looser because the
+free path produced it.
 
-```
-┌ → agent · Explore  "Recon chat Bash block rendering"          running ▸ ┐   ← spawn, collapsed
-┌ → agent · Explore  "Recon chat Bash block rendering"             done ▾ ┐
-│ PROMPT                                                                   │
-│ <full prompt payload, pre-wrap mono, maxHeight 260 scroll>               │
-│ LAUNCH                                                                   │
-│ Async agent launched successfully…                                       │
-└──────────────────────────────────────────────────────────────────────────┘
-┌ → send · a28e674…  "Resume RAG recovery — verify partial work first" ▸ ┐  ← SendMessage
-│ MESSAGE  <full message>                                                 │
-│ ← reply  <tool_result content>                                          │
-```
+### 6.3 `scripts/perplexity.mjs`
 
-Direction grammar: `→` = operator sends (spawn prompt, SendMessage), `←` = operator receives (SendMessage reply/result). Colors: reuse `ToolCallRow`'s state coding (pending `tokens.warn`, done `tokens.info`, error `tokens.bleed`); the direction marker + "agent"/"send" label use `tokens.accent` to lift them above plain tools. All payload parsing is defensive: `JSON.parse` failure → raw `argsText` in the expanded body under an explicit `UNPARSED PAYLOAD` label (R20). SendMessage inputs contain CLI-duplicated fields (`to`/`recipient`, `message`/`content`) — prefer `to`/`message`, tolerate either.
-Sub-agent attribution (R18): parts with `parentToolUseId` get a left-rail marker + `agentLabel` chip; visual weight low (they are context, not headline).
+**AMENDED at R702 (2026-08-05) — browser-first, no API key. The `ask` default backend is now
+the authenticated browser profile; the API path below is retained unchanged as an optional
+`--backend api`.** Konrad has no Perplexity API key and will not buy one (stated 2026-08-05
+~09:30): Perplexity is a browser service for him. So `ask` defaults to `--backend browser`,
+which drives `perplexity.ai` inside the shared `perplexity` profile owned by R701's
+`scripts/research-browser.mjs` — navigate, submit, wait for streaming to settle, extract the
+answer **and its numbered citations**. `search` stays API-only; there is no browser surface for
+it that this tool is willing to scrape.
 
-### 6.3 What is knowingly absent (R19)
+**RE-RANKED at R776 (2026-08-06) — `api` is the default backend for BOTH `ask` and `search`;
+the browser path above is unchanged, fully reachable via `--backend browser`, and is now the
+documented fallback and the only path for logged-in work.** This amends the *ranking* in the
+R702 note above, not its reasoning, and it removes nothing. The new fact is a probe run from
+this host at R775 and re-run at R776:
 
-Agent completion payloads (the result text a background agent returns) are not in the thread — the operator's *reaction* to them is, but the notification itself dies in `cc-runner.ts:417–429`. `docs/plan/notification-gap.md` records: exact code path, the closed `CcEvent` union (:170–188), the minimal future fix (new event type → `appendThreadEntry` with a new `kind: "task_notification"` → one mapping branch → these same renderers pick it up), and ownership (engine-v2-research-lane). The renderers are built so that if that `kind` ever appears, the fallback path shows it rather than dropping it.
+| Probe (2026-08-06, `65.108.6.149`) | Result |
+|---|---|
+| `POST https://api.perplexity.ai/search` | **401** `invalid_api_key` — reachable, it only wants a key |
+| `GET https://www.perplexity.ai/` | **403** — Cloudflare interstitial, an edge block on our egress IP |
 
-## 7. Interfaces changed (complete list)
+R702 had Konrad's constraint but not this measurement, and so promoted the one path that cannot
+complete from this box while demoting the one that needs nothing but a key. Konrad's constraint
+(no key, will not buy one) still stands and is still his call — what changed is that it now has
+a stated price: with no key and no egress change, this tool has no working path from this host.
+Details and the full probe history: `docs/tools/perplexity.md` §1, §9.1, §12.1.
 
-| Interface | Where | Change |
+- **This overrules §10's "Building Perplexity browser scraping — fragile, bot-defended,
+  unmaintainable" and the last sentence of the original §6.3 text below.** The judgement was
+  correct and is **not** withdrawn; a constraint overrides it. The response is to MITIGATE, and
+  the mitigations are load-bearing, not decorative: EVERY DOM selector lives in ONE marked
+  table at the top of the script (nothing else in the file, and nothing in
+  `research-browser.mjs`, knows Perplexity's markup); selection prefers `data-testid` /
+  `aria-label` / element semantics over class-name soup; citation harvest is anchor-based, not
+  layout-based; and a missed selector, an unsettled stream or zero extracted citations are
+  **hard errors with a screenshot and a page-text excerpt**. No partial answer is ever emitted
+  as if it were complete. `--dump-capture` re-cuts the parser fixture in one command.
+- **No credential is stored anywhere.** The browser path reads no key, types no password and
+  prompts for nothing. Session cookies live **only** inside Chrome's `user-data-dir` at
+  `/opt/ai-os/browser-profiles/perplexity/` (mode 0700). Konrad logs in ONCE, by hand, in a
+  real Chrome window over a loopback-only noVNC session reached through an SSH tunnel.
+- **New exit code 4 = NEEDS LOGIN**, deliberately the same number as
+  `research-browser.mjs`'s `LOGIN_REQUIRED` (asserted at import time). On a wall the tool
+  screenshots what it saw, hands the handshake to the harness — which queues the reminder,
+  brings up noVNC and leaves the browser running — prints what Konrad must do, and exits 4.
+  It never attempts a login. This is the expected first-run outcome, not a failure.
+- **Bot wall ≠ login wall.** A Cloudflare interstitial is waited out (`--challenge-timeout`,
+  default 90 s) and then, if it persists, is a hard exit 1 with a screenshot and **no
+  reminder** — logging in cannot fix a challenge page. Before exiting it parks a headed browser
+  on the page via the harness so a human can look at it over noVNC.
+- **Screenshots** follow R701's contract verbatim: `/opt/ai-os/uploads/<run_id>/<stamp>-<label>.png`,
+  with both the absolute path and the `/api/uploads/<run_id>/<name>` URL in stdout JSON.
+- **Output contract:** the R502 keys (`answer`, `citations`, `search_results`, `model`,
+  `usage`) are preserved on both backends; the browser adds `backend`, `needs_login`,
+  `sources`, `screenshots`, `extraction`, `bot_challenge`, `stream`, `takeover`, `profile`,
+  `run_id*`, `lock_actions`. On the browser path `model` and `usage` are `null` — the web UI
+  discloses neither — and `search_results` entries carry `{url,title}` only. Documented in
+  `docs/tools/perplexity.md` §4.
+- **Status at amendment time: not yet usable, for a reason the mitigations predicted.** Nobody
+  has logged into the automation browser, so the acceptance target was the exit-4 login wall —
+  but on this box Perplexity's Cloudflare managed challenge does not clear at all (HTTP 403,
+  "Performing security verification", verified 2026-08-05 through both this tool and the R701
+  harness), so runs stop one step earlier at the documented exit-1 bot wall. Details and the
+  open question in `docs/tools/perplexity.md` §12.
+
+**AMENDED at R502 — this whole subsection is superseded by `docs/research/perplexity-api.md`
+(commit d870320); see 01-requirements R22's amendment for the binding text.** Sonar Chat
+Completions was deprecated in July 2026 and `POST /v1/chat/completions` returns 404; there
+is no `perplexity/sonar-pro` slug. As shipped: `ask` → `POST https://api.perplexity.ai/v1/agent`
+(Bearer auth), default `perplexity/sonar`, emitting
+`{ answer, citations, search_results, model, usage }` — `citations` derived, not
+vendor-supplied; `search` → `POST https://api.perplexity.ai/search` emitting
+`{ search_results }`. The Agent API rejects any unknown request field with a hard HTTP 400,
+so the body is an explicit whitelist. The original text follows, kept for the audit trail:
+
+`ask` → `POST https://api.perplexity.ai/chat/completions` (Bearer auth), default
+`sonar-pro` ($3/$15 per 1M + per-request search fee); emit
+`{ answer, citations, search_results }` from the response fields of the same names.
+`search` → the dedicated `POST /search` endpoint (`query`, `max_results` ≤ 20) emitting
+`{ search_results }`. Exact endpoint paths re-verified by the phase scout at build time
+(docs.perplexity.ai) — API surface drift is the risk, not the design. Browser-steering
+fallback: documented manual procedure only (perplexity.ai via playwright skill), because
+scraping a bot-defended SPA is exactly the fragile artifact this system refuses to own.
+
+## 7. Failure modes (each answers: what breaks, who notices, how)
+
+| Failure | Behavior | Konrad sees |
 |---|---|---|
-| `AgentRun` (wire) | routes/agents.ts + agentsApi.ts mirror | + `settled`, `settled_at`, `agent_kind`, `role`, `project_id`, `cron_name` |
-| `Subagent` (wire) | same | + `ended_at`, `description` |
-| `ToolCallPart` | thread-mapping.ts | + `parentToolUseId?`, `agentLabel?` |
-| assistant-ui tool registry | AssistantThread.tsx:127 | + `by_name: { Agent, SendMessage }` |
+| Reviewer run dies (`failed`/`cancelled`) | Existing path: task `failed`, project `blocked` (unchanged; group consolidation only handles all-settled groups) | 🚫 notification + red Kanban card |
+| Reviewer emits no VERDICT | Group `block(no_verdict)` | 🚫 notification naming the task |
+| 3 fix cycles exhausted | Group `block(max_cycles)` | 🚫 notification |
+| Tick crashes mid-consolidation | Re-runs next tick; `chain_key` conflict guard absorbs replays; reviewers still `running`-with-settled-run so the group re-evaluates | nothing (self-heals), log line |
+| Two ticks overlap (defensive) | Claim path already `FOR UPDATE SKIP LOCKED`; consolidation inserts are conflict-guarded | nothing |
+| Project paused mid-round | In-flight runs finish; nothing new promotes/claims; resumes on `active` | Kanban status + (existing) heartbeat wording |
+| gemini/perplexity key missing | Tool exits 2 with both locations; build task queued a reminder | ⏰ reminder + tool stderr |
+| Gemini file stuck processing | 10-min poll timeout ⇒ hard error, non-zero exit | tool stderr (and phase reviewer) |
+| Push rejected (non-FF) | Helper exits non-zero, never forces; reviewer reports it | reviewer message in run thread |
+| Executor restart needed post-deploy | Detached safe-restart waits for fleet idle (≤ 12h, 45s quiet) | safe-restart log + eventual restart; deploy task's final message says it was launched |
 
-Everything additive; no consumer breaks; mobile PWA unaffected.
+## 8. Observability
 
-## 8. Observability of this project itself
+Unchanged surfaces, richer content: Kanban board (`GET /api/projects/board`) shows the
+single fix chain instead of duplicate chains; goal heartbeats keep firing every
+`checkin_hours`; every block path already notifies. New: consolidation logs one line per
+group decision (`[project-tick] round R reviewers → fix cycle c` etc.) — grep-able in
+executor logs; the helpers are CLIs whose stdout/stderr land in run threads.
 
-Progress is observable in the standard places: task board (`/api/projects/<id>`), per-phase commits on `project/8ea0cc08` (pushed to origin), phase artifacts under `docs/plan/perf/` and `docs/plan/notification-gap.md`, reviewer logs with pasted command output. Failure surfaces: a failed task blocks the round and notifies (engine behavior); merge conflicts at deploy stop the phase with a file list per the brief.
+## 9. Technology choices (one line each)
+
+- **Pure-function module + node:test** — matches `account-health.ts` precedent; no framework.
+- **Partial unique index on `chain_key`** — DB-enforced idempotency without mutating
+  historical rows; NULL-excluded so migration is additive.
+- **Prompt constants exported from project-tick.ts** — policy testable as data, single source.
+- **Bash for git helper** — it is five git/gh commands; a TS wrapper would add nothing.
+- **Zero-dep `.mjs` CLIs** — standalone-copyable, no lockfile churn, node 22 fetch suffices.
+- **`gemini-3.6-flash` default** — current video-leaderboard flash model at flash pricing;
+  flag-overridable. **AMENDED at R502: the shipped default is `gemini-omni-flash` —
+  `gemini-3.6-flash` does not accept video input (`docs/research/round-399-41e8757d.md`).**
+- **`sonar-pro` default** — citation-bearing search quality over base `sonar`; flag-overridable.
+  **AMENDED at R502: the shipped default is `perplexity/sonar` on the Agent API; no
+  `sonar-pro` slug exists (`docs/research/perplexity-api.md`, commit d870320).**
+
+## 10. Rejected alternatives (one line each)
+
+- **Advisory lock / serialize whole tick** — tick is already effectively serial; the real
+  bug is group-blindness, not concurrency.
+- **Forbid parallel reviewers in prompts** — prompt-only guarantees are what just failed;
+  fix the reconciler, keep parallel review legal.
+- **Unique index on `(project_id, round, role, fix_cycle)`** — collides with historical
+  duplicate rows and overloads `fix_cycle` semantics; a dedicated `chain_key` is explicit.
+- **Cancel in-flight runs on pause** — destructive semantics hiding behind a status flip;
+  cancellation stays an explicit per-run act.
+- **Engine-side automatic git push on PASS** — puts shelling-to-git (auth, network, hooks)
+  inside the tick's failure domain for a cosmetic feature; guidance + helper keeps the
+  tick pure bookkeeping.
+- **Researcher policy inside agents/*.md role files** — those files are shared with
+  interactive subagents that legitimately touch live checkouts; project policy belongs in
+  buildPrompt().
+- **npm SDKs (@google/genai etc.) for the helpers** — dependency + lockfile churn for two
+  HTTP calls; raw fetch is smaller than the SDK's README.
+- **Building Perplexity browser scraping** — fragile, bot-defended, unmaintainable;
+  documented manual fallback only. **AMENDED at R702 (2026-08-05): overruled by Konrad's
+  constraint — no API key, ever — so it is now the DEFAULT `ask` path. The three risks named
+  here stand and are mitigated explicitly (one selector table, semantic-first locators, loud
+  failure with a screenshot, never a partial answer); see §6.3's R702 amendment.**
+  **RE-RANKED at R776 (2026-08-06): no longer the default — `api` is, for both modes — but the
+  browser code stays and is the documented fallback plus the only path for logged-in work. Of
+  the three risks named here, the one that actually bit is `bot-defended`: `perplexity.ai`
+  answers this host **403** at the Cloudflare edge while `api.perplexity.ai` answers **401**, so
+  the block sits on the egress IP, upstream of anything the selector-table mitigations can
+  reach. `fragile` and `unmaintainable` were and remain mitigated. See §6.3's R776 note.**

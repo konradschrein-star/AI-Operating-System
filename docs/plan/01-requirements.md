@@ -1,123 +1,253 @@
 # 01 — Requirements
 
-Every requirement is numbered and testable. **Verify** is the exact check a reviewer runs. **Phase** maps each requirement to exactly one phase (`04-phases.md`). File references are to the worktree.
+Every requirement is numbered, testable, and owned by exactly one phase (matrix in
+04-phases.md). "Engine" = `forge-control/src/lib/project-tick.ts` + `src/db/projects.ts`
+unless another file is named. Hard-error policy applies throughout: no silent fallbacks;
+anything that swallows an error is a review-blocking defect.
 
-## A. Time truth (Phase 1)
+## A. Reviewer-round consolidation (bug 1)
 
-**R1 — Server-side settled duration.**
-`GET /api/agents` computes `elapsed_ms` per run as:
-- status ∈ {completed, failed, cancelled}: `COALESCE(completed_at, updated_at) − started_at` (server-side, from columns selected in the same query);
-- otherwise: `now − started_at` as today.
-`completed_at` must be added to the SELECT in `fetchActiveRows` (routes/agents.ts:420–449) and to the `/api/agents/:id` SELECT (agents.ts:661–669). No engine files touched.
-*Verify:* `curl -s :7700/api/agents | jq '[.agents[] | select(.status=="completed" or .status=="failed" or .status=="cancelled") | {id, elapsed_ms}]'` twice, ≥5s apart → identical output. A row with NULL `started_at` yields `elapsed_ms: null`, not a crash.
+- **R1 — Group settlement.** Reviewer tasks are reconciled as a *(project_id, round)
+  group*: no verdict action (fix chain, block, pass) is taken until EVERY reviewer task in
+  that group has a settled run (`completed`) or the group is already broken by a
+  failed/cancelled run (which takes the existing task-failed → project-blocked path).
+  *Verify:* unit test on the pure group-readiness function; a settled reviewer whose
+  sibling is still running produces no action and stays reconcilable next tick.
+- **R2 — One fix chain per round.** N ≥ 1 NEEDS_FIXES verdicts in one group produce
+  exactly ONE `Fix cycle {c}` builder at `round + 1` and exactly ONE
+  `Re-review after fix cycle {c}` reviewer at `round + 2`. The builder brief merges ALL
+  NEEDS_FIXES feedback, sectioned per source reviewer (task title + its full feedback
+  text). The re-review brief instructs re-checking every merged concern against the new
+  diff. *Verify:* unit test (two NEEDS_FIXES in ⇒ one builder + one reviewer out, both
+  reviewers' text present in the merged brief).
+- **R3 — PASS never races NEEDS_FIXES.** Because of R1, a PASS from one reviewer takes no
+  effect while a sibling is unsettled; in a settled group, any NEEDS_FIXES wins over any
+  number of PASSes. All-PASS ⇒ mark group done, create nothing (project close stays with
+  `closeFinishedProjects()`). *Verify:* unit tests for PASS+NEEDS_FIXES and all-PASS groups.
+- **R4 — Verdict parsing hardened.** The verdict is the LAST `VERDICT: PASS|NEEDS_FIXES`
+  occurrence in the reviewer's final message (reviewers quote the format mid-reasoning;
+  the last line is the declaration). Extracted as a pure `parseVerdict(text)` returning
+  `'PASS' | 'NEEDS_FIXES' | null`. *Verify:* unit tests incl. quoted-verdict-then-real-verdict,
+  missing verdict, case variance.
+- **R5 — Unparseable verdict blocks.** Any settled reviewer in the group with no parseable
+  verdict ⇒ project `blocked` + notification naming the reviewer task (existing behavior,
+  now group-aware: evaluated at group settlement, before fix/pass logic). *Verify:* unit test.
+- **R6 — Fix-cycle ceiling.** Chain cycle `c = max(fix_cycle over the group) + 1`; if
+  `max(fix_cycle) >= MAX_FIX_CYCLES` (3) and the group still needs fixes ⇒ project
+  `blocked` + notification (existing behavior preserved at group level). *Verify:* unit test.
+- **R7 — Idempotent, crash-safe creation.** Fix builder + re-reviewer are inserted in ONE
+  transaction, each stamped with a deterministic `chain_key`
+  (`fix:{round}:{c}` / `rereview:{round}:{c}`), inserted `ON CONFLICT DO NOTHING` against
+  a partial unique index `(project_id, chain_key)` (migration 0039 — renumbered from 0035
+  at R308: `main` shipped its own 0035, the task-identity index). Reviewers are marked
+  `done` only AFTER the insert transaction commits, so a crash between the two steps
+  re-runs consolidation and the conflict guard absorbs the replay. Historical rows have
+  `chain_key NULL` — the migration adds a nullable column + partial index and touches no
+  existing data. *Verify:* unit test on chain_key derivation; SQL review; red-team
+  crash-window walk in the review.
 
-**R2 — Settled flag + settle timestamp on the wire.**
-`AgentRun` gains `settled: boolean` (status ∈ completed/failed/cancelled) and `settled_at: string | null` (`completed_at ?? updated_at` for settled rows, null otherwise). Additive only — no existing field renamed or removed (the mobile PWA consumes this endpoint too).
-*Verify:* `curl … | jq '.agents[0] | keys'` shows old fields intact plus new ones; settled rows have non-null `settled_at`.
+## B. Project-status gating (bug 2)
 
-**R3 — Sub-agent `ended_at` + `description` projected.**
-`subagentsFromRollup` (agents.ts:503–533) and the `Subagent` wire interface pass through `ended_at` (string | null) and `description` (string | null) from `metadata.subagents_v2[]`. These are persisted today and dropped.
-*Verify:* `curl … | jq '.agents[] | .subagents[]? | {role, status, ended_at, description}'` — every `status:"done"` element has non-null `ended_at` (for runs recorded since rollup v2; older nulls fall to R5's fallback).
+- **R8 — Promotion gated.** `promoteReadyTasks()` promotes `pending → ready` only for
+  tasks whose project has `status = 'active'`. *Verify:* SQL clause present + red-team walk;
+  behavior covered by the extracted predicate test (R10).
+- **R9 — Claiming gated.** `claimReadyTasks()` claims only tasks of `active` projects.
+  A task already `running` when its project pauses is NOT killed (run cancellation stays a
+  separate, explicit operation); it finishes and reconciles normally, but reconciliation
+  spawns nothing new for a non-active project beyond recording (fix-chain tasks MAY be
+  created while non-active — they are pending rows, harmless by R8/R9, and resume
+  correctly on reactivation). *Verify:* SQL review + unit test of the shared predicate.
+- **R10 — Testable predicate.** A pure `projectAcceptsWork(status: ProjectStatus): boolean`
+  (true only for `'active'`) exported from the new pure-logic module and used as a
+  defense-in-depth TS-side filter in `spawnTaskRuns()` in addition to the SQL clauses —
+  the SQL is the gate, the predicate is the belt worn in code and in tests. *Verify:* unit
+  tests over all five statuses.
+- **R11 — Typecheck + suite.** After `pnpm install --prod=false` (never a bare `pnpm
+  install`: `NODE_ENV=production` is inherited from the executor and silently drops the
+  dev deps that ARE the toolchain), `npx tsc --noEmit` clean in `forge-control`; `pnpm test`
+  green including the new `project-reconcile.test.ts`. *Verify:* commands run by builder
+  and reviewer each phase.
 
-**R4 — Client: settled top-level rows never tick.**
-`AgentRunLine` renders duration for settled rows strictly from server `elapsed_ms` (now correct per R1) and passes `now` only to live rows. Queued rows (not yet started) show `—`, not a growing count.
-*Verify:* React DevTools / code review plus: open panel with a settled run visible; duration text unchanged across ≥3 poll cycles (screenshot pair or DOM poll via Playwright).
+## C. Worktree-only policy + executor-safe deploy (bugs 3 + 4)
 
-**R5 — Client: settled sub-agent lines never tick.**
-`SubagentLine` duration: `status === "running"` → `now − started_at`; else `ended_at − started_at`; if `ended_at` is null (old rows) → `updated_at − started_at`; if that is also unusable → render `—`. **Never `now` for a done sub-agent** (kills the current grow-forever fallback at AgentActivity.tsx:258).
-*Verify:* Playwright DOM poll over a done sub-agent line across ≥3 poll cycles → text constant; a fabricated entry with null `ended_at`+`updated_at` renders `—` (unit test on the extracted duration function).
+- **R12 — Worktree-only rule in prompts.** `buildPrompt()` appends, for every role on a
+  repo-backed (non-scratch) project, an explicit policy block: all edits happen in the
+  project worktree; the live checkout (`/opt/forge-ai-os` for repo `ai-os`,
+  `/opt/content-forge` for `content-forge`) must NEVER be edited during build phases;
+  verification against live endpoints happens only via an explicitly-briefed deploy/verify
+  task. *Verify:* unit test asserting the policy text appears in builder/planner/
+  architect/reviewer/researcher prompts for repo projects and NOT for scratch projects.
+- **R13 — Reviewer cleanliness check.** The reviewer prompt for repo-backed projects
+  instructs: run `git -C <live checkout> status --porcelain`; any dirt is itself a
+  NEEDS_FIXES finding (someone hot-applied). *Verify:* prompt unit test + reviewer
+  behavior observed in this very project's later phases.
+- **R14 — Executor-safe deploy guidance.** The goal-mode architect prompt's deploy
+  guidance (and `docs/tools/deploy-playbook.md`) states: when the diff touches
+  executor-loaded code (`src/lib/project-tick.ts`, `src/lib/cc-runner.ts`,
+  `src/executor.ts`, `src/db/*`, `agents/*.md` role files), NEVER `pm2 restart
+  forge-executor`; instead launch
+  `setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &`
+  and END the task — the restart lands when the fleet is idle. `pm2 restart forge-control`
+  (API side) remains allowed. *Verify:* prompt unit test for the guidance text; deploy
+  phase follows it.
 
-**R6 — One duration function.**
-Exactly one exported helper (e.g. `runElapsedMs(row, now)` / `subagentElapsedMs(s, now)`) in the Live panel module owns the settled-vs-live decision; both row components call it; no other call site computes durations. This is the "no exceptions anywhere" clause made structural.
-*Verify:* `grep -n "now -\|- started\|parseTs" forge-control-web/app/desktop/live/*.tsx` — all duration arithmetic lives in the helper module; components contain none.
+## D. GitHub integration
 
-## B. Kind truth (Phase 2)
+- **R15 — Push helper.** `scripts/git-sync-branch.sh <worktree-dir>` (repo root
+  `scripts/`): verifies an `origin` remote exists and `gh auth status` succeeds, then
+  `git push origin HEAD` — plain push, no `--force`/`--force-with-lease` anywhere in the
+  script; fails loudly (non-zero + stderr) on rejection, never retries with force.
+  With `--pr "<title>"` it additionally opens a PR via `gh pr create` (base = project
+  base branch) if none exists for the branch. No origin / no auth ⇒ clear non-zero error
+  (caller decides whether that matters). *Verify:* run against this repo (push succeeds);
+  grep proves no force flag; no-origin case tested in a scratch repo.
+- **R16 — Phase-completion push guidance.** Goal-mode prompt guidance (planner + reviewer
+  branches of `buildPrompt()`): when a phase's gating reviewer issues PASS on a repo with
+  an origin remote, the reviewer runs the push helper so progress is visible on GitHub.
+  Deterministic engine-side pushing is explicitly rejected (see 02-architecture,
+  rejected alternatives). *Verify:* prompt unit test; observed pushes from later phases
+  of this project.
+- **R17 — PR-on-completion guidance.** Deploy guidance: if the project brief says "open a
+  PR instead of merging", the final phase uses `git-sync-branch.sh --pr` and does NOT
+  merge to main; otherwise merge per the brief. *Verify:* guidance text test; this
+  project's own brief says merge, so the PR path is proven only via helper dry-run
+  against a scratch repo.
 
-**R7 — Server-side kind classification.**
-`AgentRun` gains `agent_kind: "operator" | "worker" | "cron" | "unknown"` plus `role: string | null` (`metadata.role`), `project_id: string | null`, `cron_name: string | null`. Classification precedence (explicit, ordered, documented in code):
-1. `metadata.cron_id` present → `cron`;
-2. `metadata.project_id` AND `metadata.role` present → `worker`;
-3. `worker = 'forge-executor'` with none of the above → `operator`;
-4. anything else → `unknown` (rendered as such — never guessed).
-`parent_run_id` (already on the wire) marks child runs orthogonally.
-*Verify:* `curl … | jq '[.agents[] | {id, agent_kind, role, project_id}]'` — every row classified; cross-check 3 known rows (an operator chat, a project worker, a cron run) against the DB.
+## E. Researcher role
 
-**R8 — Model normalization for display.**
-The wire keeps raw `model` (resolved-preferred, as today, agents.ts:549–561). The client renders a display name via a small pure mapping (`claude-fable-5` → `fable-5`, `claude-opus-5` → `opus-5`, alias `haiku`/`opus` → shown as-is but faint); unknown ids pass through verbatim. No hardcoded colors; mapping unit-tested.
-*Verify:* unit test table; screenshot shows old alias rows legible, current rows showing concrete model.
+- **R18 — Role file.** `agents/researcher.md` exists in-repo. Frontmatter: `name`,
+  `description`, `model: claude-opus-5`, `effort: high`,
+  `tools: Read, Write, Glob, Grep, Bash, WebSearch, WebFetch, Skill`. Mission: deep
+  research with real sources; may steer a real browser via the playwright/hermes browser
+  skills for logged-in/web-app work; MUST cite what it saw (URLs, titles, dates, quoted
+  snippets); writes findings to `docs/research/*.md`; no implementation, no task creation.
+  It also names the two service helpers (`scripts/perplexity.mjs`, `scripts/gemini-qa.mjs`)
+  as available instruments with their key protocol. *Verify:* file exists, frontmatter
+  parses under `roleConfig()`'s regexes (unit-test the parse against the real file content).
+- **R19 — Installation. STRUCK at R308 — superseded by R306's repo fallback.** It required
+  a human `cp` into `/root/.claude/agents/`, which the agent harness guards as a sensitive
+  path, so no task of this project could satisfy it (three rounds proved exactly that —
+  `docs/plan/evidence/p3-smoke.md`). `roleFilePaths()` now falls back to `REPO_AGENTS_DIR`,
+  so a role file committed to `agents/` self-installs at the first post-deploy executor
+  restart. *Superseded by:* R18 (file exists, frontmatter parses) + T13 (the ENGINE's own
+  resolution order finds a real definition, and any hand-installed copy is byte-identical).
+  Konrad is owed nothing; the reminder asking him for the `cp` was cancelled at R308.
+- **R20 — Smoke run. MOVED to P6 at R308** (acceptance unchanged; see 03-quality §3.1).
+  It cannot run before the deploy: the live engine predates the repo fallback, so a
+  researcher launched on it would cache the bare mission for the executor's lifetime and
+  force the one restart this project must not perform. After P6's detached restart it
+  tests the deployed engine, which is the stronger check.
+  A scratch-repo project is created whose brief instructs its
+  round-0 architect (tier `fast`) to create exactly one researcher task and stop. The
+  researcher task runs end-to-end: run completes, a `docs/research/*.md` with ≥ 3 cited
+  sources is committed in the scratch repo. The scratch project is then closed
+  (status → done/cancelled via API). *Verify:* file content inspected by the phase
+  reviewer; run row completed; project closed.
 
-**R9 — Visible kind classification in the panel.**
-Every top-level row shows: kind marker (operator chat vs project worker vs cron — distinct token-colored badge or glyph, both themes), role label for workers (architect/planner/builder/reviewer/scout/researcher), and model. Sub-agent lines (nested, existing indent idiom) show role, model, and now `description` as the title text where present. A stranger reading the panel can answer "session or sub-agent?" for every line.
-*Verify:* dark+light screenshots of a live goal project; reviewer names each row's kind without reading code (S3).
+## F. External research services
 
-**R10 — Lineage on hover, perf-safe.**
-Hovering a row reveals lineage: for sub-agents, "sub-agent of <parent run title> (<model>)"; for child runs, parent run id/title; for workers, "project <name> · <role> · round context if present". Implementation must be CSS-only visibility (pre-rendered content, `:hover` class or enriched native `title` — decision in 02-architecture §5.3), **no state updates, no portal/tooltip library, no new dependency**.
-*Verify:* code review (no onMouseEnter state in the Live panel); hover during the phase-3 measurement adds no long tasks; both themes screenshot with tooltip visible (CSS route) or title attribute content dumped (native route).
+- **R21 — gemini-qa CLI.** `scripts/gemini-qa.mjs` (node ≥ 22, zero npm dependencies,
+  built-in `fetch` only): input = local video path OR public/YouTube URL; local files
+  upload via the Gemini Files API resumable flow, poll until `ACTIVE`, then
+  `generateContent` with `responseMimeType: application/json` + `responseSchema`; URLs
+  pass as `file_data.file_uri` directly. Output: the structured QA JSON (rubric in
+  02-architecture §5) on stdout; `--out <file>` optional. Default model
+  `gemini-3.6-flash`, `--model` override. *Verify:* error-path proof (R23) plus, if a key
+  exists by then, one real run on a short sample video.
+  **AMENDED at R502 — superseded by `docs/research/round-399-41e8757d.md`** (build-day
+  re-verification, surfaced by `docs/plan/evidence/p5-integration-sweep.md` §2b). Two
+  corrections, both because the original text predates the model research; the shipped
+  code is right and must not be changed to match it. (a) The default model is
+  **`gemini-omni-flash`**, not `gemini-3.6-flash`: `gemini-3.6-flash` does **not accept
+  video input**, so the tool's primary use case would fail on every invocation
+  (`scripts/gemini-qa.mjs:68-72`; research at `docs/research/round-399-41e8757d.md:15,22,198,233`).
+  (b) The rubric lives in **02-architecture §6.2**, not §5 — §5 is the researcher lane.
+  Everything else in R21 stands as written.
+- **R22 — perplexity helper.** `scripts/perplexity.mjs` (same zero-dep rules): modes
+  `ask "<question>"` (chat completions, model default `sonar-pro`, `--model` override) and
+  `search "<query>"` (dedicated search endpoint); output JSON
+  `{ answer?, citations[], search_results[] }` on stdout. Browser-steering fallback is
+  DOCUMENTED in `docs/tools/perplexity.md` as manual procedure, not built. *Verify:*
+  error-path proof (R23); live smoke if a key exists.
+  **AMENDED at R502 — superseded by `docs/research/perplexity-api.md` (commit d870320),**
+  surfaced by `docs/plan/evidence/p5-integration-sweep.md` §2c. The original text
+  specified `ask` as Sonar chat completions with model default `sonar-pro`. Live probing
+  on 2026-08-05 found Sonar Chat Completions deprecated (July 2026) and
+  `POST /v1/chat/completions` returning 404; there is no `perplexity/sonar-pro` slug.
+  **New binding text — as built:** `scripts/perplexity.mjs` (same zero-dep rules): modes
+  `ask "<question>"` (Perplexity **Agent API**, `POST https://api.perplexity.ai/v1/agent`,
+  model default `perplexity/sonar`, `--model`/`--preset` override, web search attached and
+  forced by default) and `search "<query>"` (`POST https://api.perplexity.ai/search`);
+  output JSON `{ answer, citations[], search_results[], model, usage }` for `ask` and
+  `{ search_results[] }` for `search`, on stdout — a superset of the original shape, no
+  field lost. The Agent API is strict — any unknown field is a hard HTTP 400 — so the
+  request body is an explicit whitelist, never a pass-through of user options.
+  Browser-steering fallback is DOCUMENTED in `docs/tools/perplexity.md` §11 as manual
+  procedure, not built. *Verify:* error-path proof (R23); live smoke if a key exists.
+- **R23 — Key protocol (both tools).** Key resolution order: env (`GEMINI_API_KEY` /
+  `PERPLEXITY_API_KEY`) → secret store file (`/opt/ai-os/.secrets/store/gemini-api-key` /
+  `perplexity-api-key`). Missing ⇒ exit code 2 with a message naming BOTH locations and
+  the exact key name; no partial behavior. Invalid key ⇒ surface the API's HTTP status +
+  error body verbatim, exit 1 — this proves the request path without a valid key.
+  *Verify:* run both tools with no key and with `GEMINI_API_KEY=invalid` etc.; assert
+  messages and exit codes (scriptable check the reviewer re-runs).
+- **R24 — Reminders for missing keys.** As of recon (2026-08-05) NEITHER key exists in
+  `/opt/ai-os/.secrets/store/`. For each key still missing at build time, the builder
+  queues ONE reminder via `POST http://127.0.0.1:7700/api/reminders` telling Konrad the
+  exact key name, where to put it (secret store name + path, or env var), and what it
+  unlocks. Queued once per key by the build task — NOT by the tools at runtime. *Verify:*
+  reminder rows exist (GET the reminders API); text names key + location.
+- **R25 — Tool docs.** `docs/tools/gemini-qa.md` and `docs/tools/perplexity.md`: usage,
+  flags, key setup (both locations), rubric semantics / response fields, cost notes
+  (models + rough pricing from research), error-path examples, and (perplexity) the
+  documented browser fallback. *Verify:* docs exist and match actual CLI behavior
+  (reviewer cross-checks `--help` output against docs).
 
-**R11 — Managers/summary rows keep counting only live work.**
-`ManagersSection` and the summary strip must not regress: counts and spend remain as today; any duration ManagersSection might show follows R6's helper. (Today it shows none — this requirement pins that no ticking duration gets *added* here.)
-*Verify:* code review + screenshots.
+## G. Integration, documentation, deploy
 
-## C. Hover performance (Phase 3)
+- **R26 — Full regression + whole-diff review.** Final build phase: `pnpm install
+  --prod=false` (worktree `forge-control` has no `node_modules`, and `NODE_ENV=production`
+  in the executor env makes a plain install skip `tsx`/`typescript` — see 03-quality
+  §preamble), `npx tsc --noEmit`, `pnpm test`, and a
+  reviewer sweep over `git diff main...HEAD` for the whole project. *Verify:* reviewer
+  runs the commands and reasons through the failure-mode checklist in 03-quality.
+- **R27 — Knowledge capture.** Vault updates appended (never overwritten): `AI OS/Goal
+  Mode Design.md` gains the consolidation/gating semantics, worktree-only policy, deploy
+  pattern, and researcher lane; `AI OS/Operator Log.md` gains a dated entry. A
+  `docs/tools/deploy-playbook.md` in-repo records the executor-safe deploy steps.
+  *Verify:* notes contain the new sections; nothing deleted.
+- **R28 — Deploy protocol.** Exactly the brief's: in `/opt/forge-ai-os`, merge `main` into
+  `project/4120f785` first if main moved; re-run tsc + tests in the WORKTREE; merge to
+  main; on conflicts STOP and report files; `pm2 restart forge-control`; detached
+  `safe-restart.sh forge-executor 43200 45` via `setsid nohup … &` without waiting;
+  apply migration 0039 before restarting (additive: nullable column + partial index);
+  final message lists changes, test results, and keys/reminders owed. *Verify:* deploy
+  task transcript; post-deploy `pm2 ls` shows forge-control online; safe-restart log
+  exists.
 
-**R12 — Recorded baseline before any perf fix.**
-Baseline measurement of the hover interaction on the worktree build (pre-phase-3-changes), per protocol `03-quality.md` §4, committed as `docs/plan/perf/baseline.md` + raw trace files. Baseline is taken at phase start so it isolates the phase-3 fix (phases 1–2 touch the Live panel, not the chat rail).
-*Verify:* files exist, numbers filled in, trace loadable in Chrome DevTools (`chrome://tracing` / Performance tab import).
+## Non-functional requirements
 
-**R13 — Root cause identified from measurement, not intuition.**
-The phase's fix PR/commit message and `docs/plan/perf/findings.md` name the mechanism (e.g. unmemoized rail re-render per mouse event, poll-driven commit storm, style recalculation) **with the trace evidence** (which function/component, how many ms, how many commits). Candidate list in 02-architecture §5.2 is a starting point, not a conclusion.
-*Verify:* reviewer reads findings against the raw trace and confirms the named cause appears in it.
-
-**R14 — Fix meets the numeric gate.**
-After the fix, the scripted hover sweep (03-quality §4) shows: zero main-thread tasks > 50ms attributable to hover handling, and total scripting time during the sweep reduced vs baseline (target ≥ 50% if baseline shows a storm; if baseline is already < 60ms total, the gate is "no regression + cause documented elsewhere"). Numbers recorded in `docs/plan/perf/after.md`.
-*Verify:* reviewer re-runs the sweep script and reproduces within ±20%.
-
-**R15 — No behavior regressions from the perf fix.**
-Chat rail still: selects on click, shows ✕ close affordance on hover, marks selected row, updates status dots live. Side-panel task list still opens runs.
-*Verify:* Playwright click-through + screenshots both themes.
-
-## D. Agent comms in chat (Phase 4)
-
-**R16 — `thread-mapping.ts` carries the dropped fields.**
-`ToolCallPart` gains `parentToolUseId?: string` and result `isError` is preserved onto the part (today only set via back-search; keep) — mapping continues to dispatch on `role`/`kind` only. No pipeline changes server-side.
-*Verify:* unit test: a thread fixture with subagent-attributed entries maps parts with `parentToolUseId` set.
-
-**R17 — First-class Agent/SendMessage blocks.**
-Register `tools.by_name` renderers (AssistantThread.tsx:127) for `Agent` and `SendMessage` (both directions of the operator↔agent conversation that exist in the thread):
-- **Agent spawn** (`tool_call`, meta.tool="Agent"): direction marker "→" + parsed `subagent_type`/`description` as the one-line preview; expanded: full `prompt` payload, mono block.
-- **Launch ack** (`tool_result` on that call): rendered inside the same block as today's RESULT section (status line: launched/failed).
-- **SendMessage** (`tool_call`): "→ <to>" + `summary` preview; expanded: full message; its `tool_result` = the reply, direction-marked "←".
-Visual grammar identical to `ToolCallRow` (same tokens: `toolBg`, `borderDivider`, status color coding, `dot()`, mono class, collapsed-by-default, 110-char preview). Input JSON that fails to parse renders the raw `argsText` with an explicit "unparsed payload" label — visible, never dropped (R20).
-*Verify:* open historical run `3853c154-…` (this architect run — it contains 2 Agent spawns) in the chat surface; blocks render with direction + agent name + preview; expand shows full prompt; both themes screenshots.
-
-**R18 — Sub-agent attribution in the transcript.**
-Parts carrying `parentToolUseId` render with a visible sub-agent marker (indent/left rail + the spawning agent's `description` or short id association) so a sub-agent's tool calls are no longer indistinguishable from the operator's own. Association map is built in `mapThreadToMessages` from Agent spawn calls seen earlier in the same thread (tool_use_id → description) — pure function, unit-tested.
-*Verify:* fixture test + screenshot of run `3853c154-…` where sub-agent Bash calls show the marker.
-
-**R19 — Notification gap documented, not plumbed.**
-`docs/plan/notification-gap.md`: exactly what is missing (agent completion payloads never reach `runs.thread`), where it dies (`cc-runner.ts:417–429`, closed `CcEvent` union at :170–188), what a fix would take (new event type + `ThreadEntry.kind` + mapping branch), and why it is out of scope here (engine files owned by engine-v2-research-lane). No code change for this item.
-*Verify:* doc exists, claims match the quoted code, and no diff touches `cc-runner.ts`.
-
-**R20 — No silent drops in the transcript.**
-Every thread entry that reaches the mapper produces a visible part: unknown kinds degrade to the existing text/generic-tool rendering, malformed tool payloads render raw with an explicit label. Grep-level check that the new renderers contain no bare `return null` on data they merely fail to parse.
-*Verify:* code review + a deliberately malformed fixture renders visibly.
-
-## E. Cross-cutting / deploy (Phase 5; NF apply to all phases)
-
-**R21 — Builds green.**
-`npx tsc --noEmit` clean in `forge-control` and `forge-control-web`; `pnpm build` passes in `forge-control-web`. Run in every phase; formally gated here.
-*Verify:* command output in the deploy task log.
-
-**R22 — Deploy per the brief's runbook.**
-Merge main into `project/8ea0cc08` first if main moved; re-run tsc + build in the worktree; merge to main in `/opt/forge-ai-os`; rebuild web; `pm2 restart forge-control-web` and `forge-control` (API files changed — yes, agents.ts). **Never forge-executor.** On any merge conflict: stop, leave the branch, report the exact files.
-*Verify:* `pm2 jlist` online; `curl :7700/api/health`; `curl -s -o /dev/null -w '%{http_code}' :7701/desktop`; settled runs frozen in production; final summary includes hover before/after numbers.
-
-### Non-functional (all phases)
-
-**NF1** Design tokens only (`app/tokens.ts` / `var(--fg-*)`); both themes verified per phase; zero hardcoded colors in touched files (`grep -nE '#[0-9a-fA-F]{3,8}|rgb\(' <touched>` → only token definitions may hit).
-**NF2** Forbidden files: `project-tick.ts`, `cc-runner.ts`, `executor.ts`, `db/projects.ts`, `FileExplorerPanel*`, `VaultFileList*`, `routes/files.ts`. Needed run-query helpers live inside `routes/agents.ts`.
-**NF3** `/api/agents` changes are strictly additive (mobile PWA + ProjectsSurface consume it).
-**NF4** No new npm dependencies in any phase. (Perf fixes use React.memo / CSS, not libraries.)
-**NF5** Work only inside this worktree until phase 5. `pnpm install` in each repo before first build (worktree ships without node_modules): `NODE_ENV=development pnpm install --prod=false`.
-**NF6** No `forge-executor` restart; no destructive DB statements; DB access read-only (`psql` SELECTs) except nothing — this project writes no DB data at all.
-**NF7** Every phase's builder commits to `project/8ea0cc08` with per-unit commits and updates its task log; reviewer tasks paste executed command output, not assertions.
+- **N1 — No new npm dependencies** anywhere (helpers are zero-dep; engine changes use
+  what's installed). pnpm only, per repo rules.
+- **N2 — Do not touch** `forge-control-web/app/desktop/**` or `src/routes/agents.ts`.
+- **N3 — Hard errors everywhere:** no catch-and-continue on new paths except where the
+  existing code deliberately degrades (notification queueing`.catch(() => {})` may stay);
+  every new failure path either throws or notifies Konrad.
+- **N4 — Migration discipline:** 0035 is additive-only (nullable column + partial unique
+  index), applied to the live DB only at deploy phase, safe for the running engine
+  (old code never writes `chain_key`).
+  **AMENDED at R502 — the migration number is stale** (surfaced by
+  `docs/plan/evidence/p5-integration-sweep.md` §2a). As written, N4 tells a deploy
+  engineer to treat *main's* `0035_task_idempotency.sql` — already live — as this
+  project's migration, which is exactly the ambiguity the R308 renumber existed to
+  remove. Every other corpus site was updated (`01-requirements.md:41`,
+  `03-quality.md:99`, `04-phases.md:31`); N4 was missed. **New binding text:**
+  `db/migrations/0039_reviewer_chain_key.sql` — renumbered from 0035 at R308, because
+  `main` shipped its own `0035_task_idempotency.sql` while this branch was out and
+  `db/migrations/` has no ledger to disambiguate two `0035_*` files — is additive-only
+  (nullable column + partial unique index), applied to the live DB only at deploy phase,
+  safe for the running engine (old code never writes `chain_key`).
+- **N5 — Worktree discipline (self-referential):** every build task of THIS project works
+  only in `/opt/ai-os/workspace/projects/4120f785-…`; the only live-system writes allowed
+  before deploy are: queueing reminders (R24), applying nothing to
+  `/opt/forge-ai-os`, and vault appends (R27).
