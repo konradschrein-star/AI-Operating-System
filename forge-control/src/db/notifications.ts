@@ -55,6 +55,37 @@ export async function queueNotification(
   }
 }
 
+/**
+ * When this source last queued anything, as epoch ms, or null if it never has.
+ *
+ * The one-push-per-outage rule (lib/usage-wall.ts, R860) needs to know whether
+ * the fleet has already told Konrad about the wall it is currently bouncing
+ * off. Answering from the table rather than from a module variable is the
+ * point: the executor restarts, and an in-memory flag would let the second
+ * restart re-announce an outage the first one already reported.
+ *
+ * Every status counts, 'failed' included — the message was composed and handed
+ * to the queue; whether Telegram then accepted it says nothing about whether
+ * the fleet should compose another one.
+ *
+ * Throws on a DB error rather than returning null. The caller decides what an
+ * unreadable history means (it announces), and it should make that choice
+ * knowingly instead of being handed a null that also means "never announced".
+ */
+export async function lastNotificationAt(source: string): Promise<number | null> {
+  const r = await pool.query<{ created_at: string }>(
+    `SELECT created_at::text FROM notifications
+      WHERE source = $1
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [source],
+  );
+  const raw = r.rows[0]?.created_at;
+  if (!raw) return null;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** Claim up to `limit` pending rows (FOR UPDATE SKIP LOCKED — bump attempts
  *  immediately so a crashed send doesn't retry forever). */
 export async function claimPendingNotifications(

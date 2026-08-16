@@ -37,10 +37,12 @@ import uploads from "./routes/uploads.ts";
 import files from "./routes/files.ts";
 import projects from "./routes/projects.ts";
 import capabilities from "./routes/capabilities.ts";
+import tasks from "./routes/tasks.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
 import mentor from "./routes/mentor.ts";
+import runControl from "./routes/run-control.ts";
 
 const app = new Hono();
 
@@ -120,6 +122,9 @@ app.get("/", (c) =>
       "/api/projects/:id",
       "/api/projects/:id/tasks",
       "/api/projects/:id/status",
+      "/api/projects/:id/unwedge",
+      "/api/tasks/:id",
+      "/api/tasks/:id/retry",
     ],
   }),
 );
@@ -183,9 +188,14 @@ app.route("/api/projects", projects);
 // UI v3 (U8): static feature-detection for control-plane actions the engine
 // doesn't support yet. See routes/capabilities.ts for the contract source.
 app.route("/api/capabilities", capabilities);
+// Project-task recovery (retry a failed task without SQL). Separate router
+// because Step 11 of the execution-layer redesign grows /api/tasks into the
+// unified dispatch verb.
+app.route("/api/tasks", tasks);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);
+app.route("/api/runs", runControl);
 
 const port = Number(process.env.PORT ?? 7700);
 serve({ fetch: app.fetch, port, hostname: "127.0.0.1" });

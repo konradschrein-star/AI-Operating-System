@@ -14,6 +14,15 @@
 import pg from "pg";
 import { readFile, stat, readdir } from "node:fs/promises";
 import path from "node:path";
+import {
+  rankCandidates,
+  CANDIDATE_MULTIPLIER,
+  CANDIDATE_CAP,
+  MAX_CHUNKS_PER_NOTE,
+  SCORE_FLOOR,
+  type NoteKind,
+  type RankExplain,
+} from "../lib/memory-ranking.ts";
 
 const { Pool } = pg;
 
@@ -88,8 +97,15 @@ export interface SearchHit {
   vault_path: string;
   title: string;
   snippet: string;
+  /** Weighted score (raw cosine × note-type prior × recency decay). */
   score: number;
   chunk_index: number;
+  /** Retrieval prior applied — see lib/memory-ranking.ts. Absent on graph-lane
+   *  hits, whose score is synthetic rather than cosine-derived. */
+  note_kind?: NoteKind;
+  /** Ranking provenance, so a bad result set can be diagnosed from the API
+   *  response alone instead of by re-deriving the maths. */
+  explain?: RankExplain;
 }
 
 /* ============================================================================
@@ -515,13 +531,39 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
   };
 }
 
-/** Semantic search over the vault using pgvector cosine on the HNSW index. */
+export interface SearchOptions {
+  /** Override the weighted-score cutoff. `0` disables the floor entirely —
+   *  used by diagnostics that need to see what was rejected. */
+  floor?: number;
+  /** Override the per-source-note chunk cap. */
+  maxPerNote?: number;
+  /** Snippet length in characters. */
+  snippetChars?: number;
+}
+
+/**
+ * Semantic search over the vault using pgvector cosine on the HNSW index,
+ * then re-ranked (see lib/memory-ranking.ts).
+ *
+ * The ANN pass over-fetches `limit × CANDIDATE_MULTIPLIER` rows because the
+ * three corrections applied afterwards are all *subtractive*: at most two
+ * chunks survive per note, and anything under the floor is discarded. Without
+ * the over-fetch a query whose top 30 candidates are all one note would return
+ * two results instead of a full page.
+ */
 export async function searchMemory(
   query: string,
   limit = 12,
+  opts: SearchOptions = {},
 ): Promise<SearchHit[]> {
   const vec = await embedQuery(query);
   if (!vec) return [];
+
+  const candidateLimit = Math.min(
+    CANDIDATE_CAP,
+    Math.max(limit, limit * CANDIDATE_MULTIPLIER),
+  );
+  const snippetChars = opts.snippetChars ?? 220;
 
   // halfvec literal: pgvector accepts a string '[v1,v2,...]' cast to halfvec.
   const literal = `[${vec.join(",")}]`;
@@ -531,23 +573,40 @@ export async function searchMemory(
     content: string;
     chunk_index: number;
     distance: number;
+    chunk_count: number | null;
   }>(
     `SELECT source_path, title, content, chunk_index,
-            (embedding <=> $1::halfvec) AS distance
+            (embedding <=> $1::halfvec) AS distance,
+            NULLIF(metadata->>'chunk_count', '')::int AS chunk_count
        FROM knowledge_embeddings
        WHERE embedding IS NOT NULL
        ORDER BY embedding <=> $1::halfvec
        LIMIT $2`,
-    [literal, limit],
+    [literal, candidateLimit],
   );
 
-  return r.rows.map((row) => ({
+  const candidates = r.rows.map((row) => ({
+    source_path: row.source_path,
+    chunk_index: row.chunk_index,
+    score: 1 - row.distance, // cosine distance → similarity
+    chunk_count: row.chunk_count ?? undefined,
+    title: row.title,
+    content: row.content,
+  }));
+
+  return rankCandidates(candidates, {
+    limit,
+    floor: opts.floor,
+    maxPerNote: opts.maxPerNote,
+  }).map((row) => ({
     slug: slugify(row.source_path),
     vault_path: row.source_path,
     title: row.title,
-    snippet: row.content.slice(0, 220),
-    score: 1 - row.distance, // cosine distance → similarity
+    snippet: row.content.slice(0, snippetChars),
+    score: row.score,
     chunk_index: row.chunk_index,
+    note_kind: row.explain.kind,
+    explain: row.explain,
   }));
 }
 
@@ -921,6 +980,7 @@ export async function neighborhoodHits(
   excludePaths: string[],
   limit = 8,
   category?: TripleCategory,
+  scoreCeiling = GRAPH_SCORE_MAX,
 ): Promise<SearchHit[]> {
   const keys = [...new Set(entities)].filter(Boolean);
   if (keys.length === 0) return [];
@@ -936,6 +996,7 @@ export async function neighborhoodHits(
          FROM knowledge_triples
         WHERE (subject_key = ANY($1::text[]) OR object_key = ANY($1::text[]))
           AND ($4::text IS NULL OR category = $4)
+          AND ${VAULT_SOURCE_PATH_SQL("source_path")}
         GROUP BY source_path, chunk_index
      )
      SELECT e.source_path, e.chunk_index, e.title, e.content,
@@ -954,7 +1015,11 @@ export async function neighborhoodHits(
     vault_path: row.source_path,
     title: row.title,
     snippet: row.content.slice(0, 220),
-    score: 0.5 + Math.min(0.49, Number(row.hit_count) * 0.1),
+    // Synthetic — NOT a cosine similarity. Capped below the weakest vector hit
+    // by the caller (see searchMemoryWithGraph) so an entity co-occurrence can
+    // never outrank a genuine semantic match. The audit measured the old
+    // uncapped formula landing at ~0.64 against real hits of 0.45–0.55.
+    score: Math.min(scoreCeiling, 0.5 + Math.min(0.49, Number(row.hit_count) * 0.1)),
     chunk_index: row.chunk_index,
   }));
 }
@@ -982,6 +1047,109 @@ export type SearchHitWithLane = SearchHit & {
   via: "vector" | "graph";
   hop: number;
 };
+
+/* ---------------------------------------------------------------------------
+ * Graph-lane gate — §4.C of the 2026-08-04 RAG audit.
+ *
+ * At audit time all 1,452 rows in knowledge_triples were extracted from
+ * `hermes://` agent messages and `worker-task://` job JSON — zero came from a
+ * vault note. The lane could therefore only ever surface June job-state noise,
+ * and its synthetic score (0.5 + 0.1·n ≈ 0.64 after hop decay) outranked
+ * genuine vector hits. Blending it into results was strictly harmful.
+ *
+ * Rather than delete the lane, gate it on the condition that made it noise:
+ * it stays inert until triples exist that were extracted from real vault
+ * notes. `MEMORY_GRAPH_LANE` overrides — "0" forces off, "1" forces on
+ * (accepting synthetic hits), "auto" (default) applies the data condition.
+ * ------------------------------------------------------------------------- */
+
+const GRAPH_LANE_MODE = (process.env.MEMORY_GRAPH_LANE ?? "auto").toLowerCase();
+
+/** Synthetic graph scores are additionally hard-capped here, so even a forced
+ *  lane cannot present entity co-occurrence as a high-confidence match. */
+const GRAPH_SCORE_MAX = Number(process.env.MEMORY_GRAPH_SCORE_MAX ?? "0.60");
+
+/** SQL predicate: this source_path is a real vault note, not an agent-message
+ *  or worker-task pseudo-URI. Both noise schemes carry a `://`. */
+function VAULT_SOURCE_PATH_SQL(col: string): string {
+  return `(${col} LIKE '%.md' AND ${col} NOT LIKE '%://%')`;
+}
+
+export interface GraphLaneStatus {
+  enabled: boolean;
+  mode: string;
+  vault_triples: number;
+  total_triples: number;
+  reason: string;
+}
+
+let graphLaneCache: { at: number; status: GraphLaneStatus } | null = null;
+const GRAPH_LANE_TTL_MS = 60_000;
+
+/** Whether the GraphRAG lane may contribute to blended results right now.
+ *  Cached for a minute — this runs on every expanded search and the answer
+ *  only changes when a re-extraction batch lands. */
+export async function graphLaneStatus(): Promise<GraphLaneStatus> {
+  const now = Date.now();
+  if (graphLaneCache && now - graphLaneCache.at < GRAPH_LANE_TTL_MS) {
+    return graphLaneCache.status;
+  }
+
+  let vaultTriples = 0;
+  let totalTriples = 0;
+  try {
+    const r = await cf.query<{ vault: string; total: string }>(
+      `SELECT COUNT(*) FILTER (WHERE ${VAULT_SOURCE_PATH_SQL("source_path")})::text AS vault,
+              COUNT(*)::text AS total
+         FROM knowledge_triples`,
+    );
+    vaultTriples = Number(r.rows[0]?.vault ?? "0");
+    totalTriples = Number(r.rows[0]?.total ?? "0");
+  } catch (e) {
+    // A gate that fails open would reintroduce exactly the noise it exists to
+    // suppress, so a broken count means "off", loudly.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[memory graph-lane] triple count failed — lane off:", msg);
+    const status: GraphLaneStatus = {
+      enabled: false,
+      mode: GRAPH_LANE_MODE,
+      vault_triples: 0,
+      total_triples: 0,
+      reason: `triple count failed: ${msg}`,
+    };
+    graphLaneCache = { at: now, status };
+    return status;
+  }
+
+  let enabled: boolean;
+  let reason: string;
+  if (GRAPH_LANE_MODE === "0" || GRAPH_LANE_MODE === "off") {
+    enabled = false;
+    reason = "disabled by MEMORY_GRAPH_LANE";
+  } else if (GRAPH_LANE_MODE === "1" || GRAPH_LANE_MODE === "on") {
+    enabled = true;
+    reason = "forced on by MEMORY_GRAPH_LANE";
+  } else if (vaultTriples > 0) {
+    enabled = true;
+    reason = `${vaultTriples} vault-derived triples available`;
+  } else {
+    enabled = false;
+    reason =
+      totalTriples > 0
+        ? `all ${totalTriples} triples are agent-message-derived — no vault triples yet`
+        : "knowledge_triples is empty — re-extraction has not run";
+  }
+
+  const status: GraphLaneStatus = {
+    enabled,
+    mode: GRAPH_LANE_MODE,
+    vault_triples: vaultTriples,
+    total_triples: totalTriples,
+    reason,
+  };
+  graphLaneCache = { at: now, status };
+  return status;
+}
 
 /** Look up triples that fired against a specific set of (path, chunk) pairs
  *  and return the entity set so callers can walk outward from those chunks. */
@@ -1017,6 +1185,9 @@ export async function searchMemoryWithGraph(
     graphLimit?: number;
     maxHops?: number;
     category?: TripleCategory;
+    floor?: number;
+    maxPerNote?: number;
+    snippetChars?: number;
   } = {},
 ): Promise<SearchHitWithLane[]> {
   const vectorLimit = opts.vectorLimit ?? 8;
@@ -1026,12 +1197,30 @@ export async function searchMemoryWithGraph(
   const perHopBudget = Math.max(1, Math.ceil(graphLimit / Math.max(1, maxHops)));
 
   // Hop 0: vector hits.
-  const vectorHits = await searchMemory(query, vectorLimit);
+  const vectorHits = await searchMemory(query, vectorLimit, {
+    floor: opts.floor,
+    maxPerNote: opts.maxPerNote,
+    snippetChars: opts.snippetChars,
+  });
   const vectorLane: SearchHitWithLane[] = vectorHits.map((h) => ({
     ...h,
     via: "vector",
     hop: 0,
   }));
+
+  // Graph gate: until triples exist that came from real vault notes, every
+  // graph hit is June agent-message noise. Return the vector lane alone.
+  const lane = await graphLaneStatus();
+  if (!lane.enabled) return vectorLane;
+
+  // Synthetic scores are capped strictly below the weakest surviving vector
+  // hit, so entity co-occurrence can supplement a result set but never
+  // displace a semantic match — the inversion the audit measured.
+  const weakestVector =
+    vectorHits.length > 0
+      ? vectorHits[vectorHits.length - 1].score
+      : GRAPH_SCORE_MAX;
+  const scoreCeiling = Math.min(GRAPH_SCORE_MAX, weakestVector - 0.01);
 
   // Track every (path, chunk) we've already surfaced so subsequent hops don't
   // resurrect them. Same key format as the previous 1-hop dedup.
@@ -1056,6 +1245,7 @@ export async function searchMemoryWithGraph(
       [...seenPaths],
       perHopBudget,
       opts.category,
+      scoreCeiling,
     );
     const fresh: SearchHitWithLane[] = [];
     for (const h of raw) {

@@ -34,7 +34,9 @@ export type TaskRole =
   | "scout"
   | "researcher"
   | "builder"
-  | "reviewer";
+  | "reviewer"
+  | "steward"
+  | "tester";
 export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "blocked";
 /** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
  *  the role file's static model:/effort: default. Only architect and
@@ -66,6 +68,20 @@ export interface ProjectTask {
   run_id: string | null;
   fix_cycle: number;
   tier: TaskTier | null;
+  /** Manual/automatic retries spent on this task (migration 0037). Capped by
+   *  MAX_TASK_ATTEMPTS unless an operator forces it. */
+  attempt: number;
+  /** Deterministic idempotency key for reconciler-created chains
+   *  ("fix:<round>:<cycle>" / "rereview:<round>:<cycle>"), unique per project
+   *  — see migration 0039. NULL for every task that is not part of a fix
+   *  chain, which is why the unique index is partial. Only the reconciler
+   *  writes it; the task-creation API route does not expose the field.
+   *
+   *  It is a SECOND idempotency key, layered on top of migration 0035's
+   *  identity index (project, round, role, title): identity dedupes the
+   *  architect's fan-out curls, chain_key dedupes reconciler replays whose
+   *  titles are generated and could legitimately repeat across cycles. */
+  chain_key: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -77,7 +93,41 @@ export interface ProjectTaskWithProject extends ProjectTask {
 const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, work_branch,
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
-  run_id::text, fix_cycle, tier, created_at::text, updated_at::text`;
+  run_id::text, fix_cycle, tier, attempt, chain_key, created_at::text, updated_at::text`;
+/** TASK_COLS qualified for queries that join `project_tasks pt` to another
+ *  table — `projects` and `runs` both carry id/status/created_at, so an
+ *  unqualified list is ambiguous there. Kept as one list so a new column can
+ *  never again be added to TASK_COLS and silently forgotten in a hand-written
+ *  joined SELECT (every ProjectTask row this module returns must be whole). */
+const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
+  pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier, pt.attempt,
+  pt.chain_key, pt.created_at::text, pt.updated_at::text`;
+/** Last assistant message of the joined run `r`, by thread timestamp — the
+ *  text every verdict parse reads. Shared by listSettledRunningTasks() and
+ *  listVerdictRound() so the two can never drift apart. */
+const LAST_ASSISTANT_TEXT = `(SELECT elem->>'content'
+               FROM jsonb_array_elements(r.thread) elem
+              WHERE elem->>'role' = 'assistant'
+              ORDER BY (elem->>'ts')::timestamptz DESC
+              LIMIT 1)`;
+/** Last failure entry of the joined run `r` — what the executor's catch block
+ *  wrote when the run died ("Executor failed: claude-code exit 1: You've hit
+ *  your session limit · resets 1:10pm (Europe/Berlin)").
+ *
+ *  Separate from LAST_ASSISTANT_TEXT because they are different messages with
+ *  different authors: the verdict is the AGENT's last word, this is the
+ *  EXECUTOR's. Reusing the assistant text for failure classification would have
+ *  read whatever the agent happened to say before it was killed — on 2026-08-05
+ *  a half-finished tool narration — and never seen the wall at all.
+ *
+ *  'stuck_notice' is included alongside 'error' so a timeout's text is
+ *  available to the same classifier; matching on it is the classifier's
+ *  business, not this query's. */
+const LAST_ERROR_TEXT = `(SELECT elem->>'content'
+               FROM jsonb_array_elements(r.thread) elem
+              WHERE elem->>'kind' IN ('error','stuck_notice')
+              ORDER BY (elem->>'ts')::timestamptz DESC
+              LIMIT 1)`;
 
 export async function listProjects(): Promise<Project[]> {
   const r = await pool.query<Project>(
@@ -177,9 +227,7 @@ export async function listTasksForProject(
  *  board doesn't accumulate stale cards forever. */
 export async function listActiveTasks(): Promise<ProjectTaskWithProject[]> {
   const r = await pool.query<ProjectTaskWithProject>(
-    `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-            pt.created_at::text, pt.updated_at::text, p.name AS project_name
+    `SELECT ${TASK_COLS_PT}, p.name AS project_name
        FROM project_tasks pt
        JOIN projects p ON p.id = pt.project_id
       WHERE p.status IN ('active','blocked')
@@ -196,6 +244,20 @@ export async function getTask(id: string): Promise<ProjectTask | null> {
   return r.rows[0] ?? null;
 }
 
+/** Create a fan-out task, idempotently.
+ *
+ *  (project_id, round, role, title) is the task's identity — migration 0035
+ *  enforces it with a unique index. An architect that runs its fan-out curls
+ *  twice (2026-07-30, canvas-ux) gets the SAME task back the second time
+ *  instead of a duplicate that then races the original inside one worktree.
+ *  `created` tells the caller which happened: the API route turns
+ *  created=false into a 409, the fix-cycle path treats it as a no-op.
+ *
+ *  This function deliberately does NOT accept `chain_key`: every chain row is
+ *  written by createFixChain(), which is the only path that has to survive a
+ *  replay against BOTH unique indexes. A second entry point that writes
+ *  chain_key while arbitrating on identity alone would raise unique_violation
+ *  on exactly the replay it was meant to absorb. */
 export async function createTask(input: {
   project_id: string;
   round: number;
@@ -204,22 +266,41 @@ export async function createTask(input: {
   brief: string;
   fix_cycle?: number;
   tier?: TaskTier;
-}): Promise<ProjectTask> {
+}): Promise<{ task: ProjectTask; created: boolean }> {
+  const title = input.title.slice(0, 200);
   const r = await pool.query<ProjectTask>(
     `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (project_id, round, role, title) DO NOTHING
      RETURNING ${TASK_COLS}`,
     [
       input.project_id,
       input.round,
       input.role,
-      input.title.slice(0, 200),
+      title,
       input.brief,
       input.fix_cycle ?? 0,
       input.tier ?? null,
     ],
   );
-  return r.rows[0];
+  if (r.rows[0]) return { task: r.rows[0], created: true };
+
+  const existing = await pool.query<ProjectTask>(
+    `SELECT ${TASK_COLS} FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND role = $3 AND title = $4
+      LIMIT 1`,
+    [input.project_id, input.round, input.role, title],
+  );
+  if (!existing.rows[0]) {
+    // DO NOTHING fired but nothing matches the identity we just tried to
+    // insert — the unique index is on different columns than we think.
+    throw new Error(
+      `createTask: insert for (${input.project_id}, round ${input.round}, ` +
+        `${input.role}, "${title}") conflicted but no existing row matches — ` +
+        `project_tasks_identity_idx (migration 0035) may be missing or altered`,
+    );
+  }
+  return { task: existing.rows[0], created: false };
 }
 
 /** Mark 'active' projects 'done' once every one of their tasks has settled
@@ -358,12 +439,28 @@ export async function listGoalProgress(): Promise<GoalProgress[]> {
 
 /** Promote every 'pending' task whose project has no earlier-round task
  *  still outstanding to 'ready'. Single set-based query across all
- *  projects — this is the "manager" for stage sequencing, run every tick. */
+ *  projects — this is the "manager" for stage sequencing, run every tick.
+ *
+ *  Only 'active' projects advance (E7 on main, R8 in this project's plan —
+ *  the same bug, found twice). Neither this query nor claimReadyTasks used to
+ *  look at the project row at all, so `paused` was decoration: the two
+ *  projects Konrad paused on 2026-07-30 would have resumed the moment anyone
+ *  unwedged them. Pause, blocked and cancelled all now mean what they say — a
+ *  project has to be explicitly returned to 'active' to move.
+ *
+ *  The gate is a filter, not a state change: when the project flips back to
+ *  'active' the same rows are still 'pending' and the round resumes exactly
+ *  where it stopped. The reconciler is therefore free to create fix-chain
+ *  tasks for a non-active project — they sit inert under this gate instead of
+ *  the verdict being dropped on the floor. */
 export async function promoteReadyTasks(): Promise<number> {
   const r = await pool.query(
     `UPDATE project_tasks pt
         SET status = 'ready', updated_at = now()
-      WHERE pt.status = 'pending'
+       FROM projects p
+      WHERE p.id = pt.project_id
+        AND p.status = 'active'
+        AND pt.status = 'pending'
         AND NOT EXISTS (
           SELECT 1 FROM project_tasks earlier
            WHERE earlier.project_id = pt.project_id
@@ -377,7 +474,18 @@ export async function promoteReadyTasks(): Promise<number> {
 
 /** Claim every 'ready' task with no run yet (FOR UPDATE SKIP LOCKED so a
  *  second tick overlap never double-fires one). Caller creates the `runs`
- *  row per task and then calls attachRun(). */
+ *  row per task and then calls attachRun().
+ *
+ *  Joined to projects and filtered to 'active' for the same reason as
+ *  promoteReadyTasks (E7 / R9): pausing a project must actually stop it
+ *  spending money. `FOR UPDATE OF pt` locks only the task rows — a bare
+ *  FOR UPDATE would also lock the joined `projects` row, so every claim would
+ *  contend with any concurrent status flip or metadata write on that project,
+ *  and one claimed task could hide the rest of its project's work.
+ *
+ *  Pausing a project stops NEW claims only — runs already in flight are NOT
+ *  killed. They finish and reconcile normally; bookkeeping is not billable
+ *  work, and killing mid-run would lose the agent's output. */
 export async function claimReadyTasks(): Promise<
   Array<ProjectTask & { project: Project }>
 > {
@@ -385,11 +493,15 @@ export async function claimReadyTasks(): Promise<
   try {
     await client.query("BEGIN");
     const r = await client.query<ProjectTask>(
-      `SELECT ${TASK_COLS} FROM project_tasks
-        WHERE status = 'ready' AND run_id IS NULL
-        ORDER BY round ASC, created_at ASC
+      `SELECT ${TASK_COLS_PT}
+         FROM project_tasks pt
+         JOIN projects p ON p.id = pt.project_id
+        WHERE pt.status = 'ready'
+          AND pt.run_id IS NULL
+          AND p.status = 'active'
+        ORDER BY pt.round ASC, pt.created_at ASC
         LIMIT 32
-        FOR UPDATE SKIP LOCKED`,
+        FOR UPDATE OF pt SKIP LOCKED`,
     );
     if (r.rows.length === 0) {
       await client.query("COMMIT");
@@ -438,6 +550,199 @@ export async function setTaskStatus(
   );
 }
 
+/**
+ * Mark ONE gating task 'done', but only while the round's view of it still
+ * holds — the optimistic-concurrency half of consolidation (red-team S4, R905;
+ * predicate widened by R1005 findings 1 and 2).
+ *
+ * The verdict a round is judged on is read by listVerdictRound() and acted on
+ * several DB round trips later. In between, the control plane can requeue a
+ * settled reviewer run: `POST /api/runs/:id/message` against a `completed`
+ * target appends and flips it to `queued` in one statement, so the run owes one
+ * more turn — and that turn may say NEEDS_FIXES where the snapshot said PASS.
+ * An unconditional mark-done wrote 'done' anyway, and a 'done' task is
+ * invisible to listSettledRunningTasks() forever: the flipped verdict was
+ * honoured zero times, silently, which is the one outcome this whole module
+ * exists to prevent.
+ *
+ * The predicate is the SQL mirror of verdictMemberSettled() in
+ * lib/project-reconcile.ts — the same three-term rule the decision layer uses,
+ * so the two halves cannot disagree about which member is settled:
+ *
+ *  - `pt.status = 'done'` — already marked by an earlier tick. For a VERDICT
+ *    role that write can only have come from this function: project-tick's
+ *    per-task branch marks 'done' for non-verdict roles only (`isVerdictRole`
+ *    defers the rest to consolidation), and no API route writes a task status
+ *    at all — so the branch re-confirms THIS module's own earlier decision, it
+ *    does not trust a stranger. Re-marking is
+ *    the no-op it is meant to be, and it must NOT be conditioned on the run:
+ *    that row's verdict was consumed by bookkeeping and its run is free to be
+ *    resumed, stopped or to fail afterwards. Requiring `completed` here was
+ *    R1005 finding 2's other half — the round would be refused release forever
+ *    instead of merely waiting forever.
+ *  - `r.status = 'completed'` — the settled snapshot the decision was computed
+ *    from. Every write that delivers a message to a settled run moves it out of
+ *    `completed` in the SAME statement as the append, so a move is visible here.
+ *  - `pending_input IS DISTINCT FROM 'true'` — R1005 finding 1. `completed`
+ *    alone is NOT an exact detector: completeRun's handshake is two statements
+ *    (executor.ts E1/E2), and a `/message` to a RUNNING reviewer sets the flag
+ *    and leaves the row `running` for E1 to complete. If the executor dies
+ *    between E1 and E2 — OOM, pm2 restart, or this project's own DETACHED
+ *    safe-restart — the row sits `completed` carrying an undelivered message
+ *    for ≥PENDING_INPUT_STRANDED_MS and unboundedly while the executor is down.
+ *    Closing the round in that window buries the revised verdict in a 'done'
+ *    task nothing ever reads again: the exact silent outcome R906 exists to
+ *    prevent, arriving through the `running`-target door. NULL-safe by
+ *    construction — a run with no flag yields NULL, which IS DISTINCT FROM
+ *    'true'.
+ *
+ * EXISTS rather than `FROM runs r`: an UPDATE ... FROM is an inner join, so a
+ * 'done' task whose run reference was dropped (retryTask clears run_id) could
+ * never re-confirm itself. The done branch must not depend on a run row at all.
+ *
+ * Returns whether the task moved. `false` means the round must NOT be treated
+ * as decided — the caller re-consolidates on the next tick, by which time the
+ * requeued run has either settled again with a fresh verdict or is plainly
+ * unsettled (→ `wait`), and the stranded-input sweep has requeued whatever the
+ * flag was guarding.
+ */
+export async function markVerdictTaskDone(taskId: string): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE project_tasks pt
+        SET status = 'done', updated_at = now()
+      WHERE pt.id = $1
+        AND (pt.status = 'done'
+             OR EXISTS (SELECT 1
+                          FROM runs r
+                         WHERE r.id = pt.run_id
+                           AND r.status = 'completed'
+                           AND (r.metadata->>'pending_input') IS DISTINCT FROM 'true'))`,
+    [taskId],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/**
+ * Which of these gating tasks are NOT settled — the exact complement of
+ * markVerdictTaskDone()'s predicate, term for term.
+ *
+ * The cheap pre-check that keeps markVerdictTaskDone()'s refusal from arriving
+ * AFTER an irreversible side effect. consolidateVerdictGroup creates the fix
+ * chain and blocks the project before it marks the group done — that order is
+ * deliberate and crash-safe — so the same window is closed from the front here:
+ * one query immediately before the side effect, and the conditional mark-done
+ * behind it as the backstop for whatever slips through the remaining
+ * milliseconds.
+ *
+ * The two predicates being exact complements is the property that matters, and
+ * it is pinned in cp2-reconciler-interaction.test.ts: a pre-check that let
+ * through what the mark-done then refuses turns every consolidation into a
+ * partially-applied round, and one that refuses what mark-done would accept
+ * wedges the round instead.
+ *
+ * A task with no run (`run_id IS NULL`) counts as unsettled unless it is
+ * already 'done': it cannot have produced the verdict the decision was computed
+ * from. A run still carrying `pending_input` counts as unsettled for the reason
+ * spelled out above — it owes a turn nobody has delivered yet.
+ */
+export async function unsettledVerdictTasks(
+  taskIds: readonly string[],
+): Promise<string[]> {
+  if (taskIds.length === 0) return [];
+  const r = await pool.query<{ id: string }>(
+    `SELECT pt.id::text AS id
+       FROM project_tasks pt
+       LEFT JOIN runs r ON r.id = pt.run_id
+      WHERE pt.id = ANY($1::uuid[])
+        AND pt.status IS DISTINCT FROM 'done'
+        AND (r.status IS DISTINCT FROM 'completed'
+             OR r.metadata->>'pending_input' = 'true')`,
+    [[...taskIds]],
+  );
+  return r.rows.map((row) => row.id);
+}
+
+/** Automatic-retry ceiling (E3). Two retries, then the task stays put until
+ *  an operator forces it — an infinitely-retried task is just a slower way of
+ *  burning money on the same failure. */
+export const MAX_TASK_ATTEMPTS = 2;
+
+export type RetryOutcome =
+  | { ok: true; task: ProjectTask; project_resumed: boolean }
+  | { ok: false; reason: "not_found" | "not_retryable" | "attempts_exhausted"; task: ProjectTask | null };
+
+/** failed|blocked -> ready: drop the dead run reference, count the attempt,
+ *  and un-block the project so the tick can actually pick it up again (after
+ *  Step 5 a 'blocked' project is skipped by promote/claim, so leaving the
+ *  project status alone would make retry a silent no-op).
+ *
+ *  `force` is the operator override for the attempt cap — reachable from the
+ *  API, never from the tick. */
+export async function retryTask(
+  id: string,
+  opts: { force?: boolean } = {},
+): Promise<RetryOutcome> {
+  const task = await getTask(id);
+  if (!task) return { ok: false, reason: "not_found", task: null };
+  if (task.status !== "failed" && task.status !== "blocked") {
+    return { ok: false, reason: "not_retryable", task };
+  }
+  if (task.attempt >= MAX_TASK_ATTEMPTS && !opts.force) {
+    return { ok: false, reason: "attempts_exhausted", task };
+  }
+
+  const r = await pool.query<ProjectTask>(
+    `UPDATE project_tasks
+        SET status = 'ready', run_id = NULL, attempt = attempt + 1, updated_at = now()
+      WHERE id = $1 AND status IN ('failed','blocked')
+      RETURNING ${TASK_COLS}`,
+    [id],
+  );
+  if (!r.rows[0]) {
+    // Lost a race with the tick between the read and the write.
+    return { ok: false, reason: "not_retryable", task };
+  }
+
+  const p = await pool.query(
+    `UPDATE projects SET status = 'active', updated_at = now()
+      WHERE id = $1 AND status = 'blocked'`,
+    [task.project_id],
+  );
+  return { ok: true, task: r.rows[0], project_resumed: (p.rowCount ?? 0) > 0 };
+}
+
+/** Retry every failed task in the EARLIEST round that has one. Later rounds
+ *  are left alone deliberately: they are gated behind this round anyway, and
+ *  re-running them before the blocker is fixed just burns tokens. */
+export async function unwedgeProject(
+  projectId: string,
+  opts: { force?: boolean } = {},
+): Promise<{ round: number | null; retried: ProjectTask[]; skipped: ProjectTask[] }> {
+  const blocking = await pool.query<{ round: number }>(
+    `SELECT MIN(round)::int AS round FROM project_tasks
+      WHERE project_id = $1 AND status IN ('failed','blocked')`,
+    [projectId],
+  );
+  const round = blocking.rows[0]?.round ?? null;
+  if (round === null) return { round: null, retried: [], skipped: [] };
+
+  const candidates = await pool.query<ProjectTask>(
+    `SELECT ${TASK_COLS} FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND status IN ('failed','blocked')
+      ORDER BY created_at ASC`,
+    [projectId, round],
+  );
+
+  const retried: ProjectTask[] = [];
+  const skipped: ProjectTask[] = [];
+  for (const c of candidates.rows) {
+    const out = await retryTask(c.id, opts);
+    if (out.ok) retried.push(out.task);
+    else skipped.push(c);
+  }
+  return { round, retried, skipped };
+}
+
 export async function bumpFixCycle(id: string): Promise<number> {
   const r = await pool.query<{ fix_cycle: number }>(
     `UPDATE project_tasks SET fix_cycle = fix_cycle + 1, updated_at = now()
@@ -447,29 +752,337 @@ export async function bumpFixCycle(id: string): Promise<number> {
   return r.rows[0]?.fix_cycle ?? 0;
 }
 
-/** Tasks whose run has settled (completed/failed/cancelled) but whose task
- *  row hasn't been reconciled yet — the other half of the project-tick loop. */
-export async function listSettledRunningTasks(): Promise<
-  Array<ProjectTask & { run_status: RunStatus; last_text: string | null }>
-> {
-  const r = await pool.query<
-    ProjectTask & { run_status: RunStatus; last_text: string | null }
-  >(
-    `SELECT pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
-            pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier,
-            pt.created_at::text, pt.updated_at::text,
+/** Is every task of this project+round done? Called when a task settles, so
+ *  the LAST task of a round is the one that reports the round complete —
+ *  no extra bookkeeping table, and it fires exactly once per round. */
+export async function roundIsComplete(
+  projectId: string,
+  round: number,
+): Promise<boolean> {
+  const r = await pool.query<{ complete: boolean }>(
+    `SELECT NOT EXISTS (
+       SELECT 1 FROM project_tasks
+        WHERE project_id = $1 AND round = $2 AND status <> 'done'
+     ) AS complete`,
+    [projectId, round],
+  );
+  return r.rows[0]?.complete ?? false;
+}
+
+/** Tasks whose run has settled but whose task row hasn't been reconciled yet
+ *  — the other half of the project-tick loop.
+ *
+ *  'stuck' counts as settled. It is a terminal state for the TASK even though
+ *  the run itself stays resumable: the watchdog only flips a run to 'stuck'
+ *  after 90s without a heartbeat, i.e. the engine process is gone or hung.
+ *  Before this, such a task sat 'running' forever with no owner and the
+ *  project could never close or wedge — it just went quiet (E4). */
+export interface SettledRunningTask extends ProjectTask {
+  run_status: RunStatus;
+  /** Last ASSISTANT message — the verdict text. */
+  last_text: string | null;
+  /** Last EXECUTOR failure entry — what the run died of (R860). */
+  last_error: string | null;
+  /** Times this run has already been parked behind a usage wall. 0 for every
+   *  run that never was, which is almost all of them. */
+  usage_wall_attempts: number;
+}
+
+export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
+  const r = await pool.query<SettledRunningTask>(
+    `SELECT ${TASK_COLS_PT},
             r.status AS run_status,
-            (SELECT elem->>'content'
-               FROM jsonb_array_elements(r.thread) elem
-              WHERE elem->>'role' = 'assistant'
-              ORDER BY (elem->>'ts')::timestamptz DESC
-              LIMIT 1) AS last_text
+            ${LAST_ASSISTANT_TEXT} AS last_text,
+            ${LAST_ERROR_TEXT} AS last_error,
+            COALESCE((r.metadata->>'usage_wall_attempts')::int, 0) AS usage_wall_attempts
        FROM project_tasks pt
        JOIN runs r ON r.id = pt.run_id
       WHERE pt.status = 'running'
-        AND r.status IN ('completed','failed','cancelled')`,
+        AND r.status IN ('completed','failed','cancelled','stuck')`,
   );
   return r.rows;
+}
+
+/** Every gating task of one project+round, with its run settlement — the
+ *  input to project-tick's group consolidation, which must decide on the
+ *  ROUND as a whole rather than per settled task (two reviewers each firing
+ *  their own fix chain was bug 1 of the first goal-mode night).
+ *
+ *  `roles` is passed in rather than hardcoded so lib/project-reconcile.ts's
+ *  VERDICT_ROLES stays the single definition of "which roles end in a VERDICT
+ *  line" (R850 added 'tester' to it). A value import of that constant here
+ *  would close an import cycle around the pg pool, which the module's
+ *  type-only import of ProjectStatus deliberately avoids.
+ *
+ *  LEFT JOIN, not JOIN: a task whose run has not been created yet has
+ *  `run_id IS NULL` and surfaces here as `run_status: null`, which the caller
+ *  maps to `settled: false` — a group with any such member must wait, never
+ *  decide. Task status is deliberately NOT filtered: a reviewer already marked
+ *  'done' still belongs to the group's history and the caller decides what
+ *  that means (verdictMemberSettled: it is settled BY BOOKKEEPING, whatever
+ *  its run has done since).
+ *
+ *  `pending_input` rides along for the same reason markVerdictTaskDone reads it
+ *  (R1005 finding 1): a `completed` run still carrying the flag owes an
+ *  undelivered turn, so the decision layer must call it unsettled and `wait`
+ *  rather than compute a decision from text a message is about to revise. The
+ *  column is projected as a boolean here so lib/project-reconcile.ts's pure
+ *  predicate never has to know about jsonb.
+ *
+ *  ORDER BY created_at ASC is load-bearing — it is what makes the
+ *  merged fix brief byte-identical across replays of the same round; the id
+ *  tiebreak covers the two-rows-same-timestamp case, which a single-statement
+ *  insert of a reviewer and a tester makes reachable. */
+export interface VerdictRoundRow extends ProjectTask {
+  /** NULL when the task has no run yet (LEFT JOIN). */
+  run_status: RunStatus | null;
+  /** `metadata.pending_input === 'true'` — the run owes an undelivered turn. */
+  pending_input: boolean;
+  /** Last ASSISTANT message — the verdict text. */
+  last_text: string | null;
+}
+
+export async function listVerdictRound(
+  projectId: string,
+  round: number,
+  roles: readonly TaskRole[],
+): Promise<VerdictRoundRow[]> {
+  const r = await pool.query<VerdictRoundRow>(
+    `SELECT ${TASK_COLS_PT},
+            r.status AS run_status,
+            COALESCE(r.metadata->>'pending_input' = 'true', false) AS pending_input,
+            ${LAST_ASSISTANT_TEXT} AS last_text
+       FROM project_tasks pt
+       LEFT JOIN runs r ON r.id = pt.run_id
+      WHERE pt.project_id = $1
+        AND pt.round = $2
+        AND pt.role = ANY($3::text[])
+      ORDER BY pt.created_at ASC, pt.id ASC`,
+    [projectId, round, [...roles]],
+  );
+  return r.rows;
+}
+
+/** What became of one chain row.
+ *
+ *  `replay` and `occupied` BOTH mean "the INSERT wrote nothing", and they must
+ *  never be collapsed into one boolean:
+ *
+ *  - `replay` — the existing row carries OUR chain_key. It is the same chain,
+ *    re-created after a crash. Safe, expected, nothing is lost.
+ *  - `occupied` — a DIFFERENT row already holds our identity tuple
+ *    (project, round, role, title) with someone else's chain_key or none.
+ *    Its brief is not ours, so the feedback this consolidation merged would
+ *    go nowhere. That is a silent dropped verdict, and the caller has to stop
+ *    rather than mark the round done. */
+export type ChainRowOutcome =
+  | { kind: "created"; id: string }
+  | { kind: "replay"; id: string }
+  | { kind: "occupied"; id: string; title: string; chain_key: string | null };
+
+/** One chain INSERT, with the conflict CLASSIFIED rather than assumed.
+ *
+ *  `DO NOTHING` reports zero rows whichever index fired, so the row has to be
+ *  looked up afterwards to learn which one did. Order matters: chain_key is
+ *  checked FIRST, because a row matching our chain_key is our own chain even
+ *  if its round or title has since been edited, whereas a row matching only
+ *  the identity tuple is a stranger.
+ *
+ *  Throws when neither lookup explains the conflict — same contract as
+ *  createTask(): a `DO NOTHING` that nothing accounts for means the indexes
+ *  are not what this code believes, and guessing would corrupt a round. */
+async function insertChainRow(
+  client: pg.PoolClient,
+  row: {
+    project_id: string;
+    round: number;
+    role: TaskRole;
+    title: string;
+    brief: string;
+    fix_cycle: number;
+    tier: TaskTier | null;
+    chain_key: string;
+  },
+): Promise<ChainRowOutcome> {
+  const ins = await client.query<{ id: string }>(
+    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT DO NOTHING
+     RETURNING id::text`,
+    [
+      row.project_id,
+      row.round,
+      row.role,
+      row.title,
+      row.brief,
+      row.fix_cycle,
+      row.tier,
+      row.chain_key,
+    ],
+  );
+  if (ins.rows[0]) return { kind: "created", id: ins.rows[0].id };
+
+  const mine = await client.query<{ id: string }>(
+    `SELECT id::text FROM project_tasks
+      WHERE project_id = $1 AND chain_key = $2 LIMIT 1`,
+    [row.project_id, row.chain_key],
+  );
+  if (mine.rows[0]) return { kind: "replay", id: mine.rows[0].id };
+
+  const theirs = await client.query<{ id: string; title: string; chain_key: string | null }>(
+    `SELECT id::text, title, chain_key FROM project_tasks
+      WHERE project_id = $1 AND round = $2 AND role = $3 AND title = $4 LIMIT 1`,
+    [row.project_id, row.round, row.role, row.title],
+  );
+  if (theirs.rows[0]) {
+    return {
+      kind: "occupied",
+      id: theirs.rows[0].id,
+      title: theirs.rows[0].title,
+      chain_key: theirs.rows[0].chain_key,
+    };
+  }
+
+  throw new Error(
+    `createFixChain: insert for (${row.project_id}, round ${row.round}, ${row.role}, ` +
+      `"${row.title}", chain_key ${row.chain_key}) conflicted but neither ` +
+      `project_tasks_chain_key_uniq (migration 0039) nor project_tasks_identity_idx ` +
+      `(migration 0035) has a matching row — the unique indexes are not what this code expects`,
+  );
+}
+
+/** Insert a fix builder (round + 1) and its re-checkers (round + 2) in ONE
+ *  transaction, keyed by chain_key so the whole chain is idempotent (R7).
+ *
+ *  `checkers` is one row per DISSENTING ROLE (R850) — a re-reviewer, a
+ *  re-tester, or one of each when a reviewer and a tester both returned
+ *  NEEDS_FIXES in the same round. Never one per dissenting TASK: two unhappy
+ *  reviewers still produce exactly one re-review, which is the whole point of
+ *  consolidation. They all land in the same round+2 and are therefore
+ *  consolidated together in turn, exactly like the round that spawned them.
+ *
+ *  `round` is the gating round R that produced the NEEDS_FIXES verdicts. A
+ *  tick that crashes after COMMIT but before marking the group 'done'
+ *  replays harmlessly: the second attempt inserts nothing and every row comes
+ *  back `replay`. The outcomes are returned rather than swallowed so the
+ *  caller can log the replay instead of silently believing it created fresh
+ *  work — and, for `occupied`, so it can refuse to drop a verdict on the floor.
+ *
+ *  BARE `ON CONFLICT DO NOTHING`, with no conflict target, is deliberate.
+ *  There are now TWO unique indexes a chain row can hit:
+ *
+ *    - `project_tasks_chain_key_uniq` — partial, (project_id, chain_key)
+ *      WHERE chain_key IS NOT NULL (migration 0039). The replay guard.
+ *    - `project_tasks_identity_idx` — (project_id, round, role, title)
+ *      (migration 0035, already live). Not ours, but chain rows have a round,
+ *      a role and a title too, so they are subject to it.
+ *
+ *  Naming only the first — which is what this function did until R308 — makes
+ *  an identity collision an unhandled unique_violation that aborts the whole
+ *  transaction. That is reachable, not theoretical: every fix chain the
+ *  PRE-0039 engine wrote has chain_key NULL and a title of the same generated
+ *  shape ("Fix cycle N"), so re-surfacing one of those reviewer groups after
+ *  this ships collides on identity, not on chain_key. The bare form lets the
+ *  INSERT survive either, and insertChainRow() then works out WHICH one fired
+ *  — because "my own chain, replayed" and "a stranger holds my identity" are
+ *  the same rowCount and completely different situations.
+ *
+ *  A targeted form would also have been fragile for a second reason: the
+ *  target must be the index-inference form carrying the index's own WHERE
+ *  predicate. `ON CONFLICT ON CONSTRAINT project_tasks_chain_key_uniq` is NOT
+ *  a usable fallback, because a partial unique index is an index and not a
+ *  constraint — Postgres rejects it ("constraint ... does not exist").
+ *  Proven in docs/plan/evidence/0035-dryrun.md (T4/T6). */
+export async function createFixChain(input: {
+  project_id: string;
+  round: number;
+  cycle: number;
+  builderTitle: string;
+  builderBrief: string;
+  builderChainKey: string;
+  checkers: Array<{
+    role: TaskRole;
+    title: string;
+    brief: string;
+    chainKey: string;
+  }>;
+  tier?: TaskTier;
+}): Promise<{
+  builder: ChainRowOutcome;
+  /** Parallel to `input.checkers`, role carried through so the caller can name
+   *  the offending row in a collision without re-deriving it from the key. */
+  checkers: Array<ChainRowOutcome & { role: TaskRole }>;
+}> {
+  // A fix builder with nobody to check it would close the round on the next
+  // tick with the merged feedback unverified. Refuse loudly rather than write
+  // half a chain — the caller's decision type guarantees a non-empty list, so
+  // reaching this means the decision was built by hand or by a future caller.
+  if (input.checkers.length === 0) {
+    throw new Error(
+      `createFixChain: no re-checkers for project ${input.project_id} round ${input.round} ` +
+        `cycle ${input.cycle} — a fix cycle must be re-checked by at least one verdict role`,
+    );
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const builder = await insertChainRow(client, {
+      project_id: input.project_id,
+      round: input.round + 1,
+      role: "builder",
+      title: input.builderTitle.slice(0, 200),
+      brief: input.builderBrief,
+      fix_cycle: input.cycle,
+      tier: input.tier ?? null,
+      chain_key: input.builderChainKey,
+    });
+    const checkers: Array<ChainRowOutcome & { role: TaskRole }> = [];
+    // Sequential, not Promise.all: they share one client, and one transaction
+    // cannot have two statements in flight.
+    for (const c of input.checkers) {
+      const outcome = await insertChainRow(client, {
+        project_id: input.project_id,
+        round: input.round + 2,
+        role: c.role,
+        title: c.title.slice(0, 200),
+        brief: c.brief,
+        fix_cycle: input.cycle,
+        tier: null,
+        chain_key: c.chainKey,
+      });
+      checkers.push({ ...outcome, role: c.role });
+    }
+    await client.query("COMMIT");
+    return { builder, checkers };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+/** The project-metadata key that names the manager chat run a project came out
+ *  of. Written by the OTHER lane's `POST /api/projects` (boundary F8); read
+ *  here and nowhere else in this file's callers — see `managerChatRunId`. */
+const ORIGIN_CHAT_KEY = "origin_chat_id";
+
+/** The manager chat run a project was created from, or null when it has none.
+ *
+ *  Exists so `project-tick.ts` can gate a prompt block on the linkage (C17)
+ *  without ever spelling the key: 08 §4.3's boundary grep requires the literal
+ *  `origin_chat_id` to appear only in `lib/cc-runner.ts` and this file, so the
+ *  key name stays sealed here and callers ask a function instead.
+ *
+ *  This is a metadata getter, NOT the linkage resolver / thread scanner /
+ *  rollup that boundary D5 forbids: it runs no query, scans no thread, and
+ *  resolves nothing. It also does not validate the id (D5 again) — a
+ *  non-empty string is all it claims. */
+export function managerChatRunId(project: Pick<Project, "metadata">): string | null {
+  const raw = project.metadata?.[ORIGIN_CHAT_KEY];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 /** Convenience wrapper so project-tick doesn't import db/runs.ts directly
@@ -485,7 +1098,19 @@ export async function createRunForTask(input: {
   effort?: string;
   allowed_tools?: string[];
   vault_access?: boolean;
+  /** The owning project's `metadata`, so the run can inherit the manager-chat
+   *  linkage (C16). Optional: a caller that omits it just gets no linkage. */
+  project_metadata?: Record<string, unknown>;
 }) {
+  // C16: copy the project's manager-chat linkage onto the run so a worker run
+  // is self-describing without a resolver JOIN. Presence + non-empty string is
+  // the WHOLE check by design — boundary D5 forbids origin_chat_id validation
+  // on this branch (the other lane's POST /api/projects already uuid-checks it
+  // on the way in), so the missing uuid check here is deliberate, not an
+  // oversight. Additive only: no reader anywhere else changes.
+  const originChat = input.project_metadata
+    ? managerChatRunId({ metadata: input.project_metadata })
+    : null;
   return createRun({
     title: input.title,
     prompt: input.prompt,
@@ -499,6 +1124,7 @@ export async function createRunForTask(input: {
       ...(input.effort ? { effort: input.effort } : {}),
       ...(input.allowed_tools ? { allowed_tools: input.allowed_tools } : {}),
       ...(input.vault_access !== undefined ? { vault_access: input.vault_access } : {}),
+      ...(originChat ? { [ORIGIN_CHAT_KEY]: originChat } : {}),
     },
   });
 }

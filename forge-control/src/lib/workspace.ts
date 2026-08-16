@@ -18,6 +18,18 @@ const REPO_PATHS: Record<Exclude<ProjectRepo, "scratch">, string> = {
 const WORKTREE_ROOT =
   process.env.PROJECT_WORKTREE_ROOT ?? "/opt/ai-os/workspace/projects";
 
+/** The LIVE checkout a repo-backed project's worktree branches off — the
+ *  directory that is actually deployed and running. `null` for 'scratch',
+ *  which has no live counterpart (the scratch repo IS the product).
+ *
+ *  Exists so the mapping lives in exactly one place: lib/project-tick.ts
+ *  interpolates it into the worktree-only policy blocks it appends to every
+ *  role prompt (R12/R13), and a second copy there would be free to drift from
+ *  the one provisionWorkspace() actually branches from. */
+export function liveCheckoutPath(repo: ProjectRepo): string | null {
+  return repo === "scratch" ? null : REPO_PATHS[repo];
+}
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

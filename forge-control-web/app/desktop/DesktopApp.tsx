@@ -43,6 +43,13 @@ import { MoneySurface } from "./MoneySurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
+import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
+import {
+  SurfaceErrorBoundary,
+  ErrorPanel,
+  errorDetail,
+} from "./_ui/SurfaceErrorBoundary";
+import { ToastHost, toastError } from "./_ui/Toasts";
 
 /* ----------------------------------------------------------------------------
  * Surface keys — match the design's surface routing
@@ -265,6 +272,15 @@ export function DesktopApp() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQ, setPaletteQ] = useState("");
 
+  // Nav rail width — draggable and remembered. 120 still shows the labels;
+  // 360 is as wide as this rail can be without stealing the surface.
+  const navRail = useResizablePanel({
+    storageKey: "forge.layout.navRail",
+    initial: 184,
+    min: 120,
+    max: 360,
+  });
+
   const todayQ = useQuery({ queryKey: ["today"], queryFn: fetchToday });
   const inboxQ = useQuery({ queryKey: ["inbox"], queryFn: fetchInbox });
   const liveQ = useQuery({
@@ -311,6 +327,14 @@ export function DesktopApp() {
       qc.invalidateQueries({ queryKey: ["control"] });
       qc.invalidateQueries({ queryKey: ["today"] });
     },
+    // A freeze that silently didn't happen is the worst possible failure
+    // in this app — the button would flip back and you'd assume the fleet
+    // stopped.
+    onError: (e) =>
+      toastError(
+        paused ? "Resume failed — fleet is still frozen." : "FREEZE FAILED — the fleet is still running.",
+        e,
+      ),
   });
 
   const clearNeedsM = useMutation({
@@ -319,6 +343,7 @@ export function DesktopApp() {
       qc.invalidateQueries({ queryKey: ["today"] });
       qc.invalidateQueries({ queryKey: ["inbox"] });
     },
+    onError: (e) => toastError("Couldn't clear the inbox.", e),
   });
 
   const inboxBadges: Record<string, string> = {};
@@ -345,7 +370,13 @@ export function DesktopApp() {
         badges={inboxBadges}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <LeftRail surface={surface} onNav={setSurface} badges={inboxBadges} />
+        <LeftRail
+          surface={surface}
+          onNav={setSurface}
+          badges={inboxBadges}
+          width={navRail.size}
+        />
+        <ResizeHandle {...navRail.handleProps} title="Resize navigation · double-click to reset" />
         <div
           style={{
             flex: 1,
@@ -354,37 +385,78 @@ export function DesktopApp() {
             background: tokens.bgBody,
           }}
         >
-          {surface === "today" && (
-            <TodaySurface
-              data={todayQ.data ?? emptyToday}
-              inboxCount={inboxCount}
-              onNav={setSurface}
-              onClearNeeds={() => clearNeedsM.mutate()}
-              clearingNeeds={clearNeedsM.isPending}
-            />
-          )}
-          {surface === "inbox" && (
-            <InboxSurface
-              items={inboxQ.data ?? []}
-              onResolve={(id, action_id, reason) =>
-                resolveInboxItem(id, {
-                  resolved_by: "user",
-                  action_id,
-                  reason,
-                }).then(() => {
-                  qc.invalidateQueries({ queryKey: ["inbox"] });
-                  qc.invalidateQueries({ queryKey: ["today"] });
-                })
-              }
-            />
-          )}
-          {surface === "live" && <LiveSurface data={liveQ.data ?? emptyLive} />}
-          {surface === "control" && (
-            <ControlSurface
-              data={controlQ.data ?? emptyControl}
-              onFreeze={() => freezeM.mutate()}
-            />
-          )}
+          {/* One boundary around whichever surface is mounted. Keyed on the
+              surface so navigating away from a broken pane clears its error
+              instead of pinning it there for the session. */}
+          <SurfaceErrorBoundary label={surface.toUpperCase()} resetKey={surface}>
+          {surface === "today" &&
+            (todayQ.isError ? (
+              <ErrorPanel
+                title="Today didn't load."
+                detail={errorDetail(todayQ.error)}
+                onRetry={() => void todayQ.refetch()}
+              />
+            ) : (
+              <TodaySurface
+                data={todayQ.data ?? emptyToday}
+                inboxCount={inboxCount}
+                onNav={setSurface}
+                onClearNeeds={() => clearNeedsM.mutate()}
+                clearingNeeds={clearNeedsM.isPending}
+              />
+            ))}
+          {surface === "inbox" &&
+            (inboxQ.isError ? (
+              <ErrorPanel
+                title="Inbox didn't load."
+                detail={errorDetail(inboxQ.error)}
+                onRetry={() => void inboxQ.refetch()}
+              />
+            ) : (
+              <InboxSurface
+                items={inboxQ.data ?? []}
+                onResolve={(id, action_id, reason) =>
+                  resolveInboxItem(id, {
+                    resolved_by: "user",
+                    action_id,
+                    reason,
+                  })
+                    .then(() => {
+                      qc.invalidateQueries({ queryKey: ["inbox"] });
+                      qc.invalidateQueries({ queryKey: ["today"] });
+                    })
+                    .catch((e: unknown) => {
+                      toastError("Couldn't resolve that inbox item.", e);
+                    })
+                }
+              />
+            ))}
+          {/* `?? emptyLive` on its own rendered a dead backend as "no service
+              degradation reported" — the single most misleading thing this
+              console could say. Failure now looks like failure. */}
+          {surface === "live" &&
+            (liveQ.isError ? (
+              <ErrorPanel
+                title="Live status is unavailable — this is NOT an all-clear."
+                detail={errorDetail(liveQ.error)}
+                onRetry={() => void liveQ.refetch()}
+              />
+            ) : (
+              <LiveSurface data={liveQ.data ?? emptyLive} />
+            ))}
+          {surface === "control" &&
+            (controlQ.isError ? (
+              <ErrorPanel
+                title="Control didn't load — fleet state unknown."
+                detail={errorDetail(controlQ.error)}
+                onRetry={() => void controlQ.refetch()}
+              />
+            ) : (
+              <ControlSurface
+                data={controlQ.data ?? emptyControl}
+                onFreeze={() => freezeM.mutate()}
+              />
+            ))}
           {surface === "tasks" && <ProjectsSurface />}
           {surface === "memory" && <MemorySurface />}
           {surface === "chat" && (
@@ -425,6 +497,7 @@ export function DesktopApp() {
             surface !== "businesses" && (
               <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
             )}
+          </SurfaceErrorBoundary>
         </div>
       </div>
       <StatusBar
@@ -448,6 +521,7 @@ export function DesktopApp() {
           }}
         />
       )}
+      <ToastHost />
     </div>
   );
 }
@@ -661,10 +735,14 @@ function LeftRail({
   surface,
   onNav,
   badges,
+  width,
 }: {
   surface: Surface;
   onNav: (s: Surface) => void;
   badges: Record<string, string>;
+  /** Owned by DesktopApp's useResizablePanel — the adjacent ResizeHandle
+   *  also supplies the hairline this nav used to draw itself. */
+  width: number;
 }) {
   const railStyle = (key: Surface): CSSProperties => ({
     display: "flex",
@@ -685,13 +763,13 @@ function LeftRail({
   return (
     <nav
       style={{
-        width: 184,
+        width,
         flex: "none",
-        borderRight: `1px solid ${tokens.borderSoft}`,
         background: tokens.bgBody,
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
+        overflow: "hidden",
       }}
     >
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 0" }}>

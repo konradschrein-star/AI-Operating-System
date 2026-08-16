@@ -34,6 +34,7 @@ import {
 import { appendToDailyNote, createNote, type DailySection } from "./vault.ts";
 import { parseWhen } from "./when-parser.ts";
 import { createReminder, listReminders } from "../db/reminders.ts";
+import { REMINDER_TEXT_MAX } from "./reminder-text.ts";
 import {
   createRun,
   appendMessage,
@@ -105,6 +106,11 @@ async function handleCommand(text: string): Promise<string> {
       const parsed = parseWhen(args);
       if (!parsed || !parsed.rest) {
         return 'could not parse — try "/remind in 2h <text>", "/remind tomorrow 9:00 <text>", "/remind daily 08:30 <text>"';
+      }
+      // createReminder throws past the limit rather than truncating; catch it
+      // here so /remind answers with the split instruction, not a stack trace.
+      if (parsed.rest.length > REMINDER_TEXT_MAX) {
+        return `too long — ${parsed.rest.length} chars, max ${REMINDER_TEXT_MAX}. Send it as several /remind commands; a truncated reminder still looks armed.`;
       }
       const rem = await createReminder({
         text: parsed.rest,

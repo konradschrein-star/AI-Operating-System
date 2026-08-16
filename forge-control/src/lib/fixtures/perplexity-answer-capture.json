@@ -1,0 +1,127 @@
+{
+  "_fixture_note": [
+    "A saved DOM capture as produced by CAPTURE_SOURCE in scripts/perplexity.mjs, used to test",
+    "parseAnswerCapture() without a network, a browser or an X display.",
+    "",
+    "PROVENANCE, stated plainly: this is HAND-AUTHORED against the capture shape that",
+    "CAPTURE_SOURCE emits, not a recording of a live Perplexity answer page. It could not be a",
+    "recording — as of 2026-08-05 nobody has logged into the automation browser, so every real",
+    "run stops at the login wall (that is the R702 acceptance evidence). It is therefore a",
+    "CONTRACT fixture: it pins the parser's behaviour on the shapes the parser must survive, and",
+    "each entry below exists to exercise one specific rule.",
+    "",
+    "RE-CUT IT FROM A REAL PAGE the moment a session exists, in one command:",
+    "  scripts/perplexity.mjs ask \"who won the 2026 Tour de France\" --dump-capture \\",
+    "    forge-control/src/lib/fixtures/perplexity-answer-capture.json",
+    "then delete this note and re-run pnpm test. If the tests still pass, the parser survived the",
+    "real markup; if they do not, the failure is the point of the fixture."
+  ],
+  "url": "https://www.perplexity.ai/search?q=what+changed+in+node+22",
+  "title": "What changed in Node 22 | Perplexity",
+  "answer": {
+    "selector": "[data-testid=\"answer\"]",
+    "text": "Node.js 22 ships the require(esm) interop behind a flag, promotes the WebSocket client to stable, and enables V8 12.4 with the Maglev compiler on supported architectures [1]. The default V8 heap limit now scales with available memory rather than sitting at a fixed 4 GB [2]. It became the Active LTS line in October 2024 [3]."
+  },
+  "answer_candidates_tried": [
+    { "selector": "[data-testid=\"answer\"]", "result": "matched (352 chars)" }
+  ],
+  "sources_region_selector": "[data-testid=\"sources\"]",
+  "streaming": false,
+  "links": [
+    {
+      "href": "https://nodejs.org/en/blog/announcements/v22-release-announce",
+      "text": "Node.js 22 is here",
+      "title": "nodejs.org",
+      "region": "sources",
+      "order": 0,
+      "citation_index": null
+    },
+    {
+      "href": "https://nodejs.org/en/blog/announcements/v22-release-announce/",
+      "text": "Node.js 22 is here",
+      "title": "",
+      "region": "sources",
+      "order": 1,
+      "citation_index": null,
+      "_why": "same source as order 0 with a trailing slash — must be deduplicated to ONE"
+    },
+    {
+      "href": "https://v8.dev/blog/maglev",
+      "text": "Maglev - V8's Fastest Optimizing JIT",
+      "title": "",
+      "region": "sources",
+      "order": 2,
+      "citation_index": null
+    },
+    {
+      "href": "https://github.com/nodejs/release#release-schedule",
+      "text": "nodejs/release",
+      "title": "",
+      "region": "sources",
+      "order": 3,
+      "citation_index": null
+    },
+    {
+      "href": "https://www.perplexity.ai/settings/account",
+      "text": "Account",
+      "title": "",
+      "region": "content",
+      "order": 4,
+      "citation_index": null,
+      "_why": "perplexity.ai's own navigation — product chrome, never a source"
+    },
+    {
+      "href": "https://www.perplexity.ai/search?q=node+23",
+      "text": "What about Node 23?",
+      "title": "",
+      "region": "content",
+      "order": 5,
+      "citation_index": null,
+      "_why": "a 'related questions' link; internal, so dropped"
+    },
+    {
+      "href": "https://nodejs.org/en/blog/announcements/v22-release-announce",
+      "text": "1",
+      "title": "",
+      "region": "answer",
+      "order": 6,
+      "citation_index": 1,
+      "_why": "inline numbered citation — same URL as the sources card"
+    },
+    {
+      "href": "https://v8.dev/blog/maglev",
+      "text": "2",
+      "title": "",
+      "region": "answer",
+      "order": 7,
+      "citation_index": 2
+    },
+    {
+      "href": "https://github.com/nodejs/release#release-schedule",
+      "text": "3",
+      "title": "",
+      "region": "answer",
+      "order": 8,
+      "citation_index": 3
+    },
+    {
+      "href": "mailto:support@perplexity.ai",
+      "text": "Contact support",
+      "title": "",
+      "region": "content",
+      "order": 9,
+      "citation_index": null,
+      "_why": "non-http scheme — dropped by normaliseSourceUrl"
+    },
+    {
+      "href": "/library",
+      "text": "Library",
+      "title": "",
+      "region": "content",
+      "order": 10,
+      "citation_index": null,
+      "_why": "relative href: app navigation, never absolute, never a citation"
+    }
+  ],
+  "page_text_excerpt": "What changed in Node 22\n\nNode.js 22 ships the require(esm) interop behind a flag, promotes the WebSocket client to stable...\n\nSources\nnodejs.org  v8.dev  github.com"
+}

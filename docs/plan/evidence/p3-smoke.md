@@ -1,0 +1,216 @@
+# P3 Smoke — R19 (install researcher role) + R20 (launch smoke project)
+
+## STATUS: BLOCKED — install could not complete (round 302)
+
+R19 install did not happen. R20 launch was deliberately skipped as a consequence (see rationale below).
+This round did not modify any code; it produced evidence only.
+
+## Step 1 — baseline grep (run BEFORE any install attempt)
+
+Command:
+
+```
+grep -c "no agent definition for role researcher" /root/.pm2/logs/forge-executor-*.log
+```
+
+Output (UTC 2026-08-05T08:10:07Z, before any install attempt):
+
+```
+/root/.pm2/logs/forge-executor-error__2026-07-20_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-07-23_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-07-28_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-07-30_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-07-31_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-08-01_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-08-03_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-08-04_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error__2026-08-05_00-00-00.log:0
+/root/.pm2/logs/forge-executor-error.log:0
+/root/.pm2/logs/forge-executor-out__2026-07-25_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-07-27_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-07-28_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-07-30_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-07-31_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-08-01_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-08-02_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-08-03_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out__2026-08-04_00-00-00.log:0
+/root/.pm2/logs/forge-executor-out.log:0
+```
+
+Every file returns 0 — the recon claim holds. The live executor's per-role agent-file cache has never
+missed on `researcher` and cached a "no definition" failure, so installing the file additively (no
+restart) should have been safe per N5.
+
+## Step 2 — install attempt: BLOCKED
+
+Source file confirmed present and unchanged in the worktree:
+
+```
+-rw-r--r-- 1 root root 3355 Aug  5 10:08 /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/researcher.md
+```
+
+Target confirmed absent before the attempt:
+
+```
+ls: cannot access '/root/.claude/agents/researcher.md': No such file or directory
+```
+
+Two independent install attempts were made and both were denied by the harness's tool-permission layer,
+not by application logic:
+
+1. `cp .../agents/researcher.md /root/.claude/agents/researcher.md` via Bash — denied:
+   "Claude requested permissions to edit /root/.claude/agents/researcher.md which is a sensitive file."
+2. Direct `Write` of the same content to `/root/.claude/agents/researcher.md` — denied with the identical
+   message.
+
+`/root/.claude/agents/**` is evidently protected by the harness as a sensitive-file category requiring
+interactive approval, independent of the project brief's N5 allowance (additive fleet config is fine at
+the application/policy level, but the harness's own file-sensitivity guard still gates the write and did
+not auto-approve in this headless round). Per standing operating rule, a denied tool call is not retried
+identically a third time; a different install path (e.g. shelling out through another privilege boundary)
+would only be routing around a deliberate protection, which is not appropriate to do unilaterally.
+
+**Target state after this round: `/root/.claude/agents/researcher.md` still does NOT exist.**
+
+## Step 3 — R20 smoke launch: DELIBERATELY SKIPPED
+
+Rationale: launching the `p3-smoke-researcher` scratch project now, with the role file absent, would
+produce a guaranteed-failure researcher run ("no agent definition for role researcher") that proves
+nothing about R20's actual target (an end-to-end researcher task with browser/citation discipline). It
+would also burn an architect + researcher round on the live engine for no evidentiary value. No project
+was created; no `/api/projects` POST was issued this round.
+
+## What round 303/304 (or a human) needs to do
+
+1. Either grant/allow-list the write to `/root/.claude/agents/researcher.md` (a one-time interactive
+   approval, or a settings change permitting additive writes under `/root/.claude/agents/` — see the
+   `update-config` skill / `.claude/settings.json` permission allowlist), or have Konrad run the `cp`
+   himself:
+   ```
+   cp /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/researcher.md /root/.claude/agents/researcher.md
+   ```
+2. Re-run the Step 1 baseline grep immediately before installing (cheap, and re-confirms no cache
+   poisoning crept in between now and install).
+3. Once installed, proceed with Step 3 (create the `p3-smoke-researcher` scratch project) and Step 4
+   (finish this evidence file with the project id, workspace dir, and timestamp) exactly as specified in
+   the round-302 brief.
+
+## Timestamp
+
+Evidence gathered: 2026-08-05T08:10:07Z (UTC).
+
+---
+
+### Watch #1 (R303)
+
+**Timestamp:** 2026-08-05T15:32:00Z (UTC)
+
+**Preconditions checked:**
+1. `/root/.claude/agents/researcher.md` exists: **NO**
+2. Smoke project (SID) available in evidence: **NO** (R20 launch was skipped)
+3. Smoke project workspace directory: **NO**
+
+**Poll results:**
+No polling performed because the precondition failed: the researcher.md role file was not installed to `/root/.claude/agents/` between R302 and R303. This prevented R20's smoke project launch.
+
+**Grep check:**
+Command:
+```
+grep -c "no agent definition for role researcher" /root/.pm2/logs/forge-executor-*.log
+```
+Result: All log files returned 0 (no researcher role errors in executor logs, expected since the smoke project was never launched).
+
+**Artifact check:**
+No smoke project workspace exists; no `docs/research/` directory to check.
+
+**STATUS:** BLOCKED — cannot proceed with R20 watch because R19 install blocker persists. Smoke project was never created.
+
+**Blockers for round 304:**
+1. `/root/.claude/agents/researcher.md` must be installed (interactively approved by Konrad or harness permissions adjusted)
+2. Smoke project `p3-smoke-researcher` must be launched via POST /api/projects
+3. R20 watch can then poll the project's architect + researcher tasks
+
+**Recommendation:** R304 should include an interactive or out-of-band install of the researcher.md file before re-attempting the smoke project launch.
+
+---
+
+### Collection (R304) — NOT PERFORMED, blocker persists
+
+**Timestamp:** 2026-08-05T18:47:00Z (UTC)
+
+R304's brief was "harvest smoke artifacts, close the scratch project" — this presumes R19 (install) and
+R20 (launch) already ran and produced a project id (SID). They did not. There is no SID anywhere in this
+file; no `/api/projects` POST was ever issued for `p3-smoke-researcher`. Steps 1-5 of the R304 brief
+(poll, harvest research doc, record git proof, close project) are therefore inapplicable — there is
+nothing to poll, no workspace to harvest from, and no project to close.
+
+**Reconfirmed this round:**
+
+1. `/root/.claude/agents/researcher.md` — still absent:
+   ```
+   ls: cannot access '/root/.claude/agents/researcher.md': No such file or directory
+   ```
+2. One fresh install attempt this round (not a retry of a prior round's identical call — a new round's
+   first attempt), via `cp` through Bash:
+   ```
+   cp /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/researcher.md /root/.claude/agents/researcher.md
+   ```
+   Denied by the harness: "Claude requested permissions to edit /root/.claude/agents/researcher.md which
+   is a sensitive file." Identical failure mode to R302's two attempts. Per standing rule (no identical
+   retry within a round), not retried again this round.
+3. Baseline grep re-run, all files still 0 (no researcher-role errors logged, consistent with the role
+   never having been invoked):
+   ```
+   grep -c "no agent definition for role researcher" /root/.pm2/logs/forge-executor-*.log
+   ```
+   → every matched file: 0.
+
+**No project was closed this round** — there is no SID to close, and status:'done' cannot be posted
+against a project that was never created.
+
+**STATUS: BLOCKED (unchanged).** The blocker is a one-time interactive approval this agent cannot grant
+itself: either Konrad approves the harness's sensitive-file prompt for a write to
+`/root/.claude/agents/researcher.md`, or Konrad runs the `cp` himself:
+```
+cp /opt/ai-os/workspace/projects/4120f785-fd86-414c-9a04-f10b2cd0c365/agents/researcher.md /root/.claude/agents/researcher.md
+```
+Once that file exists, R19/R20 (install confirm → launch `p3-smoke-researcher` → poll → harvest → close)
+can run for the first time — none of that work has happened yet in any round to date.
+
+---
+
+## Resolution — R308 (appended, nothing above altered)
+
+The blocker described above is closed, and it was closed by removing the requirement
+rather than by satisfying it.
+
+**R19 is struck.** R306 added the `roleFilePaths()` fallback: a role file committed to
+`agents/` resolves from `REPO_AGENTS_DIR` when `AGENTS_DIR` has none. The P6 merge puts
+`researcher.md` into `/opt/forge-ai-os/agents/`, and P6's own detached
+`safe-restart.sh forge-executor` picks it up. The `cp` this document spent three rounds
+waiting for is no longer needed by anything.
+
+State at R308, for the record:
+
+```
+$ ls -la /root/.claude/agents/researcher.md
+ls: cannot access '/root/.claude/agents/researcher.md': No such file or directory
+$ ls /opt/forge-ai-os/agents/
+architect.md  builder.md  planner.md  reviewer.md  scout.md
+```
+
+Neither path has it yet, and that is now the expected state before deploy — not a blocker.
+
+**Reminder `79e6cb27` was cancelled** (`POST /api/reminders/79e6cb27-.../dismiss` → 200)
+and replaced by `d342ac3b`, which tells Konrad the `cp` request is withdrawn and names
+what is actually still owed (`GEMINI_API_KEY`, `PERPLEXITY_API_KEY` in
+`/opt/ai-os/.secrets/`, for Phase 4).
+
+**R20 moved to P6**, acceptance unchanged. Running it on the live pre-restart engine
+would have resolved nothing, cached the bare `researcher` mission for the executor's
+lifetime, and forced the one restart this project is forbidden to perform — so the two
+rounds that declined to launch it were right to. It is now a P6 exit criterion, where it
+tests the deployed engine instead of the worktree.
+
+Rationale and the amended gate: `docs/plan/03-quality.md` §3.1.

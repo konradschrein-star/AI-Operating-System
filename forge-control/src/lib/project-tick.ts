@@ -20,21 +20,28 @@
  * agent.spawn_cap ceiling, so there's exactly one place that cap lives.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   promoteReadyTasks,
   claimReadyTasks,
   listSettledRunningTasks,
+  roundIsComplete,
   createRunForTask,
   attachRun,
   setTaskStatus,
-  createTask,
+  markVerdictTaskDone,
+  unsettledVerdictTasks,
+  listVerdictRound,
+  createFixChain,
   setProjectStatus,
   setProjectWorkspace,
   closeFinishedProjects,
   getProject,
+  managerChatRunId,
   type ProjectTask,
   type Project,
+  type SettledRunningTask,
   type TaskRole,
   type TaskTier,
 } from "../db/projects.ts";
@@ -42,14 +49,55 @@ import {
   patchProjectMetadata,
   listGoalProgress,
 } from "../db/projects.ts";
-import { provisionWorkspace } from "./workspace.ts";
+import {
+  projectAcceptsWork,
+  consolidateVerdictRound,
+  verdictMemberSettled,
+  isVerdictRole,
+  noteGroupFailure,
+  clearGroupFailures,
+  VERDICT_ROLES,
+  FIX_TASK_TITLE,
+  RECHECK_TASK_TITLE,
+  recheckBrief,
+  type VerdictInput,
+  type VerdictRole,
+} from "./project-reconcile.ts";
+import {
+  classifyUsageWall,
+  parseResetAt,
+  planUsageWallRetry,
+  shouldAnnounceOutage,
+  outageMessage,
+  formatDelay,
+  USAGE_WALL_NOTIFICATION_SOURCE,
+} from "./usage-wall.ts";
+import { projectSlug } from "./run-control-rules.ts";
+import { provisionWorkspace, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
-import { queueNotification } from "../db/notifications.ts";
+import { requeueRunAfterUsageWall } from "../db/runs.ts";
+import { queueNotification, lastNotificationAt } from "../db/notifications.ts";
 
 const AGENTS_DIR = process.env.AGENTS_DIR ?? "/root/.claude/agents";
+
+/** The `agents/` directory committed in THIS checkout — resolved from the
+ *  module's own URL (src/lib → src → forge-control → repo root), so it points
+ *  at the deployed checkout the executor is running from, never at a project
+ *  worktree. Second candidate after AGENTS_DIR, see roleFilePaths(). */
+export const REPO_AGENTS_DIR = fileURLToPath(new URL("../../../agents", import.meta.url));
+
 const MAX_FIX_CYCLES = 3;
 let lastPauseLogAt = 0;
+
+/** Consecutive consolidation failures per `${project_id}:${round}`, and the
+ *  count at which a stuck group is pushed to Konrad instead of spinning in the
+ *  log. Process-local on purpose: it is a retry heuristic, not state the DB
+ *  should own, and a restart legitimately re-starts the count. Entries are
+ *  deleted on the first success, so the map holds at most one key per
+ *  currently-failing round. */
+const groupFailures = new Map<string, number>();
+const MAX_GROUP_FAILURES = 3;
 
 /** Model/effort per tier — only architect and builder tasks are ever
  *  assigned one (see docs/superpowers/specs/2026-07-11-manager-orchestration-
@@ -65,7 +113,7 @@ const TIER_MODELS: Record<TaskTier, { model: string; effort: string }> = {
   flagship: { model: "claude-fable-5", effort: "high" },
 };
 
-interface RoleConfig {
+export interface RoleConfig {
   mission: string;
   tools: string[] | null;
   model: string | null;
@@ -74,41 +122,151 @@ interface RoleConfig {
 
 const roleConfigCache = new Map<TaskRole, RoleConfig>();
 
+/** A role file whose frontmatter is present but unparseable. Its own class so
+ *  the caller can distinguish "misconfigured definition" from a genuine I/O
+ *  failure, and so tests can assert on it rather than on message text. */
+export class RoleFileParseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RoleFileParseError";
+  }
+}
+
+/** A role file's frontmatter delimiters, CRLF-tolerant. A UTF-8 BOM is
+ *  stripped before this runs rather than matched here, so it cannot leak into
+ *  the mission body of a file that has no frontmatter at all. Both a BOM and
+ *  CRLF endings are things an editor introduces with no visible change to the
+ *  file, which is precisely why they must not change behaviour. */
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/;
+/** Does this file even CLAIM to have frontmatter? Answered separately from
+ *  FRONTMATTER_RE so "no frontmatter at all" (legitimate — a plain mission
+ *  file) can be told apart from "opens a frontmatter block and never closes
+ *  it" (a truncated or corrupted definition). */
+const CLAIMS_FRONTMATTER_RE = /^---\r?\n/;
+
+/** Parse an agents/<role>.md file's raw text into mission body (frontmatter
+ *  stripped) and the `tools:`/`model:`/`effort:` fields from the frontmatter.
+ *  Pure — no I/O, no cache — so it can be tested directly against the real
+ *  agent definition files instead of a hand-copied fixture string.
+ *
+ *  THROWS on a file that opens a frontmatter block it never closes, because
+ *  the silent alternative escalates privileges. `tools: null` means "no
+ *  allowlist in the definition", and cc-runner.ts reads that as "fall back to
+ *  CC_ALLOWED_TOOLS" — the full set, Write and Edit and Task and Skill
+ *  included. agents/reviewer.md deliberately omits Write/Edit so a reviewer
+ *  can only report findings, never silently fix them; degrading its
+ *  unparseable header to `tools: null` would hand it write access to the
+ *  diff it is judging, with the raw frontmatter pasted into its mission, no
+ *  warning, and cached for the rest of the process's life. An unparseable
+ *  header is a misconfiguration, exactly like the unreadable file
+ *  readRoleFile() already throws on. */
+export function parseRoleFile(raw: string): RoleConfig {
+  // "\uFEFF" spelled as an escape on purpose: a literal BOM here would be an
+  // invisible character in the source, and the next editor to touch this file
+  // could delete it without anyone seeing the diff.
+  const text = raw.startsWith("\uFEFF") ? raw.slice(1) : raw;
+  const fmMatch = FRONTMATTER_RE.exec(text);
+  if (!fmMatch && CLAIMS_FRONTMATTER_RE.test(text)) {
+    throw new RoleFileParseError(
+      `role file opens a '---' frontmatter block that is never closed by a '---' line — ` +
+        `refusing to fall back to the default tool allowlist (first 80 chars: ` +
+        `${JSON.stringify(text.slice(0, 80))})`,
+    );
+  }
+  const frontmatter = fmMatch?.[1] ?? "";
+  const mission = (fmMatch?.[2] ?? text).trim();
+  // \r?$ on every field: with CRLF endings `.+` would otherwise swallow the
+  // carriage return into the value, producing tools like "WebFetch\r" and a
+  // model string sanitizeModel() would reject.
+  const toolsLine = /^tools:\s*(.+?)\r?$/m.exec(frontmatter)?.[1];
+  const tools = toolsLine
+    ? toolsLine.split(",").map((t) => t.trim()).filter(Boolean)
+    : null;
+  const model = sanitizeModel(/^model:\s*(.+?)\r?$/m.exec(frontmatter)?.[1]);
+  const effort = sanitizeEffort(/^effort:\s*(.+?)\r?$/m.exec(frontmatter)?.[1]);
+  return { mission, tools, model, effort };
+}
+
+/** Ordered candidate paths for a role's definition file.
+ *
+ *  1. `${AGENTS_DIR}/<role>.md` — the shared fleet directory, also read by the
+ *     Task-tool subagent system. Wins when present, so a hand-installed or
+ *     hot-patched definition still overrides the committed one.
+ *  2. `${REPO_AGENTS_DIR}/<role>.md` — the copy committed in this repo.
+ *
+ *  Candidate 2 exists because AGENTS_DIR lives under /root/.claude, which the
+ *  agent harness guards as a sensitive path: the engine's own agents
+ *  structurally cannot install a new role file there, so before this fallback
+ *  every new role needed a human `cp` (see docs/plan/evidence/p3-smoke.md —
+ *  three rounds spent proving exactly that). A role file committed to
+ *  `agents/` is now self-installing: it resolves on the next executor restart
+ *  with no human in the loop. */
+export function roleFilePaths(role: TaskRole): string[] {
+  return [`${AGENTS_DIR}/${role}.md`, `${REPO_AGENTS_DIR}/${role}.md`];
+}
+
+/** First readable candidate for `role`, or null when the role has no
+ *  definition anywhere. Only "not found" is swallowed — a file that exists but
+ *  cannot be read (permissions, a directory in its place) is a
+ *  misconfiguration that must not degrade silently into the bare fallback
+ *  mission, so it throws with the offending path and errno. */
+export function readRoleFile(role: TaskRole): { path: string; raw: string } | null {
+  for (const path of roleFilePaths(role)) {
+    try {
+      return { path, raw: readFileSync(path, "utf8") };
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue;
+      throw new Error(
+        `[project-tick] role file ${path} exists but is unreadable (${code ?? "unknown errno"})`,
+        { cause: err },
+      );
+    }
+  }
+  return null;
+}
+
+/** Roles already warned about, so the bare-fallback warning is logged once per
+ *  role rather than once per spawn (the fallback is deliberately not cached). */
+const warnedMissingRoles = new Set<TaskRole>();
+
 /** Read an agents/<role>.md file — the SAME file the Task-tool subagent
  *  system reads — and split it into the mission body (frontmatter stripped)
  *  and the `tools:` allowlist from the frontmatter. Single source of truth:
  *  editing agents/reviewer.md's tools line (e.g. dropping Write/Edit so it
  *  can only report findings, never silently fix them) changes both what the
  *  Task-tool subagent can do AND what a top-level project-run for that role
- *  can do. Cached — restart forge-executor after editing one of these files. */
+ *  can do. Resolved definitions are cached — restart forge-executor after
+ *  editing one of these files.
+ *
+ *  The bare fallback is deliberately NOT cached: caching it would pin a role to
+ *  a mission-less prompt for the rest of the process's life just because one
+ *  task happened to run before its definition was installed, and recovering
+ *  from that needs an executor restart — the exact restart this project is
+ *  forbidden to perform. Re-reading two paths on a cache miss costs two failed
+ *  stats per run spawn, which is nothing next to spawning a `claude` child. */
 function roleConfig(role: TaskRole): RoleConfig {
   const cached = roleConfigCache.get(role);
   if (cached) return cached;
-  try {
-    const raw = readFileSync(`${AGENTS_DIR}/${role}.md`, "utf8");
-    const fmMatch = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(raw);
-    const frontmatter = fmMatch?.[1] ?? "";
-    const mission = (fmMatch?.[2] ?? raw).trim();
-    const toolsLine = /^tools:\s*(.+)$/m.exec(frontmatter)?.[1];
-    const tools = toolsLine
-      ? toolsLine.split(",").map((t) => t.trim()).filter(Boolean)
-      : null;
-    const model = sanitizeModel(/^model:\s*(.+)$/m.exec(frontmatter)?.[1]);
-    const effort = sanitizeEffort(/^effort:\s*(.+)$/m.exec(frontmatter)?.[1]);
-    const cfg: RoleConfig = { mission, tools, model, effort };
-    roleConfigCache.set(role, cfg);
-    return cfg;
-  } catch {
-    console.warn(`[project-tick] no agent definition for role ${role}, using a bare fallback`);
-    const cfg: RoleConfig = {
+  const found = readRoleFile(role);
+  if (!found) {
+    if (!warnedMissingRoles.has(role)) {
+      warnedMissingRoles.add(role);
+      console.warn(
+        `[project-tick] no agent definition for role ${role} in any of ` +
+          `[${roleFilePaths(role).join(", ")}], using a bare fallback`,
+      );
+    }
+    return {
       mission: `You are the ${role} for this coding project.`,
       tools: null,
       model: null,
       effort: null,
     };
-    roleConfigCache.set(role, cfg);
-    return cfg;
   }
+  const cfg = parseRoleFile(found.raw);
+  roleConfigCache.set(role, cfg);
+  return cfg;
 }
 
 function isGoalMode(project: Project): boolean {
@@ -129,13 +287,279 @@ const TIER_GUIDE =
   `needs the strongest model. Omit tier to fall back to the role default (Opus). Flagship is the expensive ` +
   `one — reserve it for design-heavy or genuinely hard tasks.`;
 
+const IDEMPOTENCY_NOTE =
+  `A task's identity is (project, round, role, title), so titles must be distinct within one round and role. ` +
+  `Repeating a curl answers 409 with the task that already exists instead of creating a second one — re-issuing ` +
+  `a call you are not sure landed is safe, and can never fan out duplicate agents into the same worktree.`;
+
 const PARALLELISM_GUIDE =
   `Tasks in the SAME round run in PARALLEL inside the SAME worktree — only put tasks in one round when they ` +
   `touch disjoint files. Anything that could collide goes in consecutive rounds instead. Rounds only gate ` +
   `ordering (round N+1 starts when everything <= N is done); gaps in round numbers are fine and cost nothing.`;
 
-function buildPrompt(task: ProjectTask, project: Project): string {
+/** R12 — the worktree-only rule, appended to EVERY role prompt on a
+ *  repo-backed project. Bug 3 of the first night: fleet agents edited the live
+ *  checkout during build phases so reviewers could curl real endpoints, which
+ *  hot-applied half-finished code into the running services. The policy is
+ *  generated here rather than written into agents/<role>.md because those role
+ *  files are shared with the interactive Task-tool subagents, which legitimately
+ *  work on live checkouts when Konrad asks. */
+export function WORKTREE_POLICY(liveCheckout: string): string {
+  return (
+    `WORKTREE-ONLY POLICY (non-negotiable):\n` +
+    `- The live checkout for this repo is ${liveCheckout}. During build phases you work ONLY in this ` +
+    `worktree — the directory you are already in. ${liveCheckout} must NEVER be edited, patched, or ` +
+    `"just quickly fixed" during a build phase, no matter how convenient it would be for testing.\n` +
+    `- NEVER run \`pm2 restart forge-executor\`. That kills every run in flight, including your own. ` +
+    `Restarting the executor is the deploy phase's job and it has a detached procedure for it.\n` +
+    `- Verification against LIVE endpoints, live services, or the live database happens ONLY inside an ` +
+    `explicitly-briefed deploy/verify task — never ad hoc from a build task. If your brief does not say ` +
+    `"deploy" or "verify against live", you have no business touching ${liveCheckout}.\n` +
+    `- Need to prove something works? Run it out of the worktree (tsx, unit tests, a throwaway port). ` +
+    `If that is genuinely impossible, say so in your final message and let the deploy/verify task do it.`
+  );
+}
+
+/** R13 — reviewer-side enforcement of the above. A policy nobody checks is a
+ *  suggestion; the reviewer is the only role that reliably looks at the whole
+ *  round, so it owns the cleanliness gate. */
+export function REVIEWER_LIVE_CHECK(liveCheckout: string): string {
+  return (
+    `LIVE-CHECKOUT CLEANLINESS CHECK (mandatory, run it before you write your verdict):\n` +
+    `  git -C ${liveCheckout} status --porcelain\n` +
+    `ANY output at all means someone hot-applied work into the live checkout instead of keeping it in the ` +
+    `worktree. That is by itself a NEEDS_FIXES finding: name the dirty files verbatim in your numbered list ` +
+    `and require them to be reverted there and redone in the worktree. Empty output is the only pass. ` +
+    `Paste the command's output (or its emptiness) into your review — an unexecuted check is not a check.`
+  );
+}
+
+/** R14 + R17 — deploy guidance for the goal-mode architect's plan. Bug 4 of the
+ *  first night: this engine deploys itself, so a naive `pm2 restart
+ *  forge-executor` during deploy kills the very fleet that is deploying. */
+export const DEPLOY_GUIDE =
+  `DEPLOY GUIDANCE (put this verbatim into the final deploy phase's brief):\n` +
+  `- EXECUTOR-LOADED CODE. If the diff touches \`src/lib/project-tick.ts\`, \`src/lib/cc-runner.ts\`, ` +
+  `\`src/executor.ts\`, \`src/db/*\` or the \`agents/*.md\` role files, the executor is holding the old ` +
+  `code in memory and a plain restart would kill every run in flight — including the deploy task itself.\n` +
+  `- NEVER \`pm2 restart forge-executor\`. Not to deploy, not to test, not "just this once".\n` +
+  `- Instead, after merging, run exactly:\n` +
+  `    setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &\n` +
+  `  launch it DETACHED and END the task — never wait for it, never poll it, never tail the log until it ` +
+  `finishes. The script waits for the fleet to go idle and restarts then; your task must return immediately.\n` +
+  `- \`pm2 restart forge-control\` (the API side) remains allowed and is the right way to pick up route/API ` +
+  `changes, since nothing long-running lives in that process.\n` +
+  `- MERGE vs PR (R17): if the project brief says to open a PR instead of merging, run ` +
+  `\`scripts/git-sync-branch.sh <worktree-dir> --pr "<title>"\` and do NOT merge to main — the PR is the ` +
+  `deliverable. Otherwise merge per the brief (merge main into the work branch first if main moved, re-run ` +
+  `typecheck + tests in the worktree, then merge to main; on conflicts STOP and report the files).`;
+
+/** R16 — push-on-PASS guidance. Deliberately prompt guidance rather than engine
+ *  code: the engine has no opinion about which phases are worth publishing, and
+ *  a deterministic push would fire on rounds that are mid-fix-cycle. */
+export const GITHUB_PUSH_GUIDE =
+  `GITHUB PUSH (phase completion):\n` +
+  `- When a phase's gating reviewer issues VERDICT: PASS and the repo has an origin remote, run ` +
+  `\`scripts/git-sync-branch.sh <worktree-dir>\` to push the work branch so the progress is visible on ` +
+  `GitHub.\n` +
+  `- Plain push only. NEVER force-push, never \`--force\`, never \`--force-with-lease\` — this branch is ` +
+  `shared with whatever else is watching it.\n` +
+  `- If the push fails (no origin, gh not authenticated, rejected), report the failure verbatim in your ` +
+  `final message and move on. A push failure NEVER changes the verdict.`;
+
+/** R703 — the browser research lane, named concretely for the researcher.
+ *
+ *  This text is prepended to EVERY researcher run, so it stays terse: three
+ *  invocations that actually exist (quoted from the shipped `--help` of
+ *  scripts/research-browser.mjs, perplexity.mjs and gemini-qa.mjs), the
+ *  screenshot convention, and the one rule that keeps the lane safe — a login
+ *  wall is Konrad's job, never the agent's. The old branch said only "use every
+ *  research surface you have", which in practice meant WebFetch and nothing
+ *  else: an agent does not discover a 78k-line CLI by hoping.
+ *
+ *  Lives here rather than in agents/researcher.md for the same reason as
+ *  WORKTREE_POLICY: that file is shared with the interactive Task-tool
+ *  researcher, whose invocation paths differ per repo. */
+export const RESEARCH_INSTRUMENTS =
+  `RESEARCH INSTRUMENTS — three shipped CLIs in this repo's scripts/ (outside an ai-os worktree: ` +
+  `/opt/forge-ai-os/scripts/). Run one with --help before first use; research-browser and gemini-qa need ` +
+  `no key on their default path, perplexity does:\n` +
+  `- scripts/research-browser.mjs — a real Chrome with persistent logged-in profiles. ` +
+  `\`open <profile> [--url URL] [--label L]\`, \`status <profile> --probe\`, \`close <profile>\`. ` +
+  `Use the SHARED profile for a service (e.g. \`perplexity\`), never a per-run one — the login lives in it.\n` +
+  `- scripts/perplexity.mjs — both \`ask "<question>"\` and \`search "<query>"\` default to the API backend ` +
+  `and need PERPLEXITY_API_KEY (R776). \`ask --backend browser\` runs through the authenticated profile ` +
+  `instead and returns the answer WITH its citations — that is the documented fallback and the only path ` +
+  `for logged-in work, but perplexity.ai answers this host with HTTP 403 (Cloudflare edge block on our ` +
+  `egress IP), so it cannot currently complete unattended. Exit 2 from either means the key is missing: ` +
+  `say so and move on.\n` +
+  `- scripts/gemini-qa.mjs — video QA: \`gemini-qa.mjs <local-video.mp4>\` on the local Gemini Pool ` +
+  `(default backend, free, no key); \`--backend api\` is billed and needs GEMINI_API_KEY.\n` +
+  `SCREENSHOTS: every browser surface you looked at gets one, at ` +
+  `/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png (FORGE_RUN_ID is in your environment; the tools ` +
+  `write there themselves). Cite each one in your research doc as its URL, /api/uploads/$FORGE_RUN_ID/<name>, ` +
+  `so the Console renders it. An uncited browser session is an unverifiable claim.\n` +
+  `LOGIN WALL = STOP. Exit 4 from research-browser or perplexity means a login is required: the tool has ` +
+  `already screenshotted the wall, queued Konrad a reminder and left the browser up for him to log in ONCE ` +
+  `by hand over noVNC. Report it, carry on with the sources you can reach, and NEVER attempt credentials — ` +
+  `no passwords, no signup, no "try the free tier".`;
+
+/** R870 — the browser as first resort, for the two roles that hit unknowns but
+ *  do NOT get the full RESEARCH_INSTRUMENTS block (which belongs to the
+ *  researcher alone, per T16). The escalation policy states the rule; this
+ *  states the reflex at the point of work, because "drive a browser" reads as
+ *  an abstract permission until a role is told what its own unknowns look like.
+ *  Deliberately shorter than RESEARCH_INSTRUMENTS: scout is a Haiku role and
+ *  builder's prompt is already long. */
+export const BROWSER_FIRST =
+  `BROWSER FIRST FOR UNKNOWNS. When a doc is missing, an API's behaviour is unclear, a page needs JS or a ` +
+  `login, or a service exists only as a web app: open a real browser before you guess or ask. ` +
+  `\`scripts/research-browser.mjs open scratch --url <URL> --label <what-you-are-checking>\` (read its ` +
+  `\`--help\` first; from another repo's worktree: /opt/forge-ai-os/scripts/) drives real Chrome with ` +
+  `persistent logged-in profiles, and the \`playwright-skill\` covers a one-off page needing scripted ` +
+  `interaction if you hold the Skill tool. A login wall is the one thing you do NOT solve yourself — the ` +
+  `tool screenshots it and queues Konrad; never attempt credentials. An unverified guess costs more than ` +
+  `the five minutes of browsing you skipped.`;
+
+/** R870 — the fleet-wide autonomy rule Konrad set on 2026-08-05, condensed from
+ *  the vault note "AI OS/Policy - Agent Autonomy and Escalation.md". The full
+ *  text is committed verbatim at docs/plan/10-policy-agent-autonomy-and-escalation.md
+ *  so an agent without vault access can still read the original.
+ *
+ *  Applied through withPolicy() for the same reason WORKTREE_POLICY is — a new
+ *  role branch that forgets to paste it is exactly the omission this shape
+ *  prevents. Unlike the worktree rule it is NOT gated on a live checkout: a
+ *  scratch project can still spend real money, mail someone as Konrad, or burn
+ *  Konrad's attention on a question a browser would have answered.
+ *
+ *  On the browser: the vault note names "playwright / auto-browser". The
+ *  auto-browser skill's controller is not installed on this host
+ *  (docs/tools/research-browser.md §2.1), so naming it as a working path would
+ *  send agents at a dead end — scripts/research-browser.mjs is the shipped
+ *  equivalent and, being a CLI, is reachable from every role that has Bash,
+ *  including scout, which holds no Skill tool. */
+export const ESCALATION_POLICY =
+  `AUTONOMY AND ESCALATION (fleet-wide, non-negotiable — full policy in ` +
+  `docs/plan/10-policy-agent-autonomy-and-escalation.md):\n` +
+  `1) AUTONOMY IS THE DEFAULT. Blocked on a login wall, a missing doc, an unclear API, a service that only ` +
+  `exists inside a browser? Go and find out: drive a real browser with \`scripts/research-browser.mjs\` ` +
+  `(shipped in this repo — real Chrome, persistent logged-in profiles, runnable from Bash by every role; ` +
+  `from another repo's worktree: /opt/forge-ai-os/scripts/), or the \`playwright-skill\` if you hold the ` +
+  `Skill tool. Read the real docs, call the real endpoint. NEVER ask Konrad something research would have ` +
+  `answered — that is a failure of the agent, not a service to him.\n` +
+  `2) ESCALATE BEFORE an irreversible or boundary-crossing action — ask first, act after his answer: ` +
+  `changing SSH keys, deleting accounts, destroying credentials or unbacked data, force-pushing over shared ` +
+  `history, sending outbound communication as Konrad, spending real money, touching a business system in ` +
+  `production, anything that affects a third party.\n` +
+  `3) ESCALATE ON PREFERENCE/DESIGN DECISIONS in build-once-use-many work when the brief does not actually ` +
+  `say what Konrad wants — UI interaction models, schemas, naming conventions, workflow shapes, defaults ` +
+  `everything downstream inherits. Do not guess plausibly; a plausible guess at an interaction model has ` +
+  `already cost a full build-review-deploy cycle. Restate the model in 2-3 sentences, ask the specific open ` +
+  `questions, and state the default you will take if he does not answer.\n` +
+  `4) HOW TO ASK — one curl, then carry on:\n` +
+  `    curl -sX POST http://127.0.0.1:7700/api/reminders -H 'content-type: application/json' ` +
+  `-d '{"text":"<which project/task you are, what you need, what you will do by default>","when":"in 1m"}'\n` +
+  `  Max 500 chars per reminder — a longer ask is rejected with 400, so split it into several. Then KEEP ` +
+  `WORKING on everything that does not depend on the answer. Never idle waiting for a reply, and never ` +
+  `end a task early because you asked a question.`;
+
+/** C17 — the MANAGER COMMS block, appended to every worker prompt of a project
+ *  that came out of a manager chat. Three things a worker cannot derive on its
+ *  own: which run is the manager, the exact curl that reaches it, and what is
+ *  worth sending.
+ *
+ *  Field names (`text`, `from`, `sender_run_id`) are the ones
+ *  `routes/run-control.ts`'s POST /:id/message actually validates — a prompt
+ *  that taught `content` or `message` would produce a 400 the agent would have
+ *  to debug mid-task. `$FORGE_RUN_UUID` stays a literal shell variable: it is
+ *  exported into every run's environment by cc-runner (T17), so the agent
+ *  passes it through rather than pasting an id it would have to look up.
+ *
+ *  The verdict-role paragraph closes F3 of docs/plan/evidence/cp2-c9-reconciler.md
+ *  at prompt level. It is gated on `isVerdictRole` — the same predicate the
+ *  reconciler gates on — rather than a second hand-written role list, so the
+ *  set of roles that gets the instruction cannot drift from the set of roles
+ *  whose verdict is parsed. */
+export function MANAGER_COMMS(managerRunId: string, role: TaskRole): string {
+  const base =
+    `MANAGER COMMS. This project was started from a manager chat, and that chat is run ` +
+    `${managerRunId}. It is the one place your findings reach Konrad while you are still working.\n` +
+    `- To report, one curl:\n` +
+    `    curl -sX POST http://127.0.0.1:7700/api/runs/${managerRunId}/message ` +
+    `-H 'content-type: application/json' ` +
+    `-d '{"text":"<what you found>","from":"worker","sender_run_id":"'"$FORGE_RUN_UUID"'"}'\n` +
+    `  \`$FORGE_RUN_UUID\` is your OWN run id, already exported into your environment — pass the shell ` +
+    `variable through exactly as written above; never paste an id you looked up by hand.\n` +
+    `- Report FINDINGS, BLOCKERS and DECISIONS the manager must know: something that changes what the ` +
+    `next task should do, something you are stuck on, a call you had to make that the brief did not ` +
+    `cover. Not chatter, not progress narration, not "starting now" or "still working". One report ` +
+    `that matters beats five status pings.`;
+
+  if (!isVerdictRole(role)) return base;
+
+  return (
+    base +
+    `\n- YOUR VERDICT IS READ FROM YOUR LAST MESSAGE. Any reply you send AFTER you have already ` +
+    `declared your verdict MUST end with a \`VERDICT:\` line again — restate the unchanged verdict ` +
+    `verbatim if nothing has changed. The parser reads only the LAST assistant message, by design ` +
+    `(first-match parsing used to read reviewers' rehearsals instead of their verdicts), so a verdict ` +
+    `role that is messaged, answers in prose and stops leaves its round with NO parseable verdict — ` +
+    `and the round then blocks the whole project with \`no_verdict\`.`
+  );
+}
+
+export function buildPrompt(task: ProjectTask, project: Project): string {
   const mission = roleConfig(task.role).mission;
+  // null for scratch projects: no live checkout exists, so none of the
+  // live-checkout policy blocks apply (and interpolating "null" into a path
+  // would be worse than saying nothing).
+  const live = liveCheckoutPath(project.repo);
+  // C17. null when the project has no manager-chat linkage, which is the whole
+  // gate: no linkage -> no block, and an unlinked project's prompt still ends
+  // exactly where it ended before CP3, at ESCALATION_POLICY (08 §4 acceptance).
+  // Not "byte-identical": C18 below changes the goal-mode corpus paths
+  // independently of linkage. The key name
+  // itself lives in db/projects.ts and is deliberately never spelled here —
+  // 08 §4.3's boundary grep must keep matching only cc-runner.ts and
+  // db/projects.ts, so this file asks the accessor instead.
+  const managerRun = managerChatRunId(project);
+  // C18. One slug per prompt build, so a FUTURE project's planning corpus is
+  // born under its own directory instead of colliding in the flat docs/plan/
+  // this repo still uses.
+  //
+  // CREATING vs READING — the distinction that round 1105 caught. Where a
+  // prompt CREATES or seeds a corpus (the goal-mode architect's five paths, the
+  // "Plan phase k per …/04-phases.md" brief template, "commit nothing outside
+  // …"), the slugged path is the only path: it decides where the corpus lands.
+  // Where a prompt READS an existing corpus (planner, reviewer), the slug must
+  // NOT be the only path offered. buildPrompt runs at EVERY task spawn, not at
+  // project creation, so a project already in flight — planned into the flat
+  // docs/plan/ and forbidden by boundary D6 from moving until the merge recipe
+  // runs — gets the new prompt text for its very next task. Pointing such a
+  // reviewer at ${corpus}/03-quality.md alone would send it to a directory that
+  // does not exist and cannot be created, and the old "if it exists" hedge let
+  // it fall through and review with no quality gate at all: exactly the silent
+  // degradation this project exists to remove. The reading branches therefore
+  // name both paths and require the role to say which one it used.
+  const slug = projectSlug(project.name, project.id);
+  const corpus = `docs/plan/${slug}`;
+  // Wrap EVERY return through this rather than pasting the block into eight
+  // branches — a new role branch that forgets the policy is exactly the kind
+  // of omission bug 3 was. R870 rides the same wrapper for the same reason,
+  // but unconditionally: WORKTREE_POLICY is meaningless without a live
+  // checkout, whereas the escalation rule binds a scratch project just as hard.
+  // C17's MANAGER COMMS block is folded into the SAME funnel (the `withComms`
+  // of 09 CP3) for the third time over the same argument: nine `return
+  // withPolicy(...)` branches, and a tenth one added at 3am must not be able to
+  // silently lose the only channel a worker has back to its manager.
+  const withPolicy = (body: string): string => {
+    const policed = live
+      ? `${body}\n\n${WORKTREE_POLICY(live)}\n\n${ESCALATION_POLICY}`
+      : `${body}\n\n${ESCALATION_POLICY}`;
+    return managerRun
+      ? `${policed}\n\n${MANAGER_COMMS(managerRun, task.role)}`
+      : policed;
+  };
   const header =
     `${mission}\n\n---\n\n` +
     `Project: ${project.name}\n` +
@@ -145,33 +569,49 @@ function buildPrompt(task: ProjectTask, project: Project): string {
 
   if (task.role === "architect") {
     if (isGoalMode(project)) {
-      return (
+      return withPolicy(
         header +
         `\nThis is a GOAL-MODE project: a long-horizon goal that may take many hours or days of autonomous ` +
         `multi-agent work. You are the architect; your job tonight is the waterfall plan, done so thoroughly ` +
         `that implementation never has to loop back to re-litigate scope.\n\n` +
-        `1) PLANNING CORPUS. Write an exhaustive set of planning documents under docs/plan/ in the worktree ` +
+        // C18. Every path in this branch is slugged: this is where a corpus is
+        // CREATED, so it is the one place that decides where future corpora
+        // live. Deliberately NOT slugged, here or anywhere else in this file:
+        // ESCALATION_POLICY's pointer to
+        // docs/plan/10-policy-agent-autonomy-and-escalation.md and every
+        // docs/plan/... path inside a code comment. Those name files that
+        // really exist at those flat paths in THIS repo, and boundary 05 D6
+        // forbids relocating this project's own corpus now — D6's merge recipe
+        // is what eventually moves existing corpora under their slugs.
+        `1) PLANNING CORPUS. Write an exhaustive set of planning documents under ${corpus}/ in the worktree ` +
         `and commit them:\n` +
-        `   - docs/plan/00-vision.md — the goal restated precisely, definition of done, measurable success criteria, explicit non-goals.\n` +
-        `   - docs/plan/01-requirements.md — every functional and non-functional requirement, numbered (R1, R2, ...), each testable.\n` +
-        `   - docs/plan/02-architecture.md — system design: components, data models, interfaces, technology choices with one-line rationale, failure modes, how progress/state is observable.\n` +
-        `   - docs/plan/03-quality.md — test strategy (unit, integration, end-to-end), QA gates per phase, what the reviewer must run and check.\n` +
-        `   - docs/plan/04-phases.md — the waterfall itself: numbered phases, each with scope, deliverables, acceptance criteria, and which requirement IDs it covers. Every requirement maps to exactly one phase.\n` +
+        `   - ${corpus}/00-vision.md — the goal restated precisely, definition of done, measurable success criteria, explicit non-goals.\n` +
+        `   - ${corpus}/01-requirements.md — every functional and non-functional requirement, numbered (R1, R2, ...), each testable.\n` +
+        `   - ${corpus}/02-architecture.md — system design: components, data models, interfaces, technology choices with one-line rationale, failure modes, how progress/state is observable.\n` +
+        `   - ${corpus}/03-quality.md — test strategy (unit, integration, end-to-end), QA gates per phase, what the reviewer must run and check.\n` +
+        `   - ${corpus}/04-phases.md — the waterfall itself: numbered phases, each with scope, deliverables, acceptance criteria, and which requirement IDs it covers. Every requirement maps to exactly one phase.\n` +
         `   Depth beats brevity here — thousands of lines across the corpus is normal for a real goal. ` +
         `Research with your tools (codebase, vault, web) before deciding; never plan from guesswork.\n\n` +
         `2) SEED THE PIPELINE. Create ONE planner task per phase via the API:\n${taskCurl(project.id)}\n` +
         `   Phase k's planner goes at round k*100 (100, 200, 300, ...) — the gaps leave room for fix cycles ` +
-        `without colliding with the next phase. Each planner brief: "Plan phase k per docs/plan/04-phases.md" ` +
+        `without colliding with the next phase. Each planner brief: "Plan phase k per ${corpus}/04-phases.md" ` +
         `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
         `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
         `reviewer briefed to attack, not just check).\n` +
-        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n\n` +
-        `3) GIT/GITHUB. If the repo has an origin remote you may push the work branch so progress is visible ` +
-        `on GitHub; never force-push, never open PRs unless the brief asks.\n\n` +
-        `Do not write implementation code or commit anything outside docs/plan/ — that's the builders' job.`
+        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n   ${IDEMPOTENCY_NOTE}\n\n` +
+        // R14/R16/R17. Gated on `live` like every other policy block: a scratch
+        // project has no live checkout to deploy to and no executor to restart,
+        // so this guidance would be noise at best and a wrong instruction at worst.
+        (live
+          ? `3) GIT/GITHUB + DEPLOY. Plan the final deploy phase around the two blocks below, and copy them ` +
+            `into the briefs of the tasks they govern — the deploy task and each phase's gating reviewer:\n\n` +
+            `${DEPLOY_GUIDE}\n\n` +
+            `${GITHUB_PUSH_GUIDE}\n\n`
+          : "") +
+        `Do not write implementation code or commit anything outside ${corpus}/ — that's the builders' job.`
       );
     }
-    return (
+    return withPolicy(
       header +
       `\nWhen you're done: write a short plan to PLAN.md in the repo root. Then create the next ` +
       `round(s) of work by calling forge-control directly, e.g.:\n` +
@@ -179,13 +619,15 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `Split implementation into focused, independently-completable builder tasks. Always end with exactly one ` +
       `"reviewer" task in the round right after your last builder round, briefed to review the whole diff. ` +
       `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
-      TIER_GUIDE
+      `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}`
     );
   }
   if (task.role === "planner") {
-    return (
+    return withPolicy(
       header +
-      `\nRead the planning corpus under docs/plan/ (if present) and the current state of the worktree, then ` +
+      `\nRead the planning corpus — at ${corpus}/ for a project planned under the per-project layout, or at ` +
+      `the flat docs/plan/ for a project whose corpus predates it. Both paths are real in this fleet; look at ` +
+      `both and read whichever exists. Then, with the current state of the worktree, ` +
       `break YOUR assigned scope into concrete builder tasks by calling forge-control:\n` +
       `${taskCurl(project.id)}\n` +
       `Your round is ${task.round}. Create builder tasks at round ${task.round + 1} (and ${task.round + 2}, ` +
@@ -194,53 +636,120 @@ function buildPrompt(task: ProjectTask, project: Project): string {
       `which tests/commands to run. Each builder brief must be self-contained: files to touch, the approach, ` +
       `and how the builder verifies its own work (tests to write/run). Do not exceed round ${task.round + 20} — ` +
       `the space beyond that belongs to fix cycles and the next phase.\n` +
-      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n` +
-      `Do not write implementation code yourself — plan, then fan out.`
+      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}\n` +
+      `Do not write implementation code yourself — plan, then fan out.` +
+      // R16: the planner writes the reviewer briefs, so it needs the push rule
+      // in hand to put it into them.
+      (live ? `\n\n${GITHUB_PUSH_GUIDE}` : "")
     );
   }
   if (task.role === "researcher") {
-    return (
+    return withPolicy(
       header +
-      `\nDeep research only — no implementation, no task creation. Use every research surface you have ` +
-      `(web search/fetch, browser automation skills, external AI services named in your brief). Write your ` +
+      `\nDeep research only — no implementation, no task creation. Use every research surface you have: ` +
+      `web search/fetch, the instruments below, and anything else your brief names. When a source will not ` +
+      `yield to WebFetch — a JS app, a login wall, a console-only service, a doc that 403s — a real browser ` +
+      `(scripts/research-browser.mjs below, or the \`playwright-skill\`) is the FIRST resort, not the last. ` +
+      `Write your ` +
       `findings to docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that ` +
-      `one file. Findings must be concrete enough that a planner can act on them without repeating the research.`
+      `one file. Findings must be concrete enough that a planner can act on them without repeating the research.\n\n` +
+      `${RESEARCH_INSTRUMENTS}`
     );
   }
   if (task.role === "scout") {
-    return (
+    return withPolicy(
       header +
       `\nResearch only — no implementation, no task creation. Write your findings to ` +
       `docs/research/round-${task.round}-${task.id.slice(0, 8)}.md in the worktree and commit that one file. ` +
-      `Findings must be concrete enough that a planner can act on them without repeating the research.`
+      `Findings must be concrete enough that a planner can act on them without repeating the research.\n\n` +
+      `${BROWSER_FIRST}`
     );
   }
   if (task.role === "reviewer") {
-    return (
+    return withPolicy(
       header +
       `\nReview the actual diff (git diff ${project.base_branch}...HEAD) and the code itself, not just the ` +
-      `plan or commit messages. Run the tests and checks named in your brief (or docs/plan/03-quality.md if it ` +
-      `exists) — a review without executed checks is not a review. End your final message with a line starting ` +
+      `plan or commit messages. Run the tests and checks named in your brief, plus the project's quality gates ` +
+      `— at ${corpus}/03-quality.md for a project planned under the per-project layout, or at ` +
+      `docs/plan/03-quality.md for a project whose corpus predates it. Look at BOTH paths, read whichever ` +
+      `exists, and name in your review which one you used; if neither exists, say so explicitly rather than ` +
+      `reviewing without gates and staying quiet about it. ` +
+      `A review without executed checks is not a review. End your final message with a line starting ` +
       `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
-      `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.`
+      `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.` +
+      // R13 + R16: the reviewer is the round's gate, so both the cleanliness
+      // check and the push-on-PASS rule land here.
+      (live ? `\n\n${REVIEWER_LIVE_CHECK(live)}\n\n${GITHUB_PUSH_GUIDE}` : "")
+    );
+  }
+  // R850. The tester gates a round exactly like the reviewer does — its verdict
+  // is parsed, consolidated and capped by the same code — so the contract has to
+  // be stated by the engine and not left to agents/tester.md alone: a tester
+  // that ends without a VERDICT line now BLOCKS the project (`no_verdict`),
+  // which is a far more expensive silence than it was when testers were
+  // reconciled per task. No live-checkout cleanliness check here on purpose:
+  // that gate belongs to the reviewer, who reads the diff — the tester never
+  // judges code and would only duplicate the finding.
+  if (task.role === "tester") {
+    return withPolicy(
+      header +
+      `\nTest the product, not the diff — walk the real user journeys named in your brief with the ` +
+      `real surface (browser, CLI, API) and report what a customer would actually experience, with ` +
+      `evidence for every finding. If your brief does not name a running surface you may use, test ` +
+      `what you can reach from this worktree and say plainly in your report what you could not ` +
+      `exercise; never start, patch or restart a live service to make a journey testable.\n` +
+      `End your final message with a line starting exactly with "VERDICT: PASS" if a real customer ` +
+      `would be satisfied, or "VERDICT: NEEDS_FIXES" followed by a concrete numbered list (the ` +
+      `journey step, what you did, what happened, what a customer expects, severity, evidence). ` +
+      `Never skip the VERDICT line: the orchestrator parses it, a NEEDS_FIXES opens a fix cycle that ` +
+      `re-tests against your findings, and a missing verdict blocks the whole project.`
     );
   }
   if (task.role === "builder") {
-    return (
+    return withPolicy(
       header +
       `\nImplement this directly in the worktree (branch ${project.work_branch} is already checked out). ` +
       `Commit your changes with a clear message when done. Verify your own work before reporting done — run ` +
-      `the tests your brief names, and write the tests it asks for.`
+      `the tests your brief names, and write the tests it asks for.\n\n` +
+      `${BROWSER_FIRST}`
     );
   }
-  return header;
+  return withPolicy(header);
 }
 
 async function spawnTaskRuns(): Promise<void> {
   const claimed = await claimReadyTasks();
   for (const task of claimed) {
     try {
-      if (!task.project.workspace_dir || !task.project.work_branch) {
+      // Belt to the SQL gate's braces (R10). claimReadyTasks() already joins on
+      // `projects.status = 'active'` and THAT is the real gate; this catches the
+      // race where the project is paused/blocked between the claim transaction
+      // and this loop. The claim already flipped the task to 'running', so hand
+      // it back to 'ready' rather than dropping it — the row must stay
+      // re-claimable, or pausing a project would silently strand its tasks.
+      // No run is spawned and the project is NOT blocked: this is not an error.
+      if (!projectAcceptsWork(task.project.status)) {
+        await setTaskStatus(task.id, "ready");
+        console.log(
+          `[project-tick] skipping ${task.role} task ${task.id} — project status ${task.project.status}`,
+        );
+        continue;
+      }
+      // A stored workspace_dir is not evidence the directory still exists.
+      // Both 2026-07-30 worktrees were deleted from disk while the DB kept the
+      // paths (E8); a resumed task would have spawned `claude` with a cwd that
+      // isn't there and died at spawn() with an obscure error. provisionWorkspace
+      // is idempotent and prunes stale worktree registrations, so re-running it
+      // is the cheap, correct repair.
+      const wsMissing =
+        !!task.project.workspace_dir && !existsSync(task.project.workspace_dir);
+      if (wsMissing) {
+        console.warn(
+          `[project-tick] workspace ${task.project.workspace_dir} for project ` +
+            `${task.project_id} is gone from disk — re-provisioning`,
+        );
+      }
+      if (!task.project.workspace_dir || !task.project.work_branch || wsMissing) {
         // Normally the API route provisions synchronously at project creation,
         // but this tick can claim the round-0 architect task inside that
         // window, so the fallback is a real path — and it must write the
@@ -260,6 +769,9 @@ async function spawnTaskRuns(): Promise<void> {
         project_id: task.project_id,
         task_id: task.id,
         workspace_dir: task.project.workspace_dir,
+        // C16: the run inherits the project's manager-chat linkage, if any.
+        // createRunForTask owns the key and the presence check.
+        project_metadata: task.project.metadata,
         ...(cfg.tools ? { allowed_tools: cfg.tools } : {}),
         ...(tierCfg?.model ?? cfg.model ? { model: tierCfg?.model ?? cfg.model! } : {}),
         ...(tierCfg?.effort ?? cfg.effort ? { effort: tierCfg?.effort ?? cfg.effort! } : {}),
@@ -268,6 +780,13 @@ async function spawnTaskRuns(): Promise<void> {
         vault_access: task.role === "architect",
       });
       await attachRun(task.id, run.id);
+      // E4: spawning used to be silent, so a tick that did real work looked
+      // exactly like a tick that did nothing. Every spawn is on the record now.
+      console.log(
+        `[project-tick] spawned ${task.role} run ${run.id} for task ${task.id} ` +
+          `(round ${task.round}, tier ${task.tier ?? "role-default"}) — ` +
+          `${task.project.name} · ${task.title}`,
+      );
     } catch (e) {
       console.error(
         `[project-tick] failed to spawn run for task ${task.id} (${task.role}):`,
@@ -287,85 +806,612 @@ async function spawnTaskRuns(): Promise<void> {
   }
 }
 
-async function reconcileReviewer(
-  task: ProjectTask,
-  lastText: string | null,
-): Promise<void> {
-  await setTaskStatus(task.id, "done");
-  const verdict = /VERDICT:\s*(PASS|NEEDS_FIXES)/i.exec(lastText ?? "")?.[1]?.toUpperCase();
-
-  if (verdict === "PASS") {
-    return; // closeFinishedProjects() picks this up once every task is done
-  }
-
-  if (verdict !== "NEEDS_FIXES") {
-    // No parseable verdict — don't guess, surface it instead of looping.
-    console.warn(`[project-tick] reviewer task ${task.id} produced no VERDICT line`);
-    await setProjectStatus(task.project_id, "blocked");
-    const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
-    await queueNotification(
-      `🚫 Project "${name}" blocked — reviewer produced no parseable VERDICT line. Check the run's last message.`,
-      "project",
-    ).catch(() => {});
-    return;
-  }
-
-  if (task.fix_cycle >= MAX_FIX_CYCLES) {
-    await setProjectStatus(task.project_id, "blocked");
-    console.warn(
-      `[project-tick] project ${task.project_id} blocked — ${MAX_FIX_CYCLES} fix cycles exhausted`,
+/** Narrow a DB row's role to a verdict role, or throw naming the row. The query
+ *  filters on VERDICT_ROLES, so anything else means the filter and this mapping
+ *  have drifted apart — and guessing would pick the wrong re-check role and the
+ *  wrong chain key, which is how a round silently grows a second chain. */
+function assertVerdictRole(
+  role: TaskRole,
+  taskId: string,
+  projectId: string,
+  round: number,
+): VerdictRole {
+  if (!isVerdictRole(role)) {
+    throw new Error(
+      `[project-tick] listVerdictRound returned task ${taskId} with non-verdict role ` +
+        `'${role}' for project ${projectId} round ${round} — the query filter and ` +
+        `VERDICT_ROLES have drifted apart`,
     );
-    const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+  }
+  return role;
+}
+
+/**
+ * Decide ONE gating round of ONE project, and act on that decision.
+ *
+ * The unit of decision is the round, never the task: a gating round is only
+ * ready to be judged when every one of its verdict tasks has landed, and it
+ * then yields at most one fix chain. Deciding per task is what produced two
+ * "Fix cycle 1" builders, two re-reviewers, and later two deploy builders on
+ * the engine's first night (docs/plan/02-architecture.md §1.1).
+ *
+ * "Verdict task" means reviewer OR tester (R850): both role files close with
+ * the same VERDICT contract, and a tester's round-mates are its reviewers, so
+ * they are consolidated as ONE group. Splitting them per role would put two
+ * fix builders into the same round and the same worktree — bug 1 again, wearing
+ * a different hat.
+ */
+async function consolidateVerdictGroup(
+  projectId: string,
+  round: number,
+): Promise<void> {
+  const rows = await listVerdictRound(projectId, round, VERDICT_ROLES);
+  const inputs: VerdictInput[] = rows.map((r) => ({
+    taskId: r.id,
+    // Narrowed rather than cast: the query filters on VERDICT_ROLES, so a row
+    // with any other role means the filter and this mapping have drifted apart,
+    // and guessing a role would pick the wrong re-check and the wrong chain key.
+    role: assertVerdictRole(r.role, r.id, projectId, round),
+    title: r.title,
+    fixCycle: r.fix_cycle,
+    // The rule itself lives in project-reconcile.ts (verdictMemberSettled) so
+    // it can be tested exhaustively and so db/projects.ts's mark-done and
+    // pre-check predicates have one definition to mirror. Read it there: a
+    // 'done' member is settled by bookkeeping whatever its run does later
+    // (R1005 finding 2), a `completed` run still carrying pending_input is NOT
+    // settled because it owes an undelivered turn (finding 1), and everything
+    // else — no run, running, failed/cancelled/stuck/paused — waits.
+    settled: verdictMemberSettled({
+      taskStatus: r.status,
+      runStatus: r.run_status,
+      pendingInput: r.pending_input,
+    }),
+    lastText: r.last_text,
+  }));
+
+  const decision = consolidateVerdictRound(round, inputs, MAX_FIX_CYCLES);
+  // "1 reviewer + 1 tester" — the log line has to say WHICH roles gated the
+  // round, or a tester's NEEDS_FIXES reads exactly like a reviewer's in the
+  // one place Konrad follows a project from. Absent roles are omitted rather
+  // than printed as "0 tester", which would read as a missing task.
+  const roster =
+    VERDICT_ROLES.map((role) => ({ role, n: inputs.filter((r) => r.role === role).length }))
+      .filter((c) => c.n > 0)
+      .map((c) => `${c.n} ${c.role}`)
+      .join(" + ") || "empty";
+
+  switch (decision.action) {
+    case "wait": {
+      // Nothing is marked done — THE invariant. The gating tasks stay 'running'
+      // with a settled run, so listSettledRunningTasks() re-surfaces them and
+      // the group is re-evaluated on the next tick.
+      const settledCount = inputs.filter((r) => r.settled).length;
+      console.log(
+        `[project-tick] round ${round} verdicts → wait (${settledCount}/${inputs.length} settled, ${roster})`,
+      );
+      return;
+    }
+
+    case "pass": {
+      // Mark-done FIRST, and abort the whole branch if any member refuses.
+      // A PASS is the one decision with no undo: it releases the next phase.
+      // If a message requeued a reviewer between the read and here, its next
+      // turn may say NEEDS_FIXES, and closing the round now would bury that
+      // verdict in a task nothing ever looks at again. Nothing below this line
+      // has run yet, so aborting is free and the next tick re-decides.
+      const refused = await markGroupDone(inputs);
+      if (refused.length > 0) {
+        logGroupNotReleased(projectId, round, "pass", refused);
+        return;
+      }
+      console.log(`[project-tick] round ${round} verdicts → pass (${roster})`);
+      // E4's two pushes, moved from the per-task path to here. Both halves:
+      // the per-task ✅ (non-goal projects only — a goal project can carry
+      // hundreds of tasks and has goalHeartbeats() instead) and the 🏁 round
+      // boundary. The round-complete check has to run AFTER markGroupDone or
+      // it always answers false, and it is checked rather than assumed because
+      // a gating round can share its number with other roles.
+      const project = await getProject(projectId).catch(() => null);
+      const name = project?.name ?? projectId;
+      if (project && !isGoalMode(project)) {
+        for (const r of inputs) {
+          await queueNotification(
+            `✅ ${name} · ${r.role} task "${r.title}" done (round ${round}).`,
+            "project",
+          ).catch(() => {});
+        }
+      }
+      if (await roundIsComplete(projectId, round).catch(() => false)) {
+        await queueNotification(`🏁 ${name} · round ${round} complete.`, "project").catch(
+          () => {},
+        );
+      }
+      // Nothing is created here: closeFinishedProjects() owns completion.
+      return;
+    }
+
+    case "block": {
+      // ORDER IS LOAD-BEARING, same argument as the `fix` branch below: the
+      // state that STOPS work is written FIRST, the bookkeeping that RELEASES
+      // the round second. Marking the gating tasks 'done' first opens a window in
+      // which round R is fully settled and the project is still 'active' — a
+      // crash there (this project's own deploy restarts the executor; the
+      // stuck-run watchdog and OOM are other routes) leaves promoteReadyTasks()
+      // free to promote the next phase past a review that never produced a
+      // verdict, with no notification ever sent.
+      //
+      // Reversed, a crash is harmless: the gating tasks stay 'running' with
+      // settled runs, listSettledRunningTasks() has NO project-status filter
+      // (see listSettledRunningTasks in db/projects.ts — reconciliation is
+      // bookkeeping and must run
+      // for paused/blocked projects too), so it re-surfaces them next tick,
+      // consolidation re-decides `block` identically (the inputs did not move),
+      // and meanwhile the already-blocked project promotes and claims nothing.
+      //
+      // The notification is sent before mark-done for the same reason: a crash
+      // after mark-done would leave a blocked project nobody was told about,
+      // whereas a replay at worst pushes the same message twice.
+      //
+      // Pre-check, immediately before the first irreversible step. Blocking a
+      // project and pushing to Konrad's phone cannot be taken back by a later
+      // mark-done refusal, so the S4 window is closed from the front here and
+      // the conditional mark-done below catches the remaining milliseconds.
+      const moved = await unsettledVerdictTasks(inputs.map((r) => r.taskId));
+      if (moved.length > 0) {
+        logGroupNotReleased(
+          projectId,
+          round,
+          "block",
+          inputs.filter((r) => moved.includes(r.taskId)),
+        );
+        return;
+      }
+      await setProjectStatus(projectId, "blocked");
+      console.warn(
+        `[project-tick] round ${round} verdicts → block (${decision.reason}, ${roster}): ${decision.detail}`,
+      );
+      const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+      await queueNotification(
+        `🚫 Project "${name}" blocked — round ${round} verdicts (${decision.reason}): ` +
+          `${decision.detail}. Check the run threads.`,
+        "project",
+      ).catch(() => {});
+      // A refusal here is already too late to undo the block, but it must not
+      // pass unrecorded — and leaving the member 'running' is the right state:
+      // the next tick re-consolidates it against the already-blocked project,
+      // which promotes and claims nothing meanwhile.
+      const refused = await markGroupDone(inputs);
+      if (refused.length > 0) logGroupNotReleased(projectId, round, "block", refused);
+      return;
+    }
+
+    case "fix": {
+      // ORDER IS LOAD-BEARING: create the chain FIRST, mark the gating tasks
+      // done SECOND. A crash between the two re-runs consolidation next tick —
+      // they are still 'running' with settled runs, the same (round,
+      // cycle) yields the same chain keys, createFixChain's bare ON CONFLICT
+      // DO NOTHING absorbs the duplicate insert on EITHER unique index, and
+      // mark-done proceeds. The reverse order would leave
+      // a window where round R is fully 'done' with no fix round in the table,
+      // and promoteReadyTasks() would promote the next phase's planner straight
+      // past an unfinished fix cycle.
+      //
+      // Same pre-check as `block`, same reason: the chain INSERT is the
+      // irreversible step here. A reviewer requeued by a message between
+      // listVerdictRound() and this point may be about to withdraw the very
+      // NEEDS_FIXES this chain would be built from, and a stray fix chain at
+      // round+1 promotes builders nobody asked for. The conditional mark-done
+      // after createFixChain covers the milliseconds this cannot.
+      const moved = await unsettledVerdictTasks(inputs.map((r) => r.taskId));
+      if (moved.length > 0) {
+        logGroupNotReleased(
+          projectId,
+          round,
+          `fix cycle ${decision.cycle}`,
+          inputs.filter((r) => moved.includes(r.taskId)),
+        );
+        return;
+      }
+
+      const chain = await createFixChain({
+        project_id: projectId,
+        round,
+        cycle: decision.cycle,
+        builderTitle: FIX_TASK_TITLE(decision.cycle),
+        builderBrief: decision.mergedBrief,
+        builderChainKey: decision.builderChainKey,
+        // One re-check per DISSENTING role, in the decision's order — a
+        // reviewer's concerns are settled by reading the new diff, a tester's
+        // by walking the journey again, and neither can stand in for the other.
+        checkers: decision.checkers.map((c) => ({
+          role: c.role,
+          title: RECHECK_TASK_TITLE(c.role, decision.cycle),
+          brief: recheckBrief(c.role, decision.mergedBrief),
+          chainKey: c.chainKey,
+        })),
+      });
+      const chainRows = [chain.builder, ...chain.checkers];
+
+      // A STRANGER holds one of our chain's identity tuples. Its brief is not
+      // the brief this consolidation just merged, so the round's feedback would
+      // reach nobody. Treating that as an absorbed replay — which the flags
+      // did until R308 — marks the gating tasks done, sends no push, and loses
+      // the verdict in silence. The reachable case is the deploy window: the
+      // LIVE pre-0039 engine reconciles per task, so reviewer A settling before
+      // the restart writes ("Fix cycle 1", round R+1, chain_key NULL), and
+      // reviewer B settling after it lands here. B's findings are the ones that
+      // vanish.
+      //
+      // So: block, and say which row is in the way. The verdicts are not lost —
+      // they are in the runs, and the message names the round. Marking the
+      // group done anyway is deliberate: a blocked project promotes and
+      // claims nothing, and leaving the tasks 'running' would re-decide and
+      // re-notify this same round every 10s.
+      const occupied = chainRows.filter(
+        (o): o is Extract<typeof o, { kind: "occupied" }> => o.kind === "occupied",
+      );
+      if (occupied.length > 0) {
+        const detail = occupied
+          .map((o) => `task ${o.id} ("${o.title}", chain_key ${o.chain_key ?? "NULL"})`)
+          .join(" and ");
+        await setProjectStatus(projectId, "blocked");
+        console.error(
+          `[project-tick] round ${round} verdicts → fix cycle ${decision.cycle} COLLIDED: ` +
+            `${detail} already holds this chain's identity — merged feedback NOT delivered`,
+        );
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(
+          `🚫 Project "${name}" blocked — round ${round}'s fix cycle ${decision.cycle} could not be ` +
+            `created: ${detail} already occupies it, written by an earlier engine. The reviewers'/` +
+            `testers' findings are in their run threads. Re-title or delete that task, then ` +
+            `POST /api/projects/${projectId}/unwedge.`,
+          "project",
+        ).catch(() => {});
+        const refusedOnCollision = await markGroupDone(inputs);
+        if (refusedOnCollision.length > 0) {
+          logGroupNotReleased(projectId, round, "fix/collision", refusedOnCollision);
+        }
+        return;
+      }
+
+      // The chain exists at this point, so a refusal cannot un-create it — but
+      // it MUST stop the round from closing and must not announce a fix cycle
+      // whose premise a message may have just withdrawn. The next tick waits
+      // for the requeued run, re-decides, and — if the verdict is unchanged —
+      // recomputes the same (round, cycle) chain keys, which createFixChain's
+      // guard absorbs as a replay.
+      const refused = await markGroupDone(inputs);
+      if (refused.length > 0) {
+        logGroupNotReleased(projectId, round, `fix cycle ${decision.cycle}`, refused);
+        return;
+      }
+      const dissenters = decision.checkers.map((c) => c.role).join(" + ");
+      const line =
+        `[project-tick] round ${round} verdicts → fix cycle ${decision.cycle} ` +
+        `(builder ${chain.builder.kind} ${chain.builder.id}, ` +
+        `${chain.checkers.map((c) => `re-${c.role} ${c.kind} ${c.id}`).join(", ")})`;
+      if (chainRows.every((o) => o.kind === "created")) {
+        console.log(line);
+      } else {
+        // Not an error: this is the replay guard doing exactly its job.
+        console.log(`${line} — replay absorbed by the chain_key guard, no duplicate chain`);
+      }
+      // E4's fix-cycle push. Sent only for a chain this tick actually created:
+      // announcing a replay would tell Konrad the same fix cycle opened twice,
+      // which is the exact confusion bug 1 produced in the first place.
+      if (chain.builder.kind === "created") {
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(
+          `🔁 ${name} · ${dissenters} want fixes — fix cycle ${decision.cycle} opened at round ` +
+            `${round + 1}.`,
+          "project",
+        ).catch(() => {});
+      }
+      return;
+    }
+  }
+}
+
+/** Mark every gating task of a decided group 'done', each write preconditioned
+ *  on that member still being SETTLED by the same three-term rule the decision
+ *  was computed from (`verdictMemberSettled`): 'done' already, or a `completed`
+ *  run owing no undelivered turn. NOT "its run is still `completed`" — that
+ *  qualifier was R1005 finding 2, and re-adding it to the done branch
+ *  reinstates the wedge it removed.
+ *
+ *  Idempotent by construction — re-marking an already-'done' row is a no-op
+ *  UPDATE independent of what its run has done since (that row was settled by
+ *  BOOKKEEPING, and its run is free to be resumed, stopped or to fail
+ *  afterwards) — which is what makes the crash-replay path above safe to
+ *  re-run.
+ *
+ *  Returns the tasks that REFUSED to move. A non-empty list means a member left
+ *  the settled set while this consolidation was deciding (red-team S4): the
+ *  control plane requeued its run, or the run never left `completed` but now
+ *  carries an undelivered message. Either way the round is not decided after
+ *  all, and the caller must stop rather than close it. See markVerdictTaskDone
+ *  in db/projects.ts for the SQL mirror of the rule, term for term. */
+async function markGroupDone(inputs: VerdictInput[]): Promise<VerdictInput[]> {
+  const refused: VerdictInput[] = [];
+  for (const r of inputs) {
+    if (!(await markVerdictTaskDone(r.taskId))) refused.push(r);
+  }
+  return refused;
+}
+
+/** The log line every mark-done refusal shares. Loud on purpose: the round is
+ *  left mid-decision on purpose, and the next tick's `wait` would otherwise be
+ *  the only trace of a message that changed a verdict. */
+function logGroupNotReleased(
+  projectId: string,
+  round: number,
+  branch: string,
+  refused: VerdictInput[],
+): void {
+  console.warn(
+    `[project-tick] round ${round} verdicts → ${branch} NOT released for project ${projectId}: ` +
+      `${refused.map((r) => `${r.role} "${r.title}"`).join(", ")} is no longer settled ` +
+      `(a message requeued the run, or it is 'completed' still owing an undelivered turn) — ` +
+      `re-consolidating next tick`,
+  );
+}
+
+/** Per-task and per-round progress pushes (E4).
+ *
+ *  Goal-mode projects deliberately do NOT get a ping per task — they can carry
+ *  hundreds, and they already have the time-gated heartbeat in goalHeartbeats().
+ *  Round boundaries are notified for every project: in goal mode a round IS a
+ *  waterfall phase, which is exactly the granularity worth a push. */
+async function notifyTaskProgress(
+  task: ProjectTask,
+  project: Project | null,
+): Promise<void> {
+  const name = project?.name ?? task.project_id;
+  if (project && !isGoalMode(project)) {
     await queueNotification(
-      `🚫 Project "${name}" blocked — ${MAX_FIX_CYCLES} fix cycles exhausted, reviewer still finds issues.`,
+      `✅ ${name} · ${task.role} task "${task.title}" done (round ${task.round}).`,
       "project",
     ).catch(() => {});
-    return;
+  }
+  if (await roundIsComplete(task.project_id, task.round).catch(() => false)) {
+    await queueNotification(
+      `🏁 ${name} · round ${task.round} complete.`,
+      "project",
+    ).catch(() => {});
+  }
+}
+
+/** Konrad's clock, same convention as the reminder and telegram paths. */
+const DISPLAY_TZ = process.env.REMINDER_TZ ?? "Europe/Berlin";
+
+function localLabel(at: Date): string {
+  return at.toLocaleString("de-DE", {
+    timeZone: DISPLAY_TZ,
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+}
+
+/**
+ * Tell Konrad about a usage-wall outage AT MOST ONCE, however many tasks it
+ * felled (R860, requirement 3).
+ *
+ * The window lives in lib/usage-wall.ts; the only thing decided here is what an
+ * unreadable notification history means. It means "announce": the whole point
+ * of the push is that the fleet has gone quiet on its own, and a swallowed
+ * message reproduces the five hours of silence this round exists to end. A
+ * duplicate costs one line on his phone.
+ */
+async function announceUsageWallOutage(
+  sig: { kind: "session" | "weekly" | "unspecified"; resetHint: string | null },
+  plan: { delayMs: number; wakeAtMs: number },
+): Promise<void> {
+  const now = Date.now();
+  const lastAt = await lastNotificationAt(USAGE_WALL_NOTIFICATION_SOURCE).catch((e) => {
+    console.warn(
+      `[project-tick] could not read the last usage-wall push (${
+        e instanceof Error ? e.message : e
+      }) — announcing rather than risking silence`,
+    );
+    return null;
+  });
+  if (!shouldAnnounceOutage(lastAt, now)) return;
+  await queueNotification(
+    outageMessage({
+      kind: sig.kind,
+      resetHint: sig.resetHint,
+      delayMs: plan.delayMs,
+      wakeAtLabel: localLabel(new Date(plan.wakeAtMs)),
+    }),
+    USAGE_WALL_NOTIFICATION_SOURCE,
+  );
+}
+
+/**
+ * R860 — survive the Claude subscription's usage wall without a human.
+ *
+ * Incident 2026-08-05: the 5-hour window filled at ~10:00 Berlin. Eleven runs
+ * across both active projects died with `claude-code exit 1: You've hit your
+ * session limit · resets 1:10pm`, the loop below marked every one of their
+ * tasks `failed` and blocked both projects, and the fleet stayed dead until
+ * Konrad ran /unwedge at ~15:00. Nothing was broken; the engine simply had no
+ * way to tell "this task is wrong" from "the account is full".
+ *
+ * So: classify first, and on the wall's signature park the RUN instead of
+ * killing the TASK. Returns true when the caller must skip its failure path.
+ *
+ * Returning false is always safe — every false lands on the old behaviour
+ * (task failed, project blocked, Konrad told), which is the right destination
+ * for a real failure and an acceptable one for a wall we could not park.
+ *
+ * The four refusals, in order, each for its own reason:
+ *  - not 'failed' — a cancellation is Konrad's decision and a timeout ('stuck')
+ *    has its own resume path; neither is ours to reopen.
+ *  - no run row — nothing to re-queue.
+ *  - not the wall's signature — the overwhelmingly common case: a real failure.
+ *  - project not active — a queued run is invisible to project status (the
+ *    executor's claim loop knows about runs, not projects), so parking one on a
+ *    blocked or paused project would smuggle billable work past the gate that
+ *    bug 2 exists to enforce. Fail it visibly instead.
+ */
+export async function deferForUsageWall(
+  task: SettledRunningTask,
+  project: Project | null,
+): Promise<boolean> {
+  if (task.run_status !== "failed" || !task.run_id) return false;
+  const sig = classifyUsageWall(task.last_error);
+  if (!sig) return false;
+  if (!project || !projectAcceptsWork(project.status)) {
+    console.warn(
+      `[project-tick] task ${task.id} hit the ${sig.kind} usage wall but its project is ` +
+        `${project?.status ?? "unreadable"} — failing it rather than parking work on a ` +
+        `project that is not accepting any`,
+    );
+    return false;
   }
 
-  const nextCycle = task.fix_cycle + 1;
-  await createTask({
-    project_id: task.project_id,
-    round: task.round + 1,
-    role: "builder",
-    title: `Fix cycle ${nextCycle}`,
-    brief: `Reviewer feedback from the previous round:\n\n${lastText}`,
-    fix_cycle: nextCycle,
+  const now = Date.now();
+  const plan = planUsageWallRetry({
+    priorAttempts: task.usage_wall_attempts,
+    nowMs: now,
+    resetAtMs: parseResetAt(sig.resetHint, now),
   });
-  await createTask({
-    project_id: task.project_id,
-    round: task.round + 2,
-    role: "reviewer",
-    title: `Re-review after fix cycle ${nextCycle}`,
-    brief: "Re-check the same concerns raised in the previous review round against the new diff.",
-    fix_cycle: nextCycle,
+  if (plan.action === "give_up") {
+    console.warn(
+      `[project-tick] task ${task.id} (${task.role} · ${task.title}) hit the ${sig.kind} ` +
+        `usage wall again — ${plan.reason}; falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  const wakeAt = new Date(plan.wakeAtMs);
+  const parked = await requeueRunAfterUsageWall({
+    runId: task.run_id,
+    wakeAt,
+    attempt: plan.attempt,
+    note:
+      `[Fleet notice] This run was interrupted by the Claude subscription's ${sig.kind} usage ` +
+      `limit${sig.resetHint ? ` (resets ${sig.resetHint})` : ""}, not by anything you did. It was ` +
+      `parked automatically and resumed at ${localLabel(wakeAt)}. Nothing has changed in the ` +
+      `worktree since. Pick your task up where you left off and finish it.`,
   });
+  if (!parked) {
+    // The row was not 'failed' any more — Konrad cancelled it, or another path
+    // moved it, between listSettledRunningTasks() and here. Do NOT pretend the
+    // park happened: that would leave the task 'running' forever behind a run
+    // that is never coming back.
+    console.warn(
+      `[project-tick] task ${task.id}: run ${task.run_id} was no longer 'failed' when the ` +
+        `usage-wall park went to write — falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  console.warn(
+    `[project-tick] ${sig.kind} usage wall — parked ${task.role} task ${task.id} ` +
+      `(round ${task.round}) for ${formatDelay(plan.delayMs)} until ${localLabel(wakeAt)} ` +
+      `(attempt ${plan.attempt}, basis ${plan.basis}) — task NOT failed, project NOT blocked`,
+  );
+  await announceUsageWallOutage(sig, plan);
+  return true;
 }
 
 async function reconcileSettledTasks(): Promise<void> {
   const settled = await listSettledRunningTasks();
+  /** Gating rounds touched this tick, keyed `${project_id}:${round}` so a
+   *  round is consolidated AT MOST ONCE per tick even when several of its
+   *  verdict tasks settle together. Looping over tasks instead would reintroduce
+   *  bug 1 in miniature: two settled siblings, two consolidations, two fix
+   *  chains (the second one saved only by the chain_key guard — defense in depth
+   *  is not a licence to fire twice). A reviewer and a tester of the same round
+   *  collapse onto the SAME key, which is what makes them one decision. */
+  const verdictRounds = new Map<string, { projectId: string; round: number }>();
+
   for (const task of settled) {
     try {
+      const project = await getProject(task.project_id).catch(() => null);
+      const name = project?.name ?? task.project_id;
       if (task.run_status !== "completed") {
+        // R860: a run killed by the subscription's usage wall is parked behind
+        // runs.wake_after and retried on its own — the task stays 'running' and
+        // the project stays 'active'. Everything else falls through unchanged.
+        if (await deferForUsageWall(task, project)) continue;
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
-        const name = (await getProject(task.project_id).catch(() => null))?.name ?? task.project_id;
+        console.warn(
+          `[project-tick] task ${task.id} (${task.role} · ${task.title}) failed — ` +
+            `run ${task.run_id} ${task.run_status}; project ${task.project_id} blocked`,
+        );
         await queueNotification(
-          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. Check its run.`,
+          `🚫 Project "${name}" blocked — ${task.role} task "${task.title}" ${task.run_status}. ` +
+            `Retry it: POST /api/tasks/${task.id}/retry (or /api/projects/${task.project_id}/unwedge).`,
           "project",
         ).catch(() => {});
         continue;
       }
-      if (task.role === "reviewer") {
-        await reconcileReviewer(task, task.last_text);
+      if (isVerdictRole(task.role)) {
+        // NOT marked done here, and deliberately not logged as done either: a
+        // verdict task's fate belongs to its whole round. consolidateVerdictGroup
+        // may well return `wait` for this group, leaving the task 'running' for
+        // another tick — main's per-task "→ done" line would have claimed
+        // otherwise every time, in the log Konrad reads to follow a project.
+        //
+        // R850: this gate used to read `task.role === "reviewer"`, so a settled
+        // tester fell into the else-branch and was marked 'done' with its
+        // verdict never parsed — a customer-facing NEEDS_FIXES silently became
+        // an approval, which is exactly the failure mode `no_verdict` exists to
+        // prevent for reviewers.
+        console.log(
+          `[project-tick] ${task.role} task ${task.id} (round ${task.round}) settled — ` +
+            `deferring to round consolidation — ${name} · ${task.title}`,
+        );
+        verdictRounds.set(`${task.project_id}:${task.round}`, {
+          projectId: task.project_id,
+          round: task.round,
+        });
       } else {
+        console.log(
+          `[project-tick] reconciled ${task.role} task ${task.id} (round ${task.round}) ` +
+            `→ done — ${name} · ${task.title}`,
+        );
         await setTaskStatus(task.id, "done");
+        await notifyTaskProgress(task, project);
       }
     } catch (e) {
       console.error(
         `[project-tick] failed to reconcile task ${task.id}:`,
         e instanceof Error ? e.message : e,
       );
+    }
+  }
+
+  for (const [key, { projectId, round }] of verdictRounds) {
+    // Per-group isolation: one unreadable round must not abort the reconcile
+    // pass for every other project's rounds. But isolation without escalation
+    // is a silent stall — a permanently failing group (e.g. `column
+    // "chain_key" does not exist` if forge-control is restarted on this branch
+    // before migration 0039 lands) would retry every 10s forever while the
+    // project sits frozen and nobody is told. So: count consecutive failures
+    // and surface the group once it is clearly stuck.
+    try {
+      await consolidateVerdictGroup(projectId, round);
+      clearGroupFailures(groupFailures, key);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const { count, notify } = noteGroupFailure(groupFailures, key, MAX_GROUP_FAILURES);
+      console.error(
+        `[project-tick] failed to consolidate verdict round ${round} of project ${projectId} ` +
+          `(consecutive failure ${count}):`,
+        message,
+      );
+      if (notify) {
+        const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        await queueNotification(
+          `🚫 Project "${name}" — verdict round ${round} has failed to consolidate ` +
+            `${count} times in a row and is frozen: ${message}`,
+          "project",
+        ).catch(() => {});
+      }
     }
   }
 }

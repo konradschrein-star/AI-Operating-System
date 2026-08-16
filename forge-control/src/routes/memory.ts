@@ -10,10 +10,15 @@ import {
   pingMemory,
   knowledgeGraph,
   syncVaultNotes,
+  graphLaneStatus,
   TRIPLE_CATEGORIES,
   type TripleCategory,
   type NoteSource,
 } from "../db/memory.ts";
+import {
+  SCORE_FLOOR,
+  MAX_CHUNKS_PER_NOTE,
+} from "../lib/memory-ranking.ts";
 
 const r = new Hono();
 
@@ -57,6 +62,26 @@ r.get("/search", async (c) => {
   const q = c.req.query("q")?.trim() ?? "";
   if (!q) return c.json({ q, hits: [], message: "query required" }, 400);
   const limit = Math.min(50, Math.max(1, Number(c.req.query("limit") ?? "12")));
+
+  // 2026-08-05 ranking rework (audit §4.C): results are deduped to at most
+  // `max_per_note` chunks per source note, weighted by note type + mtime
+  // recency, and cut at `floor`. A query with nothing above the floor returns
+  // an empty hit list on purpose — fewer results beat confident noise.
+  // ?floor=0 disables the cut for diagnostics ("what was rejected, and why").
+  const floorRaw = c.req.query("floor");
+  const floor =
+    floorRaw !== undefined && floorRaw !== "" && Number.isFinite(Number(floorRaw))
+      ? Math.min(1, Math.max(0, Number(floorRaw)))
+      : undefined;
+  const perNoteRaw = c.req.query("max_per_note");
+  const maxPerNote =
+    perNoteRaw !== undefined && Number.isFinite(Number(perNoteRaw))
+      ? Math.min(10, Math.max(1, Number(perNoteRaw)))
+      : undefined;
+  const ranking = {
+    floor: floor ?? SCORE_FLOOR,
+    max_per_note: maxPerNote ?? MAX_CHUNKS_PER_NOTE,
+  };
   // v1.6 phase 5: ?expand=1 enables GraphRAG expansion on top of vector-only
   // halfvec cosine. Hit shape carries `via` ('vector' | 'graph') so the UI
   // can lane each result.
@@ -89,6 +114,8 @@ r.get("/search", async (c) => {
       graphLimit: Math.max(4, Math.floor(limit / 2)),
       maxHops,
       category,
+      floor,
+      maxPerNote,
     });
     return c.json({
       q,
@@ -97,10 +124,14 @@ r.get("/search", async (c) => {
       expand: true,
       max_hops: maxHops,
       category,
+      ranking,
+      // Why the graph lane did or didn't contribute — otherwise "expand=1
+      // returned only vector hits" is indistinguishable from a bug.
+      graph_lane: await graphLaneStatus(),
     });
   }
-  const hits = await searchMemory(q, limit);
-  return c.json({ q, count: hits.length, hits });
+  const hits = await searchMemory(q, limit, { floor, maxPerNote });
+  return c.json({ q, count: hits.length, hits, ranking });
 });
 
 /* POST /triples/extract-batch?limit=N — walks the next N un-extracted

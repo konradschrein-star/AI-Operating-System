@@ -27,6 +27,7 @@ import {
   archiveAllRuns,
   searchRuns,
   type RunStatus,
+  type ThreadEntry,
 } from "../db/runs.ts";
 import { sanitizeEffort } from "../lib/cc-runner.ts";
 /* phase 300g (U2/U3) — chat↔project linkage. All SQL lives in chat-linkage.ts;
@@ -1120,10 +1121,34 @@ r.post("/archive-all", async (c) => {
   return c.json({ archived });
 });
 
-/* v2.0: live run events. Emits a `snapshot` (full run JSON) immediately
- * and whenever status / thread length / updated_at changes; `ping` keeps
- * proxies from closing the pipe. DB-poll at 1s — the executor streams CC
- * tool events into runs.thread, so this is what makes chat feel alive. */
+/** Fingerprint of the thread prefix we last shipped, used to prove the
+ *  client's copy of entries [0, len) is still valid before we send a
+ *  delta. runs.thread is append-only in practice (executor.ts and
+ *  appendMessage both use `thread = thread || …`), so checking the tail
+ *  entry is enough to catch the pathological case — a rewrite that keeps
+ *  the length identical — without hashing the whole array every second. */
+function prefixKey(thread: ThreadEntry[], len: number): string {
+  if (len <= 0) return "0";
+  const e = thread[len - 1];
+  if (!e) return `${len}:missing`;
+  return `${len}:${e.ts}:${e.role}:${e.kind ?? ""}:${(e.content ?? "").length}`;
+}
+
+/* v2.0: live run events. Emits one `snapshot` (full run JSON) on connect
+ * and `append` deltas — `{from, entries, run}` with the thread stripped
+ * off `run` — thereafter; `ping` keeps proxies from closing the pipe.
+ * DB-poll at 1s.
+ *
+ * Deltas, not snapshots, because the old code re-sent the entire thread on
+ * every executor tool event: a 300-entry run shipped ~300 copies of a
+ * growing array — O(n²) bytes on the wire and a full re-map of the message
+ * list in the client for each one. A delta is one entry.
+ *
+ * Resync contract: if the prefix the client holds can no longer be proven
+ * intact (thread shrank, or the tail entry changed under us) we fall back
+ * to a full `snapshot`. The client's own resync path — reconnect, which
+ * always begins with a snapshot — covers the case where its cache is
+ * behind ours. */
 r.get("/:id/events", (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
@@ -1153,6 +1178,10 @@ r.get("/:id/events", (c) => {
 
     let lastKey = "";
     let lastPing = Date.now();
+    /** -1 until the opening snapshot lands; then the number of thread
+     *  entries the client is known to hold. */
+    let sentLen = -1;
+    let sentPrefix = "";
     while (alive) {
       let run;
       try {
@@ -1174,7 +1203,24 @@ r.get("/:id/events", (c) => {
       if (key !== lastKey) {
         lastKey = key;
         lastPing = Date.now();
-        if (!(await send("snapshot", JSON.stringify({ run })))) break;
+        const thread = run.thread;
+        const canAppend =
+          sentLen >= 0 &&
+          thread.length >= sentLen &&
+          prefixKey(thread, sentLen) === sentPrefix;
+        if (canAppend) {
+          const { thread: _thread, ...meta } = run;
+          const payload = JSON.stringify({
+            from: sentLen,
+            entries: thread.slice(sentLen),
+            run: meta,
+          });
+          if (!(await send("append", payload))) break;
+        } else {
+          if (!(await send("snapshot", JSON.stringify({ run })))) break;
+        }
+        sentLen = thread.length;
+        sentPrefix = prefixKey(thread, sentLen);
       } else if (Date.now() - lastPing > 15_000) {
         lastPing = Date.now();
         if (!(await send("ping", String(Date.now())))) break;
