@@ -22,6 +22,11 @@
 #   FORGE_SESSION_COOKIE="$(cat /tmp/p808-cookie.txt)" \
 #     bash scripts/checks/gates-808.sh --browser     # + network-700 + nav-walk
 #
+#   bash scripts/checks/gates-808.sh --strict         # same run, but exit
+#     nonzero if RED>0 — see the note above the final exit for why this is a
+#     separate flag rather than the default. Composes with --browser in
+#     either order: `--strict --browser` and `--browser --strict` both work.
+#
 # The browser gates need the harness from docs/plan/artifacts/phase800/README
 # §2 (an API on its own port with an ISOLATED SECRET_STORE_DIR, and a web build
 # baked against it). They are skipped, loudly, when it is not up — skipped and
@@ -33,7 +38,13 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO"
 
 BROWSER=0
-[ "${1:-}" = "--browser" ] && BROWSER=1
+STRICT=0
+for arg in "$@"; do
+  case "$arg" in
+    --browser) BROWSER=1 ;;
+    --strict) STRICT=1 ;;
+  esac
+done
 
 n=0
 declare -a NAMES=() CODES=()
@@ -172,4 +183,19 @@ for i in "${!NAMES[@]}"; do
 done
 echo
 echo " RED: $red"
+
+# THIS SCRIPT IS A RECORDER, NOT A GATEKEEPER. It exits 0 even when RED>0, on
+# purpose: an exit code that went nonzero on the first red gate is exactly the
+# failure mode this file was built to avoid (see the header — a red gate must
+# stay visible and must not stop the ones after it, and by the same logic it
+# must not cut short whatever invoked this script either). The RED count above
+# and each gate's own EXIT= line are the truth; read them.
+#
+# Anything that GATES A DECISION — CI, a deploy step, a reviewer's pass/fail —
+# must invoke this script with --strict, which runs every gate exactly as
+# above and then exits nonzero if RED>0. Do not gate on the bare exit code of
+# a non-strict run; it is always 0.
+if [ "$STRICT" = "1" ]; then
+  exit $([ "$red" -eq 0 ] && echo 0 || echo 1)
+fi
 exit 0
