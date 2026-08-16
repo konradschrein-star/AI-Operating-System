@@ -1350,6 +1350,13 @@ export const setProjectStatus = async (
  * The reveal helper is the ONLY call in this file that returns a raw secret
  * value. Every other secrets call — list, store, dismiss — deliberately never
  * touches the value. Keep it that way.
+ *
+ * Request flow (U30): an agent that needs a credential calls
+ * `POST /api/secrets/:name/mark-pending` with its request text as the `note`;
+ * the list below then carries `pending: true` and that note, and the chat
+ * surface answers it with `storeSecret(name, value, undefined, false)` —
+ * `undefined` keeps the agent's note on disk, `false` clears the flag. The
+ * request half of that round trip is metadata only; no value ever comes back.
  * -------------------------------------------------------------------------- */
 export interface SecretMeta {
   name: string;
@@ -1360,8 +1367,22 @@ export interface SecretMeta {
    *  and hasn't been revealed yet. UI floats these to the top of the list
    *  with a distinct badge. Cleared on first reveal (or explicit dismiss). */
   pending: boolean;
+  /** The run that asked for this credential, if it named itself at
+   *  `mark-pending` time (U7, server-validated as a uuid). Advisory lineage
+   *  for the UI — null when the requester didn't identify itself. */
+  requestedByRunId: string | null;
 }
 
+/**
+ * Store a value under `name`.
+ *
+ * `note` omitted leaves whatever note is on disk alone — that is how the chat
+ * surface answers an agent's request without erasing the request text.
+ * `forKonrad` is tri-state on purpose: `undefined` leaves the pending flag as
+ * it is, `false` explicitly CLEARS it (the `!== undefined` guard below is what
+ * makes `false` reach the wire as `"for_konrad": false` rather than vanishing),
+ * `true` raises it. Server side: `lib/secret-store.ts` putSecret().
+ */
 export const storeSecret = async (
   name: string,
   value: string,
