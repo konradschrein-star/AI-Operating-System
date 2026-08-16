@@ -36,6 +36,36 @@ import {
 } from "../api";
 import { statCanvas, subscribeCanvas } from "./canvasLive";
 /**
+ * ROUND 806 PUT THIS IMPORT BACK, ON MEASUREMENT. Round 803 moved it into
+ * `./ExcalidrawEditor` so the 144,615-byte stylesheet would travel in the
+ * editor's async chunk instead of on `/desktop`'s critical path. The bytes did
+ * move — round 806 confirmed render-blocking CSS on /desktop dropping
+ * 163,317 B → 18,702 B. **It bought nothing and it cost a lot.**
+ *
+ *   /desktop first-contentful-paint, canvas never opened
+ *     loopback  412/408 ms  →  412/408 ms   identical to the millisecond
+ *     9 Mbps / 170 ms RTT   568 ms → 568 ms   ZERO, n=6/6
+ *   canvas cold open (click → editor on screen)
+ *     loopback  768.5 ms → 1215.3 ms   **+447 ms**, n=6/6, distributions
+ *               that do not overlap at all (before 753–793, after 1193–1291)
+ *
+ * FCP on this surface is not gated on this stylesheet — it is gated on the JS
+ * bundle and the API round-trips, which take longer than 144 KB does to arrive
+ * even on a throttled link. So the split removed a cost nobody was paying and
+ * added one everybody who draws pays, on every first open.
+ *
+ * The operator's standing rule for this metric, honoured rather than argued
+ * with: "If the CSS split turns out NOT to move (B) measurably, say so plainly
+ * and drop it back down the list — I promoted it on reasoning, and your
+ * measurement outranks my reasoning."
+ *
+ * Evidence: throttled-tradeoff.json, desktop-load-{before,after}-run{1,2}.json,
+ * canvas-open-{before,after}-run{1..4}.json, all in
+ * docs/plan/artifacts/phase800/, written up in canvas-perf.md §8.
+ */
+import "@excalidraw/excalidraw/index.css";
+
+/**
  * The editor bundle, started once per page and shared by both callers.
  *
  * `next/dynamic` only asks for its chunk when `<Excalidraw>` first RENDERS, and
@@ -55,15 +85,14 @@ import { statCanvas, subscribeCanvas } from "./canvasLive";
  * this indirection existed. This does not make a failed chunk load any less
  * recoverable than it was.
  *
- * The import target is `./ExcalidrawEditor` rather than the package itself so
- * that Excalidraw's 144 KB stylesheet travels in this async chunk instead of on
- * `/desktop`'s critical path — see that file for why the boundary has to be
- * there and not around this component.
+ * This half of round 803's change SURVIVED round 806's measurement; the CSS
+ * boundary above it did not. The two were independent and are judged
+ * independently.
  */
-type ExcalidrawEditorModule = typeof import("./ExcalidrawEditor");
-let excalidrawModule: Promise<ExcalidrawEditorModule> | null = null;
-function loadExcalidraw(): Promise<ExcalidrawEditorModule> {
-  excalidrawModule ??= import("./ExcalidrawEditor");
+type ExcalidrawModule = typeof import("@excalidraw/excalidraw");
+let excalidrawModule: Promise<ExcalidrawModule> | null = null;
+function loadExcalidraw(): Promise<ExcalidrawModule> {
+  excalidrawModule ??= import("@excalidraw/excalidraw");
   return excalidrawModule;
 }
 
