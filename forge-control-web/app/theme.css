@@ -114,7 +114,15 @@ html[data-theme="light"] {
   --fg-ok: #2f7a46;
   --fg-bleed: #b23c39;
   --fg-stuck: #8e46a0;
-  --fg-warn: #8a7513;
+  /* Was #8a7513, tuned against pure white where it lands on 4.53:1 — a hair
+     over AA and nothing to spare. Every real use puts it on a TINT, not on
+     white: `warn` on `freezeBgWarn` is the app's standard warning banner
+     (settings, secrets, MobileApp, AutonomySurface, and now CanvasPane) and
+     that pair measured 4.12:1, i.e. below AA. #7f6c11 is the same olive-gold
+     two steps darker: 4.71:1 on freezeBgWarn, 5.18:1 on white, 4.83:1 on the
+     body. Light-only; dark is untouched. Verified by
+     scripts/checks/contrast-canvas-banners.cjs. */
+  --fg-warn: #7f6c11;
   --fg-info: #1f7f93;
   --fg-decide: #6152c8;
 

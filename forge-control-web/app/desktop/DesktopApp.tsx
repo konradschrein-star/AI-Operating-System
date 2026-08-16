@@ -4,7 +4,8 @@ import Link from "next/link";
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { tokens, dot, applyTheme, type ThemeMode } from "../tokens";
+import { tokens, dot, applyTheme } from "../tokens";
+import { useThemeMode } from "../useThemeMode";
 import {
   statusColor,
   tierColor,
@@ -662,19 +663,17 @@ function TopNav({
  *  reachable without digging through settings. Persists to localStorage and is
  *  re-applied before first paint (see app/layout.tsx). */
 function ThemeToggle() {
-  const [mode, setMode] = useState<ThemeMode>("dark");
+  // Reads what the pre-paint script already applied, so the icon matches
+  // reality on mount instead of assuming dark. This used to be a local
+  // useState + one-shot effect; it is now the shared hook so that the toggle
+  // and every value-consumer of the theme (today `<Excalidraw theme>` in
+  // CanvasPane) read the SAME source — the `data-theme` attribute — rather
+  // than two copies that can drift apart.
+  const mode = useThemeMode();
 
-  // Read what the pre-paint script already applied, so the icon matches
-  // reality on mount instead of assuming dark.
-  useEffect(() => {
-    setMode(document.documentElement.dataset.theme === "light" ? "light" : "dark");
-  }, []);
-
-  const flip = () => {
-    const next: ThemeMode = mode === "dark" ? "light" : "dark";
-    setMode(next);
-    applyTheme(next);
-  };
+  // No local state to update: `applyTheme` writes the attribute and the hook's
+  // observer turns that into the re-render, here and in the canvas alike.
+  const flip = () => applyTheme(mode === "dark" ? "light" : "dark");
 
   return (
     <button

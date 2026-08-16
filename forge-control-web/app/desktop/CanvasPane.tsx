@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { tokens } from "../tokens";
+import { useThemeMode } from "../useThemeMode";
 import { VPS_FILE_DRAG_MIME } from "./chat/FileExplorerPanel";
 import {
   listCanvases,
@@ -136,6 +137,12 @@ export function CanvasPane({
   onClose?: () => void;
   showChrome?: boolean;
 }) {
+  // Excalidraw paints its own canvas and never sees `var(--fg-*)`, so unlike
+  // every other colour in this file its theme has to be handed to it as a
+  // value. Read live rather than at mount: the toggle flips the theme on an
+  // open pane and the editor has to follow without remounting.
+  const themeMode = useThemeMode();
+
   // Drop-target feedback: dragOver = a droppable drawing is hovering,
   // dropHint = we rejected something and are explaining why.
   const [dragOver, setDragOver] = useState(false);
@@ -675,8 +682,11 @@ export function CanvasPane({
           style={{
             padding: "8px 12px",
             fontSize: 10.5,
-            color: "#ffd8a8",
-            background: "#5c3a0033",
+            // The warn family, not a literal. `#ffd8a8` on `#5c3a0033` measured
+            // 1.13:1 in light mode — a save conflict announced itself to nobody.
+            color: tokens.warn,
+            background: tokens.freezeBgWarn,
+            borderLeft: `3px solid ${tokens.warn}`,
             borderBottom: `1px solid ${tokens.borderDivider}`,
             display: "flex",
             alignItems: "center",
@@ -729,8 +739,10 @@ export function CanvasPane({
           style={{
             padding: "6px 12px",
             fontSize: 10.5,
-            color: "#ffa8a8",
-            background: "#5c000033",
+            // `#ffa8a8` on `#5c000033` measured 1.12:1 in light mode.
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            borderLeft: `3px solid ${tokens.bleed}`,
             flexShrink: 0,
           }}
         >
@@ -744,8 +756,10 @@ export function CanvasPane({
           style={{
             padding: "6px 12px",
             fontSize: 10.5,
-            color: "#ffd8a8",
-            background: "#5c3a0033",
+            // Same pair, same 1.13:1 — a dead freshness watcher, invisible.
+            color: tokens.warn,
+            background: tokens.freezeBgWarn,
+            borderLeft: `3px solid ${tokens.warn}`,
             flexShrink: 0,
           }}
         >
@@ -779,7 +793,7 @@ export function CanvasPane({
             // load; asserting here is the honest place to bridge the two.
             initialData={initial as never}
             onChange={onChange}
-            theme="dark"
+            theme={themeMode}
           />
         ) : null}
       </div>
