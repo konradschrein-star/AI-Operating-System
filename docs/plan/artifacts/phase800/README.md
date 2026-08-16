@@ -457,7 +457,31 @@ clean artifact-only diff, and the same file already carries round 803's
 uncommitted work (§5.1); a colour fix would tangle the two. It is a six-line
 token swap for a fix round.
 
-### 5.5 Inherited, unchanged
+### 5.5 The canvas editor is pinned to dark — visible in this round's own PNGs
+
+Found while shooting §3.4, and it is the most visible light-mode defect in the
+set. **`CanvasPane.tsx:782` passes `theme="dark"` to `<Excalidraw>` as a
+literal.** The app's theme is never consulted:
+
+```tsx
+<Excalidraw … theme="dark" />
+```
+
+So in light mode the entire drawing surface — canvas, toolbar, panels — stays
+dark while everything around it is light. `phase800-canvas-light.png` shows it:
+a black editor filling the right-hand half of a light console.
+
+**This is not an artifact of how the shots were taken.** The capture switches
+themes through the app's own `document.documentElement.dataset.theme`, and a
+component that read the theme would follow — `DesktopApp.tsx:670` reads exactly
+that attribute. `<Excalidraw>` cannot follow it because it is never given it.
+Excalidraw accepts `theme="light" | "dark"`, so the fix is to derive the prop
+the way `DesktopApp` already derives its own mode.
+
+Pre-existing and outside this phase: introduced by `ba0644b`, the original
+canvas-surface commit. Not fixed here for the same reason as §5.4.
+
+### 5.6 Inherited, unchanged
 
 `DesktopApp.tsx:676`'s `#141417` active-nav background (phase 700 §5(c)) is
 still there and is visible in `phase800-*-light.png` as a black bar in the left
