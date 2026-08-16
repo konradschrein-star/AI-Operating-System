@@ -161,12 +161,36 @@ async function apiPost(pathname, body) {
  *
  * So: the token is dollar-quoted into the statement (it is `LEAKCANARY-` plus
  * hex — no quoting hazard exists) and the statement is written to psql's
- * STDIN, which never appears in `ps`, in argv, or in an exec error. And any
- * failure is re-thrown with the token scrubbed out, so no path from here can
- * print it.
+ * STDIN, which never appears in `ps`, in argv, or in an exec error.
+ *
+ * THE CONNECTION STRING USED TO BE IN ARGV, AND THAT WAS THE SAME BUG WITH A
+ * WORSE PAYLOAD (round 807 finding 3). Every version through round 806 passed
+ * `process.env.DATABASE_URL` — `postgres://postgres:<PASSWORD>@…` — as argv[0]
+ * to `execFileSync`. Node builds a failed-exec `Error` whose `.message` is
+ * `Command failed: psql <every argument, verbatim>`, so ANY psql failure
+ * (server down, role missing, a typo in the SQL, ON_ERROR_STOP firing) printed
+ * the postgres superuser password into this script's stderr, into the agent
+ * transcript that ran it, and from there into `runs.thread` — permanently, in
+ * a database the agent fleet reads. The scrub below covered only the canary,
+ * so it did nothing about it. This is the ironic failure mode for a
+ * credential-leak sentinel and it had already fired on real runs.
+ *
+ * The fix is both halves, because either alone is insufficient:
+ *   1. The password never enters argv. The URL is parsed here and psql gets
+ *      `-h/-p/-U/-d`; the password travels in `PGPASSWORD` on the CHILD's
+ *      environment, which appears in no exec error and no `ps` output (Linux
+ *      exposes /proc/<pid>/environ only to the same uid, unlike the
+ *      world-readable /proc/<pid>/cmdline that argv lands in). DATABASE_URL is
+ *      deleted from the child env too, so a future subprocess of psql cannot
+ *      re-widen the hole.
+ *   2. `scrub()` redacts the password UNCONDITIONALLY — not only when a canary
+ *      was passed. Defence in depth: if some other path ever gets the password
+ *      into a psql diagnostic (a libpq notice, a server-side message echoing
+ *      the conninfo), it still cannot reach the transcript.
  *
  * A fresh token is generated on every run, so a token exposed by an earlier
- * failure can never weaken a later run's assertion.
+ * failure can never weaken a later run's assertion. The PASSWORD gets no such
+ * mercy — it is long-lived, so the only safe number of exposures is zero.
  */
 function psql(sql, redact = null) {
   const url = process.env.DATABASE_URL;
@@ -176,12 +200,41 @@ function psql(sql, redact = null) {
     );
   }
   if (!/^\s*SELECT\b/i.test(sql)) throw new Error(`psql(): SELECT only, refused: ${sql.slice(0, 60)}`);
-  const scrub = (s) => (redact ? String(s).split(redact).join("<canary-redacted>") : String(s));
+
+  /* Parse before anything can throw with the URL in the message: Node's URL
+   * TypeError says only "Invalid URL", but it carries the input on `.input`,
+   * and a careless `${err}` elsewhere would print it. So the failure path here
+   * interpolates NOTHING. */
+  let dsn;
   try {
-    return execFileSync("psql", [url, "-t", "-A", "-F", "|", "-v", "ON_ERROR_STOP=1"], {
-      input: sql,
-      encoding: "utf8",
-    }).trim();
+    dsn = new URL(url);
+  } catch {
+    throw new Error("DATABASE_URL is not a parseable URL (value withheld — it contains the password)");
+  }
+  const password = decodeURIComponent(dsn.password || "");
+  const user = decodeURIComponent(dsn.username || "") || "postgres";
+  const database = decodeURIComponent(dsn.pathname.replace(/^\//, "")) || "content_forge";
+  const host = dsn.hostname || "127.0.0.1";
+  const port = dsn.port || "5432";
+
+  /* Unconditional password redaction, then the canary if one was passed. */
+  const scrub = (s) => {
+    let out = String(s);
+    if (password) out = out.split(password).join("<pgpassword-redacted>");
+    if (redact) out = out.split(redact).join("<canary-redacted>");
+    return out;
+  };
+
+  const childEnv = { ...process.env };
+  delete childEnv.DATABASE_URL;
+  if (password) childEnv.PGPASSWORD = password;
+
+  try {
+    return execFileSync(
+      "psql",
+      ["-h", host, "-p", port, "-U", user, "-d", database, "-t", "-A", "-F", "|", "-v", "ON_ERROR_STOP=1"],
+      { input: sql, encoding: "utf8", env: childEnv },
+    ).trim();
   } catch (err) {
     throw new Error(
       `psql failed: ${scrub(err.message)}\nstderr: ${scrub(err.stderr ?? "")}`,

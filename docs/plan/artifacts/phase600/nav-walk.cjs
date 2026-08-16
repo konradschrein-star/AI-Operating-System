@@ -296,14 +296,66 @@ async function main() {
     await page.locator("[data-nav-back]").click();
     await page.waitForTimeout(1_500);
 
+    /* ── SAMPLING TOLERANCE, AND WHY IT IS DERIVED RATHER THAN PICKED ──────
+     *
+     * ROUND 808, closing round 807 finding 4. As originally written P1/P2
+     * compared two independently sampled 30 s windows with `<=` and no
+     * tolerance, and they failed about one run in three: round 807 measured
+     * 36/38/38, 38/38/38, 38/38/38 over three runs — a single request of
+     * difference, one window apart.
+     *
+     * The cause is the instrument, not the app. For a free-running poll of
+     * period p sampled over a window W, with φ the time to the first firing:
+     *
+     *     count(φ) = floor((W − φ)/p) + 1,  and writing W = k·p + r,
+     *     count = k + 1 with probability r/p, else k.
+     *
+     * So a poll's count is deterministic if and only if p divides W exactly,
+     * and varies by ONE SAMPLE otherwise. Round 807 proposed moving the chat
+     * list off "a divisor of the window" — that is backwards: 10 s is one of
+     * the few phase-STABLE periods and the proposed 11 s varies with
+     * probability 0.73. What actually destabilises it is that react-query
+     * re-arms `refetchInterval` after each fetch SETTLES, so the effective
+     * period is `interval + latency` — a hair above the divisor, the worst
+     * spot on the number line. The 3 s chat-detail poll varies for the same
+     * reason on its own, so NO choice of chat-list period can make a
+     * zero-tolerance comparison of two sampled windows sound.
+     *
+     * Each poll contributes at most one sample to the difference between two
+     * windows, so with N distinct polled paths the windows can differ by up
+     * to N on phase alone. N is read off the at-rest window rather than
+     * hard-coded, so the tolerance tracks the surface instead of rotting.
+     *
+     * `docs/plan/artifacts/phase800/nav-walk-sampling.cjs` derives all of
+     * this, checks the closed form against a Monte-Carlo, and measures the
+     * failure rate of each candidate assertion over 20 000 simulated runs:
+     * as written 21–49 %, with round 807's proposed ±1 still 1–8 %, with ±N
+     * exactly 0 — and ±N is tight, not slack (worst observed excess: 3).
+     *
+     * THE CEILING IS NOT TOUCHED. P3's absolute 40/min bound below is what
+     * actually caps poll load, and it is phase-robust because it is an
+     * absolute limit rather than a comparison of two samples. This change
+     * makes P1/P2 honest about their own resolution; it does not raise any
+     * budget. */
+    const SAMPLE_TOLERANCE = Object.keys(pRest.per_minute).length;
+    note("P sampling tolerance (one sample per distinct polled path, measured at rest)", {
+      distinct_polled_paths: SAMPLE_TOLERANCE,
+      at_rest_requests: pRest.requests,
+      depth_1_requests: pDepth1.requests,
+      depth_2_requests: pDepth2.requests,
+      depth_1_excess: pDepth1.requests - pRest.requests,
+      depth_2_excess: pDepth2.requests - pRest.requests,
+      derivation: "docs/plan/artifacts/phase800/nav-walk-sampling.cjs",
+    });
+
     check(
-      "P1 drilling to depth 1 does not raise the request total",
-      pDepth1.requests <= pRest.requests,
+      "P1 drilling to depth 1 does not raise the request total (within the instrument's own ±N-sample resolution)",
+      pDepth1.requests <= pRest.requests + SAMPLE_TOLERANCE,
       true,
     );
     check(
-      "P2 drilling to depth 2 does not raise it either",
-      pDepth2.requests <= pRest.requests,
+      "P2 drilling to depth 2 does not raise it either (same tolerance)",
+      pDepth2.requests <= pRest.requests + SAMPLE_TOLERANCE,
       true,
     );
     check(
@@ -313,7 +365,19 @@ async function main() {
     );
 
     return {
-      poll_budget: { at_rest: pRest, depth_1: pDepth1, depth_2: pDepth2, phase500_after_budget_per_min: 40 },
+      poll_budget: {
+        at_rest: pRest,
+        depth_1: pDepth1,
+        depth_2: pDepth2,
+        phase500_after_budget_per_min: 40,
+        sample_tolerance: {
+          samples: SAMPLE_TOLERANCE,
+          basis: "one sample per distinct polled path in the at-rest window",
+          derivation: "docs/plan/artifacts/phase800/nav-walk-sampling.cjs",
+          applies_to: ["P1", "P2"],
+          note: "P3's absolute 40/min ceiling takes no tolerance — it is not a comparison of two samples",
+        },
+      },
       base: BASE,
       api: API,
       chat: { text: CHAT_TEXT, id: chatId },

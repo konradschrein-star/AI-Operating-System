@@ -1,0 +1,458 @@
+{
+  "protocol": "round 808 — nav-walk P1/P2 sampling arithmetic",
+  "finding": "round 807 finding 4",
+  "started_at": "2026-08-16T20:08:38.049Z",
+  "finished_at": "2026-08-16T20:08:38.114Z",
+  "model": {
+    "window_ms": 30000,
+    "count_formula": "floor((W - phase) / p) + 1",
+    "p_low_closed_form": "1 - r/p, where W = k*p + r",
+    "polls": [
+      {
+        "name": "chat detail",
+        "nominalMs": 3000
+      },
+      {
+        "name": "team",
+        "nominalMs": 6000
+      },
+      {
+        "name": "chat list (round 802: 8s → 10s)",
+        "nominalMs": 10000
+      },
+      {
+        "name": "plan kanban",
+        "nominalMs": 30000
+      }
+    ],
+    "note": "react-query re-arms refetchInterval after the fetch settles, so the effective period is interval + latency"
+  },
+  "seed": 808,
+  "monte_carlo_runs": 20000,
+  "period_table": [
+    {
+      "period_ms": 3000,
+      "divides_30s": true,
+      "possible_counts_per_window": [
+        10
+      ],
+      "p_extra_sample_closed_form": 0,
+      "p_extra_sample_monte_carlo": 0,
+      "phase_stable": true
+    },
+    {
+      "period_ms": 6000,
+      "divides_30s": true,
+      "possible_counts_per_window": [
+        5
+      ],
+      "p_extra_sample_closed_form": 0,
+      "p_extra_sample_monte_carlo": 0,
+      "phase_stable": true
+    },
+    {
+      "period_ms": 8000,
+      "divides_30s": false,
+      "possible_counts_per_window": [
+        3,
+        4
+      ],
+      "p_extra_sample_closed_form": 0.75,
+      "p_extra_sample_monte_carlo": 0.7493,
+      "phase_stable": false
+    },
+    {
+      "period_ms": 9000,
+      "divides_30s": false,
+      "possible_counts_per_window": [
+        3,
+        4
+      ],
+      "p_extra_sample_closed_form": 0.3333,
+      "p_extra_sample_monte_carlo": 0.3333,
+      "phase_stable": false
+    },
+    {
+      "period_ms": 10000,
+      "divides_30s": true,
+      "possible_counts_per_window": [
+        3
+      ],
+      "p_extra_sample_closed_form": 0,
+      "p_extra_sample_monte_carlo": 0,
+      "phase_stable": true
+    },
+    {
+      "period_ms": 11000,
+      "divides_30s": false,
+      "possible_counts_per_window": [
+        2,
+        3
+      ],
+      "p_extra_sample_closed_form": 0.7273,
+      "p_extra_sample_monte_carlo": 0.7272,
+      "phase_stable": false
+    },
+    {
+      "period_ms": 12000,
+      "divides_30s": false,
+      "possible_counts_per_window": [
+        2,
+        3
+      ],
+      "p_extra_sample_closed_form": 0.5,
+      "p_extra_sample_monte_carlo": 0.4994,
+      "phase_stable": false
+    },
+    {
+      "period_ms": 15000,
+      "divides_30s": true,
+      "possible_counts_per_window": [
+        2
+      ],
+      "p_extra_sample_closed_form": 0,
+      "p_extra_sample_monte_carlo": 0,
+      "phase_stable": true
+    }
+  ],
+  "assertion_failure_rates": {
+    "latency_50ms": {
+      "p1_p2_as_written_fail_rate": 0.2102,
+      "p1_p2_tolerance_1_fail_rate": 0.0097,
+      "p1_p2_tolerance_4_fail_rate": 0,
+      "p3_ceiling_fail_rate": 0,
+      "max_observed_excess_samples": 3,
+      "most_common_per_minute_triples": [
+        "38/38/38 ×42.3%",
+        "38/36/38 ×16.6%",
+        "38/38/36 ×16.3%",
+        "36/38/38 ×16.2%"
+      ]
+    },
+    "latency_150ms": {
+      "p1_p2_as_written_fail_rate": 0.4885,
+      "p1_p2_tolerance_1_fail_rate": 0.0759,
+      "p1_p2_tolerance_4_fail_rate": 0,
+      "p3_ceiling_fail_rate": 0,
+      "max_observed_excess_samples": 3,
+      "most_common_per_minute_triples": [
+        "38/36/38 ×25.7%",
+        "36/38/36 ×24.3%",
+        "38/36/36 ×7.1%",
+        "36/36/38 ×7.0%"
+      ]
+    },
+    "latency_300ms": {
+      "p1_p2_as_written_fail_rate": 0.3643,
+      "p1_p2_tolerance_1_fail_rate": 0.0652,
+      "p1_p2_tolerance_4_fail_rate": 0,
+      "p3_ceiling_fail_rate": 0,
+      "max_observed_excess_samples": 3,
+      "most_common_per_minute_triples": [
+        "36/36/36 ×20.3%",
+        "34/36/36 ×15.6%",
+        "36/36/34 ×15.2%",
+        "36/34/36 ×15.2%"
+      ]
+    }
+  },
+  "conclusion": "Exact divisors of the sampling window are the phase-STABLE periods; every non-divisor varies by one sample. The review's proposed 11 s would be worse than the current 10 s. Latency makes every nominal divisor slightly non-divisor, and the 3 s chat-detail poll varies on its own regardless, so no choice of chat-list period can make a zero-tolerance `<=` between two independently sampled windows sound. The correct fix is the review's second option: let P1/P2 tolerate one sample. P3's absolute 40/min ceiling stays exactly as strict as it was.",
+  "checks": 11,
+  "failures": 0,
+  "results": [
+    {
+      "name": "A period 3000 ms",
+      "note": {
+        "period_ms": 3000,
+        "divides_30s": true,
+        "possible_counts_per_window": [
+          10
+        ],
+        "p_extra_sample_closed_form": 0,
+        "p_extra_sample_monte_carlo": 0,
+        "phase_stable": true
+      }
+    },
+    {
+      "name": "A period 6000 ms",
+      "note": {
+        "period_ms": 6000,
+        "divides_30s": true,
+        "possible_counts_per_window": [
+          5
+        ],
+        "p_extra_sample_closed_form": 0,
+        "p_extra_sample_monte_carlo": 0,
+        "phase_stable": true
+      }
+    },
+    {
+      "name": "A period 8000 ms",
+      "note": {
+        "period_ms": 8000,
+        "divides_30s": false,
+        "possible_counts_per_window": [
+          3,
+          4
+        ],
+        "p_extra_sample_closed_form": 0.75,
+        "p_extra_sample_monte_carlo": 0.7493,
+        "phase_stable": false
+      }
+    },
+    {
+      "name": "A period 9000 ms",
+      "note": {
+        "period_ms": 9000,
+        "divides_30s": false,
+        "possible_counts_per_window": [
+          3,
+          4
+        ],
+        "p_extra_sample_closed_form": 0.3333,
+        "p_extra_sample_monte_carlo": 0.3333,
+        "phase_stable": false
+      }
+    },
+    {
+      "name": "A period 10000 ms",
+      "note": {
+        "period_ms": 10000,
+        "divides_30s": true,
+        "possible_counts_per_window": [
+          3
+        ],
+        "p_extra_sample_closed_form": 0,
+        "p_extra_sample_monte_carlo": 0,
+        "phase_stable": true
+      }
+    },
+    {
+      "name": "A period 11000 ms",
+      "note": {
+        "period_ms": 11000,
+        "divides_30s": false,
+        "possible_counts_per_window": [
+          2,
+          3
+        ],
+        "p_extra_sample_closed_form": 0.7273,
+        "p_extra_sample_monte_carlo": 0.7272,
+        "phase_stable": false
+      }
+    },
+    {
+      "name": "A period 12000 ms",
+      "note": {
+        "period_ms": 12000,
+        "divides_30s": false,
+        "possible_counts_per_window": [
+          2,
+          3
+        ],
+        "p_extra_sample_closed_form": 0.5,
+        "p_extra_sample_monte_carlo": 0.4994,
+        "phase_stable": false
+      }
+    },
+    {
+      "name": "A period 15000 ms",
+      "note": {
+        "period_ms": 15000,
+        "divides_30s": true,
+        "possible_counts_per_window": [
+          2
+        ],
+        "p_extra_sample_closed_form": 0,
+        "p_extra_sample_monte_carlo": 0,
+        "phase_stable": true
+      }
+    },
+    {
+      "name": "A1 the closed form P(extra sample) = r/p agrees with the Monte-Carlo everywhere (±0.01)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A2 EXACT DIVISORS of the 30 s window are the phase-STABLE periods (one possible count)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A3 every NON-divisor varies by one sample with phase — the review's proposed 11 s included",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A4 the review's direction is backwards: 11 s varies where the current 10 s does not",
+      "ok": true,
+      "actual": [
+        true,
+        true
+      ],
+      "expected": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "B chat list 10 s + 0 ms latency",
+      "note": {
+        "effective_period_ms": 10000,
+        "possible_counts_per_window": [
+          3
+        ],
+        "p_extra_sample": 0
+      }
+    },
+    {
+      "name": "B chat list 10 s + 50 ms latency",
+      "note": {
+        "effective_period_ms": 10050,
+        "possible_counts_per_window": [
+          2,
+          3
+        ],
+        "p_extra_sample": 0.9851
+      }
+    },
+    {
+      "name": "B chat list 10 s + 150 ms latency",
+      "note": {
+        "effective_period_ms": 10150,
+        "possible_counts_per_window": [
+          2,
+          3
+        ],
+        "p_extra_sample": 0.9557
+      }
+    },
+    {
+      "name": "B chat list 10 s + 300 ms latency",
+      "note": {
+        "effective_period_ms": 10300,
+        "possible_counts_per_window": [
+          2,
+          3
+        ],
+        "p_extra_sample": 0.9126
+      }
+    },
+    {
+      "name": "B1 a nominal divisor becomes phase-unstable the moment latency is non-zero",
+      "ok": true,
+      "actual": [
+        true,
+        true
+      ],
+      "expected": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "B2 the 3 s chat-detail poll ALONE varies by one sample — so no chat-list period can fix P1",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B2 evidence — 3 s + 150 ms lands this many per window",
+      "note": [
+        9,
+        10
+      ]
+    },
+    {
+      "name": "C latency 50 ms",
+      "note": {
+        "p1_p2_as_written_fail_rate": 0.2102,
+        "p1_p2_tolerance_1_fail_rate": 0.0097,
+        "p1_p2_tolerance_4_fail_rate": 0,
+        "p3_ceiling_fail_rate": 0,
+        "max_observed_excess_samples": 3,
+        "most_common_per_minute_triples": [
+          "38/38/38 ×42.3%",
+          "38/36/38 ×16.6%",
+          "38/38/36 ×16.3%",
+          "36/38/38 ×16.2%"
+        ]
+      }
+    },
+    {
+      "name": "C latency 150 ms",
+      "note": {
+        "p1_p2_as_written_fail_rate": 0.4885,
+        "p1_p2_tolerance_1_fail_rate": 0.0759,
+        "p1_p2_tolerance_4_fail_rate": 0,
+        "p3_ceiling_fail_rate": 0,
+        "max_observed_excess_samples": 3,
+        "most_common_per_minute_triples": [
+          "38/36/38 ×25.7%",
+          "36/38/36 ×24.3%",
+          "38/36/36 ×7.1%",
+          "36/36/38 ×7.0%"
+        ]
+      }
+    },
+    {
+      "name": "C latency 300 ms",
+      "note": {
+        "p1_p2_as_written_fail_rate": 0.3643,
+        "p1_p2_tolerance_1_fail_rate": 0.0652,
+        "p1_p2_tolerance_4_fail_rate": 0,
+        "p3_ceiling_fail_rate": 0,
+        "max_observed_excess_samples": 3,
+        "most_common_per_minute_triples": [
+          "36/36/36 ×20.3%",
+          "34/36/36 ×15.6%",
+          "36/36/34 ×15.2%",
+          "36/34/36 ×15.2%"
+        ]
+      }
+    },
+    {
+      "name": "C1 P1/P2 as written flake at a rate consistent with round 807's 1-run-in-3",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "C2 the review's proposed ±1 tolerance is NOT enough — four independent polls can drift further",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "C3 a tolerance of N = 4 (one sample per distinct polled path) never flakes in 20000 simulated runs",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "C4 and N is TIGHT, not slack: the worst observed excess is 3 samples, i.e. ≤ N",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "C5 P3's absolute 40/min ceiling is unaffected — it never fires either way",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "C summary",
+      "note": {
+        "p1_p2_as_written_worst_case": 0.4885,
+        "p1_p2_tolerance_1_worst_case": 0.0759,
+        "p1_p2_tolerance_4_worst_case": 0,
+        "max_observed_excess_samples": 3,
+        "p3_worst_case": 0
+      }
+    }
+  ]
+}

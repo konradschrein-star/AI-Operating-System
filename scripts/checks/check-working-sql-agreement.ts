@@ -60,6 +60,49 @@ if (!DATABASE_URL) {
   process.exit(2);
 }
 
+/**
+ * THE CONNECTION STRING NEVER GOES INTO ARGV (round 807 finding 3).
+ *
+ * This script used to pass DATABASE_URL — `postgres://postgres:<PASSWORD>@…` —
+ * as psql's first argument. Node's failed-exec `Error.message` is
+ * `Command failed: <argv verbatim>`, and the catch below prints it, so any psql
+ * failure wrote the postgres superuser password to stderr and from there into
+ * the transcript of whatever agent ran the check — i.e. into `runs.thread`,
+ * permanently. The identical defect in `phase800/secret-sentinel.cjs` is what
+ * round 807 caught; this is the same bug in the same repo, fixed the same way.
+ *
+ * argv is world-readable via /proc/<pid>/cmdline; a child's environment is not
+ * (/proc/<pid>/environ is uid-restricted). So the password travels in
+ * PGPASSWORD, the address travels in -h/-p/-U/-d, and `scrub()` strips the
+ * password from every diagnostic unconditionally as a second line of defence.
+ */
+const PG = ((): { args: readonly string[]; env: NodeJS.ProcessEnv; scrub: (s: string) => string } => {
+  let dsn: URL;
+  try {
+    dsn = new URL(DATABASE_URL);
+  } catch {
+    // Interpolate NOTHING: the URL TypeError carries the raw value on `.input`.
+    console.error(
+      "check-working-sql-agreement: DATABASE_URL is not a parseable URL (value withheld — it contains the password).",
+    );
+    process.exit(2);
+  }
+  const password = decodeURIComponent(dsn.password || "");
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.DATABASE_URL;
+  if (password) env.PGPASSWORD = password;
+  return {
+    args: [
+      "-h", dsn.hostname || "127.0.0.1",
+      "-p", dsn.port || "5432",
+      "-U", decodeURIComponent(dsn.username || "") || "postgres",
+      "-d", decodeURIComponent(dsn.pathname.replace(/^\//, "")) || "content_forge",
+    ],
+    env,
+    scrub: (s: string) => (password ? s.split(password).join("<pgpassword-redacted>") : s),
+  };
+})();
+
 /** This project — the fleet the round-303 artifact tabulated. */
 const PROJECT_ID = "8ea0cc08-28d9-4301-9f28-c98e1c5d6838";
 /** Real chats worth including: long, human-paced threads full of over-cap gaps,
@@ -83,14 +126,15 @@ const TAG = "$wsql$";
 function psqlJson<T>(sql: string): T {
   let raw: string;
   try {
-    raw = execFileSync("psql", [DATABASE_URL as string, "-tA", "-c", sql], {
+    raw = execFileSync("psql", [...PG.args, "-tA", "-c", sql], {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
+      env: PG.env,
     });
   } catch (e: unknown) {
     const err = e as { stderr?: string; message?: string };
     throw new Error(
-      `psql failed: ${err.stderr?.trim() || err.message}\n--- query ---\n${sql}`,
+      PG.scrub(`psql failed: ${err.stderr?.trim() || err.message}\n--- query ---\n${sql}`),
     );
   }
   const text = raw.trim();

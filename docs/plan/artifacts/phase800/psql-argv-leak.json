@@ -1,0 +1,192 @@
+{
+  "protocol": "round 808 — psql argv credential leak, before/after",
+  "finding": "round 807 finding 3",
+  "started_at": "2026-08-16T20:04:56.156Z",
+  "finished_at": "2026-08-16T20:04:56.212Z",
+  "synthetic_password": {
+    "note": "generated per run by crypto.randomBytes; authenticates nothing; the real DATABASE_URL is never read by this script",
+    "prefix": "P808-SYNTHETIC-",
+    "length": 39,
+    "sha256": "92cf7915e68bcc701a0550680b859b3780171e8274b0e4b0e0d2d6940fe1ae39"
+  },
+  "dsn_shape": "postgres://p808probe:‹synthetic›@127.0.0.1:59997/p808_nosuchdb",
+  "files_guarded": [
+    "docs/plan/artifacts/phase800/secret-sentinel.cjs",
+    "scripts/checks/check-working-sql-agreement.ts"
+  ],
+  "checks": 23,
+  "failures": 0,
+  "results": [
+    {
+      "name": "A1 the round-806 form fails (non-vacuous: the leak is measured on a real error)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A2 the round-806 form LEAKS the password into its own error",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A2 evidence — the leaked substring, password masked",
+      "note": "psql failed: Command failed: psql postgres://p808probe:‹PASSWORD-WAS-HERE›@127.0.0.1:59997/p808_nosuchdb -t -A -F | -v ON_ERROR_STOP=1\npsql: error: connection to server at \"127.0.0.1\", port 59997 failed: Connection refus"
+    },
+    {
+      "name": "A3 the round-808 form fails the same way (non-vacuous: it is not passing by succeeding)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A4 the round-808 form does NOT leak the password anywhere in its error",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "A4 evidence — the full error text the new form produces",
+      "note": "psql failed: Command failed: psql -h 127.0.0.1 -p 59997 -U p808probe -d p808_nosuchdb -t -A -F | -v ON_ERROR_STOP=1\npsql: error: connection to server at \"127.0.0.1\", port 59997 failed: Connection refused\n\tIs the server r"
+    },
+    {
+      "name": "A5 both forms reached libpq and were refused — the same failure, not an earlier one",
+      "ok": true,
+      "actual": [
+        true,
+        true
+      ],
+      "expected": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "A6 no argv element contains the password",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "A7 no argv element contains a connection URL at all",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "A7 evidence — the exact argv psql now receives",
+      "note": [
+        "-h",
+        "127.0.0.1",
+        "-p",
+        "59997",
+        "-U",
+        "p808probe",
+        "-d",
+        "p808_nosuchdb",
+        "-t",
+        "-A",
+        "-F",
+        "|",
+        "-v",
+        "ON_ERROR_STOP=1"
+      ]
+    },
+    {
+      "name": "A8 the password travels on the child env as PGPASSWORD",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "A9 DATABASE_URL is deleted from the child env",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "A10 scrub() redacts the password with redact=null (unconditional, not canary-gated)",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "A10b scrub() leaves the redaction marker so a reader knows something was removed",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B1 secret-sentinel.cjs: no connection URL passed as an execFileSync argument",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "B2 secret-sentinel.cjs: psql is addressed with -h/-p/-U/-d flags",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B3 secret-sentinel.cjs: the password is handed over as PGPASSWORD",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B4 secret-sentinel.cjs: DATABASE_URL is removed from the child environment",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B5 secret-sentinel.cjs: an env is actually passed to the child",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B6 secret-sentinel.cjs: password redaction is not gated on a canary",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B1 check-working-sql-agreement.ts: no connection URL passed as an execFileSync argument",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "B2 check-working-sql-agreement.ts: psql is addressed with -h/-p/-U/-d flags",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B3 check-working-sql-agreement.ts: the password is handed over as PGPASSWORD",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B4 check-working-sql-agreement.ts: DATABASE_URL is removed from the child environment",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B5 check-working-sql-agreement.ts: an env is actually passed to the child",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "B6 check-working-sql-agreement.ts: password redaction is not gated on a canary",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    }
+  ]
+}
