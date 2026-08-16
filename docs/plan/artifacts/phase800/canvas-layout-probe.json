@@ -1,0 +1,1781 @@
+{
+  "protocol": "canvas-layout-probe.cjs",
+  "requirement": "U31 cause #1 — mechanism behind the layout passes on Excalidraw mount",
+  "base_url": "http://127.0.0.1:7831",
+  "generated_at": "2026-08-16T20:01:55.254Z",
+  "interval": {
+    "click_to_excalidraw_paint_ms": 2170.4,
+    "note": "categories invalidationTracking + stack are ON — these ms are INFLATED by instrumentation and are not the round's numbers. Attribution only."
+  },
+  "layout": {
+    "count": 13,
+    "total_self_ms": 214.7,
+    "forced_by_js_count": 3,
+    "scheduled_count": 10,
+    "top_forcing_frames": [
+      {
+        "frame": "computeBox (:2765)",
+        "count": 1,
+        "ms_self": 89.27
+      },
+      {
+        "frame": "X (2033-b2febb8fa4a6cfd7.js:3)",
+        "count": 1,
+        "ms_self": 16.01
+      },
+      {
+        "frame": "aR (964a6e64.e133deccbfc7f328.js:1)",
+        "count": 1,
+        "ms_self": 5.24
+      }
+    ],
+    "passes": [
+      {
+        "n": 1,
+        "ms_total": 16.01,
+        "ms_self": 16.01,
+        "ms_after_click": 17.76,
+        "dirty_objects": 31,
+        "total_objects": 8099,
+        "partial_layout": false,
+        "forced_by_stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ],
+        "ran_inside": [
+          "EventDispatch",
+          "FunctionCall"
+        ]
+      },
+      {
+        "n": 2,
+        "ms_total": 0.9,
+        "ms_self": 0.9,
+        "ms_after_click": 125.89,
+        "dirty_objects": 14,
+        "total_objects": 8102,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": []
+      },
+      {
+        "n": 3,
+        "ms_total": 0.04,
+        "ms_self": 0.04,
+        "ms_after_click": 238.84,
+        "dirty_objects": 3,
+        "total_objects": 3,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": [
+          "EvaluateScript"
+        ]
+      },
+      {
+        "n": 4,
+        "ms_total": 0.04,
+        "ms_self": 0.04,
+        "ms_after_click": 239.82,
+        "dirty_objects": 4,
+        "total_objects": 4,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": [
+          "EvaluateScript"
+        ]
+      },
+      {
+        "n": 5,
+        "ms_total": 0.03,
+        "ms_self": 0.03,
+        "ms_after_click": 240.76,
+        "dirty_objects": 5,
+        "total_objects": 5,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": [
+          "EvaluateScript"
+        ]
+      },
+      {
+        "n": 6,
+        "ms_total": 0.02,
+        "ms_self": 0.02,
+        "ms_after_click": 241.63,
+        "dirty_objects": 5,
+        "total_objects": 5,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": [
+          "EvaluateScript"
+        ]
+      },
+      {
+        "n": 7,
+        "ms_total": 2.41,
+        "ms_self": 2.41,
+        "ms_after_click": 254.19,
+        "dirty_objects": 21,
+        "total_objects": 8106,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": []
+      },
+      {
+        "n": 8,
+        "ms_total": 0.69,
+        "ms_self": 0.69,
+        "ms_after_click": 1559.25,
+        "dirty_objects": 2,
+        "total_objects": 8106,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": []
+      },
+      {
+        "n": 9,
+        "ms_total": 0.83,
+        "ms_self": 0.83,
+        "ms_after_click": 1576.3,
+        "dirty_objects": 36,
+        "total_objects": 8106,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": []
+      },
+      {
+        "n": 10,
+        "ms_total": 5.24,
+        "ms_self": 5.24,
+        "ms_after_click": 1657.96,
+        "dirty_objects": 209,
+        "total_objects": 8297,
+        "partial_layout": false,
+        "forced_by_stack": [
+          {
+            "fn": "aR",
+            "url": "964a6e64.e133deccbfc7f328.js",
+            "line": 1
+          },
+          {
+            "fn": "addEventListeners",
+            "url": "91fe18bf.b868f42d76d92326.js",
+            "line": 105
+          },
+          {
+            "fn": "componentDidMount",
+            "url": "91fe18bf.b868f42d76d92326.js",
+            "line": 105
+          },
+          {
+            "fn": "oq",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oq",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oq",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ],
+        "ran_inside": [
+          "FunctionCall"
+        ]
+      },
+      {
+        "n": 11,
+        "ms_total": 99.19,
+        "ms_self": 99.19,
+        "ms_after_click": 1862.02,
+        "dirty_objects": 8258,
+        "total_objects": 8258,
+        "partial_layout": false,
+        "forced_by_stack": null,
+        "ran_inside": []
+      },
+      {
+        "n": 12,
+        "ms_total": 0.03,
+        "ms_self": 0.03,
+        "ms_after_click": 1978.9,
+        "dirty_objects": 1,
+        "total_objects": 1,
+        "partial_layout": true,
+        "forced_by_stack": null,
+        "ran_inside": []
+      },
+      {
+        "n": 13,
+        "ms_total": 89.27,
+        "ms_self": 89.27,
+        "ms_after_click": 2062.94,
+        "dirty_objects": 8248,
+        "total_objects": 8256,
+        "partial_layout": false,
+        "forced_by_stack": [
+          {
+            "fn": "computeBox",
+            "url": "",
+            "line": 2765
+          },
+          {
+            "fn": "isElementVisible",
+            "url": "",
+            "line": 2769
+          },
+          {
+            "fn": "eval",
+            "url": "",
+            "line": 6
+          },
+          {
+            "fn": "evaluate",
+            "url": "",
+            "line": 304
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "",
+            "line": 1
+          }
+        ],
+        "ran_inside": []
+      }
+    ]
+  },
+  "invalidation": {
+    "count": 21794,
+    "by_reason": {
+      "ScheduleStyleInvalidationTracking": 4,
+      "StyleInvalidatorInvalidationTracking · Invalidation set invalidates self": 6,
+      "StyleRecalcInvalidationTracking · Related style rule": 7,
+      "StyleRecalcInvalidationTracking · Inline CSS style declaration was mutated": 10,
+      "LayoutInvalidationTracking · Text changed": 8,
+      "InvalidateLayout": 20,
+      "StyleRecalcInvalidationTracking · Node was inserted into tree": 19,
+      "LayoutInvalidationTracking · Style changed": 3,
+      "LayoutInvalidationTracking · Added to layout": 397,
+      "StyleRecalcInvalidationTracking · Animation": 108,
+      "ScheduleStyleRecalculation": 21,
+      "LayoutInvalidationTracking · Removed from layout": 202,
+      "StyleRecalcInvalidationTracking · PseudoClass": 4624,
+      "StyleRecalcInvalidationTracking · Attribute": 8,
+      "StyleRecalcInvalidationTracking · Control": 2,
+      "LayoutInvalidationTracking · Size changed": 1,
+      "StyleInvalidatorInvalidationTracking · Invalidation set invalidates subtree": 1,
+      "LayoutInvalidationTracking · Fonts changed": 16353
+    },
+    "sample": [
+      {
+        "name": "ScheduleStyleInvalidationTracking",
+        "ms_after_click": 8.05,
+        "reason": null,
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "e6",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "u3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oR",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleInvalidatorInvalidationTracking",
+        "ms_after_click": 8.42,
+        "reason": "Invalidation set invalidates self",
+        "node": "BUTTON class='mono'",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 8.43,
+        "reason": "Related style rule",
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "e6",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "u3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oR",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 8.76,
+        "reason": "Inline CSS style declaration was mutated",
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "np",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "nm",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "u3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oR",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 9.08,
+        "reason": "Inline CSS style declaration was mutated",
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "np",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "nm",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "u3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oR",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 9.38,
+        "reason": "Inline CSS style declaration was mutated",
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "np",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "nm",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "u3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oR",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 9.76,
+        "reason": "Text changed",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "InvalidateLayout",
+        "ms_after_click": 10.15,
+        "reason": null,
+        "node": null,
+        "stack": [
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 10.63,
+        "reason": "Inline CSS style declaration was mutated",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "np",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "nm",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "u3",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oR",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 10.93,
+        "reason": "Node was inserted into tree",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "oV",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oV",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oV",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o4",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 11.25,
+        "reason": "Node was inserted into tree",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "oV",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "oV",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o4",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o0",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          },
+          {
+            "fn": "o2",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 12.61,
+        "reason": "Style changed",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 13.16,
+        "reason": "Added to layout",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 13.43,
+        "reason": "Added to layout",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 13.69,
+        "reason": "Added to layout",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 13.98,
+        "reason": "Added to layout",
+        "node": "SPAN class='mono'",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 14.22,
+        "reason": "Added to layout",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 14.47,
+        "reason": "Added to layout",
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 14.71,
+        "reason": "Added to layout",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 14.96,
+        "reason": "Added to layout",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 15.23,
+        "reason": "Added to layout",
+        "node": "SPAN class='mono'",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 15.47,
+        "reason": "Added to layout",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 15.7,
+        "reason": "Added to layout",
+        "node": "SPAN",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 15.93,
+        "reason": "Added to layout",
+        "node": "A class='mono'",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 16.2,
+        "reason": "Added to layout",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 16.42,
+        "reason": "Added to layout",
+        "node": "BUTTON class='mono'",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 16.68,
+        "reason": "Added to layout",
+        "node": "#text",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 17,
+        "reason": "Added to layout",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "LayoutInvalidationTracking",
+        "ms_after_click": 17.34,
+        "reason": "Added to layout",
+        "node": "DIV",
+        "stack": [
+          {
+            "fn": "X",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "r",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "t",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 3
+          },
+          {
+            "fn": "i",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "(anonymous)",
+            "url": "2033-b2febb8fa4a6cfd7.js",
+            "line": 6
+          },
+          {
+            "fn": "oO",
+            "url": "cc7e2a30-5cf5df770345b87f.js",
+            "line": 1
+          }
+        ]
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.37,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "ScheduleStyleRecalculation",
+        "ms_after_click": 75.38,
+        "reason": null,
+        "node": null,
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.38,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.39,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.39,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.39,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.4,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.4,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.41,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.41,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      },
+      {
+        "name": "StyleRecalcInvalidationTracking",
+        "ms_after_click": 75.41,
+        "reason": "Animation",
+        "node": "SPAN",
+        "stack": null
+      }
+    ]
+  },
+  "trace_events": 48270,
+  "results": [
+    {
+      "name": "fixture",
+      "note": {
+        "chat": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        "base": "http://127.0.0.1:7831",
+        "drawing": "Excalidraw/AI OS - Canvas Smoke Test.excalidraw.md"
+      }
+    },
+    {
+      "name": "the probe captured the open (click→excalidraw paint)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "at least one Layout was recorded in the interval",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "stack attribution is available (otherwise this probe proved nothing and the mechanism stays open)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    }
+  ]
+}

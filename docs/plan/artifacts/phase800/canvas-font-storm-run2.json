@@ -1,0 +1,979 @@
+{
+  "protocol": "canvas-font-storm.cjs",
+  "requirement": "U31 cause #1 — the mechanism behind the layout storm on Excalidraw mount",
+  "base_url": "http://127.0.0.1:7831",
+  "build_dir": null,
+  "generated_at": "2026-08-16T20:19:59.322Z",
+  "note": "milliseconds here are INFLATED by invalidationTracking+stack. Ratios between legs are the finding; absolute cost belongs to canvas-open.cjs.",
+  "legs": {
+    "fonts_before_cold": {
+      "size": 45,
+      "status": "loaded",
+      "layout_nodes": 4716
+    },
+    "cold": {
+      "window_ms": 4000,
+      "excdom_ms_after_click": 2081.47,
+      "excpaint_ms_after_click": null,
+      "layout_passes": 12,
+      "layout_self_ms": 129.75,
+      "layout_self_before_paint_ms": null,
+      "document_wide_passes_before_paint": null,
+      "document_wide_passes": 1,
+      "document_wide_self_ms": 100.64,
+      "incremental_self_ms": 29.11,
+      "layout_objects": 8455,
+      "fonts_changed_invalidations": 11138,
+      "invalidations_total": 16623,
+      "invalidation_by_reason": {
+        "ScheduleStyleInvalidationTracking": 4,
+        "StyleInvalidatorInvalidationTracking · Invalidation set invalidates self": 6,
+        "StyleRecalcInvalidationTracking · Related style rule": 7,
+        "StyleRecalcInvalidationTracking · Inline CSS style declaration was mutated": 10,
+        "StyleRecalcInvalidationTracking · Node was inserted into tree": 19,
+        "LayoutInvalidationTracking · Style changed": 2,
+        "InvalidateLayout": 18,
+        "LayoutInvalidationTracking · Added to layout": 397,
+        "StyleRecalcInvalidationTracking · Animation": 72,
+        "ScheduleStyleRecalculation": 21,
+        "LayoutInvalidationTracking · Text changed": 6,
+        "LayoutInvalidationTracking · Removed from layout": 202,
+        "StyleRecalcInvalidationTracking · PseudoClass": 4709,
+        "StyleRecalcInvalidationTracking · Attribute": 8,
+        "StyleRecalcInvalidationTracking · Control": 2,
+        "LayoutInvalidationTracking · Size changed": 1,
+        "StyleInvalidatorInvalidationTracking · Invalidation set invalidates subtree": 1,
+        "LayoutInvalidationTracking · Fonts changed": 11138
+      },
+      "font_requests": 3,
+      "font_requests_sample": [
+        {
+          "ms_after_t0": 1877.77,
+          "url": "Assistant-Regular.7acbabb8.woff2"
+        },
+        {
+          "ms_after_t0": 1878.64,
+          "url": "Assistant-Bold.c8f39f24.woff2"
+        },
+        {
+          "ms_after_t0": 1926.12,
+          "url": "Assistant-Medium.1e75d8e6.woff2"
+        }
+      ],
+      "passes": [
+        {
+          "n": 1,
+          "ms_self": 19.48,
+          "ms_after_t0": 21.43,
+          "dirty_objects": 26,
+          "total_objects": 8257,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EventDispatch",
+            "FunctionCall"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 2,
+          "ms_self": 0.05,
+          "ms_after_t0": 249.25,
+          "dirty_objects": 3,
+          "total_objects": 3,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 3,
+          "ms_self": 0.04,
+          "ms_after_t0": 250.26,
+          "dirty_objects": 4,
+          "total_objects": 4,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 4,
+          "ms_self": 0.04,
+          "ms_after_t0": 251.28,
+          "dirty_objects": 5,
+          "total_objects": 5,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 5,
+          "ms_self": 0.02,
+          "ms_after_t0": 252.11,
+          "dirty_objects": 5,
+          "total_objects": 5,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 6,
+          "ms_self": 1.26,
+          "ms_after_t0": 259.12,
+          "dirty_objects": 17,
+          "total_objects": 8260,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 7,
+          "ms_self": 2.47,
+          "ms_after_t0": 559.47,
+          "dirty_objects": 18,
+          "total_objects": 8264,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 8,
+          "ms_self": 0.48,
+          "ms_after_t0": 1840.66,
+          "dirty_objects": 2,
+          "total_objects": 8264,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 9,
+          "ms_self": 0.48,
+          "ms_after_t0": 1850.47,
+          "dirty_objects": 32,
+          "total_objects": 8264,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 10,
+          "ms_self": 4.76,
+          "ms_after_t0": 1928.51,
+          "dirty_objects": 209,
+          "total_objects": 8455,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "FunctionCall"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 11,
+          "ms_self": 100.64,
+          "ms_after_t0": 2109.11,
+          "dirty_objects": 8416,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": true
+        },
+        {
+          "n": 12,
+          "ms_self": 0.03,
+          "ms_after_t0": 2233.88,
+          "dirty_objects": 1,
+          "total_objects": 1,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        }
+      ]
+    },
+    "fonts_after_cold": {
+      "size": 275,
+      "status": "loaded",
+      "layout_nodes": 4910
+    },
+    "warm": {
+      "window_ms": 4000,
+      "excdom_ms_after_click": 1505.35,
+      "excpaint_ms_after_click": 1555.46,
+      "layout_passes": 11,
+      "layout_self_ms": 24.13,
+      "layout_self_before_paint_ms": 19.75,
+      "document_wide_passes_before_paint": 0,
+      "document_wide_passes": 0,
+      "document_wide_self_ms": 0,
+      "incremental_self_ms": 24.13,
+      "layout_objects": 8455,
+      "fonts_changed_invalidations": 0,
+      "invalidations_total": 6689,
+      "invalidation_by_reason": {
+        "ScheduleStyleInvalidationTracking": 3,
+        "StyleInvalidatorInvalidationTracking · Invalidation set invalidates self": 4,
+        "StyleRecalcInvalidationTracking · Related style rule": 5,
+        "StyleRecalcInvalidationTracking · Inline CSS style declaration was mutated": 10,
+        "StyleRecalcInvalidationTracking · Node was inserted into tree": 10,
+        "LayoutInvalidationTracking · Style changed": 1,
+        "InvalidateLayout": 15,
+        "LayoutInvalidationTracking · Added to layout": 375,
+        "StyleRecalcInvalidationTracking · Animation": 1184,
+        "ScheduleStyleRecalculation": 152,
+        "StyleRecalcInvalidationTracking · PseudoClass": 4705,
+        "StyleRecalcInvalidationTracking · Attribute": 8,
+        "StyleRecalcInvalidationTracking · Control": 2,
+        "LayoutInvalidationTracking · Removed from layout": 199,
+        "LayoutInvalidationTracking · Size changed": 1,
+        "StyleInvalidatorInvalidationTracking · Invalidation set invalidates subtree": 1,
+        "LayoutInvalidationTracking · Text changed": 14
+      },
+      "font_requests": 0,
+      "font_requests_sample": [],
+      "passes": [
+        {
+          "n": 1,
+          "ms_self": 15.02,
+          "ms_after_t0": 16.01,
+          "dirty_objects": 26,
+          "total_objects": 8257,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EventDispatch",
+            "FunctionCall"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 2,
+          "ms_self": 0.57,
+          "ms_after_t0": 1297.18,
+          "dirty_objects": 18,
+          "total_objects": 8264,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 3,
+          "ms_self": 1.88,
+          "ms_after_t0": 1363.25,
+          "dirty_objects": 209,
+          "total_objects": 8455,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "FunctionCall"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 4,
+          "ms_self": 1.19,
+          "ms_after_t0": 1506.19,
+          "dirty_objects": 167,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 5,
+          "ms_self": 0.01,
+          "ms_after_t0": 1509.01,
+          "dirty_objects": 1,
+          "total_objects": 1,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 6,
+          "ms_self": 1.08,
+          "ms_after_t0": 1553.17,
+          "dirty_objects": 32,
+          "total_objects": 8414,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 7,
+          "ms_self": 0.82,
+          "ms_after_t0": 1619.01,
+          "dirty_objects": 15,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 8,
+          "ms_self": 0.85,
+          "ms_after_t0": 2776.12,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 9,
+          "ms_self": 0.9,
+          "ms_after_t0": 2789.99,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 10,
+          "ms_self": 0.96,
+          "ms_after_t0": 3409.01,
+          "dirty_objects": 32,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 11,
+          "ms_self": 0.85,
+          "ms_after_t0": 3993.72,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        }
+      ]
+    },
+    "fonts_after_warm": {
+      "size": 275,
+      "status": "loaded",
+      "layout_nodes": 4910
+    },
+    "standalone": {
+      "window_ms": 4000,
+      "excdom_ms_after_click": 812.3,
+      "excpaint_ms_after_click": 902.18,
+      "layout_passes": 15,
+      "layout_self_ms": 36.48,
+      "layout_self_before_paint_ms": 34.15,
+      "document_wide_passes_before_paint": 2,
+      "document_wide_passes": 3,
+      "document_wide_self_ms": 17.3,
+      "incremental_self_ms": 19.18,
+      "layout_objects": 241,
+      "fonts_changed_invalidations": 465,
+      "invalidations_total": 889,
+      "invalidation_by_reason": {
+        "StyleRecalcInvalidationTracking · Node was inserted into tree": 20,
+        "ScheduleStyleRecalculation": 19,
+        "LayoutInvalidationTracking · Added to layout": 277,
+        "StyleRecalcInvalidationTracking · Style rule change": 1,
+        "InvalidateLayout": 24,
+        "LayoutInvalidationTracking · Scrollbar changed": 1,
+        "LayoutInvalidationTracking · Removed from layout": 13,
+        "LayoutInvalidationTracking · Text changed": 2,
+        "LayoutInvalidationTracking · Fonts changed": 465,
+        "LayoutInvalidationTracking · Style changed": 3,
+        "ScheduleStyleInvalidationTracking": 2,
+        "StyleInvalidatorInvalidationTracking · Invalidation set invalidates self": 4,
+        "StyleRecalcInvalidationTracking · Related style rule": 9,
+        "StyleRecalcInvalidationTracking · PseudoClass": 27,
+        "StyleRecalcInvalidationTracking · Attribute": 8,
+        "StyleRecalcInvalidationTracking · Inline CSS style declaration was mutated": 6,
+        "LayoutInvalidationTracking · Size changed": 1,
+        "StyleInvalidatorInvalidationTracking · Element has pending invalidation list": 1,
+        "StyleInvalidatorInvalidationTracking · Invalidation set matched class": 3,
+        "StyleInvalidatorInvalidationTracking · Invalidation set matched tagName": 2,
+        "LayoutInvalidationTracking · SVG resource invalidated": 1
+      },
+      "font_requests": 5,
+      "font_requests_sample": [
+        {
+          "ms_after_t0": 232.62,
+          "url": "tDbv2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKwBNntkaToggR7BYRbKPxDcwg.woff2"
+        },
+        {
+          "ms_after_t0": 672.1,
+          "url": "UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7.woff2"
+        },
+        {
+          "ms_after_t0": 723.17,
+          "url": "Assistant-Regular.7acbabb8.woff2"
+        },
+        {
+          "ms_after_t0": 723.77,
+          "url": "Assistant-Bold.c8f39f24.woff2"
+        },
+        {
+          "ms_after_t0": 760.78,
+          "url": "Assistant-Medium.1e75d8e6.woff2"
+        }
+      ],
+      "passes": [
+        {
+          "n": 1,
+          "ms_self": 6.43,
+          "ms_after_t0": 232.88,
+          "dirty_objects": 6,
+          "total_objects": 6,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 2,
+          "ms_self": 3.4,
+          "ms_after_t0": 331.51,
+          "dirty_objects": 19,
+          "total_objects": 19,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 3,
+          "ms_self": 0.04,
+          "ms_after_t0": 461.68,
+          "dirty_objects": 3,
+          "total_objects": 3,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 4,
+          "ms_self": 0.02,
+          "ms_after_t0": 462.43,
+          "dirty_objects": 4,
+          "total_objects": 4,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 5,
+          "ms_self": 0.02,
+          "ms_after_t0": 463.09,
+          "dirty_objects": 5,
+          "total_objects": 5,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 6,
+          "ms_self": 0.01,
+          "ms_after_t0": 463.7,
+          "dirty_objects": 5,
+          "total_objects": 5,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 7,
+          "ms_self": 0.21,
+          "ms_after_t0": 464.58,
+          "dirty_objects": 12,
+          "total_objects": 22,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 8,
+          "ms_self": 0.9,
+          "ms_after_t0": 548.91,
+          "dirty_objects": 19,
+          "total_objects": 22,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 9,
+          "ms_self": 7.57,
+          "ms_after_t0": 672.2,
+          "dirty_objects": 13,
+          "total_objects": 26,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 10,
+          "ms_self": 0.05,
+          "ms_after_t0": 698.26,
+          "dirty_objects": 2,
+          "total_objects": 26,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 11,
+          "ms_self": 14.3,
+          "ms_after_t0": 762.65,
+          "dirty_objects": 204,
+          "total_objects": 217,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "FunctionCall"
+          ],
+          "document_wide": true
+        },
+        {
+          "n": 12,
+          "ms_self": 1.2,
+          "ms_after_t0": 826.48,
+          "dirty_objects": 239,
+          "total_objects": 239,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": true
+        },
+        {
+          "n": 13,
+          "ms_self": 1.8,
+          "ms_after_t0": 902.22,
+          "dirty_objects": 239,
+          "total_objects": 239,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": true
+        },
+        {
+          "n": 14,
+          "ms_self": 0.28,
+          "ms_after_t0": 2115.32,
+          "dirty_objects": 8,
+          "total_objects": 241,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 15,
+          "ms_self": 0.25,
+          "ms_after_t0": 3331.12,
+          "dirty_objects": 8,
+          "total_objects": 241,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        }
+      ]
+    },
+    "fonts_after_standalone": {
+      "size": 275,
+      "status": "loaded",
+      "layout_nodes": 248
+    },
+    "cold_lowfi": {
+      "window_ms": 4000,
+      "excdom_ms_after_click": 524.66,
+      "excpaint_ms_after_click": 778.71,
+      "layout_passes": 18,
+      "layout_self_ms": 217.25,
+      "layout_self_before_paint_ms": 210.32,
+      "document_wide_passes_before_paint": 2,
+      "document_wide_passes": 2,
+      "document_wide_self_ms": 185.48,
+      "incremental_self_ms": 31.77,
+      "layout_objects": 8455,
+      "fonts_changed_invalidations": 0,
+      "invalidations_total": 236,
+      "invalidation_by_reason": {
+        "InvalidateLayout": 24,
+        "ScheduleStyleRecalculation": 212
+      },
+      "font_requests": 3,
+      "font_requests_sample": [
+        {
+          "ms_after_t0": 504.43,
+          "url": "Assistant-Regular.7acbabb8.woff2"
+        },
+        {
+          "ms_after_t0": 504.74,
+          "url": "Assistant-Bold.c8f39f24.woff2"
+        },
+        {
+          "ms_after_t0": 505.13,
+          "url": "Assistant-Medium.1e75d8e6.woff2"
+        }
+      ],
+      "passes": [
+        {
+          "n": 1,
+          "ms_self": 17.54,
+          "ms_after_t0": 9.35,
+          "dirty_objects": 33,
+          "total_objects": 8257,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EventDispatch",
+            "FunctionCall"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 2,
+          "ms_self": 0.04,
+          "ms_after_t0": 207.03,
+          "dirty_objects": 3,
+          "total_objects": 3,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 3,
+          "ms_self": 0.02,
+          "ms_after_t0": 207.81,
+          "dirty_objects": 4,
+          "total_objects": 4,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 4,
+          "ms_self": 0.02,
+          "ms_after_t0": 208.43,
+          "dirty_objects": 5,
+          "total_objects": 5,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 5,
+          "ms_self": 0.02,
+          "ms_after_t0": 209,
+          "dirty_objects": 5,
+          "total_objects": 5,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "EvaluateScript"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 6,
+          "ms_self": 0.95,
+          "ms_after_t0": 210,
+          "dirty_objects": 17,
+          "total_objects": 8260,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 7,
+          "ms_self": 2.15,
+          "ms_after_t0": 467.47,
+          "dirty_objects": 18,
+          "total_objects": 8264,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 8,
+          "ms_self": 4.07,
+          "ms_after_t0": 505.36,
+          "dirty_objects": 209,
+          "total_objects": 8455,
+          "forced_by_stack": null,
+          "ran_inside": [
+            "FunctionCall"
+          ],
+          "document_wide": false
+        },
+        {
+          "n": 9,
+          "ms_self": 93.8,
+          "ms_after_t0": 538.94,
+          "dirty_objects": 8416,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": true
+        },
+        {
+          "n": 10,
+          "ms_self": 0.03,
+          "ms_after_t0": 650.63,
+          "dirty_objects": 1,
+          "total_objects": 1,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 11,
+          "ms_self": 91.68,
+          "ms_after_t0": 670.77,
+          "dirty_objects": 8406,
+          "total_objects": 8414,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": true
+        },
+        {
+          "n": 12,
+          "ms_self": 1.14,
+          "ms_after_t0": 790.47,
+          "dirty_objects": 32,
+          "total_objects": 8414,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 13,
+          "ms_self": 0.86,
+          "ms_after_t0": 1877.28,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 14,
+          "ms_self": 1.07,
+          "ms_after_t0": 1893.59,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 15,
+          "ms_self": 1.08,
+          "ms_after_t0": 2760.25,
+          "dirty_objects": 32,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 16,
+          "ms_self": 0.84,
+          "ms_after_t0": 3096.72,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 17,
+          "ms_self": 0.98,
+          "ms_after_t0": 3110.19,
+          "dirty_objects": 13,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        },
+        {
+          "n": 18,
+          "ms_self": 0.96,
+          "ms_after_t0": 3760.2,
+          "dirty_objects": 32,
+          "total_objects": 8416,
+          "forced_by_stack": null,
+          "ran_inside": [],
+          "document_wide": false
+        }
+      ]
+    }
+  },
+  "results": [
+    {
+      "name": "fixture",
+      "note": {
+        "chat": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+        "base": "http://127.0.0.1:7831",
+        "drawing": "Excalidraw/AI OS - Canvas Smoke Test.excalidraw.md"
+      }
+    },
+    {
+      "name": "L1 cold  /desktop",
+      "note": {
+        "layout_objects": 8455,
+        "passes": 12,
+        "document_wide_passes": 1,
+        "layout_self_ms": 129.75,
+        "document_wide_self_ms": 100.64,
+        "fonts_changed": 11138,
+        "excdom_ms": 2081.47,
+        "excpaint_ms": null,
+        "layout_self_before_paint_ms": null
+      }
+    },
+    {
+      "name": "L2 warm  /desktop (2nd open, same page)",
+      "note": {
+        "layout_objects": 8455,
+        "passes": 11,
+        "document_wide_passes": 0,
+        "layout_self_ms": 24.13,
+        "document_wide_self_ms": 0,
+        "fonts_changed": 0,
+        "excdom_ms": 1505.35,
+        "excpaint_ms": 1555.46,
+        "layout_self_before_paint_ms": 19.75
+      }
+    },
+    {
+      "name": "L3 cold  /canvas standalone",
+      "note": {
+        "layout_objects": 241,
+        "passes": 15,
+        "document_wide_passes": 3,
+        "layout_self_ms": 36.48,
+        "document_wide_self_ms": 17.3,
+        "fonts_changed": 465,
+        "excdom_ms": 812.3,
+        "excpaint_ms": 902.18,
+        "layout_self_before_paint_ms": 34.15
+      }
+    },
+    {
+      "name": "L4 cold  /desktop, invalidation tracking OFF",
+      "note": {
+        "layout_objects": 8455,
+        "passes": 18,
+        "document_wide_passes": 2,
+        "layout_self_ms": 217.25,
+        "document_wide_self_ms": 185.48,
+        "fonts_changed": 0,
+        "excdom_ms": 524.66,
+        "excpaint_ms": 778.71,
+        "layout_self_before_paint_ms": 210.32
+      }
+    },
+    {
+      "name": "document.fonts.size",
+      "note": {
+        "before_cold": 45,
+        "after_cold": 275,
+        "after_warm": 275,
+        "standalone_after": 275
+      }
+    },
+    {
+      "name": "DOM elements on the page",
+      "note": {
+        "desktop_before_canvas": 4716,
+        "desktop_after_canvas": 4910,
+        "standalone": 248
+      }
+    },
+    {
+      "name": "the cold open adds >100 font faces to document.fonts",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "'Fonts changed' is the largest LAYOUT invalidation reason on the cold open",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "cold open contains at least one DOCUMENT-WIDE layout pass",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "document-wide passes are the majority of cold layout self time",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "warm re-open on the same page emits no 'Fonts changed' invalidations",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "warm re-open has NO document-wide layout pass",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "warm re-open costs a fraction of the cold open's layout time",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "L4 storm vs paint",
+      "note": {
+        "excpaint_ms": 778.71,
+        "layout_self_ms_total": 217.25,
+        "layout_self_ms_before_paint": 210.32,
+        "document_wide_passes_total": 2,
+        "document_wide_passes_before_paint": 2
+      }
+    },
+    {
+      "name": "L4 reproduces the document-wide sweep with invalidation tracking off (so it is not an artifact of the instrument)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the standalone route's document is far smaller than /desktop's",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "…and it registers the same fonts (so the difference is size, not path)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "…and its cold font sweep costs proportionally less layout time",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    }
+  ]
+}

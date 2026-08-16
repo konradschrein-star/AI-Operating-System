@@ -602,3 +602,387 @@ The instrument is *designed* to be non-destructive — it writes to
 happened afterwards, in the copy-into-the-repo step, which has no such guard.
 Worth a `--write`-style refusal on the copy path before the next round trips
 over it.
+
+---
+
+# 9. Round 808 — the mechanism. It is a font sweep over *our* document.
+
+Rounds 801, 803 and 806 all arrived at the same wall: `Layout` is the largest
+single line item on the canvas open, it survives every form of caching, and
+nobody knew why. Round 801 said so honestly ("strong for the cost,
+circumstantial for the mechanism"). Round 803 wrote `canvas-layout-probe.cjs`
+to close that gap and never ran it. Round 806 removed a real serialisation,
+won real time on a real network, and left the gate red **for this reason
+alone**.
+
+This round ran the probe. The answer was in the first trace, and four
+independent runs of a second, purpose-built protocol confirm it.
+
+**The storm is two whole-document relayouts, triggered by Excalidraw adding
+230 font faces to `document.fonts` on mount, priced by the 8,416 layout
+objects that `/desktop` already carries before the canvas is opened.**
+
+Neither half is sufficient on its own, and the evidence for that is a pair of
+controls rather than an argument.
+
+| | |
+|---|---|
+| tree | `7b961b5` — committed HEAD, `git archive`d to `/tmp/phase808-canvas` |
+| served on | `http://127.0.0.1:7831` — isolated `next build` + `next start`, `FORGE_CONTROL_URL=http://127.0.0.1:7798` |
+| API | worktree harness `scripts/checks/serve-v3-7798.ts` on `:7798`. `forge-control/src/index.ts` was never booted; forge-executor was never touched |
+| viewport | 1440×900 |
+| protocols | `canvas-layout-probe.cjs` (round 803's, run at last) and `canvas-font-storm.cjs` (new, this round) |
+| runs attached | `canvas-layout-probe.json`; `canvas-font-storm-run{1,2,3,4}.json` |
+| checks | 11/11 PASS in **all four** runs of `canvas-font-storm.cjs` |
+| application code changed | **none.** This is a diagnosis round and `git diff` touches only `docs/plan/artifacts/phase800/` |
+
+---
+
+## 9.1 What `canvas-layout-probe.cjs` said the moment it was run
+
+Round 803's file works. Its invalidation histogram for one cold open on
+`/desktop` is not ambiguous:
+
+```
+  16353  LayoutInvalidationTracking · Fonts changed          ← 75 % of everything
+   4624  StyleRecalcInvalidationTracking · PseudoClass
+    397  LayoutInvalidationTracking · Added to layout
+    202  LayoutInvalidationTracking · Removed from layout
+    108  StyleRecalcInvalidationTracking · Animation
+     …   (21,794 records in total)
+```
+
+and two of its thirteen `Layout` events are the entire document at once:
+
+```
+   n=11    99.19 ms    dirty 8258 / 8258 objects
+   n=13    89.27 ms    dirty 8248 / 8256 objects
+```
+
+The other eleven passes together cost **26 ms**. So "ten or eleven layout
+passes" was always a slightly misleading frame. It is **two document-wide
+sweeps plus a dozen cheap incremental ones**, and the two sweeps are ~90 % of
+the cost.
+
+### The trigger, read out of Excalidraw's own bundle
+
+`@excalidraw/excalidraw` **0.18.1**, `dist/prod/chunk-K2UTITRG.js`:
+
+```js
+static async loadFontFaces(t, n) {
+  for (let { fontFaces: a, metadata: s } of ne.registered.values())
+    if (!s.local)
+      for (let { fontFace: d } of a)
+        window.document.fonts.has(d) || window.document.fonts.add(d);
+  …
+}
+```
+
+Every registered family, unconditionally, on mount. Measured on the page:
+`document.fonts.size` goes **45 → 275** — **230 font faces added** — for the
+fixture drawing, which is 531 bytes and has **zero elements**. Mutating the
+*document's* `FontFaceSet` invalidates the document's font selector, and Blink
+answers by marking every layout object in the document dirty, emitting one
+`Fonts changed` record each. 11,000 of them per open, over 8,416 objects.
+
+---
+
+## 9.2 The two controls
+
+`canvas-font-storm.cjs` runs four legs. Two of them exist only to be capable of
+falsifying the claim above.
+
+| leg | what it is | why |
+|---|---|---|
+| **L1 cold** | `/desktop`, first CANVAS click of the page, invalidation tracking **on** | the real case, and the only leg that can name the invalidation reason |
+| **L2 warm** | close, click again **on the same page** | same component, same bundle, same 8,455-object document — the *only* difference is that `document.fonts` is already populated, so `has()` short-circuits every `add()` |
+| **L3 standalone** | a fresh load of `/canvas?path=…`, which mounts the **same** `CanvasPane` | same editor, same cold font registration, into a **241-object** document instead of 8,416 |
+| **L4 cold-lowfi** | L1 again with invalidation tracking **off** | see §9.5 — the high-fidelity trace overflows its own buffer, and this is the leg that can honestly say where the paint mark falls |
+
+Medians of n=4, min–max in brackets. Milliseconds from this protocol are
+inflated by instrumentation and are **attribution, not cost**; `canvas-open.cjs`
+remains the instrument for cost. What compares honestly is leg against leg,
+all four measured under identical conditions.
+
+| | L1 cold | L2 warm | L4 cold-lowfi | L3 standalone |
+|---|---|---|---|---|
+| layout objects in the document | 8455 | 8455 | 8455 | **241** |
+| DOM elements | 4716 → 4910 | 4910 | — | **248** |
+| `Layout` passes | 11.5 [10–12] | 10.5 [10–13] | 17.5 [17–19] | 15.5 [15–16] |
+| **document-wide passes** | 1 [1–1] † | **0 [0–0]** | **2 [2–2]** | 3 [3–3] |
+| document-wide self time | 97.1 ms [92.2–104.7] | **0 ms** | **191.1 ms [185.5–206.2]** | **16.3 ms [13.3–17.3]** |
+| all layout self time | 124.5 ms [119.1–172.1] | **26.6 ms [24.1–33.0]** | 224.9 ms [217.3–242.9] | 36.7 ms [29.7–41.5] |
+| `Fonts changed` records | **11140 [10974–11149]** | **0 [0–0]** | n/a (category off) | **465 [465–465]** |
+| woff2 requests | 3 | **0** | 3 | 5 |
+| `document.fonts.size` after | 275 | 275 | — | 275 |
+
+† L1 under-reports at 1 — see §9.5. L4 is the trustworthy count.
+
+### Control A — the warm re-open kills it outright
+
+Second open, same page, editor fully unmounted and remounted in between:
+**zero `Fonts changed` records, zero document-wide passes, 24–33 ms of layout
+against the cold open's 217–243 ms.** Same component, same document, same
+8,455 layout objects, same code path. The only thing that changed is that
+`document.fonts` already holds those 230 faces.
+
+If the storm were intrinsic to mounting Excalidraw — its own DOM, its own
+canvas sizing, its own measurement — it would be here. It is not. **4/4 runs.**
+
+### Control B — the same fonts over a small document cost nothing
+
+`/canvas` mounts the identical `CanvasPane` and registers the identical 230
+faces (`document.fonts.size` → 275 there too, and 465 `Fonts changed` records
+in **all four runs**). The two whole-document sweeps are visible in every run
+and individually named:
+
+```
+  /canvas   (241 objects)          /desktop (8416 objects)
+  1.02–1.34 ms  dirty 239/239      93.5–104.6 ms  dirty 8416/8416
+  1.80–2.52 ms  dirty 239/239      91.7–101.6 ms  dirty 8406/8414
+```
+
+**The same two sweeps. 35× the document. ~50× the cost.** That is the
+multiplier, and it is entirely ours.
+
+---
+
+## 9.3 The whole 225 ms, attributed
+
+L4, cold `/desktop`, production-fidelity trace, n=4. Every line below is a
+measured trace event, not an allocation:
+
+| what | cost | whose | avoidable? |
+|---|---|---|---|
+| **2 × document-wide font sweep** over 8,416 layout objects | **185–206 ms** | trigger Excalidraw's, multiplier ours | only by removing one of the two factors — see §9.6 |
+| forced **synchronous** layout in a layout effect as the chat column narrows | **17.1–23.0 ms** | ours (§9.4) | in principle; not cheaply |
+| the editor's own subtree entering layout (`dirty 204/217`) | 10.4–14.3 ms | Excalidraw's, irreducible | no |
+| everything else, twelve-odd incremental passes | ~5–15 ms | mixed | not worth chasing |
+
+And the answer to the question U31 actually asks — **is this inside the gate's
+own interval?**
+
+```
+  L4, click → the frame that shows the editor:
+      excpaint            778.7 / 790.4 / 863.3 / 940.8 ms
+      layout self time    217.3 / 223.0 / 242.9 / 224.9 ms  ← total in a 4 s window
+      …of it before paint 210.3 / 216.9 / 234.7 / 218.9 ms
+      document-wide passes before paint    2 / 2 / 2 / 2
+```
+
+**Both sweeps land before the frame that shows the editor, in 4 runs out of 4.**
+U31's gate sees all of it. This is round 801's 149–160 ms and round 806's
+~192 ms, now with a name.
+
+---
+
+## 9.4 The one forced synchronous layout that is genuinely ours
+
+Present in **every** leg, cold and warm, ~9–26 ms after the click, inside
+`EventDispatch → FunctionCall` with a JS stack attached — the signature of code
+reading geometry and Blink having to lay out to answer:
+
+```
+  17.1–23.0 ms   dirty 26–33 / 8257   @ 9–13 ms after the click
+      X   ← i ← r ← t          2033-b2febb8fa4a6cfd7.js:3
+      i   ← (anonymous) ×2     2033-b2febb8fa4a6cfd7.js:6
+      oO                       cc7e2a30-…js:1        (React commit)
+```
+
+Chunk `2033` is **`@assistant-ui/react` 0.14.24** — the transcript. It contains
+no `getBoundingClientRect`, but ten `scrollHeight` reads, four `offsetHeight`
+and three `getComputedStyle`, in its thread-viewport "stick to bottom" logic
+(`ThreadPrimitive.ViewportFooter`, `es(e) = parseFloat(getComputedStyle(e).marginTop) + e.offsetHeight`).
+Opening the canvas narrows the chat column; the viewport re-measures
+synchronously inside React's commit.
+
+It is **~18 ms on every toggle, in both directions**, and unlike the font
+sweep it is not amortised by anything. It is also not a two-line fix: the read
+is inside a dependency's layout effect. Recorded here so the next round knows
+it is 18 ms and not 190, and does not go after it first.
+
+**Answering the brief's question directly: our own wrapper is NOT the problem.**
+`ResizableSplit.tsx` reads geometry in exactly one place —
+`getBoundingClientRect()` inside `onPointerDown`, at grab time, once per drag
+(`useResizablePanel`, `unit === "fraction"`). Nothing in the split, the flex
+sizing, or the `next/dynamic` boundary measures during mount. The trace shows
+no forced layout attributable to any of them.
+
+---
+
+## 9.5 Three ways this measurement lies to you, and what was done about each
+
+Every one of these was hit during this round, and each would have produced a
+confident wrong answer.
+
+**1. The instrument was in its own trace.** `canvas-layout-probe.cjs`'s single
+largest "forced by JS" frame is `computeBox (…:2765) — 89.27 ms`, which is
+**Playwright's own injected `isElementVisible`**, called by that file's
+`page.waitForSelector('.excalidraw')`. The work is real — those 8,248 objects
+were already dirty from the font invalidation and Blink would have laid them
+out in the next frame regardless — but the *attribution* is an artifact.
+`canvas-font-storm.cjs` therefore waits by polling the page's own
+`performance.mark` list through `page.evaluate`, which reads no geometry, and
+never calls a locator wait inside a traced interval. Anyone reading
+`canvas-layout-probe.json`'s `top_forcing_frames` should discount that row.
+
+**2. The trace buffer overflows, silently.** With
+`…timeline.invalidationTracking` **and** `…timeline.stack` both on, a cold
+`/desktop` open emits >16,000 records carrying stacks, the buffer fills
+mid-sweep, and every event after it is dropped — including the `excpaint`
+mark. Round 808's first two attempts died there, with `cold:excdom` present and
+`cold:excpaint` gone. A truncated trace does not announce itself; it just
+reports **one** document-wide sweep where there are **two** (which is exactly
+what L1 still does, at 1 against L4's 2). Stacks are off in
+`canvas-font-storm.cjs` and the reason is written at the call site.
+
+**3. Closing the window on the paint mark measures a race, not a cost.**
+Excalidraw requests its font files when it mounts; the sweep happens when they
+*land*. On `/canvas` they landed at 229–232 ms and the editor painted at
+~915 ms, so the sweep was inside. On the instrumented `/desktop` leg the same
+fonts were requested at ~1957 ms and the editor's node appeared at ~2239 ms,
+so the sweep fell **outside** — and the leg dutifully reported **zero**
+`Fonts changed` invalidations for an open that had demonstrably added 230 font
+faces. A round that trusted that reading would have concluded the storm was
+gone. `canvas-font-storm.cjs` uses a **fixed 4 s window from the click** and
+reports `excdom` / `excpaint` as landmarks inside it, so both readings exist
+side by side and neither is chosen for you.
+
+---
+
+## 9.6 The options, with what each actually costs
+
+The trigger is Excalidraw's and it is unconditional; the multiplier is ours and
+it is large. **No fix was applied this round**, because none of the options
+below is both small and obviously safe, and two of them are interaction-model
+decisions that belong to Konrad rather than to a builder. The brief's own
+standard: *"a guessed fix that moves numbers within noise is a failure."*
+
+**(a) Keep the editor mounted and hidden across toggles.** §7 item 3 and §8.6
+item 2, now with a mechanism behind them. Measured here: the second open on the
+same page costs **24–33 ms of layout instead of 217–243 ms** and emits zero
+`Fonts changed`. So the storm is genuinely **once per page load**, not once per
+open. *Costs:* it does not help the **first** open, which is the one Konrad
+feels most; it keeps Excalidraw's canvas, listeners and RAF loop alive for every
+desktop visitor including those who never draw; and `CanvasPane.tsx:263-269`
+currently flushes the drawing **on unmount**, so "never unmount" needs a
+deliberate replacement for that save path — this is not a display-toggle
+one-liner.
+
+**(b) Pre-warm the fonts at idle after `/desktop` loads.** Moves the ~190 ms off
+the click and onto a moment nobody is waiting for. *Costs:* 0.18.1 exports no
+supported way to register the fonts without mounting the editor, so in practice
+this **collapses into (a)** — mount hidden at idle. And it makes every desktop
+visitor pay it, which is the precise mistake round 806 falsified for the CSS
+split. It is only defensible if gated on "this chat has a remembered drawing",
+which is knowable from `forge.canvasByRun`.
+
+**(c) Shrink `/desktop`'s document.** 8,416 layout objects and 4,716 DOM
+elements for a chat surface **before the canvas opens** is the multiplier, and
+`/canvas` is the proof that it is the multiplier: 241 objects, same two sweeps,
+**1.0–2.5 ms each**. Virtualising or capping the transcript would cut this
+proportionally. *This is the only option that also pays off elsewhere* — every
+whole-document invalidation on this page is priced the same way, including
+whatever is behind §9.7. *Costs:* the largest change of the four, and it
+touches the transcript, which is not this phase's subject.
+
+**(d) Accept it.** ~190 ms, once per page load, on a surface that is already
+paying ~90 ms to evaluate the bundle cold. Defensible; it just must not be
+recorded as "U31 met".
+
+**(e) Upstream.** Registering 230 font faces for a zero-element scene is the
+actual defect, and it is Excalidraw's. Worth an issue against 0.18.1 whether or
+not anything else is done. Not a fix this project can schedule.
+
+**U31 remains measured, not closed.** Nothing in this round changed a
+millisecond of it, by design.
+
+---
+
+## 9.7 One thing this round found and did **not** explain
+
+`StyleRecalcInvalidationTracking · PseudoClass` — **4,636 records on the cold
+open and 4,637 on the warm one**, against 4,716 DOM elements on the page. That
+is ~one per element, on **every** canvas toggle, and it is **not** font-related:
+it is identical when `document.fonts` is already warm and no woff2 is fetched.
+On `/canvas`, with 248 elements, the same toggle-equivalent produces **27**.
+This is plausibly the same family of cost as round 801's `UpdateLayoutTree`
+(28–42 ms over 17 events) and it is a live lead for the panel's hover lag.
+
+**The mechanism is NOT established and is deliberately not guessed at here.**
+For the record, the obvious suspect was checked and does not obviously fit: the
+144 KB Excalidraw stylesheet carries 167 pseudo-class rules of which 20
+invalidate descendants, but every one of them is `.excalidraw`-scoped
+(`.excalidraw .Checkbox:hover .Checkbox-box`), so its invalidation sets should
+be class-scoped rather than document-wide. Our own sheet has 6 such rules
+(`.chat-row:hover .chat-row-age`, `.team-row:hover .team-row-controls`,
+`.v2-nav-item:hover:not(.v2-nav-active) span`). Which of them — if any —
+produces a whole-document invalidation set needs the same treatment the font
+question just got: a probe, not a paragraph.
+
+---
+
+## 9.8 What round 809 inherits
+
+1. **The mechanism is closed.** Do not re-measure the layout storm. It is two
+   `Fonts changed` sweeps over 8,416 layout objects, 93–105 ms each, both inside
+   click→paint, 4/4 runs. If a round wants to *change* it, §9.6 lists what is
+   actually on the table and what each costs.
+2. **The decision in §9.6 is Konrad's**, not a builder's — (a) and (c) are
+   interaction-model and architecture calls with consequences well beyond this
+   pane.
+3. **§9.7 is the next real question** on this surface, and it is the one that
+   touches the panel's hover requirement rather than the canvas.
+4. **`canvas-layout-probe.cjs`'s `top_forcing_frames` contains a Playwright
+   artifact** (§9.5 item 1). The file is otherwise sound and its histogram is
+   the load-bearing evidence.
+5. Still open from §8.6, untouched by this round: `canvas-open.cjs` records the
+   worktree's `head_sha` rather than the build's, and the 50 raw colour literals
+   gated by `scripts/checks/no-raw-colours.cjs`.
+6. **`dollar-sweep.sh` — checked, and it is green again.** The operator's
+   standing rule is that a gate missing from a predecessor's evidence counts as
+   FAILED, and `gates-806.txt` had dropped this one rather than recording its
+   failure, so this round re-ran it rather than inheriting the omission:
+   `dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist`, exit 0.
+   A parallel round-808 task landed the allowlist entry in `fbcd073`, with the
+   reason inline and pattern-scoped to the prose sentence rather than `.*`. Noted
+   here because a later reader of §8 would otherwise still see it as open.
+   This round produced no gates artifact of its own: it changed no application
+   code, so there is nothing of its own to gate.
+
+---
+
+## 9.9 Provenance, and the two things that could undermine it
+
+**The measured tree is `7b961b5`**, `git archive`d to `/tmp/phase808-canvas`,
+built and served in isolation on `:7831`. The worktree's own
+`forge-control-web/.next` was never rebuilt, and neither `forge-control` nor —
+under any circumstances — `forge-executor` was restarted.
+
+Four other round-808 builders were working in this worktree while these
+measurements ran, and five of their commits landed on top of the baseline
+(`b353afa`, `35ade34`, `0b5eefd`, `fbcd073`, `fc842d3`). None can reach the
+measured build, and for the avoidance of doubt none of them touches this path:
+
+```
+$ git diff --name-only 7b961b5..HEAD | grep -i canvas
+(no matches)
+$ git diff 7b961b5..HEAD -- forge-control-web/app/desktop/ChatSurface.tsx \
+    | grep -E '^[-+].*(canvas|CanvasPane|ResizeHandle)'
++ * `canvas.ts` already made for the drawing pane: the server pushes.
+```
+
+— one comment line in an unrelated file's header. `CanvasPane.tsx`,
+`ResizableSplit.tsx` and the canvas routes are untouched between the baseline
+and the tip.
+
+**The vault was not written.** Both browser legs stub `PUT /canvas/file`, for
+the reason §5 records: `CanvasPane.tsx:263-269` flushes on unmount and
+Excalidraw marks the scene dirty while loading it, so an unguarded diagnosis
+writes Konrad's real drawing back once per cycle. Unlike round 801's S4, no leg
+here is a cache claim, so nothing was lost by routing.
+
+**Evidence filed under a fresh namespace** (`canvas-font-storm-run*.json`) and
+the copy-into-repo step **refuses to overwrite an existing file**, which is the
+guard §8.7 asked for after round 806 clobbered round 801's
+`canvas-open-before-run2.json`.
