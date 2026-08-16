@@ -34,10 +34,40 @@ import {
   type CanvasListItem,
 } from "../api";
 import { statCanvas, subscribeCanvas } from "./canvasLive";
-import "@excalidraw/excalidraw/index.css";
+/**
+ * The editor bundle, started once per page and shared by both callers.
+ *
+ * `next/dynamic` only asks for its chunk when `<Excalidraw>` first RENDERS, and
+ * this pane does not render it until `initial` exists — i.e. until
+ * `GET /canvas/file` has come back. So 350 KB of download used to queue behind
+ * a 550-byte JSON read that it does not depend on. Measured (round 801, six
+ * cold opens across three scenarios, two runs): the first chunk request left
+ * 1.9–2.5 ms after the scene fetch resolved, every single time.
+ *
+ * Giving the eager preload and `dynamic`'s loader the SAME promise is what
+ * makes them overlap rather than race: whoever calls first starts the fetch,
+ * the second awaits it. Memoised at module scope so it is one request per page
+ * no matter how often the pane mounts or re-renders.
+ *
+ * Retry semantics are deliberately unchanged: a rejected promise stays cached
+ * here, exactly as `React.lazy` already cached the rejected `import()` before
+ * this indirection existed. This does not make a failed chunk load any less
+ * recoverable than it was.
+ *
+ * The import target is `./ExcalidrawEditor` rather than the package itself so
+ * that Excalidraw's 144 KB stylesheet travels in this async chunk instead of on
+ * `/desktop`'s critical path — see that file for why the boundary has to be
+ * there and not around this component.
+ */
+type ExcalidrawEditorModule = typeof import("./ExcalidrawEditor");
+let excalidrawModule: Promise<ExcalidrawEditorModule> | null = null;
+function loadExcalidraw(): Promise<ExcalidrawEditorModule> {
+  excalidrawModule ??= import("./ExcalidrawEditor");
+  return excalidrawModule;
+}
 
 const Excalidraw = dynamic(
-  async () => (await import("@excalidraw/excalidraw")).Excalidraw,
+  async () => (await loadExcalidraw()).Excalidraw,
   {
     ssr: false,
     loading: () => (
@@ -186,6 +216,18 @@ export function CanvasPane({
   // Load whenever the selected drawing changes.
   useEffect(() => {
     if (!path) return;
+    // A `path` is exactly the condition under which <Excalidraw> will mount
+    // below, so this is the earliest honest moment to start its bundle — and
+    // it starts here rather than after the await, so the download runs BESIDE
+    // the scene read instead of behind it. Nothing about the bundle depends on
+    // the scene. Not started when `path` is null: a pane with no drawing never
+    // mounts the editor and must not pay 350 KB for one.
+    //
+    // No handler on the rejection: this is the same promise `dynamic` awaits,
+    // so a chunk that fails to load still surfaces through the editor's own
+    // render path. The catch exists only so one failure is not ALSO reported
+    // as an unhandled rejection.
+    void loadExcalidraw().catch(() => {});
     void load(path, api);
     // `api` intentionally omitted: when it arrives we push via initialData.
     // eslint-disable-next-line react-hooks/exhaustive-deps
