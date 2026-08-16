@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
@@ -26,11 +26,13 @@ import {
   DEFAULT_ENGINE_MODEL,
   fetchAutonomy,
   updateRule,
+  fetchSecrets,
   attachmentsBlock,
   type RunDetail,
   type RunStatus,
   type RunSummary,
   type ChatLinkage,
+  type SecretMeta,
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
 import { useAutogrow } from "./chat/useAutogrow";
@@ -61,6 +63,11 @@ import {
 } from "./chat/nav-stack";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
+import {
+  autoOpenTarget,
+  pendingRequests,
+  type SecretRequest,
+} from "./chat/secret-requests";
 import { useRunEvents } from "./chat/useRunEvents";
 import {
   ResizeHandle,
@@ -70,6 +77,48 @@ import {
 } from "./_ui/ResizableSplit";
 import { toastError } from "./_ui/Toasts";
 import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
+
+/* ---------------------------------------------------------------------------
+ * U30 — the two-way secret sharer's composer-side wiring.
+ *
+ * POLL BUDGET FIRST, because this is the constraint that has already broken a
+ * phase. The chat surface sits at 39–40 req/min and phase 600's
+ * `nav-walk.cjs:310` (P3) FAILS above 40 — round 704 caught exactly that
+ * regression and round 705 had to buy the budget back by slowing two other
+ * polls. 60 s costs 1 req/min, which is what the measured headroom affords.
+ * A pending credential request is an agent BLOCKED waiting for Konrad; it is
+ * measured in minutes, not seconds, so a faster poll would buy nothing real.
+ * Do not lower this number without re-running both gates.
+ * -------------------------------------------------------------------------*/
+const SECRETS_POLL_MS = 60_000;
+
+/** How many pending names the secret button's tooltip spells out before it
+ *  summarises. Six is already more than has ever been pending at once; the cap
+ *  exists so a stuck agent raising requests in a loop can't grow a tooltip
+ *  without bound. */
+const PENDING_NAMES_IN_TITLE = 6;
+
+/** Stable empty list so `pendingRequests`/`autoOpenTarget` see the same
+ *  reference across renders and the memo below doesn't recompute for nothing. */
+const NO_SECRETS: readonly SecretMeta[] = [];
+
+/**
+ * Names Konrad has waved away this SESSION.
+ *
+ * Module-level on purpose. `ChatThread` is keyed by run id so it remounts on
+ * every chat switch, and DesktopApp unmounts the whole surface on every nav
+ * click — component state would therefore forget the dismissal and re-open the
+ * same panel the moment he came back, which is the "hostile auto-open" this
+ * requirement exists to prevent.
+ *
+ * LIFETIME: until the page reloads. Nothing is persisted, deliberately — a
+ * dismissal is a "not right now", not a decision worth surviving a reload, and
+ * the request itself stays pending on the server either way. After a reload the
+ * panel offers it again, which is correct: the agent is still waiting.
+ *
+ * It holds NAMES ONLY. No note, no value, nothing an agent wrote.
+ */
+const dismissedSecretRequests = new Set<string>();
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
@@ -1425,9 +1474,90 @@ function ChatThread({
   >([]);
   const popoverRef = useRef<SlashPopoverHandle | null>(null);
   const [secretOpen, setSecretOpen] = useState(false);
+  /** Non-null → the panel is in ANSWER mode for this agent request. Null with
+   *  `secretOpen` true → free-form mode, exactly as before U30. */
+  const [answering, setAnswering] = useState<SecretRequest | null>(null);
+  const qc = useQueryClient();
   // U28: the composer sizes itself to `draft`. No height state — see useAutogrow.
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   useAutogrow(composerRef, draft, COMPOSER_ROWS);
+
+  /* ----- U30: pending credential requests ---------------------------------
+   * `enabled` is the MOUNT. This hook lives inside ChatThread, which exists
+   * only while a manager chat's composer is on screen; no observer means
+   * react-query does not poll at all, which is a harder gate than
+   * `enabled: false` and the same one ChatTeamPanel argues for (NFU3).
+   * `refetchIntervalInBackground` is left at its default (false), so a
+   * backgrounded tab costs nothing either.
+   *
+   * NOTHING FROM THIS QUERY IS EVER SENT ANYWHERE. `GET /api/secrets` returns
+   * metadata only — no value is on the wire — and the only field this file
+   * reads out of it is `name`. The agent's `note` is passed straight to
+   * SecretField for display and is never put into a message, a system line, a
+   * title attribute, or a log. */
+  const secretsQ = useQuery({
+    queryKey: ["secrets", "list"],
+    queryFn: fetchSecrets,
+    refetchInterval: SECRETS_POLL_MS,
+    refetchOnWindowFocus: true,
+  });
+
+  /* NFU6 — a failed fetch must not leave a stale badge standing there looking
+   * fresh. react-query keeps the last good `data` through an error, which is
+   * exactly the lie to avoid here: "an agent is waiting" is a claim about the
+   * server RIGHT NOW. On error we claim nothing and say so inline instead. */
+  const secretRows: readonly SecretMeta[] = secretsQ.isError
+    ? NO_SECRETS
+    : (secretsQ.data ?? NO_SECRETS);
+  const pending = useMemo(() => pendingRequests(secretRows), [secretRows]);
+
+  /** Identity of the pending SET, not of the array. This is what "a request
+   *  arrived" means, and it is the only thing the auto-open effect reacts to —
+   *  a poll that returns the same names must not re-decide anything.
+   *  `JSON.stringify` rather than a `join`: no separator can collide with a
+   *  name, and the result stays printable in a devtools watch. */
+  const pendingKey = JSON.stringify(pending.map((r) => r.name));
+
+  const closeSecret = () => {
+    // Closing IS the dismissal. Without this the next 60 s tick would re-open
+    // the panel Konrad just closed, which is the precise failure mode the
+    // requirement calls out. "not now" also lands here (SecretField's decline
+    // clears the server flag and then calls onClose), so both exits agree.
+    if (answering) dismissedSecretRequests.add(answering.name);
+    setAnswering(null);
+    setSecretOpen(false);
+    // Refresh now rather than up to 60 s from now: a "not now" already cleared
+    // the pending flag server-side and the badge must follow immediately.
+    void qc.invalidateQueries({ queryKey: ["secrets", "list"] });
+  };
+
+  /* AUTO-OPEN, AND THE THREE WAYS IT MUST NOT BE HOSTILE.
+   *
+   * Fires on exactly two events: this chat opening with something already
+   * pending (the effect's first run — ChatThread is keyed by run id, so mount
+   * IS "chat opened"), and the pending set changing while it is open. Deps are
+   * `pendingKey` alone, which is what makes that true; `draft` and `secretOpen`
+   * are read at that instant rather than tracked, on purpose.
+   *
+   *   1. mid-typing wins. A non-empty draft means Konrad is composing; the
+   *      badge is enough and focus stays where he put it. He is not asked
+   *      again for this same pending set — the effect has already decided.
+   *   2. a closed panel stays closed, because `closeSecret` remembers the name
+   *      for the session (see `dismissedSecretRequests`).
+   *   3. it never interrupts a panel that is already open. */
+  useEffect(() => {
+    if (pending.length === 0) return;
+    if (secretOpen) return;
+    if (draft.trim() !== "") return;
+    const target = autoOpenTarget(secretRows, [...dismissedSecretRequests]);
+    if (!target) return;
+    setAnswering(target);
+    setSecretOpen(true);
+    // Intentionally keyed on the pending SET only. Adding `draft` would pop the
+    // panel open the moment he cleared or sent a message; adding `secretOpen`
+    // would re-run the decision every time he closed it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingKey]);
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
@@ -1657,9 +1787,29 @@ function ChatThread({
           flexDirection: "column",
         }}
       >
+        {secretOpen && secretsQ.isError && (
+          // NFU6. The panel is open but the list behind the badge could not be
+          // read, so say that rather than render an empty "nothing pending".
+          // `errorDetail` is the transport error; it can never carry a secret
+          // value, because no value is on this endpoint at all.
+          <div
+            className="mono"
+            style={{
+              fontSize: 10.5,
+              color: tokens.bleed,
+              lineHeight: 1.5,
+              marginBottom: 8,
+            }}
+          >
+            couldn&apos;t read pending credential requests — {errorDetail(secretsQ.error)}
+          </div>
+        )}
         {secretOpen && (
           <SecretField
-            onClose={() => setSecretOpen(false)}
+            // Remount when the request changes so no field survives the switch.
+            key={answering ? `req:${answering.name}` : "freeform"}
+            request={answering ?? undefined}
+            onClose={closeSecret}
             onStored={(name) => {
               // Only the NAME enters the conversation. The value is on disk.
               pushSys(`secret stored: ${name} (value not in this thread)`);
@@ -1738,14 +1888,43 @@ function ChatThread({
           />
           <EngineControls run={run} />
           <button
-            title="Store a credential without putting it in the chat"
-            onClick={() => setSecretOpen((v) => !v)}
+            // NAMES ONLY in the title. The agent's `note` is display-only and
+            // must not reach a DOM attribute — a tooltip is copyable, ends up
+            // in screenshots, and is attacker-written text besides.
+            title={
+              pending.length === 0
+                ? "Store a credential without putting it in the chat"
+                : `waiting for ${pending
+                    .slice(0, PENDING_NAMES_IN_TITLE)
+                    .map((r) => r.name)
+                    .join(", ")}${
+                    pending.length > PENDING_NAMES_IN_TITLE
+                      ? ` +${pending.length - PENDING_NAMES_IN_TITLE} more`
+                      : ""
+                  } — click to answer`
+            }
+            onClick={() => {
+              if (secretOpen) {
+                closeSecret();
+                return;
+              }
+              // An explicit click ignores this session's dismissals: the badge
+              // is what he is clicking, so give him the request behind it.
+              // Null → free-form mode, the pre-U30 behaviour.
+              setAnswering(autoOpenTarget(secretRows, []));
+              setSecretOpen(true);
+            }}
             className="mono"
             style={{
+              position: "relative",
               background: "transparent",
-              border: `1px solid ${tokens.border}`,
+              border: `1px solid ${pending.length > 0 ? tokens.warn : tokens.border}`,
               borderRadius: 6,
-              color: secretOpen ? tokens.accent : tokens.textMuted,
+              color: secretOpen
+                ? tokens.accent
+                : pending.length > 0
+                  ? tokens.warn
+                  : tokens.textMuted,
               fontSize: 11,
               padding: "6px 9px",
               cursor: "pointer",
@@ -1753,6 +1932,30 @@ function ChatThread({
             }}
           >
             secret
+            {pending.length > 0 && (
+              // Derived from the query, not from hover or any other event —
+              // there is no state here to get stale (NFU3: the row costs no
+              // re-render of its own).
+              <span
+                style={{
+                  position: "absolute",
+                  top: -6,
+                  right: -6,
+                  minWidth: 14,
+                  height: 14,
+                  padding: "0 3px",
+                  borderRadius: 7,
+                  background: tokens.warn,
+                  color: tokens.bgBody,
+                  fontSize: 9,
+                  lineHeight: "14px",
+                  textAlign: "center",
+                  fontWeight: 600,
+                }}
+              >
+                {pending.length}
+              </span>
+            )}
           </button>
           <button
             disabled={
