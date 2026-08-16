@@ -1,0 +1,45 @@
+{
+  "base": "https://os.schreinercontentsystems.com",
+  "drawing": "AI OS - Canvas Smoke Test",
+  "features": {
+    "secretPanel_light": {
+      "autoOpened": true,
+      "prefilledWith": "verify904-synthetic-canary",
+      "answerMode": true,
+      "waitingLine": "an agent is waiting for",
+      "noteRenderedAsText": true,
+      "neverInThread": true
+    },
+    "canvas_dark": {
+      "present": true,
+      "isDarkClass": true,
+      "classes": "excalidraw excalidraw-container excalidraw--mobile theme--dark",
+      "rootBg": "rgba(0, 0, 0, 0)",
+      "canvasFilter": "invert(0.93) hue-rotate(180deg)",
+      "docTheme": "dark"
+    },
+    "canvas_light": {
+      "present": true,
+      "isDarkClass": false,
+      "classes": "excalidraw excalidraw-container excalidraw--mobile",
+      "rootBg": "rgba(0, 0, 0, 0)",
+      "canvasFilter": "none",
+      "docTheme": "light"
+    }
+  },
+  "shots": [
+    {
+      "name": "prod-feature-secret-panel-light.png",
+      "bytes": 346972
+    },
+    {
+      "name": "prod-feature-canvas-dark.png",
+      "bytes": 323736
+    },
+    {
+      "name": "prod-feature-canvas-light.png",
+      "bytes": 326603
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,49 @@
+{
+  "base": "https://os.schreinercontentsystems.com",
+  "chat": "Okay when I click the file section",
+  "shots": [
+    {
+      "name": "prod-rail-dark.png",
+      "bytes": 364107
+    },
+    {
+      "name": "prod-composer-dark.png",
+      "bytes": 364100
+    },
+    {
+      "name": "prod-team-dark.png",
+      "bytes": 364102
+    },
+    {
+      "name": "prod-kanban-dark.png",
+      "bytes": 33286
+    },
+    {
+      "name": "prod-rail-light.png",
+      "bytes": 365667
+    },
+    {
+      "name": "prod-composer-light.png",
+      "bytes": 365631
+    },
+    {
+      "name": "prod-team-light.png",
+      "bytes": 365622
+    },
+    {
+      "name": "prod-kanban-light.png",
+      "bytes": 33181
+    }
+  ],
+  "notes": [
+    "dark: no \"● TEAM\" strip button found — panel may already be open",
+    "dark: data-team-state=ready",
+    "dark: data-plan-state=ready data-plan-progress=79/90",
+    "dark: {\"theme\":null,\"bodyBg\":\"rgb(0, 0, 0)\",\"teamRows\":94,\"planTasks\":90,\"planPhases\":16,\"linkMarker\":0,\"heuristicText\":false,\"taskBadges\":[\"79/90 tasks\",\"6/15 tasks\",\"50/56 tasks\",\"67/88 tasks\"]}",
+    "light: no \"● TEAM\" strip button found — panel may already be open",
+    "light: data-team-state=ready",
+    "light: data-plan-state=ready data-plan-progress=79/90",
+    "light: {\"theme\":\"light\",\"bodyBg\":\"rgb(247, 247, 245)\",\"teamRows\":94,\"planTasks\":90,\"planPhases\":16,\"linkMarker\":0,\"heuristicText\":false,\"taskBadges\":[\"79/90 tasks\",\"6/15 tasks\",\"50/56 tasks\",\"67/88 tasks\"]}"
+  ],
+  "errors": []
+}

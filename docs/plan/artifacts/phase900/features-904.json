@@ -1,0 +1,250 @@
+{
+  "base": "https://os.schreinercontentsystems.com",
+  "features": {
+    "palette_dark": {
+      "roleBgArchitect": "#1b1925",
+      "roleBgPlanner": "#121d20",
+      "roleBgBuilder": "#141925",
+      "roleBgReviewer": "#221f13",
+      "roleBgResearcher": "#131b16",
+      "roleBgScout": "#151517",
+      "roleBgSteward": "#1f1722",
+      "roleBgTester": "#211515",
+      "roleBgUnknown": "#19191b",
+      "roleInkArchitect": "#9b8cf0",
+      "roleInkPlanner": "#4fb0c4",
+      "roleInkBuilder": "#5b8def",
+      "roleInkReviewer": "#d8c24a",
+      "warn": "#d8c24a",
+      "selectedBg": "#101013",
+      "bgBody": "#000"
+    },
+    "roleTints_dark": {
+      "count": 9,
+      "distinct": 9,
+      "allDistinct": true,
+      "values": {
+        "roleBgArchitect": "#1b1925",
+        "roleBgPlanner": "#121d20",
+        "roleBgBuilder": "#141925",
+        "roleBgReviewer": "#221f13",
+        "roleBgResearcher": "#131b16",
+        "roleBgScout": "#151517",
+        "roleBgSteward": "#1f1722",
+        "roleBgTester": "#211515",
+        "roleBgUnknown": "#19191b"
+      }
+    },
+    "navSelected_dark": {
+      "bg": "rgba(0, 0, 0, 0)",
+      "top": 0,
+      "height": 45
+    },
+    "relayCards_dark": [
+      {
+        "bg": "#121d20",
+        "text": "◂ FROM WORKER PLANNER c8bc5ffa 7h Phase 800 planned (rounds 801-805, 6 builders + 1 advers"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER 4e842cc8 7h round 801 done (U28/U29/U32, commit 206323d). Three thin"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER e69ea9a8 7h Round 801 (U30 part 1) committed f9d5c23 — secret-reques"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER f6a2ee75 6h Round 801 (U31 canvas BEFORE trace) — finding that chang"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER f6a2ee75 6h Round 801 follow-up — BLOCKER-ish for round 803, found w"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER f6a2ee75 6h Round 801 DONE — committed c8d8819. Final numbers (my ea"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER fa2a1775 6h R802 merge(main) done, commit 9aed3e6, tsc+build+compose"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER fa2a1775 5h R802 DONE — U30 secret sharer wired, 42/42 browser check"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER 9ee2083b 5h r803 finding: the r801 canvas-open.cjs instrument was DE"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER 51d10066 5h r804 (evidence round) FINDING at start, before any of my"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER 51d10066 4h r804 finding 2 — LIGHT-MODE DEFECT, quantified, in Canva"
+      },
+      {
+        "bg": "#141925",
+        "text": "◂ FROM WORKER BUILDER 51d10066 4h r804 finding 3 — THE CANVAS EDITOR IS PINNED TO DARK. Ca"
+      }
+    ],
+    "canvas_dark": {
+      "present": false
+    },
+    "secretPanel_dark": {
+      "panelOpen": true,
+      "mentionsRequested": false,
+      "snippet": [
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"date -Is; set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSW",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG"
+      ]
+    },
+    "palette_light": {
+      "roleBgArchitect": "#f1effa",
+      "roleBgPlanner": "#ebf3f5",
+      "roleBgBuilder": "#ecf1fb",
+      "roleBgReviewer": "#f3f2ea",
+      "roleBgResearcher": "#ecf3ee",
+      "roleBgScout": "#f3f3f4",
+      "roleBgSteward": "#f5eef6",
+      "roleBgTester": "#f8eded",
+      "roleBgUnknown": "#f2f2f2",
+      "roleInkArchitect": "#6152c8",
+      "roleInkPlanner": "#1c7385",
+      "roleInkBuilder": "#2c62d4",
+      "roleInkReviewer": "#7f6c11",
+      "warn": "#7f6c11",
+      "selectedBg": "#e8e8e3",
+      "bgBody": "#f7f7f5"
+    },
+    "roleTints_light": {
+      "count": 9,
+      "distinct": 9,
+      "allDistinct": true,
+      "values": {
+        "roleBgArchitect": "#f1effa",
+        "roleBgPlanner": "#ebf3f5",
+        "roleBgBuilder": "#ecf1fb",
+        "roleBgReviewer": "#f3f2ea",
+        "roleBgResearcher": "#ecf3ee",
+        "roleBgScout": "#f3f3f4",
+        "roleBgSteward": "#f5eef6",
+        "roleBgTester": "#f8eded",
+        "roleBgUnknown": "#f2f2f2"
+      }
+    },
+    "navSelected_light": {
+      "bg": "rgba(0, 0, 0, 0)",
+      "top": 0,
+      "height": 45
+    },
+    "relayCards_light": [
+      {
+        "bg": "#ebf3f5",
+        "text": "◂ FROM WORKER PLANNER c8bc5ffa 7h Phase 800 planned (rounds 801-805, 6 builders + 1 advers"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER 4e842cc8 7h round 801 done (U28/U29/U32, commit 206323d). Three thin"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER e69ea9a8 7h Round 801 (U30 part 1) committed f9d5c23 — secret-reques"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER f6a2ee75 6h Round 801 (U31 canvas BEFORE trace) — finding that chang"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER f6a2ee75 6h Round 801 follow-up — BLOCKER-ish for round 803, found w"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER f6a2ee75 6h Round 801 DONE — committed c8d8819. Final numbers (my ea"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER fa2a1775 6h R802 merge(main) done, commit 9aed3e6, tsc+build+compose"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER fa2a1775 5h R802 DONE — U30 secret sharer wired, 42/42 browser check"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER 9ee2083b 5h r803 finding: the r801 canvas-open.cjs instrument was DE"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER 51d10066 5h r804 (evidence round) FINDING at start, before any of my"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER 51d10066 4h r804 finding 2 — LIGHT-MODE DEFECT, quantified, in Canva"
+      },
+      {
+        "bg": "#ecf1fb",
+        "text": "◂ FROM WORKER BUILDER 51d10066 4h r804 finding 3 — THE CANVAS EDITOR IS PINNED TO DARK. Ca"
+      }
+    ],
+    "canvas_light": {
+      "present": false
+    },
+    "secretPanel_light": {
+      "panelOpen": true,
+      "mentionsRequested": false,
+      "snippet": [
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"date -Is; set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSW",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG",
+        "{\"command\":\"set -a; source /opt/ai-os/.secrets/forge-control.env 2>/dev/null; set +a; export PGPASSWORD=\\\"${PG"
+      ]
+    },
+    "filePicked": "{\"command\":\"grep -rn \\\"SSE\\\\|EventSource\\\\|text/event-stream\\\" /opt/forge-ai-os/forge-control/src/routes/*.ts",
+    "openInNewTabButton": false
+  },
+  "shots": [
+    {
+      "name": "prod-feature-navrail-dark.png",
+      "bytes": 364126
+    },
+    {
+      "name": "prod-feature-canvas-dark.png",
+      "bytes": 338113
+    },
+    {
+      "name": "prod-feature-secret-dark.png",
+      "bytes": 339433
+    },
+    {
+      "name": "prod-feature-navrail-light.png",
+      "bytes": 365738
+    },
+    {
+      "name": "prod-feature-canvas-light.png",
+      "bytes": 341174
+    },
+    {
+      "name": "prod-feature-secret-light.png",
+      "bytes": 342667
+    },
+    {
+      "name": "prod-feature-files-panel.png",
+      "bytes": 265939
+    },
+    {
+      "name": "prod-feature-filepreview.png",
+      "bytes": 300800
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,95 @@
+{
+  "note": "two independent 10s sweeps against production, each with a parked-pointer idle baseline over the same window",
+  "run1": {
+    "base": "https://os.schreinercontentsystems.com",
+    "surfaces": {
+      "rail": {
+        "rows": 6,
+        "idle": {
+          "mutations": 10,
+          "longTasks": 1,
+          "maxLongTaskMs": 52,
+          "windowMs": 10003
+        },
+        "hover": {
+          "crossings": 150,
+          "mutations": 10,
+          "longTasks": 0,
+          "maxLongTaskMs": 0,
+          "windowMs": 10039
+        },
+        "attributable": {
+          "mutations": 0,
+          "longTasks": -1
+        }
+      },
+      "team": {
+        "rows": 26,
+        "idle": {
+          "mutations": 11,
+          "longTasks": 0,
+          "maxLongTaskMs": 0,
+          "windowMs": 10002
+        },
+        "hover": {
+          "crossings": 150,
+          "mutations": 10,
+          "longTasks": 1,
+          "maxLongTaskMs": 61,
+          "windowMs": 10047
+        },
+        "attributable": {
+          "mutations": -1,
+          "longTasks": 1
+        }
+      }
+    },
+    "errors": []
+  },
+  "run2": {
+    "base": "https://os.schreinercontentsystems.com",
+    "surfaces": {
+      "rail": {
+        "rows": 6,
+        "idle": {
+          "mutations": 10,
+          "longTasks": 1,
+          "maxLongTaskMs": 50,
+          "windowMs": 10003
+        },
+        "hover": {
+          "crossings": 150,
+          "mutations": 10,
+          "longTasks": 0,
+          "maxLongTaskMs": 0,
+          "windowMs": 10060
+        },
+        "attributable": {
+          "mutations": 0,
+          "longTasks": -1
+        }
+      },
+      "team": {
+        "rows": 26,
+        "idle": {
+          "mutations": 11,
+          "longTasks": 1,
+          "maxLongTaskMs": 59,
+          "windowMs": 10003
+        },
+        "hover": {
+          "crossings": 150,
+          "mutations": 12,
+          "longTasks": 1,
+          "maxLongTaskMs": 56,
+          "windowMs": 10051
+        },
+        "attributable": {
+          "mutations": 1,
+          "longTasks": 0
+        }
+      }
+    },
+    "errors": []
+  }
+}

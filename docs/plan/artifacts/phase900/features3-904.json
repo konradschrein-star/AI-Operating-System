@@ -1,0 +1,84 @@
+{
+  "base": "https://os.schreinercontentsystems.com",
+  "canary": "verify904-synthetic-canary",
+  "features": {
+    "canvasPick_dark": null,
+    "canvas_dark": {
+      "present": false,
+      "paneText": "no drawing open — pick one above,"
+    },
+    "canvasPick_light": null,
+    "canvas_light": {
+      "present": false,
+      "paneText": "no drawing open — pick one above,"
+    },
+    "secretPanel_dark": {
+      "autoOpened": true,
+      "prefilledWith": "verify904-synthetic-canary",
+      "answerMode": true,
+      "waitingLine": "an agent is waiting for",
+      "noteRenderedAsText": true,
+      "neverInThread": true
+    },
+    "secretAnswered": {
+      "stillWaiting": false,
+      "mentionsCanary": true
+    },
+    "secretPanel_light": {
+      "autoOpened": false,
+      "prefilledWith": null,
+      "answerMode": false,
+      "waitingLine": "",
+      "noteRenderedAsText": false,
+      "neverInThread": false
+    },
+    "filePicked": "cf_archive_manifest.json",
+    "openInNewTabButton": true,
+    "openInNewTabHref": "/document?root=workspace&path=cf_archive_manifest.json",
+    "newTabDocument": {
+      "openedInNewTab": true,
+      "url": "https://os.schreinercontentsystems.com/document?root=workspace&path=cf_archive_manifest.json",
+      "chars": 40010,
+      "head": "DOCUMENT workspace / cf_archive_manifest.json { \"entries\": [ { \"group\": \"01-reactor-ce-channel\", \"key\": \"chan/ff9c33c1-ac2f-473d-80e8-1e8c1e2c275b\", \"folder\": \"ff9c33c1-ac2f-473d-80e8-1e8c1e2c275b\", \"files\": [ { \"name\": \"audio_tts.wav\", \"path\": \"/opt/content-f"
+    }
+  },
+  "shots": [
+    {
+      "name": "prod-feature-canvas-dark.png",
+      "bytes": 350309
+    },
+    {
+      "name": "prod-feature-canvas-light.png",
+      "bytes": 354164
+    },
+    {
+      "name": "prod-feature-secret-panel-dark.png",
+      "bytes": 343545
+    },
+    {
+      "name": "prod-feature-secret-answer-filled.png",
+      "bytes": 342714
+    },
+    {
+      "name": "prod-feature-secret-answered.png",
+      "bytes": 343926
+    },
+    {
+      "name": "prod-feature-secret-panel-light.png",
+      "bytes": 365806
+    },
+    {
+      "name": "prod-feature-files-expanded.png",
+      "bytes": 340277
+    },
+    {
+      "name": "prod-feature-filepreview.png",
+      "bytes": 368200
+    },
+    {
+      "name": "prod-feature-newtab-document.png",
+      "bytes": 123697
+    }
+  ],
+  "errors": []
+}

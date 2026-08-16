@@ -1,0 +1,15 @@
+{
+  "url": "https://os.schreinercontentsystems.com/desktop",
+  "theme": null,
+  "dataAttrs": [
+    "data-precedence=\"next\""
+  ],
+  "clickable": [
+    "light_mode",
+    "settingsSETTINGS"
+  ],
+  "bodyText": "forge TODAY INBOX 19 CHAT PROJECTS PIPELINE LIBRARY MONEY BUSINESSES SKILLS MEMORY LIVE CONTROL AUTONOMY AUTOMATION search search everything ⌘K light_mode TODAY INBOX 19 CHAT PROJECTS PIPELINE LIBRARY MONEY BUSINESSES SKILLS MEMORY LIVE CONTROL AUTONOMY AUTOMATION GOALS JOURNAL MAP settings SETTINGS konrad online Good evening, Konrad. OPEN INBOX 19 open · open inbox → FLEET cc-architect idle cc-docs idle cc-writer-01 idle sysop-01 idle test-02 idle NEEDS YOU clear all REMINDER 1h r808 chat-colour/rich-render builder: interaction model for agent-emitted INTERACTIVE blocks is not specified. Default… REMINDER 1h round808 open-doc-in-tab: the doc viewer (FilePreview) lives entirely inside FileExplorerPanel.tsx, which the brief… REMINDER 1h SECURITY (handled, one decision for you): the postgres superuser password was leaking into agent transcripts via… 65.108.6.149 · forge ● hermes ● 5h 27% 7d 73% ⟳ just now · auto · 0 bleed 0 stuck · ⌘K",
+  "errors": [
+    "console: Failed to load resource: the server responded with a status of 404 ()"
+  ]
+}
