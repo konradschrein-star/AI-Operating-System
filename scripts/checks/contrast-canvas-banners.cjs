@@ -161,12 +161,16 @@ const BANNERS = [
 /* ── browser confirmation ─────────────────────────────────────────────────── */
 
 async function confirmInBrowser(palettes) {
+  /* lib-703 owns the chromium path, the viewport and the session cookie; it
+   * also refuses to launch without FORGE_SESSION_COOKIE, which is correct —
+   * /desktop is behind OAuth and an unauthenticated sample would resolve the
+   * signin page's variables, not the console's. PHASE700_BASE_URL must equal
+   * --url so the cookie is minted for the right host. */
+  process.env.PHASE700_BASE_URL = BASE_URL;
   const L = require(path.join(REPO_ROOT, "docs/plan/artifacts/phase700/lib-703.cjs"));
   const keys = ["warn", "bleed", "freezeBgWarn", "dangerActionBg", "bgCard", "bgBody"];
-  const browser = await L.launch();
   const mismatches = [];
-  try {
-    const ctx = await browser.newContext();
+  await L.withBrowser(async (ctx) => {
     const page = await ctx.newPage();
     await page.goto(`${BASE_URL}/desktop`, { waitUntil: "domcontentloaded" });
     for (const mode of ["dark", "light"]) {
@@ -185,9 +189,8 @@ async function confirmInBrowser(palettes) {
           mismatches.push(`${mode} --fg-${k}: theme.css says ${declared}, browser resolved ${seen[k]}`);
       }
     }
-  } finally {
-    await browser.close();
-  }
+    await page.close();
+  });
   return mismatches;
 }
 

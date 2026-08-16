@@ -1,0 +1,119 @@
+{
+  "protocol": "canvas-theme.cjs",
+  "requirement": "phase 800 round 804 §5.5 — <Excalidraw theme> was the literal \"dark\"; the editor must follow the app theme, live",
+  "base_url": "http://127.0.0.1:7822",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "chat": {
+    "id": "bfd1283a-b71b-4f35-b577-7d09aad803f2"
+  },
+  "seed_path": "Excalidraw/AI OS - Canvas Smoke Test.excalidraw.md",
+  "screenshots": {
+    "dark": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase800/phase800-canvas-theme-dark.png",
+    "light": "/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase800/phase800-canvas-theme-light.png"
+  },
+  "generated_at": "2026-08-16T17:52:40.076Z",
+  "results": [
+    {
+      "name": "dark",
+      "note": {
+        "classes": "excalidraw excalidraw--mobile excalidraw-container theme--dark",
+        "has_dark_class": true,
+        "default_bg_color": "#121212",
+        "island_bg_color": "#232329",
+        "text_primary_color": "#e3e3e8",
+        "island_computed_background": "rgb(35, 35, 41)",
+        "probe_stamp": null,
+        "html_theme": "dark"
+      }
+    },
+    {
+      "name": "stamped",
+      "note": {
+        "classes": "excalidraw excalidraw--mobile excalidraw-container theme--dark",
+        "has_dark_class": true,
+        "default_bg_color": "#121212",
+        "island_bg_color": "#232329",
+        "text_primary_color": "#e3e3e8",
+        "island_computed_background": "rgb(35, 35, 41)",
+        "probe_stamp": "same-node",
+        "html_theme": "dark"
+      }
+    },
+    {
+      "name": "light",
+      "note": {
+        "classes": "excalidraw excalidraw--mobile excalidraw-container",
+        "has_dark_class": false,
+        "default_bg_color": "#fff",
+        "island_bg_color": "#fff",
+        "text_primary_color": "#1b1b1f",
+        "island_computed_background": "rgb(255, 255, 255)",
+        "probe_stamp": "same-node",
+        "html_theme": "light"
+      }
+    },
+    {
+      "name": "the editor mounted at all",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "the stamp landed on the live node",
+      "ok": true,
+      "actual": "same-node",
+      "expected": "same-node"
+    },
+    {
+      "name": "dark mode: editor carries .theme--dark",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "light mode: editor does NOT carry .theme--dark",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "the drawing surface colour changed",
+      "ok": true,
+      "actual": "#121212 -> #fff",
+      "expected": "#121212 -> #fff"
+    },
+    {
+      "name": "the toolbar panel colour changed",
+      "ok": true,
+      "actual": "#232329 -> #fff",
+      "expected": "#232329 -> #fff"
+    },
+    {
+      "name": "a real painted element followed it (.Island computed background)",
+      "ok": true,
+      "actual": "rgb(35, 35, 41) -> rgb(255, 255, 255)",
+      "expected": "rgb(35, 35, 41) -> rgb(255, 255, 255)"
+    },
+    {
+      "name": "the editor's text colour inverted",
+      "ok": true,
+      "actual": "#e3e3e8 -> #1b1b1f",
+      "expected": "#e3e3e8 -> #1b1b1f"
+    },
+    {
+      "name": "no remount: the same DOM node followed the theme",
+      "ok": true,
+      "actual": "same-node",
+      "expected": "same-node"
+    },
+    {
+      "name": "the console followed the flip",
+      "ok": true,
+      "actual": "dark->light",
+      "expected": "dark->light"
+    }
+  ]
+}
