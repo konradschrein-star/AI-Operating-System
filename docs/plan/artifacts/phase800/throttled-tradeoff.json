@@ -1,0 +1,116 @@
+{
+  "protocol": "throttled-tradeoff.cjs --merge",
+  "requirement": "U31 — decide the SIGN of round 803's CSS trade off-loopback, where 144 KB is not free",
+  "profiles": {
+    "loopback": null,
+    "4g": {
+      "offline": false,
+      "latency": 170,
+      "downloadThroughput": 1125000,
+      "uploadThroughput": 375000
+    }
+  },
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "seed_path": "Excalidraw/AI OS - Canvas Smoke Test.excalidraw.md",
+  "cells": {
+    "loopback/pageload": {
+      "before": [
+        400,
+        404,
+        396,
+        444,
+        448,
+        424
+      ],
+      "after": [
+        420,
+        408,
+        464,
+        424,
+        448,
+        476
+      ],
+      "median_before": 414,
+      "median_after": 436,
+      "delta_ms": 22,
+      "delta_pct": 5.3
+    },
+    "loopback/open": {
+      "before": [
+        775.5,
+        792.7,
+        773.6,
+        755.7,
+        763.4,
+        753
+      ],
+      "after": [
+        1215.4,
+        1215.3,
+        1192.6,
+        1227.2,
+        1215.3,
+        1291
+      ],
+      "median_before": 768.5,
+      "median_after": 1215.3,
+      "delta_ms": 446.8,
+      "delta_pct": 58.1
+    },
+    "4g/pageload": {
+      "before": [
+        588,
+        568,
+        584,
+        568,
+        568,
+        568
+      ],
+      "after": [
+        568,
+        568,
+        564,
+        580,
+        556,
+        568
+      ],
+      "median_before": 568,
+      "median_after": 568,
+      "delta_ms": 0,
+      "delta_pct": 0
+    },
+    "4g/open": {
+      "before": [
+        1487.4,
+        1478,
+        1510,
+        1454.6,
+        1527.2,
+        1514.8
+      ],
+      "after": [
+        1530,
+        1492.5,
+        1455.6,
+        1461.7,
+        1470.4,
+        1471.6
+      ],
+      "median_before": 1498.7,
+      "median_after": 1471,
+      "delta_ms": -27.7,
+      "delta_pct": -1.8
+    }
+  },
+  "page_load_saving_ms": {
+    "loopback": -22,
+    "4g": 0
+  },
+  "open_cost_ms": {
+    "loopback": 446.8,
+    "4g": -27.7
+  }
+}

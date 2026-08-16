@@ -1,0 +1,394 @@
+{
+  "protocol": "desktop-load.cjs",
+  "requirement": "U31 metric family B — /desktop page load with the canvas never opened",
+  "base_url": "http://127.0.0.1:7821",
+  "build_dir": "/tmp/phase806-before/forge-control-web/.next",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "generated_at": "2026-08-16T18:15:43.171Z",
+  "summary": {
+    "samples": 5,
+    "first_contentful_paint_ms_median": 412,
+    "first_paint_ms_median": 412,
+    "dom_interactive_ms_median": 317.5,
+    "dom_content_loaded_ms_median": 317.6,
+    "load_event_ms_median": 887.3,
+    "render_blocking_css_disk_bytes_median": 163317,
+    "render_blocking_css_transfer_bytes_median": 28199,
+    "excalidraw_css_on_critical_path_bytes_median": 144615,
+    "excalidraw_assets_requested_without_opening_the_canvas": [
+      {
+        "file": "008289500c38878d.css",
+        "bytes": 144615,
+        "has_excalidraw": true
+      },
+      {
+        "file": "501-93dd9b714412130f.js",
+        "bytes": 29100,
+        "has_excalidraw": true
+      }
+    ]
+  },
+  "samples": [
+    {
+      "n": 1,
+      "first_paint": 408,
+      "first_contentful_paint": 408,
+      "dom_content_loaded": 313.2,
+      "load_event": 887.1,
+      "dom_interactive": 313.1,
+      "transfer_bytes": 4590,
+      "stylesheet_hrefs": [
+        "/_next/static/css/b2ef84b7d4746ad3.css",
+        "/_next/static/css/67ab3368c62b9f05.css",
+        "/_next/static/css/008289500c38878d.css",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+        "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,200,0,0&display=swap"
+      ],
+      "stylesheet_transfer_bytes": 28199,
+      "editor_mounted": false,
+      "stylesheets": [
+        {
+          "file": "b2ef84b7d4746ad3.css",
+          "bytes": 14994,
+          "has_excalidraw": false
+        },
+        {
+          "file": "67ab3368c62b9f05.css",
+          "bytes": 3708,
+          "has_excalidraw": false
+        },
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "css2"
+        },
+        {
+          "file": "css2"
+        }
+      ],
+      "stylesheet_disk_bytes": 163317,
+      "excalidraw_stylesheets": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        }
+      ],
+      "excalidraw_assets_requested": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "501-93dd9b714412130f.js",
+          "bytes": 29100,
+          "has_excalidraw": true
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "first_paint": 412,
+      "first_contentful_paint": 412,
+      "dom_content_loaded": 317.6,
+      "load_event": 879.6,
+      "dom_interactive": 317.5,
+      "transfer_bytes": 4590,
+      "stylesheet_hrefs": [
+        "/_next/static/css/b2ef84b7d4746ad3.css",
+        "/_next/static/css/67ab3368c62b9f05.css",
+        "/_next/static/css/008289500c38878d.css",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+        "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,200,0,0&display=swap"
+      ],
+      "stylesheet_transfer_bytes": 28199,
+      "editor_mounted": false,
+      "stylesheets": [
+        {
+          "file": "b2ef84b7d4746ad3.css",
+          "bytes": 14994,
+          "has_excalidraw": false
+        },
+        {
+          "file": "67ab3368c62b9f05.css",
+          "bytes": 3708,
+          "has_excalidraw": false
+        },
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "css2"
+        },
+        {
+          "file": "css2"
+        }
+      ],
+      "stylesheet_disk_bytes": 163317,
+      "excalidraw_stylesheets": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        }
+      ],
+      "excalidraw_assets_requested": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "501-93dd9b714412130f.js",
+          "bytes": 29100,
+          "has_excalidraw": true
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "first_paint": 400,
+      "first_contentful_paint": 400,
+      "dom_content_loaded": 313.9,
+      "load_event": 901,
+      "dom_interactive": 313.8,
+      "transfer_bytes": 4590,
+      "stylesheet_hrefs": [
+        "/_next/static/css/b2ef84b7d4746ad3.css",
+        "/_next/static/css/67ab3368c62b9f05.css",
+        "/_next/static/css/008289500c38878d.css",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+        "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,200,0,0&display=swap"
+      ],
+      "stylesheet_transfer_bytes": 28199,
+      "editor_mounted": false,
+      "stylesheets": [
+        {
+          "file": "b2ef84b7d4746ad3.css",
+          "bytes": 14994,
+          "has_excalidraw": false
+        },
+        {
+          "file": "67ab3368c62b9f05.css",
+          "bytes": 3708,
+          "has_excalidraw": false
+        },
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "css2"
+        },
+        {
+          "file": "css2"
+        }
+      ],
+      "stylesheet_disk_bytes": 163317,
+      "excalidraw_stylesheets": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        }
+      ],
+      "excalidraw_assets_requested": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "501-93dd9b714412130f.js",
+          "bytes": 29100,
+          "has_excalidraw": true
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "first_paint": 412,
+      "first_contentful_paint": 412,
+      "dom_content_loaded": 319,
+      "load_event": 899.8,
+      "dom_interactive": 318.9,
+      "transfer_bytes": 4590,
+      "stylesheet_hrefs": [
+        "/_next/static/css/b2ef84b7d4746ad3.css",
+        "/_next/static/css/67ab3368c62b9f05.css",
+        "/_next/static/css/008289500c38878d.css",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+        "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,200,0,0&display=swap"
+      ],
+      "stylesheet_transfer_bytes": 28199,
+      "editor_mounted": false,
+      "stylesheets": [
+        {
+          "file": "b2ef84b7d4746ad3.css",
+          "bytes": 14994,
+          "has_excalidraw": false
+        },
+        {
+          "file": "67ab3368c62b9f05.css",
+          "bytes": 3708,
+          "has_excalidraw": false
+        },
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "css2"
+        },
+        {
+          "file": "css2"
+        }
+      ],
+      "stylesheet_disk_bytes": 163317,
+      "excalidraw_stylesheets": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        }
+      ],
+      "excalidraw_assets_requested": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "501-93dd9b714412130f.js",
+          "bytes": 29100,
+          "has_excalidraw": true
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "first_paint": 412,
+      "first_contentful_paint": 412,
+      "dom_content_loaded": 317.7,
+      "load_event": 887.3,
+      "dom_interactive": 317.6,
+      "transfer_bytes": 4590,
+      "stylesheet_hrefs": [
+        "/_next/static/css/b2ef84b7d4746ad3.css",
+        "/_next/static/css/67ab3368c62b9f05.css",
+        "/_next/static/css/008289500c38878d.css",
+        "https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap",
+        "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,200,0,0&display=swap"
+      ],
+      "stylesheet_transfer_bytes": 28199,
+      "editor_mounted": false,
+      "stylesheets": [
+        {
+          "file": "b2ef84b7d4746ad3.css",
+          "bytes": 14994,
+          "has_excalidraw": false
+        },
+        {
+          "file": "67ab3368c62b9f05.css",
+          "bytes": 3708,
+          "has_excalidraw": false
+        },
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "css2"
+        },
+        {
+          "file": "css2"
+        }
+      ],
+      "stylesheet_disk_bytes": 163317,
+      "excalidraw_stylesheets": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        }
+      ],
+      "excalidraw_assets_requested": [
+        {
+          "file": "008289500c38878d.css",
+          "bytes": 144615,
+          "has_excalidraw": true
+        },
+        {
+          "file": "501-93dd9b714412130f.js",
+          "bytes": 29100,
+          "has_excalidraw": true
+        }
+      ]
+    }
+  ],
+  "results": [
+    {
+      "name": "build",
+      "note": {
+        "dir": "/tmp/phase806-before/forge-control-web/.next",
+        "base_url": "http://127.0.0.1:7821"
+      }
+    },
+    {
+      "name": "every sample produced a first-contentful-paint",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "every sample loaded at least one stylesheet",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "the editor never mounted — the canvas really was not opened",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "summary",
+      "note": {
+        "samples": 5,
+        "first_contentful_paint_ms_median": 412,
+        "first_paint_ms_median": 412,
+        "dom_interactive_ms_median": 317.5,
+        "dom_content_loaded_ms_median": 317.6,
+        "load_event_ms_median": 887.3,
+        "render_blocking_css_disk_bytes_median": 163317,
+        "render_blocking_css_transfer_bytes_median": 28199,
+        "excalidraw_css_on_critical_path_bytes_median": 144615,
+        "excalidraw_assets_requested_without_opening_the_canvas": [
+          {
+            "file": "008289500c38878d.css",
+            "bytes": 144615,
+            "has_excalidraw": true
+          },
+          {
+            "file": "501-93dd9b714412130f.js",
+            "bytes": 29100,
+            "has_excalidraw": true
+          }
+        ]
+      }
+    }
+  ]
+}

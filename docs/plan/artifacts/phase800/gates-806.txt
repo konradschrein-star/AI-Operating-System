@@ -1,0 +1,18 @@
+########## GATE 1 — tsc forge-control ##########
+EXIT=0
+########## GATE 2 — tsc forge-control-web ##########
+EXIT=0
+########## GATE 3 — NODE_ENV=production pnpm build ##########
+EXIT=0  (log /tmp/p806-gatebuild.log)
+ ✓ Compiled successfully
+Route (app)                              Size     First Load JS
+########## GATE 4 — check-composer-v3.ts ##########
+EXIT=0
+
+OK — 9 clamp cases + ramp table clean
+########## GATE 5 — no-raw-colours.cjs ##########
+EXIT=0
+no-raw-colours: PASS — 207 literal(s) across 16 file(s), all accounted for (157 legitimate, 50 known debt, 0 unlisted).
+########## GATE 6 — contrast-canvas-banners.cjs ##########
+EXIT=0
+PASS — all 6 banner/theme combinations clear 4.5:1.

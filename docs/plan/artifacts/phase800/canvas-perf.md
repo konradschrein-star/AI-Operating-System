@@ -431,3 +431,159 @@ comparison.
 
 Whatever 803 changes, the AFTER run must name its baseline sha explicitly and
 report cold and warm separately, or the comparison is not one.
+
+---
+
+# 8. Round 806 — the AFTER numbers, and what they killed
+
+Round 803 wrote the fix and exited without committing it. Round 806 read the
+diff, judged it, landed it, measured it — and then **reverted half of it**,
+because the measurement said so. This section is the AFTER round 801 asked for
+and round 803 never produced.
+
+| | |
+|---|---|
+| BEFORE tree | `7549b13` — committed HEAD before this round's application code, i.e. the merged tree round 803 should have baselined against |
+| AFTER tree (r803 full) | `91ccfe0` — preload **and** CSS boundary |
+| AFTER tree (final) | preload only; CSS boundary reverted, `ExcalidrawEditor.tsx` deleted |
+| served on | `:7821` / `:7822` / `:7823`, three isolated `next build` + `next start`, all `FORGE_CONTROL_URL=:7798` |
+| API | worktree harness `serve-v3-7798.ts`. `forge-control/src/index.ts` never booted; forge-executor never touched |
+| protocol | `canvas-open.cjs` (repaired selector), `desktop-load.cjs`, `throttled-tradeoff.cjs` |
+| runs | canvas-open **n=4** per tree for BEFORE/full, n=2 for preload-only; desktop-load n=2; throttled n=6 per cell |
+| checks | 18/18 PASS on every canvas-open run, on every tree, including "the fixture drawing's SCENE is byte-identical after the run" |
+
+**The instrument records `head_sha` from the worktree, not from the build under
+test, so all runs report the same sha.** The trees are distinguished by
+`build_dir` and `base_url` in each JSON. That is a reporting flaw in
+`canvas-open.cjs` worth fixing before anyone quotes `head_sha` as provenance.
+
+## 8.1 Metric family B — /desktop page load, canvas never opened
+
+The bytes moved exactly as predicted. **The time did not move at all.**
+
+| | BEFORE | AFTER (r803 full) |
+|---|---|---|
+| render-blocking CSS on `/desktop` | 163,317 B | **18,702 B** |
+| …of which excalidraw-bearing | 144,615 B | **0 B** |
+| excalidraw assets requested without opening the canvas | 2 | 1 |
+| first-contentful-paint, loopback | 412 / 408 ms | **412 / 408 ms** |
+| dom-interactive, loopback | 317.5 / 314.6 ms | 316.3 / 318.5 ms |
+| **first-contentful-paint, 9 Mbps / 170 ms RTT** | **568 ms** | **568 ms** |
+
+Loopback alone would have been a weak reading — 144 KB is free on a link with
+no transfer cost, so a null result there proves little. That is why
+`throttled-tradeoff.cjs` exists: it re-runs the same question under CDP network
+emulation, and the answer under a realistic phone link is **zero milliseconds,
+n=6 per cell**.
+
+`/desktop`'s first paint is not gated on that stylesheet. It is gated on the JS
+bundle and the API round-trips, which outlast 144 KB of CSS even when 144 KB
+takes ~128 ms to arrive. **The hypothesis in §7 item 4 is falsified**, and the
+CSS boundary is reverted.
+
+## 8.2 Metric family A — canvas open, cold
+
+`canvas-open.cjs` medians, click → the frame showing the editor:
+
+| scenario | BEFORE (n=4) | r803 FULL (n=4) | PRELOAD ONLY (n=2) |
+|---|---|---|---|
+| S2-drawing | 724.7 ms | 932.3 ms | **661.7 ms** |
+| S3-drawing-nocache | 711.5 ms | 789.9 ms | **653.1 ms** |
+| S4-drawing-reload | 579.5 ms | 760.5 ms | 624.2 ms |
+
+The full r803 change is worse than doing nothing, in every scenario. Strip the
+CSS boundary and the remaining preload beats the baseline on S2 and S3 by
+58–63 ms. S4 is not readable in either direction: the baseline's own four
+samples were 389 / 591 / 600 / 568 ms, a 54 % spread inside one tree.
+
+Off loopback, where a serialised fetch costs what it actually costs:
+
+| cold open, 9 Mbps / 170 ms RTT | median, n=6 |
+|---|---|
+| BEFORE | 1505 ms |
+| r803 FULL | 1471 ms |
+| **PRELOAD ONLY** | **1138 ms — −367 ms, −24 %** |
+
+That is the shape of the mechanism: the preload removes a *serialisation of two
+network operations*, so its win scales with how much the network costs, and the
+CSS boundary was eating the entire win by putting 144 KB back on the open path.
+
+**Mechanically the serialisation is gone.** In the AFTER trees the editor chunks
+leave 38–42 ms after the click, alongside the two API calls at 36–43 ms. In
+BEFORE they were not requested until the scene fetch had resolved, ~103 ms in.
+That is precisely cause #3 from §5, removed.
+
+## 8.3 The gate is still red, and §7 already said why
+
+Cold-open **scripting** — the metric U31 actually gates — is unmoved across all
+three trees: **~210–224 ms against a 100 ms gate**. Warm opens improved 1–10 %.
+The worst cold open per run never went below 201 ms on any tree.
+
+This is not a surprise and it is not a failure of the fix. It is §7's own
+finding arriving on schedule: *"with all 1.08 MB of chunks already in the HTTP
+cache the open still costs 102–106 ms scripting over 532–536 ms wall, so
+removing the network entirely does not clear the gate. The largest single line
+item is layout, not script."* `Layout` is still ~192 ms over 10 passes, and no
+round has yet touched it. `canvas-layout-probe.cjs` was written to diagnose
+exactly that and has still never been run against a candidate fix.
+
+**U31 is not closed.** One of its two proposed fixes is dead on measurement, the
+other is landed and pays for itself on a real network, and the dominant cost is
+where round 801 said it was three rounds ago.
+
+## 8.4 Confidence, stated rather than implied
+
+- The family-B null result is the strongest claim here: two network profiles,
+  n=6, byte-level corroboration from the build output, and `/desktop`'s HTML
+  no longer referencing the sheet. It is not close.
+- The −367 ms throttled open win is tight (1118–1159 ms across six samples
+  against 1476–1607 ms) and has a mechanism.
+- **`throttled-tradeoff.cjs`'s *loopback* open cell disagrees with
+  `canvas-open.cjs` and should not be quoted.** It read preload-only as *worse*
+  on loopback where the primary instrument reads it as better. The two define
+  "cold" differently — `canvas-open.cjs` measures cycle 1 of a warmed page,
+  this file measures one open on a fresh context — and the primary instrument
+  has n=4, a richer protocol and three rounds of use behind it. Where they
+  conflict, `canvas-open.cjs` wins. The conflict is recorded rather than
+  averaged away.
+- S4 is not readable at n=4. Anyone re-running should raise n before quoting it.
+
+## 8.5 Three light-mode defects, closed
+
+Not perf, but the same file and the same round — the operator ranked these
+above the perf work and they are the round's actual user-facing result.
+
+| defect | before | after |
+|---|---|---|
+| conflict banner, light | **1.13:1** invisible | 4.71:1 |
+| error banner, light | **1.12:1** invisible | 5.09:1 |
+| watch-failure banner, light | **1.13:1** invisible | 4.71:1 |
+| conflict / watch banner, dark | 14.50:1 | 10.71:1 |
+| error banner, dark | 11.13:1 | 5.16:1 |
+| `<Excalidraw theme>` | literal `"dark"` | follows the app, live, no remount |
+
+`scripts/checks/contrast-canvas-banners.cjs` reproduces §5.4's four published
+numbers exactly before reporting the swap, which is what makes it trustworthy
+as a gate. `canvas-theme.cjs` proves the editor rethemes **without remounting**
+— a stamped DOM attribute survives the flip — so a theme switch mid-drawing
+does not discard the drawing.
+
+`--fg-warn` moved `#8a7513` → `#7f6c11` in the LIGHT palette only. It was tuned
+against pure white (4.53:1, nothing to spare) but every real use puts it on a
+tint, where it measured 4.12:1 — below AA at every existing warn banner in the
+app, not just this one.
+
+## 8.6 What the next round inherits
+
+1. **Layout, still.** The only unexplored cause and the largest one. Run
+   `canvas-layout-probe.cjs` and read `Q2` — who forces the 11 passes.
+2. **Keeping the pane mounted and hidden across toggles** (§7 item 3). Warm
+   opens still pay ~150 ms of wall clock because close unmounts the editor.
+   Untouched by this round.
+3. **50 raw colour literals**, now enumerated and gated by
+   `scripts/checks/no-raw-colours.cjs`. The loudest is `DesktopApp.tsx`'s
+   `#141417` active-nav background — phase 700 §5(c), still unfixed, and
+   plainly visible as a black bar in this round's own
+   `phase800-canvas-theme-light.png`.
+4. **`canvas-open.cjs` records the worktree's `head_sha`, not the build's.**
+   Fix before anyone cites it as provenance.

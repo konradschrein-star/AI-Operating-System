@@ -1,0 +1,40 @@
+{
+  "protocol": "throttled-tradeoff.cjs",
+  "tree": "after",
+  "rep": "3",
+  "base_url": "http://127.0.0.1:7822",
+  "profiles": {
+    "loopback": null,
+    "4g": {
+      "offline": false,
+      "latency": 170,
+      "downloadThroughput": 1125000,
+      "uploadThroughput": 375000
+    }
+  },
+  "samples_per_cell": 2,
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "seed_path": "Excalidraw/AI OS - Canvas Smoke Test.excalidraw.md",
+  "generated_at": "2026-08-16T18:53:14.189Z",
+  "cells": {
+    "loopback/pageload": [
+      448,
+      476
+    ],
+    "loopback/open": [
+      1215.3,
+      1291
+    ],
+    "4g/pageload": [
+      556,
+      568
+    ],
+    "4g/open": [
+      1470.4,
+      1471.6
+    ]
+  }
+}

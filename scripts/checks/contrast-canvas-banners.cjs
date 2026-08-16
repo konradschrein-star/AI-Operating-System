@@ -184,8 +184,21 @@ async function confirmInBrowser(palettes) {
       );
       for (const k of keys) {
         const declared = palettes[mode][k];
-        const norm = (s) => s.toLowerCase().replace(/\s+/g, "");
-        if (norm(seen[k]) !== norm(declared))
+        /* Compare PARSED colours, not strings. The browser re-serialises
+         * custom properties — `#ffffff` comes back as `#fff`, `rgba(0,0,0,.6)`
+         * as `rgba(0, 0, 0, 0.6)` — and a string compare reports those as
+         * mismatches, which is a false alarm that would train a reader to
+         * ignore this check. Anything that fails to parse is reported as a
+         * mismatch rather than silently skipped. */
+        let same = false;
+        try {
+          const a = parseColour(declared);
+          const b = parseColour(seen[k]);
+          same = a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
+        } catch {
+          same = false;
+        }
+        if (!same)
           mismatches.push(`${mode} --fg-${k}: theme.css says ${declared}, browser resolved ${seen[k]}`);
       }
     }
