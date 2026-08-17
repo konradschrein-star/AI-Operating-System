@@ -97,7 +97,13 @@ So §1's ruling is no longer only steward judgement — it is a binding operator
 
 ## 6. What the two round-1291 probes returned
 
-_Pending — filled in by round 1292 once the hover re-run and the 9.7 probe have landed._
+Both landed. Written up in full at `docs/plan/perf/baseline.md`, `findings.md` and `after.md` (round 1292).
+
+**`docs/plan/artifacts/phase1290/hover/` — the hover re-run. The §2 residual is CLOSED.** Five interleaved idle/hover pairs per surface, run twice: median attributable long tasks > 50 ms is **0 (team run1), 0 (team run2), 0 (rail run1), −1 (rail run2)**. Pooled over 100 s per surface, sweeping produced **fewer** long tasks than a parked pointer (rail 6 vs 10, team 5 vs 6). The 61 ms task §2 flagged was the team panel's own 6 s poll landing, not hover: the long tasks form a lattice at a 6 294.6 / 6 283.4 ms base period, `about:blank` in the same browser emits none, and with the pointer provably parked each task starts **2.1–2.3 ms** after the `/team` response finishes. `TEAM_POLL_MS = 6_000` at `ChatTeamPanel.tsx:91`, 102 rows and 61 KB re-parsed every six seconds. Gate clause (a): **PASS**. Gate clause (b): **NOT VERIFIABLE AS WRITTEN** — phase 400 never captured scripting ms, so no reduction can be computed against it.
+
+**`docs/plan/artifacts/phase1290/invalidation/` — the §9.7 probe. MECHANISM ESTABLISHED, and it is two mechanisms.** (A) §9.7's `PseudoClass` records are a **canvas** cost, not a hover cost: Excalidraw's `setLanguage` writes `document.documentElement.lang` on mount, and Blink charges one record per DOM element. 5 934 records / 5 941 elements, identical across four trace-category sets, reproduced with no canvas at all by a single `lang` write (6 098 / 6 139). Pointer legs produce **zero** such records. Per §4 this is a **note**, not a finding. (B) The hover finding §9.7 hoped for does exist and is **one selector**: `v2.css:291`, `.v2-nav-item:hover:not(.v2-nav-active) span`, ends in a bare tagName, so `span` enters the document-wide hover invalidation set and every `.chat-row`/`.team-row` crossing invalidates every span in the row. Deleting that one rule takes a 30-crossing sweep from **1 340 → 720** records — 46 % of the total reducible cost. Excalidraw's 87 `:hover` rules are worth **0**, confirming §9.7's guess by measurement.
+
+**Consequence for phase 1300, exactly as §3 anticipated:** the one real open lead resolves to **a selector change**, not an architecture change — squarely inside the MAY column of §5. It is a recommendation only; round 1291 applied nothing. And the probe is explicit that record counts are not milliseconds, so it is **not** established that (B) is what Konrad feels as hover lag.
 
 ---
 
