@@ -26,6 +26,21 @@ reporting artifact, not a property of the work* — the poll still does work eve
 
 ## 1. The rig
 
+> **Addendum 2026-08-17 (round 1305 fix cycle 1 — red-team finding F3): what
+> `buildShaUnderTest` in `lattice-1302.json` can and cannot tell you.** That
+> field reads `b3bd80f` for `run1`/`run2`, and the payload fix shipped as
+> `92aeb0f` — because the field is `git rev-parse HEAD` of a worktree that had
+> the fix present but not yet committed, as its own `shaNote` conceded. **No
+> measurement here is disproven by that**: `team-payload-after.json` demonstrably
+> contains no `task.id`, so the build under test was the trimmed one, and the
+> red team re-verified the trim end to end on HEAD. But the field cannot answer
+> "did they measure what they shipped", and it should not be cited as if it
+> could. Since round 1305 the instrument records `env.gitProvenance`
+> (`git status --porcelain` verbatim, plus `dirty`/`dirtyFileCount`, measured by
+> the run itself) and `env.sourceTree` (a sha256 over the source bytes of the
+> directory that was actually built) beside it. New runs carry provenance;
+> this artifact's `buildShaUnderTest` stays as recorded, with this caveat.
+
 | | |
 |---|---|
 | worktree | `/opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838`, branch `project/8ea0cc08` |

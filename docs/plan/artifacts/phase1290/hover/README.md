@@ -360,16 +360,34 @@ print(d['runs']['control']['control']['app']['gapFromPollResponseEndMs']['values
 → `[0, 0]`
 → `[2.1, 2.3, 2.2]`
 
-### 6.2 The sweep really hovered rows
+### 6.2 The sweep really hovered rows — ~~claimed here~~ **RETRACTED, round 1305**
+
+> **RETRACTION (2026-08-17, round 1305 fix cycle 1 — red-team finding F1).**
+> **The 60/60 table below does not mean the sweep hovered rows, and the sentences
+> that said it did were wrong.** The probe's `pass` required only that the element
+> at the target coordinate was the element the browser reported as `:hover` and
+> that it was not BODY/HTML. Row membership *was computed* one line above
+> (`teamRowHovered`) and **was not required**, so a coordinate landing on a
+> plan-Kanban card, a header, or a post-reflow gap passed. It did:
+> `hover-1291.json`, team surface, crossing 40 — `teamRow=false pass=true` in
+> **10 of 10 pairs**, while `hoverProbesAllPassed` read `true`.
+>
+> Read the numbers below as *"60 probes found a non-body element under the
+> pointer"* and nothing more. **The corrected instrument, the gate that proves
+> the correction, and a re-run whose probes are row-asserted are in
+> [`../../phase1300/fix-1305/`](../../phase1300/fix-1305/README.md).** The
+> phase-1291 measurements themselves are not withdrawn — §2.3's idle floor and
+> §2.4's poll lattice never depended on where the pointer was, and §2.4(iii)
+> holds the pointer *still* — but any claim of the form "the sweep hovered N
+> rows" must now come from a post-1305 run.
 
 `03-quality.md` §5 briefs the red-team reviewer to attack exactly this ("sweep
 script not actually hitting rows"). Three times inside every hover window — at
-crossings 5, 40 and 90 — the script asks the page which elements match `:hover`
-and asserts that **the element the browser reports at the target coordinates is
+crossings 5, 40 and 90 — the script asked the page which elements match `:hover`
+and asserted that **the element the browser reports at the target coordinates is
 the same element the browser reports as `:hover`**, and that it is not BODY/HTML.
-The assertion does not trust a class name, so it works on both surfaces.
 
-| | probes | passed |
+| | probes | passed (pre-1305 rule: non-body element under the pointer) |
 |---|---|---|
 | run1 rail | 15 | **15** |
 | run1 team | 15 | **15** |
@@ -377,10 +395,16 @@ The assertion does not trust a class name, so it works on both surfaces.
 | run2 team | 15 | **15** |
 | **total** | **60** | **60** |
 
-On the team surface the probes additionally report `teamRowHovered` — the hovered
-element resolves to a `[data-team-row]` ancestor. `hoverProbeAllPassed: true` for
-all four surface/run cells. Crossings per window: **149–150**, matching round
-904's 150.
+On the team surface the probes additionally reported `teamRowHovered` — and this
+is the field that mattered: **10 of the 20 team-surface probes have
+`teamRowHovered: false`** (every crossing-40 probe, in both runs), i.e. the
+pointer was on the plan Kanban below the panel. Crossings per window: **149–150**,
+matching round 904's 150.
+
+Since round 1305 the probe requires the hovered element to resolve to a row of
+the surface under sweep — `[data-team-row]` on the team panel, `.chat-row` on the
+rail — the picker clips candidate rows to their scroll container instead of to
+the viewport, and a failing probe exits the process 1 with `SWEEP INVALID`.
 
 No screenshot is written: the round is allowed exactly three files, and the DOM
 assertion is the stronger of the two options §5 offers — it proves the pointer was
@@ -428,42 +452,68 @@ steps A–E, with the copy and port moved.
 > (into this directory) or `HOVER_OUT=<dir>`. Only output-path resolution
 > changed — no measurement logic was touched, so numbers stay comparable.
 
+> **Changed 2026-08-17 (round 1305, red-team finding F2): step A no longer trusts
+> :7798.** It used to read *"worktree API on :7798 — ALREADY UP"* and prove it
+> with `/api/health`. Two things were wrong with that. `/api/health` is one of
+> the paths this harness **passes through to production :7700**, so it answers
+> `ok` even when nothing of the worktree is mounted; and the process that held
+> :7798 had been running since 2026-08-16 16:10:39, hours before round 1302's
+> payload trim, so it still served the `task.id` that round deleted. A round
+> following this recipe would have measured a twelve-hour-old build and called it
+> the worktree. **Start your own instance on your own port and assert its
+> freshness against a field you changed.**
+
 ```bash
 cd /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838
+CHAT=bfd1283a-b71b-4f35-b577-7d09aad803f2
 
-# A) worktree API on :7798 — ALREADY UP. Never boot forge-control/src/index.ts.
-curl -s 127.0.0.1:7798/api/health
+# A) YOUR OWN worktree API. Pick a free port; never boot forge-control/src/index.ts.
+ss -ltn | grep -E ':(77|78)[0-9][0-9]'          # ← what is already bound; kill nothing
+set -a; . /opt/ai-os/.secrets/forge-control.env; set +a
+(cd forge-control && SERVE_V3_PORT=7789 nohup ./node_modules/.bin/tsx \
+   ../scripts/checks/serve-v3-7798.ts > /tmp/api-1305.log 2>&1 &)
+sleep 10
 
-# B) build the web app AGAINST the harness, into an ISOLATED copy.
+# FRESHNESS, not liveness. /api/health proxies to production :7700 and proves
+# nothing about the mount; this asserts a field THIS worktree deleted is gone.
+curl -s "127.0.0.1:7789/api/chat/$CHAT/team" | jq -e '.workers[0].task|has("id")|not' \
+  && echo "API is this worktree (task.id trimmed)" \
+  || { echo "STALE API — it still ships task.id. Do not measure against it."; exit 1; }
+
+# B) build the web app AGAINST YOUR harness, into an ISOLATED copy.
 #    Do NOT rebuild forge-control-web/.next in place — other rounds serve from it.
-rm -rf /tmp/phase1291b-web && mkdir -p /tmp/phase1291b-web
-rsync -a --exclude='.next' --exclude='node_modules' forge-control-web/ /tmp/phase1291b-web/
-ln -s "$(pwd)/forge-control-web/node_modules" /tmp/phase1291b-web/node_modules
-cd /tmp/phase1291b-web
-FORGE_CONTROL_URL=http://127.0.0.1:7798 NODE_ENV=production ./node_modules/.bin/next build
-grep -o '127.0.0.1:77[0-9][0-9]' .next/routes-manifest.json | sort -u   # → 127.0.0.1:7798
+rm -rf /tmp/phase1305-web && mkdir -p /tmp/phase1305-web
+rsync -a --exclude='.next' --exclude='node_modules' forge-control-web/ /tmp/phase1305-web/
+ln -s "$(pwd)/forge-control-web/node_modules" /tmp/phase1305-web/node_modules
+cd /tmp/phase1305-web
+FORGE_CONTROL_URL=http://127.0.0.1:7789 NODE_ENV=production ./node_modules/.bin/next build
+grep -o '127.0.0.1:77[0-9][0-9]' .next/routes-manifest.json | sort -u   # → 127.0.0.1:7789
 
 # C) mint the session cookie (read-only source of the live env file)
 cat > mint-cookie.mjs <<'EOF'
 import { encode } from "next-auth/jwt";
 const name = "authjs.session-token";
-console.log(await encode({ token: { name: "phase1291 hover sweep", email: "check@localhost",
+console.log(await encode({ token: { name: "phase1305 hover sweep", email: "check@localhost",
   sub: "check" }, secret: process.env.AUTH_SECRET, salt: name, maxAge: 60 * 240 }));
 EOF
 set -a; . /opt/forge-ai-os/forge-control-web/.env.local; set +a
-node ./mint-cookie.mjs > /tmp/session-cookie-phase1291.txt && rm mint-cookie.mjs
+node ./mint-cookie.mjs > /tmp/session-cookie-phase1305.txt && rm mint-cookie.mjs
 
-# D) serve the copy on :7790. AUTH_URL must match the port and AUTH_SECRET must be
+# D) serve the copy on :7792. AUTH_URL must match the port and AUTH_SECRET must be
 #    in the SERVER env, not just the minting subshell (MissingSecret otherwise).
 ss -ltn | grep -E ':779[0-9]' || true
-AUTH_URL=http://127.0.0.1:7790 FORGE_CONTROL_URL=http://127.0.0.1:7798 AUTH_SECRET="$AUTH_SECRET" \
-  ./node_modules/.bin/next start -p 7790 &
+AUTH_URL=http://127.0.0.1:7792 FORGE_CONTROL_URL=http://127.0.0.1:7789 AUTH_SECRET="$AUTH_SECRET" \
+  ./node_modules/.bin/next start -p 7792 &
 
 # E) run the script from the WORKTREE against that server
 cd /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838
-export FORGE_SESSION_COOKIE="$(cat /tmp/session-cookie-phase1291.txt)"
-export HOVER_BASE_URL=http://127.0.0.1:7790
+export FORGE_SESSION_COOKIE="$(cat /tmp/session-cookie-phase1305.txt)"
+export HOVER_BASE_URL=http://127.0.0.1:7792
 export HOVER_BUILD_SHA="$(git rev-parse HEAD)" HOVER_UPTIME="$(uptime)"
+# round 1305 (F3): name the directory that was actually built, so the run can
+# hash its source bytes instead of leaning on a commit id that a dirty tree
+# makes meaningless.
+export HOVER_BUILD_DIR=/tmp/phase1305-web
 
 # these write to /tmp/hover-1291-out/hover-1291.json — the committed artifact
 # is NOT touched. Add --commit-artifact only when you mean to replace it.
@@ -471,7 +521,11 @@ HOVER_RUN_LABEL=run1 node docs/plan/artifacts/phase1290/hover/hover-1291.cjs
 HOVER_RUN_LABEL=run2 node docs/plan/artifacts/phase1290/hover/hover-1291.cjs
 HOVER_RUN_LABEL=control HOVER_CONTROL=1 node docs/plan/artifacts/phase1290/hover/hover-1291.cjs
 
-# F) no-regression gates
+# F) the probe gate — no server, no cookie, ~5 s. Proves the row assertion
+#    rejects what the pre-1305 one accepted (round 1305, F1).
+node docs/plan/artifacts/phase1300/fix-1305/probe-1305.cjs
+
+# G) no-regression gates
 (cd forge-control && npx tsc --noEmit)
 (cd forge-control-web && npx tsc --noEmit)
 git status --short
@@ -481,8 +535,13 @@ Each invocation merges its result into `<OUT>/hover-1291.json` under
 `runs.<label>`; delete that file first for a clean set. Knobs: `HOVER_PAIRS`
 (default 5), `HOVER_WINDOW_MS` (default 10000), `HOVER_CONTROL=1` (mechanism
 check instead of sweep), `HOVER_OUT` / `--commit-artifact` (output directory —
-see the note above; default `/tmp/hover-1291-out`). Wall-clock: ~4 min per
-5-pair run, ~2 min for the control.
+see the note above; default `/tmp/hover-1291-out`), `HOVER_BUILD_DIR` (the built
+copy to hash), and two round-1305 additions:
+`HOVER_SABOTAGE_BOXES=<px>` aims the sweep deliberately off the rows so you can
+watch the row assertion fail, and `HOVER_ALLOW_PROBE_FAILURE=1` keeps the exit
+code at 0 while you diagnose a miss. **A sweep whose probes do not all land on a
+row exits 1 and prints `SWEEP INVALID`; its numbers are not a hover
+measurement.** Wall-clock: ~4 min per 5-pair run, ~2 min for the control.
 
 ---
 

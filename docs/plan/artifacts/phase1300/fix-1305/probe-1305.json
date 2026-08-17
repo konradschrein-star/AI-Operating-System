@@ -1,0 +1,302 @@
+{
+  "script": "docs/plan/artifacts/phase1300/fix-1305/probe-1305.cjs",
+  "round": 1305,
+  "finding": "F1 — hover probe's `pass` omitted row membership",
+  "probeSource": "docs/plan/artifacts/phase1290/hover/hover-1291.cjs (required, not copied)",
+  "finishedAt": "2026-08-17T02:48:52.308Z",
+  "naiveBoxes": [
+    {
+      "x": 210,
+      "y": 20
+    },
+    {
+      "x": 210,
+      "y": 60
+    },
+    {
+      "x": 210,
+      "y": 100
+    },
+    {
+      "x": 210,
+      "y": 140
+    },
+    {
+      "x": 210,
+      "y": 180
+    },
+    {
+      "x": 210,
+      "y": 220
+    },
+    {
+      "x": 210,
+      "y": 260
+    },
+    {
+      "x": 210,
+      "y": 300
+    },
+    {
+      "x": 210,
+      "y": 340
+    },
+    {
+      "x": 210,
+      "y": 380
+    },
+    {
+      "x": 210,
+      "y": 420
+    },
+    {
+      "x": 210,
+      "y": 460
+    },
+    {
+      "x": 210,
+      "y": 500
+    },
+    {
+      "x": 210,
+      "y": 540
+    },
+    {
+      "x": 210,
+      "y": 580
+    },
+    {
+      "x": 210,
+      "y": 620
+    },
+    {
+      "x": 210,
+      "y": 660
+    },
+    {
+      "x": 210,
+      "y": 700
+    },
+    {
+      "x": 210,
+      "y": 740
+    },
+    {
+      "x": 210,
+      "y": 780
+    },
+    {
+      "x": 210,
+      "y": 820
+    },
+    {
+      "x": 210,
+      "y": 860
+    },
+    {
+      "x": 210,
+      "y": 900
+    },
+    {
+      "x": 210,
+      "y": 940
+    },
+    {
+      "x": 210,
+      "y": 980
+    }
+  ],
+  "clippedBoxes": [
+    {
+      "x": 210,
+      "y": 20
+    },
+    {
+      "x": 210,
+      "y": 60
+    },
+    {
+      "x": 210,
+      "y": 100
+    },
+    {
+      "x": 210,
+      "y": 140
+    },
+    {
+      "x": 210,
+      "y": 180
+    },
+    {
+      "x": 210,
+      "y": 220
+    },
+    {
+      "x": 210,
+      "y": 260
+    },
+    {
+      "x": 210,
+      "y": 290
+    }
+  ],
+  "samples": {
+    "oldOnKanban": {
+      "teamRowHovered": false,
+      "deepestTag": "DIV",
+      "pass": true
+    },
+    "newOnKanban": {
+      "target": {
+        "x": 210,
+        "y": 340
+      },
+      "rowSelector": "[data-team-row]",
+      "hoverChainLength": 4,
+      "deepestTag": "DIV",
+      "deepestClass": "kanban-card",
+      "elementAtTargetIsTheHoveredOne": true,
+      "rowHovered": false,
+      "atPointInRow": false,
+      "teamRowHovered": false,
+      "hoveredRowText": "Phase 2 review — kind truth (R7-R11)",
+      "missedOnto": "Phase 2 review — kind truth (R7-R11)",
+      "pass": false
+    },
+    "newOnRow": {
+      "target": {
+        "x": 210,
+        "y": 20
+      },
+      "rowSelector": "[data-team-row]",
+      "hoverChainLength": 5,
+      "deepestTag": "DIV",
+      "deepestClass": "team-row",
+      "elementAtTargetIsTheHoveredOne": true,
+      "rowHovered": true,
+      "atPointInRow": true,
+      "teamRowHovered": true,
+      "hoveredRowText": "row 0",
+      "missedOnto": null,
+      "pass": true
+    },
+    "railProbe": {
+      "target": {
+        "x": 150,
+        "y": 30
+      },
+      "rowSelector": ".chat-row",
+      "hoverChainLength": 4,
+      "deepestTag": "DIV",
+      "deepestClass": "chat-row",
+      "elementAtTargetIsTheHoveredOne": true,
+      "rowHovered": true,
+      "atPointInRow": true,
+      "teamRowHovered": false,
+      "hoveredRowText": "chat 0",
+      "missedOnto": null,
+      "pass": true
+    }
+  },
+  "checks": [
+    {
+      "id": "F1-a",
+      "label": "the viewport rule targets coordinates outside the panel",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-b",
+      "label": "pointer is on the Kanban card, not on a row",
+      "ok": true,
+      "got": false,
+      "want": false
+    },
+    {
+      "id": "F1-c",
+      "label": "OLD probe passes there — the finding, reproduced",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-d",
+      "label": "NEW probe fails there",
+      "ok": true,
+      "got": false,
+      "want": false
+    },
+    {
+      "id": "F1-e",
+      "label": "NEW probe says why: no row under the pointer",
+      "ok": true,
+      "got": false,
+      "want": false
+    },
+    {
+      "id": "F1-f",
+      "label": "NEW probe records what it hit instead",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-g",
+      "label": "NEW probe passes on a genuine row",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-h",
+      "label": "…and reports the row it hovered",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-i",
+      "label": "…with the row's own text",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-j",
+      "label": "every clipped box lies inside the panel's scroll box",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-k",
+      "label": "all 8 clipped boxes hover a row",
+      "ok": true,
+      "got": 8,
+      "want": 8
+    },
+    {
+      "id": "F1-l",
+      "label": "rail picker returns only rows inside the rail's scroll box",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-m",
+      "label": "NEW probe passes on a rail row with the rail selector",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "F1-n",
+      "label": "…and teamRowHovered is false there, which is why `pass` must not read it",
+      "ok": true,
+      "got": false,
+      "want": false
+    }
+  ],
+  "failures": 0
+}
