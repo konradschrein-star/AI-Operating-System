@@ -484,7 +484,28 @@ project already has ≥ 6 (`PROJECT_MAX_WORKSTREAMS`, env-overridable). A goal
 project fanning out 40 workstreams would fill the disk with full checkouts. The
 refusal is a hard error naming the count and the limit at task-creation time
 (`400`), not at spawn time.
-*How proved:* unit.
+
+**THE API HALF LANDS EARLY, IN PHASE 3 (round 212), and phase 4 must not
+re-open it.** This requirement's primary owner stays phase 4 — §K above and §9
+of `04-phases.md` both say so and must keep agreeing — but its own words put the
+refusal *at task-creation time, not at spawn time*, and task creation is
+`POST /api/projects/:id/tasks` in `forge-control/src/routes/projects.ts`, a file
+`04-phases.md` §10 assigns to phase 3 **alone**. Phase 4 could satisfy the `400`
+only by writing a phase-3 file, so as mapped the requirement was unsatisfiable
+in its own phase; `04-phases.md` Phase 3 deliverable 2 had already noticed and
+listed "R39's workstream cap" among phase 3's `400`s. Amending it where it is
+enforced, rather than reinterpreting the mapping silently, is standing rule 2
+(`00-vision.md` §7). So: the `400`, the distinct-workstream count and the
+`PROJECT_MAX_WORKSTREAMS` constant itself land in phase 3, exported from
+`routes/projects.ts`. **Phase 4 keeps the rest and must not restate the `400`:**
+the provisioning refusal in `lib/workspace.ts` (R32's `provisionWorkstream`),
+which reads the same exported constant rather than re-reading the environment so
+the two refusals cannot disagree about the limit, and phase 4's `04-phases.md`
+deliverable 8 is satisfied by *reading* the cap, not by re-implementing its
+rejection. A second, differently-worded `400` for the same condition is a
+finding.
+*How proved:* unit (the `400`, phase 3 — `scripts/checks/check-task-api.ts`);
+`check-workstream-e2e.sh` (the provisioning half, phase 4).
 
 ---
 

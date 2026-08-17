@@ -90,7 +90,16 @@ function checkThrows(name: string, body: Body, message: string): void {
  * These cases pin the pre-extraction expression verbatim
  * (`body.mode === "goal" ? { mode, ...(Number(checkin_hours) > 0 ? … : {}) } : {}`).
  * Round 303d is a refactor plus one key; if any of these flips, goal-mode
- * check-ins broke. */
+ * check-ins broke.
+ *
+ * AMENDED ROUND 212 (engine-task-graph phase 3, R31). `mode: "goal"` now also
+ * sets `strict_write_sets: true`, so nine of these cases had to gain the key or
+ * fail. Amending the expectations is the whole reason they are written as exact
+ * objects rather than as key subsets: the diff below IS the record of what R31
+ * changed, and every non-goal case is untouched, which is the property R31
+ * actually promises ("existing projects do not [set it], so R18's replica is
+ * untouched"). `check()` compares JSON.stringify output, so the literals also
+ * pin INSERTION ORDER — mode, checkin_hours, strict_write_sets, origin_chat_id. */
 console.log("── mode / checkin_hours (unchanged behaviour) ────────────────");
 check("no mode → empty metadata", buildProjectMetadata({}), {});
 check(
@@ -98,36 +107,39 @@ check(
   buildProjectMetadata({ name: "x", brief: "y", repo: "scratch" }),
   {},
 );
-check("mode goal → { mode: 'goal' }", buildProjectMetadata({ mode: "goal" }), { mode: "goal" });
+check("mode goal → { mode: 'goal', strict_write_sets: true }", buildProjectMetadata({ mode: "goal" }), {
+  mode: "goal",
+  strict_write_sets: true,
+});
 check(
   "mode goal + checkin_hours 6 → both keys",
   buildProjectMetadata({ mode: "goal", checkin_hours: 6 }),
-  { mode: "goal", checkin_hours: 6 },
+  { mode: "goal", checkin_hours: 6, strict_write_sets: true },
 );
 check(
   "mode goal + checkin_hours 0 → checkin_hours dropped",
   buildProjectMetadata({ mode: "goal", checkin_hours: 0 }),
-  { mode: "goal" },
+  { mode: "goal", strict_write_sets: true },
 );
 check(
   "mode goal + negative checkin_hours → dropped",
   buildProjectMetadata({ mode: "goal", checkin_hours: -3 }),
-  { mode: "goal" },
+  { mode: "goal", strict_write_sets: true },
 );
 check(
   "mode goal + NaN checkin_hours → dropped",
   buildProjectMetadata({ mode: "goal", checkin_hours: Number.NaN }),
-  { mode: "goal" },
+  { mode: "goal", strict_write_sets: true },
 );
 check(
   "mode goal + unparsable checkin_hours string → dropped",
   buildProjectMetadata({ mode: "goal", checkin_hours: "soon" as unknown as number }),
-  { mode: "goal" },
+  { mode: "goal", strict_write_sets: true },
 );
 check(
   "mode goal + numeric string checkin_hours coerces (Number('6') > 0)",
   buildProjectMetadata({ mode: "goal", checkin_hours: "6" as unknown as number }),
-  { mode: "goal", checkin_hours: 6 },
+  { mode: "goal", checkin_hours: 6, strict_write_sets: true },
 );
 check(
   "checkin_hours WITHOUT goal mode is ignored entirely",
@@ -185,7 +197,39 @@ check(
 check(
   "goal mode + checkin_hours + origin_chat_id → all three coexist",
   buildProjectMetadata({ mode: "goal", checkin_hours: 4, origin_chat_id: CHAT_ID }),
-  { mode: "goal", checkin_hours: 4, origin_chat_id: CHAT_ID },
+  { mode: "goal", checkin_hours: 4, strict_write_sets: true, origin_chat_id: CHAT_ID },
+);
+
+/* ── strict_write_sets (R31, engine-task-graph phase 3) ────────────────────
+ * The route reads `project.metadata.strict_write_sets === true` and refuses a
+ * builder/tester task with an empty write_set. What is asserted here is the
+ * WRITE half: which projects are born carrying the key. The asymmetry is the
+ * requirement — "new goal-mode projects created by this engine set it; existing
+ * projects do not, so R18's replica is untouched" — so the absence cases below
+ * matter at least as much as the presence one. */
+console.log("\n── strict_write_sets (R31) ───────────────────────────────────");
+check(
+  "goal mode sets strict_write_sets: true (the literal, never a truthy string)",
+  buildProjectMetadata({ mode: "goal" }).strict_write_sets,
+  true,
+);
+checkHas(
+  "no mode → key ABSENT, not false (an existing project's metadata is untouched)",
+  buildProjectMetadata({}),
+  "strict_write_sets",
+  false,
+);
+checkHas(
+  "a full non-goal create body → key absent",
+  buildProjectMetadata({ name: "x", brief: "y", repo: "ai-os", architect_tier: "standard" }),
+  "strict_write_sets",
+  false,
+);
+checkHas(
+  "goal mode → key present",
+  buildProjectMetadata({ mode: "goal" }),
+  "strict_write_sets",
+  true,
 );
 
 console.log("\n── origin_chat_id rejection (route maps these to 400) ────────");
