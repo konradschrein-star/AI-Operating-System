@@ -949,6 +949,27 @@ export function partitionByWorkstream<
   return { spawn, deferred };
 }
 
+/** The one spawn log line's TEXT (R58), pulled out so project-tick.test.ts can
+ *  assert on it without importing anything that opens a pg Pool — `spawnTaskRuns()`
+ *  below is the only caller. Workstream is printed ALWAYS, including 'main': a
+ *  line meant to be grepped by `workstream=` must not silently drop the common
+ *  case. `depends_on`'s NULL sentinel (doc-comment on `ProjectTask.depends_on`,
+ *  db/projects.ts) is never collapsed into 0 — that is exactly the kind of lie
+ *  NF1 forbids — so a legacy row reads `deps=legacy` and a graph row reads
+ *  `deps=<n>`, tested with one `=== null`, never `?? []`, never truthiness. */
+export function formatSpawnLog(
+  task: Pick<ProjectTask, "id" | "role" | "round" | "tier" | "workstream" | "depends_on" | "title">,
+  runId: string,
+  projectName: string,
+): string {
+  const deps = task.depends_on === null ? "legacy" : String(task.depends_on.length);
+  return (
+    `[project-tick] spawned ${task.role} run ${runId} for task ${task.id} ` +
+    `(round ${task.round}, tier ${task.tier ?? "role-default"}, workstream=${task.workstream}, deps=${deps}) — ` +
+    `${projectName} · ${task.title}`
+  );
+}
+
 /**
  * R17's WARN CLAUSE — the message a spawn owes an undeclared builder, or `null`
  * when it owes none. Relocated to phase 4 by 01-requirements R17 and 04-phases
@@ -972,27 +993,6 @@ export function partitionByWorkstream<
  * fires for `builder` and not for `scout`" — is a unit test over the rule and
  * its text rather than a regex over this file's source.
  */
-/** The one spawn log line's TEXT (R58), pulled out so project-tick.test.ts can
- *  assert on it without importing anything that opens a pg Pool — `spawnTaskRuns()`
- *  below is the only caller. Workstream is printed ALWAYS, including 'main': a
- *  line meant to be grepped by `workstream=` must not silently drop the common
- *  case. `depends_on`'s NULL sentinel (doc-comment on `ProjectTask.depends_on`,
- *  db/projects.ts) is never collapsed into 0 — that is exactly the kind of lie
- *  NF1 forbids — so a legacy row reads `deps=legacy` and a graph row reads
- *  `deps=<n>`, tested with one `=== null`, never `?? []`, never truthiness. */
-export function formatSpawnLog(
-  task: Pick<ProjectTask, "id" | "role" | "round" | "tier" | "workstream" | "depends_on" | "title">,
-  runId: string,
-  projectName: string,
-): string {
-  const deps = task.depends_on === null ? "legacy" : String(task.depends_on.length);
-  return (
-    `[project-tick] spawned ${task.role} run ${runId} for task ${task.id} ` +
-    `(round ${task.round}, tier ${task.tier ?? "role-default"}, workstream=${task.workstream}, deps=${deps}) — ` +
-    `${projectName} · ${task.title}`
-  );
-}
-
 export function emptyWriteSetWarning(
   task: Pick<ProjectTask, "id" | "role" | "title" | "workstream" | "write_set">,
   projectName: string,
