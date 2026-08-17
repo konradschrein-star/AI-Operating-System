@@ -231,9 +231,27 @@ export async function createProject(input: {
       ],
     );
     const project = pr.rows[0];
+    // depends_on = '{}' — an EXPLICIT graph root, not the NULL legacy sentinel
+    // (02-architecture.md §2.2; the sentinel's two meanings are on the
+    // ProjectTask.depends_on doc-comment above).
+    //
+    // Correct because a round-0 task has no predecessors by construction, so
+    // the legacy rule ("no non-done task in a strictly lower round" — vacuous
+    // at round 0) and the graph rule ("[] is trivially satisfied") agree
+    // exactly on this row: it promotes immediately under either branch. No
+    // observable scheduling change, on any project.
+    //
+    // Necessary because without it every project this engine mints is born
+    // carrying a permanent `depends_on IS NULL` row, and NF6 — "the legacy
+    // branch is retirable in one commit once no NULL rows remain" — would
+    // never again be satisfiable: the retirement condition cannot be reached
+    // while the creation path keeps manufacturing legacy roots.
+    //
+    // Not named by R22–R31; taken as a decision under fleet escalation policy
+    // rule 3 and reported to the manager chat (round 211).
     const tr = await client.query<ProjectTask>(
-      `INSERT INTO project_tasks (project_id, round, role, title, brief, tier)
-       VALUES ($1, 0, 'architect', $2, $3, $4)
+      `INSERT INTO project_tasks (project_id, round, role, title, brief, tier, depends_on)
+       VALUES ($1, 0, 'architect', $2, $3, $4, '{}'::uuid[])
        RETURNING ${TASK_COLS}`,
       [project.id, `Plan: ${project.name}`, project.brief, input.architect_tier ?? null],
     );
@@ -317,7 +335,55 @@ export async function getTask(id: string): Promise<ProjectTask | null> {
  *  written by createFixChain(), which is the only path that has to survive a
  *  replay against BOTH unique indexes. A second entry point that writes
  *  chain_key while arbitrating on identity alone would raise unique_violation
- *  on exactly the replay it was meant to absorb. */
+ *  on exactly the replay it was meant to absorb.
+ *
+ *  ── The three graph columns (R22, migration 0040) ───────────────────────────
+ *
+ *  `depends_on` CARRIES A SENTINEL and the two absent-ish values are NOT the
+ *  same value (02-architecture.md §2.2, settled as E2 in §9.1):
+ *
+ *    undefined  → SQL NULL → a LEGACY row: never graph-scheduled, promoted by
+ *                 the round rule. This is what every caller that predates the
+ *                 column gets, which is what makes the migration a no-op on
+ *                 day one.  TODO(R12-retire)
+ *    null       → SQL NULL. Identical to undefined, explicitly.
+ *    []         → SQL '{}' → a GRAPH ROOT: graph-scheduled, no predecessors,
+ *                 promotes immediately.
+ *    [a, b]     → SQL '{a,b}' → promotes when a and b are both done.
+ *
+ *  The column is therefore ALWAYS named in the INSERT and always bound, with
+ *  `input.depends_on ?? null`. That `??` is a NULL-to-NULL identity — the only
+ *  value it can convert is `undefined`, and the value it converts to is the
+ *  same SQL NULL `undefined` would have produced via the schema default. It
+ *  is not an NF1 silent fallback: nothing is being rescued, no error is being
+ *  swallowed, and `[]` cannot reach it. Naming the column unconditionally is
+ *  what keeps the emitted SQL a single constant string, so which of the four
+ *  cases you are in is decided by the BINDING and provable by reading it,
+ *  rather than by a branch that assembles a different statement.
+ *
+ *  `workstream` mirrors the schema default (`NOT NULL DEFAULT 'main'`,
+ *  02-architecture.md §2.1) on the TS side rather than omitting the column,
+ *  for the same one-statement reason. It is a default-for-omitted, not a
+ *  fallback-for-invalid: an INVALID workstream is passed through untouched so
+ *  the column's CHECK rejects it loudly. `write_set` likewise defaults to `[]`,
+ *  which intersects nothing and is therefore always claimable (R17).
+ *
+ *  VALIDATION IS NOT THIS LAYER'S. The route calls validateWorkstream() and
+ *  normaliseWritePath() from lib/task-graph.ts and answers 400 (R28); the
+ *  values arriving here are already normalised. Nothing is re-validated and
+ *  nothing is coerced — an unparseable workstream quietly becoming 'main' is
+ *  named in NF1 as a forbidden silent fallback, so the omission is deliberate
+ *  and must stay.
+ *
+ *  IDENTITY IS UNCHANGED BY ALL THREE (R30). It remains
+ *  (project_id, round, role, title): the ON CONFLICT target, the follow-up
+ *  SELECT and the unexplained-conflict diagnostic below all still name exactly
+ *  those four columns. A repeated call with an identical body therefore returns
+ *  the EXISTING row with created=false — including the depends_on, workstream
+ *  and write_set that row was inserted with, never the ones the second call
+ *  sent. A second POST does not get to rewrite the graph, which is how R29
+ *  (depends_on immutable after insert) holds at this layer: the only write is
+ *  the insert itself. */
 export async function createTask(input: {
   project_id: string;
   round: number;
@@ -326,11 +392,20 @@ export async function createTask(input: {
   brief: string;
   fix_cycle?: number;
   tier?: TaskTier;
+  /** See the sentinel table above: `undefined` and `null` both mean legacy,
+   *  `[]` means an explicit graph root. Already validated by the route. */
+  depends_on?: string[] | null;
+  workstream?: string;
+  write_set?: string[];
 }): Promise<{ task: ProjectTask; created: boolean }> {
   const title = input.title.slice(0, 200);
+  // $8/$10 are cast explicitly because an array parameter's type is otherwise
+  // inferred from the target column, and the emitted SQL should say what it
+  // sends rather than rely on that inference surviving a schema edit.
   const r = await pool.query<ProjectTask>(
-    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier,
+                                depends_on, workstream, write_set)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::uuid[], $9, $10::text[])
      ON CONFLICT (project_id, round, role, title) DO NOTHING
      RETURNING ${TASK_COLS}`,
     [
@@ -341,6 +416,10 @@ export async function createTask(input: {
       input.brief,
       input.fix_cycle ?? 0,
       input.tier ?? null,
+      // NULL-to-NULL identity, not a fallback — see the sentinel table above.
+      input.depends_on ?? null,
+      input.workstream ?? "main",
+      input.write_set ?? [],
     ],
   );
   if (r.rows[0]) return { task: r.rows[0], created: true };
