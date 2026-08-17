@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
-
+/* `next/link` is gone from this file on purpose (round 1350): the SETTINGS
+ * rail entry was its last user, and it now opens a surface instead of
+ * navigating away. Nothing in the OS shell unmounts the OS any more. */
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot, applyTheme } from "../tokens";
@@ -41,6 +42,7 @@ import { PipelineSurface } from "./PipelineSurface";
 import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
 import { MoneySurface } from "./MoneySurface";
+import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
@@ -488,6 +490,7 @@ export function DesktopApp() {
           {surface === "autonomy" && <AutonomySurface />}
           {surface === "automation" && <AutomationSurface />}
           {surface === "money" && <MoneySurface />}
+          {surface === "settings" && <SettingsSurface />}
           {surface === "businesses" && <BusinessesSurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
@@ -813,23 +816,21 @@ function LeftRail({
             margin: "9px 16px",
           }}
         />
-        {/* A real route, not a surface toggle: /settings is its own page.
-            Every other entry in this rail is still client-side tab state. */}
-        <Link
-          href="/settings"
-          style={{
-            ...railStyle("settings"),
-            textDecoration: "none",
-            color: "inherit",
-          }}
-        >
+        {/* Round 1350: a surface, not a route. This was a `next/link` to
+            /settings, which unmounted the entire OS — rail, live panel, open
+            chat — to show a centred document with a "back to OS" link where
+            the app had been. Konrad: settings must open without losing the
+            shell. It is now the same button every other NAV entry is, and
+            /settings survives only as a bookmarkable wrapper around the same
+            AccountsPanel the surface mounts. */}
+        <div onClick={() => onNav("settings")} style={railStyle("settings")}>
           <span className="ms" style={{ fontSize: 15, marginRight: 8 }}>
             settings
           </span>
           <span className="mono" style={{ fontSize: 11.5 }}>
             SETTINGS
           </span>
-        </Link>
+        </div>
         {/* Businesses used to be its own /businesses route with a Link here.
             Konrad's 2026-08-04 feedback: unmounting the whole OS to reach
             it was jarring. It's now a surface (WORK group in NAV), and this
