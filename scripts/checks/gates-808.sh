@@ -170,6 +170,24 @@ gate_sh "check-stop-affordance.tsx — the ⏸ button's disabled state vs what a
   "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
      --tsconfig ../tsconfig.checks.json ../scripts/checks/check-stop-affordance.tsx | tail -3"
 
+# ── Round 1355's checks ────────────────────────────────────────────────────
+# A4: a control labelled "N hidden · show" whose onClick was `restoreAll`.
+# Both halves of that defect — the missing peek in the markup, and the label
+# bound to the wrong verb — are asserted; 25 of these assertions fail against
+# round 1354's code (docs/plan/artifacts/phase1355/README.md §2).
+gate_sh "check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-dismiss-peek.tsx | tail -3"
+
+gate_sh "check-team-rows.ts — flatten, hiddenRows, frozen time" \
+  "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-rows.ts | tail -2"
+
+gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)" \
+  "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2"
+
+gate_sh "verify-notification-gap-pins.mjs — fenced quotes + prose pins" \
+  "node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2"
+
 # Needs a Postgres SERVER. It creates its own scratch database and issues no
 # statement against the one named in DATABASE_URL — but with no DSN at all there
 # is nothing to connect to, so it is SKIPPED rather than reported as passing.

@@ -287,6 +287,92 @@ console.log("\n── flattenTeam: hiddenCount is ROWS, not ids (round 505 #3) �
   }
 }
 
+/* ── The peek list (round 1355, from round 1354's review A4) ───────────────
+ *
+ * The panel used to offer one way back: a control labelled "N hidden · show"
+ * that called `restoreAll` and deleted every dismissal on the machine. The
+ * fix is a peek, and a peek needs the rows — so the same walk that counts them
+ * now keeps them. These cases pin the two properties the affordance rests on:
+ * `hiddenRows.length === hiddenCount` (the label cannot promise rows the list
+ * does not have), and `restorable` marks exactly the nodes whose own
+ * `restore(id)` will actually un-hide something.
+ */
+console.log("\n── flattenTeam: hiddenRows, the peek list ───────────────────");
+{
+  const flat = flattenTeam(TREE, NONE);
+  check("nothing dismissed → no peek rows", flat.hiddenRows.length, 0);
+}
+{
+  const flat = flattenTeam(TREE, new Set(["worker-a"]));
+  check(
+    "a dismissed parent brings its whole subtree into the peek",
+    flat.hiddenRows.map((h) => h.row.node.id).join(","),
+    "worker-a,sub-a1,sub-a2",
+  );
+  check("…so the list matches the label exactly", flat.hiddenRows.length, flat.hiddenCount);
+  check(
+    "…at the depths they had in the tree",
+    flat.hiddenRows.map((h) => h.row.depth).join(","),
+    "1,2,2",
+  );
+  check(
+    "…only the dismissed node itself is restorable",
+    flat.hiddenRows.map((h) => (h.restorable ? "Y" : "n")).join(""),
+    "Ynn",
+  );
+  check(
+    "…and the peeked children carry their lineage",
+    flat.hiddenRows[1].row.parentDescription,
+    "build the team panel",
+  );
+}
+{
+  const flat = flattenTeam(TREE, new Set(["sub-a1"]));
+  check("a dismissed leaf is one restorable peek row", flat.hiddenRows.length, 1);
+  check("…and it is restorable", flat.hiddenRows[0].restorable, true);
+  check("…while its parent stays in the main list", flat.rows.some((r) => r.node.id === "worker-a"), true);
+}
+{
+  // A dismissal NESTED under a dismissed parent: the child is not separately
+  // restorable, because deleting its own row from `ui_dismissals` would leave
+  // it hidden under the parent — a control that changes nothing on screen.
+  const flat = flattenTeam(TREE, new Set(["worker-a", "sub-a2"]));
+  check("a nested dismissal does not add a second peek entry", flat.hiddenRows.length, 3);
+  check("…and stays non-restorable while its parent is hidden", flat.hiddenRows[2].restorable, false);
+  check("…count and list still agree", flat.hiddenRows.length, flat.hiddenCount);
+  // Restore the parent and the child reappears as a dismissed ROOT with its
+  // own ↺ — the nested dismissal was hidden, never lost.
+  const after = flattenTeam(TREE, new Set(["sub-a2"]));
+  check("restoring the parent surfaces the child's own dismissal", after.hiddenRows.length, 1);
+  check("…now restorable in its own right", after.hiddenRows[0].restorable, true);
+  check("…and it is the child", after.hiddenRows[0].row.node.id, "sub-a2");
+}
+{
+  const flat = flattenTeam(TREE, new Set(["manager", "worker-a", "worker-b"]));
+  check("everything dismissed → every node is peekable", flat.hiddenRows.length, 5);
+  check("…in tree order", flat.hiddenRows.map((h) => h.row.node.id).join(","), "manager,worker-a,sub-a1,sub-a2,worker-b");
+  check("…three of them restorable", flat.hiddenRows.filter((h) => h.restorable).length, 3);
+  check("…and nothing left in the main list", flat.rows.length, 0);
+}
+{
+  const flat = flattenTeam(TREE, new Set(["ghost-1", "ghost-2"]));
+  check("ids matching nothing produce no peek rows", flat.hiddenRows.length, 0);
+  check("…and no phantom count", flat.hiddenCount, 0);
+}
+{
+  // Peeking must not disturb the wrapper cache — its whole claim is "these are
+  // the rows the tree renders", and the memo bail-out measured in round 1302
+  // is written against exactly that set.
+  const cache = createTeamRowCache();
+  flattenTeam(TREE, NONE, cache);
+  const sizeAll = cache.byId.size;
+  const flat = flattenTeam(TREE, new Set(["worker-a"]), cache);
+  check("the cache holds only the rendered rows", cache.byId.size, 2);
+  check("…not the peeked ones", cache.byId.has("worker-a"), false);
+  check("…and the peek list is still complete", flat.hiddenRows.length, 3);
+  check("(sanity: the full tree cached five)", sizeAll, 5);
+}
+
 /* ── Row identity, the L1 half of round 1302 ───────────────────────────────
  *
  * The panel's `memo(TeamRowView)` can only bail out if the wrapper object it

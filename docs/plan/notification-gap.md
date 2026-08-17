@@ -19,7 +19,7 @@ commit as this doc. What remains open is one specific payload: the harness's
 |---|---|
 | Quotes read at | `fc49e35b1c72d20f7b2221666bcfd4c689eb5850` |
 | Re-verified at | `b02aa6268777d0c42cd8e0ba01a6754c9213f967` — HEAD moved mid-task (two sibling commits in this shared worktree). Every cited range is **identical at both SHAs**; `git diff fc49e35 b02aa62` touches one cited file, `tool-summary.ts`, but not its cited lines 384–386. |
-| **Re-pinned at** | **`852b089ce67b212d8a0503ff711ae9a8ce9e4f8e`** (round 1353). Six pins were wrong — four rotted, two transposed; see the correction table below. **Every pin in this document was re-resolved against the tree, not only the ones the review named**, and all are current at this SHA. |
+| **Re-pinned at** | **`852b089ce67b212d8a0503ff711ae9a8ce9e4f8e`** (round 1353), corrected again at round 1355. **Four** pins were wrong, all four rotted — see the correction table below. Round 1353 also reported two §2c pins as "transposed"; that correction was itself wrong and is withdrawn (the rows are kept, marked VERIFIED, so the next reader does not re-make it). **Every pin in this document was re-resolved against the tree, not only the ones the review named**, and all are current at this SHA. |
 | Branch | `project/8ea0cc08` |
 | Worktree state of quoted files | all nine cited files **clean** at `852b089` (`git status --porcelain` empty for each) |
 | Read-only | every file below was opened read-only; `cc-runner.ts`, `executor.ts`, `run-control-rules.ts` are owned by **engine-v2-research-lane** |
@@ -33,10 +33,25 @@ verified by nobody — so from round 1353 **the check is a script**:
 node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs
 ```
 
-It parses every pinned heading in this file, reads the range out of the working tree and
-diffs. Exit 0 means every quote matches. At `852b089`: **11 of 11 pinned quotes PASS**
-(round 1350's nine, plus §3a's two new `thread-mapping.ts` blocks). An unmapped file name
-is a hard error, and finding zero quotes is a failure, so the script cannot pass vacuously.
+It checks two things, and round 1355 added the second because the first was being read as
+if it covered both:
+
+1. **Fenced quotes.** Every pinned heading in this file, read out of the working tree and
+   diffed. **11 of 11 PASS** (round 1350's nine, plus §3a's two `thread-mapping.ts`
+   blocks). An unmapped file name is a hard error and finding zero quotes is a failure, so
+   this half cannot pass vacuously.
+2. **Prose pins** (`PROSE_PINS` in the script). The `file:line` citations that appear in
+   running text with no fence under them — §2c's two, §3's four, and six more. Each is
+   checked twice over: the doc must still bind that number to the *claim* it carries, and
+   the line must still hold the symbol. **12 of 12 PASS.**
+
+Half 2 exists because of a specific failure. Round 1353 swapped §2c's two pins onto each
+other's symbols; both numbers were still real lines in the file, so nothing about the
+*numbers* was wrong, and the script — which then only saw fenced quotes — printed
+`ALL PASS — 11/11` with the wrong pin four lines below a passing one. Read
+`ALL PASS` narrowly: the summary line now names both counts and says outright that it is
+not every pin in the document. What remains uncovered is listed in the script's SCOPE
+comment.
 
 The script deliberately does **not** check the SHA — it verifies quotes against the tree
 as it stands. Whether this doc's pins are still *current* is the other half, and that is
@@ -77,16 +92,37 @@ re-resolved** — which turned up two more the review had not looked at:
 | `AssistantThread.tsx` `UserMessage` dispatch | `:233-235` | `:235-237` | same |
 | `AssistantThread.tsx` `AssistantMessage` dispatch | `:277-278` | `:279-281` | same |
 | `tool-summary.ts` "Async agent launched" banner note | `:384-386` | `:406-409` | `852b089`, this round's own `EMPTY_GIST` edit above it |
-| §2c `POST /:id/message` | `:214` | `:149` | **transposed in round 1350** — never right, at any SHA |
-| §2c `toThreadEntry` | `:149` | `:214` | same transposition, the other half |
+| §2c `POST /:id/message` | `:214` | `:214` | **VERIFIED, unchanged.** Round 1353 "corrected" this to `:149`; that was the error, and it is reverted. |
+| §2c `toThreadEntry` | `:149` | `:149` | **VERIFIED, unchanged.** Same withdrawn correction, the other half. |
 | `subagent-slice.ts` the inline-entries fact | `:11-17` | `:11-17` | unchanged |
 
-Two lessons, both mechanical rather than editorial. **A drift command must list every file
-the document cites** — the one file it omitted is the one that moved. And **a rotted pin
-and a wrong pin fail identically for the reader**: the transposed pair had been wrong
-since the day it was written, survived one review, and no `git diff` would ever have
-flagged it. Only re-resolving each pin against its symbol catches that class, which is why
-the verifier script now exists.
+**The withdrawn correction, recorded rather than deleted (round 1354's review, finding 1).**
+Round 1353 reported the two §2c pins as transposed since round 1350 and swapped them. They
+were not transposed. The tree says, at `main`, at `91b0fa7` and at `852b089` alike —
+`run-control.ts` has never been touched on this branch:
+
+```sh
+git -C . grep -n 'function toThreadEntry\|r.post("/:id/message"' -- forge-control/src/routes/run-control.ts
+# 149:function toThreadEntry(e: CommsThreadEntry): ThreadEntry {
+# 214:r.post("/:id/message", async (c) => {
+```
+
+Round 1350's original mapping — route at `:214`, serializer at `:149` — was right, and the
+"correction" made this document wrong in the exact place it was boasting about accuracy.
+Both numbers are back where they started. The rows above stay in the table, marked
+VERIFIED, because an empty row invites the same swap next round.
+
+Three lessons, all mechanical rather than editorial. **A drift command must list every file
+the document cites** — the one file it omitted is the one that moved. **A rotted pin and a
+wrong pin fail identically for the reader**, which is why the verifier script now exists.
+And **an unrequested correction needs the same evidence as the defect it claims to fix**:
+the four rotted pins were each proved by a `git diff` naming the commit that moved them;
+the transposition was asserted from reading, against a file that had not changed, and it
+survived into a commit whose message said every pin had been re-resolved. The verifier
+would not have caught it either — these two are unfenced prose pins, so they sat four lines
+below a passing quote inside an `ALL PASS — 11/11` run. That hole is closed: the script now
+carries an explicit prose-pin table (§1's `PROSE_PINS`), and its SCOPE comment states what
+it does and does not cover.
 
 **How the previous pins rotted — and the useful thing that falls out of it.** R19 was
 written against `cc-runner.ts:170–188` / `:417–429`. At `b02aa62`, `:170–188` is
@@ -248,13 +284,8 @@ no thread entry carries the completion banner. Everything else here stands on co
 This is the path the steward raised as counter-evidence, and the steward was right. It is
 complete, and it is the reason the old blanket claim was wrong.
 
-`POST /:id/message` (`run-control.ts:149` @ `852b089`) → `commsEntries` → `toThreadEntry`
-(`run-control.ts:214` @ `852b089`) → `appendCommsEntry` → `runs.thread`.
-
-*(Round 1353: these two pins were **transposed** in round 1350's text — it put the route
-at `:214` and `toThreadEntry` at `:149`, which is exactly backwards. Not caught by round
-1352's review, caught by re-resolving every pin in this file rather than only the ones the
-review named. Both numbers were right; the labels on them were not.)*
+`POST /:id/message` (`run-control.ts:214` @ `852b089`) → `commsEntries` → `toThreadEntry`
+(`run-control.ts:149` @ `852b089`) → `appendCommsEntry` → `runs.thread`.
 
 `routes/run-control.ts` — the `commsEntries(...)` call in `POST /:id/message` (`:259-266` @ `852b089`)
 ```ts
@@ -436,6 +467,13 @@ Per the standing rule — never silently drop, never quietly pass:
   list, carried the same rotted pin and the same over-broad claim; it was missed by a
   first grep pass that truncated its output, and caught by re-running it. Recorded here
   because a gate that greps for the old pin should find the reason, not a survivor.)
+- **One correction is WITHDRAWN, not quietly deleted** (round 1355, from round 1354's
+  review). Round 1353 reported §2c's two pins as transposed since round 1350 and swapped
+  them; they had been right at every SHA, and the swap made them wrong. Both are back on
+  round 1350's mapping, the correction table keeps the rows marked VERIFIED, and the
+  verifier now covers prose pins so the next such claim has to be made against a check
+  rather than against a reading. The general lesson is in §1: an unrequested correction
+  needs the same evidence as the defect it claims to fix.
 - **R20 was cited for something it did not cover, and the gap is closed rather than
   reworded** (round 1353, from round 1352's review). §3's old closing sentence asserted
   R20 held for `role: "tool"`; `thread-mapping.ts`'s catch-all `silent++` was an explicit,

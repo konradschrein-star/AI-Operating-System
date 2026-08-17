@@ -137,7 +137,7 @@ export interface AgentRun {
   /** When Konrad hid this row from the Live panel, else null (round 1350,
    *  `ui_dismissals`). The payload is NOT filtered by it: the server's job is
    *  to say what is true, and the panel's job is to decide what to draw — it
-   *  also has to render "N hidden · show", which needs the hidden rows. */
+   *  also has to render "N dismissed · show", which needs the hidden rows. */
   dismissed_at: string | null;
   /** System A sub-agents currently active within this run's process. */
   subagents: Subagent[];

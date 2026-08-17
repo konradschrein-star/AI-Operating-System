@@ -203,7 +203,7 @@ const TEAM_RUN_COLUMNS = `runs.id::text, runs.title, runs.status, runs.worker,
  *  `ui_dismissals`' primary key, so it can never multiply a row, and it is a
  *  LEFT join with no WHERE clause attached: a dismissed node is still in the
  *  tree, carrying the timestamp that lets the panel hide it and offer it back
- *  under "N hidden · show". The team endpoint never filters on dismissal. */
+ *  under "N dismissed · show". The team endpoint never filters on dismissal. */
 const TEAM_DISMISSAL_JOIN = `LEFT JOIN ui_dismissals d ON d.node_id = runs.id::text`;
 
 /**
@@ -387,7 +387,7 @@ interface TeamNode {
    *  round 1350). It ships INSIDE the tree so the panel's first paint is
    *  already correct — without it the panel would draw every node and then
    *  un-draw the hidden ones after a second round-trip. The tree itself is
-   *  never filtered by this field: "N hidden · show" needs the hidden nodes. */
+   *  never filtered by this field: "N dismissed · show" needs the hidden nodes. */
   dismissed_at: string | null;
   /** Present on run nodes; empty on sub-agents (they do not nest further). */
   subagents: TeamNode[];

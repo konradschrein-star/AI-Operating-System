@@ -121,7 +121,7 @@ const RECENT_COMPLETION_WINDOW_MS = 24 * 60 * 60 * 1000;
  * The `ui_dismissals` LEFT JOIN (round 1350) adds `dismissed_at` and NOTHING
  * else: no WHERE clause reads it, so a hidden row is still returned and still
  * counted. Hiding is the panel's decision, and the panel needs the hidden rows
- * to offer "N hidden · show". `node_id` is that table's primary key, so the
+ * to offer "N dismissed · show". `node_id` is that table's primary key, so the
  * join can never multiply a row.
  */
 async function fetchActiveRows(projectId?: string): Promise<AgentRowRaw[]> {

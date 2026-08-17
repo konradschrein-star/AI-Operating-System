@@ -50,6 +50,13 @@
  * `.team-row` rules in app/globals.css. They sit in a fixed-width slot, so the
  * reveal changes opacity and nothing else — no reflow, no re-render.
  *
+ * ── The peeked variant (round 1355) ───────────────────────────────────────
+ * A row can also be rendered as part of the DISMISSED group: faded, marked
+ * `data-team-peeked`, and carrying ↺ instead of ⏸/✕. It is still this
+ * component — one row model, one set of columns, one lineage tooltip — because
+ * the alternative was a second row component that would drift. The props union
+ * below makes the two states mutually exclusive at compile time.
+ *
  * ARMING moves no pixels either, which is a separate claim and was false until
  * round 506: the armed ✕ grew a 1px border, which grew line 1, which pushed
  * every row below it down 2px mid-gesture — and a pointer that had been over
@@ -75,6 +82,12 @@ import {
   isSpuriousActivation,
   stopBlockReason,
 } from "./confirm";
+import {
+  HIDDEN_WITH_PARENT_MARK,
+  HIDDEN_WITH_PARENT_TITLE,
+  PEEK_OPACITY,
+  RESTORE_ROW_TITLE,
+} from "./peek";
 import { fmtTokens, fmtWorkingTime, type TeamNode } from "./teamApi";
 import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
 import { useTick } from "./tickStore";
@@ -362,7 +375,7 @@ const X_STYLE: CSSProperties = {
 
 /* ── The row ─────────────────────────────────────────────────────────────── */
 
-export interface TeamRowProps {
+interface TeamRowBaseProps {
   row: TeamRow;
   /** Is THIS row's X currently armed? A boolean, so arming re-renders exactly
    *  two rows (the one losing it and the one gaining it) instead of the list. */
@@ -392,6 +405,28 @@ export interface TeamRowProps {
   onX: (nodeId: string, settled: boolean) => void;
 }
 
+/**
+ * The peek half, as a discriminated union rather than three loose optionals.
+ *
+ * A peeked row is one the panel is HIDING and the operator asked to see anyway
+ * (round 1354 review, A4). It never carries ⏸ or ✕ — its only verb is the way
+ * back — so the two states cannot both be half-configured: `peeked: true`
+ * REQUIRES `restorable` and `onRestore` at the type level, and a normal row
+ * cannot accidentally be handed a restore callback that nothing will render.
+ * No runtime fallback, no defaulted no-op.
+ */
+export type TeamRowProps = TeamRowBaseProps &
+  (
+    | { peeked?: false; restorable?: never; onRestore?: never }
+    | {
+        peeked: true;
+        /** `HiddenTeamRow.restorable` — false for a row hidden only because an
+         *  ancestor was, which gets a stated reason instead of a control. */
+        restorable: boolean;
+        onRestore: (nodeId: string) => void;
+      }
+  );
+
 function TeamRowViewImpl({
   row,
   armed,
@@ -402,6 +437,9 @@ function TeamRowViewImpl({
   onOpenNode,
   onStop,
   onX,
+  peeked = false,
+  restorable = false,
+  onRestore,
 }: TeamRowProps) {
   const n = row.node;
   const settled = n.settled;
@@ -453,6 +491,7 @@ function TeamRowViewImpl({
       data-settled={settled ? "true" : "false"}
       data-status={n.status}
       data-role={n.role ?? "-"}
+      data-team-peeked={peeked ? "true" : undefined}
       title={lineageTitle(row)}
       onClick={clickable ? () => onOpenNode(n) : undefined}
       style={{
@@ -461,6 +500,10 @@ function TeamRowViewImpl({
         borderBottom: `1px solid ${tokens.borderDivider}`,
         cursor: clickable ? "pointer" : "default",
         fontSize: 11,
+        /* The fade is the whole visual statement, and it is an OPACITY, not a
+           colour — the row keeps every token it renders with, so it stays
+           legible in both themes (NFU1). Same constant the /live peek uses. */
+        ...(peeked ? { opacity: PEEK_OPACITY } : {}),
       }}
     >
       {/* line 1 — what this is: dot, kind, role, model … controls */}
@@ -518,9 +561,14 @@ function TeamRowViewImpl({
 
         {/* Always mounted, revealed by CSS only (.team-row rules in
             globals.css). Fixed width at all times so the reveal cannot move a
-            pixel of the row. */}
+            pixel of the row.
+
+            A PEEKED row is the exception to the hover-gating, not to the fixed
+            width: it lives in a list the operator explicitly summoned, and a
+            way back you have to discover by hovering inside that list is a
+            puzzle, not an affordance. Same call the /live peek made. */}
         <span
-          className="team-row-controls"
+          className={peeked ? undefined : "team-row-controls"}
           style={{
             flex: "none",
             minWidth: CONTROLS_COL,
@@ -529,6 +577,42 @@ function TeamRowViewImpl({
             gap: 2,
           }}
         >
+          {peeked ? (
+            restorable ? (
+              <button
+                data-team-restore={n.id}
+                type="button"
+                title={RESTORE_ROW_TITLE}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  /* Non-null by the props union: `peeked: true` requires it. */
+                  onRestore?.(n.id);
+                }}
+                className="mono"
+                style={{ ...X_STYLE, color: tokens.textMuted, cursor: "pointer" }}
+              >
+                ↺
+              </button>
+            ) : (
+              /* Not a disabled button: there is no verb here at all. A control
+                 that exists only to refuse would read as "restore is broken"
+                 rather than "this row belongs to the one above it". */
+              <span
+                data-team-hidden-with-parent
+                title={HIDDEN_WITH_PARENT_TITLE}
+                className="mono"
+                style={{
+                  ...X_STYLE,
+                  color: tokens.textGhost,
+                  cursor: "default",
+                  display: "inline-block",
+                }}
+              >
+                {HIDDEN_WITH_PARENT_MARK}
+              </span>
+            )
+          ) : (
+            <>
           {/* Two independent reasons this button can be dead, and BOTH have to
               reach `disabled` — `canStop` alone is a capability answer, and a
               capability answer says nothing about whether THIS row still has a
@@ -573,7 +657,8 @@ function TeamRowViewImpl({
             disabled={!settled && !canTerminate}
             title={
               settled
-                ? "Hide this row — reversible from “N hidden · show” below"
+                ? "Hide this row — and everything settled under it. Reversible " +
+                  "from “N dismissed · show” below"
                 : canTerminate
                   ? "Terminate this agent — click again to confirm"
                   : capabilityTitle("terminate")
@@ -611,6 +696,8 @@ function TeamRowViewImpl({
           >
             {armed ? "sure?" : "✕"}
           </button>
+            </>
+          )}
         </span>
       </div>
 

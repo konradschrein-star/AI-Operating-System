@@ -60,6 +60,13 @@ import {
   useDismissalsLoaded,
 } from "../team/dismissals";
 import {
+  DISMISSED_GROUP_LABEL,
+  DISMISSED_TOGGLE_TITLE,
+  PEEK_OPACITY,
+  RESTORE_ROW_TITLE,
+  dismissedToggleLabel,
+} from "../team/peek";
+import {
   agentKindOf,
   fetchAgents,
   isModelAlias,
@@ -305,11 +312,6 @@ const CONTROL_STYLE: CSSProperties = {
   cursor: "pointer",
 };
 
-/** How far a peeked row is faded. Opacity, not a colour: the row keeps every
- *  token it renders with, and "this is hidden" is said by the whole row being
- *  quieter than the live list above it. */
-const PEEK_OPACITY = 0.55;
-
 /** Aliases render fainter than resolved ids — the colour IS the statement
  *  that we know less about this row's model (R8). */
 function modelColor(model: string | null | undefined): string {
@@ -432,7 +434,7 @@ function AgentRunLine({
             <button
               data-live-restore={a.id}
               type="button"
-              title="Bring this row back"
+              title={RESTORE_ROW_TITLE}
               onClick={() => onRestore(a.id)}
               className="mono"
               style={{ ...CONTROL_STYLE, color: tokens.textMuted }}
@@ -787,11 +789,7 @@ export function AgentActivity({
             data-live-dismissed-toggle
             type="button"
             onClick={() => setPeek((v) => !v)}
-            title={
-              "Show the rows dismissed from this panel. Dismissing hides a " +
-              "row; it never deletes anything, and the set is shared with the " +
-              "chat team panel."
-            }
+            title={DISMISSED_TOGGLE_TITLE}
             className="mono"
             style={{
               background: "transparent",
@@ -803,7 +801,7 @@ export function AgentActivity({
               cursor: "pointer",
             }}
           >
-            {hiddenRowCount} dismissed · {peek ? "hide" : "show"}
+            {dismissedToggleLabel(hiddenRowCount, peek)}
           </button>
         )}
         <span style={{ flex: 1 }} />
@@ -901,7 +899,7 @@ export function AgentActivity({
                 padding: "10px 8px 4px",
               }}
             >
-              DISMISSED
+              {DISMISSED_GROUP_LABEL}
             </div>
             {hidden.map((a) => (
               <AgentRunLine

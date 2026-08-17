@@ -37,8 +37,18 @@
  *  server's own reason. `restore` and `restoreAll` have the same shape.
  *
  *  Dismissal is still a HIDE, and still reversible: the server only ever
- *  inserts into `ui_dismissals`, `runs` is never touched, and "N hidden ·
- *  show" is one DELETE away.
+ *  inserts into `ui_dismissals`, `runs` is never touched, and every hidden row
+ *  is one DELETE away — reachable per row from the "N dismissed · show" peek
+ *  that both surfaces now render (./peek, round 1355).
+ *
+ *  ── `restore` vs `restoreAll` — not interchangeable ──────────────────────
+ *  `restore(id)` is the way back a row's own ↺ calls. `restoreAll()` deletes
+ *  EVERY dismissal on the machine, across projects and both panels, and the
+ *  operator cannot reconstruct the set afterwards. Round 1354's review found
+ *  the team panel calling the second from a control labelled "show" and lost
+ *  eleven unrelated dismissals to one click. A caller reaching for `restoreAll`
+ *  owes the user a control that says so and a confirm step — see
+ *  `decideRestoreAllClick` in ./confirm.
  */
 
 import { useCallback, useEffect, useMemo } from "react";
@@ -145,7 +155,7 @@ export interface Dismissals {
 }
 
 /* This hook deliberately exposes NO count. `dismissed.size` counts ids, and
- * the panels' "N hidden · show" labels need ROWS — two different numbers, in
+ * the panels' "N dismissed · show" labels need ROWS — two different numbers, in
  * both directions (round 505 finding #3): a dismissed worker takes its
  * sub-agents with it, so one id can hide three rows, while an id belonging to
  * another project's tree hides none at all in this one and would still have

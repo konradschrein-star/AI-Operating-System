@@ -40,10 +40,15 @@
  *  ── What counts as destructive ────────────────────────────────────────────
  *  X on a RUNNING row is terminate: it would kill work in flight, and it gets
  *  the two-click confirm. X on a SETTLED row is a local dismissal — hidden,
- *  never deleted, reversible from the panel's own "N hidden · show"
+ *  never deleted, reversible from the panel's own "N dismissed · show"
  *  affordance (see ./dismissals) — so it fires on a single click. A confirm
  *  step in front of a reversible action trains people to click through
  *  confirms, which is how the irreversible one eventually gets clicked too.
+ *
+ *  RESTORE ALL is the third destructive control, added to this file in round
+ *  1355 — see `decideRestoreAllClick` at the bottom. It destroys no run, but it
+ *  destroys STATE the operator cannot reconstruct: which forty rows they had
+ *  hidden, across every project and both panels.
  */
 
 /** How long an armed button stays armed before it disarms itself. U17: "first
@@ -255,4 +260,43 @@ export const SETTLED_STOP_TITLE = "Run has already settled — nothing to stop";
  *  dead. */
 export function capabilityTitle(flag: "stop" | "terminate"): string {
   return `engine support pending (control plane contract: ${flag})`;
+}
+
+export type RestoreAllDecision =
+  | { action: "arm" }
+  | { action: "rearm" }
+  | { action: "restore-all" };
+
+/**
+ * The restore-all machine — round 1354's review, A4.
+ *
+ * `restoreAll` issues `DELETE /api/agents/dismissals`, which drops EVERY
+ * dismissal on the machine: other projects' rows, the Live panel's rows, rows
+ * hidden a week ago. Nothing is destroyed in the engine — `runs` is never
+ * touched — but the *set* is gone, and the operator cannot reconstruct it: it
+ * is forty individual decisions, not one. That is the definition of an
+ * irreversible action, so it takes the same two-click confirm the terminate
+ * path takes, on the same two constants, and for the same reason.
+ *
+ * Note what this function does NOT gate. It is not capability-gated (there is
+ * no engine verb behind it), and it has no "settled" notion (a dismissal has no
+ * status). The whole machine is the confirm — which is exactly the thing the
+ * shipped control was missing, so it is expressed here as a value that
+ * `check-team-confirm.ts` asserts rather than as a `useState` a reviewer would
+ * have to reach through a browser.
+ *
+ * `armedAt` is `Date.now()` at the arming click, or null when nothing is armed.
+ * Rules 2–4 of `decideXClick`, verbatim in intent: a stale arming re-arms
+ * rather than firing, and a too-fast second click RE-STAMPS the window instead
+ * of accumulating separation, so a click stream can never confirm itself.
+ */
+export function decideRestoreAllClick(i: {
+  armedAt: number | null;
+  nowMs: number;
+}): RestoreAllDecision {
+  if (i.armedAt === null) return { action: "arm" };
+  const sinceArm = i.nowMs - i.armedAt;
+  if (sinceArm > ARM_WINDOW_MS) return { action: "arm" };
+  if (sinceArm < MIN_CONFIRM_MS) return { action: "rearm" };
+  return { action: "restore-all" };
 }

@@ -33,10 +33,33 @@ export interface TeamRow {
   displayWorkingMs: number | null;
 }
 
-/** What `flattenTeam` produces: the rows to render, and how many nodes did not
- *  make it into them because a dismissal covered them.
+/** One row of the DISMISSED group — a row this walk withheld, kept so the
+ *  panel can PEEK at what it is hiding instead of offering only a fleet-wide
+ *  "restore everything" (round 1354 review, A4).
  *
- *  `hiddenCount` exists because the panel's "N hidden · show" label used to
+ *  It is a wrapper around a `TeamRow` rather than a flag on it so that nothing
+ *  about the visible row model changes: `sameRow`, the wrapper cache and every
+ *  identity assertion round 1302 rests on are untouched by peeking. */
+export interface HiddenTeamRow {
+  row: TeamRow;
+  /** True when THIS node's own id is the one in the dismissal set — the row
+   *  someone clicked ✕ on. `restore(node.id)` brings it and its whole subtree
+   *  back, so it is the row that carries the ↺.
+   *
+   *  False for a descendant, which is hidden BECAUSE ITS ANCESTOR IS. Deleting
+   *  such a row's own dismissal (if it even has one) would leave it hidden
+   *  under the parent — a control that changes nothing on screen, which is the
+   *  silent no-op NFU6 forbids. It says "restore the parent" instead. A nested
+   *  dismissal is not lost: restore the ancestor and the child comes back as a
+   *  dismissed root of its own, wearing its own ↺. */
+  restorable: boolean;
+}
+
+/** What `flattenTeam` produces: the rows to render, how many nodes did not
+ *  make it into them because a dismissal covered them, and which ones those
+ *  were.
+ *
+ *  `hiddenCount` exists because the panel's "N dismissed · show" label used to
  *  count DISMISSED IDS, which is a different number in both directions (round
  *  505 finding #3): dismissing a worker that owns two sub-agents hides three
  *  rows and counted 1, while a localStorage key holding ids that match nothing
@@ -49,6 +72,11 @@ export interface FlatTeam {
    *  with a dismissed parent. Zero when nothing in `dismissed` matches this
    *  tree, no matter how many ids it holds. */
   hiddenCount: number;
+  /** Exactly those skipped nodes, in tree order, at their real depths —
+   *  `hiddenRows.length === hiddenCount`, always. The label and the peek list
+   *  are therefore two readings of one walk and cannot disagree about what is
+   *  hidden. */
+  hiddenRows: HiddenTeamRow[];
 }
 
 /**
@@ -138,6 +166,15 @@ function subtreeSize(node: TeamNode): number {
  * back as the PREVIOUS object, so `memo(TeamRowView)` bails out on it (see
  * TeamRowCache above). Without one, every wrapper is fresh, which is the old
  * behaviour and is what the ordering/dismissal assertions exercise.
+ *
+ * `hiddenRows` is built OUTSIDE the cache, deliberately. The cache exists to
+ * make `memo(TeamRowView)` bail out on the list that re-renders every 6s poll;
+ * it holds exactly the rows the panel is rendering as its tree, which is the
+ * invariant round 1302's identity assertions are written against. Peeked rows
+ * are a handful of nodes shown only while the operator is explicitly looking at
+ * them, so they get fresh wrappers and re-render with the poll — the cheaper
+ * trade than widening a cache whose whole claim is "these are the rendered
+ * rows".
  */
 export function flattenTeam(
   res: TeamResponse,
@@ -145,9 +182,29 @@ export function flattenTeam(
   cache?: TeamRowCache,
 ): FlatTeam {
   const rows: TeamRow[] = [];
+  const hiddenRows: HiddenTeamRow[] = [];
   let hiddenCount = 0;
   const prevById = cache?.byId;
   const nextById = cache ? new Map<string, TeamRow>() : null;
+
+  /** Everything under a dismissed node, in the same order and at the same
+   *  depths the main list would have used, so the peek list reads as the piece
+   *  of the org chart it is rather than as a flat pile. Only the root is
+   *  `restorable` — see HiddenTeamRow. */
+  const pushHidden = (
+    node: TeamNode,
+    depth: number,
+    parentDescription: string | null,
+    isRoot: boolean,
+  ): void => {
+    hiddenRows.push({
+      row: { node, depth, parentDescription, displayWorkingMs: node.working_ms },
+      restorable: isRoot,
+    });
+    for (const sub of node.subagents) {
+      pushHidden(sub, depth + 1, node.description, false);
+    }
+  };
 
   const pushSubtree = (
     node: TeamNode,
@@ -155,10 +212,12 @@ export function flattenTeam(
     parentDescription: string | null,
   ): void => {
     if (dismissed.has(node.id)) {
-      // The whole subtree goes, so the whole subtree counts. A dismissed id
-      // nested under an already-dismissed one is never reached and therefore
-      // never counted twice.
+      // The whole subtree goes, so the whole subtree counts — and the whole
+      // subtree is kept, so "N dismissed · show" shows exactly the N rows it
+      // claims. A dismissed id nested under an already-dismissed one is never
+      // reached by this branch and therefore never counted twice.
       hiddenCount += subtreeSize(node);
+      pushHidden(node, depth, parentDescription, true);
       return;
     }
     const fresh: TeamRow = {
@@ -181,7 +240,7 @@ export function flattenTeam(
     pushSubtree(worker, 1, res.manager.description);
   }
   if (cache && nextById) cache.byId = nextById;
-  return { rows, hiddenCount };
+  return { rows, hiddenCount, hiddenRows };
 }
 
 /** Ceiling on client-side interpolation, in ms.

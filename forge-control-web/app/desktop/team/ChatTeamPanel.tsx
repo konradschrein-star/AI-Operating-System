@@ -28,6 +28,26 @@
  *   • dismissals, via ./dismissals — server-backed and GLOBAL since round 1350
  *     (`ui_dismissals`); the panel still hides the dismissed node's whole
  *     subtree locally so the gesture lands in one frame
+ *   • `peek` — one boolean for the whole panel, not a flag per row, so
+ *     revealing the DISMISSED group costs one render of the list and nothing
+ *     on hover
+ *
+ * ── The way back, and why it is three controls (round 1354 review, A4) ────
+ * Until round 1355 the footer held ONE control, labelled "N hidden · show",
+ * whose onClick was `restoreAll` — `DELETE /api/agents/dismissals`, every
+ * dismissal on the machine. Round 1350 had just widened dismissals from a
+ * per-chat localStorage key to a global table, so a label promising to reveal
+ * this panel's hidden rows now wiped the Live panel's too. The reviewer clicked
+ * it and lost eleven unrelated dismissals.
+ *
+ * The affordance is now the /live one (AgentActivity.tsx), sharing its words
+ * through ./peek:
+ *   1. "N dismissed · show" TOGGLES a peek. It writes nothing.
+ *   2. Each peeked row carries its own ↺ — the way back is per row, because
+ *      the way out was.
+ *   3. "restore all" is a separate control, visible only while peeking, which
+ *      names the global count it will delete and takes two clicks
+ *      (`decideRestoreAllClick` in ./confirm).
  *
  * It does NOT own hover. There is no pointer-enter handler, no pointer-leave
  * handler and no hover state anywhere in this directory; the controls are mounted in every
@@ -59,18 +79,35 @@
  * worth photographing.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
   ARM_WINDOW_MS,
   SETTLED_STOP_TITLE,
   capabilityTitle,
+  decideRestoreAllClick,
   decideStopClick,
   decideXClick,
+  isSpuriousActivation,
   type ArmedState,
 } from "./confirm";
 import { seededDismissals, useDismissals, useDismissalsLoaded } from "./dismissals";
+import {
+  DISMISSED_GROUP_LABEL,
+  DISMISSED_TOGGLE_TITLE,
+  RESTORE_ALL_LABEL,
+  dismissedToggleLabel,
+  restoreAllArmedLabel,
+  restoreAllTitle,
+} from "./peek";
 import {
   fetchCapabilities,
   fetchChatTeam,
@@ -118,7 +155,7 @@ const ALL_FALSE: CapabilitiesResponse["control_plane"] = {
 
 /** The "no response yet" tree. One frozen object so the `rows` memo returns a
  *  stable identity while loading and the row list never re-renders for it. */
-const NO_TEAM: FlatTeam = { rows: [], hiddenCount: 0 };
+const NO_TEAM: FlatTeam = { rows: [], hiddenCount: 0, hiddenRows: [] };
 
 /** Nothing flagged — one frozen array, so the seed memo below keeps its
  *  identity on every poll of a tree with no dismissals in it. */
@@ -143,6 +180,22 @@ function payloadDismissedIds(res: TeamResponse | undefined): readonly string[] {
   for (const worker of res.workers) walk(worker);
   return ids.length > 0 ? ids : NO_PAYLOAD_DISMISSALS;
 }
+
+/** The footer controls — the peek toggle and, beside it, restore-all. Shared so
+ *  the two read as one row of quiet text rather than as a button and a link,
+ *  and so `color` is the only thing either of them varies. `nowrap` because
+ *  restore-all's armed label is longer than its idle one and a 260px panel
+ *  would otherwise wrap it mid-gesture. */
+const FOOTER_BTN_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  fontSize: 9.5,
+  fontFamily: "inherit",
+  color: tokens.textMuted,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
 
 /** The five states of the panel, on `data-team-state` at the root. Every one
  *  of them is a deliberate render — there is no sixth "blank" case where the
@@ -228,8 +281,16 @@ export function ChatTeamPanel({
    *
    * `chatId` is passed for the call site's sake only — dismissals are global
    * since round 1350 and the hook does not read it. */
-  const { dismissed, dismiss, restoreAll } = useDismissals(chatId || null);
+  const { dismissed, dismiss, restore, restoreAll } = useDismissals(chatId || null);
   const dismissalsLoaded = useDismissalsLoaded();
+
+  /** Is the DISMISSED group open? Panel state, one boolean — see the header. */
+  const [peek, setPeek] = useState(false);
+
+  /** `Date.now()` at the first click on "restore all", or null. A value rather
+   *  than a boolean because `decideRestoreAllClick` needs the clock to refuse a
+   *  stream of fast clicks; the render only reads whether it is null. */
+  const [restoreAllArmedAt, setRestoreAllArmedAt] = useState<number | null>(null);
 
   /* ── Armed state ───────────────────────────────────────────────────────
    * `armedId` renders (as a boolean prop per row); `armedRef` is what the
@@ -243,6 +304,7 @@ export function ChatTeamPanel({
   const capsRef = useRef(caps);
   const openNodeRef = useRef(onOpenNode);
   const dismissRef = useRef(dismiss);
+  const restoreRef = useRef(restore);
   useEffect(() => {
     capsRef.current = caps;
   }, [caps]);
@@ -252,6 +314,9 @@ export function ChatTeamPanel({
   useEffect(() => {
     dismissRef.current = dismiss;
   }, [dismiss]);
+  useEffect(() => {
+    restoreRef.current = restore;
+  }, [restore]);
 
   /* The team query's own refetch, reachable from the two dependency-free
    * handlers below. Same ref discipline as `capsRef`/`openNodeRef` above and
@@ -275,12 +340,35 @@ export function ChatTeamPanel({
     return () => clearTimeout(t);
   }, [armedId]);
 
+  /** The restore-all confirm's own auto-disarm, the twin of `armedId`'s above
+   *  and for the same reason: `decideRestoreAllClick` treats a stale arming as
+   *  expired on its own, so this timer is only the VISUAL disarm. */
+  useEffect(() => {
+    if (restoreAllArmedAt === null) return;
+    const t = setTimeout(() => setRestoreAllArmedAt(null), ARM_WINDOW_MS);
+    return () => clearTimeout(t);
+  }, [restoreAllArmedAt]);
+
+  /* Closing the peek disarms it. An armed "sure?" left behind a collapsed group
+   * would be a loaded control the operator can no longer see the consequences
+   * of — and the whole point of putting restore-all inside the peek is that it
+   * is only reachable while what it destroys is on screen. */
+  useEffect(() => {
+    if (!peek) setRestoreAllArmedAt(null);
+  }, [peek]);
+
   /* Ref-stable, empty deps — the identity handed to every memoized row must
    * not change when ChatSurface re-renders with a fresh arrow, or every row
    * re-renders and NFU2's zero-re-render hover claim dies with it. The ref
    * above is what carries the current callback through. */
   const handleOpenNode = useCallback((node: TeamNode) => {
     openNodeRef.current(node);
+  }, []);
+
+  /** One row back. Same ref discipline as the rest — peeked rows are memoized
+   *  `TeamRowView`s too. */
+  const handleRestore = useCallback((nodeId: string) => {
+    restoreRef.current(nodeId);
   }, []);
 
   const handleStop = useCallback((nodeId: string, settled: boolean) => {
@@ -404,7 +492,7 @@ export function ChatTeamPanel({
     [dismissalsLoaded, dismissed, payloadDismissed],
   );
 
-  const { rows, hiddenCount } = useMemo(
+  const { rows, hiddenCount, hiddenRows } = useMemo(
     () => (data ? flattenTeam(data, hiddenBy, rowCache.current) : NO_TEAM),
     [data, hiddenBy],
   );
@@ -535,13 +623,53 @@ export function ChatTeamPanel({
                     onX={handleX}
                   />
                 ))}
-              </ResponseNowContext.Provider>
 
               {state === "loading" && (
                 <Note>{enabled ? "loading team…" : "no chat open"}</Note>
               )}
               {state === "unlinked" && <Note>no project linked to this chat</Note>}
               {state === "empty" && <Note>no agents yet</Note>}
+
+              {/* The peek. Below everything, behind its own heading, visibly
+                  quieter: these rows ARE hidden and the panel says so rather
+                  than mixing them back into the tree. `hiddenRows` comes out of
+                  the same walk that produced `hiddenCount`, so the list and the
+                  label cannot disagree — and each row carries its own way back
+                  (or, for a row hidden with its parent, says so). */}
+              {peek && hiddenRows.length > 0 && (
+                <>
+                  <div
+                    data-team-dismissed-group
+                    className="mono"
+                    style={{
+                      fontSize: 9,
+                      color: tokens.textGhost,
+                      letterSpacing: "0.08em",
+                      padding: "10px 8px 4px",
+                    }}
+                  >
+                    {DISMISSED_GROUP_LABEL}
+                  </div>
+                  {hiddenRows.map((hidden) => (
+                    <TeamRowView
+                      key={hidden.row.node.id}
+                      row={hidden.row}
+                      armed={false}
+                      canStop={caps.stop}
+                      canTerminate={caps.terminate}
+                      degradedTime={degradedTime}
+                      degradedTasks={degradedTasks}
+                      onOpenNode={handleOpenNode}
+                      onStop={handleStop}
+                      onX={handleX}
+                      peeked
+                      restorable={hidden.restorable}
+                      onRestore={handleRestore}
+                    />
+                  ))}
+                </>
+              )}
+              </ResponseNowContext.Provider>
             </div>
 
             {/* Driven by rows actually withheld from THIS tree, so the label
@@ -549,29 +677,71 @@ export function ChatTeamPanel({
                 is global and holds ids from every project) nor undercount a
                 dismissed parent's sub-agents. */}
             {hiddenCount > 0 && (
-              <div style={{ padding: "4px 10px", borderTop: `1px solid ${tokens.borderDivider}` }}>
+              <div
+                style={{
+                  padding: "4px 10px",
+                  borderTop: `1px solid ${tokens.borderDivider}`,
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 10,
+                }}
+              >
                 <button
-                  data-team-restore
+                  data-team-dismissed-toggle
                   type="button"
-                  onClick={restoreAll}
-                  title={
-                    "Bring every hidden row back. Dismissals are global since " +
-                    "round 1350, so this also un-hides them in the Live panel. " +
-                    "Dismissing hides rows; it never deletes anything."
-                  }
+                  onClick={() => setPeek((v) => !v)}
+                  title={DISMISSED_TOGGLE_TITLE}
                   className="mono"
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    padding: 0,
-                    fontSize: 9.5,
-                    fontFamily: "inherit",
-                    color: tokens.textMuted,
-                    cursor: "pointer",
-                  }}
+                  style={FOOTER_BTN_STYLE}
                 >
-                  {hiddenCount} hidden · show
+                  {dismissedToggleLabel(hiddenCount, peek)}
                 </button>
+                {/* Only while peeking, so it cannot be reached without the
+                    rows it affects being on screen — and only when the server
+                    set has actually been read, because the count it names comes
+                    from that set. Two clicks: `decideRestoreAllClick`. */}
+                {peek && dismissed.size > 0 && (
+                  <button
+                    data-team-restore-all
+                    data-confirm={restoreAllArmedAt === null ? "idle" : "armed"}
+                    type="button"
+                    onClick={() => {
+                      const nowMs = Date.now();
+                      const decision = decideRestoreAllClick({
+                        armedAt: restoreAllArmedAt,
+                        nowMs,
+                      });
+                      switch (decision.action) {
+                        case "arm":
+                        case "rearm":
+                          // One write for both, exactly as the ✕ machine does
+                          // it: a `rearm` pushes the window back to THIS click
+                          // so a click stream can never confirm itself.
+                          setRestoreAllArmedAt(nowMs);
+                          return;
+                        case "restore-all":
+                          setRestoreAllArmedAt(null);
+                          restoreAll();
+                          return;
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (isSpuriousActivation({ detail: 0, repeat: e.repeat })) {
+                        e.preventDefault();
+                      }
+                    }}
+                    title={restoreAllTitle(dismissed.size)}
+                    className="mono"
+                    style={{
+                      ...FOOTER_BTN_STYLE,
+                      color: restoreAllArmedAt === null ? tokens.textGhost : tokens.bleed,
+                    }}
+                  >
+                    {restoreAllArmedAt === null
+                      ? RESTORE_ALL_LABEL
+                      : restoreAllArmedLabel(dismissed.size)}
+                  </button>
+                )}
               </div>
             )}
           </>

@@ -1,0 +1,330 @@
+[
+  {
+    "name": "dark · the /live bystander is on the server",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · bystander id",
+    "note": "cc001350"
+  },
+  {
+    "name": "dark · the team row left the tree",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · both dismissals are on the server",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · the footer says \"dismissed · show\", not \"hidden\"",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · toggle label",
+    "note": "1 dismissed · show"
+  },
+  {
+    "name": "dark · restore-all is NOT reachable before peeking",
+    "ok": true,
+    "actual": null,
+    "expected": null
+  },
+  {
+    "name": "dark · and there is no DISMISSED group yet",
+    "ok": true,
+    "actual": null,
+    "expected": null
+  },
+  {
+    "name": "dark · clicking \"show\" does NOT restore anything on the server",
+    "ok": true,
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "name": "dark · …the bystander in particular survives it",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · the dismissed row is shown as PEEKED, not returned to the tree",
+    "ok": true,
+    "actual": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ],
+    "expected": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ]
+  },
+  {
+    "name": "dark · under a DISMISSED heading",
+    "ok": true,
+    "actual": "DISMISSED",
+    "expected": "DISMISSED"
+  },
+  {
+    "name": "dark · with its own restore control",
+    "ok": true,
+    "actual": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ],
+    "expected": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ]
+  },
+  {
+    "name": "dark · and the toggle flips to \"hide\"",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · the peeked row is faded",
+    "ok": true,
+    "actual": "0.55",
+    "expected": "0.55"
+  },
+  {
+    "name": "dark · ↺ returns that row to the tree",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · …and only that one: the bystander is still hidden",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · …the team id is gone from the server",
+    "ok": true,
+    "actual": false,
+    "expected": false
+  },
+  {
+    "name": "dark · peek survives the group emptying and refilling",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · restore-all says what it does",
+    "ok": true,
+    "actual": "restore all",
+    "expected": "restore all"
+  },
+  {
+    "name": "dark · …and warns that it crosses panels",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · one click only ARMS it",
+    "ok": true,
+    "actual": "armed",
+    "expected": "armed"
+  },
+  {
+    "name": "dark · …the server is untouched",
+    "ok": true,
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "name": "dark · …and the label names the global count",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "dark · armed label",
+    "note": "restore all 2?"
+  },
+  {
+    "name": "dark · a click under the confirm floor is swallowed",
+    "ok": true,
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "name": "dark · a deliberate second click clears everything",
+    "ok": true,
+    "actual": 0,
+    "expected": 0
+  },
+  {
+    "name": "light · the /live bystander is on the server",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · bystander id",
+    "note": "cc001350"
+  },
+  {
+    "name": "light · the team row left the tree",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · both dismissals are on the server",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · the footer says \"dismissed · show\", not \"hidden\"",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · toggle label",
+    "note": "1 dismissed · show"
+  },
+  {
+    "name": "light · restore-all is NOT reachable before peeking",
+    "ok": true,
+    "actual": null,
+    "expected": null
+  },
+  {
+    "name": "light · and there is no DISMISSED group yet",
+    "ok": true,
+    "actual": null,
+    "expected": null
+  },
+  {
+    "name": "light · clicking \"show\" does NOT restore anything on the server",
+    "ok": true,
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "name": "light · …the bystander in particular survives it",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · the dismissed row is shown as PEEKED, not returned to the tree",
+    "ok": true,
+    "actual": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ],
+    "expected": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ]
+  },
+  {
+    "name": "light · under a DISMISSED heading",
+    "ok": true,
+    "actual": "DISMISSED",
+    "expected": "DISMISSED"
+  },
+  {
+    "name": "light · with its own restore control",
+    "ok": true,
+    "actual": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ],
+    "expected": [
+      "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    ]
+  },
+  {
+    "name": "light · and the toggle flips to \"hide\"",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · the peeked row is faded",
+    "ok": true,
+    "actual": "0.55",
+    "expected": "0.55"
+  },
+  {
+    "name": "light · ↺ returns that row to the tree",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · …and only that one: the bystander is still hidden",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · …the team id is gone from the server",
+    "ok": true,
+    "actual": false,
+    "expected": false
+  },
+  {
+    "name": "light · peek survives the group emptying and refilling",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · restore-all says what it does",
+    "ok": true,
+    "actual": "restore all",
+    "expected": "restore all"
+  },
+  {
+    "name": "light · …and warns that it crosses panels",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · one click only ARMS it",
+    "ok": true,
+    "actual": "armed",
+    "expected": "armed"
+  },
+  {
+    "name": "light · …the server is untouched",
+    "ok": true,
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "name": "light · …and the label names the global count",
+    "ok": true,
+    "actual": true,
+    "expected": true
+  },
+  {
+    "name": "light · armed label",
+    "note": "restore all 2?"
+  },
+  {
+    "name": "light · a click under the confirm floor is swallowed",
+    "ok": true,
+    "actual": 2,
+    "expected": 2
+  },
+  {
+    "name": "light · a deliberate second click clears everything",
+    "ok": true,
+    "actual": 0,
+    "expected": 0
+  }
+]
