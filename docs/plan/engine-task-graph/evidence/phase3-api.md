@@ -24,11 +24,18 @@ the ones that shipped is the defect phase 2 cycle 3 was spent on.
 ```
 worktree                /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
 branch                  project/8c591d6c
-transcript §4 produced  ba09b2a   (uncommitted, of the three files under test: none)
+transcript §4 produced  3b54229   (uncommitted, of the three files under test: none)
 this file committed at  the commit that adds it, one commit later
 base                    b1bb731   (phase 7b, round 212 — the tree builder 4 started from)
 
-sha256 forge-control/src/routes/projects.ts   b55c7c29ff14d8920073694ff619f58cd4e54a49211a16074b30e9786594e297
+REVISION. §4's transcript was first produced at ba09b2a, 20 cases / 96
+assertions. Operator ruling 2 on finding F2 (§7) then added case 2's fourth and
+fifth probes and one clause to the guard, so the transcript was RE-RUN at
+3b54229 — the bytes that ship — rather than left reporting a tree that no longer
+exists. 20 cases / 101 assertions. The ba09b2a numbers survive only where this
+document quotes them as history, in §5.1 and §7.
+
+sha256 forge-control/src/routes/projects.ts   0fd8c8f0767fdabc801cb23a28074aac03f870e4a24c2e449564ea88c142e9ba
 sha256 forge-control/src/lib/task-graph.ts    00f4c66bd128f0233613a58deac4afe3904f9deb4f27affe7eb5429a483cbb07
 sha256 forge-control/src/db/projects.ts       50ba76906e166f3c5e835c2bf01d3b5abbf0690d15722e3dae3458e54b059de7
 ```
@@ -43,8 +50,11 @@ The three builder commits this instrument tests:
 
 `routes/projects.ts`'s sha256 above is **not** the one `5a1180d` shipped
 (`8baa3346129b54f9bb069198707b342dad7f2e6ec92925c22e581922df5089ac`): round 213
-amended one expression in it under an operator ruling. §5 is that amendment,
-measured on both sides.
+amended one expression in it under **two** operator rulings, one at each end of
+the same guard. §5 is the first, §7's F2 the second; both are measured on both
+sides. The intermediate state, after ruling 1 and before ruling 2, was
+`b55c7c29ff14d8920073694ff619f58cd4e54a49211a16074b30e9786594e297` at `ba09b2a`
+— named because §6.2's mutation transcript was taken against it.
 
 ## 2. The universal gate (`03-quality.md` §3.1)
 
@@ -57,6 +67,9 @@ $ ./node_modules/.bin/tsc --noEmit --strict --target ES2022 --module ESNext \
     --allowImportingTsExtensions --resolveJsonModule --types node \
     ../scripts/checks/check-task-api.ts           → exit 0, no diagnostics
 $ git -C /opt/forge-ai-os status --porcelain      → empty
+$ python3 docs/plan/engine-task-graph/check-corpus-map.py
+                                                  → OK, R1..R69 + NF1..NF7,
+                                                    all three statements agree, exit 0
 ```
 
 **The script's own typecheck is a separate invocation on purpose.** It lives at
@@ -81,8 +94,15 @@ citation in `routes/projects.ts`. Nothing wires it into the unit suite.
 
 ## 3. The instrument
 
-`scripts/checks/check-task-api.ts` — 20 cases, 96 assertions, exit 0 only when
-every case ran every assertion it declares and all of them passed.
+`scripts/checks/check-task-api.ts` — 20 cases, 101 assertions, exit 0 only when
+every case ran **exactly** the assertions it declares and all of them passed.
+
+**Exactly**, in both directions, and it earned its keep during ruling 2: case 2
+was declared at `9` while executing `11` after F2's probes were added, and the
+runner refused to certify it — `MISSED case 2 declares 9 assertion(s) but
+executed 11`. An over-count catches a probe that was skipped; an under-count
+catches a declaration that went stale when the case grew. A one-directional
+check would have passed that edit silently.
 
 **Assertions were written from the contract first.** Phase 3's fifteen-row
 `400` table and `01-requirements.md` §C were the source; `routes/projects.ts`
@@ -153,10 +173,10 @@ abbreviated or reflowed.
 ```
 === check-task-api.ts — build identity =======================================
   repo worktree      : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
-  git HEAD           : ba09b2a
+  git HEAD           : 3b54229
   git branch         : project/8c591d6c
   uncommitted (subj) : none
-  sha256             : b55c7c29ff14d8920073694ff619f58cd4e54a49211a16074b30e9786594e297  forge-control/src/routes/projects.ts
+  sha256             : 0fd8c8f0767fdabc801cb23a28074aac03f870e4a24c2e449564ea88c142e9ba  forge-control/src/routes/projects.ts
   sha256             : 00f4c66bd128f0233613a58deac4afe3904f9deb4f27affe7eb5429a483cbb07  forge-control/src/lib/task-graph.ts
   sha256             : 50ba76906e166f3c5e835c2bf01d3b5abbf0690d15722e3dae3458e54b059de7  forge-control/src/db/projects.ts
   scratch database   : forge_tg_scratch (local; DSN never printed)
@@ -165,7 +185,7 @@ abbreviated or reflowed.
   bind               : http://127.0.0.1:7799/api/projects (never 7700)
   migrations applied : 20 (+1 forced content_jobs placeholder)
   cases to run       : 20
-  assertions declared: 96
+  assertions declared: 101
 ==============================================================================
 
   PROJECT_MAX_WORKSTREAMS (from the router module) = 6
@@ -186,7 +206,7 @@ abbreviated or reflowed.
       ok   1b status — = 400
       ok   1b message — = "role must be one of: architect, planner, scout, researcher, builder, reviewer, steward, tester"
 
---- case 2: round supplied but not a non-negative finite INTEGER → 400 (operator ruling, round 213)
+--- case 2: round supplied but not a non-negative int4 → 400 (two operator rulings, round 213)
     2a round: "abc"
       req  {"role":"builder","title":"c2a","brief":"check-task-api.ts fixture body — never executed by any agent.","round":"abc"}
       res  400 {"error":"round must be a non-negative integer"}
@@ -197,11 +217,22 @@ abbreviated or reflowed.
       res  400 {"error":"round must be a non-negative integer"}
       ok   2b status — = 400
       ok   2b message — = "round must be a non-negative integer"
-    2c round: 1.5 (the ruling)
+    2c round: 1.5 (ruling 1)
       req  {"role":"builder","title":"c2c","brief":"check-task-api.ts fixture body — never executed by any agent.","round":1.5}
       res  400 {"error":"round must be a non-negative integer"}
       ok   2c status is 400 and NOT 500 — = 400
       ok   2c message — = "round must be a non-negative integer"
+    2d round: 2147483648 (ruling 2, F2)
+      req  {"role":"builder","title":"c2d","brief":"check-task-api.ts fixture body — never executed by any agent.","round":2147483648}
+      res  400 {"error":"round must be at most 2147483647 (project_tasks.round is a 32-bit integer); got 2147483648"}
+      ok   2d status is 400 and NOT 500 — = 400
+      ok   2d message names the bound — body names "at most 2147483647"
+      ok   2d message names the offending value — body names "got 2147483648"
+    2e round: 2147483647 (the boundary, accepted)
+      req  {"role":"builder","title":"c2e boundary","brief":"check-task-api.ts fixture body — never executed by any agent.","round":2147483647}
+      res  201 {"task":{"id":"9436ddd4-5d4d-44d8-99b1-277f2e00001e","project_id":"00000000-0000-4000-8000-0000000000a1","round":2147483647,"role":"builder","title":"c2e boundary","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.413471+00","updated_at":"2026-08-17 18:33:10.413471+00"}}
+      ok   2e status — = 201
+      ok   2e stored round is int4's maximum — = 2147483647
 
 --- case 3: title or brief missing → 400 (existing messages)
     3a title absent
@@ -359,27 +390,27 @@ abbreviated or reflowed.
       ok   14b message names the role — body names "tester task requires a non-empty write_set"
     14c reviewer, no write_set, strict project
       req  {"role":"reviewer","title":"c14c","brief":"check-task-api.ts fixture body — never executed by any agent."}
-      res  201 {"task":{"id":"82ba3801-c6b8-4731-8c76-79540203fadf","project_id":"00000000-0000-4000-8000-0000000000a3","round":0,"role":"reviewer","title":"c14c","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.563247+00","updated_at":"2026-08-17 18:22:02.563247+00"}}
+      res  201 {"task":{"id":"e47a890c-874f-4c6d-9f71-a1d91e62ec5b","project_id":"00000000-0000-4000-8000-0000000000a3","round":0,"role":"reviewer","title":"c14c","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.482166+00","updated_at":"2026-08-17 18:33:10.482166+00"}}
       ok   14c status — = 201
       ok   14c reviewer row was created — = "reviewer"
 
 --- case 15: identical body POSTed twice → 409, and exactly ONE row (R30)
     15a first POST
       req  {"role":"builder","title":"c15 idempotency subject","brief":"check-task-api.ts fixture body — never executed by any agent.","round":500}
-      res  201 {"task":{"id":"b1d3994b-1e2e-4f48-9fb4-8dcbc4eb0dc8","project_id":"00000000-0000-4000-8000-0000000000a1","round":500,"role":"builder","title":"c15 idempotency subject","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.569123+00","updated_at":"2026-08-17 18:22:02.569123+00"}}
+      res  201 {"task":{"id":"705905cc-f011-45fc-8934-8213e45f532c","project_id":"00000000-0000-4000-8000-0000000000a1","round":500,"role":"builder","title":"c15 idempotency subject","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.485936+00","updated_at":"2026-08-17 18:33:10.485936+00"}}
       ok   15a status — = 201
     15b identical POST
       req  {"role":"builder","title":"c15 idempotency subject","brief":"check-task-api.ts fixture body — never executed by any agent.","round":500}
-      res  409 {"task":{"id":"b1d3994b-1e2e-4f48-9fb4-8dcbc4eb0dc8","project_id":"00000000-0000-4000-8000-0000000000a1","round":500,"role":"builder","title":"c15 idempotency subject","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.569123+00","updated_at":"2026-08-17 18:22:02.569123+00"},"error":"duplicate task: this project already has a task with that round/role/title"}
+      res  409 {"task":{"id":"705905cc-f011-45fc-8934-8213e45f532c","project_id":"00000000-0000-4000-8000-0000000000a1","round":500,"role":"builder","title":"c15 idempotency subject","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.485936+00","updated_at":"2026-08-17 18:33:10.485936+00"},"error":"duplicate task: this project already has a task with that round/role/title"}
       ok   15b status — = 409
       ok   15b message — body names "duplicate task"
-      ok   15b returned the same task id — = "b1d3994b-1e2e-4f48-9fb4-8dcbc4eb0dc8"
+      ok   15b returned the same task id — = "705905cc-f011-45fc-8934-8213e45f532c"
       ok   15c exactly one row exists (psql, not the API) — = "1"
 
 --- case 16: depends_on ABSENT → 201, stored as SQL NULL — the legacy sentinel (E2)
     16 depends_on absent
       req  {"role":"builder","title":"c16 legacy sentinel","brief":"check-task-api.ts fixture body — never executed by any agent.","round":501}
-      res  201 {"task":{"id":"61f8a142-61c1-46d2-9e72-fa4541a64ae1","project_id":"00000000-0000-4000-8000-0000000000a1","round":501,"role":"builder","title":"c16 legacy sentinel","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.621239+00","updated_at":"2026-08-17 18:22:02.621239+00"}}
+      res  201 {"task":{"id":"49986ee4-7e79-49e1-a72b-8b849cae31dd","project_id":"00000000-0000-4000-8000-0000000000a1","round":501,"role":"builder","title":"c16 legacy sentinel","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.537939+00","updated_at":"2026-08-17 18:33:10.537939+00"}}
       ok   16 status — = 201
       ok   16 stored depends_on IS NULL (psql) — = "t"
       ok   16 the column is NULL, not an empty array — = "NULL"
@@ -387,7 +418,7 @@ abbreviated or reflowed.
 --- case 17: depends_on: [] → 201, stored as '{}' — a graph ROOT, not NULL
     17 depends_on: []
       req  {"role":"builder","title":"c17 explicit root","brief":"check-task-api.ts fixture body — never executed by any agent.","round":502,"depends_on":[]}
-      res  201 {"task":{"id":"9ffab0a2-d7e2-4ac0-bfcf-608df7e3fd49","project_id":"00000000-0000-4000-8000-0000000000a1","round":502,"role":"builder","title":"c17 explicit root","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":[],"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.713869+00","updated_at":"2026-08-17 18:22:02.713869+00"}}
+      res  201 {"task":{"id":"149def39-ba72-4c0d-be2a-959d4966250a","project_id":"00000000-0000-4000-8000-0000000000a1","round":502,"role":"builder","title":"c17 explicit root","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":[],"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.627502+00","updated_at":"2026-08-17 18:33:10.627502+00"}}
       ok   17 status — = 201
       ok   17 stored depends_on IS NOT NULL (psql) — = "f"
       ok   17 stored depends_on is the empty array — = "{}"
@@ -396,7 +427,7 @@ abbreviated or reflowed.
 --- case 18: round omitted, deps at rounds {300, 305} → 201 with round 306 (R23)
     18 round omitted, two deps
       req  {"role":"builder","title":"c18 computed round","brief":"check-task-api.ts fixture body — never executed by any agent.","depends_on":["00000000-0000-4000-8000-0000000000b1","00000000-0000-4000-8000-0000000000b2"]}
-      res  201 {"task":{"id":"3e29486d-b280-4527-8b74-02919eb3e42d","project_id":"00000000-0000-4000-8000-0000000000a1","round":306,"role":"builder","title":"c18 computed round","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":["00000000-0000-4000-8000-0000000000b1","00000000-0000-4000-8000-0000000000b2"],"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.850337+00","updated_at":"2026-08-17 18:22:02.850337+00"}}
+      res  201 {"task":{"id":"37d8f4d4-1bd2-4cb0-a6f7-607cfb0b0c76","project_id":"00000000-0000-4000-8000-0000000000a1","round":306,"role":"builder","title":"c18 computed round","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":["00000000-0000-4000-8000-0000000000b1","00000000-0000-4000-8000-0000000000b2"],"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.76653+00","updated_at":"2026-08-17 18:33:10.76653+00"}}
       ok   18 status — = 201
       ok   18 response round is 1 + max(dep.round) — = 306
       ok   18 stored round is 306 (psql) — = "306"
@@ -404,7 +435,7 @@ abbreviated or reflowed.
 --- case 19: round SUPPLIED (700) is honoured untouched, even with deps (R23/E1)
     19 round 700 supplied with deps
       req  {"role":"builder","title":"c19 supplied round","brief":"check-task-api.ts fixture body — never executed by any agent.","round":700,"depends_on":["00000000-0000-4000-8000-0000000000b1","00000000-0000-4000-8000-0000000000b2"]}
-      res  201 {"task":{"id":"8fafc704-8ce9-41b6-96d0-6bea9ccd7098","project_id":"00000000-0000-4000-8000-0000000000a1","round":700,"role":"builder","title":"c19 supplied round","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":["00000000-0000-4000-8000-0000000000b1","00000000-0000-4000-8000-0000000000b2"],"workstream":"main","write_set":[],"created_at":"2026-08-17 18:22:02.90123+00","updated_at":"2026-08-17 18:22:02.90123+00"}}
+      res  201 {"task":{"id":"e16f5978-82e2-4646-bac5-2d80a5c76920","project_id":"00000000-0000-4000-8000-0000000000a1","round":700,"role":"builder","title":"c19 supplied round","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":["00000000-0000-4000-8000-0000000000b1","00000000-0000-4000-8000-0000000000b2"],"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.820994+00","updated_at":"2026-08-17 18:33:10.820994+00"}}
       ok   19 status — = 201
       ok   19 response round is the supplied 700, not 306 — = 700
       ok   19 stored round is 700 (psql) — = "700"
@@ -412,7 +443,7 @@ abbreviated or reflowed.
 --- case 20: workstream + write_set valid → 201, write_set stored NORMALISED (R28)
     20 workstream ui, write_set needing normalisation
       req  {"role":"builder","title":"c20 normalised write set","brief":"check-task-api.ts fixture body — never executed by any agent.","round":503,"workstream":"ui","write_set":["./src/a.ts","src//b.ts"]}
-      res  201 {"task":{"id":"5f581420-8036-4c5b-97af-9874fd20fab5","project_id":"00000000-0000-4000-8000-0000000000a1","round":503,"role":"builder","title":"c20 normalised write set","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"ui","write_set":["src/a.ts","src/b.ts"],"created_at":"2026-08-17 18:22:02.95083+00","updated_at":"2026-08-17 18:22:02.95083+00"}}
+      res  201 {"task":{"id":"2ebf0da1-32c1-4c13-9c41-62a8bcecd0d9","project_id":"00000000-0000-4000-8000-0000000000a1","round":503,"role":"builder","title":"c20 normalised write set","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"ui","write_set":["src/a.ts","src/b.ts"],"created_at":"2026-08-17 18:33:10.87251+00","updated_at":"2026-08-17 18:33:10.87251+00"}}
       ok   20 status — = 201
       ok   20 workstream stored — = "ui"
       ok   20 write_set stored normalised (psql) — = "{src/a.ts,src/b.ts}"
@@ -421,11 +452,11 @@ abbreviated or reflowed.
 --- census -------------------------------------------------------------------
   cases planned              : 20
   cases that ran an assertion: 20
-  assertions declared        : 96
-  assertions executed        : 96
+  assertions declared        : 101
+  assertions executed        : 101
   assertions failed          : 0
 
-PASS — 20 cases, every declared assertion executed and green: the fifteen 400 families (R22, R24, R25, R27, R28, R31, R39), the 409 (R30), and the five happy paths including the NULL-vs-'{}' sentinel (E2).
+PASS — 20 cases, every declared assertion executed and green: the fifteen 400 families (R22, R22a, R24, R25, R27, R28, R31, R39), the 409 (R30), and the happy paths — the NULL-vs-'{}' sentinel (E2), the computed and the supplied round, the normalised write-set, and int4's maximum accepted at the bound.
   teardown           : schema tg_check_api dropped, :7799 closed
 ```
 
@@ -545,9 +576,17 @@ a 500 from the API, is an instrument obscuring its own measurement.
 
 ### 6.1 Why this section exists
 
-A probe never observed failing is not an instrument. §4 shows 96 green
-assertions; on its own that is equally consistent with 96 assertions that cannot
-go red.
+A probe never observed failing is not an instrument. §4 shows 101 green
+assertions; on its own that is equally consistent with 101 assertions that
+cannot go red.
+
+**This section's transcripts were taken at `ba09b2a`**, before ruling 2 added
+case 2's fourth and fifth probes, so its counts read 96 rather than §4's 101.
+They are not re-run against `3b54229`: the mutation targets the sentinel at the
+`createTask` call, which ruling 2 did not touch, and re-running a mutation
+against newer bytes to make two numbers match would be cosmetic. The sha256 in
+each transcript says which tree it was taken against, which is the whole reason
+it is printed.
 
 ### 6.2 Mutation — the sentinel flipped, case 16 goes red
 
@@ -561,8 +600,9 @@ the E2 deploy race, re-opened in one character sequence.
 ```
 
 The mutation was applied to the working tree, measured, and reverted. **It is
-not in any commit** — §1's sha256 of `routes/projects.ts` (`b55c7c29…`) is the
-restored file; under the mutation the same line of the build-identity block read
+not in any commit** — it was taken at `ba09b2a`, between the two rulings, so the
+restored sha256 it prints is that commit's `b55c7c29…` and not §1's `0fd8c8f0…`;
+under the mutation the same line of the build-identity block read
 `2378478dcf1312c3471f6de7733c6e74b88293fbcd220d47fea6a61cc15f0d2f` and
 `uncommitted (subj) : M forge-control/src/routes/projects.ts`. The instrument
 named its own contamination, which is the point of printing the sha256 at all.
@@ -613,8 +653,9 @@ is proved by the pair, not by either row alone.
 
 ### 6.3 Restored, green again
 
-After reverting, the same command exits 0 with 96/96 and
-`16 stored depends_on IS NULL (psql) — = "t"` (§4).
+After reverting, the same command exited 0 with 96/96 at `ba09b2a`, and case 16
+is green in §4's `3b54229` run at 101/101 —
+`16 stored depends_on IS NULL (psql) — = "t"` in both.
 
 ## 7. Findings — where the contract and the shipped code disagreed
 
@@ -632,32 +673,112 @@ bytes — `", "` between ids, `" -> "` between cycle nodes, workstream names
 §5. Found by round 212 as a reading conflict, ruled by the operator, amended
 where it is enforced, and exercised by case 2c. Closed.
 
-### F2 — a round above int4 is still a 500 (OPEN — the same species as F1)
+### F2 — a round above int4 was a 500 (RESOLVED by operator ruling 2)
 
-`Number.isInteger(2147483648)` is `true`, so the amended guard passes it, and
-`project_tasks.round` is `integer`:
+**Raised as OPEN by this task, ruled the same round, and closed in `3b54229`.**
+Recorded in full because the decision, not just the diff, is what the next
+reader needs.
+
+`Number.isInteger(2147483648)` is `true`, so ruling 1's guard passed it, and
+`project_tasks.round` is declared `round int` in
+`db/migrations/0030_coding_projects.sql`. Measured with case 2d **before** the
+bound existed:
 
 ```
-$ node -e 'console.log(Number.isInteger(2147483648))'        → true
-$ psql … -c "CREATE TEMP TABLE t(r integer); INSERT INTO t VALUES (2147483648);"
-  CREATE TABLE
-  ERROR:  integer out of range                                 (SQLSTATE 22003)
+error: value "2147483648" is out of range for type integer
+    at /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4/forge-control/node_modules/.pnpm/pg-pool@3.14.0_pg@8.21.0/node_modules/pg-pool/index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async createTask (/opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4/forge-control/src/db/projects.ts:405:13)
+    at async Array.<anonymous> (/opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4/forge-control/src/routes/projects.ts:638:29)
+    at async <anonymous> (/opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4/scripts/checks/check-task-api.ts:1095:26) {
+  length: 153,
+  severity: 'ERROR',
+  code: '22003',
+  detail: undefined,
+  hint: undefined,
+  position: undefined,
+  internalPosition: undefined,
+  internalQuery: undefined,
+  where: "unnamed portal parameter $2 = '...'",
+  schema: undefined,
+  table: undefined,
+  column: undefined,
+  dataType: undefined,
+  constraint: undefined,
+  file: 'numutils.c',
+  line: '611',
+  routine: 'pg_strtoint32_safe'
+}
+    2d round: 2147483648 (ruling 2, F2)
+      req  {"role":"builder","title":"c2d","brief":"check-task-api.ts fixture body — never executed by any agent.","round":2147483648}
+      res  500 Internal Server Error
+      FAIL 2d status is 400 and NOT 500 — expected 400, got 500
+      MISSED case 2 declares 9 assertion(s) but executed 7 — a case that does not run what it declares cannot certify anything.
 ```
 
-So `{"round": 2147483648}` reaches the `INSERT` and produces a **500**, by
-exactly F1's mechanism: caller input answered with "the server is broken".
+SQLSTATE **22003**, `integer out of range`, out of `pg_strtoint32_safe` — F1's
+exact mechanism at the other end of the same expression. Note that the harness
+reported it as `res  500 Internal Server Error` and failed on the **status**,
+rather than dying inside `JSON.parse` as it did for F1: §5.4's hardening paying
+for itself one ruling later.
 
-**Reported, not silently fixed, and no assertion asserts either behaviour.**
-Contract row 2 refuses a round that is "not a non-negative **finite integer**";
-`2147483648` *is* one, so the table as written says accept it — and accepting it
-requires widening the column, which is a schema decision nobody has made. The
-alternative, refusing above `2147483647`, is a second behaviour change on a
-guard the operator has already ruled on once. Writing an assertion for either
-would be this builder choosing between them under cover of a green check.
-**Recommendation:** bound the guard to int4 (`round <= 2147483647`), for F1's
-own stated reason. One line, in the same expression, whenever Konrad or the
-phase-3 reviewer says so. Practical exposure today is nil — no planner writes
-2³¹ — which is why it is a finding and not a blocker.
+**What this builder did NOT do, and why it was right not to.** No fix, and no
+assertion in either direction. Contract row 2 refused a round that is not a
+non-negative *finite integer*; `2147483648` **is** one, so the table as written
+said accept it — and accepting it means widening the column, a schema decision
+nobody had made. Writing an assertion for either behaviour would have been this
+builder choosing between them under cover of a green check.
+
+**The ruling.** Bound the guard to int4; `2147483648` returns `400`. Widening
+`project_tasks.round` to `bigint` was rejected on R19's grounds: `round` is
+becoming a DERIVED value — `taskDepth()`'s longest-path depth from the roots —
+and a dependency graph's depth cannot approach 2³¹, so a wider column would be a
+migration, a fresh deploy-window risk and permanent dead weight bought to store
+a value the engine will never legitimately produce. Meanwhile `2147483648` is
+unambiguously caller input, and this phase's own design says caller input is
+`400` and corrupt stored state is `500`.
+
+**After**, at `3b54229`:
+
+```
+    2d round: 2147483648 (ruling 2, F2)
+      req  {"role":"builder","title":"c2d","brief":"check-task-api.ts fixture body — never executed by any agent.","round":2147483648}
+      res  400 {"error":"round must be at most 2147483647 (project_tasks.round is a 32-bit integer); got 2147483648"}
+      ok   2d status is 400 and NOT 500 — = 400
+      ok   2d message names the bound — body names "at most 2147483647"
+      ok   2d message names the offending value — body names "got 2147483648"
+    2e round: 2147483647 (the boundary, accepted)
+      req  {"role":"builder","title":"c2e boundary","brief":"check-task-api.ts fixture body — never executed by any agent.","round":2147483647}
+      res  201 {"task":{"id":"9436ddd4-5d4d-44d8-99b1-277f2e00001e","project_id":"00000000-0000-4000-8000-0000000000a1","round":2147483647,"role":"builder","title":"c2e boundary","brief":"check-task-api.ts fixture body — never executed by any agent.","status":"pending","run_id":null,"fix_cycle":0,"tier":null,"attempt":0,"chain_key":null,"depends_on":null,"workstream":"main","write_set":[],"created_at":"2026-08-17 18:33:10.413471+00","updated_at":"2026-08-17 18:33:10.413471+00"}}
+```
+
+**Two deviations from the ruling's letter, both deliberate and disclosed.**
+
+1. *"One line"* became one line plus its own message. `2147483648` **is** a
+   non-negative integer, so reusing `round must be a non-negative integer` would
+   tell the caller something false about their own input — the same misleading
+   response both rulings exist to remove. The precedent is case 9b: a non-string
+   `workstream` gets its own message rather than borrowing
+   `validateWorkstream()`'s for a value that function never judged. The
+   pre-existing message is untouched for the inputs that always produced it
+   (2a, 2b, 2c), so row 2's *"existing message"* clause still holds where it
+   applied.
+2. **Case 2e was added, which the ruling did not ask for**: `2147483647` is
+   POSTed and must be **accepted**, `201`, stored. A bound that refused the
+   largest legal value would be an off-by-one nobody notices until a real round
+   sits on the edge — a gate that cannot be passed (standing rule 2). The
+   boundary is asserted, not assumed.
+
+**Row 2 amended where it is enforced, in the same commit.** The fifteen-row
+contract table lives in the round-212/213 task briefs, not in this repo; its
+durable statement in the corpus was **R22**'s *"every existing field keeps its
+exact current validation"*, which two rulings have now made false.
+`01-requirements.md` §C therefore gains **R22a** — the guard's three clauses,
+both `500`→`400` moves with their SQLSTATEs, the rejected `bigint` alternative
+with its reason, and the proof named — and R22 points at it instead of claiming
+the round validation is untouched. Fixing the code without fixing the table
+would have left the next reader with the same question that produced two rounds
+of ambiguity.
 
 ### F3 — no unsatisfiable gate was found in phase 3's gate list
 
@@ -779,7 +900,7 @@ Every one of those rows is now exercised. §9 is the map.
 | # | contract row | case | evidence in §4 |
 |---|---|---|---|
 | 1 | role missing/unknown → 400 | 1a, 1b | the eight-role message, both spellings |
-| 2 | round not a non-negative finite **integer** → 400 | 2a, 2b, **2c** | `"abc"`, `-1`, and `1.5` (§5) |
+| 2 | round not a non-negative **int4** → 400 (R22a) | 2a, 2b, **2c**, **2d**, **2e** | `"abc"`, `-1`, `1.5` (§5), `2147483648` (§7 F2), and `2147483647` **accepted** — the bound is passable |
 | 3 | title or brief missing → 400 | 3a, 3b | `title required` / `brief required` |
 | 4 | tier unknown → 400 | 4 | the four-tier message |
 | 5 | `depends_on` not an array of uuid strings → 400 | 5a–5d | non-array, non-uuid, **non-string element**, **explicit null** |
