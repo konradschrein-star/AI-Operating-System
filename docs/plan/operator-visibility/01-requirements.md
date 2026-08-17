@@ -70,6 +70,7 @@ The phase's fix PR/commit message and `docs/plan/perf/findings.md` name the mech
 
 **R14 — Fix meets the numeric gate.**
 After the fix, the scripted hover sweep (03-quality §4) shows: zero main-thread tasks > 50ms attributable to hover handling, and total scripting time during the sweep reduced vs baseline (target ≥ 50% if baseline shows a storm; if baseline is already < 60ms total, the gate is "no regression + cause documented elsewhere"). Numbers recorded in `docs/plan/perf/after.md`.
+> **The "≥ 50%" scripting-ms target above is clause (b) of the numeric gate, and clause (b) was RETIRED 2026-08-17 by operator decision (Konrad), round 1300.** The binding text is `03-quality.md` §4 — clause (a) stands, and clauses (b1) invalidation records / (b2) attributable long tasks against a stated idle floor replace it. This line is kept as written for history; read §4 before evaluating R14.
 *Verify:* reviewer re-runs the sweep script and reproduces within ±20%.
 
 **R15 — No behavior regressions from the perf fix.**

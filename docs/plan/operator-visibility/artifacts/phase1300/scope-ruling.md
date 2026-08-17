@@ -12,14 +12,29 @@ Phase 1300 **MUST NOT** undertake "shrink the `/desktop` document" — virtualis
 
 ---
 
-## 2. DoD #3 is close to met, and nobody has written it up
+## 2. DoD #3 is close to met, and nobody has written it up — *closed 2026-08-17, round 1292*
 
-The project DoD demands recorded before/after hover numbers. The corpus demands them in three specific files — `docs/plan/perf/baseline.md` (`docs/plan/operator-visibility/01-requirements.md:64`, `04-phases.md:54`), `docs/plan/perf/findings.md` (`01-requirements.md:68`, `04-phases.md:55`), `docs/plan/perf/after.md` (`01-requirements.md:72`, `04-phases.md:57`). **None of the three exists.** Verified:
+> **STATUS UPDATE, round 1301 (2026-08-17).** This section's argument was true when it was written in round 1291 and is **no longer true**. The three files landed in commit **`e0df0a5`**, *"docs(phase1292): the three perf documents, written from committed measurements"*. The heading and the paragraph below are kept because the absence they describe was §2's entire argument — the reason phase 1300 was told to read three documents rather than re-derive the numbers. What changed is the availability of the write-up, not the ruling in §1. Read the sub-blocks below in order: *what was true then*, then *what is true now*.
+
+**What was true when this document was written (round 1291):**
+
+The project DoD demands recorded before/after hover numbers. The corpus demands them in three specific files — `docs/plan/perf/baseline.md` (`docs/plan/operator-visibility/01-requirements.md:64`, `04-phases.md:54`), `docs/plan/perf/findings.md` (`01-requirements.md:68`, `04-phases.md:55`), `docs/plan/perf/after.md` (`01-requirements.md:72`, `04-phases.md:57`). **None of the three existed.** Verified at the time:
 
 ```
 $ ls docs/plan/perf
 ls: cannot access 'docs/plan/perf': No such file or directory
 ```
+
+**What is true now (round 1301, after `e0df0a5`):** all three exist and are committed. Re-verified:
+
+```
+$ ls docs/plan/perf
+after.md
+baseline.md
+findings.md
+```
+
+Round 1292 wrote them from the artifacts tabulated below plus round 1291's re-run, exactly as this section anticipated. Phase 1300 still does **not** write them and does not re-derive the numbers — it reads them.
 
 The measurements themselves **do exist and are committed**. Read out of the files, not copied from a brief:
 
@@ -43,7 +58,7 @@ The measurements themselves **do exist and are committed**. Read out of the file
 
 **State the residual honestly.** It is **one long task, in one run out of two, on one surface**, at 61 ms — measured against an idle floor that produced tasks of the *same size* with the pointer parked (59 ms on team run2, 52 ms and 50 ms on rail). Ambient ~50–60 ms long tasks exist on this VPS with nothing hovering at all. That is not a demonstrated hover defect; it is a signal at the noise floor.
 
-Round 1291's sibling task is **re-running the instrument** to settle it. **Round 1292** writes `docs/plan/perf/{baseline,findings,after}.md` from these artifacts plus that re-run. Phase 1300 does **not** write them and does not re-derive the numbers — it reads the three docs.
+Round 1291's sibling task **re-ran the instrument** and settled it — see §6. **Round 1292 wrote** `docs/plan/perf/{baseline,findings,after}.md` from these artifacts plus that re-run, in commit `e0df0a5`. Phase 1300 does **not** write them and does not re-derive the numbers — it reads the three docs.
 
 ---
 
@@ -59,7 +74,7 @@ Round 1291's sibling task is **re-running the instrument** to settle it. **Round
 
 §9.8 item 3 (line 934): *"**§9.7 is the next real question** on this surface, and it is the one that touches the panel's hover requirement rather than the canvas."*
 
-The sibling round-1291 probe task runs it. **The consequence for planning:** if one of our own rules produces a whole-document invalidation set, the fix is **a selector change**, not an architecture change.
+The sibling round-1291 probe task ran it, and it landed — the result is in §6. **The consequence for planning:** if one of our own rules produces a whole-document invalidation set, the fix is **a selector change**, not an architecture change. §6 records that this is exactly what it turned out to be.
 
 ---
 
@@ -88,10 +103,10 @@ So §1's ruling is no longer only steward judgement — it is a binding operator
 |---|---|
 | Read `docs/plan/perf/{baseline,findings,after}.md` (round 1292) and the two round-1291 probe artifacts, and **close DoD #3 on the panel's own numbers** from §2. | **Virtualise, cap, window or paginate the chat transcript** — §9.6 (c), CLOSED by operator decision. |
 | Act on a **selector-level** finding from the §9.7 probe if it names one of our rules: a CSS selector change in `forge-control-web/app/globals.css` / `app/v2.css` is in scope. | **Change the canvas mount/unmount model** — §9.6 (a), CLOSED by operator decision. |
-| **Re-verify R15 click-through** (`01-requirements.md:75`; protocol in `03-quality.md` §4 and the regression list at `03-quality.md:33`). | **Pre-warm Excalidraw fonts** — §9.6 (b), which §9.6 shows collapses into (a). |
+| **Re-verify R15 click-through** (`01-requirements.md:76`; protocol in `03-quality.md` §4 and the regression list at `03-quality.md:33`). | **Pre-warm Excalidraw fonts** — §9.6 (b), which §9.6 shows collapses into (a). |
 | **Document §9.6 as an answered decision**, citing `15-ui-v3-phases.md` and `phase800/README.md`. | **Record U31 as "met."** It is closed-as-accepted; no AFTER exists and none is owed. |
 
-**Default if the round-1291 probes have not landed when 1300 plans:** close DoD #3 on the items in §2 and §3, record §9.6 as answered per §4, and hand any unresolved §9.7 mechanism to a later phase with the probe output attached. Do **not** substitute an architecture change for a missing measurement. *(The brief for this ruling anticipated a Konrad-has-not-answered default; that branch is moot — `e8df4e6` answers it.)*
+**Default if the round-1291 probes have not landed when 1300 plans:** close DoD #3 on the items in §2 and §3, record §9.6 as answered per §4, and hand any unresolved §9.7 mechanism to a later phase with the probe output attached. Do **not** substitute an architecture change for a missing measurement. *(The brief for this ruling anticipated a Konrad-has-not-answered default; that branch is moot — `e8df4e6` answers it. **The probes-have-not-landed branch is also moot as of round 1301:** both probes landed and are written up in §6, and the three perf documents landed in `e0df0a5`. The default is kept only as the record of what the fallback was.)*
 
 ---
 
@@ -109,25 +124,19 @@ Both landed. Written up in full at `docs/plan/perf/baseline.md`, `findings.md` a
 
 ## 7. Provenance
 
-Every `docs/plan/...` path cited above, proven to resolve:
+Every `docs/plan/...` path cited above, proven to resolve. Re-run in round 1301 (2026-08-17), same command verbatim:
 
 ```
 $ grep -oE 'docs/plan/[A-Za-z0-9._/-]+' docs/plan/operator-visibility/artifacts/phase1300/scope-ruling.md \
     | sort -u | while read p; do [ -e "$p" ] || echo "MISSING: $p"; done
 MISSING: docs/plan/...
-MISSING: docs/plan/perf
-MISSING: docs/plan/perf/
-MISSING: docs/plan/perf/after.md
-MISSING: docs/plan/perf/baseline.md
-MISSING: docs/plan/perf/findings.md
 ```
 
-Six lines, all accounted for, none of them a broken citation:
+**One line, and it is not a path.** `docs/plan/...` is the literal ellipsis in the sentence "Every `docs/plan/...` path cited above", caught by the extractor's character class — a grep artifact of this document's own prose. **Every real cited path resolves.**
 
-- `docs/plan/perf`, `docs/plan/perf/`, `.../after.md`, `.../baseline.md`, `.../findings.md` — **forward references, expected to be missing.** They are exactly the files §2 reports do not exist and round 1292 will create.
-- `docs/plan/...` — not a path at all. It is the literal ellipsis in the sentence "Every `docs/plan/...` path cited above", caught by the extractor's character class. A grep artifact of this document's own prose.
+*What this block said before, and why it changed.* When round 1291 wrote this document the same command emitted six lines: the ellipsis artifact plus `docs/plan/perf`, `docs/plan/perf/`, `.../after.md`, `.../baseline.md` and `.../findings.md`, all correctly labelled **forward references, expected to be missing** — they were exactly the files §2 reported did not exist and round 1292 was tasked to create. Round 1292 created them, in commit **`e0df0a5`**, and round 1301 re-ran the grep and rewrote this block. The five forward references are now five resolving citations. Nothing was ever a broken citation, then or now.
 
-Every real cited path resolves.
+*Whole-document sweep, round 1301.* The path-extraction grep was run across the **entire** file, not only the paths named above, and every one of the 26 extracted strings was resolved individually. Result: **nothing else was stale.** Two tense corrections outside §2 and §7 followed from the same sweep and are recorded inline — §2's closing paragraph and §3's "the sibling probe task runs it" now read in the past tense, and §5's "if the round-1291 probes have not landed" default is marked moot. One line-number citation was corrected: `01-requirements.md:75` → `:76` in §5, because round 1301 inserted the clause-(b)-retirement cross-reference under R14 and R15's heading moved down one line.
 
 Files read and cited:
 
