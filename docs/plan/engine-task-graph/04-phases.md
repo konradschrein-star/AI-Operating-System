@@ -513,22 +513,61 @@ own numbers move it further.
 2b. **Read E-3's baseline — BEFORE step 3, and this ordering is load-bearing.**
    Run E-3's `measure-schedule.ts full --project 8ea0cc08…` and append its
    output to `evidence/baseline-8ea0cc08.md` **now**, while `project_tasks`
-   still carries the pre-0040 `depends_on IS NULL` sentinel on every 8ea0cc08
-   row. Added round 215 for round 214's phase-7 finding 1: step 3's backfill
-   OVERWRITES that sentinel with the strictly-lower-round closure, and under
-   that closure S3's arithmetic is tautologically 0 — the instrument would
-   certify "no numbering stall" for the very project whose numbering stall
-   motivated this work. Step 1 makes this worse rather than better: it
-   guarantees 8ea0cc08 is *settled*, which is exactly the state in which the
-   closure resolves cleanly instead of erroring. Since round 215 the instrument
-   also **refuses** on the closure's shape (`schedule-metrics.ts`'s
-   `isClosureShaped()`), so running it late produces a NOT COMPUTABLE rather
-   than a lie — but a refusal you have to redo the deploy to fix is not a
-   substitute for reading the number while it exists.
+   still carries the pre-0040 legacy sentinel on every 8ea0cc08 row. Added round
+   215 for round 214's phase-7 finding 1; **amended round 217 for round 216's
+   finding 2, which caught the justification below claiming more than it buys.**
+
+   **EXPECT A REFUSAL, NOT A NUMBER. S3 is not readable at step 2b either.** At
+   this point migration 0040 has not run, so `project_tasks` has no `depends_on`
+   **column at all**: `readProjectRows()` asks `information_schema`, sets
+   `hasDependsOnColumn = false`, and `taskRow()` leaves the key absent, so every
+   row reaches `isLegacyRow()` as `undefined` and D7's **first** arm refuses.
+   The pasted output will read `S3 … NOT COMPUTABLE (131 legacy rows, 0
+   closure-shaped rows)` or thereabouts. **That is the correct refusal and not a
+   defect** — S3 for 8ea0cc08 was never recoverable by any ordering, because the
+   round integer conflated ordering, contention and phase and no column ever
+   recorded which. Do not treat it as a failed step, do not redo the deploy over
+   it, and do not go looking for a flag that makes it compute.
+
+   **What the ordering buys, then, stated honestly.** Not a number — a *reason*,
+   and everything else in `full` mode. Three things, none of them S3:
+
+   - **The honest reason.** Read before the migration, the refusal names the
+     LEGACY SENTINEL: these rows never recorded a dependency set. That is true,
+     permanent, and the finding this whole project rests on. Read after it,
+     step 3's backfill has destroyed the sentinel, `legacy-rows` reads **0**,
+     and the only thing left to refuse on is `isClosureShaped()` — which 7b of
+     `schedule-metrics.test.ts` and this document both call a **signature, not a
+     proof**, because a strictly serial graph-scheduled project produces the
+     same bytes. Same verdict, weaker ground, and a header that no longer says
+     the rows were legacy.
+   - **S1, S2, the run count, the mean run duration and the wall clock** — which
+     are the numbers part 2 actually owes (R62), are unaffected by the
+     migration, and are the ones DoD-6 compares against.
+   - **The pre-migration census itself**, which is the evidence that the read
+     happened when it claims to have happened — see the gate in `03-quality.md`
+     §3.2 that reads `closure-shaped-rows` off the pasted header.
+
+   Without the ordering the instrument would, before round 215, have printed
+   `S3 max numbering stall (min) 0` with `legacy-rows=0` and **exit 0** —
+   certifying "no numbering stall" for the very project whose numbering stall
+   motivated this work (measured, round 214). Step 1 makes that worse rather
+   than better: it guarantees 8ea0cc08 is *settled*, which is exactly the state
+   in which the closure resolves cleanly instead of erroring. Round 215's
+   detector turned that lie into a refusal; round 217's amendment stops this
+   step promising a number that D7 is designed never to produce for a legacy
+   project.
+   *Pinned in code:* `schedule-metrics.test.ts`'s
+   `describe("D7 — the pre-0040 read at step 2b refuses on the legacy sentinel")`,
+   which builds its rows through the real `taskRow()` with
+   `hasDependsOnColumn = false` and was watched failing under two mutations.
 3. **Apply the migration.** `psql -f db/migrations/0040_task_graph.sql`, twice,
    pasting both outputs. It is additive and the running old engine ignores it
    (R8), which is why it goes before the restart. **After this statement runs,
-   S3 for 8ea0cc08 is gone** — see 2b.
+   8ea0cc08's legacy sentinel is gone and with it the honest reason S3 refuses
+   for** — see 2b, amended round 217. S3 itself was never computable for this
+   project; what the migration destroys is `legacy-rows`, the header field that
+   says so.
 4. **Restart the API side.** `pm2 restart forge-control` — allowed, and the right
    way to pick up the route changes; nothing long-running lives there.
 5. **Restart the executor, detached, and END THE TASK:**
@@ -664,6 +703,8 @@ against it.
 | `forge-control/src/lib/schedule-source.ts` | 7 |
 | `scripts/checks/check-task-api.ts` | 3 |
 | `forge-control/src/lib/source-hygiene.test.ts` | 3 |
+| `forge-control/src/lib/schedule-metrics.test.ts` | 7 |
+| `docs/plan/engine-task-graph/check-instrument-identity.py` | 7 (created), then every phase runs it (`03-quality.md` §3.1 item 7) |
 | `forge-control/src/executor.ts` | **none** — see `02-architecture.md` §1.2 |
 
 **Writes recorded after the fact, round 215.** Each was substantively correct
@@ -676,6 +717,23 @@ is computing contention from **declared** write-sets.
 | `forge-control/src/routes/projects.ts` and `docs/plan/engine-task-graph/01-requirements.md`, by phase 3's builder 4 (`ba09b2a`, `3b54229`) | 213 | Both are builder 3's declared files. Required by **standing rule 2**: F2's int4 bound had to be amended *where it is enforced*, and the enforcement is in builder 3's route. Correct in substance, taken silently — round 214 phase-3 finding 4. Builders 1 and 3 also wrote outside their sets in the same phase and both disclosed it at the site; the rule is disclose, not abstain. |
 | `forge-control/src/lib/schedule-source.ts`, by phase 7's builder (`b1bb731`) | 212 | Declared write_set was `measure-schedule.ts` + `schedule-truncated-4.json` + `03-quality.md`. The module had to exist because `scripts/` has no `node_modules`, so a bare `pg` specifier in a root-level script resolves nowhere — the wrapper could not have held those thirty lines. Sound code, but it is the module phase 8's live read runs entirely through and it shipped with **no test file** (round 214 phase-7 finding 4). `schedule-source.test.ts` closes the coverage half; this row closes the declaration half. |
 | `forge-control/src/lib/schedule-source.test.ts`, `forge-control/src/lib/source-hygiene.test.ts` | 215 | New files created by this fix cycle, declared here in the same commit that creates them. |
+
+**Round 217's write-set, declared in the commit that makes it (fix cycle 2).**
+Not "recorded after the fact" — this fix cycle has one task and no concurrent
+builder, so the set is stated rather than reconstructed, which is the standing
+rule's whole point.
+
+| file | why round 217 writes it |
+|---|---|
+| `docs/plan/engine-task-graph/check-instrument-identity.py` | **new.** The gate for round 216's finding 1 — see `03-quality.md` §3.1 item 7. |
+| `docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md` | eight pasted headers re-run under the current instrument; §1 gains the re-run record; §5(3) and §7 amended. |
+| `docs/plan/engine-task-graph/00-vision.md` | §2.2's heading and body named the retired identity. |
+| `docs/plan/engine-task-graph/01-requirements.md` | R62's *How proved* replaced (it could be satisfied by a stale SHA); the round-217 amendment added. |
+| `docs/plan/engine-task-graph/03-quality.md` | §3.1 item 7 and its command; §3.2's phase-8 gate, which called a correct pre-migration S3 refusal a redo; §4's block. |
+| `docs/plan/engine-task-graph/04-phases.md` | step 2b, step 3, §12's E-3, and this table. |
+| `docs/plan/engine-task-graph/evidence/phase3-fix-1.md` | §2b, round 216's advisory finding 3. |
+| `forge-control/src/lib/schedule-metrics.test.ts` | section 7c — five tests pinning what step 2b actually yields. |
+| `docs/plan/engine-task-graph/evidence/fix-cycle-2.md` | **new.** This round's transcript. |
 
 Within a phase, the planner splits builders so that **no two builders in the
 same workstream declare the same file**. Where a split is impossible — two
@@ -780,8 +838,32 @@ rewritten: part 1's tables and its §5 disproofs stay as they were written. The
 ordering matters for one reason and it is not bookkeeping: R62 requires the
 before and the after to be produced by **one instrument**, and an after-number
 measured before its before-number has no instrument-identity guarantee to offer.
-Run it before, from the same commit, and the two headers name the same
-`instrument-sha256`.
+
+**What "one instrument" means, restated round 217 because as written it was
+already false.** The sentence that stood here — *"Run it before, from the same
+commit, and the two headers name the same `instrument-sha256`"* — assumed the
+script's bytes never change. They changed in round 215 (`isClosureShaped()`,
+`renderCensus()`, `printFull()`), moving the identity
+from `80ef1123…` `[historical instrument]` to `f6828a68…`
+while part 1's pasted headers still
+named the old one; round 216's re-review found it as its finding 1. **Part 1 was
+re-run under the current bytes in round 217 and every number reproduced
+unchanged**, so the guarantee is repaired rather than abandoned — but it has to
+be stated as something a living instrument can actually promise:
+
+> **Every header pasted in `baseline-8ea0cc08.md`, part 1 and part 2, names the
+> same `instrument-sha256`, and that value equals `sha256sum
+> scripts/measure-schedule.ts` on the commit the file ships in.**
+
+Phase 8 therefore has a concrete obligation and not a hope. Before appending part
+2, run `python3 docs/plan/engine-task-graph/check-instrument-identity.py`. If it
+passes, append. **If the instrument has moved since round 217, re-run part 1's
+seven commands and replace their headers IN THE SAME COMMIT that appends part
+2**, adding a row to the re-run record in §1 of that file — the mechanics are
+already written there, and the round/task tables are expected to reproduce
+byte-for-byte because they are a pure function of the committed fixture. Never
+append a part 2 whose header disagrees with part 1's. The checker is in
+`03-quality.md` §3.1's universal gate, so this cannot be discovered late.
 
 **THE STRONGER ORDERING CONSTRAINT — added round 215, for round 214's phase-7
 finding 1 (attack A3 succeeding through the database rather than the code).**

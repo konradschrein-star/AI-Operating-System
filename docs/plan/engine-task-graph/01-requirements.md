@@ -806,7 +806,17 @@ with the reason rather than printing a smaller, prettier table.
 **R62.** A baseline run against `operator-visibility` (8ea0cc08) is committed at
 `docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md`, produced by the same
 script, so the before and after are measured by one instrument.
-*How proved:* the file exists and its header names the script's SHA.
+*How proved, amended round 217 (round 216's finding 1):*
+`python3 docs/plan/engine-task-graph/check-instrument-identity.py` exits 0 —
+every `instrument-sha256:` header pasted in that file equals
+`sha256sum scripts/measure-schedule.ts` on disk, and no retired identity is
+quoted anywhere in the corpus without the marker `[historical instrument]`. The
+old wording — *"the file exists and its header names the script's SHA"* — was
+satisfiable by a file naming a SHA the script no longer has, and for two rounds
+that is exactly what it was satisfied by. It is replaced rather than supplemented
+because it did not fail when it should have; standing rule 4's retire-together is
+discharged here, in the same commit as the checker it hands the job to and as
+`03-quality.md` §3.1 item 7, which runs it.
 
 **Amended round 213 — the baseline lands in two parts, one instrument.** This is
 a **split, not a retirement**: nothing is dropped and no gate clause is relaxed,
@@ -856,6 +866,35 @@ The binding statement of the phase-8 obligation is erratum **E-3** in
 `evidence/baseline-8ea0cc08.md` is listed in phase 8's "Files this phase writes"
 in the same commit, so the append is not an undeclared write (`03-quality.md`
 §3.1 item 4).
+
+**Amended round 217 — two corrections, both from round 216's re-review, neither
+changing what R62 requires.**
+
+1. **The instrument moved, and part 1 was re-run rather than left mislabelled
+   (finding 1).** Round 215's phase-7 repairs edited `scripts/measure-schedule.ts`,
+   moving its self-computed identity from `80ef1123…` `[historical instrument]`
+   to `f6828a68…` while eight pasted headers, a `00-vision.md` §2.2 heading, a
+   ledger row and a `sha256sum` block still named the old value. Round 217 re-ran
+   all seven of part 1's commands under the current bytes; **every round/task
+   table and the run-C refusal reproduced byte for byte**, so no measurement
+   moved. "One instrument" is therefore restated as something a living instrument
+   can promise and a script can check: *every header pasted in that file, part 1
+   and part 2, names the same `instrument-sha256`, and that value equals the file
+   on disk in the commit it ships in.* If the instrument moves again before phase
+   8 appends part 2, part 1 is re-run **in the same commit as the append**
+   (`04-phases.md` §12, E-3; `03-quality.md` §3.2's phase-8 gate).
+2. **Step 2b yields a refusal, not a number (finding 2).** The round-215
+   amendment below is correct about the ordering and overstated what it buys.
+   Before migration 0040 the `depends_on` column does not exist, so every row is
+   a legacy row and D7's **first** arm refuses: S3 for 8ea0cc08 is NOT COMPUTABLE
+   at step 2b as well, and always was. The ordering buys the **honest reason**
+   (the legacy sentinel, rather than the closure *signature* that survives the
+   migration), plus S1, S2, run count, mean duration and wall clock — which are
+   the numbers part 2 actually owes. Nothing here licenses expecting an S3 for
+   this project. *How proved:* `schedule-metrics.test.ts`'s
+   `describe("D7 — the pre-0040 read at step 2b refuses on the legacy sentinel")`,
+   whose rows are built by the real `taskRow()` with `hasDependsOnColumn = false`
+   and which was watched failing under two mutations.
 
 R62's **primary owner phase is unchanged: phase 7.** Phase 8 discharges part 2
 under R63–R68's deploy sequence and acquires no new requirement id — §K's mapping

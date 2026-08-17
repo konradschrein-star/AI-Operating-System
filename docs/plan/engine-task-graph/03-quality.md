@@ -176,6 +176,7 @@ quotes the output. A review without executed checks is not a review.
 cd forge-control && pnpm typecheck && pnpm test
 git -C /opt/forge-ai-os status --porcelain          # MUST be empty
 git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
+python3 docs/plan/engine-task-graph/check-instrument-identity.py   # MUST exit 0
 ```
 
 1. `tsc --noEmit` clean.
@@ -197,6 +198,21 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 6. **Silent-fallback audit (NF1).** List every `catch`, `?? default`,
    `|| fallback` and `.catch(() => {})` the phase added, and state for each why
    it is not a swallowed error.
+7. **Instrument-identity check (round 217, round 216's finding 1).**
+   `check-instrument-identity.py` exits 0. It asserts that every
+   `instrument-sha256:` header pasted anywhere in this corpus equals
+   `sha256sum scripts/measure-schedule.ts` on disk, and that no retired identity
+   is quoted without the literal marker `[historical instrument]` on the line.
+   **Why it is a universal gate and not a phase-7 one:** round 215 edited the
+   script from a phase-3 fix cycle, which moved the identity under eight pasted
+   headers, a section heading, a ledger row and a `sha256sum` block the document
+   offers as an *independent* re-derivation — and two reviewers read past it,
+   because agreeing with a document is not the same as agreeing with the disk.
+   Any phase can move the instrument, so every phase checks it.
+   It carries its own positive controls: fewer than 8 headers found, or none
+   found in `evidence/baseline-8ea0cc08.md`, is a **failure** and not a clean
+   run, so a glob that matches nothing cannot certify itself
+   (`00-vision.md` §7 rule 2).
 
 ### 3.2 Phase gates
 
@@ -395,9 +411,34 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
   missing: the ordering above, **and** a header line reading
   `closure-shaped-rows=0` in the pasted baseline output. A non-zero count on the
   8ea0cc08 baseline means the read happened after the migration whatever the
-  narrative says. If the baseline instead reports `S3 … NOT COMPUTABLE (0 legacy
-  rows, N closure-shaped rows)`, the detector caught it — that is a **finding
-  and a redo**, not a pass, because the number no longer exists to be read.
+  narrative says.
+- **Read the S3 line correctly — amended round 217, round 216's finding 2, in
+  the same commit as the step-2b prose it enforces.** This clause used to say
+  that a `NOT COMPUTABLE` S3 meant the detector had caught a late read. Half of
+  that was wrong, and it would have failed a correct deploy. **S3 is NOT
+  COMPUTABLE at step 2b too**, and necessarily: before migration 0040 there is
+  no `depends_on` column, so every row is a legacy row and D7's first arm
+  refuses. Judge the refusal by its **counts**, which is what makes this gate
+  satisfiable:
+  - `S3 … NOT COMPUTABLE (131 legacy rows, 0 closure-shaped rows)` — the
+    **PASS**. The read happened before the migration and the refusal names the
+    legacy sentinel.
+  - `S3 … NOT COMPUTABLE (0 legacy rows, N closure-shaped rows)` — a **finding
+    and a redo**. `legacy-rows=0` on a project that has never been graph-planned
+    means the backfill already ran; the detector caught a late read.
+  - **Any S3 number at all for 8ea0cc08** — the worst outcome, and a finding
+    whatever the ordering claims, because the only shape that produces one is
+    the backfilled closure computing tautologically to 0.
+  S1, S2, the run count, the mean run duration and the wall clock are what part
+  2 actually owes (R62); those must be present and are unaffected by the
+  migration either way.
+- **Instrument identity, before the append.**
+  `python3 docs/plan/engine-task-graph/check-instrument-identity.py` must exit 0
+  *before* part 2 is appended to `evidence/baseline-8ea0cc08.md`. If the
+  instrument has moved since round 217, part 1's seven commands are re-run and
+  their headers replaced **in the same commit** that appends part 2 — see
+  `04-phases.md` §12, E-3, and the re-run record in §1 of that file. A part 2
+  whose header disagrees with part 1's breaks R62's one-instrument guarantee.
 - **R31 must not reach production ahead of R47–R53.** R31 (`strict_write_sets`
   → a `builder`/`tester` task with no `write_set` is a `400`) is enforced from
   phase 3; the behaviour that satisfies it — planner, architect and builder
@@ -430,6 +471,10 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 # executable position, is a finding. Prose files are swept separately below.
 grep -rn "pm2 restart forge-executor" . --include='*.ts' --include='*.sh'
 grep -rn "consecutive rounds" forge-control/         # must be empty from phase 5 on
+# Round 217, §3.1 item 7 — instrument identity. Exits 0, or names every document
+# that quotes a dead one. Reads the disk, not the corpus's claims about the disk.
+python3 docs/plan/engine-task-graph/check-corpus-map.py
+python3 docs/plan/engine-task-graph/check-instrument-identity.py
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

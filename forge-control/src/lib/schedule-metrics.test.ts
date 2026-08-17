@@ -65,6 +65,11 @@ import {
   type MetricRun,
   type MetricTask,
 } from "./schedule-metrics.ts";
+// Section 7c feeds rows through the REAL narrowing phase 8's live read uses,
+// rather than hand-building the pre-0040 shape it is asserting about. `taskRow`
+// is pure and builds no pool — the pool lives inside `readProjectRows()`, and
+// NF3 forbids a test that opens a connection.
+import { taskRow } from "./schedule-source.ts";
 
 /* -------------------------------------------------------------------------- *
  * Fixtures — hand-built rows, no database, no fixture file
@@ -711,6 +716,128 @@ describe("D7 — a project carrying migration 0040's backfilled closure", () => 
     if (stall.computable) assert.fail("no edges means no measurement");
     assert.match(stall.reason, /no edge to measure/);
     assert.doesNotMatch(stall.reason, /0040/);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * 7c. What step 2b ACTUALLY yields — the pre-0040 read, in the shape phase 8
+ *     will meet it.
+ *
+ * ROUND 216'S FINDING 2. `04-phases.md` §8 step 2b justified its ordering with
+ * "a refusal you have to redo the deploy to fix is not a substitute for reading
+ * the number while it exists", which reads as though S3 is a number before the
+ * migration and a refusal after it. It is not. At step 2b, `0040` has not run,
+ * so `project_tasks` has NO `depends_on` COLUMN AT ALL; `readProjectRows()` asks
+ * `information_schema`, sets `hasDependsOnColumn = false`, and `taskRow()`
+ * leaves the key ABSENT. Every row then reaches `isLegacyRow()` as `undefined`
+ * and D7's FIRST arm refuses. Step 2b prints a refusal, never a number.
+ *
+ * The ordering is still right, and this block is what says why in code rather
+ * than in prose: read before the migration and the refusal names the LEGACY
+ * SENTINEL — "these rows never recorded their real dependency set", which is
+ * true and permanent. Read after it and the refusal names the CLOSURE SIGNATURE
+ * — a weaker, heuristic reason (7b calls it a signature, not a proof) reached
+ * only because round 215 added a second arm, and one that a strictly-serial
+ * graph project would also trigger. Same verdict, different quality of reason,
+ * and the sentinel is destroyed either way. That is the whole value of 2b.
+ *
+ * The two arms are joined here rather than left to prose: the rows are built by
+ * `taskRow()` — the real narrowing function phase 8's live read runs through —
+ * with `hasDependsOn = false`, so the shape is not hand-asserted.
+ * -------------------------------------------------------------------------- */
+
+describe("D7 — the pre-0040 read at step 2b refuses on the legacy sentinel", () => {
+  /* The same motivating case as 7b: one 32-minute reviewer, seven builders
+   * numbered above it. The ONLY difference is the schema — the migration has
+   * not run, so no row carries a depends_on key at all. */
+  const blocker = ran("blocker", "10:00", "10:32", { round: 1, role: "reviewer" });
+  const builders = Array.from({ length: 7 }, (_unused, i) =>
+    ran(`builder-${i}`, "10:32", "10:44", { round: 2 }),
+  );
+
+  /** Every row through the real narrowing, with the column absent. */
+  function preMigrationRows(): MetricTask[] {
+    return [blocker.task, ...builders.map((b) => b.task)].map((task, i) =>
+      taskRow(
+        {
+          id: task.id,
+          project_id: task.project_id,
+          round: task.round,
+          role: task.role,
+          title: task.title,
+          status: task.status,
+          created_at: task.created_at,
+          run_id: task.run_id,
+        },
+        i,
+        false, // hasDependsOnColumn — pre-0040, exactly what step 2b meets
+        PROJECT,
+      ),
+    );
+  }
+
+  const preMigration = input(preMigrationRows(), [blocker.run, ...builders.map((b) => b.run)]);
+
+  test("taskRow leaves the key ABSENT, not null — the two say different things", () => {
+    for (const row of preMigration.tasks) {
+      assert.equal("depends_on" in row, false, `${row.id} must carry no depends_on key`);
+    }
+  });
+
+  // DELIBERATELY ROBUST, and recorded as such so it is not read as vacuous.
+  // Round 217 mutated `isLegacyRow` to ignore `undefined`, and `taskRow` to
+  // fabricate `depends_on: []` for a pre-0040 row; this test stayed GREEN under
+  // both, because each mutation only downgrades the refusal to "no edge to
+  // measure". That is the finding: no reachable defect turns step 2b into a
+  // number. The two tests below are the ones that discriminate — they pin the
+  // REASON, and both went red on both mutations.
+  test("S3 is NOT COMPUTABLE at step 2b — a refusal, never a number", () => {
+    const stall = computeSchedule(preMigration).numberingStall;
+    assert.equal(stall.computable, false);
+    if (stall.computable) assert.fail(`step 2b must not yield a number, got ${JSON.stringify(stall)}`);
+    assert.ok(!("maxMinutes" in stall), "the refusal must carry no minutes field");
+  });
+
+  test("the refusal is D7's FIRST arm — the sentinel, not the closure signature", () => {
+    // This is the assertion that carries 04-phases.md §8 step 2b's amended
+    // justification. Before the migration the reason is the strong one.
+    const stall = computeSchedule(preMigration).numberingStall;
+    if (stall.computable) assert.fail("expected the legacy arm");
+    assert.equal(stall.legacyRows, 8, "every row is legacy — the column does not exist yet");
+    assert.equal(stall.closureRows, 0, "nothing has been backfilled yet");
+    assert.match(stall.reason, /never recorded/);
+    assert.doesNotMatch(stall.reason, /strictly lower round/);
+  });
+
+  test("the census header phase 8 pastes discloses the same thing", () => {
+    // `03-quality.md` §3.2's phase-8 gate reads these two fields off the pasted
+    // header to decide whether the read really happened before the migration.
+    const census = inputCensus(preMigration);
+    assert.equal(census.tasks, 8);
+    assert.equal(census.legacyRows, 8);
+    assert.equal(census.graphRows, 0);
+    assert.equal(census.closureShapedRows, 0);
+  });
+
+  test("after the migration the SAME project refuses for the weaker reason", () => {
+    // The contrast that makes the ordering load-bearing rather than tidy. Apply
+    // 0040's backfill by hand — the strictly-lower-round closure — and the
+    // verdict is unchanged while the reason degrades from the sentinel to the
+    // signature, and `legacyRows` drops to 0 so nothing is left saying these
+    // rows never declared anything.
+    const backfilled = input(
+      [
+        { ...blocker.task, depends_on: [] },
+        ...builders.map((b) => ({ ...b.task, depends_on: ["blocker"] })),
+      ],
+      preMigration.runs,
+    );
+    const stall = computeSchedule(backfilled).numberingStall;
+    assert.equal(stall.computable, false);
+    if (stall.computable) assert.fail("7b already pins this refusal");
+    assert.equal(stall.legacyRows, 0);
+    assert.match(stall.reason, /strictly lower round/);
+    assert.equal(inputCensus(backfilled).closureShapedRows, 8);
   });
 });
 

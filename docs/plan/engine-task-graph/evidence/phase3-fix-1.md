@@ -215,6 +215,29 @@ extension filter was measured, not assumed: run unfiltered it reported 300+
 PNG "offenders", which is how the constant came to be named and reasoned about
 rather than quietly applied.
 
+### 2b. The NUL survives in git history, and that is expected — recorded round 217
+
+Round 216's re-review, advisory finding 3, recorded here so the next reviewer's
+`git log -p | grep` does not become a mystery. **The byte is gone from the
+working tree and from every gate's field of view, but a commit that REMOVES a
+NUL still contains one**, on its `-` line. Measured, round 217:
+
+| command | NUL bytes | note |
+|---|---|---|
+| `git show 34268e9` | **1** | at offset 113463 of the diff stream — the removed line |
+| `git log -p main..HEAD` | **2** | the same line, added and then removed |
+| `git diff main...HEAD` | **0** | the form `03-quality.md` §3.1 and §4 actually use |
+| working tree, `forge-control/src/` + `docs/plan/**.md` | **0** | `source-hygiene.test.ts`'s two arms |
+
+So `git show`/`git log -p` will report `binary file matches` on this branch
+forever, and that is **not** a regression: history rewriting is forbidden here
+(standing rules; force-push needs explicit instruction), and no gate reads those
+forms. Anyone re-deriving this: `grep -c $'\x00'` **cannot** measure it — bash
+strips the NUL from `$'\x00'`, leaving an empty pattern that matches every line
+and reports thousands. Round 217's first attempt did exactly that and had to be
+thrown away. Count the bytes (`python3 -c "…stdout.count(b'\x00')"`), which is
+what the table above did.
+
 ---
 
 ## 3. Phase 3, finding 3 — `normaliseWritePath` missed an interior `./`
