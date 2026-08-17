@@ -303,8 +303,17 @@ saying so here is the point, because a gate that forbade it would have been
 unsatisfiable the moment E3 was ruled, and an unsatisfiable gate is what teaches
 reviewers to disclose and proceed. R69 reads `round` only *about legacy rows*,
 and only while any exist.
-*How proved:* review — `grep -n "round" db/projects.ts` and a stated
-justification for every surviving occurrence, each attributed to R12 or R69.
+*How proved:* **`scripts/checks/check-r20-census.py`** — generated, not reviewed.
+**Amended round 206**, replacing *"review — `grep -n "round" db/projects.ts` and
+a stated justification for every surviving occurrence"*: that phrasing made the
+proof a hand-written census, which rotted twice (round 205 found it 14 lines
+stale) and which never actually asserted the requirement — a census that counts
+admits a new predicate the moment somebody adds a row for it. The script asserts
+R20 directly: every non-comment `round` line inside `promoteReadyTasks`,
+`claimReadyTasks` and `sweepDanglingDependencies` must appear in
+`ALLOWED_SCHEDULING_LINES` with a justification, and a new one fails by name.
+The attributed census it generates into `evidence/phase2-replay.md` §7 is the
+review artefact; `--self-check` calibrates the instrument against `27d300f`.
 
 **R21.** `spawnTaskRuns()`'s TypeScript-side belt is preserved unchanged: a task
 whose project stopped accepting work between claim and spawn is handed back to

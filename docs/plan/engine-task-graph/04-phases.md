@@ -145,6 +145,17 @@ scripts/checks/check-scheduler-sql.sh                     (cases 8, 8b, 9, 10; t
 forge-control/src/lib/task-graph.ts                       (R14's duplicate arm; R17's proof base)
 forge-control/src/lib/task-graph.test.ts                  (four duplicate/fan-in cases)
 forge-control/src/lib/task-graph-replay.test.ts            (header: what this proof does NOT cover)
+
+ADDED BY FIX CYCLE 2 (round 206), for round 205's single documentation finding.
+Declared before the fact, per R47's companion-files clause. NO ENGINE FILE IS
+WRITTEN — `projects.ts`, `task-graph.ts` and both test files are untouched, which
+is the finding's own instruction and is checkable as an empty `git diff`:
+scripts/checks/check-r20-census.py                        (new — R20's census, generated + asserted)
+docs/plan/engine-task-graph/evidence/phase2-replay.md     (§3 frozen; §7 regenerated; §7.3 restated)
+docs/plan/engine-task-graph/evidence/phase2-cycle-2.md    (new — this cycle's record)
+docs/plan/engine-task-graph/01-requirements.md            (R20 "How proved")
+docs/plan/engine-task-graph/03-quality.md                 (§3.2 Phase 2 — the R20 gate)
+docs/plan/engine-task-graph/04-phases.md                  (this list)
 ```
 
 ### Deliverables

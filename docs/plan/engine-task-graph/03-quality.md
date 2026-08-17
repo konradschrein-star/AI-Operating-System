@@ -275,8 +275,28 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
   backfilled array without actually applying the legacy rule; a fixture whose
   every task is already `done`; a tick loop that terminates before divergence.
   Then it checks that each of those is impossible. (Standing rule 3.)
-- `grep -n "round" forge-control/src/db/projects.ts` with a justification for
-  every surviving occurrence (R20).
+- **`scripts/checks/check-r20-census.py` exits 0**, and
+  `scripts/checks/check-r20-census.py --self-check` with it (R20). This replaces
+  *"`grep -n "round" forge-control/src/db/projects.ts` with a justification for
+  every surviving occurrence"*, **amended round 206 where it is enforced**. The
+  grep was discharged by a hand-written table in `evidence/phase2-replay.md` §7
+  and that table went stale twice — round 205 found its headline counts reading
+  85/92 against a file of 99/108. Eleven of the nineteen `round` lines the fix
+  cycle added are the literal citation "round 204", which recurs every cycle, so
+  the gate as written was one no fix cycle could leave satisfied. The script
+  discharges the same requirement and strictly more of it: it regenerates §7's
+  census from the file, fails when the committed region is stale, fails when a
+  symbol carrying `round` has no attribution, and — the part the grep never
+  did — fails **by name** when a scheduling predicate reads `round` outside the
+  labelled legacy surface. Reviewers may still run the grep; it is no longer the
+  artefact.
+- The reviewer confirms the census gate can fail, rather than trusting a green
+  run: the mutations of `evidence/phase2-cycle-2.md` §3 (stale region, new
+  predicate, unattributed symbol, altered attribution rule) each turn it red,
+  and each is reproducible from that document. Mutation 5 of that section is the
+  one to read first — the gate is also checked **after being committed**, since
+  a region stamped with `git HEAD` goes stale the moment it lands and would have
+  made this very gate unsatisfiable.
 
 **Phase 3 — task creation, validation, cycles**
 - `check-task-api.ts` green, with the 400 bodies pasted — cycle path named,

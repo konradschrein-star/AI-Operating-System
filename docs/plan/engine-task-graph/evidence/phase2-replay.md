@@ -82,6 +82,39 @@ ok 5 - R18 — the graph is an exact replica of today's rounds
 
 ## 3. The replay banner — what the instrument says about itself
 
+> **FROZEN AT `27d300f`. Round 206.** Everything in this section — the banner,
+> the four `sha256` values, the `DIRTY` line — is the transcript of a run made
+> when this document was written, and it is kept as one. Three of the four
+> hashes below no longer name bytes that exist: `task-graph.ts` and
+> `task-graph-replay.test.ts` were rewritten by fix cycle 1 (`863bc25`) and
+> `projects.ts` by the same commit. **For the current build identity see
+> `phase2-fix-cycle-1.md` §1**, which records `projects.ts` `e1b14c1f…` and
+> `task-graph.ts` `5bf1e91d…` at that commit.
+>
+> Round 205 found this table stale and offered the alternative of re-measuring
+> it. Freezing is the right answer and re-measuring is the wrong one: a banner
+> is *evidence of a particular run*, and rewriting its numbers to match a later
+> tree would produce a transcript no run ever printed — the "sha naming the
+> worktree rather than the build" failure already on this project's record. What
+> was actually wrong was not the numbers but the tense: the section presented a
+> historical transcript as a live claim, and told a reviewer to run a check that
+> would print `DIRTY (none — all three match HEAD)`. That instruction is
+> corrected below.
+>
+> The one gap the forward pointer leaves is `task-graph-replay.test.ts`, which
+> `phase2-fix-cycle-1.md` §1 does not list. Measured at `27737a9`, and this
+> commit changes no file in the table:
+>
+> | File | sha256 at `27737a9` |
+> |---|---|
+> | `forge-control/src/lib/task-graph.ts` | `5bf1e91d35a965bc92629750490ef9dc0041138f002181edabdb88802c853836` |
+> | `forge-control/src/lib/task-graph-replay.test.ts` | `f29b7488cfb1ce7f4b8bd360231373a6f9dfef3ede6b1ef54982d285304c7fc8` |
+> | `forge-control/src/lib/fixtures/replay-operator-visibility.json` | `e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7` |
+> | `forge-control/src/db/projects.ts` | `e1b14c1f7a4dc8dbbfc784ea1445e92f590809e04e4884a6d5efa4d7b8dcd040` |
+>
+> Only the fixture is unchanged since `27d300f` — which is the point of pinning
+> it, and the harness re-checks it against its capture record on every run.
+
 Printed at import, before the first assertion, by the harness itself:
 
 ```
@@ -110,18 +143,33 @@ strictly stronger. `sha256sum` at the moment of every run in this document:
 | `forge-control/src/lib/fixtures/replay-operator-visibility.json` | `e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7` |
 | `forge-control/src/db/projects.ts` | `63b6055e54432568a8ee97a40e9ee25033e2f2c0343ca016045a87d4648ad1b8` |
 
-Those four hashes are the bytes every number below was produced from. The
-fixture's is unchanged since capture and matches its sibling capture record,
+Those four hashes are the bytes every number below was produced from, **as of
+`27d300f`** — see the freeze notice above before comparing them to a checkout.
+The fixture's is unchanged since capture and matches its sibling capture record,
 which the harness re-checks on every run (`RECORD sha matches capture record`).
 `task-graph.ts`'s hash is identical to the pristine copy taken before §5's
 mutations and restored after them — see §5.4.
 
-**The reviewer's check, one line**, which prints `DIRTY (none — all three match
-HEAD)` at the committed SHA and reproduces every case number in §4:
+**The reviewer's check, one line.** It reproduces every case number in §4 at any
+commit from `27d300f` onward:
 
 ```bash
 cd forge-control && npx tsx --test src/lib/task-graph-replay.test.ts
 ```
+
+Its banner prints the identity of **the tree it is run against** — so expect
+`HEAD` to name that tree, not `c54f860`. Run at `27737a9` it prints all six
+case lines with the numbers §4 records, unchanged.
+
+**On the `DIRTY (none — all three match HEAD)` line this section used to point
+at.** It still prints exactly that, and it always will on a clean checkout —
+which is precisely the trap. `DIRTY` reports whether those files have
+*uncommitted modifications*; it says nothing about whether they match the
+`sha256` table above. The two are independent, and reading the first as
+confirmation of the second is what let three stale hashes sit under a green
+banner for two commits. Compare hashes against the freeze notice, never against
+`DIRTY`. What the run must still show is `RECORD sha matches capture record` —
+the fixture is the input every case number depends on, and it is pinned.
 
 ---
 
@@ -464,18 +512,81 @@ the tree, so the restore is proved rather than asserted.
 
 ---
 
-## 7. R20 — `grep -n "round" forge-control/src/db/projects.ts`, justified
+## 7. R20 — the census of `round` in `db/projects.ts`, **generated**
+
+> **CORRECTED ROUND 206 — the census was hand-maintained and it went stale.**
+> Round 205 found the headline pair wrong: this section read *"85 lines match
+> `round`; 92 match case-insensitively"* against a file that had grown to **99**
+> and **108**, in a table the round-204 commit had itself edited. Eleven of the
+> nineteen `round`-bearing lines that commit added are the literal citation
+> *"round 204"* — a string that recurs every fix cycle — so a third hand count
+> would rot on the same schedule. The census below is therefore **generated by
+> `scripts/checks/check-r20-census.py`**, which exits non-zero when the region
+> is stale, when a symbol carrying `round` has no attribution, and when a
+> scheduling predicate reads `round` outside the labelled legacy surface.
+> `03-quality.md` §3.2 Phase 2 now names that script as how the gate is
+> discharged — gate amended where it is enforced, same commit (standing rules 2
+> and 4).
+>
+> **A retraction belongs here, because this round nearly filed a false finding
+> against round 202.** Re-measuring under the new script made it look as though
+> the old per-symbol table had been invented: §7.3 credited
+> `sweepDanglingDependencies` with *"seven hits, all of them comments"*, and the
+> script measured **zero**; four other rows were off by 2 to 4. That conclusion
+> was drafted into this document and it was **wrong**. The round-202 author was
+> attributing a comment block to the declaration **above** it; this script
+> attributes it to the declaration **below** (the TSDoc convention). Under the
+> author's convention every single row of the old table reproduces exactly —
+> all eight §7.4 groups, §7.2's ORDER BY, and the sweep's seven. The old table
+> was a measurement under a different convention, not a fabrication. That
+> reproduction is now an assertion in `--self-check` (`ROUND202_TABLE`) so no
+> future round can repeat the accusation without the script contradicting it
+> first.
+
+R20's clause is that **no promotion or claim predicate reads `round`** outside
+the labelled legacy surface. Counting hits never was that requirement; a census
+that only counted would admit a fresh predicate as long as somebody remembered
+to add a row for it. So the script asserts the requirement directly — every
+non-comment `round` line inside `promoteReadyTasks`, `claimReadyTasks` and
+`sweepDanglingDependencies` must appear in its `ALLOWED_SCHEDULING_LINES` table
+with a justification, and a new one fails the check **by name**. The count is
+reported alongside, as context rather than as the proof.
+
+Attribution is **by symbol**, not by line range, so it survives the next edit to
+this file (standing rule 1). Which symbol a free-standing comment block belongs
+to is a convention, not a fact, and the script implements both: `--rule tsdoc`
+(default, the block documents the declaration below it) and `--rule trailing`
+(the round-202 convention). **R20's conclusion is invariant under the choice** —
+no scheduling predicate reads `round` either way — so adopting TSDoc is a change
+of presentation, stated explicitly, not a change of finding. A 70-line `/** … */`
+sitting directly above `sweepDanglingDependencies` documents the sweep, which is
+why it is the default.
+
+**What would make this instrument certify wrongly** (standing rule 3): an
+attribution rule tuned until it agreed with the numbers it was asked to produce.
+Three things close it, and the third was found by attacking the first two:
+
+1. **Calibration on a tree it was not tuned for.** `--self-check` censuses
+   `27d300f` and must reproduce the round-202 author's hand-derived
+   **85 / 92 / 41 / 44** without being shown them.
+2. **Reproduction of the author's whole table** under `--rule trailing`, all ten
+   rows. This is the stronger of the two: the totals above are *invariant* under
+   the attribution rule, so agreeing on them proves less than it appears to.
+3. **The distribution is pinned, not just the totals.** Measured, not supposed:
+   flipping the attribution direction moves **36 rows** of the generated table
+   while `hits`, `code` and `comment` all stay put — a totals-only self-check
+   called that mutation OK. The red run was never the danger; the danger was
+   that `--write` would then launder the altered rule into this document as a
+   fresh measurement. The pinned 19-symbol map turns it red.
 
 ```
-$ grep -c "round" forge-control/src/db/projects.ts
-85
+$ scripts/checks/check-r20-census.py --self-check
+self-check OK — at 27d300f the tsdoc rule reproduces the round-202 totals
+(85 hits, 92 case-insensitive, 41 code / 44 comment) and its pinned 19-symbol
+distribution is unchanged; the trailing rule reproduces all 10 rows of the
+round-202 hand table — that table was a measurement under a different
+convention, not an invention
 ```
-
-85 lines match `round`; 92 match case-insensitively. The seven extra are
-identifier spellings — `listVerdictRound`, `VerdictRoundRow`,
-`legacyRoundReady`, and one prose `ROUND` — and are covered by the same
-attributions below. Attribution is **by symbol**, not by line range, so it
-survives the next edit to this file (standing rule 1).
 
 ### 7.1 The only two occurrences R20 is actually about
 
@@ -505,29 +616,85 @@ paragraph, the R69 loop and `readyRule`. The two surfaces retire in one commit.
 |---|---|---|
 | `claimReadyTasks` | `ORDER BY pt.round ASC, pt.created_at ASC` | **Not a predicate — an ordering.** R15 keeps the transaction shape and `02-architecture.md` §3.4 keeps this clause byte-identical. Its *meaning* changed without its text changing: `round` is now an engine-computed depth, so the clause genuinely means "shallower first". Inventing a new ORDER BY would have been an unrecorded change of claim order across the migration — precisely what R18 exists to forbid. It cannot gate promotion: every row it sorts is already `ready`. |
 
-### 7.3 `sweepDanglingDependencies` — seven hits, **all of them comments**
+### 7.3 `sweepDanglingDependencies` — one hit under TSDoc, and it is an annotation
 
-R14's sweep contains **no code line** mentioning `round`. Its seven hits are all
-in the doc-comment, explaining the two branches and the legacy surface. A
-mechanical check: intersecting "lines containing `round`" with "lines that are
-not comments" yields zero rows in this symbol.
+**RESTATED ROUND 206, and the count is not a correction.** This subsection reads
+*"seven hits, all of them comments"* in the round-202 text. That is exactly
+right **under the convention that author used** — attributing a comment block to
+the declaration above it — and `--rule trailing` still reproduces the seven. It
+is stated here only because the generated census below uses TSDoc attribution
+and therefore shows **one**, and a reader comparing the two numbers deserves the
+reason rather than a contradiction. The seven lines have not moved or changed:
+they are the seven `round`-bearing lines of **`promoteReadyTasks`'s
+doc-comment**, the block sitting between the sweep and that declaration —
+credited to the sweep by the trailing rule, to `promoteReadyTasks` by TSDoc.
+This is also why the round-202 §7.1 counted promote as **2**: its two predicate
+lines, with its doc-comment's seven booked one symbol earlier.
 
-### 7.4 Everything else — not the scheduler at all
+Under either convention the subsection's actual claim holds: **no code line in
+this symbol has a predicate mentioning `round`.** At HEAD the sweep has exactly
+one hit on a code line, added by the fix cycle:
 
-Grouped by enclosing symbol. Of the 85 lines, 41 are code and 44 are doc-comment
-prose inside the same symbols, explaining the same things; the counts below are
-over all 85 and sum to 85 together with §§7.1–7.3's twelve:
+```
+AND pt.status IN ('pending','ready')     -- decision 2, round 204
+```
 
-| Symbol(s) | Hits | Attribution — none of these is a scheduling predicate |
+which is an **SQL annotation**, not a predicate: the term is on `status`, and
+the only `round` on the line sits after the trailing `--`. R14's sweep still
+contains no code line whose *predicate* mentions `round`, which is what the
+subsection was for. The script now classifies annotations as their own category
+precisely so this distinction is measured rather than argued.
+
+### 7.4 The full census, by symbol — generated
+
+Regenerate with `scripts/checks/check-r20-census.py --write`; the check gate
+fails while this region disagrees with the file.
+
+<!-- BEGIN GENERATED: r20-census -- scripts/checks/check-r20-census.py -->
+
+*Generated by `scripts/checks/check-r20-census.py` from `forge-control/src/db/projects.ts`, sha256 `e1b14c1f7a4dc8db…` — the region names the BYTES it was computed from, not a commit, so committing it does not make it stale. Do not hand-edit: `--write` regenerates it and the check gate fails when it disagrees with the file.*
+
+**99 lines match `round`; 108 match case-insensitively.** Of the 99, **44 are code and 55 are comment prose** — and 3 of the code lines are SQL annotations, code whose only `round` sits after a trailing `--`. The 9 case-insensitive extras are identifier spellings (`listVerdictRound`, `VerdictRoundRow`, `legacyRoundReady`) and prose `ROUND`, covered by the same attributions.
+
+| Symbol | Hits | Code | Comment | Attribution |
+|---|---:|---:|---:|---|
+| `createFixChain` | 12 | 4 | 8 | **Fix-chain placement** at `round + 1` / `round + 2`. R42 owns its move to `depends_on` in phase 4. |
+| `promoteReadyTasks` | 12 | 4 | 8 | **The scheduler.** Its two predicate lines are R69's legacy-row term and R12's legacy branch, both `TODO(R12-retire)`; its other code hits are R27's project-correlation lines, whose `round` is in the trailing `--`. The graph branch reads no `round` at all — see the second table. |
+| `unwedgeProject` | 11 | 8 | 3 | **Operator recovery.** Retries the earliest round holding a failed task — the operator's re-entry point, not the tick's. R46 moves it to the earliest failed *group* in phase 4. |
+| `createTask` | 8 | 7 | 1 | **Task creation and identity.** `(project_id, round, role, title)` is the identity index (migration 0035) and the `ON CONFLICT` target that makes creation idempotent. Creation, not scheduling. |
+| `insertChainRow` | 8 | 6 | 2 | **Fix-chain creation.** Same identity index; R42 gives phase 4 the job of writing `depends_on` on chain rows. |
+| `roundIsComplete` | 7 | 4 | 3 | **Consolidation bookkeeping**, called when a task settles. R40/R43 move the group key to `(project_id, round, workstream)` in phase 4; the group decision is preserved and only its definition restated. |
+| `(module preamble)` | 6 | 0 | 6 | **The module header.** Corrected round 204: it now states the two-branch rule, the NULL sentinel, which branch survives only for rows the old engine wrote, what `round` is still for, and that a cardinality mismatch is corruption no route may turn into a run. |
+| `markVerdictTaskDone` | 6 | 0 | 6 | **Comments only**, describing the verdict race a *round* view creates. No code line reads `round`. |
+| `ProjectTask` | 4 | 1 | 3 | **The column exists and must be selected.** E1 rules that `round` stays a stored, engine-computed integer for Kanban grouping (R19/R20). |
+| `claimReadyTasks` | 4 | 1 | 3 | **Claim ordering, not a predicate** (§7.2). `ORDER BY pt.round ASC` sorts rows that are already `ready`. |
+| `VerdictRoundRow` | 3 | 0 | 3 | **The consolidation group's row type.** |
+| `listVerdictRound` | 3 | 3 | 0 | **The consolidation group.** Reads the verdict-bearing tasks of one project+round. Not a promotion or claim predicate; phase 4 owns its redefinition. |
+| `ChainRowOutcome` | 2 | 0 | 2 | **Fix-chain outcome type**, comment only. |
+| `createProject` | 2 | 1 | 1 | **Task creation** — seeds the round-0 architect task. |
+| `unsettledVerdictTasks` | 2 | 0 | 2 | **Consolidation bookkeeping**, comment only. |
+| `DEPS_MISMATCH_SQL` | 1 | 0 | 1 | **The shared corruption predicate** (R27), comment only. Reads `depends_on`, never `round`. |
+| `DanglingSweepRow` | 1 | 0 | 1 | **The sweep's row type**, comment only (round-204 finding 1). |
+| `TASK_COLS` | 1 | 1 | 0 | **Column list.** Selecting a stored column is not reading it to schedule. |
+| `TASK_COLS_PT` | 1 | 1 | 0 | **Column list**, qualified for the join. Updated together with `TASK_COLS`. |
+| `dependencyCorruption` | 1 | 0 | 1 | **One row's corruption test**, comment only — the same SQL as the sweep, so retry and sweep cannot drift. |
+| `listTasksForProject` | 1 | 1 | 0 | **Display ordering.** `ORDER BY round ASC, created_at ASC` on a read used by the Kanban and the plan endpoint. |
+| `retryTask` | 1 | 0 | 1 | **Operator recovery**, comment only. Round 204 gave it the `dependencyCorruption()` refusal, which reads no `round`. |
+| `sweepDanglingDependencies` | 1 | 1 | 0 | **R14's sweep.** One code hit, and it is an annotation: the predicate is on `status`, the `round` is in the `-- decision 2, round 204` comment. No sweep predicate reads `round`. |
+| `toGraphTask` | 1 | 1 | 0 | **Projection into `GraphTask`**, whose `round` field R69's term and `taskDepth()`'s legacy seed both need. |
+
+**Every non-comment `round` line inside the three scheduling symbols**, which is the set R20 actually constrains:
+
+| Symbol | Line | Why it is allowed |
 |---|---|---|
-| `(module preamble)` | 2 | **CORRECTED ROUND 204 — this attribution did not hold.** The header described the round rule in the PRESENT TENSE (*"nothing in round N+1 becomes 'ready' until…"*), which after this phase is false for every graph row, and it is the first thing any reader or agent sees. Calling it "what rounds *were*" was a reinterpretation the text did not support. The preamble now states the two-branch rule and the NULL sentinel, and says which of the two survives only for rows the old engine wrote. |
-| `ProjectTask`, `TASK_COLS`, `TASK_COLS_PT`, `toGraphTask` | 7 | **The column exists and must be selected.** E1 rules that `round` stays a stored, engine-computed integer for Kanban grouping and human conversation (R19/R20). Selecting a stored column is not reading it to schedule. `toGraphTask` maps it into `GraphTask`, whose `round` field R69's term and `taskDepth()`'s legacy seed both need. |
-| `createProject`, `createTask`, `insertChainRow`, `createFixChain` | 26 | **Task creation and identity.** `(project_id, round, role, title)` is the identity index (migration 0035) and the `ON CONFLICT` target that makes creation idempotent; `createFixChain` places its rows at `round + 1` / `round + 2`. Creation, not scheduling — and R42 gives phase 4 the job of writing `depends_on` on those chain rows. |
-| `listTasksForProject`, `getProject`, `getTask` | 3 | **Display ordering and projection.** `ORDER BY round ASC, created_at ASC` on a read used by the Kanban and the plan endpoint. |
-| `setTaskStatus`, `markVerdictTaskDone` | 8 | **Comments only**, describing the verdict race a *round* view creates. No code line reads `round`. |
-| `retryTask`, `unwedgeProject` | 10 | **Operator recovery.** `unwedgeProject` retries the earliest round holding a failed task. This is the operator's re-entry point, not the tick's; R46 moves it to the earliest failed *group* in phase 4. |
-| `roundIsComplete`, `bumpFixCycle` | 7 | **Consolidation bookkeeping**, called when a task settles. R40/R43 move the group key to `(project_id, round, workstream)` in phase 4; the group decision is preserved and only its definition is restated. |
-| `listVerdictRound`, `VerdictRoundRow`, `listSettledRunningTasks`, `ChainRowOutcome` | 10 | **The consolidation group.** Reads the verdict-bearing tasks of one project+round. Not a promotion or claim predicate; phase 4 owns its redefinition. |
+| `sweepDanglingDependencies` | `AND pt.status IN ('pending','ready')     -- decision 2, round 204` | SQL ANNOTATION. The predicate is on `status`; the only `round` on the line is inside the trailing `--` comment naming the decision. |
+| `promoteReadyTasks` | `AND d.project_id = pt.project_id   -- R27, round 204` | SQL ANNOTATION. The predicate is R27's project correlation; the only `round` on the line is inside the trailing `--` comment. |
+| `promoteReadyTasks` | `AND d.project_id = pt.project_id)     -- R27, round 204` | SQL ANNOTATION, as above, closing the second subquery. |
+| `promoteReadyTasks` | `AND l.round < pt.round` | R69's legacy-row term. Reads `round` only ABOUT legacy rows (the NOT EXISTS on `l` is guarded by `l.depends_on IS NULL`) and only while any exist; on a project with no NULL row the sentinel test short-circuits and `round` is never consulted. TODO(R12-retire). |
+| `promoteReadyTasks` | `AND earlier.round < pt.round` | R12's legacy branch — today's rule, verbatim, for rows that were never graph-scheduled. Inside the `pt.depends_on IS NULL` arm. TODO(R12-retire). |
+| `claimReadyTasks` | `ORDER BY pt.round ASC, pt.created_at ASC` | Not a predicate, an ORDERING (§7.2). R15 keeps the transaction shape and `02-architecture.md` §3.4 keeps this clause byte-identical. It cannot gate promotion: every row it sorts is already `ready`. |
+
+<!-- END GENERATED: r20-census -->
 
 **Every surviving occurrence is attributed**: two to the legacy surface (R12's
 branch and R69's term), one to a claim *ordering* that R15 and §3.4 both
