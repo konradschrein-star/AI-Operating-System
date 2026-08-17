@@ -56,7 +56,10 @@ Every phase gate includes, without exception:
 1. Launch chromium headless, viewport 1440×900, open `http://127.0.0.1:7799/desktop`, wait for the chat rail + Live panel to be populated (network idle + selector waits).
 2. Settle 5s (let initial polls land).
 3. Start tracing (categories: `devtools.timeline`, `disabled-by-default-devtools.timeline`, `blink.user_timing`).
-4. For 10 seconds, dispatch `mousemove`/`mouseenter`/`mouseleave` sweeps up and down the chat-rail rows at ~60 events/s (Playwright `mouse.move` along the rail's bounding boxes), covering ≥ 8 rows repeatedly.
+4. For one measurement window, dispatch `mousemove`/`mouseenter`/`mouseleave` sweeps up and down the chat-rail rows at ~60 events/s (Playwright `mouse.move` along the rail's bounding boxes), covering **every row the surface actually renders**, repeatedly.
+   - *Window length:* not 10 s — see the measurement-window rule in §4 below, which supersedes the literal figure written here. (Amended 2026-08-17, operator, after round 1306 disclosed the 10 s window as a standing violation for the third round running.)
+   - *Row count:* the original text demanded **≥ 8 rows**. The chat rail has **7** visible rows, so that threshold was never satisfiable — rounds 1291 → 1306 each disclosed it honestly and proceeded, which is exactly how a gate rots into noise. The requirement is now *complete coverage of the rows that exist*, which is measurable and which the sweep already achieves. A future surface with more rows raises the count by itself.
+   - *Row membership is mandatory (round 1305):* a sweep must assert that each probe landed on a row of the surface under test (`[data-team-row]` / `.chat-row`), clipping candidates to the scroll container, **not** the viewport. A sweep whose probes miss must exit non-zero as `SWEEP INVALID` rather than certify itself. See `docs/plan/artifacts/phase1300/fix-1305/`.
 5. Stop tracing; save `trace-<label>-<n>.json`.
 6. Repeat ×3; report per-run and median of: total main-thread scripting ms during the 10s window; count of tasks > 50ms; longest task ms; and (from user timing if present) React commit count. Record `uptime`/`nproc`/load average alongside (busy-VPS honesty).
 
