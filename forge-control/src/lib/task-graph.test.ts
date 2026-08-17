@@ -912,6 +912,43 @@ describe("normaliseWritePath — normalise, then validate the result (R28)", () 
     assert.equal(normaliseWritePath("./././a.ts"), "a.ts");
   });
 
+  test("an INTERIOR '.' segment is collapsed too — round 214 finding 3", () => {
+    // Before the fix these returned themselves, so `src/a.ts` and `src/./a.ts`
+    // were two spellings of one file that did NOT conflict under R16's exact
+    // string equality — two builders of the SAME workstream both claimable,
+    // both writing one file in one worktree. The assertion below the table is
+    // the one that states the consequence rather than the mechanism.
+    assert.equal(normaliseWritePath("src/./a.ts"), "src/a.ts");
+    assert.equal(normaliseWritePath("./src/./a.ts"), "src/a.ts");
+    // Two adjacent interior segments need a second pass: `/./` matches overlap
+    // on the shared slash, so one global replace leaves the odd one behind.
+    // This is the case that catches a fix applied OUTSIDE the fixpoint loop.
+    assert.equal(normaliseWritePath("src/././a.ts"), "src/a.ts");
+    assert.equal(normaliseWritePath("a/./b/./c.ts"), "a/b/c.ts");
+  });
+
+  test("the two spellings now CONFLICT — what finding 3 was actually about", () => {
+    // The belt, not the string. `conflicts()` is R16's exact-equality test, and
+    // this assertion fails against the pre-fix normaliser.
+    assert.equal(conflicts([normaliseWritePath("src/a.ts")], [normaliseWritePath("src/./a.ts")]), true);
+  });
+
+  test("'..' survives the interior rule — `/../` holds no `/./`", () => {
+    // The regression the interior rule could most easily have caused: eating
+    // `..` segments would turn an escape attempt into a legal path. `src/../x`
+    // must still REACH the refusal, which the table below asserts; here we only
+    // pin that it is not silently rewritten to `src/x` first.
+    assert.throws(() => normaliseWritePath("src/../x"), GraphValidationError);
+    assert.equal(normaliseWritePath("src/a..b/c.ts"), "src/a..b/c.ts");
+  });
+
+  test("a bare '.' and a TRAILING '.' segment are still not refused", () => {
+    // Recorded deliberately: the doc-comment's "WHAT IS STILL NOT REFUSED"
+    // paragraph and this test retire together if that ever changes.
+    assert.equal(normaliseWritePath("."), ".");
+    assert.equal(normaliseWritePath("src/."), "src/.");
+  });
+
   test("an already-clean path is returned unchanged", () => {
     for (const clean of ["src/a.ts", "docs/plan/engine-task-graph/02-architecture.md", "a"]) {
       assert.equal(normaliseWritePath(clean), clean);

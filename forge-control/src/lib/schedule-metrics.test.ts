@@ -601,6 +601,120 @@ describe("D7 — the numbering stall", () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * 7b. D7's SECOND arm — the backfilled closure, which is attack A3 succeeding
+ *     through the database instead of through the code.
+ *
+ * ROUND 214, PHASE-7 FINDINGS 1 AND 2. Finding 2 was about THIS FILE: the only
+ * closure-related assertion in the block above is `assert.match(stall.reason,
+ * /backfilled closure/)`, which fires on the `depends_on IS NULL` path. NO TEST
+ * EVER FED ROWS CARRYING THE CLOSURE — which is precisely why finding 1 survived
+ * a suite of 970 green tests. The module's prose warned at length against
+ * substituting the closure IN CODE while migration 0040's final UPDATE wrote
+ * that same closure over every legacy row IN THE DATABASE, and no test noticed
+ * that those are the same substitution arriving by a different door.
+ *
+ * The fixtures below are the literal motivating case from `00-vision.md` §2:
+ * one 32-minute reviewer, seven unrelated builders numbered above it, and
+ * `depends_on` exactly as `0040_task_graph.sql`'s R6 backfill writes it
+ * (`SELECT e.id … WHERE e.round < pt.round`). The true numbering stall is 32
+ * minutes — the builders needed nothing from the reviewer — and the closure
+ * makes it compute to 0.
+ * -------------------------------------------------------------------------- */
+
+describe("D7 — a project carrying migration 0040's backfilled closure", () => {
+  /** The 32-minute reviewer that held everything behind it. Round 1. */
+  const blocker = ran("blocker", "10:00", "10:32", { round: 1, role: "reviewer", depends_on: [] });
+
+  /* The seven builders. Round 2, so 0040 backfills each with the set of tasks
+   * at a strictly lower round — which is `[blocker]` and nothing else. Every
+   * one of them was claimed at 10:32, the instant the round drained, because
+   * that is what the OLD engine did. Under the closure, `start − max(dep
+   * completed_at)` is therefore 0 for all seven, by construction and not by
+   * measurement. */
+  const builders = Array.from({ length: 7 }, (_unused, i) =>
+    ran(`builder-${i}`, "10:32", "10:44", { round: 2, depends_on: ["blocker"] }),
+  );
+
+  const backfilled = input(
+    [blocker.task, ...builders.map((b) => b.task)],
+    [blocker.run, ...builders.map((b) => b.run)],
+  );
+
+  test("S3 REFUSES — it must not report the 0 the closure computes to", () => {
+    const stall = computeSchedule(backfilled).numberingStall;
+    // The assertion that fails against the pre-round-215 module, where this
+    // returned { computable: true, maxMinutes: 0, perTask: 7 entries }.
+    assert.equal(stall.computable, false);
+    if (stall.computable) assert.fail(`expected a refusal, got ${JSON.stringify(stall)}`);
+    assert.ok(!("maxMinutes" in stall), "the refusal must carry no minutes field");
+    assert.equal(stall.legacyRows, 0, "the sentinel is GONE — that is the whole hazard");
+    assert.equal(stall.closureRows, 8);
+    assert.match(stall.reason, /strictly lower round/);
+    assert.match(stall.reason, /0040/);
+  });
+
+  test("the arithmetic it refuses to report really would have been 0", () => {
+    // Proves the refusal is protecting against a FLATTERING number and not
+    // against an error. Computed here from the fixture, independently of the
+    // module: every builder started at 10:32 and its only dependency completed
+    // at 10:32, so every term is exactly 0 — while the real stall, the reason
+    // this project exists, is the 32 minutes the builders spent waiting for a
+    // reviewer they did not depend on.
+    for (const b of builders) {
+      assert.equal(b.run.started_at, blocker.run.completed_at);
+    }
+    const trueStallMinutes =
+      (Date.parse(builders[0].run.started_at ?? "") - Date.parse(blocker.run.started_at ?? "")) / 60_000;
+    assert.equal(trueStallMinutes, 32);
+  });
+
+  test("the census discloses it even though no row is legacy any more", () => {
+    // Round 214 finding 1's exact words: "No header field discloses that these
+    // are backfilled rows." Now one does.
+    const census = inputCensus(backfilled);
+    assert.equal(census.legacyRows, 0);
+    assert.equal(census.graphRows, 8);
+    assert.equal(census.closureShapedRows, 8);
+  });
+
+  test("ONE row breaking the closure is enough to measure again", () => {
+    // The refusal is about a project that is closure-shaped THROUGHOUT. Give
+    // one builder a genuine planner-written dependency set — empty, i.e. an
+    // explicit root that does NOT wait for the reviewer — and the signature is
+    // broken, so the instrument computes. It then reports the real stall of the
+    // remaining six as 0, which is honest: those six DID declare the reviewer.
+    const [first, ...rest] = builders;
+    const partial = input(
+      [blocker.task, { ...first.task, depends_on: [] }, ...rest.map((b) => b.task)],
+      [blocker.run, ...builders.map((b) => b.run)],
+    );
+    const stall = computeSchedule(partial).numberingStall;
+    assert.equal(stall.computable, true);
+    if (!stall.computable) assert.fail("one non-closure row must restore measurability");
+    assert.equal(stall.perTask.length, 6);
+    // …and the disclosure survives, which is what stops a partial match hiding.
+    assert.equal(inputCensus(partial).closureShapedRows, 7);
+  });
+
+  test("perfect fan-out is NOT accused of being a backfill", () => {
+    // Every task a root at one round: vacuously closure-shaped for every row,
+    // and the single best result this instrument can be handed. S3 is still not
+    // computable — there is no edge — but the REASON must be that, not a
+    // migration it never met.
+    const roots = Array.from({ length: 6 }, (_unused, i) =>
+      ran(`root-${i}`, "10:00", "10:10", { round: 0, depends_on: [] }),
+    );
+    const stall = computeSchedule(
+      input(roots.map((r) => r.task), roots.map((r) => r.run)),
+    ).numberingStall;
+    assert.equal(stall.computable, false);
+    if (stall.computable) assert.fail("no edges means no measurement");
+    assert.match(stall.reason, /no edge to measure/);
+    assert.doesNotMatch(stall.reason, /0040/);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
  * 8. The negative-stall guard
  * -------------------------------------------------------------------------- */
 
@@ -664,6 +778,16 @@ describe("R60 — inputCensus", () => {
       tasksWithoutRun: 3, // legacy + two filler, all run-less
       legacyRows: 1,
       graphRows: 4,
+      /* Round 215, for round 214's phase-7 finding 1. `a` and `b` sit at the
+       * lowest round present (1) with `depends_on: []`, so the
+       * strictly-lower-round set is empty for both and they match the backfill
+       * signature VACUOUSLY. `legacy` carries the NULL sentinel and is excluded
+       * by construction; the two filler rows at round 9 declare `[]` while
+       * three tasks sit below them, so they do not match. Two is the honest
+       * count, and it is exactly why this field is a DISCLOSURE rather than a
+       * verdict — the refusal in `numberingStall()` fires only when every row
+       * matches AND some row declares an edge. */
+      closureShapedRows: 2,
     });
   });
 

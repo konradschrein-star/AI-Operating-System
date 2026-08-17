@@ -383,7 +383,31 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
   it is a finding.
 
 **Phase 8 — deploy and verify**
-- See `04-phases.md` §Phase 8. The gate is the deploy checklist itself.
+- See `04-phases.md` §Phase 8. The gate is the deploy checklist itself, plus the
+  two clauses below, both added round 215.
+- **E-3's baseline read happened at step 2b, BEFORE step 3 applied migration
+  0040.** Check the order in `evidence/phase8-deploy.md`, not the intent. Round
+  214's phase-7 finding 1: 0040's R6 backfill overwrites the
+  `depends_on IS NULL` sentinel with the strictly-lower-round closure, under
+  which every S3 term is 0 by construction — the instrument certifying "no
+  numbering stall" for the project whose numbering stall justified this work.
+  Two independent things must both hold, and the gate fails if either is
+  missing: the ordering above, **and** a header line reading
+  `closure-shaped-rows=0` in the pasted baseline output. A non-zero count on the
+  8ea0cc08 baseline means the read happened after the migration whatever the
+  narrative says. If the baseline instead reports `S3 … NOT COMPUTABLE (0 legacy
+  rows, N closure-shaped rows)`, the detector caught it — that is a **finding
+  and a redo**, not a pass, because the number no longer exists to be read.
+- **R31 must not reach production ahead of R47–R53.** R31 (`strict_write_sets`
+  → a `builder`/`tester` task with no `write_set` is a `400`) is enforced from
+  phase 3; the behaviour that satisfies it — planner, architect and builder
+  prompts that declare a `write_set` — lands in phase 5. Today's shipped prompt
+  in `project-tick.ts` mentions `write_set` **zero times**. Because there is
+  exactly one deploy, at phase 8, no window exists in practice; this clause
+  exists so that a phase-8 task tempted to ship early cannot open one. Verify
+  before the restart: `grep -c "write_set" forge-control/src/lib/project-tick.ts`
+  is **> 0**. If it is 0 while R31 is live, the first goal project created after
+  the restart `400`s on its first builder fan-out.
 
 ---
 
@@ -399,11 +423,48 @@ pnpm test
 cd "$WORKTREE"
 git -C /opt/forge-ai-os status --porcelain ; echo "exit=$? (empty output is the only pass)"
 git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
-grep -rn "pm2 restart forge-executor" . --include='*.ts' --include='*.sh' --include='*.md' \
-  | grep -v -i "never\|forbidden\|not to deploy"    # any survivor is a finding
+# R66, amended round 215 — EXECUTABLE FILE TYPES ONLY, and no -v filter.
+# Expect exactly 4 hits, all string literals inside NEVER-worded prohibitions
+# (project-tick.ts ×2, project-tick.test.ts ×2). READ EACH ONE: R66 permits the
+# string only inside a sentence forbidding it. A 5th hit, or any hit in an
+# executable position, is a finding. Prose files are swept separately below.
+grep -rn "pm2 restart forge-executor" . --include='*.ts' --include='*.sh'
 grep -rn "consecutive rounds" forge-control/         # must be empty from phase 5 on
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
+
+**Why this gate changed — round 214's phase-3 finding 5, amended here where it
+is enforced.** The command used to sweep `*.ts`, `*.sh` **and `*.md`** and pipe
+through `grep -v -i "never\|forbidden\|not to deploy"`, under the comment
+`# any survivor is a finding`. Two things were wrong with it.
+
+The filter is a **narrower rule than R66's own**, which forbids the string
+*"except inside a sentence forbidding it"* — a sentence may prohibit without
+using any of those three spellings. Twelve survivors came out of it on this tree
+and **every one was prose prohibiting the command**: `00-vision.md`, R66 itself,
+this document's own gate line, `deploy-playbook.md`, two evidence files. The gate
+could never be clean, on this tree or any future one, and three consecutive
+reviewers disclosed-and-proceeded against it. **A gate that can only be disclosed
+teaches that disclosure is normal**, and that habit is what let a self-certifying
+hover probe survive round 213 (`00-vision.md` §7 rule 2).
+
+The repair is a scope narrowing plus an honest instruction, not a cleverer
+filter. **Scope:** a `.md` cannot execute anything, and every `.md` hit in this
+corpus is a prohibition by construction — the documents that discuss R66 are the
+documents that forbid it. Sweeping `*.ts` and `*.sh` leaves **4 hits, a number
+small enough to read**, and reading them is what R66's rule actually requires:
+all four are string literals *inside* NEVER-worded prohibitions — two in
+`project-tick.ts`'s shipped deploy guidance, two in `project-tick.test.ts`
+asserting that guidance still carries the prohibition. **Instruction:** the
+comment now states R66's rule and names the expected count, so a fifth hit is a
+signal rather than noise, and no `grep -v` decides on the reviewer's behalf.
+
+A CONSIDERED-AND-REJECTED ALTERNATIVE, recorded so the next round does not
+re-derive it: narrowing to this branch's diff
+(`git diff $(git merge-base main HEAD)...HEAD | grep '^+.*pm2 restart…'`) looks
+tighter and is **not satisfiable here either** — this branch *created* the
+corpus, so all ten prohibitive prose lines are `+` lines on it. Measured, round
+215: 10 hits. It would have been the same unsatisfiable gate wearing a diff.
 
 Then, before writing `VERDICT:`, answer in the review:
 

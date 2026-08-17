@@ -161,15 +161,39 @@ export interface ScheduleOptions {
  *                        `runs`, or a non-`pending` task with no `run_id` at
  *                        all. `detail` names the task ids (and the missing run
  *                        ids where there are any).
- *   "missing-timestamp"  D6 — a run in scope that started and never terminated
- *                        (D5), or any timestamp that fails `Date.parse`.
+ *   "missing-timestamp"  D6 — a timestamp that fails `Date.parse`, thrown by
+ *                        `parseInstant()`; and the DEPENDENCY case in
+ *                        `numberingStall()`, where a task's dependency has a
+ *                        run with no `completed_at`, so there is no instant to
+ *                        measure a stall against. CORRECTED round 215 (round
+ *                        214's phase-7 finding 3): this entry used to claim it
+ *                        also covered "a run in scope that started and never
+ *                        terminated (D5)". It does not, and never did — that
+ *                        case throws `"unterminated-run"`, below. A list whose
+ *                        whole point is to declare rather than smuggle cannot
+ *                        also misattribute; a reader chasing an
+ *                        `unterminated-run` through this block found nothing,
+ *                        and a reader reading this block expected the wrong
+ *                        string.
  *   "too-few-tasks"      D6 — fewer than five tasks. There is no schedule to
  *                        measure in four rows.
  *
- * THREE FURTHER REASONS, DECLARED RATHER THAN SMUGGLED. D6 names three
- * conditions; the arithmetic below reaches three more states in which it cannot
+ * FOUR FURTHER REASONS, DECLARED RATHER THAN SMUGGLED. D6 names three
+ * conditions; the arithmetic below reaches four more states in which it cannot
  * produce an honest number. Each is a REFUSAL, in R61's direction — none of
  * them invents a value, and none of them is reachable by widening D6's three:
+ *
+ *   "unterminated-run"   D5 — a run in scope with a `started_at` and no
+ *                        `completed_at`, thrown by `runIntervals()` unless
+ *                        `allowUnterminated` is set, in which case the run is
+ *                        dropped and its id disclosed in
+ *                        `excluded.unterminatedRunIds`. DECLARED HERE from
+ *                        round 215; it was thrown, and named in
+ *                        `01-requirements.md`, but this enumeration omitted it.
+ *                        An interval with no end has no duration, and the two
+ *                        alternatives — treating the run as instantaneous, or
+ *                        ending it at the window's edge — both shorten summed
+ *                        run time and so flatter S2.
  *
  *   "inverted-interval"  A run whose `completed_at` precedes its `started_at`.
  *                        Neither timestamp is missing and neither fails to
@@ -210,6 +234,14 @@ export interface InputCensus {
   tasksWithoutRun: number;
   legacyRows: number;
   graphRows: number;
+  /**
+   * Rows whose `depends_on` equals the strictly-lower-round closure — migration
+   * 0040's backfill signature. See `isClosureShaped()`. A DISCLOSURE, not an
+   * exclusion: when it equals `tasks` and any edge exists, S3 refuses; when it
+   * is merely non-zero the measurement proceeds and this count is what tells a
+   * reader that part of the graph is tautological.
+   */
+  closureShapedRows: number;
 }
 
 /**
@@ -233,9 +265,16 @@ export interface InputCensus {
  * D6 the second case is fatal to `computeSchedule()`; here it is merely
  * counted, because the header must survive the project that fails.
  *
- * `legacyRows` + `graphRows` === `tasks`, always. `legacyRows` is what D7 reads
- * to decide S3 is not computable, and printing it in the header is what stops a
- * reader mistaking "not computable" for "nothing to report".
+ * `legacyRows` + `graphRows` === `tasks`, always. `legacyRows` is what D7's
+ * FIRST arm reads to decide S3 is not computable, and printing it in the header
+ * is what stops a reader mistaking "not computable" for "nothing to report".
+ *
+ * `closureShapedRows` is D7's SECOND arm, and it is a header field because
+ * round 214's finding 1 was, precisely, that NO header field disclosed that a
+ * project's dependency sets came from migration 0040's backfill rather than
+ * from a planner. It is NOT a subset of `legacyRows` — it is what those rows
+ * become once the backfill has overwritten their NULL, which is exactly when
+ * `legacyRows` drops to 0 and stops disclosing anything.
  */
 export function inputCensus(input: MetricInput): InputCensus {
   const runIds = new Set(input.runs.map((r) => r.id));
@@ -252,11 +291,17 @@ export function inputCensus(input: MetricInput): InputCensus {
   let tasksWithoutRun = 0;
   let legacyRows = 0;
   let graphRows = 0;
+  let closureShapedRows = 0;
   for (const task of input.tasks) {
     const runId = runIdOf(task);
     if (runId === null || !runIds.has(runId)) tasksWithoutRun += 1;
     if (isLegacyRow(task)) legacyRows += 1;
     else graphRows += 1;
+    // Set comparison per row, O(tasks²) overall. On the corpus this reads (131
+    // rows) that is 17k comparisons; the census runs once. Not worth an index,
+    // and an index would be a second place for the definition to drift from
+    // `isClosureShaped()`, which is the one the refusal reads.
+    if (isClosureShaped(task, input.tasks)) closureShapedRows += 1;
   }
 
   return {
@@ -268,6 +313,7 @@ export function inputCensus(input: MetricInput): InputCensus {
     tasksWithoutRun,
     legacyRows,
     graphRows,
+    closureShapedRows,
   };
 }
 
@@ -349,7 +395,7 @@ export interface ConcurrencySample {
  */
 export type NumberingStall =
   | { computable: true; maxMinutes: number; perTask: { task_id: string; minutes: number }[] }
-  | { computable: false; reason: string; legacyRows: number };
+  | { computable: false; reason: string; legacyRows: number; closureRows: number };
 
 export interface ScheduleMetrics {
   runCount: number;
@@ -732,6 +778,44 @@ function numberingStall(input: MetricInput, runsById: Map<string, MetricRun>): N
         "closure would make every legacy stall compute to exactly 0, i.e. the instrument would " +
         "report no numbering stall for the project whose numbering stall motivated this work.",
       legacyRows,
+      closureRows: input.tasks.filter((t) => isClosureShaped(t, input.tasks)).length,
+    };
+  }
+
+  /* D7's SECOND ARM — the sentinel above no longer exists once migration 0040
+   * has backfilled, so the refusal has to be able to read the SHAPE. See
+   * `isClosureShaped()` for the full argument and for the measured transcript
+   * of this module certifying "no numbering stall" for the exact project that
+   * motivated the work.
+   *
+   * `hasEdge` BUYS A CORRECT REASON, not a different verdict, and the
+   * distinction is worth stating because a reader will check. A project whose
+   * tasks are ALL roots satisfies the closure test vacuously for every row —
+   * the strictly-lower-round set is empty and so is every declared set — and
+   * that project is PERFECT FAN-OUT, the single best result this instrument can
+   * be handed. S3 is still not computable for it, but for the reason the
+   * `perTask.length === 0` arm below already gives: there is no edge to measure
+   * a stall across. Without this guard that project would be told its
+   * dependency sets came from a migration backfill, which is false. */
+  const closureRows = input.tasks.filter((t) => isClosureShaped(t, input.tasks)).length;
+  const hasEdge = input.tasks.some((t) => {
+    const deps = t.depends_on;
+    return deps !== null && deps !== undefined && deps.length > 0;
+  });
+  if (hasEdge && closureRows === input.tasks.length) {
+    return {
+      computable: false,
+      reason:
+        `all ${closureRows} tasks carry a depends_on equal to the set of tasks at a strictly lower ` +
+        "round — byte for byte what migration 0040's R6 backfill writes over the pre-0040 NULL " +
+        "sentinel. Under that shape every dependency completes exactly when the task's round " +
+        "drains, which is exactly when the old engine promoted it, so every stall computes to 0 " +
+        "and S3 would certify 'no numbering stall' for a project that may have stalled for hours. " +
+        "This is a SIGNATURE, not a proof: a strictly serial graph-scheduled project produces the " +
+        "same shape, and for it the honest cost of this refusal is a true 0. Measure a project " +
+        "with real fan-out, or read the baseline BEFORE applying 0040 (04-phases.md §12, E-3).",
+      legacyRows,
+      closureRows,
     };
   }
 
@@ -804,6 +888,7 @@ function numberingStall(input: MetricInput, runsById: Map<string, MetricRun>): N
         "so there is no edge to measure a stall across. Reporting 0 here would read as " +
         "'no numbering stall' when the truth is 'no measurement'.",
       legacyRows: 0,
+      closureRows,
     };
   }
 
@@ -823,9 +908,83 @@ function numberingStall(input: MetricInput, runsById: Map<string, MetricRun>): N
  * `undefined` is a pre-0040 schema with no such column. Both mean "the real
  * dependency set of this row was never recorded", and D7 refuses on both. An
  * empty ARRAY is neither: it is an explicit graph root.
+ *
+ * IT ONLY ANSWERS FOR A ROW THE MIGRATION HAS NOT REACHED. Once 0040's backfill
+ * has run, the sentinel is GONE — see `isClosureShaped()`, which is the other
+ * half of D7 and the half that survives the migration.
  */
 function isLegacyRow(task: MetricTask): boolean {
   return task.depends_on === null || task.depends_on === undefined;
+}
+
+/**
+ * D7's SECOND arm, added round 215 for round 214's phase-7 finding 1 (attack
+ * A3, which succeeded through the database rather than through the code).
+ *
+ * THE HOLE THIS CLOSES. `isLegacyRow()` keys on `depends_on IS NULL`. Migration
+ * `0040_task_graph.sql`'s final statement — the R6 backfill — WRITES OVER that
+ * exact sentinel on every pre-existing row, with "every task in a strictly
+ * lower round". After it runs, a legacy project's rows are indistinguishable
+ * from graph rows by nullity, `isLegacyRow()` answers false for all of them,
+ * and the arithmetic below happily produces a number. That number is 0, always,
+ * for the tautological reason the doc-block on `numberingStall()` sets out at
+ * length: under the closure a task's dependencies all complete exactly when its
+ * round drains, which is exactly when the old engine promoted it.
+ *
+ * MEASURED, round 214: fed the literal motivating case — one 32-minute
+ * reviewer, seven unrelated builders numbered above it, `depends_on` backfilled
+ * as 0040 writes it — the module printed `S3 max numbering stall (min) 0 (over
+ * 7 tasks with a recorded dependency set)`, `legacy-rows=0`, and exited 0. It
+ * certified "no numbering stall" for the project whose numbering stall is this
+ * project's entire justification.
+ *
+ * E-3 pins phase 8's baseline read to run BEFORE the migration, and that
+ * sequencing is real. It is not enough. Correctness that rests on the order two
+ * steps of a deploy happen to be executed in is correctness that a tired
+ * operator can delete by running step 3 first, with no error and no disclosure.
+ * This function is the belt: the instrument refuses on the SHAPE of the data,
+ * whatever order anything ran in.
+ *
+ * WHAT IT TESTS, exactly: is this row's `depends_on` equal, AS A SET, to the ids
+ * of every task of the project at a strictly lower `round`? That is the
+ * backfill's WHERE clause transcribed. Duplicates in a stored array collapse
+ * into the set and are forgiven, because a duplicate is R14's problem and not a
+ * reason to answer a different question here.
+ *
+ * IT IS A SIGNATURE, NOT A PROOF, and pretending otherwise would be the same
+ * species of overclaim this arm exists to stop. A genuinely graph-scheduled
+ * project CAN produce these bytes — a strictly serial one where every task
+ * really does depend on everything before it. For such a project the refusal
+ * costs a true 0. That trade is one-sided and deliberately so: reporting 0
+ * wrongly is a certified lie about the number this whole project is judged on,
+ * while refusing wrongly is a visible "NOT COMPUTABLE" that names its own
+ * reason and points at the fix. DoD-6's after-measurement wants a project with
+ * real fan-out, whose research tasks share no files and no ordering; a
+ * closure-shaped one would mean the fan-out never happened, which is itself the
+ * finding.
+ *
+ * A PROJECT WHOSE EVERY TASK IS A ROOT SATISFIES THIS VACUOUSLY. With every
+ * task at one round and `depends_on = []`, the strictly-lower-round set is
+ * empty and so is every declared set, so this answers `true` for every row —
+ * and that project is perfect fan-out, not a backfill. `numberingStall()`'s
+ * `hasEdge` guard is what keeps the backfill REASON off it; being stated
+ * precisely, S3 is not computable for that project either, but for the honest
+ * reason that there is no edge to measure a stall across, which is the refusal
+ * that was already there. The guard buys a correct explanation, not a different
+ * verdict, and a comment claiming more would be the overclaim this arm exists
+ * to stop.
+ */
+function isClosureShaped(task: MetricTask, tasks: readonly MetricTask[]): boolean {
+  const deps = task.depends_on;
+  if (deps === null || deps === undefined) return false; // the OTHER arm's case.
+  const declared = new Set(deps);
+  let closureSize = 0;
+  for (const other of tasks) {
+    if (other.round >= task.round) continue;
+    closureSize += 1;
+    if (!declared.has(other.id)) return false;
+  }
+  return declared.size === closureSize;
 }
 
 /** `run_id` normalised to `string | null`. Written out rather than `??` so the

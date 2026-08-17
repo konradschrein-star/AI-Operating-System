@@ -385,9 +385,10 @@ r.post("/:id/tasks", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     role?: string;
     /** `unknown`, so that `=== null` is a legal comparison and so that the
-     *  existing `Number()` expression below stays the only thing that judges
-     *  it. The three fields below are `unknown` for R22's own reason: they are
-     *  narrowed BY COMPARISON, never by an `as` cast (NF4). */
+     *  guard below is the only thing that judges it. Since round 214 finding 1
+     *  that guard leads with `typeof body.round !== "number"`, which is what
+     *  narrows the `unknown` — by COMPARISON, never by an `as` cast (NF4), the
+     *  same reason the three fields below are `unknown`. */
     round?: unknown;
     title?: string;
     brief?: string;
@@ -462,10 +463,44 @@ r.post("/:id/tasks", async (c) => {
    *
    * `null` counts as OMITTED rather than as `Number(null) === 0`: a caller who
    * sends the key with no value is asking the engine to decide, and with
-   * depends_on absent computeRound([]) returns that same 0 anyway. */
+   * depends_on absent computeRound([]) returns that same 0 anyway.
+   *
+   * THE TYPE CLAUSE — round 214 finding 1, the third amendment to this one
+   * expression and in the same direction as rulings 1 and 2. `Number()` coerces
+   * BEFORE `Number.isInteger` judges, so `[]`, `true`, `""` and `"0x10"` were
+   * all integers by the time the guard saw them and landed as rounds 0, 1, 0
+   * and 16. That coercion predates this phase; the CONSEQUENCE is new, because
+   * this phase made `round` OPTIONAL. A caller whose template renders an empty
+   * round — the exact shape a planner curl produces from an unset shell
+   * variable — now sets `roundSupplied` and is handed round 0 instead of
+   * `computeRound(deps)`, with its dependencies sitting at round 300. Three
+   * things then go wrong at once: R24's phase-block gate is bypassed entirely
+   * (it only runs when the round is computed); R40's consolidation group key
+   * `(project_id, round, workstream)` names the wrong group; and while that row
+   * is pending at round 0, `legacyRoundReady`'s
+   * `earlier.round < task.round && earlier.status !== "done"` blocks EVERY
+   * legacy (NULL-depends_on) row of the project — the stalled fleet this
+   * project exists to end, reintroduced by a typo.
+   *
+   * R22a already said "a non-negative integer <= 2147483647"; only the
+   * expression disagreed, so this is enforcement catching up to prose rather
+   * than a new rule. `typeof !== "number"` and NOT a `Number.isInteger(raw)`
+   * probe, because the two differ on exactly the values worth refusing loudly.
+   * Safe: taskCurl()'s shipped example in project-tick.ts sends `"round": 1`,
+   * a JSON number, so no real caller regresses — a JSON body cannot carry a
+   * numeric string by accident unless someone quoted it, and quoting it is the
+   * typo. The message is REUSED verbatim rather than given its own: unlike
+   * ruling 2's out-of-range case, `[]` and `"1"` are genuinely not
+   * non-negative integers, so the existing sentence is true of them. */
   const roundSupplied = body.round !== undefined && body.round !== null;
   let round = 0;
   if (roundSupplied) {
+    if (typeof body.round !== "number") {
+      return c.json({ error: "round must be a non-negative integer" }, 400);
+    }
+    /* An identity now — the clause above proves it — kept so that this stays
+     * the single expression all three rulings amended, and so `round`'s type
+     * does not silently depend on a narrowing several lines up. */
     round = Number(body.round);
     if (!Number.isInteger(round) || round < 0) {
       return c.json({ error: "round must be a non-negative integer" }, 400);

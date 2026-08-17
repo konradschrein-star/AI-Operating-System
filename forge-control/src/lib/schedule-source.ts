@@ -123,7 +123,22 @@ export async function readProjectRows(projectId: string): Promise<ProjectRows> {
   }
 }
 
-function taskRow(
+/**
+ * EXPORTED FOR `schedule-source.test.ts`, round 215 (round 214's phase-7
+ * finding 4). This module is the entire path phase 8's live read runs through
+ * and it shipped with no test file at all, while the pure module beside it has
+ * an extensive one. The reason was structural rather than lazy: everything here
+ * was reachable only through `readProjectRows()`, which needs a pool, and NF3
+ * forbids a test that opens a connection.
+ *
+ * Exporting the two row mappers dissolves that: the MAPPING is pure — a
+ * `Record<string, unknown>` in, a narrowed row out — and it is the half most
+ * likely to be wrong, because it is where `pg`'s runtime types (a `Date` for
+ * `timestamptz`, a `string` for `int8`, `null` for an absent column) meet
+ * `MetricTask`'s declared ones. The SQL and the pool stay untested from here
+ * and are phase 8's business; the narrowing no longer is.
+ */
+export function taskRow(
   row: Record<string, unknown>,
   index: number,
   hasDependsOn: boolean,
@@ -150,7 +165,8 @@ function taskRow(
   return task;
 }
 
-function runRow(row: Record<string, unknown>, index: number): MetricRun {
+/** Exported for the same reason as `taskRow()` above. */
+export function runRow(row: Record<string, unknown>, index: number): MetricRun {
   const where = `runs[${index}]`;
   return {
     id: asString(field(row, "id", where), `${where}.id`),

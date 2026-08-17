@@ -547,13 +547,15 @@ const CASES: Case[] = [
   },
   {
     id: "2",
-    title: "round supplied but not a non-negative int4 → 400 (two operator rulings, round 213)",
-    /* 11 = 2a:2 + 2b:2 + 2c:2 + 2d:3 + 2e:2. First written as 9, which is the
-     * count before 2d's third assertion and 2e existed; the runner refused to
-     * certify a case that executed MORE than it declared, which is the half of
-     * failure mode (b) that catches a stale declaration rather than a skipped
-     * probe. Both directions are failures on purpose. */
-    assertions: 11,
+    title: "round supplied but not a non-negative int4 → 400 (three rulings; 213, 213, 214-F1)",
+    /* 21 = 2a:2 + 2b:2 + 2c:2 + 2d:3 + 2e:2 + 2f..2i:8 (four bodies × 2) + 2j:2.
+     * The two 2j SETUP posts assert nothing themselves; their failure surfaces
+     * through the assertions that read them. First written as
+     * 9, which is the count before 2d's third assertion and 2e existed; the
+     * runner refused to certify a case that executed MORE than it declared,
+     * which is the half of failure mode (b) that catches a stale declaration
+     * rather than a skipped probe. Both directions are failures on purpose. */
+    assertions: 21,
     run: async () => {
       const notNumber = await post("2a round: \"abc\"", P_MAIN, goodBody("c2a", { round: "abc" }));
       assertEq("2a status", 400, notNumber.status);
@@ -607,6 +609,57 @@ const CASES: Case[] = [
       const maxLegal = await post("2e round: 2147483647 (the boundary, accepted)", P_MAIN, goodBody("c2e boundary", { round: 2147483647 }));
       assertEq("2e status", 201, maxLegal.status);
       assertEq("2e stored round is int4's maximum", 2147483647, taskField(maxLegal, "round"));
+
+      /* ROUND 214 FINDING 1 — THE TYPE CLAUSE, the third amendment to this one
+       * expression. Case 2a passed for a reason that was luck rather than
+       * design: `Number("abc")` is `NaN` and `Number.isInteger(NaN)` is false,
+       * so the guard fired. Every OTHER non-number coerces to a perfectly good
+       * integer before `Number.isInteger` ever judges it, and each of the four
+       * below was measured at HEAD 99cb121 landing a `201` with the round named:
+       *
+       *     {"round":[]}      → 201, stored round 0
+       *     {"round":true}    → 201, stored round 1
+       *     {"round":"0x10"}  → 201, stored round 16
+       *     {"round":""}      → 201, stored round 0
+       *
+       * The coercion predates this phase. The CONSEQUENCE is new, because this
+       * phase made `round` optional — see 2j, which is the assertion that
+       * states it. */
+      const COERCED: Array<[string, unknown, string]> = [
+        ["2f", [], "an empty array; Number([]) === 0"],
+        ["2g", true, "a boolean; Number(true) === 1"],
+        ["2h", "0x10", "a hex STRING; Number(\"0x10\") === 16"],
+        ["2i", "", "an empty string; Number(\"\") === 0 — the planner-typo shape"],
+      ];
+      for (const [sub, value, why] of COERCED) {
+        const coerced = await post(
+          `${sub} round: ${JSON.stringify(value)} — ${why}`,
+          P_MAIN,
+          goodBody(`c${sub}`, { round: value }),
+        );
+        assertEq(`${sub} status is 400 and NOT a coerced 201`, 400, coerced.status);
+        assertEq(`${sub} message`, ROUND_MSG, errorOf(coerced));
+      }
+
+      /* 2j — THE CONSEQUENCE, not the coercion. `""` is the shape a curl
+       * template produces from an unset shell variable, and it used to make
+       * `roundSupplied` true: R24's phase-block gate skipped, R40's
+       * consolidation key `(project_id, round, workstream)` naming the wrong
+       * group, and — while that row sits pending at round 0 —
+       * `legacyRoundReady`'s `earlier.round < task.round AND earlier.status <>
+       * 'done'` blocking EVERY legacy row of the project. The same body with
+       * the field OMITTED must land at the computed depth instead, which is the
+       * behaviour the empty string was stealing. Both halves are asserted here
+       * so the refusal is not merely a refusal but a redirection to the right
+       * answer. */
+      const parent2j = await post("2j-setup a dependency at round 600", P_MAIN, goodBody("c2j parent", { round: 600 }));
+      const parentId2j = String(taskField(parent2j, "id"));
+      const empty2j = await post("2j round: \"\" with a real dependency", P_MAIN,
+        goodBody("c2j child", { round: "", depends_on: [parentId2j] }));
+      assertEq("2j the empty-string round is refused, not read as 0", 400, empty2j.status);
+      const omitted2j = await post("2j the SAME body with round omitted", P_MAIN,
+        goodBody("c2j child", { depends_on: [parentId2j] }));
+      assertEq("2j omitting it computes 601 — the round the typo was stealing", 601, taskField(omitted2j, "round"));
     },
   },
   {
@@ -1097,7 +1150,19 @@ async function main(): Promise<void> {
         const headers = new Headers();
         const ct = req.headers["content-type"];
         if (typeof ct === "string") headers.set("content-type", ct);
-        const upstream = await router.fetch(new Request(target, { method, headers, body }));
+        /* `new Uint8Array(buf)` rather than the Buffer itself, and this is a
+         * TYPECHECK fix taken in round 215 alongside finding 1. Under
+         * `tsc --strict` the probe did not compile: `@types/node` types a
+         * Buffer as `Buffer<ArrayBufferLike>` while `BodyInit` wants a
+         * `BufferSource`, i.e. an `ArrayBufferView<ArrayBuffer>`. The script
+         * RAN — tsx strips types without checking them — so a defect in the
+         * instrument was invisible to every gate, which is the class this
+         * project is here to stop. The constructor copies the bytes, so the
+         * request body reaching the router is byte-identical to what the socket
+         * delivered; nothing about the probe's behaviour changes. */
+        const upstream = await router.fetch(
+          new Request(target, { method, headers, body: body === undefined ? undefined : new Uint8Array(body) }),
+        );
         const out = Buffer.from(await upstream.arrayBuffer());
         res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") ?? "application/json" });
         res.end(out);

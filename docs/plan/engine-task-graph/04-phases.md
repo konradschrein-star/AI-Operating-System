@@ -510,9 +510,25 @@ own numbers move it further.
 2. **Merge.** Merge `main` into the work branch first if main moved. Re-run
    `pnpm typecheck` and `pnpm test` **in the worktree** after the merge. On
    conflicts: **STOP and report the files.** Then merge to `main`.
+2b. **Read E-3's baseline — BEFORE step 3, and this ordering is load-bearing.**
+   Run E-3's `measure-schedule.ts full --project 8ea0cc08…` and append its
+   output to `evidence/baseline-8ea0cc08.md` **now**, while `project_tasks`
+   still carries the pre-0040 `depends_on IS NULL` sentinel on every 8ea0cc08
+   row. Added round 215 for round 214's phase-7 finding 1: step 3's backfill
+   OVERWRITES that sentinel with the strictly-lower-round closure, and under
+   that closure S3's arithmetic is tautologically 0 — the instrument would
+   certify "no numbering stall" for the very project whose numbering stall
+   motivated this work. Step 1 makes this worse rather than better: it
+   guarantees 8ea0cc08 is *settled*, which is exactly the state in which the
+   closure resolves cleanly instead of erroring. Since round 215 the instrument
+   also **refuses** on the closure's shape (`schedule-metrics.ts`'s
+   `isClosureShaped()`), so running it late produces a NOT COMPUTABLE rather
+   than a lie — but a refusal you have to redo the deploy to fix is not a
+   substitute for reading the number while it exists.
 3. **Apply the migration.** `psql -f db/migrations/0040_task_graph.sql`, twice,
    pasting both outputs. It is additive and the running old engine ignores it
-   (R8), which is why it goes before the restart.
+   (R8), which is why it goes before the restart. **After this statement runs,
+   S3 for 8ea0cc08 is gone** — see 2b.
 4. **Restart the API side.** `pm2 restart forge-control` — allowed, and the right
    way to pick up the route changes; nothing long-running lives there.
 5. **Restart the executor, detached, and END THE TASK:**
@@ -645,7 +661,21 @@ against it.
 | `forge-control/src/routes/chat.ts` | 6 |
 | `forge-control-web/app/desktop/team/*` | 6 |
 | `scripts/measure-schedule.ts`, `lib/schedule-metrics.ts` | 7 |
+| `forge-control/src/lib/schedule-source.ts` | 7 |
+| `scripts/checks/check-task-api.ts` | 3 |
+| `forge-control/src/lib/source-hygiene.test.ts` | 3 |
 | `forge-control/src/executor.ts` | **none** — see `02-architecture.md` §1.2 |
+
+**Writes recorded after the fact, round 215.** Each was substantively correct
+and none overlapped a concurrent builder; recording them here is what lets the
+next audit resolve without archaeology, in the project whose entire deliverable
+is computing contention from **declared** write-sets.
+
+| write | round | why it was not declared, and the ruling |
+|---|---|---|
+| `forge-control/src/routes/projects.ts` and `docs/plan/engine-task-graph/01-requirements.md`, by phase 3's builder 4 (`ba09b2a`, `3b54229`) | 213 | Both are builder 3's declared files. Required by **standing rule 2**: F2's int4 bound had to be amended *where it is enforced*, and the enforcement is in builder 3's route. Correct in substance, taken silently — round 214 phase-3 finding 4. Builders 1 and 3 also wrote outside their sets in the same phase and both disclosed it at the site; the rule is disclose, not abstain. |
+| `forge-control/src/lib/schedule-source.ts`, by phase 7's builder (`b1bb731`) | 212 | Declared write_set was `measure-schedule.ts` + `schedule-truncated-4.json` + `03-quality.md`. The module had to exist because `scripts/` has no `node_modules`, so a bare `pg` specifier in a root-level script resolves nowhere — the wrapper could not have held those thirty lines. Sound code, but it is the module phase 8's live read runs entirely through and it shipped with **no test file** (round 214 phase-7 finding 4). `schedule-source.test.ts` closes the coverage half; this row closes the declaration half. |
+| `forge-control/src/lib/schedule-source.test.ts`, `forge-control/src/lib/source-hygiene.test.ts` | 215 | New files created by this fix cycle, declared here in the same commit that creates them. |
 
 Within a phase, the planner splits builders so that **no two builders in the
 same workstream declare the same file**. Where a split is impossible — two
@@ -735,8 +765,9 @@ Phase 7 therefore landed **part 1** — the round/task tables, the correction of
 `00-vision.md` §2 and the discrepancy analysis, all from the committed fixture.
 
 **Phase 8 owes part 2, and this is the binding statement of that obligation.**
-As part of its deploy/verify sequence and **BEFORE** the after-measurement of
-DoD-6, phase 8 runs
+As part of its deploy/verify sequence, at **step 2b** of "The deploy sequence, in
+order" above — i.e. **BEFORE step 3 applies migration 0040**, and therefore also
+before the after-measurement of DoD-6 — phase 8 runs
 
 ```bash
 cd forge-control && ./node_modules/.bin/tsx ../scripts/measure-schedule.ts full \
@@ -751,6 +782,41 @@ before and the after to be produced by **one instrument**, and an after-number
 measured before its before-number has no instrument-identity guarantee to offer.
 Run it before, from the same commit, and the two headers name the same
 `instrument-sha256`.
+
+**THE STRONGER ORDERING CONSTRAINT — added round 215, for round 214's phase-7
+finding 1 (attack A3 succeeding through the database rather than the code).**
+As originally written this erratum constrained the read only to fall *before*
+DoD-6's after-measurement, which permits it after step 3. That permission is a
+defect. Migration 0040's final statement — the R6 backfill — is
+
+```sql
+UPDATE project_tasks pt
+   SET depends_on = COALESCE((SELECT array_agg(e.id …) FROM project_tasks e
+        WHERE e.project_id = pt.project_id AND e.round < pt.round), '{}'::uuid[])
+ WHERE pt.depends_on IS NULL;
+```
+
+which writes the strictly-lower-round closure over **every pre-existing 8ea0cc08
+row**, destroying the `depends_on IS NULL` sentinel that D7's original refusal
+keys on. Under that closure a task's dependencies all complete exactly when its
+round drains, which is exactly when the old engine promoted it, so every stall
+term is 0 by construction. Measured in round 214 on the literal motivating case:
+`S3 max numbering stall (min) 0 (over 7 tasks with a recorded dependency set)`,
+`legacy-rows=0`, **exit 0** — the instrument certifying "no numbering stall" for
+the project this entire effort exists because of.
+
+Two repairs landed together in round 215, and neither replaces the other:
+
+- **This ordering**, pinned to step 2b above, in `03-quality.md` §3.2's phase-8
+  gate and in R62's prose — one commit, per the rule that a requirement and its
+  gate clause move together.
+- **A durable detector**, because correctness must not rest on the order two
+  deploy steps happen to run in: `isClosureShaped()` in
+  `forge-control/src/lib/schedule-metrics.ts` refuses S3 when every row's
+  `depends_on` equals the strictly-lower-round closure, and
+  `census.closureShapedRows` prints that count in the header in every mode. The
+  refusal is a **signature, not a proof** — a strictly serial graph-scheduled
+  project produces the same bytes, and for it the refusal costs a true 0.
 
 Three consequences, stated so nobody has to infer them:
 

@@ -720,8 +720,9 @@ export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string {
 /**
  * Normalise and validate one `write_set` entry (R28): repo-relative POSIX,
  * non-empty, no leading `/`, no `..` segment, no NUL, at most 400 characters,
- * with `./` stripped and duplicate slashes collapsed. Throws naming the
- * offending entry — never a warning, never a silent drop.
+ * with every `.` SEGMENT stripped — leading or interior — and duplicate slashes
+ * collapsed. Throws naming the offending entry — never a warning, never a
+ * silent drop.
  *
  * NORMALISE, THEN VALIDATE THE RESULT, in that order: `./src//a.ts` is a legal
  * entry that happens to be written badly, and refusing it would push planners
@@ -729,16 +730,40 @@ export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string {
  * two write-sets and stop conflicting (R16 is exact string equality — the whole
  * contention belt rests on one spelling per file).
  *
- * THE TWO NORMALISATION RULES ARE APPLIED TO A FIXPOINT, COLLAPSE FIRST, and
+ * THE THREE NORMALISATION RULES ARE APPLIED TO A FIXPOINT, COLLAPSE FIRST, and
  * that ordering is a decision rather than a transcription. Applied strip-first
  * in a single pass, `.//a.ts` becomes `/a.ts` and is then refused as absolute —
- * a refusal produced by the order of two rules rather than by anything wrong
+ * a refusal produced by the order of three rules rather than by anything wrong
  * with the entry. Collapsing first, and looping until nothing changes, makes the
  * result independent of the order the rules are written in, and leaves every
  * case R28 names identical: `./src/a.ts` → `src/a.ts`, `src//a.ts` →
- * `src/a.ts`, `./././a.ts` → `a.ts`. `../x` is untouched by both rules: the
- * strip matches a `.` segment (`^./`), never a `..` one, so `..` still reaches
- * the refusal below.
+ * `src/a.ts`, `./././a.ts` → `a.ts`. `../x` is untouched by all three: the
+ * leading strip matches a `.` segment (`^./`) and the interior rule matches
+ * `/./`, never a `..` one — `/../` contains no `/./` substring — so `..` still
+ * reaches the refusal below.
+ *
+ * THE INTERIOR `/./` RULE IS ROUND 214 FINDING 3, and it retires the "WHAT IS
+ * *NOT* REFUSED" paragraph that used to stand below (retire a rule and the
+ * clause that documents it in one commit). That paragraph reasoned that
+ * `src/./a.ts` is "harmless under exact-equality contention — it conflicts only
+ * with an identical spelling". That reasoning was exactly backwards. R16/R17
+ * judge contention BY EXACT STRING EQUALITY, so two builders in the SAME
+ * workstream declaring `src/a.ts` and `src/./a.ts` did not conflict, were both
+ * claimable in one round, and landed in ONE worktree writing ONE file —
+ * 03-quality.md §6's "contention belt too loose → two agents clobbering in one
+ * worktree", which is the failure this belt exists to prevent. Measured before
+ * the fix: `conflicts(["src/a.ts"], ["src/./a.ts"]) === false`. Phase 4's
+ * worktree isolation rests on this function being canonical, so canonical is
+ * what it now is. The fixpoint loop is what makes it complete rather than
+ * one-deep: `src/././a.ts` needs two passes, and it gets them.
+ *
+ * WHAT IS STILL NOT REFUSED, recorded rather than left for a reader to
+ * discover: a bare `.`, and a TRAILING `.` segment (`src/.`), because neither
+ * contains the `/./` the interior rule matches and neither is a leading `./`.
+ * Both are nonsense a planner would have to type deliberately, and — unlike the
+ * interior case — neither is a second spelling of a path any sane planner would
+ * also write plainly: `src/.` names a directory, not a file, and R28 already
+ * refuses directories that end in `/`. They are two spellings of nothing.
  *
  * A TRAILING SLASH IS REFUSED — the decision R28 leaves open, taken here. A
  * `write_set` entry names a FILE. `conflicts()` already records why declaring a
@@ -751,19 +776,11 @@ export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string {
  * verbatim leaves the same hole with a slash on the end. Refusing it is the only
  * option that tells the planner the thing it needs to know: declare the files.
  *
- * WHAT IS *NOT* REFUSED, recorded rather than left for a reader to discover: a
- * bare `.`, and any entry containing a `.` SEGMENT that is not leading
- * (`src/./a.ts` normalises only its leading `./`). R28 enumerates the refusals
- * and a validator that quietly grows a sixth rule is the kind of drift this
- * corpus reports as a finding. Both are harmless under exact-equality
- * contention — they conflict only with an identical spelling — and both are
- * nonsense a planner would have to type deliberately.
- *
  * THE MESSAGE QUOTES THE ENTRY WITH `JSON.stringify`, not raw. R28 asks the
  * refusal to name the entry; two of the entries it refuses are an empty string
  * and one containing a NUL, and a message naming those verbatim names them
  * invisibly — a raw NUL also truncates the message in some log readers. Quoted,
- * `""` and `"a b"` are legible, and every other entry still appears
+ * `""` and `"a\u0000b"` are legible, and every other entry still appears
  * literally inside the quotes. The normalised form is shown alongside when it
  * differs, so a caller reading the refusal knows which string was judged.
  */
@@ -771,7 +788,14 @@ export function normaliseWritePath(raw: string): string {
   let path = raw;
   for (;;) {
     const before = path;
-    path = path.replace(/\/{2,}/g, "/").replace(/^(?:\.\/)+/, "");
+    path = path
+      .replace(/\/{2,}/g, "/")
+      // Interior `.` segments (round 214 finding 3). A global replace cannot
+      // consume `src/././a.ts` in one pass — the second `/./` overlaps the
+      // slash the first match already ate — which is exactly why this sits
+      // inside the fixpoint loop rather than beside it.
+      .replace(/\/\.\//g, "/")
+      .replace(/^(?:\.\/)+/, "");
     if (path === before) break;
   }
 

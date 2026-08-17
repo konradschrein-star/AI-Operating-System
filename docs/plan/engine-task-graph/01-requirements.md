@@ -364,11 +364,47 @@ to store a value this engine will never legitimately produce.
 Both changes move behaviour from `500` to `400` only. Nothing that previously
 succeeded starts failing, and no legitimate caller depends on receiving a `500`
 for a malformed round.
-*How proved:* `check` — `scripts/checks/check-task-api.ts` case 2, five probes:
-`"abc"`, `-1`, `1.5`, `2147483648` refused, and **`2147483647` accepted**, so the
-bound is a gate that can be passed rather than an off-by-one nobody notices.
-Each refusal was observed as a `500` before its clause existed
-(`evidence/phase3-api.md` §5, §7).
+
+**THE TYPE CLAUSE — amended round 215, third ruling on the same expression, for
+round 214's phase-3 finding 1.** "A non-negative integer" is what this
+requirement always said; it is not what the expression enforced. `Number()`
+coerced before `Number.isInteger` judged, so every non-number that JSON can carry
+arrived as a perfectly good integer. Measured end-to-end through the mounted
+router at HEAD `99cb121`:
+
+| body | before | stored round |
+|---|---|---|
+| `{"round":[]}` | `201` | 0 |
+| `{"round":true}` | `201` | 1 |
+| `{"round":"0x10"}` | `201` | 16 |
+| `{"round":""}` | `201` | 0 |
+
+Case 2a passed only by luck: `Number("abc")` is `NaN`, which `Number.isInteger`
+rejects. The coercion predates this phase; **the consequence is new**, because
+this phase made `round` OPTIONAL. `""` is the shape a curl template renders from
+an unset shell variable, and it now makes `roundSupplied` true, so the caller
+gets **round 0** instead of `computeRound(deps)` with its dependencies at round
+300. Three things break at once: R24's phase-block gate is bypassed (it runs only
+on a computed round); R40's consolidation group key `(project_id, round,
+workstream)` names the wrong group; and while that row is `pending` at round 0,
+`legacyRoundReady`'s `earlier.round < task.round AND earlier.status <> 'done'`
+blocks **every legacy (NULL-`depends_on`) row of the project** — the stalled
+fleet this project exists to end, reintroduced by a typo. So the guard now leads
+with `typeof body.round !== "number"`, refused with the **existing** message
+(unlike the bound's own message, `[]` and `"1"` genuinely are not non-negative
+integers, so the sentence is true of them), **amended where it is enforced**.
+Safe in the same direction as both round-213 rulings: `taskCurl()`'s shipped
+example in `project-tick.ts` sends `"round": 1`, a JSON number, so no real caller
+regresses.
+
+*How proved:* `check` — `scripts/checks/check-task-api.ts` case 2, ten probes:
+`"abc"`, `-1`, `1.5`, `2147483648`, `[]`, `true`, `"0x10"`, `""` refused, and
+**`2147483647` accepted**, so the bound is a gate that can be passed rather than
+an off-by-one nobody notices; plus **2j**, which posts one body twice — with
+`round: ""` (refused) and with `round` omitted (computed to 601 against a
+dependency at 600), the assertion that states the consequence rather than the
+coercion. Each refusal was observed as a `500` or a coerced `201` before its
+clause existed (`evidence/phase3-api.md` §5, §7; `evidence/phase3-fix-1.md` §1).
 
 **R23. Round is computed, not supplied.** When `round` is omitted, the engine
 sets `round = 1 + max(round of the tasks named in depends_on)`, or `0` when
@@ -422,9 +458,28 @@ same thing as telling the caller.
 
 **R28.** `workstream` is validated against R4's regex; `write_set` entries are
 validated as repo-relative POSIX paths: non-empty, no leading `/`, no `..`
-segment, no NUL, ≤ 400 chars each, ≤ 200 entries, normalised (`./` stripped,
-duplicate slashes collapsed) before storage. A violation is a `400` naming the
-entry. *How proved:* unit — a table of good and bad paths.
+segment, no NUL, ≤ 400 chars each, ≤ 200 entries, normalised (**every `.`
+segment stripped — leading or interior**, duplicate slashes collapsed) before
+storage. A violation is a `400` naming the entry.
+
+**"`./` stripped" MEANT LEADING ONLY, and round 214's phase-3 finding 3 is why
+it now says otherwise.** The shipped `normaliseWritePath()` stripped `^(\./)+`
+and collapsed `/{2,}` and nothing else, so `src/./a.ts` returned itself.
+Measured: `conflicts(["src/a.ts"], ["src/./a.ts"]) === false`. R16/R17 judge
+contention by **exact string equality**, so two builders of the *same*
+workstream declaring those two spellings did not conflict, were both claimable
+in one round, and landed in one worktree writing one file — `03-quality.md` §6's
+"contention belt too loose → two agents clobbering in one worktree", which is
+the failure this belt exists to prevent. Phase 4's isolation rests on this
+function being canonical. The interior `/./` collapse joins the same fixpoint
+loop (one pass cannot consume `src/././a.ts`, whose matches overlap on the
+shared slash), and `..` is untouched by it — `/../` contains no `/./`. A bare
+`.` and a trailing `.` segment are still accepted and that is now stated at the
+function rather than reasoned about at each reading.
+
+*How proved:* unit — a table of good and bad paths, including
+`src/./a.ts → src/a.ts`, `src/././a.ts → src/a.ts`, and an assertion on
+`conflicts()` itself, since the string was never the point.
 
 **R29. `depends_on` is immutable after insert.** No route, no reconciler path
 and no script updates it. This is what makes the computed `round` stable, which
@@ -543,6 +598,21 @@ the two refusals cannot disagree about the limit, and phase 4's `04-phases.md`
 deliverable 8 is satisfied by *reading* the cap, not by re-implementing its
 rejection. A second, differently-worded `400` for the same condition is a
 finding.
+
+**THE PHASE-3 `400` IS TOCTOU, RECORDED ROUND 215 (round 214's phase-3 finding
+6, non-blocking).** `POST /:id/tasks` calls `listTasksForProject()` **once**,
+before validation, and counts distinct workstreams off that snapshot. Two
+concurrent POSTs each proposing a *different* new workstream both see five
+present and both succeed, yielding seven. It is recorded rather than fixed
+because the blast radius is disk rather than correctness, and because the
+amendment above already keeps a second refusal in phase 4's
+`provisionWorkstream()` reading the same exported constant — the worktree that
+would actually consume the disk cannot be created without passing it. **Phase
+4's red team owns the decision** whether the provisioning refusal is sufficient
+or whether the count needs a transaction. Closing it at the API would need
+either `SELECT … FOR UPDATE` over the project row or a unique index over
+distinct workstreams, and neither is phase 3's to introduce.
+
 *How proved:* unit (the `400`, phase 3 — `scripts/checks/check-task-api.ts`);
 `check-workstream-e2e.sh` (the provisioning half, phase 4).
 
@@ -757,9 +827,29 @@ appends to one file:
   fixture rather than printing a smaller table (R61), and that refusal is the
   mechanical form of this split. Phase 8 runs
   `measure-schedule.ts full --project 8ea0cc08-28d9-4301-9f28-c98e1c5d6838`
-  against the live database **before** the after-measurement of DoD-6 and
-  **appends** its output to the same file, so the before and the after are still
-  produced by one instrument as this requirement requires.
+  against the live database at **step 2b** of `04-phases.md` §8's deploy
+  sequence — **BEFORE step 3 applies migration 0040**, and therefore before the
+  after-measurement of DoD-6 — and **appends** its output to the same file, so
+  the before and the after are still produced by one instrument as this
+  requirement requires.
+
+**Amended round 215 — the read is pinned BEFORE the migration, and the
+instrument now refuses the shape.** Round 214's phase-7 review measured this: the
+0040 backfill's final `UPDATE … WHERE pt.depends_on IS NULL` writes the
+strictly-lower-round closure over every pre-existing row, destroying the sentinel
+D7's refusal keys on, and under that closure every S3 term is 0 by construction.
+Fed the literal motivating case the committed instrument printed
+`S3 max numbering stall (min) 0`, `legacy-rows=0`, **exit 0** — a certified
+"no numbering stall" for the project whose numbering stall is this project's
+justification. R62 said only "before the after-measurement", which permitted the
+read *after* the migration; that permission is now withdrawn. Two repairs, one
+commit, neither replacing the other: this ordering (here, in E-3, and in
+`03-quality.md` §3.2's phase-8 gate), and a durable detector — `isClosureShaped()`
+in `forge-control/src/lib/schedule-metrics.ts` refuses S3 when every row matches
+the closure, with `closure-shaped-rows` printed in the header in every mode.
+*How proved, additionally:* `schedule-metrics.test.ts`'s
+`describe("D7 — a project carrying migration 0040's backfilled closure")`,
+watched failing against the pre-round-215 module.
 
 The binding statement of the phase-8 obligation is erratum **E-3** in
 `04-phases.md` §12, which overrides any brief it contradicts;
@@ -804,8 +894,16 @@ forge-control` is allowed and is the right way to pick up the route changes.
 
 **R66.** `pm2 restart forge-executor` appears nowhere in this project's diff, in
 any script, brief or doc, except inside a sentence forbidding it.
-*How proved:* `check` — `grep -rn "pm2 restart forge-executor"` over the diff,
-with every hit inspected.
+*How proved:* `check` — `03-quality.md` §4's block runs
+`grep -rn "pm2 restart forge-executor" . --include='*.ts' --include='*.sh'`
+with **every hit inspected**, which is the rule this requirement states. Amended
+round 215 alongside that block (round 214's phase-3 finding 5): the `*.md` sweep
+and the `grep -v -i "never\|forbidden\|not to deploy"` filter are gone. The
+filter encoded a narrower rule than "except inside a sentence forbidding it" —
+a sentence may prohibit in other words — and left twelve permanent survivors,
+all of them prose prohibitions, so the gate could not be passed by any tree. §4
+carries the reasoning and the expected hit count; a requirement and its gate
+clause were retired together, in one commit.
 
 **R67.** After the restart lands, a verification task confirms against live: the
 columns exist, a graph-scheduled task promotes without its round draining, a

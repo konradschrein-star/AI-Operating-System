@@ -695,23 +695,32 @@ function printHeader(
 }
 
 /**
- * `inputCensus()` counts eight things and five of them are answers about runs.
+ * `inputCensus()` counts nine things and five of them are answers about runs.
  * In `rounds` mode the runs were never read, so those five print as `not-read`
  * rather than as a number — `runs=0` would be a claim about run data this mode
- * is defined not to make. The three printed in both modes (`tasks`,
- * `legacy-rows`, `graph-rows`) are the three derived from task rows alone.
+ * is defined not to make. The four printed in both modes (`tasks`,
+ * `legacy-rows`, `graph-rows`, `closure-shaped-rows`) are the four derived from
+ * task rows alone.
+ *
+ * `closure-shaped-rows` joined the header in round 215 because round 214's
+ * phase-7 finding 1 was exactly that no header field disclosed a dependency set
+ * written by migration 0040's backfill rather than by a planner. It prints in
+ * BOTH modes for the same reason `legacy-rows` does: it is a property of the
+ * task rows, and `rounds` mode is the mode a reader runs first.
  */
 function renderCensus(census: InputCensus, runsRead: boolean): string {
   if (!runsRead) {
     return (
       `tasks=${census.tasks} legacy-rows=${census.legacyRows} graph-rows=${census.graphRows} ` +
+      `closure-shaped-rows=${census.closureShapedRows} ` +
       "runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read"
     );
   }
   return (
     `tasks=${census.tasks} runs=${census.runs} top-level=${census.topLevelRuns} ` +
     `sub-agent=${census.subagentRuns} archived=${census.archivedRuns} ` +
-    `tasks-without-run=${census.tasksWithoutRun} legacy-rows=${census.legacyRows} graph-rows=${census.graphRows}`
+    `tasks-without-run=${census.tasksWithoutRun} legacy-rows=${census.legacyRows} ` +
+    `graph-rows=${census.graphRows} closure-shaped-rows=${census.closureShapedRows}`
   );
 }
 
@@ -748,7 +757,15 @@ function printFull(metrics: ScheduleMetrics): void {
   if (stall.computable) {
     out(`  S3 max numbering stall (min)          ${stall.maxMinutes} (over ${stall.perTask.length} tasks with a recorded dependency set)`);
   } else {
-    out(`  S3 max numbering stall (min)          NOT COMPUTABLE (${stall.legacyRows} legacy rows)`);
+    // BOTH counts, always. The two D7 arms are distinguished by which of them
+    // is non-zero — `legacy rows` is the pre-migration NULL sentinel, `closure-
+    // shaped rows` is what migration 0040 turns those same rows into — and a
+    // line printing only the first read `0 legacy rows` for the post-migration
+    // refusal, which is the sentence a reader would have called a bug.
+    out(
+      `  S3 max numbering stall (min)          NOT COMPUTABLE ` +
+        `(${stall.legacyRows} legacy rows, ${stall.closureRows} closure-shaped rows)`,
+    );
     out(`     reason: ${stall.reason}`);
   }
   out("");
