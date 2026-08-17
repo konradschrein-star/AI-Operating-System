@@ -62,16 +62,18 @@
  * number was never one in both directions. Round 1355 found the anti-join is
  * only exact WITHIN one `sampleHour()` call: `runSamplerTick` freezes a
  * bucket after writing it twice and `backfill` only ever fills EMPTY
- * buckets (see the KNOWN EXCEPTION note by LINKED below), so a run that
- * idles across >= 2 hourly buckets and then resumes gets folded into BOTH
- * the frozen old bucket and the new one holding its resumed turn. What can
- * honestly be said now: a run's rollup usually lands in exactly one bucket,
- * except when it idles >= 2 buckets and comes back, in which case it lands
- * in two; and an executor restart loses part of it either way. Cost is
- * unaffected either way (it comes from the CLI's own total_cost_usd) — which
- * is why cost, not tokens, is the number the panel should lead with. Runs
- * that carry no rollup at all are counted in `meta.runs_without_usage` on
- * the bucket rather than silently rounded away.
+ * buckets, so a run that idled across >= 2 hourly buckets and then resumed
+ * got folded into BOTH the frozen old bucket and the new one holding its
+ * resumed turn. Round 1356 closed that: every bucket records the run ids it
+ * folded (`meta.folded_runs`), and `repairDisplacedBuckets` re-samples any
+ * bucket whose recorded set contains a run that has since been billed later.
+ * What can honestly be said now: a run's rollup lands in exactly one bucket —
+ * the hour of its last billed turn as of the last repair pass — and an
+ * executor restart mid-run still loses part of it. Cost is unaffected either
+ * way (it comes from the CLI's own total_cost_usd) — which is why cost, not
+ * tokens, is the number the panel should lead with. Runs that carry no rollup
+ * at all are counted in `meta.runs_without_usage` on the bucket rather than
+ * silently rounded away.
  *
  * Schema: db/migrations/0040_usage_hourly.sql.
  */
@@ -376,44 +378,56 @@ export async function sampleHour(
    * The anti-join keeps a run only when NO claude-code spend row for it exists
    * at or after this bucket's end — i.e. its latest turn is in THIS hour.
    * WITHIN a single sampleHour() call that is exact: one run, one bucket, one
-   * fold. It stops being exact once the tick's write schedule enters the
-   * picture:
+   * fold. It is NOT self-sufficient across the tick's write schedule, and this
+   * is the half that round 1356 had to add:
    *
-   *   KNOWN EXCEPTION — the idle-then-resume double fold. `runSamplerTick`
-   *   below writes each bucket at most twice (once as the closing hour, once
-   *   more the following tick as the RESAMPLE_LOOKBACK hour) and never
-   *   revisits it after that — the bucket is frozen. `backfill` only fills
-   *   buckets that have NO row yet, so a frozen bucket is never recomputed by
-   *   either path. A run that goes idle for >= 2 hourly buckets and then
-   *   resumes was folded into its old, now-frozen bucket while it looked
-   *   idle, and gets folded AGAIN into the new bucket holding its resumed
-   *   turn — nothing goes back and un-counts the frozen one. Measured on live
-   *   data at round 1355: true total 5000 tokens, buckets summed to 6000; 16
+   *   THE IDLE-THEN-RESUME DOUBLE FOLD (round 1355's blocker, fixed here).
+   *   `runSamplerTick` writes each bucket at most twice — once as the closing
+   *   hour, once more on the following tick as the RESAMPLE_LOOKBACK hour —
+   *   and `backfill` only ever fills buckets with NO row yet. So two ticks
+   *   after an hour closes, its row is frozen: nothing recomputes it. A run
+   *   that goes quiet for >= 2 hourly buckets and then resumes was folded into
+   *   its old, now-frozen bucket while it looked settled, and is folded AGAIN
+   *   into the bucket holding its resumed turn. Measured on live-shaped data
+   *   at round 1355: true total 5000 tokens, buckets summed to 6000; 16
    *   phantom foldings across 4 runs over 30 days, worst case one long-lived
-   *   operator chat folded 7x, carrying 1.37M cache_read with it each time.
-   *   NOT fixed here — the fix is a larger job (resample every bucket a still-
-   *   open run could still reach back into, or stop freezing buckets a live
-   *   run could touch) and is deliberately out of scope for round 1355, which
-   *   only had to stop this comment and the UI from claiming more than the
-   *   SQL delivers.
+   *   operator chat folded 7x, carrying 1.37M cache_read each time.
+   *
+   *   The repair is `repairDisplacedBuckets` below, and `folded_runs` in this
+   *   statement's `meta` is what makes it possible AND makes it terminate.
+   *   Each bucket records the exact run ids it folded; the repair pass finds
+   *   any bucket whose recorded set contains a run that has since been billed
+   *   at or after that bucket's end, and re-samples it. Re-sampling drops the
+   *   run from `linked`, so it also drops out of `folded_runs` and the bucket
+   *   is never revisited for that run again. Without the recorded set the pass
+   *   would have to re-sample every earlier hour of every multi-hour run on
+   *   every tick, forever — cost with no convergence.
    *
    * It also fixes the stability half of round 1353's defect. RESAMPLE_LOOKBACK
    * re-closes the previous hour on every tick, and re-closing used to re-read a
    * still-growing run's counter and rewrite an already-settled number upward
    * (1000 → 5000 in the reviewer's repro). A run that has spoken since simply
-   * leaves the earlier bucket for the later one it belongs to — as long as
-   * that earlier bucket has not frozen yet; see the exception above when it
-   * has.
+   * leaves the earlier bucket for the later one it belongs to — and now leaves
+   * it however long the silence between the two turns was.
+   *
+   * `lower()` on the spend row's id is not cosmetic. `b.run_id::text` is
+   * lowercase-canonical (Postgres renders every uuid that way), so a spend row
+   * whose `meta.run_id` was stored uppercase would fail the comparison, the
+   * anti-join would not see the later turn, and the double fold would resume
+   * silently. Zero such rows exist today (694 live rows checked at round
+   * 1355); the guard costs one function call on a set that has no index to
+   * lose. The same normalisation is applied on both sides of the repair join.
    *
    * Cost is deliberately NOT deduped this way: `cost` aggregates `billed`
    * directly, because each spend row carries its OWN turn's usd and summing
    * them is exactly right. Both the round-1353 bug and the round-1355
-   * exception above are token-fold-only; cost is never double-counted.
+   * double fold are token-fold-only; cost is never double-counted.
    *
    * Proved against a real Postgres by scripts/checks/check-usage-fold.ts —
-   * which fails on the pre-1354 SQL with precisely round 1353's numbers. It
-   * does not yet cover the round-1355 idle-then-resume exception; fixing that
-   * is the larger job named above, not this round's.
+   * which fails on the pre-1354 SQL with precisely round 1353's numbers, and
+   * whose §2b drives the REAL `runSamplerTick` across a 3-hour silence and
+   * fails on the pre-1356 code with round 1355's numbers (5000 true, 6000
+   * summed).
    */
   const sql = `
     WITH billed AS (
@@ -426,8 +440,17 @@ export async function sampleHour(
          AND s.created_at >= $1::timestamptz
          AND s.created_at <  $2::timestamptz
     ),
+    -- run_count is COUNT(*) over spend rows, i.e. TURNS — one per executor
+    -- invocation, and a chat run is re-entered every turn. It is labelled
+    -- "turns" in the panel for that reason. distinct_runs is the number the
+    -- word "runs" would honestly describe; it is kept in meta rather than in
+    -- the series payload because it is NOT additive across buckets (a run
+    -- spanning three hours is distinct in each of them, and summing would
+    -- claim three runs), and /api/usage/series rolls hours up into days and
+    -- weeks by summing.
     cost AS (
       SELECT COUNT(*)::bigint AS run_count,
+             COUNT(DISTINCT run_id)::bigint AS distinct_runs,
              COALESCE(SUM(${num("meta", "usd")}), 0)::numeric AS shadow_usd,
              COUNT(*) FILTER (WHERE jsonb_typeof(meta->'usd') <> 'number')::bigint AS rows_without_usd,
              COUNT(*) FILTER (WHERE run_id IS NULL)::bigint AS rows_without_run_id
@@ -442,7 +465,7 @@ export async function sampleHour(
                  FROM spend_log s2
                 WHERE s2.provider = 'claude-code'
                   AND s2.created_at >= $2::timestamptz
-                  AND s2.meta->>'run_id' = b.run_id::text
+                  AND lower(s2.meta->>'run_id') = b.run_id::text
              )
     ),
     parent AS (
@@ -487,7 +510,10 @@ export async function sampleHour(
              'runs_without_usage',  parent.runs_without_usage,
              'rows_without_usd',    cost.rows_without_usd,
              'rows_without_run_id', cost.rows_without_run_id,
+             'distinct_runs',       cost.distinct_runs,
              'subagent_count',      subs.subagent_count,
+             'folded_runs',         (SELECT COALESCE(jsonb_agg(l.run_id ORDER BY l.run_id), '[]'::jsonb)
+                                       FROM linked l),
              'source',              'spend_log+runs.metadata',
              'attribution',         $3::text
            )
@@ -546,21 +572,22 @@ export async function sampleHour(
  * prints verbatim.
  *
  * It said "counted at run completion" until round 1354, then "counted once"
- * until round 1355 — both named the claim the SQL looked like it made, not
- * the claim it could actually keep. Round 1354's anti-join fixed the every-
- * hour-billed fold, but left the freeze-then-empty-only-backfill gap that
- * double-folds a run idling >= 2 hourly buckets before it resumes (see the
- * KNOWN EXCEPTION note by LINKED above). The wording now says only what is
- * true: tokens land whole in the hour of a run's last billed turn, usually
- * once — except a run that idles long enough to freeze its bucket and then
- * resumes, which lands in two. Buckets written before this round carry the
- * older strings in their own `meta`, which is the point of stamping it per
- * row — a reader can tell which rule produced which number.
+ * until round 1355, then named its own exception out loud in round 1355 —
+ * each wording tracking what the SQL could actually keep at the time. Round
+ * 1354's anti-join fixed the every-hour-billed fold; round 1356's repair pass
+ * (`repairDisplacedBuckets`) closed the freeze-then-empty-only-backfill gap
+ * that double-folded a run idling >= 2 hourly buckets before it resumed. The
+ * exception is gone, so the wording drops it — and says where the boundary
+ * now is instead: the fold is corrected by the repair pass, so a bucket read
+ * between a run's resumption and the next tick can still hold a fold that is
+ * about to move. Buckets written before this round carry the older strings in
+ * their own `meta`, which is the point of stamping it per row — a reader can
+ * tell which rule produced which number.
  */
 export const ATTRIBUTION =
-  "tokens land in the hour of the run's last billed turn, usually once — a " +
-  "run idling >=2h then resuming can be double-counted; cost is per turn, " +
-  "never double-counted";
+  "tokens land whole in the hour of the run's last billed turn, counted once " +
+  "— earlier buckets are re-sampled when a run resumes; cost is per turn, in " +
+  "the turn's own hour";
 
 function toIso(v: Date | string): string {
   return v instanceof Date ? v.toISOString() : new Date(v).toISOString();
@@ -582,14 +609,127 @@ const BACKFILL_DAYS = Number(process.env.USAGE_SAMPLER_BACKFILL_DAYS ?? "30");
 /** Each tick also re-samples the hour BEFORE the one it is closing. Free
  *  (the upsert is idempotent) and it repairs the one race the skew cannot:
  *  an executor whose rollup flush lands after we already closed the bucket.
- *  This is also HALF of the round-1355 KNOWN EXCEPTION named by LINKED in
- *  sampleHour(): a bucket gets written when it is `newest` and again when it
- *  is `newest - RESAMPLE_LOOKBACK`, then never again — it freezes. */
+ *  It is deliberately NOT the mechanism that keeps old buckets honest — two
+ *  writes and a bucket would freeze forever. `repairDisplacedBuckets` below
+ *  is what reaches further back, and it reaches only where it must. */
 const RESAMPLE_LOOKBACK = 1;
+
+/** How far back a repair pass audits. Same horizon as the boot backfill:
+ *  spend_log holds ~30d, and a bucket whose source rows have aged out cannot
+ *  be recomputed from anything. */
+const REPAIR_DAYS = Number(
+  process.env.USAGE_SAMPLER_REPAIR_DAYS ?? String(BACKFILL_DAYS),
+);
+
+/** What one repair pass did. Returned rather than logged-and-forgotten so the
+ *  tick can print it and a check can assert on it. */
+export interface RepairResult {
+  /** Buckets that folded a run which has since been billed at or after the
+   *  bucket's end — the double-fold, found and re-sampled. */
+  displaced: string[];
+  /** Buckets written before `meta.folded_runs` existed (round 1356). They
+   *  cannot be audited, so they are re-sampled once, which both corrects them
+   *  and gives them the audit field. Empty on every pass after the first. */
+  unaudited: string[];
+}
+
+/**
+ * Re-sample every bucket whose stored fold is now wrong. This is the fix for
+ * round 1355's blocker — the idle-then-resume double fold — and the reason
+ * `sampleHour` records `meta.folded_runs`.
+ *
+ * TWO reasons a bucket is re-sampled, and they are reported separately:
+ *
+ *   displaced — the bucket recorded run R in `folded_runs`, and R has a
+ *     claude-code spend row at or after that bucket's end. R's cumulative
+ *     total therefore belongs to a LATER bucket and is currently counted in
+ *     both. Re-sampling drops R from `linked`, which drops it from
+ *     `folded_runs`, which is why this terminates: the same bucket is never
+ *     selected for the same run twice.
+ *
+ *   unaudited — the bucket predates `folded_runs`. Nothing can be said about
+ *     what it folded, so it is recomputed once. After that pass every row in
+ *     the horizon carries the field and this list stays empty. This is also
+ *     what repairs the 16 (run, bucket) pairs round 1355's reviewer measured
+ *     on live-shaped data — they were written by the frozen-bucket code.
+ *
+ * ORDERING MATTERS: the caller must sample the closing hour BEFORE repairing.
+ * Repair first and a run's tokens are removed from the old bucket before the
+ * new bucket that should hold them exists — a momentary UNDER-count in a
+ * table other processes read. Sample-then-repair is never wrong in either
+ * direction: between the two statements the run is counted in both, and
+ * `runSamplerTick` closes that window inside one tick.
+ *
+ * Sequential, like `backfill`, and for the same reason: a pool of 2 shared
+ * with the HTTP server must not be flooded by a chart's bookkeeping.
+ */
+export async function repairDisplacedBuckets(
+  now: Date,
+  db: Querier = usagePool(),
+): Promise<RepairResult> {
+  const from = new Date(
+    previousClosedHour(now).getTime() - (REPAIR_DAYS * 24 - 1) * HOUR_MS,
+  );
+
+  /* One pass over spend_log, one over usage_hourly. `lower()` on BOTH sides:
+   * `folded_runs` holds uuid::text (lowercase-canonical by construction) and
+   * spend_log.meta->>'run_id' is free text — see the LINKED note above. */
+  const audit = await db.query<{ bucket_start: Date | string; reason: string }>(
+    `WITH last_billed AS (
+       SELECT lower(s.meta->>'run_id') AS run_id, MAX(s.created_at) AS last_at
+         FROM spend_log s
+        WHERE s.provider = 'claude-code'
+          AND jsonb_typeof(s.meta->'run_id') = 'string'
+          AND s.created_at >= $1::timestamptz
+        GROUP BY 1
+     ),
+     audited AS (
+       SELECT u.bucket_start, lower(f.run_id) AS run_id
+         FROM usage_hourly u
+         CROSS JOIN LATERAL jsonb_array_elements_text(u.meta->'folded_runs') AS f(run_id)
+        WHERE u.bucket_start >= $1::timestamptz
+          AND jsonb_typeof(u.meta->'folded_runs') = 'array'
+     )
+     SELECT DISTINCT a.bucket_start, 'displaced' AS reason
+       FROM audited a
+       JOIN last_billed b ON b.run_id = a.run_id
+      WHERE b.last_at >= a.bucket_start + interval '1 hour'
+     UNION ALL
+     SELECT u.bucket_start, 'unaudited' AS reason
+       FROM usage_hourly u
+      WHERE u.bucket_start >= $1::timestamptz
+        AND COALESCE(jsonb_typeof(u.meta->'folded_runs'), 'missing') <> 'array'
+      ORDER BY 1`,
+    [from.toISOString()],
+  );
+
+  const out: RepairResult = { displaced: [], unaudited: [] };
+  for (const row of audit.rows) {
+    const bucket = row.bucket_start instanceof Date
+      ? row.bucket_start
+      : new Date(row.bucket_start);
+    if (row.reason === "displaced") out.displaced.push(toIso(bucket));
+    else if (row.reason === "unaudited") out.unaudited.push(toIso(bucket));
+    else {
+      // The two literals above are the only values the statement can produce.
+      throw new Error(
+        `repairDisplacedBuckets: unknown audit reason ${JSON.stringify(row.reason)} ` +
+          `for bucket ${toIso(bucket)} — the audit query and this switch have diverged`,
+      );
+    }
+    await sampleHour(bucket, db);
+  }
+  return out;
+}
 
 let tickHandle: NodeJS.Timeout | null = null;
 let started = false;
 
+/**
+ * One tick: close the newest complete hour (and re-close the one before it for
+ * the flush race), THEN repair every older bucket whose fold has moved on.
+ * The order is load-bearing — see `repairDisplacedBuckets`.
+ */
 export async function runSamplerTick(
   now: Date,
   db: Querier = usagePool(),
@@ -600,6 +740,17 @@ export async function runSamplerTick(
     const bucket = new Date(newest.getTime() - i * HOUR_MS);
     out.push(await sampleHour(bucket, db));
   }
+  const repaired = await repairDisplacedBuckets(now, db);
+  const n = repaired.displaced.length + repaired.unaudited.length;
+  if (n > 0) {
+    console.log(
+      `[usage-sampler] repaired ${n} bucket(s) · ` +
+        `${repaired.displaced.length} displaced by a resumed run, ` +
+        `${repaired.unaudited.length} written before folded_runs existed`,
+    );
+  }
+  // Deliberately NOT appended to the return value: callers treat this array as
+  // "the hours this tick closed", and the newest of them is what gets logged.
   return out;
 }
 
@@ -608,10 +759,10 @@ export async function runSamplerTick(
  * boot. Sequential on purpose — 720 small aggregates on a pool of 2 must not
  * starve the HTTP server that shares the process.
  *
- * "No row yet" is the OTHER half of the round-1355 KNOWN EXCEPTION named by
- * LINKED in sampleHour(): this never revisits a bucket that already has a
- * row, so once RESAMPLE_LOOKBACK above has frozen a bucket, nothing —
- * neither the tick nor this boot pass — ever recomputes it.
+ * "No row yet" is strict, and stays strict: this pass must never rewrite a
+ * bucket it did not create, or booting the process would silently restate
+ * history. Recomputing an EXISTING bucket is `repairDisplacedBuckets`'s job,
+ * which does it only where it can name the reason.
  */
 export async function backfill(
   now: Date,
@@ -656,9 +807,20 @@ export function startUsageSamplerTick(): void {
         `[usage-sampler] boot backfill complete · ${filled} bucket(s) filled ` +
           `(${BACKFILL_DAYS}d horizon)`,
       );
+      // On the first boot after round 1356 this recomputes every pre-existing
+      // bucket once (they carry no `folded_runs`), which is what un-doubles
+      // the folds the frozen-bucket code left behind. Every later boot finds
+      // nothing and costs one audit query.
+      const repaired = await repairDisplacedBuckets(new Date());
+      console.log(
+        `[usage-sampler] boot repair complete · ` +
+          `${repaired.displaced.length} displaced, ` +
+          `${repaired.unaudited.length} unaudited bucket(s) re-sampled ` +
+          `(${REPAIR_DAYS}d horizon)`,
+      );
     } catch (e) {
       console.error(
-        "[usage-sampler] boot backfill failed:",
+        "[usage-sampler] boot backfill/repair failed:",
         e instanceof Error ? e.message : e,
       );
     }
@@ -673,8 +835,12 @@ export function startUsageSamplerTick(): void {
           const closed = rows[rows.length - 1];
           if (closed) {
             console.log(
+              // "turn(s)", not "run(s)": run_count is COUNT(*) over spend
+              // rows and spend_log gets one row per TURN. Round 1355's
+              // reviewer caught this line still using the old word after the
+              // panel had been corrected.
               `[usage-sampler] closed ${closed.bucket_start} · ` +
-                `${closed.run_count} run(s), $${closed.shadow_usd}`,
+                `${closed.run_count} turn(s), $${closed.shadow_usd}`,
             );
           }
         } catch (e) {

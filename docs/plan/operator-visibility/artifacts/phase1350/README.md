@@ -100,6 +100,26 @@ Boot cost is not a concern: the sampler's backfill measured **9.06 ms** per
 bucket against live data (574 runs / 673 spend rows), so a full 720-bucket
 30-day backfill is ≈6.5 s, once, on the first boot after 0040 lands.
 
+**Round 1356 — one extra boot pass, no extra schema.** The double-fold repair
+(`repairDisplacedBuckets`) is pure `meta` bookkeeping: no column was added, so
+0040 is unchanged as SQL and nothing about the order above moves. On boot the
+sampler now logs two lines instead of one:
+
+```
+[usage-sampler] boot backfill complete · N bucket(s) filled (30d horizon)
+[usage-sampler] boot repair complete · 0 displaced, 0 unaudited bucket(s) re-sampled (30d horizon)
+```
+
+On a database where 0040 has never been applied — which is the live state, both
+`to_regclass` columns below still answer NULL — the backfill writes every
+bucket with the new `meta.folded_runs` audit field, so the repair line reports
+**0 and 0** on the very first boot. It only reports non-zero on a database that
+already carries buckets written by the pre-1356 sampler; there, expect one
+`unaudited` re-sample per existing bucket, at the same ≈9 ms each, once.
+Thereafter each hourly tick runs one extra read (`jsonb_array_elements_text`
+over the audit field) and re-samples only buckets a resumed run actually left
+behind.
+
 Verify before restarting:
 
 ```bash

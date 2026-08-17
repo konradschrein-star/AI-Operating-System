@@ -37,6 +37,7 @@ import {
   missingBuckets,
   msUntilNextTick,
   previousClosedHour,
+  repairDisplacedBuckets,
   runSamplerTick,
   sampleHour,
   setRate,
@@ -324,14 +325,16 @@ describe("sampleHour", () => {
     // refactor. Round 1354 changed it once — "counted at run completion"
     // described a fold that counted a run in every hour it was billed in.
     // Round 1355 changed it again — "counted once" was still an overclaim:
-    // a run idling >=2h across buckets before resuming is double-counted
-    // (see the KNOWN EXCEPTION note by LINKED in usage-sampler.ts), and the
-    // string now says so instead of promising exactness it cannot keep.
+    // a run idling >=2h across buckets before resuming was double-counted,
+    // and the string said so instead of promising exactness it could not
+    // keep. Round 1356 made the promise keepable (repairDisplacedBuckets
+    // re-samples the bucket the run left behind) and the string states the
+    // mechanism rather than an exception.
     assert.equal(
       ATTRIBUTION,
-      "tokens land in the hour of the run's last billed turn, usually once — " +
-        "a run idling >=2h then resuming can be double-counted; cost is per " +
-        "turn, never double-counted",
+      "tokens land whole in the hour of the run's last billed turn, counted " +
+        "once — earlier buckets are re-sampled when a run resumes; cost is " +
+        "per turn, in the turn's own hour",
     );
   });
 
@@ -354,9 +357,16 @@ describe("sampleHour", () => {
     );
     assert.match(
       sql,
-      /NOT EXISTS[\s\S]*s2\.created_at >= \$2::timestamptz[\s\S]*s2\.meta->>'run_id' = b\.run_id::text/,
+      /NOT EXISTS[\s\S]*s2\.created_at >= \$2::timestamptz[\s\S]*lower\(s2\.meta->>'run_id'\) = b\.run_id::text/,
       "the 'no later spend row for this run' anti-join is gone — a run spanning " +
         "N hours will be counted N times again",
+    );
+    // The bucket must record WHICH runs it folded, or repairDisplacedBuckets
+    // has nothing to audit and old buckets freeze with a stale fold again.
+    assert.match(
+      sql,
+      /'folded_runs',\s*\(SELECT COALESCE\(jsonb_agg\(l\.run_id/,
+      "meta.folded_runs is gone — the repair pass cannot find a displaced fold",
     );
     // Cost must NOT be deduped the same way: each spend row carries its own
     // turn's usd. If `cost` ever starts reading from `linked`, hours lose the
@@ -404,6 +414,88 @@ describe("runSamplerTick", () => {
     // Oldest first, so the newest closed hour is the last thing logged.
     assert.equal(calls[0]?.params?.[0], "2026-08-17T12:00:00.000Z");
     assert.equal(calls[1]?.params?.[0], "2026-08-17T13:00:00.000Z");
+  });
+
+  test("repairs AFTER sampling, never before", async () => {
+    // Order is load-bearing. Repairing first empties a run's old bucket before
+    // the new bucket that should hold its tokens exists — a window in which
+    // the table under-counts. The queue answers the two samples and then the
+    // audit; an exhausted queue yields no rows, so nothing is re-sampled.
+    const { db, calls } = fakeDb([[pgRow()], [pgRow()]]);
+    await runSamplerTick(new Date("2026-08-17T14:00:30.000Z"), db);
+    assert.equal(calls.length, 3, "two samples and one audit");
+    assert.match(calls[0]?.sql ?? "", /INSERT INTO usage_hourly/);
+    assert.match(calls[1]?.sql ?? "", /INSERT INTO usage_hourly/);
+    assert.match(calls[2]?.sql ?? "", /jsonb_array_elements_text/);
+    assert.doesNotMatch(
+      calls[2]?.sql ?? "",
+      /INSERT INTO usage_hourly/,
+      "the audit only reads; the re-sample is a separate statement",
+    );
+  });
+});
+
+/* ------------------------------------------------------------------------- *
+ * repairDisplacedBuckets — the un-freezing pass (round 1356)
+ * ------------------------------------------------------------------------- */
+
+describe("repairDisplacedBuckets", () => {
+  test("audits one horizon and re-samples exactly the buckets it named", async () => {
+    const { db, calls } = fakeDb([
+      [
+        { bucket_start: new Date("2026-08-17T10:00:00.000Z"), reason: "displaced" },
+        { bucket_start: "2026-08-17T11:00:00.000Z", reason: "unaudited" },
+      ],
+      [pgRow()],
+      [pgRow()],
+    ]);
+    const got = await repairDisplacedBuckets(new Date("2026-08-17T14:00:30.000Z"), db);
+
+    assert.deepEqual(got.displaced, ["2026-08-17T10:00:00.000Z"]);
+    assert.deepEqual(got.unaudited, ["2026-08-17T11:00:00.000Z"]);
+    assert.equal(calls.length, 3, "one audit plus one upsert per named bucket");
+    assert.equal(calls[1]?.params?.[0], "2026-08-17T10:00:00.000Z");
+    assert.equal(calls[2]?.params?.[0], "2026-08-17T11:00:00.000Z");
+    // A Date from pg and a string from psql must produce the same answer.
+    assert.match(calls[1]?.sql ?? "", /INSERT INTO usage_hourly/);
+  });
+
+  test("a clean table costs exactly one query and re-samples nothing", async () => {
+    const { db, calls } = fakeDb([[]]);
+    const got = await repairDisplacedBuckets(new Date("2026-08-17T14:00:30.000Z"), db);
+    assert.deepEqual(got, { displaced: [], unaudited: [] });
+    assert.equal(calls.length, 1);
+  });
+
+  test("the audit horizon is the repair horizon, counted back from the closed hour", async () => {
+    const { db, calls } = fakeDb([[]]);
+    await repairDisplacedBuckets(new Date("2026-08-17T14:00:30.000Z"), db);
+    // 30d default: the newest closed hour is 13:00, and the horizon reaches
+    // (30 × 24 − 1) hours back from it — the same arithmetic as backfill, so
+    // the two passes cover the same window and neither leaves an orphan.
+    assert.equal(calls[0]?.params?.[0], "2026-07-18T14:00:00.000Z");
+  });
+
+  test("both sides of the run-id join are lowercased", async () => {
+    // folded_runs holds uuid::text (always lowercase); spend_log.meta.run_id
+    // is free text. Comparing them raw would silently stop matching if any
+    // writer ever stored an uppercase id, and the double fold would return.
+    const { db, calls } = fakeDb([[]]);
+    await repairDisplacedBuckets(new Date("2026-08-17T14:00:30.000Z"), db);
+    const sql = calls[0]?.sql ?? "";
+    assert.match(sql, /lower\(s\.meta->>'run_id'\)/);
+    assert.match(sql, /lower\(f\.run_id\)/);
+  });
+
+  test("an audit reason the switch does not know throws instead of being skipped", async () => {
+    const { db } = fakeDb([
+      [{ bucket_start: "2026-08-17T10:00:00.000Z", reason: "something_new" }],
+      [pgRow()],
+    ]);
+    await assert.rejects(
+      () => repairDisplacedBuckets(new Date("2026-08-17T14:00:30.000Z"), db),
+      /unknown audit reason "something_new".*have diverged/s,
+    );
   });
 });
 

@@ -32,6 +32,20 @@
  *   §1  a two-turn run spanning two hours is counted ONCE, in the later hour
  *       (this is the regression: it used to be counted in both)
  *   §2  a closed bucket does not move when the run keeps talking afterwards
+ *   §2b THE ROUND-1355 BLOCKER: the same thing driven by the REAL
+ *       `runSamplerTick` on production's cadence across a 3-hour silence.
+ *       §2 re-samples by hand, which production only does inside a 2-tick
+ *       window; past that the bucket freezes and the run is folded twice
+ *       (10:00 = 1000 and 14:00 = 5000 for a true total of 5000). Nothing in
+ *       §2b calls sampleHour, and it asserts the SUM across every bucket —
+ *       the only number a double fold cannot hide from. It also asserts the
+ *       repair TERMINATES: a second pass finds nothing.
+ *   §2c a bucket written before `meta.folded_runs` existed cannot be audited,
+ *       so it is re-sampled once on the `unaudited` reason — this is what
+ *       repairs the 16 (run, bucket) pairs measured on live data
+ *   §2d an UPPERCASE run id in spend_log still matches the lowercase-canonical
+ *       ids in `folded_runs` (round 1355's non-blocking note; latent, so it
+ *       gets a check rather than a comment)
  *   §3  a single-hour run is unaffected — the ordinary case still works
  *   §4  COST is per-row and must NOT be deduped: both turns' USD count, in
  *       their own hours (the bug never touched cost, and the fix must not)
@@ -70,6 +84,8 @@ import { execFileSync } from "node:child_process";
 
 import {
   HOUR_MS,
+  repairDisplacedBuckets,
+  runSamplerTick,
   sampleHour,
   type Querier,
 } from "../../forge-control/src/lib/usage-sampler.ts";
@@ -151,6 +167,14 @@ const SCHEMA = `
 const H10 = new Date("2026-08-17T10:00:00.000Z");
 const H11 = new Date(H10.getTime() + HOUR_MS);
 const H12 = new Date(H10.getTime() + 2 * HOUR_MS);
+const H13 = new Date(H10.getTime() + 3 * HOUR_MS);
+const H14 = new Date(H10.getTime() + 4 * HOUR_MS);
+const H15 = new Date(H10.getTime() + 5 * HOUR_MS);
+
+/** The production tick fires TICK_SKEW_MS after the hour boundary and closes
+ *  the hour that just ended. `tickAt(H12)` is therefore "the 12:00:30 tick",
+ *  which closes 11:00 and re-closes 10:00. */
+const tickAt = (h: Date): Date => new Date(h.getTime() + 30_000);
 
 const RUN_A = "aaaaaaaa-0000-4000-8000-000000000001";
 const RUN_B = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -281,6 +305,27 @@ function turn(db: Db, runId: string, at: Date, usd: number): void {
 
 const at = (h: Date, min: number): Date => new Date(h.getTime() + min * 60_000);
 
+/** Every bucket in the table, oldest first. §2b's assertions are about the
+ *  SUM across buckets, which is the only number that can catch a double fold
+ *  — each individual bucket looked perfectly reasonable while the total was
+ *  20% too high. */
+function buckets(db: Db): Array<{ hour: string; tokens: number }> {
+  return db
+    .exec(
+      `SELECT to_char(bucket_start AT TIME ZONE 'UTC', 'HH24:MI') || '|' || tokens_in
+         FROM usage_hourly ORDER BY bucket_start`,
+    )
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .map((l) => {
+      const [hour, tokens] = l.trim().split("|");
+      return { hour: hour ?? "", tokens: Number(tokens ?? "0") };
+    });
+}
+
+const sumTokens = (rows: Array<{ tokens: number }>): number =>
+  rows.reduce((a, b) => a + b.tokens, 0);
+
 const usage = (input: number): Record<string, number> => ({
   input_tokens: input,
   output_tokens: 0,
@@ -348,6 +393,111 @@ async function main(): Promise<void> {
     check("re-closing hour 11 after the run grew leaves it alone", again.tokens_in, 0);
     const h12 = await sampleHour(H12, q);
     check("…because the total moved to hour 12, where the latest turn is", h12.tokens_in, 5000);
+  }
+
+  console.log(`\n── §2b the same, but driven by the REAL tick over a 3h gap ─`);
+  {
+    /* Round 1355's blocker, reproduced the way production actually behaves.
+     *
+     * §2 above re-samples hour 11 BY HAND after the later turn arrives. That
+     * is a repair production only performs inside a 2-tick window: each tick
+     * writes the closing hour and re-closes the one before it, `backfill`
+     * only fills EMPTY buckets, and after that the bucket is frozen. So a run
+     * that goes quiet across >= 2 buckets and then resumes used to be folded
+     * into its old frozen bucket AND its new one — the reviewer measured
+     * 10:00 = 1000, 14:00 = 5000, true total 5000, buckets summing to 6000.
+     *
+     * Nothing below calls sampleHour. Every write goes through
+     * `runSamplerTick` on the schedule the timer arms — one tick per hour,
+     * 30s past the boundary — so this fails on any code where the repair pass
+     * is missing, disabled, or reaches back less far than the silence.
+     */
+    reset(db);
+    putRun(db, RUN_A, usage(1000));
+    turn(db, RUN_A, at(H10, 5), 0.10); // one turn, hour 10 …
+
+    // 11:00:30 … 14:00:30, the run silent throughout. The 11:00 tick closes
+    // hour 10 and the 12:00 tick re-closes it as its RESAMPLE_LOOKBACK hour;
+    // from the 13:00 tick on, hour 10 is frozen under the pre-1356 code.
+    for (const h of [H11, H12, H13, H14]) {
+      await runSamplerTick(tickAt(h), q);
+    }
+
+    const frozen = buckets(db).find((b) => b.hour === "10:00");
+    check("hour 10 holds the run while it is the run's latest turn", frozen?.tokens, 1000);
+
+    // … and three hours later it resumes. Cumulative counter is now 5000.
+    putRun(db, RUN_A, usage(5000));
+    turn(db, RUN_A, at(H14, 5), 0.30);
+    await runSamplerTick(tickAt(H15), q); // the tick that sees the resumed turn
+
+    const after = buckets(db);
+    const h10 = after.find((b) => b.hour === "10:00");
+    const h14 = after.find((b) => b.hour === "14:00");
+    check("hour 14 takes the resumed run's whole total", h14?.tokens, 5000);
+    check("hour 10 gives it up — this was 1000 before round 1356", h10?.tokens, 0);
+    check(
+      "…so every bucket, summed, is the run's real total and not 6000",
+      sumTokens(after),
+      5000,
+    );
+
+    // Convergence: the repair must not re-select the same bucket forever.
+    const second = await repairDisplacedBuckets(tickAt(H15), q);
+    check("a second repair pass finds nothing displaced", second.displaced.length, 0);
+    check("…and nothing unaudited either", second.unaudited.length, 0);
+    check("…and the numbers did not move", sumTokens(buckets(db)), 5000);
+  }
+
+  console.log(`\n── §2c a bucket written before folded_runs existed is repaired ─`);
+  {
+    /* The 16 (run, bucket) pairs round 1355 measured were written by the
+     * frozen-bucket code, so they carry no `meta.folded_runs` and cannot be
+     * audited. They are re-sampled once, on the reason `unaudited`. Simulated
+     * here by stripping the key from a bucket that legitimately holds a fold
+     * the run has since left behind.
+     */
+    reset(db);
+    putRun(db, RUN_A, usage(1000));
+    turn(db, RUN_A, at(H10, 5), 0.10);
+    await sampleHour(H10, q); // hour 10 folds the run, 1000 tokens
+    putRun(db, RUN_A, usage(5000));
+    turn(db, RUN_A, at(H14, 5), 0.30);
+    await sampleHour(H14, q); // hour 14 folds it too — 6000 across the table
+
+    db.exec("UPDATE usage_hourly SET meta = meta - 'folded_runs'");
+    check("the pre-1356 shape double-counts, as measured", sumTokens(buckets(db)), 6000);
+
+    const repaired = await repairDisplacedBuckets(tickAt(H15), q);
+    check("both legacy buckets are re-sampled on the unaudited reason", repaired.unaudited.length, 2);
+    check("nothing is reported as displaced — they carried no audit", repaired.displaced.length, 0);
+    check("…and the total is the run's real total", sumTokens(buckets(db)), 5000);
+
+    const again = await repairDisplacedBuckets(tickAt(H15), q);
+    check("a second pass finds them audited and leaves them alone", again.unaudited.length, 0);
+  }
+
+  console.log(`\n── §2d an UPPERCASE run id in spend_log still matches ──────`);
+  {
+    /* Round 1355's non-blocking note. `folded_runs` and the anti-join's
+     * `b.run_id::text` are lowercase-canonical because Postgres renders every
+     * uuid that way; `spend_log.meta->>'run_id'` is free text. Without
+     * `lower()` on the spend side, an uppercase id would make the later turn
+     * invisible to both the anti-join and the repair audit, and the double
+     * fold would come back silently. Zero such rows exist live — which is
+     * exactly why it needs a check rather than a comment.
+     */
+    reset(db);
+    putRun(db, RUN_A, usage(1000));
+    turn(db, RUN_A, at(H10, 5), 0.10);
+    await sampleHour(H10, q);
+    putRun(db, RUN_A, usage(5000));
+    turn(db, RUN_A.toUpperCase(), at(H14, 5), 0.30); // same run, shouted
+    await sampleHour(H14, q);
+
+    const repaired = await repairDisplacedBuckets(tickAt(H15), q);
+    check("hour 10 is found displaced by the uppercase-id turn", repaired.displaced.length, 1);
+    check("…and the table sums to the run's real total", sumTokens(buckets(db)), 5000);
   }
 
   console.log(`\n── §3 the ordinary case: a run that lives in one hour ──────`);
@@ -431,7 +581,7 @@ async function main(): Promise<void> {
         WHERE NOT EXISTS (SELECT 1 FROM spend_log s2
                            WHERE s2.provider = 'claude-code'
                              AND s2.created_at >= ${lit(H11.toISOString())}::timestamptz
-                             AND s2.meta->>'run_id' = b.run_id::text)`,
+                             AND lower(s2.meta->>'run_id') = b.run_id::text)`,
     );
     // Informational, not an assertion: on a table of a dozen rows Postgres
     // picks a seq scan whatever the shape, so asserting "Anti Join" here would

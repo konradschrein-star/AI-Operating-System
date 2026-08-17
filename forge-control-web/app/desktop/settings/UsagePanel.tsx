@@ -39,11 +39,14 @@
  *    counts spend_log rows (one per billed turn), so a four-hour chat run
  *    contributes four to it, not one. A number whose label disagrees with its
  *    meaning is the defect class round 1355 was for.
- *  • The KNOWN OVERCOUNT paragraph in `ShadowCostNote` is not decoration: a
- *    run idling >=2h across buckets before resuming is folded into two
- *    buckets' token totals, not one (usage-sampler.ts's KNOWN EXCEPTION note
- *    by LINKED names the exact mechanism). Konrad has caught this panel
- *    overclaiming before; the caveat stays next to the numbers, not in a doc.
+ *  • The caveat paragraph in `ShadowCostNote` is not decoration. Round 1355
+ *    it named a live overcount (a run idling >=2h then resuming was folded
+ *    into two buckets); round 1356 fixed that in the sampler
+ *    (`repairDisplacedBuckets`), so the paragraph now names what is still
+ *    true instead: a token bar is provisional, because a resumed run takes
+ *    its rollup forward and the older hour gives it up. Konrad has caught
+ *    this panel overclaiming before; the caveat stays next to the numbers,
+ *    not in a doc.
  *
  * ── Constraints honoured ─────────────────────────────────────────────────
  *  • Charts are hand-rolled inline SVG. This repo has no chart library and
@@ -299,12 +302,14 @@ function ShadowCostNote({
         paid. The quota bars are the number that actually constrains you.
       </div>
       <div style={{ marginTop: 8, color: tokens.warn }}>
-        Known overcount: a run that idles 2+ hours and then resumes can be
-        folded into two buckets' token totals instead of one — the sampler
-        freezes a bucket after two writes and never revisits it. Observed on
-        live data: 16 double-foldings across 4 runs in 30 days, worst case one
-        run counted 7×. Cost figures are unaffected — they are summed per
-        turn, never folded.
+        Token bars are not final until a run stops talking. A run&apos;s whole
+        rollup sits in the hour of its last billed turn, so when a long-idle
+        run resumes, its tokens move forward and the older hour gives them up
+        at the next hourly tick — a bar you read today can shrink tomorrow.
+        Until round 1356 the old hour kept them too, and the same run was
+        counted twice; that is now repaired on every tick. Tokens still
+        under-count when the executor restarts mid-run. Cost figures are
+        unaffected either way — summed per turn, never folded.
       </div>
       <div
         className="mono"

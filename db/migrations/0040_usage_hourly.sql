@@ -48,10 +48,27 @@ CREATE TABLE IF NOT EXISTS usage_hourly (
   cache_read   bigint         NOT NULL DEFAULT 0,
   cache_write  bigint         NOT NULL DEFAULT 0,
   shadow_usd   numeric(12, 4) NOT NULL DEFAULT 0,  -- USD, never EUR — see header
-  run_count    int            NOT NULL DEFAULT 0,  -- finished runs billed into this hour
+  run_count    int            NOT NULL DEFAULT 0,  -- BILLED TURNS, not runs — see below
   sampled_at   timestamptz    NOT NULL DEFAULT now(),
   meta         jsonb          NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- run_count: this column said "finished runs billed into this hour" until
+-- round 1356, and the panel printed it as "runs". It is COUNT(*) over the
+-- hour's claude-code spend rows, and spend_log gets one row per TURN — so a
+-- four-turn chat contributes four. Live, over 24h: 217 by this count where
+-- there were 101 distinct runs. Renaming the column would break every reader
+-- for a word; the honest label ships instead, in the panel and in the
+-- sampler's log line. The distinct-run count is written to meta.distinct_runs
+-- per bucket, and deliberately NOT summed into the day/week rollups: a run
+-- spanning three hours is distinct in each, so summing would claim three.
+--
+-- meta.folded_runs (round 1356): the run ids whose CUMULATIVE token totals
+-- were folded into this bucket. It is what lets the sampler find a bucket
+-- whose fold has since moved to a later hour and re-sample it, instead of
+-- freezing the double count in place — see repairDisplacedBuckets in
+-- forge-control/src/lib/usage-sampler.ts. Rows written before that round have
+-- no such key; the sampler re-samples them once on boot to give them one.
 
 -- Every read is "the last N buckets, newest first". DESC matches the scan.
 CREATE INDEX IF NOT EXISTS usage_hourly_bucket_start_desc_idx
