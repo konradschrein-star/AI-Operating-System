@@ -21,7 +21,6 @@ import {
 } from "../data";
 import {
   fetchToday,
-  fetchQuota,
   fetchInbox,
   fetchInboxPreview,
   fetchLive,
@@ -46,7 +45,7 @@ import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
-import { ContextGauge } from "./chat/ContextGauge";
+import { QuotaRow } from "./quota/QuotaRow";
 import {
   ResizeHandle,
   useResizablePanel,
@@ -1060,7 +1059,7 @@ function LeftRail({
             the app had been. Konrad: settings must open without losing the
             shell. It is now the same button every other NAV entry is, and
             /settings survives only as a bookmarkable wrapper around the same
-            AccountsPanel the surface mounts. */}
+            ConnectionsPanel the surface mounts. */}
         <div onClick={() => onNav("settings")} style={railStyle("settings")}>
           <span className="ms" style={{ fontSize: 15, marginRight: 8 }}>
             settings
@@ -1160,7 +1159,10 @@ function StatusBar({
         hermes <span style={{ color: tokens.ok }}>●</span>
       </span>
       <span style={{ flex: 1 }} />
-      <QuotaBars />
+      {/* THE indicator row — 5h, 7d, the open chat's context, and the Gemini
+          tally. Exactly one of these exists in the app (round 1876); the copy
+          that used to sit above the composer is gone. */}
+      <QuotaRow />
       <Sep />
       <span
         onClick={() => onNav("autonomy")}
@@ -1211,124 +1213,6 @@ function StatusBar({
     </div>
   );
 }
-/** Subscription quota gauges — the 5-hour and 7-day windows, measured (not
- *  guessed) from Anthropic's OAuth usage endpoint.
- *
- *  Deliberately NOT live: it polls slowly and shows how old the reading is,
- *  with a manual refresh — Konrad's own framing ("it doesn't even have to be
- *  live, just add a refresh button and say when it was last refreshed"). A
- *  gauge that silently goes stale is worse than one that admits its age. */
-function QuotaBars() {
-  const q = useQuery({
-    queryKey: ["usage", "quota"],
-    queryFn: () => fetchQuota(false),
-    refetchInterval: 120_000,
-    staleTime: 60_000,
-  });
-  const [refreshing, setRefreshing] = useState(false);
-  const qc = useQueryClient();
-
-  const refresh = async () => {
-    setRefreshing(true);
-    try {
-      const fresh = await fetchQuota(true);
-      qc.setQueryData(["usage", "quota"], fresh);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  // Re-render each minute so "3m ago" stays truthful between polls.
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 60_000);
-    return () => clearInterval(t);
-  }, []);
-
-  const d = q.data;
-  // The ctx gauge (round 1350) has its OWN data path — the run behind the
-  // chat on screen, not Anthropic's usage endpoint — so a quota reading that
-  // hasn't landed (or 429'd) must not take it down with it.
-  if (!d) return <ContextGauge />;
-
-  const age = (iso: string) => {
-    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-    if (s < 60) return "just now";
-    const m = Math.floor(s / 60);
-    return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
-  };
-  const resetIn = (iso: string | null) => {
-    if (!iso) return "";
-    const ms = new Date(iso).getTime() - Date.now();
-    if (ms <= 0) return "resetting";
-    const m = Math.round(ms / 60000);
-    return m < 60 ? `resets ${m}m` : `resets ${Math.round(m / 60)}h`;
-  };
-
-  const Bar = ({ label, w }: { label: string; w: { utilization: number | null; resets_at: string | null } }) => {
-    const pct = w.utilization ?? 0;
-    // Colour by pressure, not by brand — the point is to notice at a glance.
-    const color = pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : tokens.ok;
-    return (
-      <span
-        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-        title={`${label}: ${pct}% used${w.resets_at ? ` · ${resetIn(w.resets_at)}` : ""}`}
-      >
-        <span style={{ color: tokens.textFaint }}>{label}</span>
-        <span
-          style={{
-            width: 46,
-            height: 5,
-            borderRadius: 3,
-            background: tokens.borderEmphasis,
-            overflow: "hidden",
-            display: "inline-block",
-          }}
-        >
-          <span
-            style={{
-              display: "block",
-              width: `${Math.min(100, Math.max(0, pct))}%`,
-              height: "100%",
-              background: color,
-            }}
-          />
-        </span>
-        <span style={{ color }}>{w.utilization == null ? "—" : `${Math.round(pct)}%`}</span>
-      </span>
-    );
-  };
-
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-      <Bar label="5h" w={d.five_hour} />
-      <Bar label="7d" w={d.seven_day} />
-      {/* Third in the row, same visual language, its own source of truth:
-          how full the OPEN CHAT's context window is — the signal to type
-          /compact. Renders nothing when no chat is on screen. */}
-      <ContextGauge />
-      {/* The refresh control is ALWAYS rendered, including on error. It used
-          to be swallowed by the failure state, so a single 429 left the bars
-          stuck on "last refresh failed" with nothing to click. */}
-      <span
-        onClick={() => void refresh()}
-        title={
-          d.error
-            ? `${d.error} — click to try again`
-            : `quota updated ${age(d.fetched_at)} — click to refresh`
-        }
-        style={{
-          cursor: refreshing ? "wait" : "pointer",
-          color: d.error ? tokens.warn : tokens.textGhost,
-          opacity: refreshing ? 0.5 : 1,
-        }}
-      >
-        {refreshing ? "⟳ …" : d.error ? "⟳ retry" : `⟳ ${age(d.fetched_at)}`}
-      </span>
-    </span>
-  );
-}
-
 function Sep() {
   return (
     <span style={{ color: tokens.borderEmphasis, margin: "0 12px" }}>·</span>

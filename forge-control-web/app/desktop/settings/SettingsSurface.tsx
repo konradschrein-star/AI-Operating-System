@@ -19,7 +19,14 @@
  * Two levels, deliberately the SAME two the chat surface has:
  *
  *   depth 0  the settings index — what settings there are, one line each.
- *   depth 1  one section, alone. ACCOUNTS / SECRETS / USAGE / INTEGRATIONS.
+ *   depth 1  one section, alone. CONNECTIONS / SECRETS / USAGE.
+ *
+ * Round 1876 merged ACCOUNTS and INTEGRATIONS into CONNECTIONS. Konrad could
+ * not tell from either where an account gets wired in ("the settings are still
+ * a bit confusing, especially with connecting accounts"), and the split was
+ * the reason: a Claude login and a Google consent are the same kind of thing
+ * to the person connecting them, and they sat in different sections that each
+ * explained neither. See ConnectionsPanel.tsx.
  *
  * The left-hand section list is always visible so a lateral move (accounts →
  * usage) is one click, and the body is keyed on `frameKey` so the `.nav-drill`
@@ -45,12 +52,11 @@
 import { useCallback, useMemo, useState, type CSSProperties, type JSX } from "react";
 import { tokens } from "../../tokens";
 import { BackButton } from "../chat/AgentChatView";
-import { AccountsPanel } from "./AccountsPanel";
+import { ConnectionsPanel } from "./ConnectionsPanel";
 import { SecretsPanel } from "./SecretsPanel";
 import { UsagePanel } from "./UsagePanel";
-import { IntegrationsPanel } from "./IntegrationsPanel";
 
-type SectionKey = "accounts" | "secrets" | "usage" | "integrations";
+type SectionKey = "connections" | "secrets" | "usage";
 
 interface Section {
   key: SectionKey;
@@ -67,11 +73,12 @@ interface Section {
 
 const SECTIONS: readonly Section[] = [
   {
-    key: "accounts",
-    label: "ACCOUNTS",
+    key: "connections",
+    label: "CONNECTIONS",
     icon: "account_circle",
-    blurb: "Claude accounts, health, and which one is serving runs right now.",
-    body: () => <AccountsPanel />,
+    blurb:
+      "Every account this OS holds — Claude, Google, Gemini — with its state and how to wire it in.",
+    body: () => <ConnectionsPanel />,
   },
   {
     key: "secrets",
@@ -86,13 +93,6 @@ const SECTIONS: readonly Section[] = [
     icon: "monitoring",
     blurb: "Tokens and spend — the one place in this UI money numbers belong.",
     body: () => <UsagePanel />,
-  },
-  {
-    key: "integrations",
-    label: "INTEGRATIONS",
-    icon: "hub",
-    blurb: "Outside services the OS is wired into, and whether they answer.",
-    body: () => <IntegrationsPanel />,
   },
 ];
 

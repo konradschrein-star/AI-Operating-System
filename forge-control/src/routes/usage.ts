@@ -13,10 +13,16 @@
  * Cached because this is chrome polled by an always-open dashboard, and the
  * numbers move in minutes, not milliseconds. `fetched_at` is returned so the
  * UI can show how stale the reading is rather than implying it's live.
+ *
+ * ROUND 1876 — the response also carries `gemini`, a SELF-TALLY (calls and
+ * tokens we counted), because the whole indicator row is one request now. See
+ * the `GeminiTally` block below for why it is a count and not a bar.
  */
 
 import { Hono } from "hono";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { constants as FS } from "node:fs";
+import { join } from "node:path";
 import pg from "pg";
 import {
   ATTRIBUTION,
@@ -46,6 +52,179 @@ interface QuotaSnapshot {
   seven_day_opus: QuotaWindow | null;
   fetched_at: string;
   error?: string;
+}
+
+/* ── Gemini: a tally, never a percentage ─────────────────────────────────────
+ *
+ * Konrad wants his Google subscription in the same indicator row as the Claude
+ * windows. It CANNOT be a bar. Round 1302's research (docs/plan/
+ * operator-visibility/artifacts/phase1700/gemini-ultra-oauth.md §3.1-§3.4)
+ * established that Google publishes no quota surface for a consumer AI Ultra
+ * subscription: the Gemini API discovery document has no quota resource, the
+ * Code Assist path that once carried one was switched off on 2026-06-18, and
+ * the only place a remaining-credit number exists is inside the Antigravity
+ * CLI's own TUI. There is no denominator to divide by, so this reports what WE
+ * counted and says so — §3.4 option 1.
+ *
+ * It rides the /quota response ON PURPOSE. The indicator row is one row, and a
+ * second endpoint behind it would be a second poll on its own timer — which is
+ * precisely the duplication this round exists to delete.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+interface GeminiWindowTally {
+  /** Calls WE logged to spend_log in the window. Never null: zero rows is a
+   *  real answer ("we made no Gemini calls"), unlike a failed query. */
+  calls: number;
+  /** Tokens WE counted, from spend_log.units on the token-priced kinds. Null
+   *  when rows exist but none carried a unit count — "we called it N times and
+   *  nobody recorded how many tokens" is a different sentence from "0 tokens". */
+  tokens: number | null;
+}
+
+export interface GeminiTally {
+  /** `agy` on PATH — the CLI that carries the Ultra entitlement. */
+  cli_installed: boolean;
+  /** A local `agy` profile exists. The session itself lives in the OS keyring
+   *  (Linux Secret Service), which no HTTP handler may open, so this is the
+   *  furthest an honest probe gets without launching the CLI. */
+  cli_profile: boolean;
+  /** One line, rendered verbatim: what state the sign-in is actually in. */
+  auth_note: string;
+  /** The exact thing to type to sign in. Null once a profile exists. */
+  connect_command: string | null;
+  five_hour: GeminiWindowTally | null;
+  seven_day: GeminiWindowTally | null;
+  /** Set when spend_log could not be read. A tally we could not compute is an
+   *  error, NEVER a zero. */
+  error?: string;
+  /** Why there is no percentage. Shipped next to the number so the sentence
+   *  and the thing it describes cannot drift apart. */
+  no_limit_note: string;
+}
+
+/** Where the Antigravity CLI keeps its settings on Linux —
+ *  `~/.gemini/antigravity-cli/settings.json` per antigravity.google/docs/cli/
+ *  install. Read per call, not once at import, for the same reason `PATH` is:
+ *  the CLI can be installed and signed into while this process is running, and
+ *  a value frozen at boot would keep reporting the state of an hour ago. */
+function agySettingsPath(): string {
+  return (
+    process.env.AGY_SETTINGS_PATH ??
+    join(process.env.HOME ?? "/root", ".gemini/antigravity-cli/settings.json")
+  );
+}
+
+const NO_LIMIT_NOTE =
+  "Google publishes no quota endpoint for an AI Ultra subscription — no denominator exists, so this is our own count, not a share of a limit.";
+
+/** Token-priced spend kinds. `units` on an image or TTS row is images/seconds,
+ *  and summing those into a token figure would be a fabricated number. */
+const TOKEN_KINDS = ["llm_input", "llm_output", "embedding"];
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path, FS.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** `agy` on PATH, resolved by hand: no shell, no `which`, no spawn. */
+async function agyOnPath(): Promise<boolean> {
+  const dirs = (process.env.PATH ?? "").split(":").filter(Boolean);
+  for (const dir of dirs) {
+    if (await exists(join(dir, "agy"))) return true;
+  }
+  return false;
+}
+
+interface GeminiTallyRow {
+  calls_5h: string;
+  tokens_5h: string | null;
+  calls_7d: string;
+  tokens_7d: string | null;
+}
+
+function tallyWindow(calls: string, tokens: string | null): GeminiWindowTally {
+  return {
+    calls: Number(calls),
+    tokens: tokens === null ? null : Number(tokens),
+  };
+}
+
+let geminiCache: GeminiTally | null = null;
+let geminiCacheAt = 0;
+
+/** Cached on the same 60s beat as the quota reading, so a dashboard polling
+ *  /quota every 120s runs at most one aggregate per poll. */
+async function geminiTally(fresh: boolean): Promise<GeminiTally> {
+  if (!fresh && geminiCache && Date.now() - geminiCacheAt < CACHE_MS) {
+    return geminiCache;
+  }
+
+  const settingsPath = agySettingsPath();
+  const cliInstalled = await agyOnPath();
+  const cliProfile = cliInstalled ? await exists(settingsPath) : false;
+  const auth_note = !cliInstalled
+    ? "Antigravity CLI (agy) is not installed on this box, so the Ultra subscription has never been signed in here."
+    : !cliProfile
+      ? `agy is installed but has no local profile (${settingsPath} is absent) — run it once to sign in.`
+      : "agy has a local profile; the session lives in the OS keyring and cannot be read from here, so this is still our own count.";
+
+  const base: Omit<GeminiTally, "five_hour" | "seven_day"> = {
+    cli_installed: cliInstalled,
+    cli_profile: cliProfile,
+    auth_note,
+    connect_command: cliProfile
+      ? null
+      : cliInstalled
+        ? "agy   # then paste the printed URL into a browser and enter the code back in the terminal (the SSH sign-in flow)"
+        : "install the Antigravity CLI, then run `agy` once to sign in",
+    no_limit_note: NO_LIMIT_NOTE,
+  };
+
+  let tally: GeminiTally;
+  try {
+    const res = await db().query<GeminiTallyRow>(
+      `SELECT count(*) FILTER (WHERE created_at >= now() - interval '5 hours')::text AS calls_5h,
+              sum(units) FILTER (WHERE created_at >= now() - interval '5 hours'
+                                   AND kind = ANY($1::text[]))::text                 AS tokens_5h,
+              count(*) FILTER (WHERE created_at >= now() - interval '7 days')::text  AS calls_7d,
+              sum(units) FILTER (WHERE created_at >= now() - interval '7 days'
+                                   AND kind = ANY($1::text[]))::text                 AS tokens_7d
+         FROM spend_log
+        WHERE provider ILIKE 'gemini%'
+          AND created_at >= now() - interval '7 days'`,
+      [TOKEN_KINDS],
+    );
+    const row = res.rows[0];
+    tally = row
+      ? {
+          ...base,
+          five_hour: tallyWindow(row.calls_5h, row.tokens_5h),
+          seven_day: tallyWindow(row.calls_7d, row.tokens_7d),
+        }
+      : // An aggregate with no GROUP BY always returns one row; if Postgres ever
+        // returns none, that is a broken assumption, not an empty window.
+        {
+          ...base,
+          five_hour: null,
+          seven_day: null,
+          error: "spend_log returned no aggregate row — the tally is unknown, not zero",
+        };
+  } catch (err) {
+    tally = {
+      ...base,
+      five_hour: null,
+      seven_day: null,
+      error: `spend_log is unreachable — the Gemini tally is unknown, not zero: ${(err as Error).message}`,
+    };
+  }
+
+  geminiCache = tally;
+  geminiCacheAt = Date.now();
+  return tally;
 }
 
 let cache: QuotaSnapshot | null = null;
@@ -132,8 +311,13 @@ async function fetchQuota(): Promise<QuotaSnapshot> {
 r.get("/quota", async (c) => {
   const fresh = c.req.query("fresh") === "1";
   const age = Date.now() - cacheAt;
+  /* Computed once, attached to EVERY branch below. The Gemini tally must
+   * survive an Anthropic 429 or a cold cache: those are two different
+   * upstreams and one failing is no reason for the other's number to vanish
+   * from the row. `geminiTally` never throws — it returns its own `error`. */
+  const gemini = await geminiTally(fresh);
   if (!fresh && cache && age < CACHE_MS) {
-    return c.json({ ...cache, cached: true, age_ms: age });
+    return c.json({ ...cache, gemini, cached: true, age_ms: age });
   }
   // Rate-limited: serve what we have and say when we'll try again, instead of
   // calling upstream and deepening the limit. Applies to ?fresh=1 too.
@@ -146,6 +330,7 @@ r.get("/quota", async (c) => {
         seven_day_opus: null,
         fetched_at: new Date().toISOString(),
       }),
+      gemini,
       cached: true,
       age_ms: age,
       error: "rate limited — showing the last good reading",
@@ -172,12 +357,12 @@ r.get("/quota", async (c) => {
   }
   try {
     const snap = await inFlight;
-    return c.json({ ...snap, cached: false, age_ms: 0 });
+    return c.json({ ...snap, gemini, cached: false, age_ms: 0 });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[usage/quota]", msg);
-    if (cache) return c.json({ ...cache, cached: true, error: msg });
-    return c.json({ error: msg }, 502);
+    if (cache) return c.json({ ...cache, gemini, cached: true, error: msg });
+    return c.json({ error: msg, gemini }, 502);
   }
 });
 

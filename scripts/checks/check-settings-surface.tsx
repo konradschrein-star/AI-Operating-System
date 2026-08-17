@@ -15,15 +15,19 @@
  *      `frameKey` changes on descend / lateral / climb and on nothing else —
  *      the same contract `scripts/checks/check-nav-stack.ts` holds
  *      `chat/nav-stack.ts` to.
- *   §3 ONE ACCOUNT REGISTRY. `AccountsPanel` is body-only, so the surface and
- *      the surviving `/settings` route mount the same component instead of
- *      two drifting copies.
+ *   §3 ONE CONNECTIONS SURFACE. `ConnectionsPanel` is body-only, so the
+ *      surface and the surviving `/settings` route mount the same component
+ *      instead of two drifting copies. (Round 1876: it replaced `AccountsPanel`
+ *      here when ACCOUNTS and INTEGRATIONS merged into CONNECTIONS — a Claude
+ *      login and a Google consent are the same kind of thing to the person
+ *      wiring them in, and they used to sit in two sections that explained
+ *      neither.)
  *   §4 TOKENS ONLY. Every colour that reaches the DOM — inline styles AND the
  *      scoped hover stylesheet — is a `var(--fg-…)` reference, so both themes
  *      work. A hex literal anywhere in the output fails the check.
- *   §3b THE USAGE AND INTEGRATIONS PANELS ARE THE REAL THING. Rounds 1350 and
+ *   §3b THE USAGE AND CONNECTIONS PANELS ARE THE REAL THING. Rounds 1350 and
  *      1352 replaced the round-1351 stubs ("loading usage" / "loading
- *      integrations") with the actual Credit Tracker and Integrations panels.
+ *      integrations") with the actual Credit Tracker and integration cards.
  *      This asserts their real, load-bearing pre-fetch markup instead —
  *      `UsagePanel` needs a `QueryClientProvider` above it to render at all
  *      (round-1350 fix: this check was throwing before any assertion ran,
@@ -45,9 +49,8 @@ import {
   SettingsSurface,
   frameKey,
 } from "../../forge-control-web/app/desktop/settings/SettingsSurface.tsx";
-import { AccountsPanel } from "../../forge-control-web/app/desktop/settings/AccountsPanel.tsx";
+import { ConnectionsPanel } from "../../forge-control-web/app/desktop/settings/ConnectionsPanel.tsx";
 import { UsagePanel } from "../../forge-control-web/app/desktop/settings/UsagePanel.tsx";
-import { IntegrationsPanel } from "../../forge-control-web/app/desktop/settings/IntegrationsPanel.tsx";
 // `UsagePanel` (round 1352) calls `useQueryClient`, so it needs a real
 // provider above it or the render throws before any assertion runs — that
 // was defect #1 (round 1350's check, red since 1352 landed). Reusing the
@@ -68,7 +71,16 @@ function ok(name: string, cond: boolean, detail?: string): void {
   console.log(`  FAIL ${name}${detail ? ` — ${detail}` : ""}`);
 }
 
-const surface = renderToStaticMarkup(<SettingsSurface />);
+/* `SettingsSurface` renders `ConnectionsPanel` in its CONNECTIONS section, and
+ * that panel observes the shared quota cache entry (the Ultra row reads the
+ * same reading the status bar shows). So the surface, like the usage panel,
+ * needs a real provider above it or the render throws before any assertion
+ * runs. */
+const surface = renderToStaticMarkup(
+  <Providers>
+    <SettingsSurface />
+  </Providers>,
+);
 
 console.log("§1 settings is a surface, not a page");
 ok("renders", surface.length > 0);
@@ -83,7 +95,7 @@ ok(
   "opens at the index, not inside a section",
   surface.includes('data-settings-section="index"'),
 );
-for (const label of ["ACCOUNTS", "SECRETS", "USAGE", "INTEGRATIONS"]) {
+for (const label of ["CONNECTIONS", "SECRETS", "USAGE"]) {
   ok(`section listed: ${label}`, surface.includes(label));
 }
 
@@ -94,10 +106,10 @@ ok(
   !/class="[^"]*nav-back/.test(surface),
 );
 ok("index key is stable", frameKey(null) === "index");
-ok("descend changes the key", frameKey("accounts") !== frameKey(null));
+ok("descend changes the key", frameKey("connections") !== frameKey(null));
 ok(
   "lateral move changes the key",
-  frameKey("accounts") !== frameKey("usage"),
+  frameKey("connections") !== frameKey("usage"),
 );
 ok("climb returns to the index key", frameKey(null) === "index");
 ok(
@@ -106,16 +118,24 @@ ok(
 );
 ok(
   "every section has a distinct key",
-  new Set(
-    (["accounts", "secrets", "usage", "integrations"] as const).map(frameKey),
-  ).size === 4,
+  new Set((["connections", "secrets", "usage"] as const).map(frameKey)).size === 3,
 );
 
-console.log("§3 one account registry, mounted twice");
-const accounts = renderToStaticMarkup(<AccountsPanel />);
-ok("AccountsPanel renders", accounts.includes("data-accounts-panel"));
+console.log("§3 one connections surface, mounted twice");
+const accounts = renderToStaticMarkup(
+  <Providers>
+    <ConnectionsPanel />
+  </Providers>,
+);
+ok("ConnectionsPanel renders", accounts.includes("data-connections-panel"));
 ok("body only — no page padding wrapper", !/100dvh/.test(accounts));
 ok("body only — no back link", !/<a /.test(accounts));
+/* The honesty rule, at the surface level: the panel tells Konrad what amber
+ * means before he has to infer it from a chip. */
+ok(
+  "it states the amber rule in words",
+  accounts.includes("Amber means unknown"),
+);
 
 console.log("§3b the real panels render — not the round-1351 stubs");
 // Both panels fetch on mount (`useQuery` / a `useEffect` that calls the
@@ -131,8 +151,6 @@ const usage = renderToStaticMarkup(
     <UsagePanel />
   </Providers>,
 );
-const integrations = renderToStaticMarkup(<IntegrationsPanel />);
-
 ok(
   // Not `usage.includes("data-usage-panel")`: the panel's own scoped
   // stylesheet contains `[data-usage-panel]` as a CSS selector, so a plain
@@ -153,15 +171,21 @@ ok(
     usage.includes("loading usage history…"),
 );
 
-ok("IntegrationsPanel marks itself", integrations.includes("data-integrations-panel"));
+/* The integration cards now live UNDER their Connections rows, mounted (so
+ * their fetch happens once) and hidden until the row is expanded — hence they
+ * are in this markup even though the panel opens collapsed. */
 ok(
-  "…renders both subject cards, not a loading stub",
-  integrations.includes("Gemini API") && integrations.includes("Google account"),
+  "…the connections panel carries both integration cards",
+  accounts.includes("data-gemini-card") && accounts.includes("data-google-card"),
 );
 ok(
   "…the Gemini key field is the real write-only contract",
-  integrations.includes('placeholder="paste your AI Studio API key"') &&
-    integrations.includes("GEMINI USAGE"),
+  accounts.includes('placeholder="paste your AI Studio API key"') &&
+    accounts.includes("GEMINI USAGE"),
+);
+ok(
+  "…and every connection row states its exact connect/repair action",
+  accounts.includes("TO CONNECT / REPAIR"),
 );
 
 console.log("§4 design tokens only — both themes");
@@ -169,9 +193,8 @@ const HEX = /#[0-9a-fA-F]{3,8}\b/;
 const FUNC_COLOUR = /\b(?:rgba?|hsla?|oklch|color-mix)\(/;
 for (const [name, markup] of [
   ["surface", surface],
-  ["accounts", accounts],
+  ["connections", accounts],
   ["usage", usage],
-  ["integrations", integrations],
 ] as const) {
   ok(`${name}: no hex literal`, !HEX.test(markup), HEX.exec(markup)?.[0]);
   ok(

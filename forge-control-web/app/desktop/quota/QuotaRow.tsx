@@ -1,0 +1,222 @@
+"use client";
+
+/**
+ * QuotaRow — THE indicator row. One per screen, one query, one cadence.
+ *
+ * Konrad, 2026-08-17: "Why do we have two indicators and why do we have them?
+ * We do not need a weekly and a 5-hour limit twice, especially refreshing at
+ * different intervals."
+ *
+ * His original ask was for a THIRD item beside the two bars ("in these chats I
+ * need an indication of how far the context window of the current chat is used
+ * up, place it next to the other two usage bars at the bottom so I know when to
+ * type /compact"). A later round shipped a second copy of the two bars above
+ * the composer instead. This component is the single row he asked for:
+ *
+ *     5h ▓▓░░ 41%   7d ▓░░░ 12%   ctx ▓▓▓░ 63%   gem not signed in   ⟳ 2m ago
+ *
+ * ── What each item is, and where its number comes from ───────────────────
+ *  5h / 7d  Anthropic's measured utilisation, from /api/oauth/usage through
+ *           forge-control. A real percentage of a real limit.
+ *  ctx      How full the OPEN CHAT's context window is — its own data path
+ *           (ContextGauge reads the chat's cache entry, not this one), which
+ *           is why it renders ABSENT on a surface with no chat rather than
+ *           "0%". A gauge reading zero when there is no chat is a false
+ *           statement, and this row prints no false statements.
+ *  gem      What WE counted for Gemini. Not a bar: Google publishes no
+ *           denominator for a consumer Ultra subscription — see geminiLine.ts.
+ *
+ * ── The row is in the status bar, not the composer ───────────────────────
+ * The status bar is visible on every surface, so the reading is one glance
+ * away from wherever Konrad is. The composer copy was only visible inside a
+ * chat and duplicated everything except the context gauge, which is the item
+ * that actually belongs to a chat — and that item works from the status bar
+ * because ChatSurface publishes its target to it.
+ *
+ * Tokens only, both themes, no hover state in React (hover here is a native
+ * `title`, so pointing at a bar re-renders nothing).
+ */
+
+import type { JSX } from "react";
+import { useState } from "react";
+import { tokens } from "../../tokens";
+import { ContextGauge } from "../chat/ContextGauge";
+import { geminiLine, type GeminiTone } from "./geminiLine";
+import {
+  readingAge,
+  resetsIn,
+  useMinuteTick,
+  useQuotaRefresh,
+  useQuotaSnapshot,
+  type QuotaWindow,
+} from "./quotaQuery";
+
+/** Bar geometry, shared by every gauge in the row — including ContextGauge,
+ *  which copies these numbers deliberately so the three read as one row. */
+const TRACK_W = 46;
+const TRACK_H = 5;
+
+const TONE_COLOUR: Record<GeminiTone, string> = {
+  // "We cannot tell" gets the warn colour, never a healthy one — the same rule
+  // the account registry keeps for an unprobed account.
+  unknown: tokens.warn,
+  unsigned: tokens.textGhost,
+  counted: tokens.info,
+};
+
+export function QuotaRow(): JSX.Element {
+  const q = useQuotaSnapshot();
+  const refresh = useQuotaRefresh();
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Keeps "3m ago" truthful between polls. No request.
+  useMinuteTick();
+
+  const run = async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const d = q.data;
+
+  // No reading yet, or a hard failure. The context gauge has its OWN data path,
+  // so a quota reading that has not landed must not take it down with it — and
+  // the refresh control stays reachable, because a single 429 used to leave the
+  // row stuck with nothing to click.
+  if (!d) {
+    return (
+      <span data-quota-row style={row()}>
+        <span style={{ color: tokens.textGhost }}>
+          {q.isError ? "quota unavailable" : "quota…"}
+        </span>
+        <ContextGauge />
+        <Refresh
+          refreshing={refreshing}
+          onClick={() => void run()}
+          title={
+            q.isError
+              ? `${q.error instanceof Error ? q.error.message : "quota failed"} — click to try again`
+              : "waiting for the first quota reading — click to fetch now"
+          }
+          label={q.isError ? "⟳ retry" : "⟳ …"}
+          tone={q.isError ? tokens.warn : tokens.textGhost}
+        />
+      </span>
+    );
+  }
+
+  const gem = geminiLine(d.gemini);
+
+  return (
+    <span data-quota-row style={row()}>
+      <Bar label="5h" w={d.five_hour} />
+      <Bar label="7d" w={d.seven_day} />
+      {d.seven_day_opus && <Bar label="opus" w={d.seven_day_opus} />}
+      {/* Third item, same visual language, its own source of truth: how full
+          the open chat's context window is. Renders nothing when no chat is on
+          screen — see the header. */}
+      <ContextGauge />
+      <span
+        data-gemini-line
+        data-gemini-tone={gem.tone}
+        title={gem.title}
+        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+      >
+        <span style={{ color: tokens.textFaint }}>gem</span>
+        <span style={{ color: TONE_COLOUR[gem.tone] }}>{gem.text}</span>
+      </span>
+      <Refresh
+        refreshing={refreshing}
+        onClick={() => void run()}
+        title={
+          d.error
+            ? `${d.error} — click to try again`
+            : `quota updated ${readingAge(d.fetched_at)} — click to refresh`
+        }
+        label={
+          refreshing ? "⟳ …" : d.error ? "⟳ retry" : `⟳ ${readingAge(d.fetched_at)}`
+        }
+        tone={d.error ? tokens.warn : tokens.textGhost}
+      />
+    </span>
+  );
+}
+
+function row(): React.CSSProperties {
+  return { display: "inline-flex", alignItems: "center", gap: 10 };
+}
+
+function Refresh({
+  refreshing,
+  onClick,
+  title,
+  label,
+  tone,
+}: {
+  refreshing: boolean;
+  onClick: () => void;
+  title: string;
+  label: string;
+  tone: string;
+}): JSX.Element {
+  return (
+    <span
+      onClick={onClick}
+      title={title}
+      style={{
+        cursor: refreshing ? "wait" : "pointer",
+        color: tone,
+        opacity: refreshing ? 0.5 : 1,
+      }}
+    >
+      {label}
+    </span>
+  );
+}
+
+function Bar({ label, w }: { label: string; w: QuotaWindow }): JSX.Element {
+  const pct = w.utilization ?? 0;
+  // Colour by pressure, not by brand — the point is to notice at a glance.
+  const colour = pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : tokens.ok;
+  return (
+    <span
+      data-quota-bar={label}
+      style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+      title={`${label}: ${w.utilization == null ? "no reading" : `${Math.round(pct)}% used`}${
+        w.resets_at ? ` · ${resetsIn(w.resets_at)}` : ""
+      }`}
+    >
+      <span style={{ color: tokens.textFaint }}>{label}</span>
+      <span
+        style={{
+          width: TRACK_W,
+          height: TRACK_H,
+          borderRadius: 3,
+          background: tokens.borderEmphasis,
+          overflow: "hidden",
+          display: "inline-block",
+        }}
+      >
+        {/* No fill at all for a missing reading — a 0%-wide bar and a real 0%
+            look identical, and only one of them is a measurement. */}
+        {w.utilization != null && (
+          <span
+            style={{
+              display: "block",
+              width: `${Math.min(100, Math.max(0, pct))}%`,
+              height: "100%",
+              background: colour,
+            }}
+          />
+        )}
+      </span>
+      <span style={{ color: w.utilization == null ? tokens.textGhost : colour }}>
+        {w.utilization == null ? "—" : `${Math.round(pct)}%`}
+      </span>
+    </span>
+  );
+}

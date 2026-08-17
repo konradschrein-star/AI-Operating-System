@@ -72,21 +72,16 @@ export interface RateSetting {
   default_eur_per_usd: number;
 }
 
-export interface QuotaWindow {
-  utilization: number | null;
-  resets_at: string | null;
-}
-
-export interface QuotaSnapshot {
-  five_hour: QuotaWindow;
-  seven_day: QuotaWindow;
-  seven_day_opus: QuotaWindow | null;
-  fetched_at: string;
-  cached?: boolean;
-  error?: string;
-  /** Present while the upstream 429 cooldown is running. */
-  retry_in_ms?: number;
-}
+/* The quota reading is NOT this module's to define or to fetch. Round 1876
+ * gave /usage/quota exactly one client — `desktop/quota/quotaQuery.ts` — after
+ * three components polled it through two different fetchers and drifted apart
+ * on screen. These re-exports keep this module's importers working while
+ * leaving one definition and one subscription in the codebase. */
+export type {
+  QuotaWindow,
+  QuotaSnapshot,
+  GeminiTally,
+} from "../quota/quotaQuery";
 
 /* ── fetchers ─────────────────────────────────────────────────────────────── */
 
@@ -130,14 +125,6 @@ export async function putUsageRate(eurPerUsd: number): Promise<RateSetting> {
   return (await res.json()) as RateSetting;
 }
 
-/** `fresh` bypasses the server's 60s cache — the panel's refresh button. */
-export async function fetchUsageQuota(fresh = false): Promise<QuotaSnapshot> {
-  const res = await fetch(`${ROOT}/usage/quota${fresh ? "?fresh=1" : ""}`, {
-    headers: { accept: "application/json" },
-  });
-  if (!res.ok) throw await failure(res, "GET /usage/quota");
-  return (await res.json()) as QuotaSnapshot;
-}
 
 /* ── conversion ───────────────────────────────────────────────────────────── */
 
@@ -289,8 +276,10 @@ export function stampFor(startMs: number): string {
   return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)} ${p(d.getUTCHours())}:00 UTC`;
 }
 
-/** "3m ago" / "2h ago" — how old a reading is, in the vocabulary QuotaBars
- *  and QuotaStrip already use. */
+/** "3m ago" / "2h ago" — how old a reading is, in the vocabulary the
+ *  indicator row (`quota/quotaQuery.ts:readingAge`) already uses. This one
+ *  additionally answers "never" for a null stamp and stretches to days, which
+ *  a status-bar reading polled every two minutes never needs. */
 export function ago(iso: string | null): string {
   if (!iso) return "never";
   const ms = Date.now() - Date.parse(iso);

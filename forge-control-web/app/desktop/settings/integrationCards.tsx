@@ -1,10 +1,18 @@
 "use client";
 
 /**
- * IntegrationsPanel — the INTEGRATIONS section of the settings surface.
+ * The two outside-service cards: `GeminiCard` and `GoogleCard`.
+ * (This file was `IntegrationsPanel.tsx` until round 1876.)
  *
- * Contract kept from the round-1351 stub — do not change the signature:
- *   export function IntegrationsPanel(): JSX.Element
+ * Round 1876 folded settings' ACCOUNTS and INTEGRATIONS sections into one
+ * CONNECTIONS surface, because Konrad could not tell from either of them how
+ * to wire an account in ("the settings are still a bit confusing, especially
+ * with connecting accounts, Claude accounts, like wiring them in and wiring in
+ * Google accounts"). The `IntegrationsPanel` wrapper that used to pair these
+ * two is gone with the section it filled: `ConnectionsPanel` now mounts each
+ * card UNDER its own summary row, and a component nothing mounts is a lie
+ * about the shape of the app. Each card reports its loaded state upward
+ * through `onFacts` so the row above it needs no second fetch.
  *
  * Two subjects, both backed by `forge-control/src/routes/integrations.ts`:
  *
@@ -52,6 +60,7 @@ import {
   type JSX,
 } from "react";
 import { tokens } from "../../tokens";
+import type { GoogleFacts } from "./connections";
 
 /* ── Wire shapes (mirror routes/integrations.ts) ─────────────────────────── */
 
@@ -345,7 +354,21 @@ function eur(n: number): string {
 
 /* ── Gemini ──────────────────────────────────────────────────────────────── */
 
-function GeminiCard(): JSX.Element {
+/** What the summary row above this card needs to know. Reported upward
+ *  instead of re-fetched: the Connections surface renders one row and one card
+ *  per subject, and two fetches for one subject is the shape round 1876 is
+ *  busy deleting. */
+export interface GeminiKeyFacts {
+  present: boolean | null;
+  masked: string | null;
+  verdict: { ok: boolean; message?: string } | null;
+}
+
+export function GeminiCard({
+  onFacts,
+}: {
+  onFacts?: (f: GeminiKeyFacts) => void;
+} = {}): JSX.Element {
   const [status, setStatus] = useState<GeminiStatus | null>(null);
   const [usage, setUsage] = useState<GeminiUsage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
@@ -431,11 +454,27 @@ function GeminiCard(): JSX.Element {
   }, []);
 
   const present = status?.key.present === true;
+
+  // Report after paint, never during render. The dependency list settles after
+  // one pass because these three values only change on a load or an action.
+  useEffect(() => {
+    if (!onFacts) return;
+    onFacts({
+      present: status === null ? null : present,
+      masked: status?.key.masked ?? null,
+      verdict:
+        verdict === null
+          ? null
+          : { ok: verdict.ok, message: verdict.ok ? undefined : verdict.message },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, verdict, present]);
+
   const models = verdict?.ok ? verdict.models : [];
   const shown = showAllModels ? models : models.slice(0, 12);
 
   return (
-    <div style={card()}>
+    <div data-gemini-card style={card()}>
       <CardHead
         title="Gemini API"
         note={status ? `default model ${status.default_model}` : undefined}
@@ -682,7 +721,11 @@ function GeminiCard(): JSX.Element {
 
 /* ── Google account ──────────────────────────────────────────────────────── */
 
-function GoogleCard(): JSX.Element {
+export function GoogleCard({
+  onFacts,
+}: {
+  onFacts?: (f: GoogleFacts) => void;
+} = {}): JSX.Element {
   const [status, setStatus] = useState<GoogleStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -717,8 +760,23 @@ function GoogleCard(): JSX.Element {
 
   const accounts = status?.accounts ?? [];
 
+  useEffect(() => {
+    if (!onFacts || !status) return;
+    const a = accounts[0];
+    onFacts({
+      hasAccount: a !== undefined,
+      hasRefreshToken: a?.has_refresh_token ?? false,
+      email: check?.email ?? a?.email ?? null,
+      scopeCount: a?.scopes.length ?? 0,
+      checkOk: check === null ? null : check.ok,
+      checkMessage: check?.message ?? null,
+      reauthCommand: status.reauth.command,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, check]);
+
   return (
-    <div style={card()}>
+    <div data-google-card style={card()}>
       <CardHead
         title="Google account"
         note="Gmail · Calendar · Drive · Docs · Sheets · Contacts"
@@ -857,17 +915,6 @@ function GoogleCard(): JSX.Element {
       {status && (
         <CommandBlock command={status.reauth.command} why={status.reauth.why} />
       )}
-    </div>
-  );
-}
-
-/* ── Panel ───────────────────────────────────────────────────────────────── */
-
-export function IntegrationsPanel(): JSX.Element {
-  return (
-    <div data-integrations-panel>
-      <GeminiCard />
-      <GoogleCard />
     </div>
   );
 }

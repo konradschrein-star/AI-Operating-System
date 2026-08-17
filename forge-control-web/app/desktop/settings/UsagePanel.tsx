@@ -57,9 +57,11 @@
  *    Both themes work; there is no hex or rgb literal in this file.
  *  • Hover is CSS-only (scoped stylesheet + native SVG <title>). No hover
  *    state re-renders this panel — the lag this project is busy deleting.
- *  • The quota query shares `["usage","quota"]`, `refetchInterval: 120_000`
- *    and `staleTime: 60_000` with QuotaBars (DesktopApp.tsx) and QuotaStrip,
- *    so opening settings adds observers, not polls.
+ *  • The quota reading is NOT fetched here. This panel subscribes through
+ *    `useQuotaSnapshot()` (desktop/quota/quotaQuery.ts), the app's single
+ *    /usage/quota client, so opening settings adds an observer, not a poll —
+ *    and the card cannot drift from the status-bar row the way the two 5h/7d
+ *    indicators drifted from each other before round 1876.
  */
 
 import {
@@ -80,7 +82,6 @@ import {
   alignSlots,
   anchorFor,
   eurOf,
-  fetchUsageQuota,
   fetchUsageRate,
   fetchUsageSeries,
   fmtEur,
@@ -91,13 +92,17 @@ import {
   putUsageRate,
   stampFor,
   totalTokens,
-  type QuotaSnapshot,
-  type QuotaWindow,
   type RateSetting,
   type Slot,
   type UsagePoint,
   type UsageSeries,
 } from "./usageApi";
+import {
+  useQuotaSnapshot,
+  useQuotaRefresh,
+  type QuotaSnapshot,
+  type QuotaWindow,
+} from "../quota/quotaQuery";
 
 /** Which quantity the bars are sized by. Tokens and euros cannot share one
  *  axis — cache reads outweigh output tokens by two orders of magnitude — so
@@ -124,15 +129,11 @@ export function UsagePanel(): JSX.Element {
   const qc = useQueryClient();
   const [metric, setMetric] = useState<Metric>("eur");
 
-  // Same key/fetch cadence as QuotaBars and QuotaStrip: three observers, one
-  // poll. A second interval here would be a regression against the project's
-  // poll budget.
-  const quota = useQuery<QuotaSnapshot>({
-    queryKey: ["usage", "quota"],
-    queryFn: () => fetchUsageQuota(false),
-    refetchInterval: 120_000,
-    staleTime: 60_000,
-  });
+  // One subscription for the whole app: the status-bar row and this card read
+  // the same cache entry, filled by one poll. Restating the key or the interval
+  // here would create a second entry that merely looks like the first.
+  const quota = useQuotaSnapshot();
+  const refreshQuota = useQuotaRefresh();
 
   // The series only moves when an hour closes. Polling it faster than that
   // would be asking the same question of the same table sixty times an hour.
@@ -191,11 +192,6 @@ export function UsagePanel(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [series.data],
   );
-
-  const refreshQuota = useCallback(async () => {
-    const fresh = await fetchUsageQuota(true);
-    qc.setQueryData(["usage", "quota"], fresh);
-  }, [qc]);
 
   return (
     <div data-usage-panel style={{ maxWidth: 940 }}>

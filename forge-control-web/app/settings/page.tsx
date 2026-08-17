@@ -12,13 +12,14 @@
  * The route survives anyway, because a bookmark, a link in a note and a
  * deep-link from Telegram all still point at it, and a 404 is a worse answer
  * than a page. What it is NOT any more is a second implementation: the body
- * below is `AccountsPanel`, the exact component the surface mounts. There is
- * one account registry in this app and both entry points render it.
+ * below is `ConnectionsPanel`, the exact component the surface mounts in its
+ * CONNECTIONS section (round 1876, which merged ACCOUNTS and INTEGRATIONS into
+ * it). One connections surface in this app; both entry points render it.
  */
 
 import Link from "next/link";
 import { tokens } from "../tokens";
-import { AccountsPanel } from "../desktop/settings/AccountsPanel";
+import { ConnectionsPanel } from "../desktop/settings/ConnectionsPanel";
 
 export default function SettingsPage() {
   return (
@@ -47,7 +48,8 @@ export default function SettingsPage() {
           Settings
         </h1>
         <div style={{ color: tokens.textMuted, fontSize: 13.5, marginBottom: 6 }}>
-          Claude accounts, health and failover policy.
+          Connections — Claude, Google and Gemini accounts, their state, and
+          how to wire each one in.
         </div>
         {/* Say where the real thing lives. Someone who landed on this URL from
             an old bookmark should learn, once, that settings is part of the OS
@@ -81,7 +83,7 @@ export default function SettingsPage() {
           </Link>
         </div>
 
-        <AccountsPanel />
+        <ConnectionsPanel />
       </div>
     </div>
   );

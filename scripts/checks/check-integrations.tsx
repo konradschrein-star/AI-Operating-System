@@ -123,8 +123,12 @@ async function main(): Promise<void> {
   const { default: router } = await import(
     "../../forge-control/src/routes/integrations.ts"
   );
-  const { IntegrationsPanel } = await import(
-    "../../forge-control-web/app/desktop/settings/IntegrationsPanel.tsx"
+  /* Round 1876 deleted the `IntegrationsPanel` wrapper: the CONNECTIONS
+   * surface mounts each card under its own row, so the cards themselves are
+   * what this check renders. Rendering them side by side is exactly what the
+   * wrapper did. */
+  const { GeminiCard, GoogleCard } = await import(
+    "../../forge-control-web/app/desktop/settings/integrationCards.tsx"
   );
 
   interface Answer {
@@ -367,8 +371,12 @@ async function main(): Promise<void> {
   /* ── §5 the panel ────────────────────────────────────────────────────────── */
 
   console.log("§5 the panel: tokens only, no invented claims");
-  const markup = renderToStaticMarkup(<IntegrationsPanel />);
-  ok("panel marks itself", markup.includes("data-integrations-panel"));
+  const markup =
+    renderToStaticMarkup(<GeminiCard />) + renderToStaticMarkup(<GoogleCard />);
+  ok(
+    "both cards mark themselves",
+    markup.includes("data-gemini-card") && markup.includes("data-google-card"),
+  );
   ok("body only — no viewport claim", !/100dvh|100vh/.test(markup));
   ok("body only — no links out of the shell", !/<a /.test(markup));
 
@@ -387,7 +395,7 @@ async function main(): Promise<void> {
   const source = await import("node:fs").then((fs) =>
     fs.readFileSync(
       new URL(
-        "../../forge-control-web/app/desktop/settings/IntegrationsPanel.tsx",
+        "../../forge-control-web/app/desktop/settings/integrationCards.tsx",
         import.meta.url,
       ),
       "utf8",

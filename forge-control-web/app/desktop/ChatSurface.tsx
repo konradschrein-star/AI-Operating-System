@@ -43,7 +43,6 @@ import {
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
 import { useAutogrow } from "./chat/useAutogrow";
-import { QuotaStrip } from "./chat/QuotaStrip";
 import { effortRamp } from "./chat/effort-ramp";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
@@ -2175,7 +2174,6 @@ function ChatThread({
           uploadError={att.uploadError}
           onRemove={att.remove}
         />
-        <QuotaStrip />
         {/* Round 1871: the composer row WRAPS on a narrow viewport. Its four
             trailing controls (engine picker, secret, send, and the slash
             popover's anchor) are all `flex: none`, so at 390px they took 300 of
