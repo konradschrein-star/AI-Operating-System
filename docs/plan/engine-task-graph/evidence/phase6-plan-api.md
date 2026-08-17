@@ -800,3 +800,572 @@ $ python3 docs/plan/engine-task-graph/check-instrument-identity.py
 OK — 8 pasted header(s) across 1 file(s) name f6828a68…
 OK — no retired identity quoted without '[historical instrument]'            (exit 0)
 ```
+
+---
+
+## §3 — the web half: the mirrors, the chip, and the check that counts itself
+
+Builder 6B, **round 223**. Written against builder 6A's landed commit `811e8c1`,
+not against the brief: the route is the source of truth and this half mirrors
+what it actually shipped. `graph_error` is mirrored because `chat.ts`'s
+`interface PlanResponse` really carries it.
+
+**Write set, declared (this is the input to contention, not archaeology):**
+
+```
+forge-control-web/app/desktop/team/planApi.ts        PlanTask/PlanResponse mirror, rotted pins
+forge-control-web/app/desktop/team/planStore.ts      PlanNode, toPlanNodes, workstreamLabel
+forge-control-web/app/desktop/team/PlanKanban.tsx    the chip, chipTitle, the block-number tooltip
+forge-control-web/app/api.ts                         ProjectTask mirror (R56's web half)
+scripts/checks/check-plan-store.ts                   extended: real edges, provenance, census
+docs/plan/engine-task-graph/03-quality.md            §3.2's phase-6 gate block
+docs/plan/engine-task-graph/evidence/phase6-plan-api.md   this section
+```
+
+Nothing outside it was written. `forge-control/src/routes/chat.ts` and
+`scripts/checks/check-plan-api.ts` are 6A's and were read only.
+
+### 3.1 The mirrors, all in one commit
+
+They are hand-written on purpose — there is no shared build across the two
+repos — so drift is the failure mode the mirroring accepts in exchange, and the
+only defence is that every mirror moves together.
+
+| type | gained | mirrored from |
+|---|---|---|
+| `planApi.ts:PlanTask` | `workstream: string`, `depth: number` | `chat.ts:`​`interface PlanTask` |
+| `planApi.ts:PlanResponse` | `graph_error?: string` | `chat.ts:`​`interface PlanResponse` (verified present in `811e8c1`, not assumed from the brief) |
+| `planApi.ts:PlanTask.deps` | doc-comment restated | `chat.ts:`​`groupPlanPhases`'s two branches |
+| `planStore.ts:PlanNode` | `workstream`, `depth`, copied through by `toPlanNodes` | — |
+| `app/api.ts:ProjectTask` | `depends_on: string[] \| null`, `workstream: string`, `write_set: string[]` | `db/projects.ts:`​`interface ProjectTask` |
+
+`PlanTask.deps`'s comment said *"Coarse today (every task in a strictly lower
+round)"*. That sentence is now FALSE for a graph row, so it was replaced rather
+than softened: real `depends_on` when the engine recorded one — including `[]`,
+an explicit root with no edges — and the synthesised strictly-lower-round set
+for a legacy row, with the added fact that **both kinds can appear in one
+response**, so no consumer may assume two tasks' edges came from the same rule.
+
+`ProjectTask.depends_on` is typed `| null` and documented as a SENTINEL, not as
+"missing": `null` selects the legacy scheduler, `[]` is an explicit graph root.
+Those are the two values a `?? []` at a read site would merge, and they are
+precisely the two that must never be merged. The doc-comment mirrors the
+canonical statement on `ProjectTask.depends_on` in `db/projects.ts`.
+
+**One drift observed and deliberately NOT repaired here:** `app/api.ts`'s
+`ProjectTask` has been missing `attempt` (migration 0037) and `chain_key`
+(migration 0039) since before this project. It is real drift of the same kind,
+but repairing it is neither R56 nor this round's brief, and adding two fields
+nothing on this branch reads would be scope this builder did not price. Recorded
+so the next audit resolves it without archaeology.
+
+### 3.2 The rotted citations, repaired — standing rule 1
+
+A finding handed to this builder by the planner, in a file this builder owns.
+
+| the pin, as it read | resolved at git SHA `7efa36b` | replaced with |
+|---|---|---|
+| header: `chat.ts` "(interfaces PlanTask / PlanPhase / PlanResponse, lines 650-689)" | the three interfaces sat at **657-667, 669-682, 684-706** | `chat.ts:`​`interface PlanTask` / `interface PlanPhase` / `interface PlanResponse` |
+| `PlanTask`: "See chat.ts:650-660." | 657-667 | ``chat.ts:`interface PlanTask` `` |
+| `PlanPhase`: "chat.ts:662-674." | 669-682 | ``chat.ts:`interface PlanPhase` `` |
+| `PlanResponse`: "chat.ts:676-689." | 684-706 | ``chat.ts:`interface PlanResponse` `` |
+
+They were **not re-pinned to fresh line numbers**: `811e8c1` moved those
+interfaces again the same night, which is the whole argument. A symbol name
+cannot rot. The header now records the old pins, the SHA they were resolved
+against and why they are gone, so the repair is legible rather than silent.
+
+### 3.3 `check-plan-store.ts`, green — full output, provenance header first
+
+Run from the worktree, `git HEAD 417be41`:
+
+```
+cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-plan-store.ts
+```
+
+```
+=== check-plan-store.ts — provenance ========================
+  repo worktree      : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+  git HEAD           : 417be41
+  git branch         : project/8c591d6c
+  uncommitted (subj) : M forge-control-web/app/desktop/team/planApi.ts |  M forge-control-web/app/desktop/team/planStore.ts |  M scripts/checks/check-plan-store.ts
+  sha256             : 729fe2e462c47dd43df03df0312d7defbddc9cd22198233833cf3677f67f8383  forge-control-web/app/desktop/team/planStore.ts
+  sha256             : 31ec8e5f750a3d149586324de2f78e5f9b115faade98949a6c6d4bbf12ccc631  forge-control-web/app/desktop/team/planApi.ts
+  sha256             : 541eaa597faf338a055059ea292f9a9cc30d98370c20976e07bd9a7b449bdde6  scripts/checks/check-plan-store.ts
+  fixture nodes      : 24 (hand count 24)
+  assertions declared: 107
+============================================================
+
+── toPlanNodes ──────────────────────────────────────────────
+PASS  flattens every task in every phase
+PASS  preserves server order — first node is round 0
+PASS  preserves server order — last node is round 706
+PASS  rounds come out ascending, exactly as the server ordered them
+PASS  a node is the U27 shape and nothing else
+PASS  deps are copied, not aliased to the wire array
+PASS  …and copied faithfully
+PASS  empty phases[] → no nodes
+
+── meta.tier / meta.run_id ──────────────────────────────────
+PASS  tier 'flagship' lands on meta.tier
+PASS  tier 'standard' lands on meta.tier
+PASS  tier: null → meta has NO tier key
+PASS  …and meta serialises as {} , not {"tier":null}
+PASS  run_id is unset — the wire does not carry it today
+
+── unknown status survives ──────────────────────────────────
+PASS  an unrecognised status reaches the node VERBATIM
+PASS  KNOWN_STATUSES does not contain it
+PASS  …and it is not silently dropped from the array
+PASS  it counts as NOT done
+PASS  …while still counting toward total
+PASS  its group counts it in total, not in done
+PASS  …same group, total 1
+
+── statusTokenName ──────────────────────────────────────────
+PASS  KNOWN_STATUSES is the migration's CHECK list, in lifecycle order
+PASS  pending  → textMuted
+PASS  ready    → textMuted
+PASS  running  → info
+PASS  done     → ok
+PASS  failed   → bleed
+PASS  blocked  → stuck, never the running colour
+PASS  blocked is not folded into running
+PASS  unknown  → textFaint (TeamRow's own fallback)
+PASS  cancelled → textFaint, where TeamRow puts it
+PASS  empty string → textFaint, not a crash
+PASS  'DONE' is not 'done' — status compare is exact
+PASS  every known status has a non-fallback token: pending
+PASS  every known status has a non-fallback token: ready
+PASS  every known status has a non-fallback token: running
+PASS  every known status has a non-fallback token: done
+PASS  every known status has a non-fallback token: failed
+PASS  every known status has a non-fallback token: blocked
+
+── phaseBase ────────────────────────────────────────────────
+PASS  0   → 0
+PASS  1   → 0
+PASS  99  → 0
+PASS  100 → 100
+PASS  606 → 600
+PASS  703 → 700
+
+── groupPlanPhases ──────────────────────────────────────────
+PASS  eight blocks across rounds 0..706
+PASS  ascending by block: 0,100,…,700
+PASS  every node lands in exactly one column
+PASS  column totals sum to the node count
+PASS  column done-counts sum to planProgress().done
+PASS  block 600: 2 of 3 done (606 is running)
+PASS  block 700: 2 of 8 done (pending, pending, harvesting, pending, running, blocked)
+PASS  title comes from the server
+PASS  doc_path comes from the server
+PASS  a server phase with no title → no title key
+PASS  a server phase with no doc_path → no doc_path key
+PASS  …and that block still has its title
+PASS  column membership is by round, in server order
+PASS  empty phases[] → no columns
+PASS  a node outside every server phase still gets a column
+PASS  …carrying its derived base
+PASS  …and no invented title
+
+── planProgress (must byte-match the rail badge SQL) ─────────
+PASS  done — EXACTLY status === 'done'
+PASS  total — every node, no status excluded
+PASS  done equals a hand filter over the same rule
+PASS  a failed task is in total and not in done
+PASS  …and still in total
+PASS  empty plan → 0/0, not a divide-by-zero anywhere
+PASS  empty phases[] → 0/0
+
+── planEdges (the whole graph projection) ───────────────────
+PASS  one edge per dep, no more
+PASS  …which is exactly the sum of deps.length
+PASS  every edge's source is a dep of its target
+PASS  edges point dep → dependent, in node order
+PASS  a node with 3 deps yields 3 edges, one per dep
+PASS  no deps → no edges
+PASS  empty plan → no edges
+PASS  empty phases[] → no edges
+
+── workstream / depth pass through toPlanNodes (R55) ────────
+PASS  every depth arrives verbatim, in node order
+PASS  depth is NOT the round: only t-0 and t-1 agree, by coincidence of numbering
+PASS  t-704 depth is 1 — three orders of magnitude off its round
+PASS  …and its round is still 704
+PASS  the non-`main` rows arrive with their workstream verbatim
+PASS  a row that asks for nothing is `main`, the column default
+PASS  no node leaks an undefined workstream
+PASS  no node leaks an undefined depth
+
+── workstreamLabel — the chip's whole rule (R55) ────────────
+PASS  `main` → undefined: no chip, no placeholder, no dash
+PASS  `ui` → 'ui'
+PASS  `Main` → 'Main' — case-sensitive, never folded to `main`
+PASS  the empty string → '' verbatim, not undefined
+PASS  …and specifically NOT undefined
+PASS  on the real corpus: t-0 is main → undefined
+PASS  on the real corpus: t-704 → 'ui'
+PASS  exactly two of twenty-four rows would wear a chip
+
+── edges the coarse rule could NEVER have produced (R54) ────
+PASS  t-704 waits on ONE task, five phase blocks below it
+PASS  …which is block 100 while t-704 sits in block 700
+PASS  the real dep set is NOT the synthesised one — the fixture discriminates — ["t-101"] !== ["t-0","t-1","t-100","t-101","t-200","t-201","t-300","t-301","t-302","t-400","t-401","t-500","t-501","t-600","t-601","t-606","t-700","t-701","t-702","t-703"]
+PASS  the synthesised set would have owed it all 20 rows below
+PASS  the two siblings share a round
+PASS  …and have DIFFERENT dep sets, which was impossible before R54 — ["t-700"] !== ["t-701","t-702"]
+PASS  sibling a waits on t-700 alone
+PASS  sibling b waits on t-701 and t-702
+PASS  the coarse rule would have given both siblings the identical set
+
+── the dangling edge, emitted on purpose (R54/R27) ──────────
+PASS  `t-missing` names no node in the set
+PASS  …and planEdges emits its edge anyway, verbatim
+PASS  the dangling id also survives on the node itself
+
+── depth disagrees with round; grouping follows ROUND (R55) ─
+PASS  t-704 groups under 700, by its ROUND
+PASS  …while its depth would have grouped it under 0
+PASS  the extreme case too: round 101 with depth 703 is still block 100
+
+── census ───────────────────────────────────────────────────
+  fixture nodes        : 24
+  assertions declared  : 107
+  assertions executed  : 107
+  assertions failed    : 0
+
+ALL PASS — U27 plan store
+EXIT=0
+```
+
+The subject files read `M` in the header because this transcript was taken
+**before** the commit that lands them; their sha256 is what identifies the
+bytes, and it is the sha256 that differs in every mutation below.
+
+**The fixture gained four rows the coarse rule could never have produced:**
+
+| row | round | deps | why it exists |
+|---|---|---|---|
+| `t-704` | 704 | `[t-101]` | a dep that **skips five phase blocks**. The synthesis owed round 704 all 20 rows below it; the real set is one id from block 100. Workstream `ui`, depth 1. |
+| `t-705a` | 705 | `[t-700]` | two **same-round siblings with different dep sets** — impossible under a rule that gave same-round siblings identical sets by construction. `t-705a` also carries workstream `api-v2`. |
+| `t-705b` | 705 | `[t-701, t-702]` | ↑ |
+| `t-706` | 706 | `[t-missing]` | a dep naming **no row in the set**. 6A's route emits a dangling id verbatim on purpose (R27 makes one unreachable through the API, so one arriving means a corrupt row and the panel is the surface that must show it). `planEdges` must therefore emit the edge, and does. |
+
+Hand counts, re-derived and updated: 24 tasks, 17 done, **11 edges**, 2 non-`main`
+workstreams, and — the discriminating one — **only 2 of 24 rows have
+`depth === round`**.
+
+### 3.4 The three mutations, observed FAILING
+
+Each was applied to the shipped bytes, run, and reverted. **Read the `sha256`
+line of each header**: it is a different file from the green run above, which is
+what makes these transcripts evidence rather than assertion.
+
+#### Mutation 1 — `planEdges` drops the last dep of every node
+
+`n.deps.map(...)` → `n.deps.slice(0, -1).map(...)`. Exit **1**, five assertions red,
+including the exact-edge case and the dangling-edge case.
+
+```
+=== check-plan-store.ts — provenance ========================
+  repo worktree      : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+  git HEAD           : 417be41
+  git branch         : project/8c591d6c
+  uncommitted (subj) : M forge-control-web/app/desktop/team/planApi.ts |  M forge-control-web/app/desktop/team/planStore.ts |  M scripts/checks/check-plan-store.ts
+  sha256             : b268e8bf1618347aa1eec3853b3b22e625897cef6cbde032528dbec759d6178c  forge-control-web/app/desktop/team/planStore.ts
+  sha256             : 31ec8e5f750a3d149586324de2f78e5f9b115faade98949a6c6d4bbf12ccc631  forge-control-web/app/desktop/team/planApi.ts
+  sha256             : 541eaa597faf338a055059ea292f9a9cc30d98370c20976e07bd9a7b449bdde6  scripts/checks/check-plan-store.ts
+  fixture nodes      : 24 (hand count 24)
+  assertions declared: 107
+============================================================
+
+[ELIDED: the sections not named below are byte-identical to the green run in §3.3.]
+
+── planEdges (the whole graph projection) ───────────────────
+FAIL  one edge per dep, no more
+        expected 11, got 3
+FAIL  …which is exactly the sum of deps.length
+        expected 11, got 3
+PASS  every edge's source is a dep of its target
+FAIL  edges point dep → dependent, in node order
+        expected [{"source":"t-0","target":"t-1"},{"source":"t-0","target":"t-100"},{"source":"t-1","target":"t-100"},{"source":"t-700","target":"t-701"},{"source":"t-700","target":"t-703"},{"source":"t-701","target":"t-703"},{"source":"t-101","target":"t-704"},{"source":"t-700","target":"t-705a"},{"source":"t-701","target":"t-705b"},{"source":"t-702","target":"t-705b"},{"source":"t-missing","target":"t-706"}]
+        got      [{"source":"t-0","target":"t-100"},{"source":"t-700","target":"t-703"},{"source":"t-701","target":"t-705b"}]
+FAIL  a node with 3 deps yields 3 edges, one per dep
+        expected [{"source":"a","target":"x"},{"source":"b","target":"x"},{"source":"c","target":"x"}]
+        got      [{"source":"a","target":"x"},{"source":"b","target":"x"}]
+PASS  no deps → no edges
+PASS  empty plan → no edges
+PASS  empty phases[] → no edges
+
+
+── the dangling edge, emitted on purpose (R54/R27) ──────────
+PASS  `t-missing` names no node in the set
+FAIL  …and planEdges emits its edge anyway, verbatim
+        expected true, got false
+PASS  the dangling id also survives on the node itself
+
+
+── census ───────────────────────────────────────────────────
+  fixture nodes        : 24
+  assertions declared  : 107
+  assertions executed  : 107
+  assertions failed    : 5
+
+5 FAILURE(S) — see the census above — U27 plan store
+EXIT=1
+```
+
+#### Mutation 2 — `workstreamLabel` returns the workstream for `main` too
+
+`node.workstream === MAIN_WORKSTREAM ? undefined : node.workstream` →
+`node.workstream`. Exit **1**, three assertions red: the rule itself, the same
+rule over a real corpus row, and the "exactly two of twenty-four rows would wear
+a chip" count that catches a badge on all sixty rows.
+
+```
+=== check-plan-store.ts — provenance ========================
+  repo worktree      : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+  git HEAD           : 417be41
+  git branch         : project/8c591d6c
+  uncommitted (subj) : M forge-control-web/app/desktop/team/planApi.ts |  M forge-control-web/app/desktop/team/planStore.ts |  M scripts/checks/check-plan-store.ts
+  sha256             : 20cc1d35af004b2ee4973c83dd2ad466316eadcfbb2f7664eeef48d45730b9bd  forge-control-web/app/desktop/team/planStore.ts
+  sha256             : 31ec8e5f750a3d149586324de2f78e5f9b115faade98949a6c6d4bbf12ccc631  forge-control-web/app/desktop/team/planApi.ts
+  sha256             : 541eaa597faf338a055059ea292f9a9cc30d98370c20976e07bd9a7b449bdde6  scripts/checks/check-plan-store.ts
+  fixture nodes      : 24 (hand count 24)
+  assertions declared: 107
+============================================================
+
+[ELIDED: the sections not named below are byte-identical to the green run in §3.3.]
+
+── workstreamLabel — the chip's whole rule (R55) ────────────
+FAIL  `main` → undefined: no chip, no placeholder, no dash
+        expected undefined, got main
+PASS  `ui` → 'ui'
+PASS  `Main` → 'Main' — case-sensitive, never folded to `main`
+PASS  the empty string → '' verbatim, not undefined
+PASS  …and specifically NOT undefined
+FAIL  on the real corpus: t-0 is main → undefined
+        expected undefined, got main
+PASS  on the real corpus: t-704 → 'ui'
+FAIL  exactly two of twenty-four rows would wear a chip
+        expected 2, got 24
+
+
+── census ───────────────────────────────────────────────────
+  fixture nodes        : 24
+  assertions declared  : 107
+  assertions executed  : 107
+  assertions failed    : 3
+
+3 FAILURE(S) — see the census above — U27 plan store
+EXIT=1
+```
+
+#### Mutation 3 — a case DECLARED but never REACHED
+
+One `check(...)` line commented out. **Zero assertions fail. Every printed line
+says PASS. The run still exits 1**, because 106 ≠ 107. This is the mutation that
+proves the census is not decoration: before this round the same edit printed
+`ALL PASS` and exited 0.
+
+```
+=== check-plan-store.ts — provenance ========================
+  repo worktree      : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+  git HEAD           : 417be41
+  git branch         : project/8c591d6c
+  uncommitted (subj) : M forge-control-web/app/desktop/team/planApi.ts |  M forge-control-web/app/desktop/team/planStore.ts |  M scripts/checks/check-plan-store.ts
+  sha256             : 729fe2e462c47dd43df03df0312d7defbddc9cd22198233833cf3677f67f8383  forge-control-web/app/desktop/team/planStore.ts
+  sha256             : 31ec8e5f750a3d149586324de2f78e5f9b115faade98949a6c6d4bbf12ccc631  forge-control-web/app/desktop/team/planApi.ts
+  sha256             : 2083b39eea8aa35cbf8d85709ff208328f6d3c23104db1ff4079fb8cba90018c  scripts/checks/check-plan-store.ts
+  fixture nodes      : 24 (hand count 24)
+  assertions declared: 107
+============================================================
+
+[ELIDED: the sections not named below are byte-identical to the green run in §3.3.]
+
+── workstreamLabel — the chip's whole rule (R55) ────────────
+PASS  `main` → undefined: no chip, no placeholder, no dash
+PASS  `ui` → 'ui'
+PASS  `Main` → 'Main' — case-sensitive, never folded to `main`
+PASS  the empty string → '' verbatim, not undefined
+PASS  …and specifically NOT undefined
+PASS  on the real corpus: t-0 is main → undefined
+PASS  exactly two of twenty-four rows would wear a chip
+
+
+── census ───────────────────────────────────────────────────
+  fixture nodes        : 24
+  assertions declared  : 107
+  assertions executed  : 106
+  assertions failed    : 0
+  FAIL executed 106 assertions but 107 are declared — a check that does not run what it declares cannot certify anything.
+
+FAILED — every assertion that ran was green, but the census above rejected the run — U27 plan store
+EXIT=1
+```
+
+### 3.5 The gate this phase needed, and the gate lines that now exist
+
+`03-quality.md` §3.1's universal gate runs `pnpm typecheck` **in `forge-control/`
+only**, against a `tsconfig.json` whose `include` is `["src/**/*.ts"]`. Four of
+this round's six code files live in `forge-control-web/`, a separate project the
+universal gate never invokes — so the gate would have reported "`tsc --noEmit`
+clean" for a phase whose principal deliverable was not compiled at all. Same
+species as phase 7's `measure-schedule.ts` gap ("Added round 212"), same repair:
+**amended where it is enforced, in this commit** — `03-quality.md` §3.2's
+**Phase 6 — observability** block now carries the install precondition and the
+three commands, with the reasoning inline.
+
+The precondition is the part that makes the gate **satisfiable rather than
+merely plausible**: this worktree ships without `forge-control-web/node_modules`
+(gitignored), so a reviewer's first `npx tsc` in a fresh worktree answers
+`tsc: not found` — and a gate whose first response is an error is a gate that
+gets disclosed-and-ignored. Measured at round 221, it completes offline in ~1s
+from the local pnpm store. `--frozen-lockfile` is what keeps the NFU8 diff empty
+and is not optional.
+
+Run here, in order:
+
+```
+$ cd forge-control-web && npx tsc --noEmit
+WEB_TSC_EXIT=0
+
+$ cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-plan-store.ts
+ALL PASS — U27 plan store        (exit 0; full transcript in §3.3)
+
+$ git diff main -- forge-control-web/package.json
+[[[ package.json diff bytes: 0 ]]]
+```
+
+**NFU8 holds: the diff is empty.** No `@xyflow/react`, no `elkjs`, no renderer,
+no layout library. Drawing the node-link view is N4 and out of scope; what this
+round shipped is the data it will consume.
+
+The universal gate, re-run at this tree:
+
+```
+$ cd forge-control && pnpm typecheck            # exit 0
+$ cd forge-control && pnpm test                 # tests 1113 | pass 1113 | fail 0 | skipped 0 | todo 0
+$ git -C /opt/forge-ai-os status --porcelain    # empty
+$ python3 docs/plan/engine-task-graph/check-corpus-map.py         # OK, exit 0
+$ python3 docs/plan/engine-task-graph/check-instrument-identity.py # OK, exit 0
+```
+
+The 1113 is not the brief's 1009 baseline at `7efa36b`; rounds 221 and 222 added
+tests in `task-graph.test.ts`, `task-graph-replay.test.ts` and
+`project-tick.test.ts`. **This round added no test to `forge-control/`** — its
+whole test surface is `check-plan-store.ts` — so the delta belongs to phase 4,
+not here.
+
+**A fourth command a reviewer may run, recorded rather than made a gate clause.**
+`tsx` strips types without checking them, and `scripts/checks/*.ts` is outside
+both projects' `include`, so this round's check script is compiled by nothing.
+Measured, exit 0:
+
+```
+cd forge-control-web && npx tsc --noEmit --strict --target ES2022 --module esnext \
+  --moduleResolution bundler --allowImportingTsExtensions --types node --lib ES2022 \
+  ../scripts/checks/check-plan-store.ts
+```
+
+It is **not** added to §3.2 by this builder because the same gap covers 6A's
+`check-plan-api.ts`, which this builder does not own — and a gate clause written
+across another builder's file is exactly the undeclared cross-write §10 exists
+to stop. Handed to the phase-6 reviewer as a decision, not taken silently.
+
+### 3.6 What would have made MY instruments report a pass wrongly
+
+Three mechanisms, each shown impossible in what shipped.
+
+**(a) A fixture whose real deps happen to equal the synthesised set.** If every
+fixture row's `deps` were "everything in a strictly lower round", the check
+could not tell which branch of `groupPlanPhases` produced them, and a green run
+would prove nothing about R54. Closed mechanically, not by inspection:
+`synthesised(id)` reimplements the old rule inside the check, and
+`checkDiffers` **fails when the two sides are equal** —
+`["t-101"] !== ["t-0",…,"t-703"]` is printed in the transcript, so a fixture
+edited into coincidence goes red instead of certifying. The sibling case is the
+same guard from the other side: it asserts that the synthesised sets of `t-705a`
+and `t-705b` are **identical** while their real sets differ, which is only
+possible if the real ones are not synthesised.
+
+**(b) A check whose new cases were declared but never reached the assertion
+counter.** This is failure mode (b) in the script's own header and mutation 3 in
+§3.4: `DECLARED_ASSERTIONS = 107` is hand-derived section by section, every
+assertion helper increments `executed`, and the census exits non-zero when the
+two differ **in either direction** — so both a skipped case and an accidentally
+duplicated one are caught. The hand count is not decorative: it was wrong on
+first derivation (`HAND_DEPTH_EQUALS_ROUND` was written 1 and is 2, because
+`t-1` is round 1 at depth 1), the check caught it, and the **hand count was
+corrected rather than the assertion loosened**. Also guarded: `node(id)` throws
+by name instead of returning `undefined`, so a renamed fixture row cannot turn
+an assertion into a silently skipped one; and `NODES.length` is asserted against
+`HAND_TOTAL` in the census, because every expected value was derived from it.
+
+**(c) `depth` mirroring `round` in the fixture.** The plausible typo in
+`toPlanNodes` is `depth: t.round`. A fixture whose depths equalled its rounds
+would pass with that typo in place. Every fixture depth is instead the true
+longest path over the fixture's own deps, so **22 of 24 rows disagree** with
+their round and the verbatim-depth array assertion goes red on that typo. The
+count of agreeing rows is itself asserted (`HAND_DEPTH_EQUALS_ROUND = 2`), so a
+future edit that quietly aligns depths with rounds — restoring the blind spot —
+fails too.
+
+**(d) A transcript that names a worktree instead of a build.** The header now
+prints `git HEAD`, the branch, the uncommitted status of each subject file and
+the **sha256 of `planStore.ts`, `planApi.ts` and the check script itself**. Every
+mutation transcript in §3.4 carries a different sha256 from §3.3's, which is
+what makes the pair readable as evidence.
+
+### 3.7 Two decisions this round had to take
+
+**The empty workstream.** `workstreamLabel("")` returns `""` verbatim, not
+`undefined`. `validateWorkstream` refuses `''` upstream and the column is
+NOT NULL DEFAULT `'main'`, so it cannot arrive through the API — only from a
+hand-written row. Returning `undefined` would file a corrupt row under "ordinary
+`main` task" and hide it; returning it verbatim renders an empty chip carrying
+`data-plan-workstream=""`, a visible anomaly a reader can ask about. The rule is
+"not `main`", and `''` is not `main` — the same NFU6 discipline this module
+already applies to an unrecognised status. Asserted both ways in §3.3.
+
+**The phase label that can cross a block boundary (phase 4B's hand-off).** R42's
+`round+1` fix-chain placement can put a group-99 fix builder at round 100, which
+`floor(round / 100) * 100` files under the NEXT phase block from the group that
+spawned it. **Chosen: show the label as derived-and-possibly-crossing; do not
+regroup.** Regrouping is not available to this component and should not be —
+R55 fixes the grouping expression, the wire carries no `chain_key`, and a client
+re-deriving membership would eventually disagree with the server's own phase
+blocks and 404 a `doc_path` in the reader's face. So the block number in
+`PlanKanban.tsx` carries a native tooltip saying the block is a numbering
+convention, that nothing is scheduled by it, and that a fix chain created at a
+boundary can appear there rather than under its originating group.
+`planStore.ts:`​`groupPlanPhases`'s doc-comment states the same thing where the
+rule lives. Reachability is low (99 dependency levels inside one phase block);
+this is correctness-of-display, and it is disclosed on the surface rather than
+silently misfiled.
+
+### 3.8 Silent-fallback audit (§3.1 item 6) — everything this round added
+
+| site | what it is | why it is not a swallowed error |
+|---|---|---|
+| `planStore.ts:`​`workstreamLabel` — `=== MAIN_WORKSTREAM ? undefined : …` | a deliberate ternary, not a default | `undefined` here means "print nothing", the requirement's own answer for `main`. Nothing is coerced: every other string, including `''` and `Main`, comes back verbatim. |
+| `PlanKanban.tsx` — `workstream !== undefined && (…)` | a render guard | The exact condition above, read once. No `??`, no truthiness — `''` is falsy and would have been dropped by a truthiness test, which is the bug this spelling avoids. |
+| `check-plan-store.ts:`​`git()` — `catch` returning `UNAVAILABLE (…)` | the only catch added | It does not degrade to a plausible value: the header prints the literal word `UNAVAILABLE` with the error's first line, so a run that cannot name its build says so on its first line instead of printing a confident wrong SHA. It cannot mask a subject-file failure — `sha256()` has no catch and aborts the run. |
+| `check-plan-store.ts:`​`node(id)` — `throw` on a missing fixture row | the opposite of a fallback | Added *because* `NODES.find(...)!` would let a renamed row become `undefined` and then a silently skipped assertion. |
+
+`chipTitle` gained two fields and no fallback; `tier`'s pre-existing
+`?? "engine default"` is unchanged and is a label for a real fact (null means
+"the engine picks"), not a swallowed value.
+
+### 3.9 Requirements this round discharges
+
+| id | artefact |
+|---|---|
+| R54 (web half) | `planApi.ts:`​`PlanTask.deps` restated; `check-plan-store.ts`'s "edges the coarse rule could NEVER have produced" and "the dangling edge" sections; §3.3, §3.4 mutation 1 |
+| R55 | `planStore.ts:`​`PlanNode.workstream`/`.depth`, `workstreamLabel`; `PlanKanban.tsx`'s chip, `chipTitle`, `data-plan-workstream`; the "grouping follows ROUND" section; §3.4 mutation 2 |
+| R56 (web half) | `app/api.ts:`​`ProjectTask` gains `depends_on`, `workstream`, `write_set`, mirroring `db/projects.ts:`​`interface ProjectTask` |
+| NFU8 | `git diff main -- forge-control-web/package.json` empty (§3.5) |
+| standing rule 1 | §3.2 — four rotted pins resolved at a recorded SHA and replaced by symbols |
+| standing rule 2 | §3.5 — `03-quality.md` §3.2's phase-6 gate amended where it is enforced, in this commit |
+| standing rule 3 | §3.3's provenance header, §3.4's three mutations, §3.6's four mechanisms |

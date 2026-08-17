@@ -352,6 +352,48 @@ python3 docs/plan/engine-task-graph/check-instrument-identity.py   # MUST exit 0
   `deps` are real edges for graph rows and synthesised for NULL rows, and that
   the response shape is unchanged from the base commit (diff the TypeScript
   interface).
+- **Added round 223 — the universal gate does not compile four of this phase's
+  six code files, so this phase adds the check that does (standing rule 2).**
+  §3.1's `cd forge-control && pnpm typecheck` runs `tsc --noEmit` against
+  `forge-control/tsconfig.json`, whose `include` is `["src/**/*.ts"]`. Phase 6's
+  web half — `planApi.ts`, `planStore.ts`, `PlanKanban.tsx` and `app/api.ts` —
+  lives in **`forge-control-web/`**, a separate project with its own
+  `tsconfig.json` that the universal gate never invokes. Without the block below
+  the gate would report "`tsc --noEmit` clean" for a phase whose principal
+  deliverable was not compiled at all: the same species of failure as phase 7's
+  `measure-schedule.ts` gap ("Added round 212" above), and the same repair —
+  amend the gate where it is enforced rather than disclose it. The gating
+  reviewer runs all four lines and pastes them:
+
+  ```bash
+  # PRECONDITION. This worktree ships WITHOUT forge-control-web/node_modules
+  # (gitignored), so `npx tsc` in a fresh worktree answers "tsc: not found" —
+  # and a gate whose first response is an error is a gate that gets
+  # disclosed-and-ignored. MEASURED, round 221: this completes offline in ~1s
+  # from the local pnpm store. Keep --frozen-lockfile: it is what guarantees the
+  # NFU8 diff below stays empty.
+  cd forge-control-web && NODE_ENV=development pnpm install --frozen-lockfile --prefer-offline
+
+  cd forge-control-web && npx tsc --noEmit          # exit 0
+  cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-plan-store.ts
+  git diff main -- forge-control-web/package.json   # MUST be empty (NFU8)
+  ```
+
+  Adding `../forge-control-web/**` to `forge-control/tsconfig.json` was rejected
+  for the reason phase 7 rejected `../scripts/**`: it would change what **every
+  other phase's** typecheck covers, and the two projects have different
+  compiler options (JSX, DOM lib) that phase 6 does not own.
+- **`check-plan-store.ts` prints its own provenance and censuses itself
+  (standing rule 3, added round 223).** Its first output line is a header
+  carrying `git rev-parse --short HEAD`, the branch, whether either subject file
+  is uncommitted, the **sha256 of `planStore.ts` and `planApi.ts`**, the
+  fixture's node count and the number of assertions it is about to run; its last
+  is a census that exits **non-zero when the assertions executed differ from the
+  hand-declared count in either direction**. The reviewer confirms both can
+  fail rather than trusting the green run — the three mutations of
+  `evidence/phase6-plan-api.md` §3.4 are reproducible, and the third is the one
+  to read first: it prints **zero FAIL lines and still exits 1**, because the
+  table declared a case it never reached.
 
 **Phase 7 — measurement**
 - The script runs against the fixture and prints its header (SHA, schema

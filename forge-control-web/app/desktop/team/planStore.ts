@@ -40,6 +40,24 @@ export type PlanNode = {
   round: number;
   role: string;
   deps: string[];
+  /** The workstream worktree the task runs in (R55). Never null, never absent
+   *  — the column is NOT NULL DEFAULT 'main'. `workstreamLabel` below is the
+   *  one rule for turning it into something a chip may show. */
+  workstream: string;
+  /** DERIVED longest-path depth from the graph roots (R55), computed by the
+   *  server and carried here for DISPLAY and for a future node-link view.
+   *
+   *  IT IS NOT THE KANBAN'S GROUPING KEY, and the next edit someone reaches
+   *  for is exactly that: `groupPlanPhases` groups by `phaseBase(round)` and
+   *  R55 says so explicitly. `round` is the planner's narrative phase number
+   *  and is what the phase blocks, the plan documents and every human
+   *  conversation about this project are numbered by; `depth` is how far down
+   *  the dependency chain a task sits and answers a different question. They
+   *  agree only by coincidence — and on a stored graph the server could not
+   *  order they agree by CONSTRUCTION, because `depth` then falls back to
+   *  `round` (`PlanResponse.graph_error` says when). Grouping by it would make
+   *  the board silently reshape itself on a cycle. */
+  depth: number;
   meta: { tier?: string; run_id?: string };
 };
 
@@ -137,6 +155,49 @@ export function statusTokenName(status: string): StatusTokenName {
   return STATUS_TOKEN[status] ?? "textFaint";
 }
 
+/** The workstream every task carries unless it asks for another — migration
+ *  0040's column default, written once here so the comparison below is not a
+ *  loose string in a component. */
+const MAIN_WORKSTREAM = "main";
+
+/**
+ * What the Kanban chip should print for a node's workstream, or `undefined` for
+ * "print nothing" (R55).
+ *
+ * `main` → `undefined`, and that is the whole interesting decision. Every task
+ * in every project today runs in `main`, so a badge on all sixty rows would be
+ * noise that makes the ONE row running somewhere else invisible — the opposite
+ * of what the field was added to show. No chip, no placeholder, no dash.
+ *
+ * IT LIVES IN THE STORE, NOT IN PlanKanban.tsx, for a mechanical reason:
+ * `01-requirements.md` R55 names `scripts/checks/check-plan-store.ts` as its
+ * proof, and that script runs under tsx and can only import React-free
+ * modules. A rule living inside the component would be a requirement whose
+ * named instrument cannot execute it — the defect `03-quality.md` §3.2's
+ * phase-2 block tells reviewers to hunt ("does the named instrument actually
+ * execute it?"). Same split as `statusTokenName`: this file names what to say,
+ * the component decides how it looks.
+ *
+ * EXACT STRING COMPARE, never folded: `Main` is not `main` and comes back as
+ * `"Main"`. `validateWorkstream` in lib/task-graph.ts refuses an uppercase
+ * name upstream, so a `Main` reaching this function means a row that did not
+ * come through the API — precisely the case that must be visible rather than
+ * normalised into looking ordinary (NFU6, the same rule this file already
+ * applies to an unrecognised status).
+ *
+ * THE EMPTY STRING comes back as `""`, verbatim, for that same reason.
+ * `validateWorkstream` refuses it too, so it cannot arrive from the API and
+ * the column is NOT NULL DEFAULT 'main' — but `''` is not blocked by the
+ * schema, so a hand-written row could carry it. Returning `undefined` for it
+ * would file a corrupt row under "ordinary main task" and hide it; returning
+ * it verbatim renders an empty chip, which is a visible anomaly a reader can
+ * ask about, and `data-plan-workstream=""` on the chip makes it greppable from
+ * the DOM. Not-`main` is the rule; `""` is not `main`.
+ */
+export function workstreamLabel(node: PlanNode): string | undefined {
+  return node.workstream === MAIN_WORKSTREAM ? undefined : node.workstream;
+}
+
 /** The hundreds-block of a round — the SAME arithmetic the server applies in
  *  `groupPlanPhases` (forge-control/src/routes/chat.ts). Exported because the
  *  check exercises it and because a caller that needs a node's column should
@@ -175,6 +236,11 @@ export function toPlanNodes(res: PlanResponse): PlanNode[] {
         // Copied, not aliased: the store owns its arrays, so a consumer that
         // sorts or splices deps cannot reach back into the fetch response.
         deps: [...t.deps],
+        // R55, carried through untouched. `workstream` is what the chip may
+        // show; `depth` is display-only and is NOT what `groupPlanPhases`
+        // groups by — see the field's comment on `PlanNode`.
+        workstream: t.workstream,
+        depth: t.depth,
         meta,
       });
     }
@@ -201,6 +267,16 @@ export function toPlanNodes(res: PlanResponse): PlanNode[] {
  * A server phase with zero tasks yields no column. That is not a lost fact:
  * the server only ever creates a phase from a task row, so a task-less phase
  * cannot appear on the wire.
+ *
+ * MEMBERSHIP IS `phaseBase(node.round)` AND NOTHING ELSE — not `node.depth`,
+ * which R55 keeps out of this on purpose (see `PlanNode.depth`). Two
+ * consequences worth stating because both look like bugs from a distance: a
+ * task's block can differ from its depth, and a fix chain created at a block
+ * boundary is labelled by ITS OWN round, so it can land in the block AFTER the
+ * group that spawned it (round 99 → 100). `01-requirements.md` R42's round-221
+ * amendment records that decision — promotion is by `depends_on`, so only the
+ * LABEL moves — and `PlanKanban.tsx` says so on the block number's tooltip
+ * rather than silently misfiling it.
  */
 export function groupPlanPhases(nodes: PlanNode[], res: PlanResponse): PlanPhaseGroup[] {
   const wire = new Map<number, PlanPhase>();

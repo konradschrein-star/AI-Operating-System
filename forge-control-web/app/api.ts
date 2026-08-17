@@ -1292,6 +1292,15 @@ export interface Project {
   updated_at: string;
 }
 
+/**
+ * One row of `project_tasks`, as `GET /api/projects/:id` and
+ * `GET /api/projects/board` serve it.
+ *
+ * HAND-MIRRORED from `interface ProjectTask` in forge-control/src/db/projects.ts
+ * (there is no shared build across the two repos), so it moves in the same
+ * commit the server type does. The three graph fields below arrived with
+ * migration 0040 and R56.
+ */
 export interface ProjectTask {
   id: string;
   project_id: string;
@@ -1303,6 +1312,32 @@ export interface ProjectTask {
   run_id: string | null;
   fix_cycle: number;
   tier: TaskTier | null;
+  /** The tasks this one waits for — THE ORDERING DEPENDENCY, and only that
+   *  (migration 0040, R3). `null` is a SENTINEL, not a missing value and not
+   *  an empty list: it means "this row was never graph-scheduled, so the
+   *  engine applies the legacy round rule to it". A non-null array, INCLUDING
+   *  `[]`, means "graph-scheduled: promote when exactly these ids are done",
+   *  so `[]` is an explicit root that promotes immediately.
+   *
+   *  Typed `| null` for that reason and never widened to `string[]` with a
+   *  `?? []` at the read site: the two values a defaulting operator would
+   *  merge are precisely the two that select different schedulers. The
+   *  canonical statement of both meanings is the doc-comment on
+   *  `ProjectTask.depends_on` in forge-control/src/db/projects.ts. */
+  depends_on: string[] | null;
+  /** Which workstream worktree this task runs in (migration 0040, R4).
+   *  `'main'` for every row that predates the column and every row that does
+   *  not ask for another. Same workstream = same worktree, serialized against
+   *  its siblings; different workstreams are isolated directories that may
+   *  write the same path. NOT NULL with a default in the schema, so never
+   *  null here. */
+  workstream: string;
+  /** Repo-relative POSIX paths this task intends to write (migration 0040,
+   *  R5) — the input to computed contention, declared by the planner rather
+   *  than reconstructed by grepping briefs. An EMPTY array intersects nothing
+   *  and is therefore always claimable (R17). NOT NULL with a `'{}'` default
+   *  in the schema. */
+  write_set: string[];
   created_at: string;
   updated_at: string;
 }

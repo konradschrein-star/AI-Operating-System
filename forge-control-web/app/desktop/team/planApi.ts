@@ -8,10 +8,19 @@
  *  when the server shape moves. Nothing here imports React, so
  *  `scripts/checks/check-plan-store.ts` can import it directly under tsx.
  *
- *  Source of truth for every type below: forge-control/src/routes/chat.ts
- *  (interfaces PlanTask / PlanPhase / PlanResponse, lines 650-689). These are
- *  hand-mirrored, not imported — this module must not reach across repos. When
- *  the server shape changes, this file changes with it.
+ *  Source of truth for every type below: forge-control/src/routes/chat.ts —
+ *  `interface PlanTask`, `interface PlanPhase`, `interface PlanResponse`.
+ *  These are hand-mirrored, not imported: there is no shared build across the
+ *  two repos, and drifting them is the failure mode the mirroring accepts in
+ *  exchange. So every mirror moves in the SAME commit as the server type.
+ *
+ *  CITED BY SYMBOL, deliberately (00-vision.md §7 rule 1). This header and the
+ *  three interface comments below used to pin `chat.ts:650-689`,
+ *  `chat.ts:650-660`, `chat.ts:662-674` and `chat.ts:676-689`. At git SHA
+ *  `7efa36b` those three interfaces already sat at 657-667, 669-682 and
+ *  684-706 — the pins had rotted and read as authoritative while being wrong,
+ *  and round 222's server commit moved them again. A symbol name cannot rot,
+ *  so the line numbers are not re-pinned to fresh ones; they are gone.
  *
  *  Both endpoints shipped in phase 300i; nothing here is speculative.
  */
@@ -20,7 +29,7 @@ const ROOT = "/api/proxy";
 
 /** One project task. `tier` is `string | null` and null is a REAL value: the
  *  engine picks a default for tier-less tasks, so null means "the engine will
- *  choose", not "unknown". See chat.ts:650-660. */
+ *  choose", not "unknown". chat.ts:`interface PlanTask`. */
 export interface PlanTask {
   id: string;
   round: number;
@@ -30,13 +39,43 @@ export interface PlanTask {
    *  ./planStore. The server does not narrow it and neither do we. */
   status: string;
   tier: string | null;
-  /** Task ids this one waits on. Coarse today (every task in a strictly lower
-   *  round); the shape does not change when the engine records true per-task
-   *  deps. chat.ts:`groupPlanPhases`. */
+  /** Task ids this one waits on — REAL EDGES since R54, and which kind depends
+   *  on the row: the engine's recorded `depends_on` when it recorded one
+   *  (including `[]`, an explicit graph root that yields no edges at all), and
+   *  the synthesised "every task in a strictly lower round" set for a LEGACY
+   *  row, whose `depends_on` is the NULL sentinel. The server chooses between
+   *  the two with a single `=== null` test and never merges them
+   *  (chat.ts:`groupPlanPhases`).
+   *
+   *  Both kinds can appear in ONE response — a project that straddles the
+   *  migration reads as one board, not two — so nothing here may assume the
+   *  edges of two tasks were produced by the same rule.
+   *
+   *  A dep id naming no task in this response is emitted VERBATIM by the
+   *  server: R27 makes a dangling dep unreachable through the API, so one
+   *  arriving means a corrupt row, and the panel is the surface that must show
+   *  it rather than tidy it away. */
   deps: string[];
+  /** Which workstream worktree the task runs in (R55). `'main'` for every row
+   *  that predates migration 0040 and every row that does not ask for another:
+   *  the column is NOT NULL DEFAULT 'main', so this is never null and never
+   *  absent. `workstreamLabel` in ./planStore is the rule for showing it, and
+   *  it shows nothing for `'main'`. */
+  workstream: string;
+  /** DERIVED longest-path depth from the graph roots (R55) — computed by the
+   *  server's `taskDepth()`, never stored. NOT `round`: `round` is the
+   *  planner's narrative phase number and `depth` is how far down the
+   *  dependency chain the task actually sits. They agree only by coincidence,
+   *  and the Kanban still groups by `round` (see `phaseBase` in ./planStore).
+   *
+   *  When the stored graph cannot be ordered at all, the server sets every
+   *  task's depth to its own `round` and says so in `PlanResponse.graph_error`
+   *  — so a `depth` that equals `round` everywhere is a fact to read together
+   *  with that field, not on its own. */
+  depth: number;
 }
 
-/** One hundreds-block of the plan. chat.ts:662-674. */
+/** One hundreds-block of the plan. chat.ts:`interface PlanPhase`. */
 export interface PlanPhase {
   /** `floor(round / 100) * 100`, decided by the server. */
   round_base: number;
@@ -51,7 +90,7 @@ export interface PlanPhase {
   doc_path?: string;
 }
 
-/** chat.ts:676-689. */
+/** chat.ts:`interface PlanResponse`. */
 export interface PlanResponse {
   chat_id: string;
   project: { id: string; status: string | null } | null;
@@ -76,6 +115,16 @@ export interface PlanResponse {
    *  corpus could not be read, and here is why" (NFU6). The phases are
    *  unaffected and still present when this is set. */
   error?: string;
+  /** Set when the server's `taskDepth()` refused to order the stored graph — a
+   *  cycle in `depends_on`. Carries the thrown message VERBATIM, ids and all,
+   *  and every task's `depth` is then its own `round` (chat.ts:`planDepths`).
+   *
+   *  A SEPARATE field from `error` on purpose, and the mirror keeps them
+   *  apart: `error` means "the docs listing failed" and nothing else.
+   *  Overloading one field would make two unrelated degradations
+   *  indistinguishable to the reader who has to act on them. The phases are
+   *  real and still drawn in both cases. */
+  graph_error?: string;
 }
 
 /* ── Fetchers ─────────────────────────────────────────────────────────────

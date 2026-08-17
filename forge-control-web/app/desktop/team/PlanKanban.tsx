@@ -66,6 +66,7 @@ import {
   planProgress,
   statusTokenName,
   toPlanNodes,
+  workstreamLabel,
   type PlanNode,
   type PlanPhaseGroup,
   type StatusTokenName,
@@ -165,7 +166,15 @@ function ProgressBar({ done, total, height }: { done: number; total: number; hei
 /** The chip's native tooltip: the full (untruncated) title plus the facts the
  *  260px line had to drop. `tier` is `undefined` when the wire sent null, and
  *  null means "the engine picks" — a real fact, so it is said, not blanked
- *  (planApi.ts:`PlanTask.tier`). */
+ *  (planApi.ts:`PlanTask.tier`).
+ *
+ *  R55 added `workstream` and `depth` here for every node, including the
+ *  `main` ones the chip itself stays silent about: the same contract as the
+ *  line above — the tooltip carries the facts the 260px row could not, and
+ *  "this task runs in main at depth 3" is exactly such a fact. The visible
+ *  chip is where noise is expensive; a tooltip nobody hovers costs nothing.
+ *  `depth` is the DERIVED longest path, not the round, and is labelled so
+ *  (planApi.ts:`PlanTask.depth`). */
 function chipTitle(node: PlanNode): string {
   return [
     node.title,
@@ -173,6 +182,8 @@ function chipTitle(node: PlanNode): string {
     `role ${node.role}`,
     `status ${node.status}`,
     `tier ${node.meta.tier ?? "engine default"}`,
+    `workstream ${node.workstream}`,
+    `depth ${node.depth}`,
   ].join(" · ");
 }
 
@@ -197,8 +208,24 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
       }}
     >
       <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+        {/* The block number carries the honesty note about its own membership
+            rule (R42's round-221 amendment, handed to phase 6 by phase 4B).
+            The alternative — regrouping a fix chain under the group that
+            spawned it — is not available to this component and should not be:
+            R55 fixes the grouping at `floor(round / 100) * 100`, the wire
+            carries no `chain_key`, and a client re-deriving membership would
+            eventually disagree with the server's own phase blocks. So the
+            label is shown as DERIVED AND POSSIBLY CROSSING rather than
+            silently misfiled. */}
         <span
           className="mono"
+          title={
+            "hundreds-block floor(round / 100) × 100 — a numbering convention, " +
+            "not a dependency. Nothing is scheduled by it: promotion is by " +
+            "depends_on. A fix chain created at a block boundary (round 99 → " +
+            "100) is labelled by its own round and can therefore appear here " +
+            "rather than under the group that spawned it."
+          }
           style={{ fontSize: 10, color: tokens.accent, flex: "none" }}
         >
           {group.round_base}
@@ -265,11 +292,22 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
       )}
 
       <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
-        {group.nodes.map((node) => (
+        {group.nodes.map((node) => {
+          /* The rule lives in ./planStore, not here, so R55's named instrument
+             (scripts/checks/check-plan-store.ts, which cannot import React) can
+             execute it. `undefined` means `main`, which means NOTHING is drawn
+             — no chip, no placeholder, no dash. */
+          const workstream = workstreamLabel(node);
+          return (
           <div
             key={node.id}
             data-plan-task={node.id}
             data-status={node.status}
+            /* Only when it is not `main`, and only ever the raw value — a
+               future DOM probe finds the interesting rows with a single
+               attribute selector instead of reading styles. Same convention as
+               `data-plan-task` / `data-status` above. */
+            {...(workstream !== undefined ? { "data-plan-workstream": workstream } : {})}
             title={chipTitle(node)}
             style={{
               display: "flex",
@@ -329,8 +367,32 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
             >
               {node.title}
             </span>
+            {/* The one row running somewhere other than `main` is the row this
+                zone exists to make findable, so the badge is drawn only for it
+                (planStore.ts:`workstreamLabel`). Every task today is `main`;
+                sixty identical badges would bury the interesting one. */}
+            {workstream !== undefined && (
+              <span
+                className="mono"
+                style={{
+                  flex: "none",
+                  fontSize: 8.5,
+                  color: tokens.accent,
+                  border: `1px solid ${tokens.borderSoft}`,
+                  borderRadius: 3,
+                  padding: "0 3px",
+                  maxWidth: 64,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {workstream}
+              </span>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
