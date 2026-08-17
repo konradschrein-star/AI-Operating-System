@@ -105,6 +105,17 @@ export interface AgentRow {
   /** The schedule's human name ("weekly-review"); `cron_id` is what
    *  classifies the row, this is display only. */
   cron_name?: string | null;
+  /** When this row was dismissed (round 1350, `ui_dismissals`), else null.
+   *
+   *  OPTIONAL for the same reason `agent_kind` is: the server field ships in
+   *  this phase and a :7700 running main answers without it. The panel does
+   *  not filter on this field — the shared dismissal set from
+   *  `GET /api/agents/dismissals` is the authority, because it is the only
+   *  source that also knows about sub-agent node ids and that a restore just
+   *  happened. It is used ONLY as the pre-GET seed (see
+   *  `seededDismissals` in ../team/dismissals), so the first painted frame
+   *  does not flash rows that the server already considers hidden. */
+  dismissed_at?: string | null;
   subagents?: SubagentRow[];
 }
 
@@ -345,3 +356,126 @@ export const fetchAgents = async (projectId?: string): Promise<AgentsResponse> =
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /agents`);
   return (await r.json()) as AgentsResponse;
 };
+
+/* ── Dismissals ───────────────────────────────────────────────────────────
+ *
+ * `/api/agents/dismissals` (round 1350, server half in
+ * docs/plan/artifacts/phase1350/dismissal-api.md). The four calls live HERE,
+ * beside `fetchAgents`, because they are routes of the same router and this
+ * module is the Live panel's whole network surface; the React hook that owns
+ * the shared set is ../team/dismissals.
+ *
+ * Every one of them THROWS on a non-2xx, carrying the server's own `error`/
+ * `message` — a dismissal that did not persist must not look like one that
+ * did (NFU6). There is no catch here that turns a 500 into an empty set.
+ */
+
+/** The server's own reason, appended to a thrown message when it sent one.
+ *  Falls back to the raw body, then to nothing — never invents a cause. */
+function serverReason(body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed !== null && typeof parsed === "object") {
+      const rec = parsed as Record<string, unknown>;
+      const parts = [rec.error, rec.message].filter(
+        (v): v is string => typeof v === "string" && v !== "",
+      );
+      if (parts.length > 0) return ` — ${parts.join(": ")}`;
+    }
+  } catch {
+    /* not JSON — fall through to the raw text */
+  }
+  const raw = body.trim();
+  return raw ? ` — ${raw.slice(0, 200)}` : "";
+}
+
+/** One request, one parsed body, or a throw naming the route. */
+async function dismissalRequest(
+  path: string,
+  init: RequestInit,
+  what: string,
+): Promise<unknown> {
+  const r = await fetch(`${ROOT}/agents/dismissals${path}`, {
+    ...init,
+    headers: { accept: "application/json", ...(init.headers ?? {}) },
+  });
+  const body = await r.text();
+  if (!r.ok) {
+    throw new Error(`${r.status} ${r.statusText} on ${what}${serverReason(body)}`);
+  }
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    throw new Error(`${what}: response was not JSON — ${body.slice(0, 200)}`);
+  }
+}
+
+/** The named field as a string array, or a throw. A malformed body is a
+ *  failure to report, not a set to silently treat as empty. */
+function stringArray(body: unknown, field: string, what: string): string[] {
+  const value =
+    body !== null && typeof body === "object"
+      ? (body as Record<string, unknown>)[field]
+      : undefined;
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) {
+    throw new Error(`${what}: malformed \`${field}\` in response`);
+  }
+  return value as string[];
+}
+
+/** Everything currently hidden — run uuids AND sub-agent `tool_use_id`s. */
+export async function fetchDismissals(): Promise<string[]> {
+  const body = await dismissalRequest("", { method: "GET" }, "GET /agents/dismissals");
+  return stringArray(body, "node_ids", "GET /agents/dismissals");
+}
+
+/**
+ * Hide `id`, and — with `cascade` — everything the server resolves under it:
+ * its settled descendants, and for an operator chat its project's settled
+ * workers. The returned list is what is hidden AS A RESULT of the call
+ * (already-hidden ids included), so the caller can adopt it wholesale instead
+ * of waiting a poll to discover what went with it.
+ */
+export async function postDismissal(
+  id: string,
+  cascade: boolean,
+): Promise<string[]> {
+  const body = await dismissalRequest(
+    "",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, cascade }),
+    },
+    "POST /agents/dismissals",
+  );
+  return stringArray(body, "dismissed", "POST /agents/dismissals");
+}
+
+/** Un-hide exactly this id. `[]` means it was not hidden — a state, not an
+ *  error, which is why the server answers 200. */
+export async function deleteDismissal(id: string): Promise<string[]> {
+  const body = await dismissalRequest(
+    `/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+    "DELETE /agents/dismissals/:id",
+  );
+  return stringArray(body, "restored", "DELETE /agents/dismissals/:id");
+}
+
+/** Un-hide everything. Returns how many rows the server deleted. */
+export async function deleteAllDismissals(): Promise<number> {
+  const body = await dismissalRequest(
+    "",
+    { method: "DELETE" },
+    "DELETE /agents/dismissals",
+  );
+  const restored =
+    body !== null && typeof body === "object"
+      ? (body as Record<string, unknown>).restored
+      : undefined;
+  if (typeof restored !== "number") {
+    throw new Error("DELETE /agents/dismissals: malformed `restored` in response");
+  }
+  return restored;
+}

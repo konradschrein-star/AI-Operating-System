@@ -86,6 +86,12 @@ export interface TeamNode {
   description: string | null;
   /** Lineage: the run this node hangs under. Null for the manager. */
   parent_id: string | null;
+  /** When this node was dismissed (round 1350, `ui_dismissals`), else null.
+   *  Carried on every node INCLUDING sub-agents; the tree is never filtered by
+   *  it server-side. The panel hides by the shared set from
+   *  `GET /api/agents/dismissals` and uses this field only to seed the frames
+   *  before that GET answers — see `seededDismissals` in ./dismissals. */
+  dismissed_at: string | null;
   /** Present on run nodes; always empty on sub-agents (they do not nest). */
   subagents: TeamNode[];
   task: TeamTask | null;

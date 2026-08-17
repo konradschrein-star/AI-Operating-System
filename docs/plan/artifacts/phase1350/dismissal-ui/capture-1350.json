@@ -1,0 +1,557 @@
+{
+  "base": "http://127.0.0.1:7861",
+  "api": "http://127.0.0.1:7860",
+  "results": [
+    {
+      "name": "live-dark · before",
+      "note": {
+        "rows": 16,
+        "xButtons": [
+          "cc001350-0000-4000-8000-00000000a002",
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b"
+        ],
+        "peeked": [],
+        "toggle": null,
+        "visibleIds": [
+          "cc001350-0000-4000-8000-00000000a002",
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b"
+        ]
+      }
+    },
+    {
+      "name": "live-dark · a settled row offers ✕",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · nothing dismissed yet",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "live-dark · the row is gone from the list",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-dark · header offers the way back",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · after dismiss",
+      "note": {
+        "rows": 16,
+        "xButtons": [
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b",
+          "ecc74b0f-695a-45be-a36d-6c24537941c7"
+        ],
+        "peeked": [],
+        "toggle": "1 dismissed · show",
+        "visibleIds": [
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b",
+          "ecc74b0f-695a-45be-a36d-6c24537941c7"
+        ]
+      }
+    },
+    {
+      "name": "live-dark · the server holds it (not localStorage)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · server set",
+      "note": {
+        "count": 1,
+        "cascaded": 1
+      }
+    },
+    {
+      "name": "live-dark · still hidden after a hard reload",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-dark · and the panel still says so",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · still hidden in a brand-new context",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-dark · peeking reveals it, with a restore control",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · the toggle flips to hide",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · peeked row opacity",
+      "note": "0.55"
+    },
+    {
+      "name": "live-dark · restored into the list",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · and the toggle is gone",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "live-dark · the server forgot it too",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-dark · the manager takes its settled workers with it",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · rows gone within 500ms of the click",
+      "note": 3
+    },
+    {
+      "name": "live-dark · server cascade size",
+      "note": 3
+    },
+    {
+      "name": "live-dark · no running row carries a ✕",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-dark · running rows inspected",
+      "note": 4
+    },
+    {
+      "name": "team-dark · before",
+      "note": {
+        "rows": 11,
+        "restore": null,
+        "state": "ready"
+      }
+    },
+    {
+      "name": "team-dark · tree is ready",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "team-dark · nothing hidden yet",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "team-dark · target row (last settled node of the tree)",
+      "note": "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    },
+    {
+      "name": "team-dark · one fewer row",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-dark · \"N hidden · show\" appears",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-dark · after dismiss",
+      "note": {
+        "rows": 10,
+        "restore": "1 hidden · show",
+        "state": "ready"
+      }
+    },
+    {
+      "name": "team-dark · the server holds it",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-dark · server set size",
+      "note": 1
+    },
+    {
+      "name": "team-dark · still hidden after a hard reload",
+      "ok": true,
+      "actual": 10,
+      "expected": 10
+    },
+    {
+      "name": "team-dark · and still offers the way back",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-dark · still hidden in a brand-new context",
+      "ok": true,
+      "actual": 10,
+      "expected": 10
+    },
+    {
+      "name": "team-dark · \"show\" brings every row back",
+      "ok": true,
+      "actual": 11,
+      "expected": 11
+    },
+    {
+      "name": "team-dark · and the label is gone",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "team-dark · the server is empty again",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    },
+    {
+      "name": "live-light · before",
+      "note": {
+        "rows": 16,
+        "xButtons": [
+          "cc001350-0000-4000-8000-00000000a002",
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b"
+        ],
+        "peeked": [],
+        "toggle": null,
+        "visibleIds": [
+          "cc001350-0000-4000-8000-00000000a002",
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b"
+        ]
+      }
+    },
+    {
+      "name": "live-light · a settled row offers ✕",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · nothing dismissed yet",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "live-light · the row is gone from the list",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-light · header offers the way back",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · after dismiss",
+      "note": {
+        "rows": 16,
+        "xButtons": [
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b",
+          "ecc74b0f-695a-45be-a36d-6c24537941c7"
+        ],
+        "peeked": [],
+        "toggle": "1 dismissed · show",
+        "visibleIds": [
+          "cc001350-0000-4000-8000-0000000000c1",
+          "cc001350-0000-4000-8000-00000000a001",
+          "a3eb31ea-6350-468c-8974-dc139e7ce953",
+          "cb270ce2-2cab-45dc-94e3-957b1e3dfdb6",
+          "d8539cbf-41b5-4830-8017-7b17ee6c0422",
+          "ad37034a-57dc-47f3-b586-e6fb8ccafbfb",
+          "f6838a8c-670d-4e15-81fa-55232d93fa9a",
+          "3f273fd2-c3af-4c14-80e7-eae5d4cfed14",
+          "0bab20d0-c950-43bf-a277-69b39e10cd27",
+          "026107dc-e30f-496f-9467-3badb6b62a0d",
+          "b2b2693e-6ce0-4407-a41d-964dc7471d8b",
+          "ecc74b0f-695a-45be-a36d-6c24537941c7"
+        ]
+      }
+    },
+    {
+      "name": "live-light · the server holds it (not localStorage)",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · server set",
+      "note": {
+        "count": 1,
+        "cascaded": 1
+      }
+    },
+    {
+      "name": "live-light · still hidden after a hard reload",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-light · and the panel still says so",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · still hidden in a brand-new context",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-light · peeking reveals it, with a restore control",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · the toggle flips to hide",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · peeked row opacity",
+      "note": "0.55"
+    },
+    {
+      "name": "live-light · restored into the list",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · and the toggle is gone",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "live-light · the server forgot it too",
+      "ok": true,
+      "actual": false,
+      "expected": false
+    },
+    {
+      "name": "live-light · the manager takes its settled workers with it",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · rows gone within 500ms of the click",
+      "note": 3
+    },
+    {
+      "name": "live-light · server cascade size",
+      "note": 3
+    },
+    {
+      "name": "live-light · no running row carries a ✕",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "live-light · running rows inspected",
+      "note": 4
+    },
+    {
+      "name": "team-light · before",
+      "note": {
+        "rows": 11,
+        "restore": null,
+        "state": "ready"
+      }
+    },
+    {
+      "name": "team-light · tree is ready",
+      "ok": true,
+      "actual": "ready",
+      "expected": "ready"
+    },
+    {
+      "name": "team-light · nothing hidden yet",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "team-light · target row (last settled node of the tree)",
+      "note": "a3eb31ea-6350-468c-8974-dc139e7ce953"
+    },
+    {
+      "name": "team-light · one fewer row",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-light · \"N hidden · show\" appears",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-light · after dismiss",
+      "note": {
+        "rows": 10,
+        "restore": "1 hidden · show",
+        "state": "ready"
+      }
+    },
+    {
+      "name": "team-light · the server holds it",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-light · server set size",
+      "note": 1
+    },
+    {
+      "name": "team-light · still hidden after a hard reload",
+      "ok": true,
+      "actual": 10,
+      "expected": 10
+    },
+    {
+      "name": "team-light · and still offers the way back",
+      "ok": true,
+      "actual": true,
+      "expected": true
+    },
+    {
+      "name": "team-light · still hidden in a brand-new context",
+      "ok": true,
+      "actual": 10,
+      "expected": 10
+    },
+    {
+      "name": "team-light · \"show\" brings every row back",
+      "ok": true,
+      "actual": 11,
+      "expected": 11
+    },
+    {
+      "name": "team-light · and the label is gone",
+      "ok": true,
+      "actual": null,
+      "expected": null
+    },
+    {
+      "name": "team-light · the server is empty again",
+      "ok": true,
+      "actual": 0,
+      "expected": 0
+    }
+  ],
+  "failures": 0
+}

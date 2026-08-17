@@ -34,12 +34,31 @@
  *   with row count and was flagged by the UI audit §2.2a as a re-render
  *   source). Lineage is a native `title` on each row container — no hover
  *   state anywhere in this directory, by design (R10).
+ *
+ * ── Dismissal (round 1350) ────────────────────────────────────────────────
+ * A SETTLED top-level row carries a ✕ that hides it, server-side and globally
+ * (`ui_dismissals`, shared with the chat team panel through
+ * ../team/dismissals). A RUNNING row has none: hiding work that is still
+ * happening is how a panel stops being a picture of the fleet, and terminate
+ * is a different verb that lives behind a capability flag in the team panel.
+ *
+ * The reveal is CSS ONLY — `.live-row` in app/globals.css, the same rule
+ * `.chat-row` and `.team-row` already use. The controls are mounted in every
+ * row at all times, in a fixed-width slot, so a pointer crossing the list
+ * changes no React state, commits nothing and lays out nothing (NFU2/R10 —
+ * hover cost is a gate on this project). Any onMouseEnter in this file would
+ * be the regression the round was written to avoid.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
 import { RunShotsIndicator } from "../chat/BrowserShots";
+import {
+  seededDismissals,
+  useDismissals,
+  useDismissalsLoaded,
+} from "../team/dismissals";
 import {
   agentKindOf,
   fetchAgents,
@@ -249,6 +268,17 @@ function useSharedClock(enabled: boolean): number {
 interface RowProps {
   a: AgentRow;
   now: number;
+  /** The ids hidden right now. Passed down so a sub-agent dismissed from the
+   *  chat team panel — its node id is a `tool_use_id`, which never appears at
+   *  top level here — does not reappear under its parent in this panel. */
+  dismissed: ReadonlySet<string>;
+  /** Hide this row. The server cascades; see `useDismissals`. */
+  onDismiss: (id: string) => void;
+  /** Un-hide it. Only ever called from the peek list below the fold. */
+  onRestore: (id: string) => void;
+  /** True when this row is being PEEKED: it IS dismissed, and the operator
+   *  asked to see it anyway. Rendered muted, with restore in place of ✕. */
+  peeked?: boolean;
 }
 
 /** Width of the kind column. Fixed so the titles line up down the list and
@@ -256,13 +286,44 @@ interface RowProps {
  *  `width` so a long cron name can spill rather than be clipped. */
 const KIND_COL = 52;
 
+/** The control slot at the end of line 1. Reserved on EVERY row — running
+ *  rows included, which carry no button — so revealing the ✕ cannot move a
+ *  pixel of the row and the token column stays aligned down the list. */
+const CONTROLS_COL = 20;
+
+const CONTROL_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "1px solid transparent",
+  borderRadius: 3,
+  padding: "0 2px",
+  minWidth: CONTROLS_COL,
+  boxSizing: "border-box",
+  textAlign: "center",
+  fontSize: 10,
+  lineHeight: 1.4,
+  fontFamily: "inherit",
+  cursor: "pointer",
+};
+
+/** How far a peeked row is faded. Opacity, not a colour: the row keeps every
+ *  token it renders with, and "this is hidden" is said by the whole row being
+ *  quieter than the live list above it. */
+const PEEK_OPACITY = 0.55;
+
 /** Aliases render fainter than resolved ids — the colour IS the statement
  *  that we know less about this row's model (R8). */
 function modelColor(model: string | null | undefined): string {
   return isModelAlias(model) ? tokens.textGhost : tokens.textFaint;
 }
 
-function AgentRunLine({ a, now }: RowProps) {
+function AgentRunLine({
+  a,
+  now,
+  dismissed,
+  onDismiss,
+  onRestore,
+  peeked = false,
+}: RowProps) {
   const live = a.status === "running";
   const elapsed = runElapsedMs(a, now);
 
@@ -283,7 +344,13 @@ function AgentRunLine({ a, now }: RowProps) {
     // the row that does not state something more specific — the dot, the
     // badge, the second line, the padding — answers "what is this and whose
     // child is it?" on hover, with zero JS.
-    <div title={lineage} data-agent-kind={kind}>
+    <div
+      className="live-row"
+      title={lineage}
+      data-agent-kind={kind}
+      data-live-peeked={peeked ? "true" : undefined}
+      style={peeked ? { opacity: PEEK_OPACITY } : undefined}
+    >
       <div
         style={{
           display: "flex",
@@ -347,6 +414,52 @@ function AgentRunLine({ a, now }: RowProps) {
         >
           ↓ {humanTokens(tokensIn)}
         </span>
+        {/* Always mounted, fixed width, revealed by the `.live-row` rules in
+            globals.css — never by React state (see the file header). A peeked
+            row's restore control is NOT hover-gated: it is already an
+            explicitly-summoned list, and a control you have to find by
+            hovering inside it would be a puzzle, not an affordance. */}
+        <span
+          className={peeked ? undefined : "live-row-controls"}
+          style={{
+            flex: "none",
+            minWidth: CONTROLS_COL,
+            display: "flex",
+            justifyContent: "flex-end",
+          }}
+        >
+          {peeked ? (
+            <button
+              data-live-restore={a.id}
+              type="button"
+              title="Bring this row back"
+              onClick={() => onRestore(a.id)}
+              className="mono"
+              style={{ ...CONTROL_STYLE, color: tokens.textMuted }}
+            >
+              ↺
+            </button>
+          ) : (
+            /* Settled only. A running row has no ✕ at all — not a disabled
+               one: there is no verb behind it here, and a control that exists
+               to refuse is noise in a list you read at a glance. */
+            a.settled && (
+              <button
+                data-live-x={a.id}
+                type="button"
+                title={
+                  "Hide this row — and everything settled under it. " +
+                  "Reversible from “N dismissed · show” in the header."
+                }
+                onClick={() => onDismiss(a.id)}
+                className="mono"
+                style={{ ...CONTROL_STYLE, color: tokens.bleed }}
+              >
+                ✕
+              </button>
+            )
+          )}
+        </span>
       </div>
 
       {/* Second line, now unconditional: role/schedule and model are facts
@@ -400,15 +513,21 @@ function AgentRunLine({ a, now }: RowProps) {
           rather than fetching per row. */}
       <RunShotsIndicator runId={a.id} paddingLeft={24} />
 
-      {a.subagents?.map((s) => (
-        <SubagentLine
-          key={s.tool_use_id}
-          s={s}
-          now={now}
-          parentTitle={a.title}
-          parentModel={model}
-        />
-      ))}
+      {/* A sub-agent hidden from the team panel stays hidden here: one set,
+          one truth, both surfaces. Its own row carries no ✕ — dismissal in
+          this panel is a top-level gesture, and a sub-agent goes with the
+          run it lives inside. */}
+      {a.subagents
+        ?.filter((s) => !dismissed.has(s.tool_use_id))
+        .map((s) => (
+          <SubagentLine
+            key={s.tool_use_id}
+            s={s}
+            now={now}
+            parentTitle={a.title}
+            parentModel={model}
+          />
+        ))}
     </div>
   );
 }
@@ -565,17 +684,50 @@ export function AgentActivity({
   const agents = useMemo(() => q.data?.agents ?? [], [q.data]);
   const s = q.data?.summary;
 
+  /* Dismissals, shared with the chat team panel (../team/dismissals). The
+   * `null` is the hook's vestigial chat id — the set is global. */
+  const { dismissed, dismiss, restore } = useDismissals(null);
+  const dismissalsLoaded = useDismissalsLoaded();
+  const payloadDismissed = useMemo(
+    () =>
+      agents.filter((a) => a.dismissed_at != null).map((a) => a.id),
+    [agents],
+  );
+  /* Same rule as the team panel: seed from the payload's own `dismissed_at`
+   * until the GET answers, then let the server set be the only authority so a
+   * restore is not re-hidden by a response that is up to 4s stale. */
+  const hiddenBy = useMemo(
+    () => seededDismissals(dismissalsLoaded, dismissed, payloadDismissed),
+    [dismissalsLoaded, dismissed, payloadDismissed],
+  );
+
+  const [peek, setPeek] = useState(false);
+
   // Memoised partition — the audit flagged these as unmemoised filter+Set()
   // allocations that fired on every one-second useLiveTick tick.
-  const { active, recent } = useMemo(() => {
+  const { active, recent, hidden, hiddenRowCount } = useMemo(() => {
     const active: AgentRow[] = [];
     const recent: AgentRow[] = [];
+    const hidden: AgentRow[] = [];
+    /* ROWS withheld, not ids hidden — the same distinction the team panel's
+     * `hiddenCount` makes. A dismissed run takes its sub-agent lines with it,
+     * and an id belonging to a run outside this feed withholds nothing here
+     * and must not be counted. */
+    let hiddenRowCount = 0;
     for (const a of agents) {
+      if (hiddenBy.has(a.id)) {
+        hidden.push(a);
+        hiddenRowCount += 1 + (a.subagents?.length ?? 0);
+        continue;
+      }
       if (ACTIVE_STATUSES.has(a.status)) active.push(a);
       else recent.push(a);
+      for (const sub of a.subagents ?? []) {
+        if (hiddenBy.has(sub.tool_use_id)) hiddenRowCount += 1;
+      }
     }
-    return { active, recent };
-  }, [agents]);
+    return { active, recent, hidden, hiddenRowCount };
+  }, [agents, hiddenBy]);
 
   // Only tick the clock when SOMETHING can be counting up. Kills the timer
   // entirely when the panel is idle (empty state / all recent).
@@ -625,6 +777,35 @@ export function AgentActivity({
         {!!s?.stuck && (
           <span style={{ color: tokens.stuck }}>{s.stuck} stuck</span>
         )}
+        {/* The way back. Counted in ROWS this panel is actually withholding,
+            so it can neither claim rows that are not in this feed nor
+            undercount a dismissed run's sub-agent lines. Peeking is local
+            state on the PANEL — one toggle, not a per-row flag — so it costs
+            one render of the list and nothing on hover. */}
+        {hiddenRowCount > 0 && (
+          <button
+            data-live-dismissed-toggle
+            type="button"
+            onClick={() => setPeek((v) => !v)}
+            title={
+              "Show the rows dismissed from this panel. Dismissing hides a " +
+              "row; it never deletes anything, and the set is shared with the " +
+              "chat team panel."
+            }
+            className="mono"
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              fontSize: 10,
+              fontFamily: "inherit",
+              color: tokens.textMuted,
+              cursor: "pointer",
+            }}
+          >
+            {hiddenRowCount} dismissed · {peek ? "hide" : "show"}
+          </button>
+        )}
         <span style={{ flex: 1 }} />
         {!!(s?.tokens_out_last_hour || s?.tokens_in_last_hour) && (
           <span title="tokens generated / read in the last hour">
@@ -669,7 +850,14 @@ export function AgentActivity({
         )}
 
         {active.map((a) => (
-          <AgentRunLine key={a.id} a={a} now={now} />
+          <AgentRunLine
+            key={a.id}
+            a={a}
+            now={now}
+            dismissed={hiddenBy}
+            onDismiss={dismiss}
+            onRestore={restore}
+          />
         ))}
 
         {!!recent.length && (
@@ -686,7 +874,45 @@ export function AgentActivity({
               RECENT
             </div>
             {recent.slice(0, 12).map((a) => (
-              <AgentRunLine key={a.id} a={a} now={now} />
+              <AgentRunLine
+                key={a.id}
+                a={a}
+                now={now}
+                dismissed={hiddenBy}
+                onDismiss={dismiss}
+                onRestore={restore}
+              />
+            ))}
+          </>
+        )}
+
+        {/* Peeked rows sit BELOW everything, behind their own heading and
+            visibly quieter: they are hidden, and the panel says so rather
+            than mixing them back into the live list. Each carries its own
+            restore — the way back is per row, because the way out was. */}
+        {peek && !!hidden.length && (
+          <>
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                color: tokens.textGhost,
+                letterSpacing: "0.08em",
+                padding: "10px 8px 4px",
+              }}
+            >
+              DISMISSED
+            </div>
+            {hidden.map((a) => (
+              <AgentRunLine
+                key={a.id}
+                a={a}
+                now={now}
+                dismissed={hiddenBy}
+                onDismiss={dismiss}
+                onRestore={restore}
+                peeked
+              />
             ))}
           </>
         )}

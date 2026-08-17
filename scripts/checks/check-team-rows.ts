@@ -59,6 +59,7 @@ function node(over: Partial<TeamNode> & { id: string }): TeamNode {
     settled: true,
     description: null,
     parent_id: null,
+    dismissed_at: null,
     subagents: [],
     task: null,
     ...over,

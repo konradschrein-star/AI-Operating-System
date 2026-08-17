@@ -25,7 +25,9 @@
  *   • two queries (team, capabilities) and nothing else that talks to the net
  *   • `armedId` — WHICH row's destructive X is armed, as one string; rows get
  *     a boolean, so arming re-renders two rows instead of the list
- *   • dismissals, via ./dismissals (localStorage today, server-backed in 1600)
+ *   • dismissals, via ./dismissals — server-backed and GLOBAL since round 1350
+ *     (`ui_dismissals`); the panel still hides the dismissed node's whole
+ *     subtree locally so the gesture lands in one frame
  *
  * It does NOT own hover. There is no pointer-enter handler, no pointer-leave
  * handler and no hover state anywhere in this directory; the controls are mounted in every
@@ -66,7 +68,7 @@ import {
   decideXClick,
   type ArmedState,
 } from "./confirm";
-import { useDismissals } from "./dismissals";
+import { seededDismissals, useDismissals, useDismissalsLoaded } from "./dismissals";
 import {
   fetchCapabilities,
   fetchChatTeam,
@@ -115,6 +117,30 @@ const ALL_FALSE: CapabilitiesResponse["control_plane"] = {
 /** The "no response yet" tree. One frozen object so the `rows` memo returns a
  *  stable identity while loading and the row list never re-renders for it. */
 const NO_TEAM: FlatTeam = { rows: [], hiddenCount: 0 };
+
+/** Nothing flagged — one frozen array, so the seed memo below keeps its
+ *  identity on every poll of a tree with no dismissals in it. */
+const NO_PAYLOAD_DISMISSALS: readonly string[] = [];
+
+/** The node ids this RESPONSE says are hidden (`dismissed_at`), sub-agents
+ *  included.
+ *
+ *  It is a SEED, not the authority: `GET /api/agents/dismissals` is, because
+ *  it is the only source that also knows about ids outside this tree and that
+ *  a restore just happened. Reading the payload after that GET has landed
+ *  would re-hide a row for up to one 6s poll after "show" un-hid it — see
+ *  `seededDismissals`, which is where the switch-over lives. */
+function payloadDismissedIds(res: TeamResponse | undefined): readonly string[] {
+  if (!res) return NO_PAYLOAD_DISMISSALS;
+  const ids: string[] = [];
+  const walk = (node: TeamNode): void => {
+    if (node.dismissed_at !== null) ids.push(node.id);
+    for (const sub of node.subagents) walk(sub);
+  };
+  walk(res.manager);
+  for (const worker of res.workers) walk(worker);
+  return ids.length > 0 ? ids : NO_PAYLOAD_DISMISSALS;
+}
 
 /** The five states of the panel, on `data-team-state` at the root. Every one
  *  of them is a deliberate render — there is no sixth "blank" case where the
@@ -196,8 +222,12 @@ export function ChatTeamPanel({
 
   /* No count comes out of this hook on purpose: the number of dismissed IDS is
    * not the number of hidden ROWS. `flattenTeam` reports the one the label
-   * needs (see FlatTeam.hiddenCount). */
+   * needs (see FlatTeam.hiddenCount).
+   *
+   * `chatId` is passed for the call site's sake only — dismissals are global
+   * since round 1350 and the hook does not read it. */
   const { dismissed, dismiss, restoreAll } = useDismissals(chatId || null);
+  const dismissalsLoaded = useDismissalsLoaded();
 
   /* ── Armed state ───────────────────────────────────────────────────────
    * `armedId` renders (as a boolean prop per row); `armedRef` is what the
@@ -343,9 +373,20 @@ export function ChatTeamPanel({
    * silent 108-row re-render. */
   const rowCache = useRef(createTeamRowCache());
 
+  /* The set the tree is actually hidden by: the server's, seeded from this
+   * response's own `dismissed_at` flags until the GET has answered. Once it
+   * has, `seededDismissals` returns `dismissed` UNCHANGED — same object — so
+   * this memo stops producing new sets and `flattenTeam` keeps handing back
+   * the cached row wrappers that let `memo(TeamRowView)` bail out. */
+  const payloadDismissed = useMemo(() => payloadDismissedIds(data), [data]);
+  const hiddenBy = useMemo(
+    () => seededDismissals(dismissalsLoaded, dismissed, payloadDismissed),
+    [dismissalsLoaded, dismissed, payloadDismissed],
+  );
+
   const { rows, hiddenCount } = useMemo(
-    () => (data ? flattenTeam(data, dismissed, rowCache.current) : NO_TEAM),
-    [data, dismissed],
+    () => (data ? flattenTeam(data, hiddenBy, rowCache.current) : NO_TEAM),
+    [data, hiddenBy],
   );
   const responseNow = useMemo(() => (data ? responseNowMs(data) : Number.NaN), [data]);
 
@@ -484,15 +525,20 @@ export function ChatTeamPanel({
             </div>
 
             {/* Driven by rows actually withheld from THIS tree, so the label
-                cannot claim hidden rows that do not exist (junk in localStorage)
-                nor undercount a dismissed parent's sub-agents. */}
+                cannot claim hidden rows that do not exist (the dismissal set
+                is global and holds ids from every project) nor undercount a
+                dismissed parent's sub-agents. */}
             {hiddenCount > 0 && (
               <div style={{ padding: "4px 10px", borderTop: `1px solid ${tokens.borderDivider}` }}>
                 <button
                   data-team-restore
                   type="button"
                   onClick={restoreAll}
-                  title="Bring every hidden row back. Dismissing hides rows; it never deletes anything."
+                  title={
+                    "Bring every hidden row back. Dismissals are global since " +
+                    "round 1350, so this also un-hides them in the Live panel. " +
+                    "Dismissing hides rows; it never deletes anything."
+                  }
                   className="mono"
                   style={{
                     background: "transparent",

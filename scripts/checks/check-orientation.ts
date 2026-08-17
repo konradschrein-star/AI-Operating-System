@@ -105,6 +105,7 @@ function node(over: Partial<TeamNode> & Pick<TeamNode, "id" | "kind">): TeamNode
     settled: false,
     description: null,
     parent_id: null,
+    dismissed_at: null,
     subagents: [],
     task: null,
     ...over,

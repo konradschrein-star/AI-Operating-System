@@ -121,6 +121,20 @@ body {
   opacity: 1;
 }
 
+/* round 1350 (NFU2): the Live panel's dismissal ✕, revealed the same way and
+ * for the same reason as `.chat-row` and `.team-row` above. The button is
+ * mounted in every settled row at all times inside a fixed-width slot, so the
+ * reveal is one opacity change: no React hover state, no re-render, no
+ * reflow. `:focus-within` keeps it reachable by keyboard. Opacity only —
+ * every colour still comes from app/tokens.ts (NFU1). */
+.live-row .live-row-controls {
+  opacity: 0;
+}
+.live-row:hover .live-row-controls,
+.live-row:focus-within .live-row-controls {
+  opacity: 1;
+}
+
 /* v3 phase 700 (U26/NFU2): plan-zone doc affordance, CSS-only — the same
  * bargain `.chat-row` and `.team-row` above make. A plan doc is a link, so it
  * behaves like one under the pointer and under keyboard focus; the change is
