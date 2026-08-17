@@ -101,10 +101,11 @@ import {
 } from "./confirm";
 import { seededDismissals, useDismissals, useDismissalsLoaded } from "./dismissals";
 import {
+  DISMISSAL_SURFACES,
   DISMISSED_GROUP_LABEL,
-  DISMISSED_TOGGLE_TITLE,
   RESTORE_ALL_LABEL,
   dismissedToggleLabel,
+  dismissedToggleTitle,
   restoreAllArmedLabel,
   restoreAllTitle,
 } from "./peek";
@@ -690,7 +691,9 @@ export function ChatTeamPanel({
                   data-team-dismissed-toggle
                   type="button"
                   onClick={() => setPeek((v) => !v)}
-                  title={DISMISSED_TOGGLE_TITLE}
+                  /* The OTHER surface: this IS the chat team panel, so the
+                     sentence names /live. */
+                  title={dismissedToggleTitle(DISMISSAL_SURFACES.live)}
                   className="mono"
                   style={FOOTER_BTN_STYLE}
                 >

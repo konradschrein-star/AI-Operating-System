@@ -60,11 +60,12 @@ import {
   useDismissalsLoaded,
 } from "../team/dismissals";
 import {
+  DISMISSAL_SURFACES,
   DISMISSED_GROUP_LABEL,
-  DISMISSED_TOGGLE_TITLE,
   PEEK_OPACITY,
   RESTORE_ROW_TITLE,
   dismissedToggleLabel,
+  dismissedToggleTitle,
 } from "../team/peek";
 import {
   agentKindOf,
@@ -789,7 +790,10 @@ export function AgentActivity({
             data-live-dismissed-toggle
             type="button"
             onClick={() => setPeek((v) => !v)}
-            title={DISMISSED_TOGGLE_TITLE}
+            /* The OTHER surface: this IS the Live panel, so the sentence that
+               tells the operator where else his dismissals apply has to name
+               the chat team panel. */
+            title={dismissedToggleTitle(DISMISSAL_SURFACES.team)}
             className="mono"
             style={{
               background: "transparent",

@@ -228,13 +228,20 @@ place — dropping one is a destructive op and was not briefed.
 
 `data-team-restore` **changed meaning**. It used to mark the single restore-all
 button; it now marks a peeked row's own `↺` and carries that row's node id.
-Three dated capture scripts read it under the old meaning and will not pass
+**Four** dated capture scripts read it under the old meaning and will not pass
 as-written against this build — they are historical evidence and were left
-untouched, so this is the note rather than an edit:
+untouched, so this is the note rather than an edit. The list below is the full
+output of `grep -rn "data-team-restore" docs scripts`, minus this phase's own
+scripts and `scripts/checks/`, both of which are on the new contract:
 
-* `../phase500/dismiss-persist.cjs:205,240,248` — expects `textContent === "1 hidden · show"`.
+* `../phase500/dismiss-persist.cjs:205,208,240,243,248,250,253,263,264` — expects `textContent === "1 hidden · show"`, clicks it as the global restore, and asserts it disappears when the set empties.
 * `../phase500/fixes-506.cjs:453,479,528,539` — clicks it to restore.
 * `../phase1350/dismissal-ui/capture-1350.cjs:189,397` — same.
+* `../phase1300/redteam/dom-1305.cjs:252-254` — **round 1356's review caught this one missing from the list.** A7 does `page.locator("[data-team-restore]").first()` and asserts `/^\s*1 hidden/` on its text: the old footer contract exactly. Under the new one that selector resolves to a per-row `↺` that does not exist until the operator peeks, and which carries a glyph rather than a count — so A7 breaks at the `innerText` assertion.
+
+One more mention is a *record*, not a script: `../phase500/README.md:306` has the
+row "`[data-team-restore]` appears reading `1 hidden · show` | ok" in its results
+table. It is a true account of what phase 500 saw and stays as written.
 
 The current contract is `[data-team-dismissed-toggle]` to peek,
 `[data-team-restore="<id>"]` per row, `[data-team-restore-all]` for the global

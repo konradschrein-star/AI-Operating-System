@@ -34,6 +34,10 @@
  *   3. THE SHARED VOCABULARY. Both surfaces must render the SAME strings from
  *      ./peek rather than two copies that drift, which is how /live ended up
  *      with a correct affordance and the team panel with a destructive one.
+ *      With ONE deliberate exception, asserted separately: the toggle's
+ *      tooltip names the OTHER panel, so it must read differently on each.
+ *      Round 1356 shared that sentence too and /live began telling the
+ *      operator his dismissals are shared with the Live panel.
  *
  * Run (from forge-control-web, whose node_modules holds react/react-dom):
  *   ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json \
@@ -48,6 +52,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Providers } from "../../forge-control-web/app/Providers.tsx";
 import { TeamRowView } from "../../forge-control-web/app/desktop/team/TeamRow.tsx";
 import {
+  DISMISSAL_SURFACES,
   DISMISSED_GROUP_LABEL,
   HIDDEN_WITH_PARENT_MARK,
   HIDDEN_WITH_PARENT_TITLE,
@@ -55,6 +60,7 @@ import {
   RESTORE_ALL_LABEL,
   RESTORE_ROW_TITLE,
   dismissedToggleLabel,
+  dismissedToggleTitle,
   restoreAllArmedLabel,
   restoreAllTitle,
 } from "../../forge-control-web/app/desktop/team/peek.ts";
@@ -303,6 +309,67 @@ console.log("\n── both surfaces, one vocabulary ─────────�
   check("the toggle label reads the same on both", dismissedToggleLabel(4, false), "4 dismissed · show");
   check("…and flips to hide when open", dismissedToggleLabel(4, true), "4 dismissed · hide");
   check("the group heading is one constant", DISMISSED_GROUP_LABEL, "DISMISSED");
+}
+
+/* ── 3. …but the tooltip names the OTHER surface ──────────────────────────────
+ *
+ * The one string in ./peek that may NOT read identically on both panels. Its
+ * whole job is to answer "where else does this dismissal apply?", so a panel
+ * that names itself answers nothing — which is exactly what round 1356 shipped
+ * when it hoisted the chat panel's wording into a bare constant and /live
+ * started promising the operator that /live shares with /live.
+ *
+ * Asserted at the render site, not on the constant: the defect was in which
+ * argument each panel passes, and only the JSX carries that. */
+console.log("\n── the tooltip names the OTHER panel ────────────────────────");
+{
+  const surfaces = [
+    { name: "/live", text: src(LIVE), attr: "data-live-dismissed-toggle", self: DISMISSAL_SURFACES.live, other: DISMISSAL_SURFACES.team },
+    { name: "team panel", text: src(PANEL), attr: "data-team-dismissed-toggle", self: DISMISSAL_SURFACES.team, other: DISMISSAL_SURFACES.live },
+  ] as const;
+
+  for (const s of surfaces) {
+    const toggle = element(s.text, s.attr);
+    check(
+      `${s.name}: its toggle's title comes from dismissedToggleTitle()`,
+      /title=\{\s*dismissedToggleTitle\(/.test(toggle),
+      true,
+    );
+    /* The argument, read out of the element rather than trusted: the key it
+     * passes must be the key of the OTHER panel. */
+    const arg = /dismissedToggleTitle\(\s*DISMISSAL_SURFACES\.(\w+)\s*\)/.exec(toggle)?.[1] ?? null;
+    check(`${s.name}: …passing the other surface`, arg === null ? null : DISMISSAL_SURFACES[arg as keyof typeof DISMISSAL_SURFACES], s.other);
+    check(`${s.name}: …and never naming itself — THE round-1356 regression`, arg === null ? null : DISMISSAL_SURFACES[arg as keyof typeof DISMISSAL_SURFACES] === s.self, false);
+    /* And no panel may go back to a hand-written copy of the sentence. Anchored
+     * on the tooltip's own distinctive clause, not on the word "shared" — both
+     * files legitimately say in PROSE that the dismissal store is shared with
+     * the other panel, and a check that forbade that would be forbidding the
+     * truth. */
+    check(`${s.name}: hand-writes no copy of the sentence`, /the set is shared with/.test(s.text), false);
+  }
+
+  check(
+    "the sentence still says dismissing never deletes",
+    dismissedToggleTitle(DISMISSAL_SURFACES.team).includes("it never deletes anything"),
+    true,
+  );
+  check(
+    "…and the two readings differ",
+    dismissedToggleTitle(DISMISSAL_SURFACES.live) === dismissedToggleTitle(DISMISSAL_SURFACES.team),
+    false,
+  );
+  check(
+    "the /live reading names the chat team panel",
+    dismissedToggleTitle(DISMISSAL_SURFACES.team),
+    "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
+      "deletes anything, and the set is shared with the chat team panel.",
+  );
+  check(
+    "the team panel's reading names the Live panel",
+    dismissedToggleTitle(DISMISSAL_SURFACES.live),
+    "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
+      "deletes anything, and the set is shared with the Live panel.",
+  );
 }
 
 console.log(

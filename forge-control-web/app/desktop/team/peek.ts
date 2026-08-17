@@ -38,11 +38,34 @@ export function dismissedToggleLabel(hiddenRowCount: number, peeking: boolean): 
   return `${hiddenRowCount} dismissed · ${peeking ? "hide" : "show"}`;
 }
 
+/** The two surfaces that share the dismissal store, named the way a reader
+ *  would name them. Sharing the WORDS is right; sharing a sentence that names
+ *  a fixed panel is not — round 1356 hoisted the chat panel's tooltip into one
+ *  constant and /live ended up telling the operator, while he stood in /live,
+ *  that his dismissals are shared with the Live panel. A vacuous sentence on
+ *  the one control whose job that round was to stop it lying.
+ *
+ *  So the surface is a parameter and each panel passes the OTHER one:
+ *  `check-dismiss-peek.tsx` fails if a panel names itself. */
+export const DISMISSAL_SURFACES = {
+  /** app/desktop/live/AgentActivity.tsx */
+  live: "the Live panel",
+  /** app/desktop/team/ChatTeamPanel.tsx */
+  team: "the chat team panel",
+} as const;
+
+export type DismissalSurfaceName =
+  (typeof DISMISSAL_SURFACES)[keyof typeof DISMISSAL_SURFACES];
+
 /** What the toggle promises on hover. Says the two things a reader cannot see:
- *  that dismissing never deletes, and that the set is shared across panels. */
-export const DISMISSED_TOGGLE_TITLE =
-  "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
-  "deletes anything, and the set is shared with the Live panel.";
+ *  that dismissing never deletes, and WHERE ELSE the dismissal applies — so
+ *  `otherSurface` is the panel the reader is NOT standing in. */
+export function dismissedToggleTitle(otherSurface: DismissalSurfaceName): string {
+  return (
+    "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
+    `deletes anything, and the set is shared with ${otherSurface}.`
+  );
+}
 
 /** The per-row way back, worn by every restorable peeked row. */
 export const RESTORE_ROW_TITLE = "Bring this row back";
@@ -74,10 +97,12 @@ export function restoreAllArmedLabel(totalDismissedIds: number): string {
   return `restore all ${totalDismissedIds}?`;
 }
 
+/** Rendered only by the chat team panel (`ChatTeamPanel.tsx` is the sole
+ *  caller), so the panel it names as "elsewhere" is fixed: /live. */
 export function restoreAllTitle(totalDismissedIds: number): string {
   return (
     `Un-hide every dismissed row on this machine — all ${totalDismissedIds} ` +
-    "of them, including rows in other projects and in the Live panel. " +
+    `of them, including rows in other projects and in ${DISMISSAL_SURFACES.live}. ` +
     "Click twice to confirm. To bring back one row, use its own ↺ below."
   );
 }
