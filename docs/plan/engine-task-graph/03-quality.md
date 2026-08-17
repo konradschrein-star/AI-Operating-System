@@ -191,6 +191,24 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 - `migrations.test.ts` names `0040_task_graph.sql`.
 - The fixture exists, has > 100 rows, and contains **no brief text** — the
   reviewer greps it for `curl`, `http`, and any string over 500 chars.
+  **Amended at capture (round 102).** The row count holds: the capture is 131
+  rows, so the `> 100` clause is satisfiable and stands unchanged. The grep
+  clause was **not** satisfiable as written, and is restated here rather than
+  disclosed-and-ignored. `grep -ci 'curl\|http'` over the captured fixture
+  returns **1**, on a real task *title* — row `127e1b38-d981-483f-9502-4733f791a3d2`,
+  round 904, `status: done`: *"U34 production verification: live endpoint curls,
+  dark+light screenshots, and proof the four shipped features are actually
+  live"*. That is live data, and R9's rule is that the six projected fields are
+  copied faithfully; redacting or editing a title to make a grep return zero
+  would corrupt the replay input to flatter an instrument. So the gate now reads:
+  **`grep -ci 'curl\|http'` must return 0, or every matching line must be a
+  `"title":` line already recorded in the fixture's sibling `.md` by row id.**
+  A match on any other key, or on an unrecorded row, is a finding. The intent —
+  no brief text, no prompts, no run ids, no secrets — is unchanged and is proved
+  by the stronger mechanical clause the sibling `.md` reports: every element has
+  **exactly** the six keys `{id, round, role, title, status, created_at}` and no
+  others, and no string value exceeds 500 characters (longest observed: 127).
+  Brief text cannot enter a document whose key set is closed.
 - The replay harness runs and prints its SHA and row count. It may legitimately
   **fail** at this phase if phase 2 has not landed; the gate is that it runs and
   reports, not that it passes.
