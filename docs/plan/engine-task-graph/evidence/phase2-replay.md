@@ -611,7 +611,7 @@ count** (standing rule 1 — an earlier draft of this paragraph enumerated
 
 | File | Enclosing symbol → site |
 |---|---|
-| `projects.ts` | `(module preamble)` — the legacy-branch sentence, **added round 206, the fifth**; `promoteReadyTasks` ×4 — its legacy-branch prose, its R69 case-(f) prose, its R69 SQL term, its `-- LEGACY BRANCH` label |
+| `projects.ts` | `(module preamble)` — the legacy-branch sentence, **added by `863bc25` — fix cycle 1, round 204 — the fifth**; `promoteReadyTasks` ×4 — its legacy-branch prose, its R69 case-(f) prose, its R69 SQL term, its `-- LEGACY BRANCH` label |
 | `task-graph.ts` | `DepsField`; `legacyRoundReady`; `graphReady` ×2 — its R69 paragraph and the R69 loop; `readyRule` |
 | `task-graph-replay.test.ts` | `GRAPH_RULE` — the harness's own retirement note; the replay retires with the branch it proves |
 

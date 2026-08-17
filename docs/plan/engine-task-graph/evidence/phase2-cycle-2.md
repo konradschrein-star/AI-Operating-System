@@ -59,7 +59,7 @@ cannot be established from the record, and this line does not pretend otherwise:
 
 | Transcript | Bytes it was produced against |
 |---|---|
-| §3 mutations 1–4, and the inert blank-line mutation | An uncommitted pre-fix draft, identity unrecoverable. **Re-run against the shipped `779d383f…` in §3.1 — all four still red.** |
+| §3 mutations 1–4, and the inert blank-line mutation | An uncommitted pre-fix draft, identity unrecoverable. **Re-run against the shipped `779d383f…` in §3.1 — mutations 1–3 still red; mutation 4, split into 4a and 4b by round 210 (§3.1's own conjunction did not survive its own re-run), is mixed: 4a leaves the main entry green, 4b still red.** |
 | §3 mutation 5, *first* transcript (`at git 27737a9` → `25ae132`) | The pre-fix draft **by construction**: it is that draft's defect being exhibited, since the shipped `render()` cannot emit a commit stamp at all. |
 | §3 mutation 5, *second* transcript (exit 0 across the commit) | The post-fix bytes, i.e. `779d383f…`. Re-confirmed in §3.1's control run, which is green *after* `cf75f83` landed. |
 
@@ -107,10 +107,15 @@ shadow's own HEAD is green on both entry points (`check exit=0`,
 
 > **READ §3.1 FIRST.** The transcripts below were produced against an
 > uncommitted draft of the script whose bytes no longer exist — §1 records why.
-> **§3.1 re-runs all four against the bytes that shipped (`779d383f…`), where all
-> four still turn red**, and notes the one incidental number that differs and
-> why. Treat the numbers below as attributed to that lost draft; treat §3.1's as
-> attributed to the build.
+> **§3.1 re-runs these against the bytes that shipped (`779d383f…`).** Mutations
+> 1–3 still turn red. Mutation 4 as stated below — one run producing both a
+> byte-identical banner and a 36-row `--write` — does not reproduce as written:
+> round 210 found the two claims belong to two different edits, split them into
+> **4a** (the default parameter alone: green, byte-identical, nothing to write)
+> and **4b** (the body: red, 36 rows move), and re-ran both separately. §3.1
+> carries the split and the corrected numbers; this section also notes the one
+> incidental number that differs and why. Treat the numbers below as attributed
+> to that lost draft; treat §3.1's as attributed to the build.
 
 **Mutation 1 — the census region goes stale.** Round 205's finding, mechanised:
 edit the generated headline back to the numbers the document used to carry.
@@ -220,7 +225,7 @@ a blank line, so the clause is currently unexercised. It is kept because the
 next edit to the file may exercise it, but it is **not** evidence, and mutation
 4 replaced it.
 
-### 3.1 Round 208 — the same four mutations, against the bytes that shipped
+### 3.1 Round 208 — the same mutations, against the bytes that shipped; mutation 4 split by round 210
 
 Added by fix cycle 3 to close §1's defect at the level it actually mattered: not
 by correcting a digit, but by making every transcript in §3 answer to bytes that
@@ -238,13 +243,36 @@ after the last mutation was reverted.
 | 1 — headline reverted to 85/92 | `exit 1`, `census is STALE`, unified diff naming `-**85` against `+**99` | holds |
 | 2 — `AND pt.round <= 5` in `promoteReadyTasks` | `exit 1`, `FAIL: R20 … in promoteReadyTasks(): unjustified round` — **by name** | holds |
 | 3 — `roundHelperAddedLater`, unattributed | `exit 1`, `symbols carrying round with no attribution — roundHelperAddedLater (3 hits)` | holds, count included |
-| 4 — the attribution rule altered | `self-check exit 1` on **distribution**, 19 symbols differ; banner byte-identical; `--write` moves **36 region rows** | holds, all three numbers |
+| 4a — `census()`'s default `rule` parameter flipped, `"tsdoc"` → `"trailing"`, nothing else touched | `check exit=0`, stdout byte-for-byte identical to the control capture; `--write` finds nothing to change, **0 rows** move | split from §3's single mutation 4 — this half holds |
+| 4b — the body: the `if rule == "trailing":` guard around the flush removed, so `tsdoc` takes that flush unconditionally | `check exit=1` — 2 newly-unattributed symbols (`DepsCorruption`, `RetryOutcome`) plus a stale-region failure; the region diff moves **36** rows, all of them table rows | split from §3's single mutation 4 — this half holds |
 
-Mutation 4's two measured claims both reproduce exactly. The full stdout banner
-under mutation 4 and under the clean run are **byte-identical** — not eyeballed:
-both captures hash to `b11718a89c644baf…`. And the `--write` laundering hazard
-that motivates pinning the distribution is **36** changed region lines, all 36 of
-them table rows, which is §3's *"36 rows of the generated table move"* to the row.
+**§3's single "mutation 4" reported one run producing both halves at once. It
+does not: check and `--write` derive the same render from the same census, so a
+byte-identical banner requires the `REGION … PASS` line, which requires
+render == committed region — which is exactly the condition under which
+`--write` has nothing to move. Round 210 re-ran the two edits separately, in a
+fresh `git clone --no-hardlinks` (`/tmp/r210/shadow`) against the same shipped
+`779d383f8b5fad34…`, at that clone's HEAD `9b7f1b0`:**
+
+- **4a, the default parameter alone.** Every call site that matters passes
+  `rule` explicitly — `main()` via `args.rule`, whose own argparse default is
+  `"tsdoc"`, independent of the function's — so flipping the function's default
+  changes nothing `check-r20-census.py` can observe: stdout hashes identical to
+  the control run, exit 0, `--write` is a no-op. (`--self-check`'s first
+  `census()` call does *not* pass `rule` explicitly and so does pick up the new
+  default, failing on the pinned 19-symbol distribution with the same
+  mismatches 4b produces below — a real, separate finding about the two entry
+  points' asymmetry, and no part of §3's claim, which was about `check` and
+  `--write`.)
+- **4b, the body.** This is the edit that actually changes attribution.
+  `check-r20-census.py` goes red, and the region diff shows **36** changed
+  table rows — reproducing §3's *"36 rows of the generated table move"* exactly,
+  to the row. Total stdout is 60 lines against the control's 7: **53** lines
+  longer. (§3, working from the lost draft, said 54; this re-run, against the
+  bytes that shipped, measured 53 — disclosed rather than reconciled, per §1.)
+
+Each number is real on its own, attributed to the mutation that actually
+produces it; the conjunction — one run, both claims — was never true of either.
 
 **One incidental delta, disclosed rather than smoothed over.** §3's mutation 2
 transcript reads `projects.ts:855`; this re-run printed `:843`. Nothing moved in
@@ -257,13 +285,14 @@ property of the mutation rather than of the tree — which is exactly why §6's
 answer 3 pins it *to the mutated shadow* and not to a commit.
 
 **A disclosure about this round's own instrument, because it nearly certified a
-false finding.** The first attempt at mutation 4 used `sed` with a 12-space
-indent against an anchor indented **8**. The substitution silently matched
-nothing, the run came back green with the region unchanged, and the natural
-reading of that green — *"§3's 36-row claim does not reproduce; the gate misses
-mutation 4"* — was a finding about to be written up. What caught it was the
-`grep -n "MUTATION 4"` post-condition printing **empty**: the mutation had never
-landed, so the green run was measuring unmutated code. The guard that failed was
+false finding.** The first attempt at mutation 4b (the body edit) used `sed`
+with a 12-space indent against an anchor indented **8**. The substitution
+silently matched nothing, the run came back green with the region unchanged,
+and the natural reading of that green — *"§3's 36-row claim does not
+reproduce; the gate misses mutation 4b"* — was a finding about to be written
+up. What caught it was the `grep -n "MUTATION 4"` post-condition printing
+**empty**: the mutation had never landed, so the green run was measuring
+unmutated code. The guard that failed was
 real but mis-aimed — it asserted the target substring **occurred once**, which it
 did, while `sed` required an exact indented match, which it did not; assert-the-
 target and assert-the-mutation-landed are different assertions and only the
