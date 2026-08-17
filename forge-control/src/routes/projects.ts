@@ -401,9 +401,30 @@ r.post("/:id/tasks", async (c) => {
    * computeRound(): the architect legitimately seeds one phase-block label per
    * phase at k*100 and everything below inherits from it by the +1 rule (E1,
    * ruled settled in 02-architecture.md §9.1). Its validation is the expression
-   * that was here before this change, character for character — `round` was
-   * REQUIRED until today, so the only requests whose behaviour changes are ones
-   * that used to be refused.
+   * that was here before this change apart from ONE ruled amendment, below —
+   * `round` was REQUIRED until today, so the only requests whose behaviour
+   * changes are ones that used to be refused.
+   *
+   * `Number.isInteger`, NOT `Number.isFinite` — OPERATOR RULING, round 213,
+   * amended here where it is enforced (standing rule 2). Round 212 kept
+   * `isFinite` verbatim because its brief said twice to preserve today's guard
+   * exactly, and reported the conflict with the contract table's "finite
+   * integer" rather than guessing: `isFinite(1.5)` is true, so a fractional
+   * round reached the INSERT. MEASURED at git b1bb731 before the amendment,
+   * with scripts/checks/check-task-api.ts case 2c: `{"round": 1.5}` produced
+   * `invalid input syntax for type integer: "1.5"` (SQLSTATE 22P02) out of
+   * createTask(), which Hono answers as a 500.
+   *
+   * The ruling is the split this phase established: `GraphValidationError` =
+   * refused CALLER input → 400; `GraphIntegrityError` = corrupt STORED graph →
+   * 500. A fractional round is unambiguously caller input, and a 500 tells the
+   * caller "the server is broken" when the truth is "your request was
+   * malformed", sending whoever debugs it to entirely the wrong place. This
+   * changes behaviour that was never previously a 400, in the only direction
+   * that is safe: a 500 becomes a 400. No legitimate caller depends on a 500
+   * for a malformed round, and nothing that currently succeeds starts failing.
+   * `Number.isInteger` also implies finite, so the old clause is subsumed
+   * rather than dropped.
    *
    * `null` counts as OMITTED rather than as `Number(null) === 0`: a caller who
    * sends the key with no value is asking the engine to decide, and with
@@ -412,7 +433,7 @@ r.post("/:id/tasks", async (c) => {
   let round = 0;
   if (roundSupplied) {
     round = Number(body.round);
-    if (!Number.isFinite(round) || round < 0) {
+    if (!Number.isInteger(round) || round < 0) {
       return c.json({ error: "round must be a non-negative integer" }, 400);
     }
   }
