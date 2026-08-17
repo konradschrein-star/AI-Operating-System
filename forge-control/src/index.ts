@@ -38,6 +38,7 @@ import files from "./routes/files.ts";
 import projects from "./routes/projects.ts";
 import capabilities from "./routes/capabilities.ts";
 import tasks from "./routes/tasks.ts";
+import integrations from "./routes/integrations.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
@@ -198,6 +199,9 @@ app.route("/api/capabilities", capabilities);
 // because Step 11 of the execution-layer redesign grows /api/tasks into the
 // unified dispatch verb.
 app.route("/api/tasks", tasks);
+// Round 1350: outside services — the Gemini API key (secret store, never the
+// DB) and the existing Gmail/Calendar/Drive Google consent.
+app.route("/api/integrations", integrations);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);
