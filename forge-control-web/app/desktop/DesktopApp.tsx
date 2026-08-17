@@ -44,6 +44,7 @@ import { MoneySurface } from "./MoneySurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
+import { ContextGauge } from "./chat/ContextGauge";
 import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
 import {
   SurfaceErrorBoundary,
@@ -1006,7 +1007,10 @@ function QuotaBars() {
   }, []);
 
   const d = q.data;
-  if (!d) return null;
+  // The ctx gauge (round 1350) has its OWN data path — the run behind the
+  // chat on screen, not Anthropic's usage endpoint — so a quota reading that
+  // hasn't landed (or 429'd) must not take it down with it.
+  if (!d) return <ContextGauge />;
 
   const age = (iso: string) => {
     const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -1060,6 +1064,10 @@ function QuotaBars() {
     <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
       <Bar label="5h" w={d.five_hour} />
       <Bar label="7d" w={d.seven_day} />
+      {/* Third in the row, same visual language, its own source of truth:
+          how full the OPEN CHAT's context window is — the signal to type
+          /compact. Renders nothing when no chat is on screen. */}
+      <ContextGauge />
       {/* The refresh control is ALWAYS rendered, including on error. It used
           to be swallowed by the failure state, so a single 429 left the bars
           stuck on "last refresh failed" with nothing to click. */}

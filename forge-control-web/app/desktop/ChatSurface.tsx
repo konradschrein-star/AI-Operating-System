@@ -71,6 +71,7 @@ import {
 } from "./chat/secret-requests";
 import { secretsPollInterval, subscribeSecretRequests } from "./chat/secretLive";
 import { useRunEvents } from "./chat/useRunEvents";
+import { publishContextTarget } from "./chat/ContextGauge";
 import {
   ResizeHandle,
   useResizablePanel,
@@ -473,6 +474,39 @@ export function ChatSurface({
    * so the level below the top sits at `navStack.length - 1`. */
   const backLabel = crumbs(navStack)[Math.max(0, navStack.length - 1)].label;
   const [composing, setComposing] = useState(false);
+
+  /* ── ctx gauge target (round 1350) ──────────────────────────────────────
+   *
+   * The status bar's context gauge lives in DesktopApp and cannot see this
+   * surface's state, so we tell it what the MIDDLE surface is showing. Not
+   * `selId`: drilling into a worker leaves `selId` on the manager chat by
+   * design (U21), and the gauge must measure the transcript on screen.
+   *
+   * `publishContextTarget` compares before it notifies, so re-publishing an
+   * unchanged target on every render is a no-op. The cleanup clears it, which
+   * is what makes the gauge disappear when you navigate to another surface —
+   * DesktopApp unmounts this component on every nav click. */
+  useEffect(() => {
+    if (composing) {
+      publishContextTarget(null);
+    } else if (drilled?.kind === "agent") {
+      publishContextTarget({
+        runId: drilled.runId,
+        subagentId: drilled.subagentId,
+      });
+    } else if (drilled?.kind === "plandoc") {
+      // A plan document is not a conversation; it has no context window.
+      publishContextTarget(null);
+    } else {
+      publishContextTarget(selId ? { runId: selId } : null);
+    }
+  }, [composing, drilled, selId]);
+
+  /* Clear on UNMOUNT ONLY. Putting this cleanup on the effect above would
+   * publish null → target on every drill-in, and each publish is a
+   * synchronous `useSyncExternalStore` notification: the gauge would blink
+   * through its empty state on the way to the new chat. */
+  useEffect(() => () => publishContextTarget(null), []);
   // Collapse + tab persist: DesktopApp unmounts this surface on every nav
   // click, so `useState` meant the panel sprang back open (on the Live tab)
   // every time you came back to chat.
