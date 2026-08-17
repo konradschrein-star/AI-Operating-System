@@ -281,16 +281,11 @@
   box-shadow: 0 0 12px rgba(var(--v2-accent-rgb), 0.3) !important;
 }
 
-.v2-nav-item {
-  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
-}
-.v2-nav-item:hover:not(.v2-nav-active) {
-  background: rgba(var(--v2-accent-rgb), 0.06) !important;
-  box-shadow: inset 4px 0 0 rgba(var(--v2-accent-rgb), 0.25);
-}
-.v2-nav-item:hover:not(.v2-nav-active) span {
-  color: rgba(232, 229, 224, 0.85) !important;
-}
+/* `.v2-nav-item` (three rules, incl. `.v2-nav-item:hover:not(.v2-nav-active) span`)
+   removed in round 1302. No markup in either repo ever carried the class — see
+   docs/plan/artifacts/phase1300/selector/README.md for the greps. The `span`
+   compound put a bare tag name in Blink's document-wide hover invalidation set,
+   so hovering ANY element invalidated every `span` in the document. */
 
 .v2-tr {
   transition: background 0.1s;
