@@ -146,11 +146,21 @@ export function normaliseWritePath(raw: string): string;   // throws on violatio
 export function validateWorkstream(raw: string): string;   // throws on violation
 
 export class GraphIntegrityError extends Error {}          // R14 — its own class
+export class GraphValidationError extends Error {}         // R23/R24/R28 — refused caller input
 ```
 
 `GraphIntegrityError` is its own class for the same reason `RoleFileParseError`
 in `project-tick.ts` is: the caller must distinguish a corrupt graph from an I/O
 failure, and a test must assert on the class rather than on message text.
+
+`GraphValidationError` was **added in phase 3** (round 211, in the commit that
+implemented `computeRound`, `findCycle` and the two validators) because the route
+has to map two kinds of throw to two different statuses and cannot do it on
+message text: a `GraphIntegrityError` means the graph already stored in the
+database is corrupt (R14) and is a `500`, while refused caller input — R24's
+block overflow, R28's write paths and workstream names — is a `400` naming the
+offending value. One class for both would answer `400` for a corrupt stored
+graph, blaming the caller for the one failure that is certainly not theirs.
 
 ### 1.2 Modified files, and what each owns
 

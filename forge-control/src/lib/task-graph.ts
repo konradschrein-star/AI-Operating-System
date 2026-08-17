@@ -27,18 +27,26 @@
  * process, and the replay proof (R18) has to run under `tsx --test` on a host
  * with Postgres stopped.
  *
- * PHASE 2 STATE — this module is still deliberately incomplete, and the list
+ * PHASE 3 STATE — this module is still deliberately incomplete, and the list
  * below is maintained rather than left to rot.
  *
  *  REAL: `legacyRoundReady()` and `GraphIntegrityError` (phase 1); `readyRule()`
  *  (R12), `graphReady()` (R11, R14, R69), `taskDepth()` (R19), `conflicts()`
- *  (R16, R17) and `selectClaimable()` (R16) — phase 2A.
+ *  (R16, R17) and `selectClaimable()` (R16) — phase 2A; `computeRound()`
+ *  (R23, R24), `findCycle()` (R25, R26), `normaliseWritePath()` and
+ *  `validateWorkstream()` (R28), with `GraphValidationError` — phase 3.
  *
- *  STILL STUBS THAT THROW: `computeRound()` (R23) and `findCycle()` (R25, R26)
- *  land in phase 3 with `normaliseWritePath()` and `validateWorkstream()` (R28);
- *  `groupKey()` (R40) lands in phase 4. Requirement ids are authoritative over
- *  any prose enumeration of phases (round 102), and `04-phases.md` §10 is the
- *  map. Their throwing is not a defect.
+ *  STILL A STUB THAT THROWS: `groupKey()` (R40) lands in phase 4. Requirement
+ *  ids are authoritative over any prose enumeration of phases (round 102), and
+ *  `04-phases.md` §10 is the map. Its throwing is not a defect.
+ *
+ * TWO ERROR CLASSES, AND THE SPLIT IS THE ROUTE'S (phase 3). A
+ * `GraphIntegrityError` means the graph ALREADY IN THE DATABASE is corrupt
+ * (R14) and belongs on a `500`; a `GraphValidationError` means the CALLER's
+ * input is refused (R24's block overflow, R28's paths and workstreams) and
+ * belongs on a `400`. A route that could not tell them apart would answer `400`
+ * for a corrupt stored graph — telling the caller their perfectly good request
+ * was the problem.
  *
  * A stub returning a plausible default (`graphReady` → `false`) would let the
  * replay test pass for the wrong reason, so there are none. Every message is
@@ -435,9 +443,62 @@ export function taskDepth(all: readonly GraphTask[]): Map<string, number> {
  * the API's only writer of `round`: an explicitly supplied round is honoured
  * unchanged, because the architect legitimately seeds one phase-block number
  * per phase (`k*100`) and everything below inherits from it by the `+1` rule.
+ *
+ * AN EXPLICIT `round` NEVER REACHES THIS FUNCTION. R23's two halves are split
+ * across two files on purpose: honouring a supplied round is a decision about a
+ * request body, so it lives in the route (`routes/projects.ts`, phase 3), which
+ * calls this only when `round` was omitted. Nothing here can tell whether the
+ * caller supplied one, and nothing here should try.
+ *
+ * THE BLOCK GATE (R24). A computed round that would leave its phase block is
+ * refused with `GraphValidationError` — a `400`, not a corrupt-graph `500`,
+ * because the offending input is the caller's `depends_on`. `base` is the block
+ * of the SHALLOWEST dependency, `floor(min(dep.round) / 100)`, in R24's own
+ * words; the refusal fires when `floor(computed / 100) !== base`. So a chain 99
+ * levels deep inside block `k` passes (`k*100` … `k*100+99`) and the 100th link
+ * is refused. That is the gate being satisfiable rather than decorative
+ * (00-vision.md §7 rule 2): a phase has 99 depth levels, which no real plan
+ * uses, and the test builds the 99 as an actual chain rather than as a
+ * hand-picked pair of numbers.
+ *
+ * WHY THE SHALLOWEST AND NOT THE DEEPEST. Reading `base` off `max` instead
+ * would make the gate self-fulfilling: the deepest dependency is the one the
+ * `+1` is measured from, so `floor((max+1)/100)` differs from `floor(max/100)`
+ * only at a block boundary the deepest dependency has itself already reached,
+ * and a task fanning in from block 1 and block 2 would be waved through into
+ * block 2 while silently abandoning its block-1 lineage. Measured against
+ * deps at rounds `{199, 205}`: shallowest-based refuses (base 1, computed 206),
+ * deepest-based accepts. The unit case is written so the two readings disagree.
+ *
+ * LEGACY ROWS ARE LEGAL MEMBERS OF `deps`. A row whose `depends_on` is `null`
+ * carries a real `round` written by the old engine, and it contributes that
+ * round here exactly as any other row does. This function reads ONLY `.round`
+ * and never interprets the sentinel — `readyRule()` is the only interpreter of
+ * it (inherited contract, phase 2A; `02-architecture.md` §2.2, E2).
  */
 export function computeRound(deps: readonly GraphTask[]): number {
-  throw new Error("task-graph: computeRound() lands in phase 3 (R23)");
+  // R23 — no dependencies is a root, and a root is round 0. Not `1`, and not
+  // the caller's own guess: the route honours an explicit round instead of
+  // calling this at all.
+  if (deps.length === 0) return 0;
+
+  let deepest = deps[0]!.round;
+  let shallowest = deps[0]!.round;
+  for (const dep of deps) {
+    if (dep.round > deepest) deepest = dep.round;
+    if (dep.round < shallowest) shallowest = dep.round;
+  }
+
+  const computed = deepest + 1;
+  const base = Math.floor(shallowest / 100);
+  if (Math.floor(computed / 100) !== base) {
+    throw new GraphValidationError(
+      `task-graph: computeRound(): computed round ${computed} leaves phase block ${base} ` +
+        `(rounds ${base * 100}-${base * 100 + 99}), the block of its shallowest dependency ` +
+        `at round ${shallowest}; a phase has 99 depth levels and this would be the 100th (R24)`,
+    );
+  }
+  return computed;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -460,12 +521,97 @@ export function computeRound(deps: readonly GraphTask[]): number {
  *
  * A node whose own `depends_on` is `null` is a legacy row: it contributes no
  * edges and must not crash the walk.
+ *
+ * WHAT WAS ACTUALLY IMPLEMENTED, so the belt claim above stays honest (R26):
+ * an iterative depth-first walk from `candidate` along dependency edges, with
+ * the current path held as an explicit stack. When the walk reaches a node that
+ * is already ON that path, the cycle is the slice of the path from that node's
+ * first appearance to the end, with the node appended again — the closed walk,
+ * so `a → a` returns `[a, a]` and `a → b → c → a` returns `[a, b, c, a]`. The
+ * repeated node is named at BOTH ends because R25's phrasing is "from the
+ * repeated node back to itself", and because a reader handed `[a, b, c]` cannot
+ * tell a cycle from a chain.
+ *
+ * ITERATIVE, NOT RECURSIVE, for the reason recorded on `taskDepth()`: recursion
+ * depth would be the chain length, and a long project is a stack overflow
+ * waiting to happen. Fully-explored nodes are remembered, so the diamond and
+ * the wide fan-out are linear rather than exponential.
+ *
+ * THE CANDIDATE'S EDGES WIN over any stored row carrying the same id: the
+ * question asked is what the graph BECOMES if these edges are added, and on the
+ * insert path the candidate is not in `byId` at all yet. That is also why the
+ * title of a node absent from `byId` reads as the task being created — see
+ * `titleOf()`.
+ *
+ * AN ID IN SOME NODE'S `depends_on` THAT IS ABSENT FROM `byId` IS SKIPPED HERE,
+ * SILENTLY, AND THAT IS NOT A SWALLOWED ERROR (NF1). A dangling dependency is
+ * R27's `400` and belongs to the route (phase 3, builder 3), which validates
+ * existence BEFORE asking this question; `graphReady()` throws `R14` on the same
+ * shape at promotion time. A cycle detector that also refused dangling ids would
+ * report the wrong defect for the wrong reason, at a point where it cannot
+ * distinguish "not yet inserted" from "vanished".
  */
 export function findCycle(
   candidate: { id: string; depends_on: string[] },
   byId: ReadonlyMap<string, { id: string; title: string; depends_on: DepsField }>,
 ): Array<{ id: string; title: string }> | null {
-  throw new Error("task-graph: findCycle() lands in phase 3 (R25, R26)");
+  const edgesOf = (id: string): readonly string[] => {
+    if (id === candidate.id) return candidate.depends_on;
+    const node = byId.get(id);
+    // Absent → no edges (see the doc-comment: R27's business, not this one's).
+    // A legacy row (`depends_on === null`) contributes no edges either, and must
+    // not crash the walk; `readyRule()` stays the only INTERPRETER of the
+    // sentinel — this is a structural "it has no edges", not a reading of it.
+    if (node === undefined || node.depends_on === null) return [];
+    return node.depends_on;
+  };
+
+  const titleOf = (id: string): string => {
+    const stored = byId.get(id);
+    if (stored !== undefined) return stored.title;
+    // Only the candidate can be absent from `byId` and still appear on a
+    // returned path: every other node on a cycle has an outgoing edge, and a
+    // node absent from `byId` has none, so it can never be the node a walk
+    // returns to.
+    return "(the task being created)";
+  };
+
+  const path: string[] = [];
+  const onPath = new Set<string>();
+  const explored = new Set<string>();
+  const stack: Array<{ id: string; edges: readonly string[]; next: number }> = [];
+
+  const descend = (id: string): void => {
+    path.push(id);
+    onPath.add(id);
+    stack.push({ id, edges: edgesOf(id), next: 0 });
+  };
+
+  descend(candidate.id);
+
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1]!;
+    if (frame.next >= frame.edges.length) {
+      explored.add(frame.id);
+      onPath.delete(frame.id);
+      path.pop();
+      stack.pop();
+      continue;
+    }
+
+    const dep = frame.edges[frame.next]!;
+    frame.next += 1;
+    if (explored.has(dep)) continue;
+    if (onPath.has(dep)) {
+      // R25 — the offending path, oldest node first, from the repeated node
+      // back to itself. Naming it is the requirement; "a cycle exists" is not.
+      const from = path.indexOf(dep);
+      return [...path.slice(from), dep].map((id) => ({ id, title: titleOf(id) }));
+    }
+    descend(dep);
+  }
+
+  return null;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -576,19 +722,126 @@ export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string {
  * non-empty, no leading `/`, no `..` segment, no NUL, at most 400 characters,
  * with `./` stripped and duplicate slashes collapsed. Throws naming the
  * offending entry — never a warning, never a silent drop.
+ *
+ * NORMALISE, THEN VALIDATE THE RESULT, in that order: `./src//a.ts` is a legal
+ * entry that happens to be written badly, and refusing it would push planners
+ * into hand-normalising paths, which is how two spellings of one file end up in
+ * two write-sets and stop conflicting (R16 is exact string equality — the whole
+ * contention belt rests on one spelling per file).
+ *
+ * THE TWO NORMALISATION RULES ARE APPLIED TO A FIXPOINT, COLLAPSE FIRST, and
+ * that ordering is a decision rather than a transcription. Applied strip-first
+ * in a single pass, `.//a.ts` becomes `/a.ts` and is then refused as absolute —
+ * a refusal produced by the order of two rules rather than by anything wrong
+ * with the entry. Collapsing first, and looping until nothing changes, makes the
+ * result independent of the order the rules are written in, and leaves every
+ * case R28 names identical: `./src/a.ts` → `src/a.ts`, `src//a.ts` →
+ * `src/a.ts`, `./././a.ts` → `a.ts`. `../x` is untouched by both rules: the
+ * strip matches a `.` segment (`^./`), never a `..` one, so `..` still reaches
+ * the refusal below.
+ *
+ * A TRAILING SLASH IS REFUSED — the decision R28 leaves open, taken here. A
+ * `write_set` entry names a FILE. `conflicts()` already records why declaring a
+ * directory is out of scope: prefix semantics would let a task declare `src/`
+ * and serialize the project by accident. The two alternatives were worse.
+ * Stripping the slash silently turns `src/` into `src`, a path that exists, that
+ * conflicts with nothing under exact equality, and that therefore buys the
+ * declarer no protection at all while looking like it did — the opposite number
+ * of silent under-parallelism, a silent CLOBBER. Accepting `src/`
+ * verbatim leaves the same hole with a slash on the end. Refusing it is the only
+ * option that tells the planner the thing it needs to know: declare the files.
+ *
+ * WHAT IS *NOT* REFUSED, recorded rather than left for a reader to discover: a
+ * bare `.`, and any entry containing a `.` SEGMENT that is not leading
+ * (`src/./a.ts` normalises only its leading `./`). R28 enumerates the refusals
+ * and a validator that quietly grows a sixth rule is the kind of drift this
+ * corpus reports as a finding. Both are harmless under exact-equality
+ * contention — they conflict only with an identical spelling — and both are
+ * nonsense a planner would have to type deliberately.
+ *
+ * THE MESSAGE QUOTES THE ENTRY WITH `JSON.stringify`, not raw. R28 asks the
+ * refusal to name the entry; two of the entries it refuses are an empty string
+ * and one containing a NUL, and a message naming those verbatim names them
+ * invisibly — a raw NUL also truncates the message in some log readers. Quoted,
+ * `""` and `"a b"` are legible, and every other entry still appears
+ * literally inside the quotes. The normalised form is shown alongside when it
+ * differs, so a caller reading the refusal knows which string was judged.
  */
 export function normaliseWritePath(raw: string): string {
-  throw new Error("task-graph: normaliseWritePath() lands in phase 3 (R28)");
+  let path = raw;
+  for (;;) {
+    const before = path;
+    path = path.replace(/\/{2,}/g, "/").replace(/^(?:\.\/)+/, "");
+    if (path === before) break;
+  }
+
+  const refuse = (why: string): never => {
+    const shown = JSON.stringify(raw);
+    const also = path === raw ? "" : ` (normalised: ${JSON.stringify(path)})`;
+    throw new GraphValidationError(
+      `task-graph: normaliseWritePath(): ${why}: ${shown}${also} (R28)`,
+    );
+  };
+
+  if (path.trim() === "") refuse("a write_set entry must not be empty or whitespace-only");
+  if (path.includes("\0")) refuse("a write_set entry must not contain a NUL");
+  if (path.startsWith("/")) refuse("a write_set entry must be repo-relative, never absolute");
+  // A SEGMENT test, not a substring test. `a..b.ts` is a legal file name and
+  // `src/..x/a.ts` is a legal directory; only `..` standing alone between
+  // separators escapes the repo, and only that is refused.
+  if (path.split("/").includes("..")) {
+    refuse("a write_set entry must not contain a '..' path segment");
+  }
+  if (path.endsWith("/")) {
+    refuse("a write_set entry must name a file, not a directory (it ends in '/')");
+  }
+  if (path.length > 400) {
+    refuse(`a write_set entry must be at most 400 characters (this one is ${path.length})`);
+  }
+
+  return path;
 }
+
+/**
+ * R4's workstream regex, and the ONLY copy of it on this side of the wire.
+ *
+ * Character for character `project_tasks_workstream_chk` in
+ * `db/migrations/0040_task_graph.sql`: `CHECK (workstream ~
+ * '^[a-z0-9][a-z0-9-]{0,39}$')`. Confirmed by reading that file in round 211;
+ * they match. If they ever diverge, the divergence is a FINDING — the database
+ * would answer a violation with a constraint error at INSERT time, which is a
+ * `500` on a request this validator was supposed to refuse with a `400`.
+ *
+ * `$` MEANS END-OF-INPUT ON BOTH SIDES, which is the one place the two dialects
+ * could have differed silently: JavaScript without the `m` flag anchors `$` at
+ * the end of the string (unlike Python, where it also matches before a trailing
+ * newline), and POSIX `~` in Postgres does the same. So `"ui\n"` is refused here
+ * AND by the CHECK. There is a unit case for it.
+ *
+ * No `g` flag, so `lastIndex` is never carried between calls and this constant
+ * is safe to share.
+ */
+const WORKSTREAM_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 
 /**
  * Validate a workstream name against R4's regex, `^[a-z0-9][a-z0-9-]{0,39}$`,
  * character for character the same charset the migration's CHECK enforces —
  * the intersection of "safe in a git branch name", "safe in a directory name"
  * and "readable in a Kanban chip" (R28). Throws naming the offender.
+ *
+ * `GraphValidationError`, not `GraphIntegrityError`: a bad name is the caller's
+ * input and is a `400`. Quoted with `JSON.stringify` for the same reason as
+ * `normaliseWritePath()` — the empty string is one of the values it refuses.
  */
 export function validateWorkstream(raw: string): string {
-  throw new Error("task-graph: validateWorkstream() lands in phase 3 (R28)");
+  if (!WORKSTREAM_RE.test(raw)) {
+    throw new GraphValidationError(
+      `task-graph: validateWorkstream(): ${JSON.stringify(raw)} is not a legal workstream name; ` +
+        `it must match ${WORKSTREAM_RE.source} — character for character the CHECK constraint ` +
+        "project_tasks_workstream_chk in db/migrations/0040_task_graph.sql (R28, R4)",
+    );
+  }
+  return raw;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -608,5 +861,30 @@ export class GraphIntegrityError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "GraphIntegrityError";
+  }
+}
+
+/**
+ * REFUSED CALLER INPUT — R24's block overflow, and R28's write paths and
+ * workstream names. Added in phase 3 (round 211) and declared in
+ * `02-architecture.md` §1.1 in the same commit.
+ *
+ * Its own class, and not `GraphIntegrityError`, because the route (phase 3)
+ * must map the two to different statuses and cannot do that on message text.
+ * `GraphIntegrityError` says the graph ALREADY IN THE DATABASE is corrupt (R14):
+ * the caller did nothing wrong, nothing they can retype will help, and it is a
+ * `500`. This one says the request body is refused: it is a `400` naming the
+ * offending value, which is what R24, R27 and R28 each demand. Collapsing them
+ * would answer `400` for a corrupt stored graph — blaming the caller for the
+ * one failure that is definitely not theirs.
+ *
+ * Same precedent as `GraphIntegrityError`'s own: `ProjectMetadataError` in
+ * `routes/projects.ts` and `RoleFileParseError` in `lib/project-tick.ts`. A test
+ * asserts on the CLASS; message text is documentation and gets reworded.
+ */
+export class GraphValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GraphValidationError";
   }
 }

@@ -112,11 +112,7 @@ import {
   legacyRoundReady,
   graphReady,
   readyRule,
-  computeRound,
-  findCycle,
   groupKey,
-  normaliseWritePath,
-  validateWorkstream,
   type GraphTask,
 } from "./task-graph.ts";
 import type { TaskStatus } from "../db/projects.ts";
@@ -1202,11 +1198,30 @@ describe("F13 — a row inserted after 0040 is named by no frozen closure", () =
  * "the phase-2 exports throw until phase 2", and phase 2 is what this commit
  * is. Leaving them would be a test asserting phase 2 never landed.
  *
- * THE FIVE THAT REMAIN ARE NOT A DEFECT, and they are listed by requirement id
+ * FURTHER RETIRED IN PHASE 3 (round 211, named in the commit message). The four
+ * clauses this block held for `computeRound` (R23, R24), `findCycle` (R25, R26),
+ * `normaliseWritePath` and `validateWorkstream` (R28) retire WITH the phase they
+ * guarded, exactly as phase 2's five did and exactly as the paragraph above
+ * instructed: "each retires with its own phase". Their cases now live in
+ * `task-graph.test.ts`'s *Round computation*, *Cycles* and *Validators* blocks.
+ * Leaving them would be a test asserting phase 3 never landed — and it would be
+ * a RED test, which is worse: the gate would have to be satisfied by unbuilding
+ * the phase.
+ *
+ * THIS FILE IS OUTSIDE ROUND 211'S DECLARED WRITE-SET, and the edit is
+ * deliberate rather than incidental. Standing rule 4 ("retire a requirement and
+ * its gate clause together, in one commit, explicitly") cannot be obeyed from
+ * inside `task-graph.ts` alone, because the gate is here. The alternative was to
+ * land phase 3 with a knowingly red suite and disclose it — the
+ * disclose-and-proceed habit this project is under orders not to repeat.
+ * Reported to the manager chat as a write-set deviation when it was taken.
+ * `04-phases.md` §10 lists no phase-3 writer for this file, so there is no
+ * concurrent builder to collide with.
+ *
+ * THE ONE THAT REMAINS IS NOT A DEFECT, and it is listed by requirement id
  * rather than by phase prose because requirement ids are authoritative
- * (`04-phases.md` §10 is the map): `computeRound` (R23) and `findCycle`
- * (R25, R26) land in phase 3 with `normaliseWritePath` and `validateWorkstream`
- * (R28); `groupKey` (R40) lands in phase 4. Each retires with its own phase.
+ * (`04-phases.md` §10 is the map): `groupKey` (R40) lands in phase 4. It
+ * retires with that phase.
  * -------------------------------------------------------------------------- */
 
 describe("stub discipline — every export not yet implemented throws", () => {
@@ -1220,11 +1235,7 @@ describe("stub discipline — every export not yet implemented throws", () => {
   };
 
   const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-    ["computeRound", () => computeRound([])],
-    ["findCycle", () => findCycle({ id: t.id, depends_on: [] }, new Map())],
     ["groupKey", () => groupKey({ round: 1, workstream: "main" })],
-    ["normaliseWritePath", () => normaliseWritePath("src/a.ts")],
-    ["validateWorkstream", () => validateWorkstream("main")],
   ];
 
   for (const [name, call] of stubs) {

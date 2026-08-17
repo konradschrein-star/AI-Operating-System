@@ -35,6 +35,17 @@
  *  3. A `graphReady` case that passes because the row is not `pending` rather
  *     than because the deps say so. Guarded by `gt()` defaulting to `pending`
  *     and by an explicit non-`pending` case that asserts `false`.
+ *
+ * PHASE 3 ADDENDUM (round 211) — appended rather than rewritten, so phase 2's
+ * cases stay byte-identical (R43). Three blocks are added at the foot of this
+ * file: *Round computation* (R23, R24), *Cycles* (R25) and *Validators* (R28),
+ * each named after the `03-quality.md` §2.1 group that demands it. The header
+ * above says `computeRound`, `findCycle`, `normaliseWritePath` and
+ * `validateWorkstream` "still throw" — as of this commit they do not; only
+ * `groupKey` (R40, phase 4) does. The five assertions those blocks most depend
+ * on were each observed FAILING against a deliberately broken implementation
+ * before being trusted (defect 2 above); the transcripts are in the round's
+ * report and in `evidence/phase3-api.md`.
  */
 
 import { test, describe } from "node:test";
@@ -47,7 +58,13 @@ import {
   taskDepth,
   conflicts,
   selectClaimable,
+  computeRound,
+  findCycle,
+  normaliseWritePath,
+  validateWorkstream,
   GraphIntegrityError,
+  GraphValidationError,
+  type DepsField,
   type GraphTask,
 } from "./task-graph.ts";
 // Type-only, like the module under test: a value import of db/* would open a pg
@@ -594,5 +611,366 @@ describe("selectClaimable — the contention belt (R16)", () => {
     // transaction; a copy would flip a row nobody else holds.
     const a = gt("a");
     assert.equal(selectClaimable([a], [])[0], a);
+  });
+});
+
+/* ========================================================================== *
+ * ROUND COMPUTATION — 03-quality.md §2.1 "Round computation" (R23, R24)
+ * ========================================================================== */
+
+describe("computeRound — the derived round and its block gate (R23, R24)", () => {
+  test("no dependencies → 0 (a root)", () => {
+    assert.equal(computeRound([]), 0);
+  });
+
+  test("1 + the DEEPEST dependency, not the first and not the count", () => {
+    assert.equal(computeRound([gt("a", { round: 5 }), gt("b", { round: 7 })]), 8);
+    // Order must not matter: the same two rows the other way round.
+    assert.equal(computeRound([gt("b", { round: 7 }), gt("a", { round: 5 })]), 8);
+  });
+
+  test("a single dep at round 0 → 1", () => {
+    assert.equal(computeRound([gt("a", { round: 0 })]), 1);
+  });
+
+  test("the architect's k*100 seed is inherited, and block 3 holds for 300..399", () => {
+    // R23's second half: the architect seeds one phase-block number per phase
+    // and everything below inherits it by the `+1` rule. The seed itself is
+    // supplied explicitly and never passes through this function — that is the
+    // route's business (R23, routes/projects.ts).
+    assert.equal(computeRound([gt("seed", { round: 300 })]), 301);
+    for (let r = 300; r <= 398; r++) {
+      const next = computeRound([gt("dep", { round: r })]);
+      assert.equal(next, r + 1);
+      assert.equal(Math.floor(next / 100), 3, `round ${next} left block 3`);
+    }
+  });
+
+  test("a 99-deep chain inside one block passes; the 100th link is refused (R24)", () => {
+    // THE CASE THAT PROVES THE GATE IS SATISFIABLE rather than decorative
+    // (00-vision.md §7 rule 2). Built as an ACTUAL chain — each link's round is
+    // computed from the previous link, not hand-picked — because a hand-picked
+    // pair proves only that two numbers were chosen to disagree.
+    let round = 300; // the architect's seed for phase 3
+    for (let link = 1; link <= 99; link++) {
+      round = computeRound([gt(`link-${link - 1}`, { round })]);
+      assert.equal(round, 300 + link, `link ${link} of the chain`);
+    }
+    assert.equal(round, 399, "99 links inside a block land on its last round");
+
+    const hundredth = gt("link-99", { round });
+    assert.throws(
+      () => computeRound([hundredth]),
+      (err: unknown) => {
+        assert.ok(err instanceof GraphValidationError, `threw ${String(err)}, not GraphValidationError`);
+        // The message must name the computed round AND the block it would leave,
+        // or the operator reading the 400 cannot tell which of the two to fix.
+        return throwsMessageMatching(/computed round 400 leaves phase block 3/, "computeRound")(err);
+      },
+    );
+  });
+
+  test("`base` is the SHALLOWEST dependency's block — deps at {199, 205} are refused", () => {
+    // Written so the two readings of R24 DISAGREE. Shallowest (199 → block 1):
+    // computed 206 sits in block 2, refused. Deepest (205 → block 2): computed
+    // 206 sits in block 2, accepted. A `base` taken from max() makes this case
+    // go green wrongly, which is mutation (c) of this round's five.
+    assert.throws(
+      () => computeRound([gt("shallow", { round: 199 }), gt("deep", { round: 205 })]),
+      (err: unknown) => {
+        assert.ok(err instanceof GraphValidationError);
+        assert.match(err.message, /computed round 206/);
+        assert.match(err.message, /phase block 1\b/);
+        assert.match(err.message, /shallowest dependency at round 199/);
+        return true;
+      },
+    );
+  });
+
+  test("a legacy dep (depends_on null) contributes its round like any other", () => {
+    // computeRound reads ONLY `.round`. It never interprets the NULL sentinel —
+    // readyRule() is the only interpreter of it (inherited contract, phase 2A).
+    assert.equal(computeRound([gt("legacy", { round: 12, depends_on: null })]), 13);
+    assert.equal(
+      computeRound([gt("legacy", { round: 12, depends_on: null }), gt("graph", { round: 15 })]),
+      16,
+    );
+  });
+
+  test("block 0 behaves like every other block", () => {
+    // No special-casing of the block the old engine's low rounds live in.
+    assert.equal(computeRound([gt("a", { round: 98 })]), 99);
+    assert.throws(() => computeRound([gt("a", { round: 99 })]), GraphValidationError);
+  });
+});
+
+/* ========================================================================== *
+ * CYCLES — 03-quality.md §2.1 "Cycles" (R25), the seven-row table
+ * ========================================================================== */
+
+/** One stored node as `findCycle()` sees it — id, title, and its own edges. */
+function cn(id: string, depends_on: DepsField): { id: string; title: string; depends_on: DepsField } {
+  return { id, title: `task ${id}`, depends_on };
+}
+
+function nodes(...list: Array<{ id: string; title: string; depends_on: DepsField }>) {
+  return new Map(list.map((n) => [n.id, n]));
+}
+
+describe("findCycle — the belt, and the path it names (R25, R26)", () => {
+  // R26: this detector is a BELT. A cycle is structurally unreachable given R27
+  // (a dependency must name an already-existing task) and R29 (`depends_on` is
+  // immutable), which together point every edge backwards in insert order. The
+  // table below therefore builds its graphs by hand: none of them can be reached
+  // through the API, and that is the point — the belt must still hold if one of
+  // those two properties is ever lost.
+
+  const chainOf50 = (() => {
+    const list = Array.from({ length: 50 }, (_, i) =>
+      cn(`n${i}`, i === 49 ? [] : [`n${i + 1}`]),
+    );
+    return { candidate: { id: "n0", depends_on: ["n1"] }, map: nodes(...list) };
+  })();
+
+  const wideDag = (() => {
+    const base = cn("base", []);
+    const leaves = Array.from({ length: 30 }, (_, i) => cn(`leaf-${i}`, ["base"]));
+    return {
+      candidate: { id: "root", depends_on: leaves.map((l) => l.id) },
+      map: nodes(base, ...leaves),
+    };
+  })();
+
+  const TABLE: Array<{
+    name: string;
+    candidate: { id: string; depends_on: string[] };
+    map: ReadonlyMap<string, { id: string; title: string; depends_on: DepsField }>;
+    expect: string[] | null;
+  }> = [
+    {
+      name: "1. a → a — the self edge",
+      candidate: { id: "a", depends_on: ["a"] },
+      map: nodes(cn("a", [])),
+      expect: ["a", "a"],
+    },
+    {
+      name: "2. a → b → a — both, oldest first",
+      candidate: { id: "a", depends_on: ["b"] },
+      map: nodes(cn("a", []), cn("b", ["a"])),
+      expect: ["a", "b", "a"],
+    },
+    {
+      name: "3. a → b → c → a — all three",
+      candidate: { id: "a", depends_on: ["b"] },
+      map: nodes(cn("a", []), cn("b", ["c"]), cn("c", ["a"])),
+      expect: ["a", "b", "c", "a"],
+    },
+    {
+      name: "4. diamond a→b, a→c, b→d, c→d plus d→a — a cycle through ONE branch",
+      candidate: { id: "a", depends_on: ["b", "c"] },
+      map: nodes(cn("a", []), cn("b", ["d"]), cn("c", ["d"]), cn("d", ["a"])),
+      // [a, c, d, a] IS EQUALLY VALID AND EQUALLY A CYCLE. The graph closes
+      // through both branches; the walk takes `b` first because it is first in
+      // the candidate's `depends_on`, and that order is the one thing about this
+      // answer that is deterministic. This assertion is not a claim that the
+      // `c` branch is acyclic — it is a claim that the detector names *a* real
+      // cycle, in order, reproducibly.
+      expect: ["a", "b", "d", "a"],
+    },
+    {
+      name: "5. a chain of 50 with no back edge → null",
+      candidate: chainOf50.candidate,
+      map: chainOf50.map,
+      expect: null,
+    },
+    {
+      name: "6. a wide DAG, one root over 30 leaves → null",
+      candidate: wideDag.candidate,
+      map: wideDag.map,
+      expect: null,
+    },
+    {
+      name: "7. a candidate depending on a LEGACY row (deps null) → null, and no crash",
+      candidate: { id: "x", depends_on: ["legacy"] },
+      map: nodes(cn("legacy", null)),
+      expect: null,
+    },
+  ];
+
+  for (const row of TABLE) {
+    test(row.name, () => {
+      const found = findCycle(row.candidate, row.map);
+      if (row.expect === null) {
+        assert.equal(found, null);
+        return;
+      }
+      assert.ok(found !== null, "a cycle was not detected at all");
+      // IDS IN ORDER, never a length. A detector that reports "a cycle exists"
+      // without naming the path fails R25, and a length assertion cannot tell
+      // the two apart.
+      assert.deepEqual(
+        found.map((n) => n.id),
+        row.expect,
+      );
+    });
+  }
+
+  test("the named path carries titles, not just ids (R25 asks for {id, title})", () => {
+    const found = findCycle({ id: "a", depends_on: ["b"] }, nodes(cn("a", []), cn("b", ["a"])));
+    assert.deepEqual(found, [
+      { id: "a", title: "task a" },
+      { id: "b", title: "task b" },
+      { id: "a", title: "task a" },
+    ]);
+  });
+
+  test("a candidate not yet stored is named as the task being created", () => {
+    // The insert path: the candidate has no row yet, so `byId` cannot supply its
+    // title. A cycle through it still has to be printable.
+    const found = findCycle({ id: "new", depends_on: ["b"] }, nodes(cn("b", ["new"])));
+    assert.deepEqual(found?.map((n) => n.title), [
+      "(the task being created)",
+      "task b",
+      "(the task being created)",
+    ]);
+  });
+
+  test("an id absent from byId is skipped, not thrown over (R27 is the route's)", () => {
+    // Deliberate, and documented at the skip: a dangling dependency is R27's
+    // 400 and belongs to the route, which validates existence before asking this
+    // question. Answering "cycle" here would report the wrong defect.
+    assert.equal(findCycle({ id: "a", depends_on: ["ghost"] }, nodes(cn("a", []))), null);
+  });
+
+  test("an empty depends_on can close nothing", () => {
+    assert.equal(findCycle({ id: "a", depends_on: [] }, nodes(cn("b", []))), null);
+  });
+
+  test("a duplicated dep id does not confect a cycle", () => {
+    // R14 refuses duplicates at PROMOTION time; here a repeat is simply the same
+    // edge twice and must not read as a second visit to a node on the path.
+    assert.equal(findCycle({ id: "a", depends_on: ["b", "b"] }, nodes(cn("b", []))), null);
+  });
+});
+
+/* ========================================================================== *
+ * VALIDATORS — 03-quality.md §2.1 "Validators" (R28)
+ * ========================================================================== */
+
+/**
+ * A RegExp matching one literal string. Used so every validator case asserts
+ * that the refusal NAMES THE OFFENDING VALUE rather than merely refusing — R28
+ * asks for the entry, and a pattern like /must not be empty/ would pass against
+ * a message that named nothing.
+ */
+function literal(value: string): RegExp {
+  return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
+
+describe("validateWorkstream — R4's regex, character for character (R28, R4)", () => {
+  for (const name of ["main", "ui", "api-v2", "a".repeat(40), "0", "x9-y"]) {
+    test(`'${name}' passes and is returned unchanged`, () => {
+      assert.equal(validateWorkstream(name), name);
+    });
+  }
+
+  const REFUSED: Array<[string, string]> = [
+    ["Main", "uppercase"],
+    ["-ui", "a leading hyphen"],
+    ["ui_", "an underscore"],
+    ["a".repeat(41), "41 characters — one over R4's 40"],
+    ["../x", "path traversal, which a branch name would carry into the filesystem"],
+    ["", "the empty string"],
+    ["ui\n", "a trailing newline — `$` is end-of-input in JS and in Postgres alike"],
+  ];
+
+  for (const [value, why] of REFUSED) {
+    test(`${JSON.stringify(value)} throws — ${why}`, () => {
+      assert.throws(
+        () => validateWorkstream(value),
+        (err: unknown) => {
+          assert.ok(err instanceof GraphValidationError, `threw ${String(err)}, not GraphValidationError`);
+          // The message quotes the value with JSON.stringify, so the empty
+          // string and the newline are legible rather than invisible.
+          return throwsMessageMatching(literal(JSON.stringify(value)), "validateWorkstream")(err);
+        },
+      );
+    });
+  }
+});
+
+describe("normaliseWritePath — normalise, then validate the result (R28)", () => {
+  test("'./src/a.ts' → 'src/a.ts'", () => {
+    assert.equal(normaliseWritePath("./src/a.ts"), "src/a.ts");
+  });
+
+  test("'src//a.ts' → 'src/a.ts'", () => {
+    assert.equal(normaliseWritePath("src//a.ts"), "src/a.ts");
+  });
+
+  test("'./././a.ts' → 'a.ts' — the strip repeats", () => {
+    assert.equal(normaliseWritePath("./././a.ts"), "a.ts");
+  });
+
+  test("an already-clean path is returned unchanged", () => {
+    for (const clean of ["src/a.ts", "docs/plan/engine-task-graph/02-architecture.md", "a"]) {
+      assert.equal(normaliseWritePath(clean), clean);
+    }
+  });
+
+  test("'a..b.ts' PASSES — '..' is a SEGMENT test, not a substring test", () => {
+    // The case that catches the `.includes("..")` version, which is mutation (d)
+    // of this round's five. `a..b.ts` is a perfectly ordinary file name and a
+    // substring test refuses it, which would quietly make a legal declaration
+    // impossible to write.
+    assert.equal(normaliseWritePath("a..b.ts"), "a..b.ts");
+    assert.equal(normaliseWritePath("src/a..b/c.ts"), "src/a..b/c.ts");
+  });
+
+  test("400 characters exactly passes (401 is in the refusal table below)", () => {
+    // The boundary in both directions, so the gate is satisfiable rather than
+    // off by one in the direction nobody tests.
+    const at400 = "src/" + "a".repeat(396);
+    assert.equal(at400.length, 400);
+    assert.equal(normaliseWritePath(at400), at400);
+  });
+
+  const REFUSED: Array<[string, string, RegExp]> = [
+    ["/etc/passwd", "absolute", literal("/etc/passwd")],
+    ["../x", "a leading '..' segment", literal("../x")],
+    ["src/../../x", "a '..' segment in the middle", literal("src/../../x")],
+    // The NUL entry is quoted ESCAPED: the message reads a\u0000b, six visible
+    // characters where the entry has one invisible one. A refusal naming a raw
+    // NUL names it invisibly, and truncates the line in some log readers; the
+    // escape is what makes this refusal readable at all.
+    // A message naming a raw NUL names it invisibly and truncates in some log
+    // readers; the escape is what makes the refusal readable at all.
+    ["a\0b", "a NUL", /a\\u0000b/],
+    ["src/" + "a".repeat(397), "401 characters", literal("a".repeat(397))],
+    ["", "empty", /: ""/],
+    ["   ", "whitespace-only", literal('"   "')],
+    ["src/", "a trailing slash — declare the FILE, not the directory", literal("src/")],
+  ];
+
+  for (const [value, why, pattern] of REFUSED) {
+    test(`${JSON.stringify(value)} throws — ${why}`, () => {
+      assert.throws(
+        () => normaliseWritePath(value),
+        (err: unknown) => {
+          assert.ok(err instanceof GraphValidationError, `threw ${String(err)}, not GraphValidationError`);
+          return throwsMessageMatching(pattern, "normaliseWritePath")(err);
+        },
+      );
+    });
+  }
+
+  test("a refusal reached only AFTER normalisation shows both spellings", () => {
+    // `.//x` normalises to `x`… but `.//../x` normalises to `../x` and is then
+    // refused. The caller sent the first string and must be able to see which
+    // one was judged.
+    assert.throws(
+      () => normaliseWritePath(".//../x"),
+      throwsMessageMatching(/"\.\/\/\.\.\/x" \(normalised: "\.\.\/x"\)/, "normaliseWritePath"),
+    );
   });
 });
