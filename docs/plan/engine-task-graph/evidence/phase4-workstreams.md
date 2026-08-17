@@ -1189,3 +1189,34 @@ R39, R41, R42, R70, NF1, NF3. **No bare `file.ts:NN` pin is added by this
 round.** Commit shas are cited as identities (`b201f22` — the HEAD every
 measurement above was taken at, worktree carrying only this round's changes;
 `27d300f` — the census self-check's historical tree).
+
+## 10. The e2e re-run AT the commit, not merely at the bytes
+
+§7's transcript was taken with the worktree dirty — the run that produced it
+printed `workspace.ts dirty : [ M forge-control/src/lib/workspace.ts]`, which is
+honest but leaves the reader to trust that the committed bytes are the tested
+ones. Round 225's fix landed as `57d3c97`; the check was then run again with
+nothing uncommitted:
+
+```
+check-workstream-e2e.sh — engine-task-graph phase 4 (R32–R35, R38, R39, NF1)
+
+BUILD IDENTITY OF THE CODE UNDER TEST
+  git HEAD           : 57d3c97b5cd5e5d143aad5c84d6e561f64edf63b
+  git branch         : project/8c591d6c
+  subject sha256     : 081aaedbd59a84e6d22f8bb6400191f89145b4aee4f10459356038962b778706   <-- authoritative
+  workspace.ts dirty : [committed, matches HEAD]
+  …
+check-workstream-e2e.sh PASSED — 61/61 assertions ran and passed.
+
+$ git status --porcelain          # worktree root
+                                  # (no output)
+```
+
+**The subject sha256 is byte-identical to §7's run** — `081aaedb…` before the
+commit and `081aaedb…` after it — which is the point of a content-addressed
+identity: committing does not change the bytes, so it cannot change the answer.
+What the second run adds is the `[committed, matches HEAD]` line plus an empty
+porcelain, so "the bytes I tested" and "the bytes I committed" are the same
+claim rather than two. This is the failure round 224's reviews both listed
+first: *a sha naming the worktree rather than the build*.
