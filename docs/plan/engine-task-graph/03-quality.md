@@ -344,6 +344,43 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
   case; an instrument that degrades quietly is worse than none.
 - The baseline file for 8ea0cc08 exists and its header names the script's SHA
   (R62).
+- **Added round 212 — the universal gate does not reach this phase's principal
+  deliverable, so this phase adds the check that does (standing rule 2).**
+  `forge-control/tsconfig.json` reads `"include": ["src/**/*.ts"]` — verified at
+  git SHA `126969acd55985d9d7c79d63877718a55794349b` and still reading that at
+  `5a1180d17af78c77fcbd8bd2fede1d3ded4808c4`. `scripts/measure-schedule.ts` lives
+  at the **repo root**, outside that include, so `pnpm typecheck` — item 1 of
+  §3.1, and the only typecheck any phase runs — never examines it. Without the
+  line below the universal gate would report `tsc --noEmit clean` for a phase
+  whose principal deliverable had not been compiled at all: a gate passed by a
+  file nobody looked at, which is the same species of failure as a probe that
+  never touches its target. The gating reviewer runs this and pastes it:
+
+  ```bash
+  cd forge-control && ./node_modules/.bin/tsc --noEmit --strict --target ES2022 \
+    --module ESNext --moduleResolution bundler --allowImportingTsExtensions \
+    --resolveJsonModule ../scripts/measure-schedule.ts
+  ```
+
+  Adding `../scripts/**` to `forge-control/tsconfig.json`'s `include` was
+  rejected deliberately: it would change what **every other phase's** typecheck
+  covers, and phase 7 does not own that decision.
+
+  The reviewer confirms the check is not vacuous by re-running it with
+  `--listFiles` and finding `src/lib/schedule-source.ts` and `@types/pg` in the
+  program — the wrapper reaches its database reader through a dynamic
+  `await import()`, and a compile that resolved neither would be clean for the
+  same reason an unread file is clean.
+- **Added round 212 — `full` never degrades to `rounds` (R61).** The instrument
+  takes a named subcommand, and the reviewer confirms the two modes do not leak
+  into one another: `full` over a task-only fixture exits non-zero naming the
+  missing `runs` key rather than printing the round table, and `full` over a
+  4-row fixture exits non-zero on `too-few-tasks` having printed its header and
+  **no** table. `rounds` prints, in its own header, the constant
+  `S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no
+  concurrency result.` A `full` run that emitted a smaller, prettier table and
+  announced the degradation only in its exit status is the failure R61 names, and
+  it is a finding.
 
 **Phase 8 — deploy and verify**
 - See `04-phases.md` §Phase 8. The gate is the deploy checklist itself.
