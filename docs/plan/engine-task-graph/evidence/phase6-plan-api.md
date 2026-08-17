@@ -750,6 +750,39 @@ and the whole-project typecheck was clean when this phase's edits were made and
 lists no file of this phase's write set now. Judge this phase's paths only, per
 the round-222 brief's own note on `git status --porcelain` in this worktree.
 
+**RESOLVED, and re-run at this phase's committed HEAD.** The concurrent builder
+finished its edit; `project-tick.ts` compiles again. The whole gate, re-run
+after both of this phase's commits had landed:
+
+```
+$ cd forge-control && pnpm typecheck
+> tsc --noEmit
+(no output — clean)
+
+$ cd forge-control && pnpm test
+# suites 195
+# pass 1070
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4998.506188
+
+$ ./node_modules/.bin/tsx ../scripts/checks/check-plan-api.ts | tail -3
+  assertions failed          : 0
+PASS — 8 cases, …
+$ echo "exit=$?"
+exit=0
+```
+
+That run's provenance header reads `git HEAD : 463803f` and
+`sha256 : f682bddd…  forge-control/src/routes/chat.ts` — **the same `chat.ts`
+digest as the clean run in §2.2**, so §2.2's transcript and this re-run certify
+byte-identical code, and both certify what is committed. Its
+`uncommitted (subj)` line still names `db/projects.ts`: phase 4 continues to
+work beside this phase, and case H therefore still exercised an in-flight
+`db/projects.ts` — on which `TASK_COLS` and `TASK_COLS_PT` agreed.
+
 The live checkout was never touched:
 
 ```
