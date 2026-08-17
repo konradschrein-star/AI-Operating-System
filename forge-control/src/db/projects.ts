@@ -492,6 +492,15 @@ export async function createTask(input: {
  *  not an integration task by R38's definition and its merge would run in the
  *  wrong worktree.
  *
+ *  THE RESIDUAL, ON THE RECORD RATHER THAN IMPLIED AWAY (round 224's red team).
+ *  This term verifies EXISTENCE AND EDGES, never git: an integration task marked
+ *  'done' WITHOUT its merge having happened is caught by nothing here, and the
+ *  project closes. The designed catch is R38's integration REVIEWER, which a
+ *  hand-edit in psql bypasses — the same operator-with-psql class as the
+ *  hand-renumber R41 guards, and accepted for the same reason. What this term
+ *  does defend against is the case that actually occurred to a planner: no
+ *  integration task at all.
+ *
  *  A LEGACY PROJECT IS UNTOUCHED. `workstream` defaults to 'main' and
  *  `depends_on` may be NULL (02-architecture.md §2.2 — nullable IS the migration
  *  strategy). With every row in 'main' the correlated subquery finds no `w` at

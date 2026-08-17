@@ -519,9 +519,20 @@ export function fixChainGraphFields(group: {
   };
 }
 
-/** Two id lists compared as SETS. Order-free and duplicate-free on both sides,
- *  which is what makes it the exact mirror of the `cardinality(...) = ... AND
- *  @> AND <@` triple in db/projects.ts's guard SQL. */
+/** Two id lists compared as SETS. Order-free and duplicate-free on both sides.
+ *
+ *  THERE IS NO SQL COUNTERPART TO THIS, and the earlier version of this comment
+ *  claiming one — "the exact mirror of the `cardinality(...) = ... AND @> AND
+ *  <@` triple in db/projects.ts's guard SQL" — was false and is retracted
+ *  (round 224's gating review; `grep -n "@>\|<@" src/db/projects.ts` returns
+ *  nothing, and `cardinality` appears there only in `promoteReadyTasks()`'s R14
+ *  term, which is a different rule). The guard SQL in `createFixChain()` only
+ *  NARROWS — this project, role `builder`, `chain_key IS NOT NULL`, this fix
+ *  cycle, `depends_on IS NOT NULL` — and delegates the whole comparison to
+ *  `duplicatesFixChain()` below, which calls this. That is R41's own decision
+ *  ("called by db/projects.ts rather than restated in SQL, so there is no
+ *  second copy to drift"), and inventing a mirror in a comment is the drift the
+ *  decision exists to avoid. */
 function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
   const sa = new Set(a);
   const sb = new Set(b);
@@ -531,9 +542,15 @@ function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * R41's HAND-RENUMBER GUARD, as a pure rule — and the mirror db/projects.ts's
- * SQL states it is a mirror OF, term for term, exactly as `markVerdictTaskDone`
- * mirrors `verdictMemberSettled`.
+ * R41's HAND-RENUMBER GUARD, and the ONLY definition of it. `createFixChain()`
+ * in db/projects.ts calls this from inside its transaction; the SELECT beside
+ * the call narrows the candidate rows and decides nothing. This is deliberately
+ * NOT the `markVerdictTaskDone` / `verdictMemberSettled` shape — that pair is
+ * this module's one genuine SQL mirror, where a term really is written twice
+ * and kept in step, and confusing the two would send whoever audits R41 looking
+ * for a second copy that does not exist. (An earlier version of this header
+ * asserted the analogy; round 224's gating review measured it false — there is
+ * no `@>`/`<@` set comparison anywhere in db/projects.ts — and it is retracted.)
  *
  * THE HAZARD (recorded round 204 from phase 2's red team, decided round 221).
  * `chainKeys` embeds `round`. An operator who renumbers a group AFTER its fix

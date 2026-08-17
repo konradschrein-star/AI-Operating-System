@@ -653,19 +653,48 @@ deliverable 8 is satisfied by *reading* the cap, not by re-implementing its
 rejection. A second, differently-worded `400` for the same condition is a
 finding.
 
-**THE PHASE-3 `400` IS TOCTOU, RECORDED ROUND 215 (round 214's phase-3 finding
-6, non-blocking).** `POST /:id/tasks` calls `listTasksForProject()` **once**,
-before validation, and counts distinct workstreams off that snapshot. Two
-concurrent POSTs each proposing a *different* new workstream both see five
-present and both succeed, yielding seven. It is recorded rather than fixed
-because the blast radius is disk rather than correctness, and because the
-amendment above already keeps a second refusal in phase 4's
-`provisionWorkstream()` reading the same exported constant — the worktree that
-would actually consume the disk cannot be created without passing it. **Phase
-4's red team owns the decision** whether the provisioning refusal is sufficient
-or whether the count needs a transaction. Closing it at the API would need
-either `SELECT … FOR UPDATE` over the project row or a unique index over
-distinct workstreams, and neither is phase 3's to introduce.
+**BOTH REFUSALS ARE ADVISORY, AND THE TOCTOU IS ACCEPTED. Recorded round 215,
+DECIDED round 224 by phase 4's red team, which the round-215 text named as the
+owner of the decision.**
+
+*The race, in both places.* `POST /:id/tasks` calls `listTasksForProject()`
+**once**, before validation, and counts distinct workstreams off that snapshot;
+two concurrent POSTs each proposing a *different* new workstream both see five
+present and both succeed, yielding seven. `provisionWorkstream()` reads
+`git worktree list` and then runs `worktree add`, with no lock, so it has the
+**identical** race.
+
+*The measurement that replaces the earlier claim.* Round 215 recorded the API
+race as tolerable on the ground that "the worktree that would actually consume
+the disk cannot be created without passing" the phase-4 refusal. **That is
+measurably false and is retracted.** Round 224's red team and gating reviewer
+each ran two concurrent `provisionWorkstream()` calls for two different new
+workstreams at a filled cap, in a throwaway repo at `HEAD=b201f22`: both
+returned exit 0 and the project ended one **over** cap (4→5 in one transcript,
+5→6 in the other). The disk-side check bounds **serial** excess only.
+
+*The ruling: accept the race in both places; do NOT make the count
+transactional.* The grounds are the measurement, not the earlier claim of
+enforcement:
+  a. **Unreachable in the deployed topology.** `provisionWorkstream()` has
+     exactly two call sites, both inside `spawnTaskRuns()`'s sequential
+     `for … await` loop in a single executor process. Reaching the window needs
+     two executors overlapping across a deploy.
+  b. **The slip is clean.** Both workstreams got a consistent branch+worktree
+     pair — no orphan branch, no orphan directory, nothing half-provisioned —
+     and `removeWorkspace()` enumerates from the worktree registry, so teardown
+     still reaches every one of them. Checked in both directions.
+  c. **A refusal writes nothing.** The cap check runs before any git write
+     (e2e §12.6), so the serial path — the one that actually occurs — refuses
+     cleanly.
+  d. **The priced cost is one extra full checkout of disk**, never a corrupt
+     workspace and never a wrong answer. Closing the race would need
+     `SELECT … FOR UPDATE` over the project row (or a unique index over distinct
+     workstreams) at the API, plus a lock over a git repository at provisioning
+     — a real mechanism bought against a disk-space nuisance.
+
+The overclaiming sentence is retired from `provisionWorkstream()`'s R39 comment
+block in the same commit as this paragraph, which is where the rule is enforced.
 
 *How proved:* unit (the `400`, phase 3 — `scripts/checks/check-task-api.ts`);
 `check-workstream-e2e.sh` (the provisioning half, phase 4).
@@ -712,6 +741,19 @@ They are therefore **not** members of W and are never required to depend on
 themselves — get this wrong and no project with a workstream could ever close,
 which is a worse bug than the one being fixed. A covering task that lives in
 another workstream integrates nothing: it would merge in the wrong worktree.
+
+**THE RESIDUAL, STATED RATHER THAN IMPLIED AWAY. Recorded round 224 by phase
+4's red team.** This rule verifies **existence and edges, never git**. An
+integration task marked `done` **without its merge having happened** is caught
+by *nothing* structural: the covering task exists, its `depends_on` covers W,
+the term is satisfied and the project closes with the branch unmerged — the very
+outcome R70 was added for, reached by a different door. The designed catch is
+R38's integration **reviewer**, and a hand-edit in psql bypasses a reviewer.
+That is the same operator-with-psql class as the hand-renumber R41 guards, and
+it is accepted for the same reason: the engine's own paths cannot produce it, and
+defending against an operator with write access to `project_tasks` would mean
+verifying merges in git on every close. It is written down here because R70's
+presence otherwise *implies* a completeness it does not have.
 
 **Coverage is ⊇, not =.** An integration task routinely depends on more than W
 (its planner's ordering edges, the phase's other roots), so the test is that W's

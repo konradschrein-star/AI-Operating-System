@@ -358,9 +358,11 @@ Two corollaries follow, and the second is a **live limitation of this phase**:
 
 ### 3.1 What it is, and what it refuses to do
 
-`scripts/checks/check-workstream-e2e.sh` — bash, `set -euo pipefail`, 53
-assertions, each a separately named PASS/FAIL line, exits non-zero on any
-failure. It operates entirely inside one `mktemp -d`: `AI_OS_REPO_DIR` and
+`scripts/checks/check-workstream-e2e.sh` — bash, `set -euo pipefail`, **61
+assertions as of round 225** (53 when phase 4A wrote it; §6 below records the
+eight added for NF1 on the recovery path, and every transcript in §3 is the
+53-assertion run at phase 4A's sha), each a separately named PASS/FAIL line,
+exits non-zero on any failure. It operates entirely inside one `mktemp -d`: `AI_OS_REPO_DIR` and
 `PROJECT_WORKTREE_ROOT` are overridden to point inside it, so the code under
 test cannot reach `/opt/forge-ai-os`, this worktree, or the real worktree root.
 It needs no database and issues no SQL.
@@ -582,13 +584,19 @@ prints absolute `mktemp -d` paths that differ on every invocation.
   provisioning-side refusal R39's amendment assigns to phase 4, reading phase
   3's constant.
 - **The phase-3 TOCTOU on that `400`** (recorded round 215) is unchanged. The
-  provisioning refusal here is the defence-in-depth that amendment describes:
-  two concurrent POSTs proposing two different new workstreams can both pass the
-  API's snapshot count, but the worktree that would actually consume the disk
-  cannot be created without passing `provisionWorkstream`'s check. **Whether
-  that is sufficient or the count needs a transaction is explicitly the phase-4
-  red team's decision**, not this round's, and it is left open rather than
-  closed by assertion.
+  provisioning refusal here is defence-in-depth against SERIAL excess.
+  ~~but the worktree that would actually consume the disk cannot be created
+  without passing `provisionWorkstream`'s check~~ — **RETRACTED round 225.**
+  That sentence was measured false: round 224's red team and gating reviewer
+  each ran two concurrent `provisionWorkstream()` calls for two different new
+  workstreams at a filled cap and both returned 0, one over cap. The
+  provisioning check reads the worktree list and then adds, with no lock, so it
+  carries the identical TOCTOU. **The phase-4 red team's decision, which this
+  bullet correctly left to it, was taken in round 224: ACCEPT the race in both
+  places, no transactional count** — the slip is clean, the spawn loop
+  serialises it in the deployed topology, and the priced cost is one checkout of
+  disk. See R39 in `01-requirements.md` §D and `provisionWorkstream`'s own R39
+  comment block, both amended in the same commit as this line.
 - **Scratch-repo workstreams** are supported — `projectRefs()` resolves the
   repo, project branch and main directory per repo type — but a scratch
   project's workstream worktrees are **not** removed by `removeWorkspace`,
@@ -919,3 +927,265 @@ prose.
   caught had it not been.
 - **It did not touch a live endpoint, a live service, the live database, or
   `/opt/forge-ai-os`.** The instrument refuses to run inside the live checkout.
+
+---
+
+# Round 225 — fix cycle 1: three retracted claims and one silence made loud
+
+Fix cycle 1 against round 224's two reviews (the phase-4 gating review and the
+phase-4 red team), which agreed on a verdict of NEEDS_FIXES and between them
+raised six findings, three of them the same defect seen from two sides. **Every
+functional deliverable of phase 4 was already discharged; what failed was
+prose** — three sentences in shipped source and in the requirements corpus that
+read as authoritative and were measurably wrong — plus one genuinely silent
+failure path. This section records the fix and the evidence.
+
+Files written by this round:
+
+```
+forge-control/src/lib/workspace.ts          maxWorkstreams() JSDoc, provisionWorkstream()'s
+                                            R39 block, and the NF1 warning (the ONLY
+                                            behavioural change in this commit)
+forge-control/src/lib/project-reconcile.ts  sameIdSet() and duplicatesFixChain() headers
+forge-control/src/db/projects.ts            closeFinishedProjects() doc comment
+docs/plan/engine-task-graph/01-requirements.md          R39 §D, R70 §D
+docs/plan/engine-task-graph/evidence/phase4-workstreams.md   §3.1, §4, and this §6
+docs/plan/engine-task-graph/evidence/phase2-replay.md   §7's GENERATED region (--write)
+scripts/checks/check-workstream-e2e.sh      §5.6, §7.4, §9.4–9.9, split streams
+scripts/checks/check-r20-census.py          one ATTRIBUTIONS entry
+```
+
+## 6. The findings, and what each one cost
+
+### 6.1 Gating finding 1 — a SQL mirror that does not exist
+
+`sameIdSet()`'s JSDoc called itself *"the exact mirror of the `cardinality(...)
+= ... AND @> AND <@` triple in db/projects.ts's guard SQL"*, and
+`duplicatesFixChain()`'s header called it a mirror *"term for term, exactly as
+`markVerdictTaskDone` mirrors `verdictMemberSettled`"*. Re-measured rather than
+re-read:
+
+```
+$ grep -n "cardinality\|@>\|<@" forge-control/src/db/projects.ts
+42: * A `depends_on` whose cardinality does not match the same-project rows it names
+684: *  explanation of a cardinality mismatch, and the only three that exist.
+685: *  `cardinality(depends_on)` counts array ELEMENTS; the comparison counts
+728:          AND cardinality(pt.depends_on)
+781: * The front half — the `cardinality` equality in promoteReadyTasks()'s graph
+830: *     closed loudly: promote by the cardinality equality (R14 front half), retry
+972: *  forever with a matching cardinality that the sweep could not see — while
+1026:               = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
+```
+
+**No `@>`. No `<@`. Every `cardinality` hit belongs to R14's dangling-dependency
+term in `promoteReadyTasks()`, a different rule entirely.** The comment
+contradicted R41's own decision text, `createFixChain`'s inline comment beside
+the call, and `02-architecture.md` §1.2 — three correct statements and one wrong
+one, and the wrong one sat in the file an auditor of R41 would open first. Both
+headers now say what is true: one definition, called from the transaction; the
+SELECT beside it narrows and decides nothing. The
+`markVerdictTaskDone`/`verdictMemberSettled` analogy is deleted rather than
+softened, because that pair is this module's one GENUINE SQL mirror and
+conflating the two sends the next auditor hunting a second copy that does not
+exist.
+
+### 6.2 Gating finding 2 — a measurement retracted in the doc, alive in the file
+
+`maxWorkstreams()`'s JSDoc still claimed importing `routes/projects.ts`
+*"constructs THREE pg Pools against content_forge at module scope"* and that a
+static import would *"break the standing rule that tests never touch a
+database"*. `02-architecture.md` §4.3 retracted exactly that in round 222 —
+measured with a counting `pg.Pool` subclass, `project-tick.ts` **alone**
+constructs **5**, and `routes/projects.ts` on top adds **0** — and said in as
+many words that *"a correct decision resting on a measurement that does not hold
+is one audit away from being reversed for the wrong reason"*. Round 224's
+reviewer re-measured at `HEAD=b201f22` and reproduced 5 / +0.
+
+The retraction had landed in the architecture doc and **not** in the file the
+retraction was about. Phase 4C could not have fixed it — `workspace.ts` was
+outside its declared write set — so it is inherited rather than caused. The
+paragraph now carries §4.3's actual reasoning (`lib/` must not statically depend
+on `routes/`; a `pg.Pool` constructs lazily and connects on first query, so NF3
+was never at risk from either import), states the measured 5 / +0, and marks the
+three-pool claim retracted in place. The stale line *"phase 4B is editing it
+concurrently"* went with it, replaced by §4.3's actual ruling: phase 4C reviewed
+the move and the constant **stays**.
+
+### 6.3 Gating finding 3 = red-team finding 2 — R39's TOCTOU, overclaimed in three places
+
+Round 215 accepted the API's TOCTOU on the ground that phase 4's
+`provisionWorkstream()` *"actually guards the disk, because the checkout that
+would consume it cannot be created without passing here."* Both round-224
+reviews attacked that sentence with two concurrent processes at a filled cap,
+independently, and both broke it — the gating reviewer measured cap 4 → 5
+distinct workstreams, the red team cap 5 → 6 worktrees. The provisioning check
+reads `git worktree list` and then runs `worktree add`, with no lock: the
+**identical** TOCTOU it was cited as closing.
+
+**The ruling, which R39 explicitly left to phase 4's red team, was taken in
+round 224: ACCEPT the race in both places; do NOT make the count
+transactional.** Recorded now where the rule is enforced, on the grounds that
+were actually measured rather than the claim that was not:
+
+- the race is **unreachable in the deployed topology** — `provisionWorkstream`
+  has exactly two call sites, both inside `spawnTaskRuns()`'s sequential
+  `for … await` loop in a single executor process;
+- the slip is **clean** — consistent branch+worktree pairs, no orphan branch, no
+  orphan directory, nothing half-provisioned, and `removeWorkspace()` enumerates
+  from the registry so teardown still reaches every one; checked both ways;
+- a refusal **writes nothing**, because the cap check runs before any git write
+  (e2e §12.6);
+- the priced cost is **one extra full checkout of disk**, never a corrupt
+  workspace.
+
+The sentence is retired from all three places it was restated — R39 in
+`01-requirements.md` §D, `provisionWorkstream()`'s R39 comment block, and §4 of
+this document — **in this one commit**, which is the standing rule about
+retiring a claim and its restatements together.
+
+### 6.4 Red-team finding 3 — R70's residual, stated instead of implied
+
+An integration task marked `done` **without its merge having happened** is
+caught by nothing structural: R70 verifies existence and edges, never git. The
+covering task exists, its `depends_on` covers W, the term is satisfied, the
+project closes with the branch unmerged. The designed catch is R38's integration
+**reviewer**, which a hand-edit in psql bypasses — the same operator-with-psql
+class as the hand-renumber R41 guards, and accepted for the same reason. One
+sentence each now in R70 (§D) and in `closeFinishedProjects()`'s doc comment,
+because R70's presence otherwise implies a completeness it does not have.
+
+### 6.5 Red-team finding 1 — the silent re-provision, and the only code change
+
+The one finding that was not prose. A workstream worktree deleted from disk was
+re-provisioned with **zero output**, while the equivalent `main` recovery has
+always warned (`wsMissing` in `resolveTaskWorkspace()`). Uncommitted work in the
+old directory is gone — necessarily; nothing can restore an `rm -rf`'d directory
+— so the requirement is that the loss is ANNOUNCED, not that it is prevented.
+NF1 is not satisfied by a workstream losing work more quietly than `main` does.
+
+`provisionWorkstream()` now warns on the `branchExists && !already` path, after
+a successful `worktree add`:
+
+```
+[workspace] project <id> workstream "<ws>": a previous checkout of branch
+<branch> existed and is no longer registered — re-created at <dir>. Commits on
+<branch> are intact; any UNCOMMITTED state in the old checkout is unrecoverable.
+```
+
+**The race-loser does not reach it, by construction rather than by hope.** Git
+refuses `worktree add` for a branch already checked out elsewhere, so a racer
+whose rival won lands in the `!add.ok` branch and returns from the re-check.
+Only a checkout that is genuinely no longer registered gets past `add.ok`.
+
+## 7. The instrument, and what would have made it certify wrongly
+
+`check-workstream-e2e.sh` goes from 53 to **61** assertions. Three of the eight
+are the finding; five exist to stop the finding certifying itself.
+
+**Stream separation was a prerequisite, not tidiness.** `drive()` captured
+`2>&1`. `console.warn` goes to stderr, and one warning line interleaved into the
+driver's single JSON object would make `jget`'s `json.load` throw — every JSON
+assertion in the run would have collapsed. Stdout and stderr are now captured
+separately, and both are quoted into failure diagnostics so a driver that dies
+before printing JSON still leaves its diagnosis.
+
+**Failure mode (f), added to the header's list: the warning passed because it is
+unconditional.** A `console.warn` on every provisioning would satisfy the
+positive assertion while telling an operator nothing. Two negative controls on
+the same string:
+
+```
+  ok   5.6 a first-ever checkout does not warn about loss     no: a previous checkout of branch
+  ok   7.4 the idempotent call does not warn about loss       no: a previous checkout of branch
+```
+
+**And the case must genuinely lose something.** §9 writes an uncommitted file
+into the worktree before deleting it, then asserts the loss really happened and
+that the warning's claim about COMMITTED work is true — a message that said
+"commits are intact" while the tip had moved would be a different kind of lie:
+
+```
+9. a workstream worktree deleted from disk is re-provisioned, LOUDLY (R32, NF1)
+  ok   9.1 re-provision returns the same dir                  = <root>/…--ui
+  ok   9.2 re-provision returns the same branch               = project/11111111-ui
+  ok   9.3 the directory is a live worktree again             …/.git present
+  ok   9.4 the re-provision WARNED about the lost checkout    contains: a previous checkout of branch
+  ok   9.5 the warning names the project                      contains: 11111111-2222-4333-8444-555555555555
+  ok   9.6 the warning names the workstream                   contains: "ui"
+  ok   9.7 the warning says the uncommitted state is gone     contains: UNCOMMITTED
+  ok   9.8 the branch tip is unmoved (commits really are intact) = 6ef21ba4297e8d8f47623c39c7ef3da7812d6977
+  ok   9.9 the uncommitted file really is gone                absent, which is what 9.4 announces
+      warning: [workspace] project 11111111-2222-4333-8444-555555555555 workstream "ui": a previous
+      checkout of branch project/11111111-ui existed and is no longer registered — re-created at
+      <root>/…--ui. Commits on project/11111111-ui are intact; any UNCOMMITTED state in the old
+      checkout is unrecoverable.
+```
+
+### 7.1 Both mutations, observed failing
+
+Standing rule 3 says instruments lie before code does, and an assertion never
+seen to fail is a claim rather than a measurement. Both directions were mutated
+in the subject, run, and reverted (`sha256sum` used to confirm the revert):
+
+```
+MUTATION 1 — the guard removed, `if (branchExists.ok)` → `if (true)`
+  FAIL 5.6 a first-ever checkout does not warn about loss     found [a previous checkout of branch] in […]
+  check-workstream-e2e.sh FAILED after 16 assertions          exit=1
+
+MUTATION 2 — the whole `console.warn` block deleted
+  FAIL 9.4 the re-provision WARNED about the lost checkout    missing [a previous checkout of branch] in []
+  check-workstream-e2e.sh FAILED after 31 assertions          exit=1
+```
+
+An unconditional warning fails at 5.6. A missing warning fails at 9.4. Neither
+survives.
+
+## 8. The full gate, at this round's bytes
+
+Every command run, output as printed. `pnpm test` and `pnpm typecheck` from
+`forge-control/`; the rest from the worktree root.
+
+```
+pnpm typecheck                → TYPECHECK_EXIT=0  (tsc --noEmit, clean)
+pnpm test                     → tests 1113 | suites 201 | pass 1113 | fail 0
+                                cancelled 0 | skipped 0 | todo 0
+check-workstream-e2e.sh       → PASSED — 61/61 assertions ran and passed
+check-close-gate.ts           → 27 (expected 27), failed 0, PASS      [scratch DB]
+check-fix-chain-graph.ts      → 33 (expected 33), failed 0, PASS      [scratch DB]
+check-r69-straddle.sh         → registered 11  ran 11  passed 11  failed 0  never-ran 0
+check-corpus-map.py           → OK — R1..R70 and NF1..NF7 complete, all three statements agree
+check-instrument-identity.py  → OK — 8 pasted headers name f6828a68…, no unmarked retired identity
+check-r20-census.py --self-check → OK at 27d300f (85 / 92 / 41 / 44 reproduced)
+check-r20-census.py           → SYMBOLS 25 attributed; R20 PASS; REGION matches  (after --write)
+```
+
+**The R20 census moved, and why.** §6.4's sentence in
+`closeFinishedProjects()`'s doc comment contains the citation *"round 224's red
+team"*, which is a `round` hit in `db/projects.ts` — so the census gained a
+symbol and refused it as **UNATTRIBUTED**, correctly, before anything was
+regenerated. `check-r20-census.py` gained one `ATTRIBUTIONS` entry recording
+what that hit is (a citation of a review round; the closure statement reads
+`workstream` and `depends_on` and never `round`), and
+`evidence/phase2-replay.md` §7's generated region was regenerated with `--write`
+— **123 → 124 hits, sha256 `47e25793…` → `f620b372…`.** That file is outside
+this round's obvious set and the write is declared here and in the commit
+message. The `--self-check` at `27d300f` is unchanged, which is the evidence the
+attribution rule itself did not move.
+
+**Not run, and why.** No live endpoint, no live service, no live database, and
+nothing under `/opt/forge-ai-os` — this is a build task and verification against
+live belongs to the deploy task. The two Postgres-touching checks ran against
+`forge_tg_scratch`, created via the `postgres` maintenance database, never
+`content_forge`.
+
+## 9. Citations
+
+By symbol or requirement id throughout: `provisionWorkstream`, `maxWorkstreams`,
+`listProjectWorktrees`, `removeWorkspace`, `resolveTaskWorkspace`, `wsMissing`,
+`spawnTaskRuns`, `sameIdSet`, `duplicatesFixChain`, `createFixChain`,
+`markVerdictTaskDone`, `verdictMemberSettled`, `promoteReadyTasks`,
+`closeFinishedProjects`, `unintegratedWorkstreams`; R14, R28, R29, R32, R38,
+R39, R41, R42, R70, NF1, NF3. **No bare `file.ts:NN` pin is added by this
+round.** Commit shas are cited as identities (`b201f22` — the HEAD every
+measurement above was taken at, worktree carrying only this round's changes;
+`27d300f` — the census self-check's historical tree).

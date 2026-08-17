@@ -492,6 +492,12 @@ ATTRIBUTIONS = {
         "**One row's corruption test**, comment only — the same SQL as the "
         "sweep, so retry and sweep cannot drift."
     ),
+    "closeFinishedProjects": (
+        "**Project closure (R70)**, comment only, and the `round` is a CITATION "
+        "— \"round 224's red team\", naming the review that put R70's residual on "
+        "the record. The statement itself reads `workstream` and `depends_on` "
+        "and never `round`; closure has never been round-shaped."
+    ),
     "describeDepsCorruption": "**English for one corrupt row.** Reads no `round`.",
     # The five below carry no `round` under the tsdoc rule; they are the symbols
     # the round-202 table named because it attributed comment blocks upward.

@@ -155,16 +155,27 @@ const WORKSTREAM_DIR_SEP = "--";
  * sources of truth and let them disagree about the limit, which R39's amendment
  * (01-requirements.md §D) forbids in as many words.
  *
- * WHY A DYNAMIC `import()` AND NOT A STATIC ONE. A static import would make
- * lib/workspace.ts depend on the route layer, and that is not merely untidy —
- * it is measurably load-bearing in the wrong direction. Importing
- * routes/projects.ts constructs THREE pg Pools against content_forge at module
- * scope (measured 2026-08-17: `pg.Pool` counted by a monkeypatched constructor,
- * transcript in evidence/phase4-workstreams.md §1). lib/project-tick.test.ts
- * VALUE-imports this module for `liveCheckoutPath()` while type-importing
- * db/projects.ts precisely so that `pnpm test` never opens a pool; a static
- * import here would put all three pools into the unit-test process and break
- * the standing rule that tests never touch a database.
+ * WHY A DYNAMIC `import()` AND NOT A STATIC ONE — THE IMPORT DIRECTION, and
+ * NOT a pool count. `lib/` must not statically depend on `routes/`: a static
+ * import would make the leaf module of the workspace layer depend on the HTTP
+ * layer, and that inversion is the whole reason this is dynamic.
+ *
+ * THE POOL-COUNT ARGUMENT THIS COMMENT USED TO MAKE IS RETRACTED, and the
+ * retraction is restated here rather than only in the doc, because a claim
+ * corrected in one place and left standing in another reads as authoritative
+ * and is wrong (02-architecture.md §4.3, round 222; round 224's gating review
+ * found this file still carrying the retracted version). The old text said a
+ * static import "would put THREE pg Pools into `pnpm test`". Measured with a
+ * counting `pg.Pool` subclass, twice — 2026-08-17 for §4.3 and again at
+ * `HEAD=b201f22` for round 224's review — importing `lib/project-tick.ts`
+ * ALONE constructs **5** pools, and `lib/project-tick.test.ts` value-imports
+ * that module for `buildPrompt`, so `pnpm test` constructs those 5 today,
+ * before any of this. Importing `routes/projects.ts` on top adds **0**: its
+ * pools are the same already-loaded db modules. NF3 was never at risk from
+ * either import, because a `pg.Pool` constructs lazily and connects only on
+ * the first query — the rule is that tests never TOUCH a database, and none
+ * does. So the dynamic import buys nothing measurable in pool count; it buys
+ * the import direction above, which is a real and sufficient reason on its own.
  *
  * A dynamic import keeps the STATIC graph a leaf — workspace.ts still imports
  * only node:fs, ./exec.ts and ./task-graph.ts, all pure — while the value
@@ -173,10 +184,14 @@ const WORKSTREAM_DIR_SEP = "--";
  *
  * THE CLEAN END STATE is for the constant to live in lib/task-graph.ts, the
  * leaf both layers already import statically (it already owns the other
- * workstream-shaped rule, `validateWorkstream()`/R28). Phase 4A does not own
- * task-graph.ts — 04-phases.md §10 shares it with phase 3, and phase 4B is
- * editing it concurrently — so that move is reported to the manager chat as a
- * follow-up rather than taken here.
+ * workstream-shaped rule, `validateWorkstream()`/R28). Phase 4C REVIEWED that
+ * move in round 222 and ruled the constant STAYS here for now
+ * (02-architecture.md §4.3): the move writes `lib/task-graph.ts`, which
+ * 04-phases.md §10 assigns to phases 1–3, and taking it would be a silent
+ * write outside a declared set in the project whose entire deliverable is
+ * computing contention from DECLARED write-sets. The phase that owns
+ * task-graph.ts should take the constant and delete `maxWorkstreams()`'s
+ * dynamic import in one commit.
  */
 async function maxWorkstreams(): Promise<number> {
   const routes = await import("../routes/projects.ts");
@@ -319,9 +334,34 @@ export async function provisionWorkstream(
 
   // R39, the provisioning half. The API refuses at task creation
   // (routes/projects.ts) and its count is a TOCTOU snapshot — two concurrent
-  // POSTs proposing two different new workstreams can both pass it. This is the
-  // refusal that actually guards the disk, because the checkout that would
-  // consume it cannot be created without passing here.
+  // POSTs proposing two different new workstreams can both pass it.
+  //
+  // THIS REFUSAL HAS THE SAME TOCTOU, AND THAT IS ACCEPTED — ruled by phase 4's
+  // red team in round 224, which R39 explicitly left to it. The count below is
+  // read from `git worktree list` and the `worktree add` happens after, with no
+  // lock, so two PROCESSES provisioning two different new workstreams can both
+  // pass: measured on this host at HEAD=b201f22, cap 4, three streams present,
+  // both calls returned 0 and the project ended with 5 distinct workstreams.
+  // This check therefore defends against SERIAL excess — a fourth, fifth, sixth
+  // spawn arriving one after another — and NOT against concurrent provisioning.
+  // The earlier wording here claimed the latter ("the checkout that would
+  // consume it cannot be created without passing here"); that was measured
+  // false and is retracted.
+  //
+  // WHY ACCEPTED RATHER THAN MADE TRANSACTIONAL. (a) The race is unreachable in
+  // the deployed topology: `provisionWorkstream` has exactly two call sites,
+  // both inside `spawnTaskRuns()`'s sequential `for … await` loop in a single
+  // executor process, so reaching it needs two executors overlapping across a
+  // deploy. (b) The measured slip is CLEAN — both streams got a consistent
+  // branch+worktree pair, no orphan branch, no orphan directory, nothing
+  // half-provisioned, and `removeWorkspace()` enumerates from the registry so
+  // teardown still reaches every one of them. (c) The priced cost is one extra
+  // full checkout of disk, never a corrupt workspace or a wrong answer. A
+  // transactional count would need a lock over a git repository, which is a
+  // real mechanism bought against a disk-space nuisance.
+  //
+  // What the check DOES guarantee unconditionally: it runs before any git
+  // write, so a refusal writes nothing at all (e2e §12.6).
   const existing = await listProjectWorktrees(repoPath, mainDir);
   const distinct = new Set(existing.map((w) => w.workstream));
   const limit = await maxWorkstreams();
@@ -380,6 +420,30 @@ export async function provisionWorkstream(
     throw new Error(
       `git worktree add failed (repo=${project.repo}, workstream=${workstream}, ` +
         `branch=${workBranch}): ${add.stderr || add.stdout}`,
+    );
+  }
+
+  // NF1, THE ASYMMETRY ROUND 224'S RED TEAM MEASURED. Reaching here with
+  // `branchExists.ok` means the branch already had a checkout that this call
+  // did not find — deleted from disk, or a crash part-way through a previous
+  // provisioning. Committed work is safe (the branch tip is untouched and is
+  // what we just checked out); anything UNCOMMITTED in the old directory is
+  // gone, and before this line it went with zero output. The equivalent `main`
+  // recovery has always warned — `wsMissing` in `resolveTaskWorkspace()`,
+  // lib/project-tick.ts — and a workstream losing work more quietly than
+  // `main` does is the silent half of a pair whose other half is loud.
+  //
+  // NOT reached by the race-loser, and that is by construction rather than by
+  // hope: git refuses `worktree add` for a branch already checked out
+  // elsewhere, so a racer whose rival won lands in the `!add.ok` branch above
+  // and returns from the re-check. Only a checkout that is genuinely no longer
+  // registered gets past `add.ok`.
+  if (branchExists.ok) {
+    console.warn(
+      `[workspace] project ${project.id} workstream "${workstream}": a previous ` +
+        `checkout of branch ${workBranch} existed and is no longer registered — ` +
+        `re-created at ${workspaceDir}. Commits on ${workBranch} are intact; any ` +
+        `UNCOMMITTED state in the old checkout is unrecoverable.`,
     );
   }
 

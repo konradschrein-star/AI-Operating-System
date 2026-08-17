@@ -4,7 +4,9 @@
 # R32 (provisionWorkstream, idempotent and race-safe), R33 (branch naming),
 # R34 (sibling directories, and the cleanliness gate stays quiet), R35
 # (removeWorkspace tears down every workstream), R38's proof obligation (a real
-# merge conflict resolves NOTHING), and R39's provisioning-side refusal.
+# merge conflict resolves NOTHING), R39's provisioning-side refusal, and NF1 on
+# the recovery path (a re-provisioned workstream ANNOUNCES the uncommitted work
+# it could not save — §9, added round 225 from phase 4's red-team finding 1).
 #
 # It is an INTEGRATION check, not a unit test: it needs a real git and a real
 # pnpm, so it lives here and never runs inside `pnpm test` (NF3 — the unit suite
@@ -64,6 +66,12 @@
 #       fails for an unrelated reason also exits non-zero. Guarded by asserting
 #       all four of: non-zero exit, the conflicting filename verbatim in the
 #       output, conflict markers left in the file, and HEAD unmoved.
+#   (f) THE NF1 WARNING PASSED BECAUSE IT IS UNCONDITIONAL. A `console.warn` on
+#       every provisioning would satisfy §9.4 while telling an operator nothing.
+#       Guarded by two NEGATIVE controls on the same string — §5.6 (a first-ever
+#       checkout) and §7.4 (the idempotent path) must both be SILENT — and by
+#       §9.9, which asserts the uncommitted file really did disappear, so the
+#       announcement is about a loss that actually happened.
 #
 # Usage:  bash scripts/checks/check-workstream-e2e.sh
 # Exit:   0 = every assertion passed AND every assertion ran.
@@ -77,8 +85,14 @@ TSX="$REPO_ROOT/forge-control/node_modules/.bin/tsx"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: a mismatch in either direction FAILS.
-EXPECTED_ASSERTIONS=53
+EXPECTED_ASSERTIONS=61
 ASSERTIONS_RUN=0
+
+# The distinguishing substring of `provisionWorkstream`'s NF1 loss warning
+# (§5.6, §7.4, §9.4). Written once, asserted PRESENT in exactly one section and
+# ABSENT in two others, so a warning that became unconditional — or that stopped
+# firing — fails rather than passes.
+LOSS_WARN="a previous checkout of branch"
 
 pass() {
   ASSERTIONS_RUN=$((ASSERTIONS_RUN + 1))
@@ -101,13 +115,16 @@ assert_has() {  # name haystack needle
 assert_nonzero() {  # name rc
   [ "$2" -ne 0 ] && pass "$1" "exit $2" || fail "$1" "expected non-zero exit, got 0"
 }
+assert_lacks() {  # name haystack needle
+  case "$2" in *"$3"*) fail "$1" "found [$3] in [$2]" ;; *) pass "$1" "no: $3" ;; esac
+}
 
 # ---------------------------------------------------------------------------
 # 0. BUILD IDENTITY — first, before a single assertion, so the transcript
 #    records which bytes were exercised. See (a) above for why the sha256 and
 #    not the commit is the authoritative line.
 # ---------------------------------------------------------------------------
-echo "check-workstream-e2e.sh — engine-task-graph phase 4A (R32–R35, R38, R39)"
+echo "check-workstream-e2e.sh — engine-task-graph phase 4 (R32–R35, R38, R39, NF1)"
 echo
 echo "BUILD IDENTITY OF THE CODE UNDER TEST"
 echo "  worktree path      : $REPO_ROOT"
@@ -186,6 +203,7 @@ process.exit(0);
 EOF
 
 DRIVE_OUT=""
+DRIVE_ERR=""
 DRIVE_RC=0
 # `&& ... || ...` and NOT `set +e`: several probes here are EXPECTED to fail
 # (a refused workstream, a conflicted merge), and bash runs the ERR trap on a
@@ -194,9 +212,20 @@ DRIVE_RC=0
 # NOT a pass" into the transcript of a passing run. A harness whose own output
 # says it aborted while it reports success is an instrument nobody will read
 # twice.
+#
+# STDOUT AND STDERR ARE CAPTURED SEPARATELY, and that is not tidiness. §9's NF1
+# assertions read the subject's `console.warn`, which goes to STDERR, while
+# every other assertion reads the driver's one JSON object on STDOUT — merged
+# with `2>&1` as this used to be, a single warning line would make `jget`'s
+# `json.load` throw and every JSON assertion in the run would collapse. Both
+# streams are kept so a driver that dies before printing JSON still leaves its
+# diagnosis in the transcript.
 drive() {   # [env assignments handled by caller via DRIVE_ENV] cmd args...
-  DRIVE_OUT="$(env AI_OS_REPO_DIR="$REPO" PROJECT_WORKTREE_ROOT="$WROOT" \
-    ${DRIVE_ENV:-} "$TSX" "$DRIVER" "$@" 2>&1)" && DRIVE_RC=0 || DRIVE_RC=$?
+  local o="$TMP/drive.out" e="$TMP/drive.err"
+  env AI_OS_REPO_DIR="$REPO" PROJECT_WORKTREE_ROOT="$WROOT" \
+    ${DRIVE_ENV:-} "$TSX" "$DRIVER" "$@" > "$o" 2> "$e" && DRIVE_RC=0 || DRIVE_RC=$?
+  DRIVE_OUT="$(cat "$o")"
+  DRIVE_ERR="$(cat "$e")"
 }
 jget() {    # json key
   printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$2"
@@ -224,7 +253,7 @@ echo
 # ---------------------------------------------------------------------------
 echo "2. subject identity and the resolved R39 limit"
 DRIVE_ENV="" ; drive identity "$PID" ""
-[ "$DRIVE_RC" -eq 0 ] || fail "2.0 driver ran" "driver exited $DRIVE_RC: $DRIVE_OUT"
+[ "$DRIVE_RC" -eq 0 ] || fail "2.0 driver ran" "driver exited $DRIVE_RC: stdout[$DRIVE_OUT] stderr[$DRIVE_ERR]"
 assert_eq "2.1 driver imported the hashed file" "$SUBJECT" "$(jget "$DRIVE_OUT" subject)"
 DEFAULT_LIMIT="$(jget "$DRIVE_OUT" limit)"
 assert_eq "2.2 unset PROJECT_MAX_WORKSTREAMS defaults to 6" "6" "$DEFAULT_LIMIT"
@@ -259,14 +288,14 @@ echo
 # ---------------------------------------------------------------------------
 echo "4. workstream 'main' is a passthrough (R32, R33, R34)"
 DRIVE_ENV="" ; drive workspace "$PID" ""
-[ "$DRIVE_RC" -eq 0 ] || fail "4.0 provisionWorkspace ran" "exit $DRIVE_RC: $DRIVE_OUT"
+[ "$DRIVE_RC" -eq 0 ] || fail "4.0 provisionWorkspace ran" "exit $DRIVE_RC: stdout[$DRIVE_OUT] stderr[$DRIVE_ERR]"
 WS_DIR="$(jget "$DRIVE_OUT" workspace_dir)"
 WS_BRANCH="$(jget "$DRIVE_OUT" work_branch)"
 assert_eq "4.1 provisionWorkspace dir"    "$WROOT/$PID"     "$WS_DIR"
 assert_eq "4.2 provisionWorkspace branch" "project/$ID8"    "$WS_BRANCH"
 
 DRIVE_ENV="" ; drive workstream "$PID" main
-[ "$DRIVE_RC" -eq 0 ] || fail "4.x provisionWorkstream(main) ran at all" "exit $DRIVE_RC: $DRIVE_OUT"
+[ "$DRIVE_RC" -eq 0 ] || fail "4.x provisionWorkstream(main) ran at all" "exit $DRIVE_RC: stdout[$DRIVE_OUT] stderr[$DRIVE_ERR]"
 assert_eq "4.3 provisionWorkstream(main) same dir"    "$WS_DIR"    "$(jget "$DRIVE_OUT" workspace_dir)"
 assert_eq "4.4 provisionWorkstream(main) same branch" "$WS_BRANCH" "$(jget "$DRIVE_OUT" work_branch)"
 echo
@@ -276,7 +305,7 @@ echo
 # ---------------------------------------------------------------------------
 echo "5. workstream 'ui' — branch, directory, sibling layout (R33, R34)"
 DRIVE_ENV="" ; drive workstream "$PID" ui
-[ "$DRIVE_RC" -eq 0 ] || fail "5.0 provisionWorkstream(ui) ran" "exit $DRIVE_RC: $DRIVE_OUT"
+[ "$DRIVE_RC" -eq 0 ] || fail "5.0 provisionWorkstream(ui) ran" "exit $DRIVE_RC: stdout[$DRIVE_OUT] stderr[$DRIVE_ERR]"
 UI_DIR="$(jget "$DRIVE_OUT" workspace_dir)"
 UI_BRANCH="$(jget "$DRIVE_OUT" work_branch)"
 assert_eq "5.1 ui branch is the hyphen form" "project/$ID8-ui" "$UI_BRANCH"
@@ -287,6 +316,10 @@ case "$UI_DIR" in
   *)           pass "5.4 ui dir is NOT nested inside main" "not under $WS_DIR" ;;
 esac
 assert_has "5.5 git registers the ui worktree" "$(git -C "$REPO" worktree list --porcelain)" "worktree $UI_DIR"
+# NEGATIVE CONTROL for §9's NF1 warning. A warning that fired on EVERY
+# provisioning would pass §9 while telling an operator nothing, so the FIRST
+# ever checkout of a brand-new branch must be silent about lost work.
+assert_lacks "5.6 a first-ever checkout does not warn about loss" "$DRIVE_ERR" "$LOSS_WARN"
 echo
 
 # ---------------------------------------------------------------------------
@@ -307,11 +340,15 @@ echo
 echo "7. idempotence (R32)"
 BEFORE_N="$(git -C "$REPO" worktree list --porcelain | grep -c '^worktree ')"
 DRIVE_ENV="" ; drive workstream "$PID" ui
-[ "$DRIVE_RC" -eq 0 ] || fail "7.0 second call ran" "exit $DRIVE_RC: $DRIVE_OUT"
+[ "$DRIVE_RC" -eq 0 ] || fail "7.0 second call ran" "exit $DRIVE_RC: stdout[$DRIVE_OUT] stderr[$DRIVE_ERR]"
 assert_eq "7.1 second call returns the same dir"    "$UI_DIR"    "$(jget "$DRIVE_OUT" workspace_dir)"
 assert_eq "7.2 second call returns the same branch" "$UI_BRANCH" "$(jget "$DRIVE_OUT" work_branch)"
 assert_eq "7.3 second call created no new worktree" "$BEFORE_N" \
           "$(git -C "$REPO" worktree list --porcelain | grep -c '^worktree ')"
+# The second negative control: the idempotent path returns an EXISTING worktree
+# and has lost nothing, so it too must be silent. §5.6 and this one together are
+# what make §9.4 evidence rather than a constant.
+assert_lacks "7.4 the idempotent call does not warn about loss" "$DRIVE_ERR" "$LOSS_WARN"
 echo
 
 # ---------------------------------------------------------------------------
@@ -344,13 +381,25 @@ echo
 
 # ---------------------------------------------------------------------------
 # 9. RECOVERY — the directory is deleted from disk, the same way
-#    project-tick.ts's `wsMissing` branch recovers the main worktree today.
+#    project-tick.ts's `wsMissing` branch recovers the main worktree today,
+#    AND IT SAYS SO (NF1). Round 224's red team measured the asymmetry: the
+#    `main` recovery warns ("gone from disk — re-provisioning") while the
+#    workstream path re-provisioned with "any warning about loss: 0". The
+#    recovery is necessarily lossy for UNCOMMITTED work — nothing can bring
+#    back a directory that was `rm -rf`'d — so the requirement is that the loss
+#    is announced, not that it is prevented.
+#
+#    An uncommitted file is written into the worktree before the deletion so the
+#    case tested is the one that actually loses something, rather than a
+#    deletion of a clean checkout.
 # ---------------------------------------------------------------------------
-echo "9. a workstream worktree deleted from disk is re-provisioned"
+echo "9. a workstream worktree deleted from disk is re-provisioned, LOUDLY (R32, NF1)"
+printf 'work in progress, never committed\n' > "$UI_DIR/uncommitted.txt"
+UI_TIP_BEFORE="$(git -C "$REPO" rev-parse "$UI_BRANCH")"
 rm -rf "$UI_DIR"
 [ -d "$UI_DIR" ] && fail "9.0 the directory was really deleted" "still present"
 DRIVE_ENV="" ; drive workstream "$PID" ui
-[ "$DRIVE_RC" -eq 0 ] || fail "9.1 re-provision after rm -rf" "exit $DRIVE_RC: $DRIVE_OUT"
+[ "$DRIVE_RC" -eq 0 ] || fail "9.1 re-provision after rm -rf" "exit $DRIVE_RC: stdout[$DRIVE_OUT] stderr[$DRIVE_ERR]"
 assert_eq "9.1 re-provision returns the same dir"    "$UI_DIR"    "$(jget "$DRIVE_OUT" workspace_dir)"
 assert_eq "9.2 re-provision returns the same branch" "$UI_BRANCH" "$(jget "$DRIVE_OUT" work_branch)"
 if [ -e "$UI_DIR/.git" ]; then
@@ -358,6 +407,21 @@ if [ -e "$UI_DIR/.git" ]; then
 else
   fail "9.3 the directory is a live worktree again" "no .git at $UI_DIR"
 fi
+# NF1: the loss is ANNOUNCED. Asserted on stderr, which is where console.warn
+# goes and which §5.6/§7.4 proved is otherwise quiet on this string.
+assert_has "9.4 the re-provision WARNED about the lost checkout" "$DRIVE_ERR" "$LOSS_WARN"
+assert_has "9.5 the warning names the project"                   "$DRIVE_ERR" "$PID"
+assert_has "9.6 the warning names the workstream"                "$DRIVE_ERR" '"ui"'
+assert_has "9.7 the warning says the uncommitted state is gone"  "$DRIVE_ERR" "UNCOMMITTED"
+# The claim the warning makes about COMMITTED work has to be true, or the
+# message is a different kind of lie: the branch tip must be exactly where it
+# was, and the re-created checkout must be sitting on it.
+assert_eq "9.8 the branch tip is unmoved (commits really are intact)" \
+          "$UI_TIP_BEFORE" "$(git -C "$REPO" rev-parse "$UI_BRANCH")"
+[ -e "$UI_DIR/uncommitted.txt" ] \
+  && fail "9.9 the uncommitted file really is gone" "$UI_DIR/uncommitted.txt survived — the case tested nothing" \
+  || pass "9.9 the uncommitted file really is gone" "absent, which is what 9.4 announces"
+echo "      warning: $DRIVE_ERR"
 echo
 
 # ---------------------------------------------------------------------------
