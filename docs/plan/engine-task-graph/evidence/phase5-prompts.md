@@ -364,3 +364,281 @@ insides rewritten).
 ## 4+ — RESERVED FOR BUILDER 5B (round 240)
 
 Do not write above this line; do not let 5A's sections drift into 5B's.
+
+---
+
+## 4. Phase 5B (round 240) — the withPolicy addenda
+
+### 4.1 The tip this work was built on
+
+```
+$ git rev-parse HEAD          # before the first edit
+05f284207b5b77897ef2fb4d6d249498d5a0a02b
+```
+
+That is round 239's commit — *"feat(engine-task-graph/phase-5A, round 239): the
+graph vocabulary — R49 retired with its gate clause"*. Every number below is
+pinned to it. `git log --oneline "$(git merge-base main HEAD)"..HEAD
+--name-only` at that sha shows `project-tick.ts` last touched by 239 (the
+graph vocabulary), 233 and 231; 5A's diff to `project-tick.ts` and
+`project-tick.test.ts` was read before either file was touched, so the shapes
+below extend the file rather than re-derive it.
+
+The "after" sha is named by subject, not by hash, for the reason §1 gives: a
+commit cannot contain its own sha.
+
+#### Files written (the declared write-set, and nothing else)
+
+| file | what |
+|---|---|
+| `forge-control/src/lib/project-tick.ts` | four constants, `withPolicy()`, the reviewer branch |
+| `forge-control/src/lib/project-tick.test.ts` | appended gates; **two declared in-place amendments**, §4.6 |
+| `docs/plan/engine-task-graph/evidence/phase5-prompts.md` | this section |
+| `docs/plan/engine-task-graph/01-requirements.md` | the two doc fixes folded in by the operator, §4.7 |
+
+`01-requirements.md` was added to the write-set by the operator's round-240
+instruction, not taken. No file outside this table was written.
+
+### 4.2 The four rules, where each is delivered from, and what it reaches
+
+| rule | constant | delivered by | role set | budget | measured |
+|---|---|---|---|---|---|
+| **B1** dep-install trap | `DEP_INSTALL_NOTE` | `withPolicy()`, `live` arm | **all 8 roles** on a repo-backed project; **none** on scratch | 500 | **474** |
+| **B2** the reviewed tip | `REVIEWER_TIP_DISCIPLINE` | reviewer branch | **reviewer** only | 1300 | **1081** |
+| **B3** the gate suite | `REVIEWER_GATE_SUITE` | reviewer branch | **reviewer** only | 1250 | **1150** |
+| **B4** the row that changed state | `BROWSER_CONTROL_SAFETY` | `withPolicy()`, derived from the body | **builder, researcher, scout** | 900 | **863** |
+
+Each budget is asserted **on the constant**, with the budget in the failure
+message, and paired with a `length > 200` positive control — a length budget
+alone is satisfied by the empty string.
+
+**B1 and B4 go through the funnel and B2/B3 do not, and the split is the
+argument `withPolicy()`'s own doc-comment makes.** B1 is a property of how the
+executor runs *every* task of *every* project, so no role branch may be able to
+lose it. B4 belongs to whichever roles drive a browser. B2 and B3 are
+preconditions of a *verdict*, and only one role emits one.
+
+**B4's role set is COMPUTED, NOT LISTED.** `withPolicy()` attaches it wherever
+the body already carries `BROWSER_FIRST` or `RESEARCH_INSTRUMENTS` — matched
+against the constants' whole text, never a generic substring. A hand-written
+list of "browser-driving roles" is precisely how a role added later loses a
+policy block, which is the failure this wrapper exists to prevent, one level in.
+The test asserts the *derivation* and the *concrete membership* together: the
+derivation alone would silently reach all eight roles if someone gave every
+branch a browser tomorrow.
+
+**The tester is not in B4's set, and that is a judgement.** Its branch carries
+neither constant today, so the derivation excludes it. Its prompt does name the
+browser as a testing surface, which makes it the one role this derivation
+arguably under-serves — **reported to the manager chat** rather than fixed by
+widening a block into a branch this task was told not to touch.
+
+**Ordering, inside the funnel.** B1 and B4 are both placed **before**
+`ESCALATION_POLICY`. `cp3-linkage.test.ts` asserts that an unlinked project's
+prompt *ends* with `ESCALATION_POLICY`, and that ending is load-bearing evidence
+for the comms gate (08 §4 acceptance). Appending after it would have broken a
+gate in another file; a case in `project-tick.test.ts` now states that
+dependency where a reader of *this* file will see it.
+
+**Ordering, inside the reviewer branch.** B2 and B3 are printed **before** the
+`VERDICT:` sentence they are preconditions of. A rule stated after the
+instruction it constrains reads as an afterthought — the defect class §2.5
+records 5A finding only by reading its own built prompt aloud, because no
+`.includes()` gate can see the order of two clauses it finds both of.
+
+### 4.3 NF7 — the numbers after this change
+
+| | characters |
+|---|---|
+| pre-phase-5 baseline, **re-derived** at `d9858b9` (§4.4) | **9187** |
+| measured at `05f2842` (5A's tip) | **11585** |
+| measured after phase 5B | **12061** |
+| **5B consumed** | **+476** (of the **600** reserved) |
+| budget (unchanged, the operator's ruling) | 3050 → cap **12237** |
+| headroom remaining | **176** |
+
+**No overrun. The budget was not widened.** The 476 is `DEP_INSTALL_NOTE` (474)
+plus the `\n\n` that joins it. B2, B3 and B4 cost this measurement **nothing**:
+the reviewer blocks reach only the reviewer branch, and the browser block only
+the roles carrying `BROWSER_FIRST` or `RESEARCH_INSTRUMENTS` — the planner is
+none of them. Measured through `maximalPlannerPrompt()`, the same maximal path
+§2.4 uses, which asserts its own four blocks before returning.
+
+### 4.4 The baseline pin was 92 too high — found, re-derived, corrected
+
+§2.4 records `BASELINE = 9279` at `d9858b9` and "measured after this commit
+11677". **The second is `9279 + 2398`: a sum, not a measurement.** The first is
+wrong by 92.
+
+Re-derived by the method `BASELINE`'s own comment prescribes, because every
+number in this section is pinned to it:
+
+```
+$ git show d9858b9:forge-control/src/lib/project-tick.ts \
+    > forge-control/src/lib/<probe>.ts       # beside its own siblings, which 239 did not touch,
+                                             # so its imports resolve to the same modules
+$ npx tsx <measure>.ts                       # positive control first: the module must NOT export
+                                             # GRAPH_GUIDE, i.e. it really is the pre-5A code
+PRE-5A (d9858b9) maximal planner prompt length: 9187
+```
+
+(The probe was removed in the same shell invocation that created it — it carries
+the retired identifier R49's gate greps `forge-control/` for, and a probe left
+behind would have re-armed that sweep.)
+
+| | |
+|---|---|
+| re-derived pre-5A baseline | **9187** |
+| pinned in the assertion as `BASELINE` | 9279 — **+92, wrong** |
+| measured at `05f2842` | **11585** |
+| 5A's itemised net | **+2398** → 9187 + 2398 = 11585 **exact** |
+
+**5A's arithmetic was right and its pin was not; the two errors cancelled**,
+which is why nothing went red. Left alone, the enforced cap would sit 92
+characters above what it advertises — a rotted pin that reads as authoritative
+rather than as stale, the failure class 00-vision.md §7 rule 1 exists to catch.
+The correction **tightens** the gate (cap 12329 → 12237) and makes 5A's promised
+headroom exact: 12237 − 11585 = **652**, the number its brief reserved.
+
+`BUDGET` is untouched at 3050.
+
+### 4.5 The gates written, three observed RED, and what would have made them lie
+
+The instrument check the brief requires. Two mechanisms would have made these
+assertions report a pass **wrongly**:
+
+**(a) An assertion that greps the CONSTANT instead of the BUILT PROMPT** — and
+so passes while `withPolicy()` never delivers it. Closed **structurally**, not by
+inspection: every delivery claim is a **pair** over `buildPrompt()`'s output — a
+positive on one project or role, and a negative on another. `DEP_INSTALL_NOTE`
+is one object; an assertion that had degenerated into `CONST.includes(...)`
+answers the same for both halves, so the negative half would fail. A pair that
+both passes can only be produced by a `buildPrompt` that actually discriminates.
+
+**(b) A `.includes()` on a string so generic it matches unrelated text.** No
+delivery assertion takes a hand-typed needle. They take the **whole constant** —
+474 to 1150 characters of exact text — which nothing else in a prompt satisfies
+by accident. Where a specific *clause* is required, it is asserted against the
+**constant**, per this file's header convention, so a reworded constant that
+dropped a required clause fails here rather than drifting away from the test.
+
+Two further mechanisms, closed the same way: **(c)** a length measured on the
+short path — everything length-related goes through `maximalPlannerPrompt()`;
+**(d)** a role-set case that only checks presence — every role-set case is
+exhaustive over `ALL_TASK_ROLES`, with the complement **computed**, not listed.
+
+**Observed failing, then reverted** (all three mutations to `project-tick.ts`,
+`npx tsx --test src/lib/project-tick.test.ts`, 135 cases in the file):
+
+| # | mutation | result |
+|---|---|---|
+| 1 | `withPolicy()` stops interpolating `DEP_INSTALL_NOTE` — **the funnel is cut** | **4 RED**: the two positive B1 cases, the branchless-role funnel case, and the NF7 discharge control |
+| 2 | the `live` gate ignored — scratch projects get B1 too | **1 RED**: "no role's prompt on a scratch project carries it" |
+| 3 | `drivesBrowser = true` — B4 delivered to every role | **3 RED**: the computed complement, plus G5 and the NF7 discharge (an over-delivered block blows the budget too) |
+
+**Mutation 1 is the one that proves (a) is impossible**: the constant was
+untouched and every assertion still went red, so the assertions read the built
+prompt. **Mutation 2 proves the pair discriminates** in the other direction.
+After each, the file was restored and re-run green.
+
+**A gate caught this task's own work.** G1 (5A's anti-regression grep over
+`project-tick.ts`'s source) went **RED on the first full run**: B3's doc-comment
+had written R49's retired wording while explaining why reviewers disclose and
+proceed. A doc-comment is source — the same way G1 caught 5A's on *its* first
+run. The comment now describes the precedent instead of quoting it, and says
+why in place.
+
+**Read end to end.** The built reviewer prompt was printed in full and read as a
+reviewer would. Holding only that text, a reviewer can state its tip, re-read
+HEAD before blocking, locate and run the gate suite, and name what blocks a
+PASS. **The weakest sentence found** — and it was found by reading, not by any
+assertion — was B3's *"run it with `--strict`"*: `scripts/checks/gates-808.sh`
+takes that flag, but this constant ships to every project's reviewer, and one
+whose suite takes no such flag would be told to pass an argument its script
+rejects, leaving the reviewer to invent a step. That is the disclose-and-proceed
+seam by another route, so it was **amended in the same commit**: *"run it with
+`--strict`, or with its documented invocation if it takes no such flag, and say
+which you used."* (+83 characters; B3 1067 → 1150, still inside its 1250.)
+
+### 4.6 The two in-place amendments to `project-tick.test.ts`, declared
+
+The brief says **append only, delete no test**. Nothing was deleted. Two pins in
+the existing NF7 block were amended in place, each marked ROUND 240 with its
+reasoning inline, because leaving either would have left a false or
+unsatisfiable gate:
+
+1. **`BASELINE` 9279 → 9187.** §4.4. The correction tightens the gate.
+2. **"the headroom builder 5B needs is actually there".** Round 239 wrote it as
+   a **forward reservation** (`headroom >= 600`) — explicitly so that *"eating
+   that headroom fails HERE, loudly, rather than as a mysterious overrun in
+   round 240"*. Round 240 is the round that spends it. Left as written the case
+   would have gone red **the moment it did its job** — an unsatisfiable gate of
+   exactly the kind 00-vision.md §7 rule 2 says to amend where it is enforced.
+   It is neither deleted nor widened: it is **turned around** to audit the same
+   600 from the other side (*did 5B spend more than it was promised?* — 476 of
+   600), and given a control, because a spend of **0** would otherwise read as a
+   comfortable underspend when it actually means the block stopped being
+   delivered.
+
+### 4.7 The two doc fixes folded in (operator ruling, 2026-08-17)
+
+Both in `01-requirements.md`, both one-sentence amendments, both from 5A's
+findings:
+
+1. **NF7 §J: "~1500" → 3050**, with the arithmetic inline. The requirement text
+   and the assertion that enforces it disagreed; **the measured number wins**.
+   Closes 5A's **F-D**. The pins written into §J are the **re-derived** ones
+   (9187 / 11585 / 12061), with a note that the round-239 message's 9279 and
+   11677 were a rotted pin and a sum — §4.4.
+2. **The R22a commentary's falsified `taskCurl()` sentence.** R53 falsified
+   *"`taskCurl()`'s shipped example sends `round: 1`"*; 5A fixed the twin in
+   `routes/projects.ts` but this copy was outside its write-set. Amended in the
+   same terms, noting the reasoning survives *stronger* (the only caller left
+   that supplies a round is the architect's `"round": 100` phase label). Closes
+   5A's **F-C**.
+
+`check-corpus-map.py` exits 0 after both: R1–R70 and NF1–NF7 complete, all three
+statements of the requirement→phase map agree.
+
+### 4.8 Verification, run at the tip this section names
+
+```
+$ cd forge-control && pnpm install --frozen-lockfile --prod=false && pnpm typecheck && pnpm test
+Lockfile is up to date, resolution step is skipped / Already up to date
+> tsc --noEmit                    (clean)
+# tests 1159   # pass 1159   # fail 0   # skipped 0        (1140 before)
+
+$ grep -rn "consecutive rounds" forge-control/          # R49's sweep
+(empty — exit 1)
+
+$ grep -rn "pm2 restart forge-executor" . --include='*.ts' --include='*.sh' | wc -l
+4                                  # all four inside NEVER-worded prohibitions
+
+$ python3 docs/plan/engine-task-graph/check-corpus-map.py           ; echo $?   -> 0
+$ python3 docs/plan/engine-task-graph/check-instrument-identity.py  ; echo $?   -> 0
+$ git -C /opt/forge-ai-os status --porcelain
+(empty)
+```
+
+### 4.9 Findings
+
+**F-E — the tester drives browsers and B4's derivation does not reach it.**
+The tester's prompt names the browser as a testing surface ("walk the real user
+journeys … with the real surface (browser, CLI, API)") but carries neither
+`BROWSER_FIRST` nor `RESEARCH_INSTRUMENTS`, so the computed set excludes it.
+Widening the set by hand would defeat the derivation; giving the tester
+`BROWSER_FIRST` is a change to a branch this task's write-set does not cover.
+**Reported, not fixed.** The next planner should decide whether the tester gains
+`BROWSER_FIRST` (and B4 with it) or an explicit exclusion in the corpus.
+
+**F-F — 5A's `BASELINE` pin was 92 too high and its "11677" was a sum.**
+Resolved in this commit, §4.4. Recorded because it changes what a reader
+believes about §2.4, which is corpus rather than code: the *arithmetic* there is
+exact and the *pins* were not.
+
+**No unresolvable citation.** Every symbol and requirement id cited by the
+round-240 brief resolved: `withPolicy()`, `WORKTREE_POLICY`,
+`ESCALATION_POLICY`, `MANAGER_COMMS`, `BROWSER_FIRST`, `RESEARCH_INSTRUMENTS`,
+the `ROLES` array, `maximalPlannerPrompt()`, `scripts/checks/gates-808.sh`, and
+NF7's assertion. The one line-number-shaped pin the brief carried
+(`01-requirements.md` lines ~450–451) resolved to the R22a commentary it names.

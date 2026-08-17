@@ -2256,7 +2256,32 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * unbudgeted growth: it is 652 characters from red, not comfortable — the
    * headroom case below was observed RED at 502 when the workstream-cap sentence
    * was added, which is how both halves of this gate are known to work. */
-  const BASELINE = 9279;
+  /* ── ROUND 240: THE BASELINE PIN WAS 92 TOO HIGH, AND IS CORRECTED HERE ──
+   *
+   * Builder 5B re-derived the baseline by exactly the method the comment above
+   * prescribes, because every number 5B reports is pinned to it. Method: `git
+   * show d9858b9:forge-control/src/lib/project-tick.ts` written beside its own
+   * siblings (which that commit did not touch, so its imports resolve to the
+   * same modules), imported under a POSITIVE CONTROL that the module does NOT
+   * export GRAPH_GUIDE — i.e. that it really is the pre-5A code and not HEAD's —
+   * and measured through the same maximal fixtures.
+   *
+   *   re-derived pre-5A baseline           9187
+   *   pinned above as BASELINE             9279   (+92, wrong)
+   *   measured at 05f2842 (5A's tip)      11585
+   *   5A's itemised net              +2398        -> 9187 + 2398 = 11585 EXACT
+   *
+   * So 5A's arithmetic was right and its pin was not: the "11677" its commit
+   * message reports as measured is 9279 + 2398, a SUM, never a measurement, and
+   * the two errors cancelled. Left alone, the cap would sit 92 characters above
+   * what it advertises — a rotted pin that no longer reads as stale but as
+   * authoritative, which is the failure class 00-vision.md §7 rule 1 exists to
+   * catch. Correcting it TIGHTENS the gate (cap 12329 -> 12237) and makes 5A's
+   * promised headroom exact: 12237 - 11585 = 652, the number its brief reserved.
+   *
+   * BUDGET is untouched at 3050. It is the operator's ruling (round 240) and is
+   * now also written into 01-requirements.md §J, where NF7 read "~1500". */
+  const BASELINE = 9187;
   const BUDGET = 3050;
 
   test("G5 — the maximal planner prompt stays inside the amended budget", () => {
@@ -2273,16 +2298,472 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
     );
   });
 
-  test("the headroom builder 5B needs is actually there", () => {
-    // Stated as its own case so 5B's brief has a number to read rather than a
-    // subtraction to perform, and so eating that headroom fails HERE, loudly,
-    // rather than as a mysterious overrun in round 240.
+  test("the headroom builder 5B needs is actually there — RESERVATION DISCHARGED, round 240", () => {
+    /* WHAT THIS CASE WAS, AND WHY IT IS NOW THE OTHER DIRECTION. Round 239 wrote
+     * it as a FORWARD RESERVATION — `headroom >= 600` — "so 5B's brief has a
+     * number to read rather than a subtraction to perform, and so eating that
+     * headroom fails HERE, loudly, rather than as a mysterious overrun in round
+     * 240". Round 240 is the round that spends it: DEP_INSTALL_NOTE now rides
+     * withPolicy() into every repo-backed prompt, this measurement included.
+     *
+     * Left as written, the case would have gone red the moment it did its job —
+     * an unsatisfiable gate of exactly the kind 00-vision.md §7 rule 2 says to
+     * amend WHERE IT IS ENFORCED. It is not deleted and not widened: it is
+     * turned around to audit the same 600 from the other side. The reservation
+     * was a promise about what 5B could spend, so the surviving question is
+     * whether 5B spent more than it was promised.
+     *
+     * This is the one case in this file round 240 edited in place; the rest of
+     * its work is appended below. The exception is declared in the phase 5B
+     * header and in the commit message.
+     *
+     * MEASURED at round 240, on the corrected BASELINE:
+     *   at 05f2842 (5A's tip)            11585   headroom 652
+     *   after 5B                         12061   headroom 176
+     *   5B consumed                        476   of the 600 reserved
+     * The 476 is DEP_INSTALL_NOTE (474) plus the "\n\n" that joins it. B2, B3
+     * and B4 cost this measurement nothing: the reviewer blocks reach only the
+     * reviewer branch, and the browser block only the roles carrying
+     * BROWSER_FIRST or RESEARCH_INSTRUMENTS — the planner is none of them. */
+    const FIVE_A_HEADROOM = 652;
+    const FIVE_B_RESERVATION = 600;
     const measured = maximalPlannerPrompt().length;
     const headroom = BASELINE + BUDGET - measured;
+    const consumed = FIVE_A_HEADROOM - headroom;
     assert.ok(
-      headroom >= 600,
-      `NF7: only ${headroom} characters of headroom left, and builder 5B (round 240) needs 600 ` +
-        "for the withPolicy() addenda that land inside this same measurement",
+      consumed <= FIVE_B_RESERVATION,
+      `NF7: phase 5B's withPolicy() addenda consumed ${consumed} characters of the ` +
+        `${FIVE_B_RESERVATION} reserved for them (headroom ${FIVE_A_HEADROOM} -> ${headroom}). ` +
+        "Shrink the addenda; do not widen BUDGET to fit them — that is the direction " +
+        "00-vision.md §7 rule 2 does not license.",
+    );
+    assert.ok(
+      headroom >= 0,
+      `NF7: no headroom left at all (${headroom}) — G5 above says the same thing louder`,
+    );
+    // The control. Without this, the arithmetic above would keep passing if
+    // DEP_INSTALL_NOTE stopped being delivered at all: consumed would fall to 0,
+    // which is comfortably <= 600 and means the opposite of what it looks like.
+    assert.ok(
+      maximalPlannerPrompt().includes(DEP_INSTALL_NOTE),
+      "NF7: the reservation reads as discharged, but the block it was reserved for is not in " +
+        "the planner prompt — a spend of 0 is not an underspend here, it is a missing delivery",
+    );
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * PHASE 5B (round 240) — the withPolicy addenda. Four rules put where they
+ * cannot be forgotten: the dep-install trap (B1), the reviewed tip (B2), the
+ * gate suite (B3), and the row that changed state between runs (B4).
+ *
+ * Built on 05f284207b5b77897ef2fb4d6d249498d5a0a02b (phase 5A, round 239).
+ * Every number in evidence/phase5-prompts.md §4 is pinned to that sha.
+ *
+ * APPENDED ONLY, with TWO DECLARED EXCEPTIONS, both amendments to a pin rather
+ * than deletions of a test — see "NF7 the prompt budget" above, where each is
+ * marked ROUND 240 with its reasoning inline:
+ *   1. BASELINE 9279 -> 9187. Re-derived by the method the constant's own
+ *      comment prescribes; the old value was 92 too high, which made the
+ *      enforced cap 92 more generous than it advertised. The correction TIGHTENS
+ *      the gate.
+ *   2. "the headroom builder 5B needs is actually there" — a forward
+ *      RESERVATION for this round, which this round spends. Rewritten as a
+ *      backward audit of the same number (5B may consume at most the 600 it was
+ *      promised) so the case keeps a live assertion instead of becoming vacuous.
+ * No test was deleted, and nothing else above this line was modified.
+ *
+ * ── WHAT WOULD MAKE THIS INSTRUMENT REPORT A PASS WRONGLY ─────────────────
+ *
+ * (a) "The assertion greps the CONSTANT instead of the BUILT PROMPT, and so
+ *     passes while withPolicy() never delivers it." This is the failure the
+ *     brief names first, and it is closed STRUCTURALLY, not by inspection:
+ *     every delivery claim below is a PAIR over buildPrompt()'s output — a
+ *     positive on one project/role and a NEGATIVE on another. `DEP_INSTALL_NOTE`
+ *     is one object; an assertion that had degenerated into `CONST.includes(...)`
+ *     would answer the same for both halves of the pair, so the negative half
+ *     would fail. A pair that both passes can only be produced by a buildPrompt
+ *     that actually discriminates. (Observed, not merely argued: the negative
+ *     half of B1's pair was watched failing on purpose — see the commit message.)
+ * (b) "A `.includes()` on a string so generic it matches unrelated text." No
+ *     delivery assertion here takes a hand-typed needle. They take the WHOLE
+ *     constant — 474 to 1081 characters of exact text — which nothing else in a
+ *     prompt can satisfy by accident. Where a specific CLAUSE is required (the
+ *     brief names three for the reviewer), it is asserted against the CONSTANT,
+ *     per this file's header convention, so a reworded constant that dropped a
+ *     required clause fails here instead of drifting away from the test.
+ * (c) "The measurement was taken on the short path." Everything length-related
+ *     goes through `maximalPlannerPrompt()`, which asserts its own four blocks
+ *     are present before returning (5A, above).
+ * (d) "The role-set test only checks presence, so a block that leaked into every
+ *     role still passes." Every role-set case below is exhaustive over
+ *     ALL_TASK_ROLES: what must carry it, and what must NOT, with the complement
+ *     computed rather than listed.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+import {
+  DEP_INSTALL_NOTE,
+  REVIEWER_TIP_DISCIPLINE,
+  REVIEWER_GATE_SUITE,
+  BROWSER_CONTROL_SAFETY,
+} from "./project-tick.ts";
+
+/** The four constants and the budget each was written to. The budget is in the
+ *  failure message because a builder who trips this needs the number, not the
+ *  fact — and because a budget that lives only in a doc-comment is a budget
+ *  nobody enforces. */
+const B5_BUDGETS = [
+  ["DEP_INSTALL_NOTE", DEP_INSTALL_NOTE, 500],
+  ["REVIEWER_TIP_DISCIPLINE", REVIEWER_TIP_DISCIPLINE, 1300],
+  ["REVIEWER_GATE_SUITE", REVIEWER_GATE_SUITE, 1250],
+  ["BROWSER_CONTROL_SAFETY", BROWSER_CONTROL_SAFETY, 900],
+] as const;
+
+describe("phase 5B — the four constants stay inside their stated budgets", () => {
+  test("each constant is within budget", () => {
+    for (const [name, text, budget] of B5_BUDGETS) {
+      assert.ok(
+        text.length <= budget,
+        `${name} is ${text.length} characters, over its stated budget of ${budget} by ` +
+          `${text.length - budget}. These blocks ride in every spawn's prompt and unbounded ` +
+          "prompt growth is a real per-spawn cost (NF7). Shrink the text — do NOT widen the " +
+          "budget to make your own work green; that is the one direction 00-vision.md §7 " +
+          "rule 2 does not license.",
+      );
+    }
+  });
+
+  test("no constant is empty — the budget check's own positive control", () => {
+    // A budget assertion is satisfied by the empty string. Without this, a
+    // constant accidentally emptied by a bad edit would pass every length gate
+    // in this file while delivering nothing.
+    for (const [name, text] of B5_BUDGETS) {
+      assert.ok(text.length > 200, `${name} is ${text.length} characters — that is not a rule, ` +
+        "and a length budget alone would have certified it");
+    }
+  });
+});
+
+describe("B1 the dep-install trap is delivered through withPolicy(), to every role", () => {
+  /* THE PAIR. Positive over every role on a repo-backed project; negative over
+   * every role on a scratch one. See (a) in this section's header: an assertion
+   * that had degenerated into grepping the constant could not pass both. */
+
+  test("every role's prompt on a repo-backed project carries DEP_INSTALL_NOTE", () => {
+    // ALL_TASK_ROLES, not a hand-written list, and not ROLES either: it is
+    // ROLES plus the branchless `steward`, and it is compile-enforced through
+    // `satisfies Record<TaskRole, true>`, so a role added to the union tomorrow
+    // is a build error here rather than a role that silently lost the block.
+    for (const repo of ["ai-os", "content-forge"] as const) {
+      const proj = project({ repo });
+      for (const role of ALL_TASK_ROLES) {
+        assert.ok(
+          buildPrompt(task({ role }), proj).includes(DEP_INSTALL_NOTE),
+          `B1: role ${role} on repo '${repo}' is missing DEP_INSTALL_NOTE. The executor exports ` +
+            "NODE_ENV=production, so a --frozen-lockfile install without --prod=false skips " +
+            "devDependencies and exits 0, and the universal typecheck gate then dies with " +
+            "`tsc: not found` while the install looks like a success (round 101)",
+        );
+      }
+    }
+  });
+
+  test("the ROLES array the rest of this file loops is covered too", () => {
+    // Stated separately because the brief names ROLES specifically. ROLES is a
+    // subset of ALL_TASK_ROLES, so this cannot fail alone — it exists so that a
+    // future split of the two arrays is caught rather than assumed away.
+    const proj = project({ repo: "ai-os" });
+    for (const role of ROLES) {
+      assert.ok(
+        buildPrompt(task({ role }), proj).includes(DEP_INSTALL_NOTE),
+        `B1: role ${role} (ROLES) is missing DEP_INSTALL_NOTE`,
+      );
+    }
+  });
+
+  test("no role's prompt on a scratch project carries it", () => {
+    // The negative half of the pair, and the reason B1 is gated on `live`: a
+    // scratch project has no checkout to install into, so the block would name
+    // a package directory that does not exist.
+    const proj = project({ repo: "scratch" });
+    for (const role of ALL_TASK_ROLES) {
+      assert.ok(
+        !buildPrompt(task({ role }), proj).includes(DEP_INSTALL_NOTE),
+        `B1: role ${role} on a scratch project carries DEP_INSTALL_NOTE — there is no checkout ` +
+          "to install into, and this is also the negative control that proves the positive case " +
+          "above reads the BUILT PROMPT rather than the constant",
+      );
+    }
+  });
+
+  test("the rule states the flag, the failure and the mechanism", () => {
+    for (const [what, needle] of [
+      ["the corrected command", "--frozen-lockfile --prod=false"],
+      ["why the default is wrong", "NODE_ENV=production"],
+      ["that the bad install SUCCEEDS", "EXITS 0"],
+      ["the symptom a reader will actually see", "tsc: not found"],
+      ["pnpm over npm", "pnpm, never npm"],
+    ] as const) {
+      assert.ok(
+        DEP_INSTALL_NOTE.includes(needle),
+        `B1: DEP_INSTALL_NOTE no longer states ${what} (looked for "${needle}"). A rule that ` +
+          "gives the fix without the symptom is a rule nobody connects to the failure they are " +
+          "staring at",
+      );
+    }
+  });
+});
+
+describe("B2/B3 the reviewer states its tip, re-reads HEAD, and runs the gate suite", () => {
+  const reviewerPrompt = buildPrompt(task({ role: "reviewer" }), project({ repo: "ai-os" }));
+
+  test("both blocks are in the reviewer's built prompt", () => {
+    assert.ok(
+      reviewerPrompt.includes(REVIEWER_TIP_DISCIPLINE),
+      "B2: the reviewer prompt lost the tip discipline. A verdict without a tip is unfalsifiable",
+    );
+    assert.ok(
+      reviewerPrompt.includes(REVIEWER_GATE_SUITE),
+      "B3: the reviewer prompt lost the gate-suite clause. A suite run at the author's " +
+        "discretion measures diligence, not the tree",
+    );
+  });
+
+  test("B2 — the sha statement and the re-read-HEAD-before-blocking clause", () => {
+    for (const [what, needle] of [
+      ["the verdict must carry the sha", "STATE THE EXACT SHA YOU REVIEWED"],
+      ["how to obtain it", "git rev-parse HEAD"],
+      ["why a tipless verdict is worthless", "unfalsifiable"],
+      ["HEAD is re-read before a blocker", "RE-READ HEAD IMMEDIATELY BEFORE WRITING A BLOCKER"],
+      ["only that blocker is re-checked, not the whole review", "not the whole review"],
+      ["why the blocker specifically", "the expensive claim"],
+      ["the general rule", "ANY CLAIM ABOUT THE TREE CARRIES THE TREE-STATE IT WAS MADE AGAINST"],
+    ] as const) {
+      assert.ok(
+        REVIEWER_TIP_DISCIPLINE.includes(needle),
+        `B2: the tip discipline no longer states ${what} (looked for "${needle}"). Round 1357: a ` +
+          "reviewer forked a clean checkout — the CAREFUL act — and blocked on a defect a commit " +
+          "had already fixed while it read. Its verdict was true of the tree it read and false of " +
+          "the tree that existed",
+      );
+    }
+  });
+
+  test("B3 — the suite runs before a PASS, reports EXECUTED, and is never widened", () => {
+    for (const [what, needle] of [
+      ["it runs before any PASS", "BEFORE ANY PASS"],
+      ["with --strict", "`--strict`"],
+      ["the table is pasted", "Paste its table into your review"],
+      ["a suite without the flag still has an invocation", "if it takes no such flag"],
+      ["a nonzero exit blocks the PASS", "BLOCKS the PASS"],
+      ["the executed count is reported", "REPORT THE NUMBER OF GATES EXECUTED"],
+      ["why the executed count matters", "silently stops running"],
+      ["a gate is never widened to pass", "NEVER MAKE A GATE PASS BY WIDENING IT"],
+      ["allowlists are scoped to the sentence", "the exact offending SENTENCE"],
+      ["not to the file, not to a token", "not the file, not a bare token"],
+    ] as const) {
+      assert.ok(
+        REVIEWER_GATE_SUITE.includes(needle),
+        `B3: the gate-suite clause no longer states ${what} (looked for "${needle}")`,
+      );
+    }
+  });
+
+  test("B3 SATISFIABILITY — the clause has an arm for a project that ships no suite", () => {
+    /* The clause most likely to become an unsatisfiable gate, and 00-vision.md
+     * §7 rule 2's whole point: a reviewer left holding a gate it cannot
+     * discharge learns that disclose-and-proceed is normal. So BOTH arms must be
+     * present in the text — the run-it arm and the say-so-and-run-the-quality-doc
+     * arm — and the text must say that those are the only two options. */
+    for (const [what, needle] of [
+      ["where to look for a suite", "scripts/checks/"],
+      ["the glob it looks for", "gates-*.sh"],
+      ["the fallback naming, for a project that names its suite elsewhere", "quality document"],
+      ["the no-suite arm exists at all", "IF IT SHIPS NONE"],
+      ["and is discharged by saying so", "say exactly that in your verdict"],
+      ["with a substitute command block to run", "command block"],
+      ["and no third option", "the only two options"],
+      ["neither arm is a disclosure", "neither is a disclose-and-proceed"],
+    ] as const) {
+      assert.ok(
+        REVIEWER_GATE_SUITE.includes(needle),
+        // The failure message DESCRIBES the precedent rather than quoting the
+        // phrase 03-quality.md §4 uses for it: that phrase is R49's retired
+        // wording, this file lives under forge-control/, and the phase-5 gate
+        // greps exactly there and requires empty output. Same discipline as
+        // G1's assembled needles above.
+        `B3 (satisfiability): the gate-suite clause no longer states ${what} (looked for ` +
+          `"${needle}"). A gate a reviewer cannot discharge is how three rounds in a row ` +
+          `learned to disclose and proceed (03-quality.md §4)`,
+      );
+    }
+  });
+
+  test("the builder and the planner gain no gate-suite clause", () => {
+    // Explicit in the brief: B3 is the reviewer's precondition for a PASS.
+    // A builder has no verdict to gate, and a planner has no tree to gate yet.
+    const proj = project({ repo: "ai-os" });
+    for (const role of ALL_TASK_ROLES.filter((r) => r !== "reviewer")) {
+      const prompt = buildPrompt(task({ role }), proj);
+      assert.ok(
+        !prompt.includes(REVIEWER_GATE_SUITE),
+        `B3: role ${role} carries the gate-suite clause — it belongs to the role whose PASS it ` +
+          "is a precondition of",
+      );
+      assert.ok(
+        !prompt.includes(REVIEWER_TIP_DISCIPLINE),
+        `B2: role ${role} carries the reviewer tip discipline`,
+      );
+    }
+  });
+
+  test("both blocks precede the VERDICT sentence they are preconditions of", () => {
+    // The defect class round 239 caught only by reading its built prompt aloud:
+    // two clauses a `.includes()` gate both finds, in the wrong order. A rule
+    // printed after the instruction it constrains reads as an afterthought.
+    const verdictAt = reviewerPrompt.indexOf('exactly with "VERDICT: PASS"');
+    assert.ok(verdictAt > 0, "the VERDICT sentence could not be located — this case's own control");
+    assert.ok(
+      reviewerPrompt.indexOf(REVIEWER_TIP_DISCIPLINE) < verdictAt,
+      "B2: the tip discipline is printed after the VERDICT instruction it constrains",
+    );
+    assert.ok(
+      reviewerPrompt.indexOf(REVIEWER_GATE_SUITE) < verdictAt,
+      "B3: the gate-suite clause is printed after the VERDICT instruction it gates",
+    );
+  });
+});
+
+describe("B4 the browser rules reach exactly the derived role set", () => {
+  const proj = project({ repo: "ai-os" });
+
+  /* THE ROLE SET IS DERIVED, AND ASSERTED ANYWAY, and the two together are the
+   * point. `withPolicy()` attaches BROWSER_CONTROL_SAFETY wherever the body
+   * already carries BROWSER_FIRST or RESEARCH_INSTRUMENTS — never from a
+   * hand-written list of "browser-driving roles", because a hand-written list is
+   * exactly how a role added later loses a policy block. The derivation alone
+   * would be untestable drift, though: if someone gave every role BROWSER_FIRST
+   * tomorrow, the block would silently reach all eight. So this case asserts the
+   * CONCRETE membership as well, and computes its complement rather than listing
+   * it (failure (d) in this section's header).
+   *
+   * TESTER IS OUT, and it is a judgement rather than an oversight: its branch
+   * carries neither constant today. Its prompt does name the browser as a
+   * testing surface, which makes it the one role this derivation arguably
+   * under-serves — reported to the manager chat at round 240 rather than fixed
+   * by widening a block into a branch this task was told not to touch. */
+  const EXPECTED_BROWSER_ROLES = ["builder", "researcher", "scout"] as const;
+
+  test("the derivation and the membership agree", () => {
+    const carriesABrowserBlock = ALL_TASK_ROLES.filter((role) => {
+      const prompt = buildPrompt(task({ role }), proj);
+      return prompt.includes(BROWSER_FIRST) || prompt.includes(RESEARCH_INSTRUMENTS);
+    });
+    assert.deepEqual(
+      [...carriesABrowserBlock].sort(),
+      [...EXPECTED_BROWSER_ROLES].sort(),
+      "B4: the set of roles carrying BROWSER_FIRST or RESEARCH_INSTRUMENTS has changed. That is " +
+        "not necessarily wrong — but the browser-control rules follow that set by construction, " +
+        "so a change here silently changes who is told not to click a running row. Confirm the " +
+        "new member should have it, then amend this list with the reason",
+    );
+  });
+
+  test("every role in the set receives BROWSER_CONTROL_SAFETY", () => {
+    for (const role of EXPECTED_BROWSER_ROLES) {
+      assert.ok(
+        buildPrompt(task({ role }), proj).includes(BROWSER_CONTROL_SAFETY),
+        `B4: role ${role} drives a browser and is missing the run-control rules. Round 1873: a ` +
+          "verification script clicked confirm on a row that had gone from settled to running " +
+          "between two executions, and terminated the operator's own run",
+      );
+    }
+  });
+
+  test("no other role receives it — the complement, computed", () => {
+    for (const role of ALL_TASK_ROLES.filter(
+      (r) => !(EXPECTED_BROWSER_ROLES as readonly string[]).includes(r),
+    )) {
+      assert.ok(
+        !buildPrompt(task({ role }), proj).includes(BROWSER_CONTROL_SAFETY),
+        `B4: role ${role} carries the browser-control rules but drives no browser — prompt bloat ` +
+          "with no matching behaviour, and the negative control that proves the positive cases " +
+          "above read the built prompt rather than the constant",
+      );
+    }
+  });
+
+  test("a scratch project's browser roles keep the rules", () => {
+    // Deliberately NOT gated on `live`, unlike B1: a scratch project's builder
+    // can still drive the fleet's own control panel, and the row it clicks is
+    // just as live.
+    const scratch = project({ repo: "scratch" });
+    for (const role of EXPECTED_BROWSER_ROLES) {
+      assert.ok(
+        buildPrompt(task({ role }), scratch).includes(BROWSER_CONTROL_SAFETY),
+        `B4: scratch ${role} lost the browser-control rules — the panel it can reach is the same one`,
+      );
+    }
+  });
+
+  test("all three rules and the general one are stated", () => {
+    for (const [what, needle] of [
+      ["the run-control endpoints are stubbed too", "POST /runs/:id/stop and POST /runs/:id/terminate"],
+      ["why stubbing what you mean to exercise is not enough", "DIFFERENT endpoints depending on the row's state"],
+      ["never click a row that is not settled", "NEVER drive a confirm or an X on a row that is not settled"],
+      ["the assertion is immediately before the click", "IMMEDIATELY BEFORE the click"],
+      ["and not once at the start", "never once at script start"],
+      ["row state is re-asserted between runs", "RE-ASSERT ROW STATE BETWEEN RUNS"],
+      ["the general rule", "BLAST RADIUS CHANGES WHERE THE CODE DOES NOT"],
+      ["its four inputs", "(code, capability flags, store scope, live row state)"],
+      ["and that only one of them is reviewable", "only the first appears in a diff"],
+    ] as const) {
+      assert.ok(
+        BROWSER_CONTROL_SAFETY.includes(needle),
+        `B4: BROWSER_CONTROL_SAFETY no longer states ${what} (looked for "${needle}")`,
+      );
+    }
+  });
+});
+
+describe("phase 5B — the delivery path is the funnel, not a branch", () => {
+  /* The claim this whole section rests on, asserted rather than assumed. B1 and
+   * B4 are delivered by `withPolicy()`, which is what makes them unforgettable;
+   * if a future edit moved either into individual role branches, every
+   * membership test above would keep passing while the property the operator
+   * asked for — "a role branch added at 3am cannot lose it" — would be gone.
+   *
+   * Asserted through a role with NO branch of its own. `steward` falls straight
+   * through to `return withPolicy(header)`, so the only path by which its prompt
+   * can contain DEP_INSTALL_NOTE is the wrapper. */
+  test("the branchless role still receives B1 — so the wrapper is delivering it", () => {
+    const stewardPrompt = buildPrompt(task({ role: "steward" }), project({ repo: "ai-os" }));
+    assert.ok(
+      stewardPrompt.includes(DEP_INSTALL_NOTE),
+      "B1 is not coming from withPolicy(): steward has no branch in buildPrompt, so if it lacks " +
+        "the note the delivery has been moved into the role branches — where the next role added " +
+        "will not have it. That is the failure this shape exists to prevent",
+    );
+    assert.ok(
+      stewardPrompt.includes(ESCALATION_POLICY) && stewardPrompt.includes(WORKTREE_POLICY("/opt/forge-ai-os")),
+      "the control: steward's prompt is built through withPolicy() at all",
+    );
+  });
+
+  test("B1 is delivered BEFORE ESCALATION_POLICY, which must stay the last block", () => {
+    // cp3-linkage.test.ts asserts an unlinked prompt ENDS with ESCALATION_POLICY
+    // — load-bearing evidence for the comms gate (08 §4 acceptance). Ordering
+    // B1 after it would have broken that in another file; stating the
+    // dependency here means the next reader of THIS file sees it too.
+    const prompt = buildPrompt(task({ role: "builder" }), project({ repo: "ai-os", metadata: {} }));
+    assert.ok(prompt.endsWith(ESCALATION_POLICY), "B1/B4 changed where an unlinked prompt ends");
+    assert.ok(
+      prompt.indexOf(DEP_INSTALL_NOTE) < prompt.indexOf(ESCALATION_POLICY),
+      "B1 must precede ESCALATION_POLICY",
+    );
+    assert.ok(
+      prompt.indexOf(BROWSER_CONTROL_SAFETY) < prompt.indexOf(ESCALATION_POLICY),
+      "B4 must precede ESCALATION_POLICY",
     );
   });
 });

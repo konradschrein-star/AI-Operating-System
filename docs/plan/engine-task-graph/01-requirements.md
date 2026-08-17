@@ -447,9 +447,16 @@ fleet this project exists to end, reintroduced by a typo. So the guard now leads
 with `typeof body.round !== "number"`, refused with the **existing** message
 (unlike the bound's own message, `[]` and `"1"` genuinely are not non-negative
 integers, so the sentence is true of them), **amended where it is enforced**.
-Safe in the same direction as both round-213 rulings: `taskCurl()`'s shipped
-example in `project-tick.ts` sends `"round": 1`, a JSON number, so no real caller
-regresses.
+Safe in the same direction as both round-213 rulings — *amended at round 240;
+this sentence read that `taskCurl()`'s shipped example sends `"round": 1`, which
+R53 falsified: as of `05f2842` `taskCurl()` OMITS `round` entirely and the route
+computes it from `depends_on`. The reasoning survives intact, and is in fact
+stronger, which is why the guard itself is unchanged:* the only caller left that
+supplies a round is the goal-mode architect branch, whose prompt shows the field
+as a literal JSON number (`"round": 100`, R51's phase label). Nothing in the tree
+sends a quoted round, so no real caller regresses. (The twin of this sentence in
+`routes/projects.ts`'s round-guard doc-comment was amended at round 239; this
+copy was outside that task's write-set and is closed here.)
 
 *How proved:* `check` — `scripts/checks/check-task-api.ts` case 2, ten probes:
 `"abc"`, `-1`, `1.5`, `2147483648`, `[]`, `true`, `"0x10"`, `""` refused, and
@@ -1323,10 +1330,29 @@ one commit once no `depends_on IS NULL` rows remain. A `TODO(R12-retire)` marks
 each site. *How proved:* review — the marker appears at every site and nowhere
 else.
 
-**NF7. Prompt budget.** The planner prompt grows by no more than ~1500
-characters net; `PARALLELISM_GUIDE`'s removal pays for most of the new text.
-Every worker prompt already carries WORKTREE_POLICY + ESCALATION_POLICY +
-MANAGER_COMMS, and unbounded prompt growth is a real cost per spawn.
+**NF7. Prompt budget.** The planner prompt grows by no more than **3050**
+characters net. Every worker prompt already carries WORKTREE_POLICY +
+ESCALATION_POLICY + MANAGER_COMMS, and unbounded prompt growth is a real cost
+per spawn.
+
+*Amended at round 240 by the operator's ruling; this text read "~1500" and the
+assertion that enforces it read 3050, so the two disagreed and **the measured
+number wins**.* The original figure assumed the retired round guide's removal
+would pay for most of the new text. Measured at round 239: it pays **314 of
+3221**, for a net of **+2398**. 1500 is unreachable while R47's companion-files
+clause and R38's integration paragraph are stated in the terms their
+requirements demand — the only text that fits is text that satisfies
+`.includes()` and misleads a planner, which 03-quality.md §3.2 calls a passing
+gate on a broken deliverable. Round 240 spent 476 of the remaining 652 on the
+withPolicy() addenda, leaving 176.
+
+*Pins, re-derived at round 240 and corrected — the round-239 commit message
+quotes a baseline of 9279 and a total of 11677; the second is `9279 + 2398`, a
+sum rather than a measurement, and the first is 92 too high. Measured through
+the maximal path (repo-backed, goal mode, manager-chat linkage): **9187** before
+phase 5 (`d9858b9`), **11585** after it (`05f2842`), **12061** after phase 5B.
+The itemised +2398 was exact; only the baseline pin had rotted.*
+
 *How proved:* unit — a length assertion on the built planner prompt, with the
 budget written into the assertion message.
 

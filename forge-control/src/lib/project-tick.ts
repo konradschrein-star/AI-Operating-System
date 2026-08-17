@@ -399,6 +399,42 @@ export function WORKTREE_POLICY(liveCheckout: string): string {
   );
 }
 
+/** B1 (round 101's incident, delivered round 240) — the dep-install trap, in the
+ *  funnel rather than in a brief.
+ *
+ *  THE INCIDENT. `cc-runner` exports NODE_ENV=production into every run, so
+ *  `pnpm install --frozen-lockfile` skips devDependencies, prints
+ *  "devDependencies: skipped because NODE_ENV is set to production" and EXITS 0.
+ *  `tsx` and `typescript` are devDependencies of forge-control, so the universal
+ *  typecheck gate then dies with `tsc: not found` while the install that caused
+ *  it looks like a success. A silent-success install that leaves the gate
+ *  unrunnable is the exact failure class 00-vision.md §7 exists to catch. Round
+ *  101 verified the correct form; a worse variant of the same root cause once
+ *  had `pnpm add` prune `tsx` out of forge-control and brick the executor, which
+ *  needs it to boot — hence "pnpm, never npm" is part of the rule, not a style
+ *  note.
+ *
+ *  WHY THE FUNNEL. The operator's round-240 instruction is explicit that pasting
+ *  this into individual briefs is how it got missed: it is a property of how the
+ *  executor runs EVERY task of EVERY project, not of any one phase, and a role
+ *  branch added at 3am must not be able to lose it — the same argument
+ *  `withPolicy()`'s own comment makes for WORKTREE_POLICY.
+ *
+ *  WHY GATED ON `live`. One line, and it is the whole reason: a scratch project
+ *  has no repo checkout to install into, so the instruction would name a package
+ *  directory that does not exist.
+ *
+ *  BUDGET 500 characters, asserted on the constant in project-tick.test.ts. It
+ *  rides in every prompt of every spawn on a repo-backed project and lands
+ *  inside NF7's planner-prompt measurement, so it is priced, not free. */
+export const DEP_INSTALL_NOTE =
+  `DEPENDENCIES, BEFORE ANY GATE. Your runtime exports NODE_ENV=production, so ` +
+  `\`pnpm install --frozen-lockfile\` SKIPS devDependencies — it says so quietly and EXITS 0, and your ` +
+  `typecheck then dies with \`tsc: not found\` while the install looked clean. tsx and typescript ARE ` +
+  `devDependencies. Always:\n` +
+  `    cd <the package holding the lockfile> && pnpm install --frozen-lockfile --prod=false\n` +
+  `pnpm, never npm — \`pnpm add\` under that pruning has removed tsx and bricked the executor.`;
+
 /** R13 — reviewer-side enforcement of the above. A policy nobody checks is a
  *  suggestion; the reviewer is the only role that reliably looks at the whole
  *  round, so it owns the cleanliness gate. */
@@ -412,6 +448,99 @@ export function REVIEWER_LIVE_CHECK(liveCheckout: string): string {
     `Paste the command's output (or its emptiness) into your review — an unexecuted check is not a check.`
   );
 }
+
+/** B2 (round 1357's incident, delivered round 240) — the reviewer states the tip
+ *  it reviewed, and re-reads HEAD before it blocks.
+ *
+ *  THE INCIDENT, and why neither half alone is enough. On operator-visibility a
+ *  reviewer forked a CLEAN CHECKOUT at 8c5fcd0 — correct discipline: a sibling
+ *  task had uncommitted work in the shared worktree and the reviewer refused to
+ *  misattribute it — and wrote a blocker. Commit 1c0c23e landed while it read and
+ *  had already fixed the thing it blocked on. Its verdict was true of the tree it
+ *  read and false of the tree that existed. Note the trap: the CAREFUL act is
+ *  what created the staleness, and the naive reviewer reading the live worktree
+ *  would have been contaminated but current. So the prompt requires BOTH halves —
+ *  state the tip, and re-confirm the expensive claim against HEAD.
+ *
+ *  ONLY THE BLOCKER IS RE-CHECKED, deliberately. Re-reviewing everything at
+ *  HEAD would make a review unfinishable on a moving branch; a blocker is the
+ *  claim that costs a whole round, so it is the one worth re-confirming.
+ *
+ *  THE GENERAL RULE IS IN THE PROMPT because this was the fourth artifact in one
+ *  night that was true when produced and silently stopped describing the tree: a
+ *  stale VERDICT.md that blocked a deploy, rotted line pins, a gate run
+ *  invalidated by a later commit in its own round, and this review of a
+ *  superseded tip. None of them read as stale; they read as authoritative.
+ *
+ *  Reviewer-scoped, not withPolicy(): the tester's claims are about a running
+ *  product, not about a tree, and a builder states its tip by committing to it.
+ *  BUDGET 1300 characters, asserted in project-tick.test.ts. */
+export const REVIEWER_TIP_DISCIPLINE =
+  `THE TIP YOU REVIEWED — state it, and re-read HEAD before you block:\n` +
+  `- STATE THE EXACT SHA YOU REVIEWED in your verdict, always: run \`git rev-parse HEAD\` in the tree you ` +
+  `actually read and quote it. A verdict without a tip is unfalsifiable — no later reader can tell whether ` +
+  `it still applies.\n` +
+  `- RE-READ HEAD IMMEDIATELY BEFORE WRITING A BLOCKER. If HEAD has moved past the tip you reviewed, say so ` +
+  `and re-check THAT SPECIFIC blocker against HEAD — not the whole review, just the thing you are about to ` +
+  `block on. A blocker is the expensive claim; it is the one worth re-confirming. This is not hypothetical: ` +
+  `a reviewer forked a clean checkout (right call — a sibling's uncommitted work was in the shared ` +
+  `worktree), and the commit that fixed its blocker landed while it read.\n` +
+  `- THE GENERAL RULE: ANY CLAIM ABOUT THE TREE CARRIES THE TREE-STATE IT WAS MADE AGAINST — a sha, a ` +
+  `timestamp, something a later reader can check. Verdicts, line pins and gate runs all stop describing the ` +
+  `tree without changing a character, and none of them read as stale afterwards. They read as authoritative.`;
+
+/** B3 (adopted by the operator after round 1875) — the gate suite runs before
+ *  any PASS, not when someone remembers.
+ *
+ *  THE EVIDENCE, and why the prompt carries the why. The suite only ran when
+ *  someone thought to run it, and that gap was hit twice on one project in one
+ *  day: round 1356 found gate 8 already red at HEAD because a commit landed
+ *  after its reviewer's gate run and nobody re-ran it, and round 1875 found the
+ *  suite RED:2 at HEAD, introduced by two rounds that did not author the gate and
+ *  unnoticed across three intervening rounds. A gate suite executed at the
+ *  author's discretion measures DILIGENCE, NOT THE TREE.
+ *
+ *  THE TWO CONSTRAINTS learned there are in the prompt for a reason each. The
+ *  EXECUTED count, because a gate that silently stops running is worse than one
+ *  that fails and only a count exposes it — the same argument the corpus's own
+ *  checkers make with their positive controls. The allowlist-scoping rule,
+ *  because the cheapest way to turn a suite green is to widen it, and a gate
+ *  loosened until it passes proves nothing while reading as safety.
+ *
+ *  SATISFIABILITY (00-vision.md §7 rule 2). This is the clause most likely to
+ *  become an unsatisfiable gate: not every project ships a gate-suite script, and
+ *  a reviewer left holding a gate it cannot discharge learns that
+ *  disclose-and-proceed is normal — the habit 03-quality.md §4 records three
+ *  rounds in a row practising. (Phrased that way deliberately: the obvious
+ *  wording here is R49's retired text, G1 greps this file's source for it, and a
+ *  doc-comment is source. G1 caught this comment on its first run at round 240,
+ *  as it caught 5A's on its first run at round 239.) The rule carries both arms:
+ *  run the suite if one ships, and if none ships SAY SO and run the quality
+ *  document's own command block. There is no state in which it cannot be
+ *  honoured, and the prompt says that out loud rather than leaving it inferable.
+ *
+ *  The `--strict` clause carries the same hedge, and it was found by READING THE
+ *  BUILT PROMPT rather than by any assertion: `scripts/checks/gates-808.sh` in
+ *  this repo takes `--strict`, but this constant ships to every project's
+ *  reviewer, and one whose suite takes no such flag would be told to pass an
+ *  argument its script rejects — leaving the reviewer to invent a step, which is
+ *  the same seam by another route.
+ *
+ *  BUDGET 1250 characters, asserted in project-tick.test.ts. */
+export const REVIEWER_GATE_SUITE =
+  `THE GATE SUITE RUNS BEFORE ANY PASS, not when someone remembers. Before you emit VERDICT: PASS:\n` +
+  `- IF THIS PROJECT SHIPS A GATE SUITE — look under scripts/checks/ for a gates-*.sh, or the suite named ` +
+  `in its quality document — run it with \`--strict\`, or with its documented invocation if it takes no ` +
+  `such flag, and say which you used. Paste its table into your review and report ` +
+  `EXECUTED / RED / SKIPPED-by-design. A nonzero exit BLOCKS the PASS.\n` +
+  `- IF IT SHIPS NONE, say exactly that in your verdict and run the quality document's own command block ` +
+  `instead. Those are the only two options; neither is a disclose-and-proceed.\n` +
+  `- REPORT THE NUMBER OF GATES EXECUTED, not just the red count. A gate that silently stops running is ` +
+  `worse than one that fails.\n` +
+  `- NEVER MAKE A GATE PASS BY WIDENING IT. Scope any allowlist entry to the exact offending SENTENCE — not ` +
+  `the file, not a bare token — so a real violation elsewhere in the same file still fails.\n` +
+  `A suite run at the author's discretion measures DILIGENCE, NOT THE TREE: one project was found red at ` +
+  `HEAD twice in one day, once because a commit landed after its reviewer's gate run and nobody re-ran it.`;
 
 /** R14 + R17 — deploy guidance for the goal-mode architect's plan. Bug 4 of the
  *  first night: this engine deploys itself, so a naive `pm2 restart
@@ -499,6 +628,60 @@ export const BROWSER_FIRST =
   `interaction if you hold the Skill tool. A login wall is the one thing you do NOT solve yourself — the ` +
   `tool screenshots it and queues Konrad; never attempt credentials. An unverified guess costs more than ` +
   `the five minutes of browsing you skipped.`;
+
+/** B4 (round 1873's incident, 2026-08-17 14:08:58 UTC, delivered round 240) —
+ *  the row under your cursor changes state between runs.
+ *
+ *  THE INCIDENT. A fleet builder's verification script drove the team panel's
+ *  confirm control on the MANAGER row and CANCELLED THE OPERATOR'S OWN RUN.
+ *  Between the script's two executions that chat went from settled to running, so
+ *  the second click was no longer a dismissal but a TERMINATE
+ *  (`capabilities.terminate` has been true since round 1353). The script had
+ *  stubbed the dismissal endpoints but not the run-control ones. No lasting
+ *  damage; the builder disclosed it at once and hardened its own script — which
+ *  is exactly right, and exactly the problem: the guard then lived in one
+ *  worker's script, and the next agent to write a browser test would not have it.
+ *  That is what "put it in the funnel" means here.
+ *
+ *  THE GENERAL RULE, and why it is worth prompt budget: this is the THIRD variant
+ *  of one failure. A capability flag flipped (terminate:true turned an X into a
+ *  kill); a store widened scope (per-chat localStorage became a global DELETE);
+ *  and now TIME. A control's meaning is a function of (code, capability flags,
+ *  store scope, live row state) and ONLY THE FIRST APPEARS IN A DIFF, so a
+ *  reviewer reading the diff cannot catch the other three.
+ *
+ *  ── THE ROLE SET, AND WHY IT CANNOT DRIFT ────────────────────────────────
+ *  Delivered by `withPolicy()` to every role whose body already carries
+ *  BROWSER_FIRST or RESEARCH_INSTRUMENTS — today {builder, scout} and
+ *  {researcher} respectively, per T16 and the round-239 scope test. The set is
+ *  COMPUTED FROM THE BODY, not from a hand-written role list, because a
+ *  hand-written list is precisely how a new role silently loses a policy block
+ *  (the argument `withPolicy()`'s own comment makes, applied to a conditional
+ *  block). A role branch that gains a browser tomorrow gains this with it; one
+ *  that loses its browser stops paying for it. The membership test in
+ *  project-tick.test.ts asserts the resulting set explicitly so the derivation
+ *  cannot quietly start including roles that drive no browser.
+ *
+ *  NOT the tester, and the exclusion is a judgement, not an oversight: its branch
+ *  carries neither constant today. Its prompt does name the browser as a testing
+ *  surface, which makes it the one role this derivation would arguably under-serve
+ *  — reported to the manager chat at round 240 rather than fixed by widening a
+ *  block into a branch this task was told not to touch.
+ *
+ *  BUDGET 900 characters, asserted in project-tick.test.ts. Terse and imperative
+ *  on purpose: the narrative above costs the prompt nothing, and the four spawns
+ *  a day that carry this text should not pay for it. */
+export const BROWSER_CONTROL_SAFETY =
+  `DRIVING A LIVE CONTROL SURFACE (any script that clicks a row in a team, Live or run panel):\n` +
+  `- STUB THE RUN-CONTROL ENDPOINTS TOO — POST /runs/:id/stop and POST /runs/:id/terminate — not just the ` +
+  `dismissal ones. The same control reaches DIFFERENT endpoints depending on the row's state, so stubbing ` +
+  `"the endpoints I mean to exercise" is not the set you will hit.\n` +
+  `- NEVER drive a confirm or an X on a row that is not settled. Assert \`settled\` IMMEDIATELY BEFORE the ` +
+  `click, never once at script start.\n` +
+  `- RE-ASSERT ROW STATE BETWEEN RUNS of the same script. This is the part that bit: a settled row was ` +
+  `running by the next execution, and the identical click terminated the operator's own run.\n` +
+  `- BLAST RADIUS CHANGES WHERE THE CODE DOES NOT. A control's meaning is a function of (code, capability ` +
+  `flags, store scope, live row state) — only the first appears in a diff.`;
 
 /** R870 — the fleet-wide autonomy rule Konrad set on 2026-08-05, condensed from
  *  the vault note "AI OS/Policy - Agent Autonomy and Escalation.md". The full
@@ -734,10 +917,30 @@ export function buildPrompt(
   // of 09 CP3) for the third time over the same argument: nine `return
   // withPolicy(...)` branches, and a tenth one added at 3am must not be able to
   // silently lose the only channel a worker has back to its manager.
+  //
+  // ROUND 240 adds two more riders on the same argument, and each is placed
+  // where its own gate can still see it:
+  //
+  //  - DEP_INSTALL_NOTE (B1) rides the `live` arm beside WORKTREE_POLICY. It is
+  //    a property of how the executor runs EVERY task, so no role branch may
+  //    lose it; it is meaningless on a scratch project, which has no checkout
+  //    to install into. It goes BEFORE ESCALATION_POLICY, never after: two
+  //    suites (cp3-linkage.test.ts, "an unlinked project's prompt ends exactly
+  //    with ESCALATION_POLICY") assert that ending, and an unlinked prompt's
+  //    last block is load-bearing evidence for the comms gate.
+  //
+  //  - BROWSER_CONTROL_SAFETY (B4) is DERIVED FROM THE BODY, not from a role
+  //    list: it attaches wherever BROWSER_FIRST or RESEARCH_INSTRUMENTS already
+  //    is. A hand-written list of browser-driving roles is exactly how a role
+  //    added later loses the block — the same failure this wrapper was built to
+  //    prevent, one level in. Matched against the constants' whole text, not a
+  //    generic substring, so nothing else can accidentally satisfy it.
   const withPolicy = (body: string): string => {
+    const drivesBrowser = body.includes(BROWSER_FIRST) || body.includes(RESEARCH_INSTRUMENTS);
+    const briefed = drivesBrowser ? `${body}\n\n${BROWSER_CONTROL_SAFETY}` : body;
     const policed = live
-      ? `${body}\n\n${WORKTREE_POLICY(live)}\n\n${ESCALATION_POLICY}`
-      : `${body}\n\n${ESCALATION_POLICY}`;
+      ? `${briefed}\n\n${WORKTREE_POLICY(live)}\n\n${DEP_INSTALL_NOTE}\n\n${ESCALATION_POLICY}`
+      : `${briefed}\n\n${ESCALATION_POLICY}`;
     return managerRun
       ? `${policed}\n\n${MANAGER_COMMS(managerRun, task.role)}`
       : policed;
@@ -924,6 +1127,14 @@ export function buildPrompt(
       `declared and restated in its report. An undeclared write is a FINDING, not a footnote. This gate is ` +
       `satisfiable by construction — write-sets are DECLARED on the task row, never archaeologically ` +
       `reconstructed by grepping briefs — so there is nothing here to disclose and proceed past.\n` +
+      // B2 + B3 (round 240). Both are reviewer-scoped, and both are printed
+      // BEFORE the VERDICT sentence on purpose: they are preconditions OF a
+      // verdict, and a rule stated after the instruction it constrains reads as
+      // an afterthought. That ordering defect is the one round 239 caught only
+      // by reading its own built prompt end to end — no `.includes()` gate can
+      // see the order of two clauses it both finds.
+      `${REVIEWER_TIP_DISCIPLINE}\n` +
+      `${REVIEWER_GATE_SUITE}\n` +
       `End your final message with a line starting ` +
       `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
       `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.` +
