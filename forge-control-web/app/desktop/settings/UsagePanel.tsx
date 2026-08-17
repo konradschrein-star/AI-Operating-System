@@ -33,8 +33,17 @@
  *  • `attribution` is printed verbatim from the API, because it explains why a
  *    four-hour run is one token spike with cost spread beneath it. Verbatim
  *    matters: the server stamps the rule that produced each bucket, and the
- *    rule changed in round 1354 — a panel that hardcoded the old wording would
- *    now be labelling the new numbers with the old promise.
+ *    rule has changed twice (round 1354, round 1355) — a panel that hardcoded
+ *    an old wording would now be labelling new numbers with an old promise.
+ *  • `run_count` is labelled "turns" everywhere it is shown, not "runs" — it
+ *    counts spend_log rows (one per billed turn), so a four-hour chat run
+ *    contributes four to it, not one. A number whose label disagrees with its
+ *    meaning is the defect class round 1355 was for.
+ *  • The KNOWN OVERCOUNT paragraph in `ShadowCostNote` is not decoration: a
+ *    run idling >=2h across buckets before resuming is folded into two
+ *    buckets' token totals, not one (usage-sampler.ts's KNOWN EXCEPTION note
+ *    by LINKED names the exact mechanism). Konrad has caught this panel
+ *    overclaiming before; the caveat stays next to the numbers, not in a doc.
  *
  * ── Constraints honoured ─────────────────────────────────────────────────
  *  • Charts are hand-rolled inline SVG. This repo has no chart library and
@@ -288,6 +297,14 @@ function ShadowCostNote({
         Every euro below is what these tokens <em>would</em> have cost on the
         metered API. The subscription is flat-rate: none of this is money you
         paid. The quota bars are the number that actually constrains you.
+      </div>
+      <div style={{ marginTop: 8, color: tokens.warn }}>
+        Known overcount: a run that idles 2+ hours and then resumes can be
+        folded into two buckets' token totals instead of one — the sampler
+        freezes a bucket after two writes and never revisits it. Observed on
+        live data: 16 double-foldings across 4 runs in 30 days, worst case one
+        run counted 7×. Cost figures are unaffected — they are summed per
+        turn, never folded.
       </div>
       <div
         className="mono"
@@ -648,7 +665,11 @@ function metricLabel(v: number, metric: Metric): string {
 interface Totals {
   tokens: number;
   usd: number;
-  runs: number;
+  /** `run_count` counts spend_log rows billed into the bucket, and spend_log
+   *  gets one row per TURN (executor.ts:1147 runs once per invocation, and a
+   *  chat run is re-entered every turn) — so this is a turn count, not a
+   *  run count. Named `turns` here so the label matches the number. */
+  turns: number;
   sampled: number;
   gaps: number;
 }
@@ -656,16 +677,16 @@ interface Totals {
 function sumSlots(slots: readonly Slot[]): Totals {
   let tokens = 0;
   let usd = 0;
-  let runs = 0;
+  let turns = 0;
   let sampled = 0;
   for (const s of slots) {
     if (!s.point) continue;
     sampled++;
     tokens += totalTokens(s.point);
     usd += s.point.shadow_usd;
-    runs += s.point.run_count;
+    turns += s.point.run_count;
   }
-  return { tokens, usd, runs, sampled, gaps: slots.length - sampled };
+  return { tokens, usd, turns, sampled, gaps: slots.length - sampled };
 }
 
 /** Bar chart over a continuous grid of slots. Missing slots are holes with a
@@ -714,7 +735,7 @@ function ChartCard({
         right={
           <span className="mono" style={{ fontSize: 11.5, color: tokens.textSoft }}>
             {fmtTokens(t.tokens)} tokens · {fmtEur(eurOf(t.usd, eurPerUsd))} shadow ·{" "}
-            {t.runs} runs
+            {t.turns} turns
           </span>
         }
       />
@@ -843,7 +864,7 @@ function tooltip(p: UsagePoint, start: number, eurPerUsd: number): string {
     stampFor(start),
     `in ${fmtExact(p.tokens_in)} · out ${fmtExact(p.tokens_out)}`,
     `cache read ${fmtExact(p.cache_read)} · write ${fmtExact(p.cache_write)}`,
-    `${fmtExact(totalTokens(p))} tokens total · ${p.run_count} runs`,
+    `${fmtExact(totalTokens(p))} tokens total · ${p.run_count} turns`,
     `shadow ${fmtUsd(p.shadow_usd)} = ${fmtEur(eurOf(p.shadow_usd, eurPerUsd))}`,
   ].join("\n");
 }
@@ -877,7 +898,7 @@ function WeeklyCard({
         right={
           <span className="mono" style={{ fontSize: 11.5, color: tokens.textSoft }}>
             {fmtTokens(t.tokens)} tokens · {fmtEur(eurOf(t.usd, eurPerUsd))} shadow ·{" "}
-            {t.runs} runs
+            {t.turns} turns
           </span>
         }
       />
@@ -951,7 +972,7 @@ function WeeklyCard({
                   }}
                 >
                   {fmtTokens(totalTokens(s.point))} tok ·{" "}
-                  {fmtEur(eurOf(s.point.shadow_usd, eurPerUsd))} · {s.point.run_count} runs
+                  {fmtEur(eurOf(s.point.shadow_usd, eurPerUsd))} · {s.point.run_count} turns
                 </span>
               )}
             </div>

@@ -48,12 +48,15 @@ export interface UsageSeries {
   weekly: UsagePoint[];
   eur_per_usd: number;
   rate_source: RateSource;
-  /** The rule the numbers obey, printed as-is. Today: "tokens counted once, in
-   *  the hour of the run's last billed turn; cost per turn". Never hardcode it
-   *  here — the server stamps the rule that actually produced the buckets, and
-   *  round 1354 changed it once already (the previous "counted at run
-   *  completion" described a fold that counted a run in every hour it touched).
-   *  Buckets written under the old rule still carry the old string. */
+  /** The rule the numbers obey, printed as-is. Today: "tokens land in the
+   *  hour of the run's last billed turn, usually once — a run idling >=2h
+   *  then resuming can be double-counted; cost is per turn, never double-
+   *  counted". Never hardcode it here — the server stamps the rule that
+   *  actually produced the buckets, and it has changed twice already: round
+   *  1354 replaced "counted at run completion" (a fold that counted a run in
+   *  every hour it touched), and round 1355 replaced "counted once" (still an
+   *  overclaim — see usage-sampler.ts's KNOWN EXCEPTION note by LINKED).
+   *  Buckets written under an older rule still carry that rule's string. */
   attribution: string;
   /** Newest closed hour on record; null on a database the sampler never ran on. */
   sampled_through: string | null;

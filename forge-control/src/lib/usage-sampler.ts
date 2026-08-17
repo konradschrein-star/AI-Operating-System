@@ -56,14 +56,22 @@
  *
  * The rollup is per-executor-process and resets if the executor restarts
  * mid-run, so token counts UNDER-count when that happens. They were also
- * OVER-counting until round 1354 (the multi-bucket fold above), which is why
- * the word "floor" has been removed from this header: a floor is a promise,
- * and the number was not one in both directions. What can be said now is that
- * each run's rollup is counted exactly once, and that an executor restart
- * loses part of it. Cost is unaffected either way (it comes from the CLI's own
- * total_cost_usd) — which is why cost, not tokens, is the number the panel
- * should lead with. Runs that carry no rollup at all are counted in
- * `meta.runs_without_usage` on the bucket rather than silently rounded away.
+ * OVER-counting on every hour a run was billed in, until round 1354's
+ * anti-join narrowed that to the run's newest hour — which is why the word
+ * "floor" has been removed from this header: a floor is a promise, and the
+ * number was never one in both directions. Round 1355 found the anti-join is
+ * only exact WITHIN one `sampleHour()` call: `runSamplerTick` freezes a
+ * bucket after writing it twice and `backfill` only ever fills EMPTY
+ * buckets (see the KNOWN EXCEPTION note by LINKED below), so a run that
+ * idles across >= 2 hourly buckets and then resumes gets folded into BOTH
+ * the frozen old bucket and the new one holding its resumed turn. What can
+ * honestly be said now: a run's rollup usually lands in exactly one bucket,
+ * except when it idles >= 2 buckets and comes back, in which case it lands
+ * in two; and an executor restart loses part of it either way. Cost is
+ * unaffected either way (it comes from the CLI's own total_cost_usd) — which
+ * is why cost, not tokens, is the number the panel should lead with. Runs
+ * that carry no rollup at all are counted in `meta.runs_without_usage` on
+ * the bucket rather than silently rounded away.
  *
  * Schema: db/migrations/0040_usage_hourly.sql.
  */
@@ -355,7 +363,7 @@ export async function sampleHour(
   const start = floorHour(bucketStart);
   const end = new Date(start.getTime() + HOUR_MS);
 
-  /* ── LINKED: one bucket per run, the newest one ──────────────────────────
+  /* ── LINKED: one bucket per run, the newest one AS OF THIS QUERY ─────────
    *
    * `billed` holds every claude-code spend row in this hour, and spend_log gets
    * one row per TURN — executor.ts:1147 runs once per invocation and a chat run
@@ -366,21 +374,46 @@ export async function sampleHour(
    * 4.9% phantom tokens over 24h of live data, unbounded as a chat grows.
    *
    * The anti-join keeps a run only when NO claude-code spend row for it exists
-   * at or after this bucket's end — i.e. its latest turn is in THIS hour. Every
-   * run lands in exactly one bucket, every token is counted exactly once.
+   * at or after this bucket's end — i.e. its latest turn is in THIS hour.
+   * WITHIN a single sampleHour() call that is exact: one run, one bucket, one
+   * fold. It stops being exact once the tick's write schedule enters the
+   * picture:
    *
-   * It also fixes the stability half of the same defect. RESAMPLE_LOOKBACK
+   *   KNOWN EXCEPTION — the idle-then-resume double fold. `runSamplerTick`
+   *   below writes each bucket at most twice (once as the closing hour, once
+   *   more the following tick as the RESAMPLE_LOOKBACK hour) and never
+   *   revisits it after that — the bucket is frozen. `backfill` only fills
+   *   buckets that have NO row yet, so a frozen bucket is never recomputed by
+   *   either path. A run that goes idle for >= 2 hourly buckets and then
+   *   resumes was folded into its old, now-frozen bucket while it looked
+   *   idle, and gets folded AGAIN into the new bucket holding its resumed
+   *   turn — nothing goes back and un-counts the frozen one. Measured on live
+   *   data at round 1355: true total 5000 tokens, buckets summed to 6000; 16
+   *   phantom foldings across 4 runs over 30 days, worst case one long-lived
+   *   operator chat folded 7x, carrying 1.37M cache_read with it each time.
+   *   NOT fixed here — the fix is a larger job (resample every bucket a still-
+   *   open run could still reach back into, or stop freezing buckets a live
+   *   run could touch) and is deliberately out of scope for round 1355, which
+   *   only had to stop this comment and the UI from claiming more than the
+   *   SQL delivers.
+   *
+   * It also fixes the stability half of round 1353's defect. RESAMPLE_LOOKBACK
    * re-closes the previous hour on every tick, and re-closing used to re-read a
    * still-growing run's counter and rewrite an already-settled number upward
-   * (1000 → 5000 in the reviewer's repro). Now a run that has spoken since
-   * simply leaves the earlier bucket for the later one it belongs to.
+   * (1000 → 5000 in the reviewer's repro). A run that has spoken since simply
+   * leaves the earlier bucket for the later one it belongs to — as long as
+   * that earlier bucket has not frozen yet; see the exception above when it
+   * has.
    *
    * Cost is deliberately NOT deduped this way: `cost` aggregates `billed`
    * directly, because each spend row carries its OWN turn's usd and summing
-   * them is exactly right. The bug was only ever in the token fold.
+   * them is exactly right. Both the round-1353 bug and the round-1355
+   * exception above are token-fold-only; cost is never double-counted.
    *
    * Proved against a real Postgres by scripts/checks/check-usage-fold.ts —
-   * which fails on the pre-fix SQL with precisely the reviewer's numbers.
+   * which fails on the pre-1354 SQL with precisely round 1353's numbers. It
+   * does not yet cover the round-1355 idle-then-resume exception; fixing that
+   * is the larger job named above, not this round's.
    */
   const sql = `
     WITH billed AS (
@@ -512,16 +545,22 @@ export async function sampleHour(
  * each bucket's meta and returned by GET /api/usage/series, which the panel
  * prints verbatim.
  *
- * It said "counted at run completion" until round 1354. That was the claim the
- * broken fold made, and it was wrong twice over — a run was counted in every
- * hour it was billed in, not at completion, and "completion" is not a thing
- * spend_log records. The wording now names what the SQL does: the hour of the
- * run's last billed turn, tokens whole, cost per turn. Buckets written before
- * this round carry the old string in their own `meta`, which is the point of
- * stamping it per row — a reader can tell which rule produced which number.
+ * It said "counted at run completion" until round 1354, then "counted once"
+ * until round 1355 — both named the claim the SQL looked like it made, not
+ * the claim it could actually keep. Round 1354's anti-join fixed the every-
+ * hour-billed fold, but left the freeze-then-empty-only-backfill gap that
+ * double-folds a run idling >= 2 hourly buckets before it resumes (see the
+ * KNOWN EXCEPTION note by LINKED above). The wording now says only what is
+ * true: tokens land whole in the hour of a run's last billed turn, usually
+ * once — except a run that idles long enough to freeze its bucket and then
+ * resumes, which lands in two. Buckets written before this round carry the
+ * older strings in their own `meta`, which is the point of stamping it per
+ * row — a reader can tell which rule produced which number.
  */
 export const ATTRIBUTION =
-  "tokens counted once, in the hour of the run's last billed turn; cost per turn";
+  "tokens land in the hour of the run's last billed turn, usually once — a " +
+  "run idling >=2h then resuming can be double-counted; cost is per turn, " +
+  "never double-counted";
 
 function toIso(v: Date | string): string {
   return v instanceof Date ? v.toISOString() : new Date(v).toISOString();
@@ -542,7 +581,10 @@ const BACKFILL_DAYS = Number(process.env.USAGE_SAMPLER_BACKFILL_DAYS ?? "30");
 
 /** Each tick also re-samples the hour BEFORE the one it is closing. Free
  *  (the upsert is idempotent) and it repairs the one race the skew cannot:
- *  an executor whose rollup flush lands after we already closed the bucket. */
+ *  an executor whose rollup flush lands after we already closed the bucket.
+ *  This is also HALF of the round-1355 KNOWN EXCEPTION named by LINKED in
+ *  sampleHour(): a bucket gets written when it is `newest` and again when it
+ *  is `newest - RESAMPLE_LOOKBACK`, then never again — it freezes. */
 const RESAMPLE_LOOKBACK = 1;
 
 let tickHandle: NodeJS.Timeout | null = null;
@@ -565,6 +607,11 @@ export async function runSamplerTick(
  * Fill every hour in the last BACKFILL_DAYS that has no row yet. One-shot, on
  * boot. Sequential on purpose — 720 small aggregates on a pool of 2 must not
  * starve the HTTP server that shares the process.
+ *
+ * "No row yet" is the OTHER half of the round-1355 KNOWN EXCEPTION named by
+ * LINKED in sampleHour(): this never revisits a bucket that already has a
+ * row, so once RESAMPLE_LOOKBACK above has frozen a bucket, nothing —
+ * neither the tick nor this boot pass — ever recomputes it.
  */
 export async function backfill(
   now: Date,

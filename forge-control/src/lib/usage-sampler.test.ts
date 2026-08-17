@@ -323,9 +323,15 @@ describe("sampleHour", () => {
     // stamped into every bucket's meta, so changing it is a decision, not a
     // refactor. Round 1354 changed it once — "counted at run completion"
     // described a fold that counted a run in every hour it was billed in.
+    // Round 1355 changed it again — "counted once" was still an overclaim:
+    // a run idling >=2h across buckets before resuming is double-counted
+    // (see the KNOWN EXCEPTION note by LINKED in usage-sampler.ts), and the
+    // string now says so instead of promising exactness it cannot keep.
     assert.equal(
       ATTRIBUTION,
-      "tokens counted once, in the hour of the run's last billed turn; cost per turn",
+      "tokens land in the hour of the run's last billed turn, usually once — " +
+        "a run idling >=2h then resuming can be double-counted; cost is per " +
+        "turn, never double-counted",
     );
   });
 
