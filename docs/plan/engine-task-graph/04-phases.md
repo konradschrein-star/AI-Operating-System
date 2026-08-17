@@ -205,7 +205,7 @@ docs/plan/engine-task-graph/evidence/phase3-api.md     (new)
 
 ## Phase 4 — Workstream worktrees, integration, consolidation
 **Planner round 400. Adversarial review required.**
-**Requirements: R32–R46, NF1, NF5.**
+**Requirements: R32–R46, R17 (warn clause), NF1, NF5.**
 
 ### Scope
 The other half of the design: teams get isolated worktrees, and the verdict
@@ -248,6 +248,12 @@ sequential. Sequential is cheaper here.
 8. `PROJECT_MAX_WORKSTREAMS = 6` enforced at task creation (R39).
 9. `check-workstream-e2e.sh` — including a **real merge conflict** that exits
    non-zero and names the file, and an assertion that nothing was auto-resolved.
+10. **R17's warn clause** — one `console.warn` per spawn naming a
+    `builder`-role task with an empty `write_set`. Relocated here from phase 2
+    in round 202 for one reason: the clause lives in the spawn path in
+    `project-tick.ts`, which §10 below assigns to phases 4 and 5, so phase 2
+    could not satisfy it without writing outside its declared file ownership.
+    Phase 2 keeps R17's contention clause; this is the other half.
 
 ### Acceptance criteria
 - `git diff main -- forge-control/src/lib/project-reconcile.test.ts
@@ -508,14 +514,14 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R18 (harness only), NF3 |
 | 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
-| 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, NF1, NF5 |
+| 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, R17, NF1, NF5 |
 | 5 | R47, R48, R49, R50, R51, R52, R53, NF7 |
 | 6 | R54, R55, R56, R57, R58 |
 | 7 | R59, R60, R61, R62 |
 | 8 | R63, R64, R65, R66, R67, R68, NF2, NF5 |
 
 R1–R69 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
-each has exactly one **primary owner** phase here. Three entries appear in two
+each has exactly one **primary owner** phase here. Four entries appear in two
 rows and each is deliberate, so a reader does not have to guess whether it is a
 mistake:
 
@@ -523,6 +529,14 @@ mistake:
   owner: phase 2. A harness that runs and reports is a phase-1 deliverable; a
   harness that is green is phase 2's, because there is nothing for it to be
   green about until the graph scheduler exists.
+- **R17** *(added round 202)* — phase 2 owns the **contention** clause (an empty
+  write-set intersects nothing and is always claimable, discharged by
+  `conflicts()`/`selectClaimable()` and by the replay reproducing today's order);
+  phase 4 owns the **warn** clause, Phase 4 deliverable 10, because it lives in
+  the spawn path in `project-tick.ts` — a file this table's §10 gives to phases
+  4 and 5. Primary owner: phase 2. Split rather than disclosed-and-ignored: as
+  written the requirement was unsatisfiable inside phase 2's file ownership, and
+  standing rule 2 says an unsatisfiable gate is amended where it is enforced.
 - **NF1, NF5** — audits performed at two phases. Their *enforcement* is the
   universal gate, which every phase runs.
 

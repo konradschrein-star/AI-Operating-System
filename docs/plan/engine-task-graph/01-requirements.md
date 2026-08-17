@@ -161,11 +161,31 @@ files).
 claimable — this is exactly today's behaviour (all tasks share one worktree and
 run in parallel) and is what keeps R18's replica exact. The engine logs one
 `console.warn` per spawn naming a `builder`-role task with an empty write set.
-*How proved:* unit — the replay fixture has empty write-sets throughout and
-still produces the identical order; unit — the warning fires for `builder` and
-not for `scout`.
 
-**R18. The replica proof.** `task-graph.test.ts` replays the R9 fixture through
+**TWO CLAUSES, TWO PHASES. Amended round 202, where it is enforced (standing
+rule 2), because as written it was unsatisfiable inside phase 2's declared file
+ownership** — and an unsatisfiable gate disclosed-and-proceeded is what teaches
+reviewers that disclose-and-proceed is normal.
+
+- **The CONTENTION clause is phase 2's** and is discharged there: `conflicts()`
+  returns `false` the moment either side is empty, `selectClaimable()` therefore
+  claims such a task unconditionally, and the R18 replay — whose every fixture
+  row carries `'{}'` — reproduces today's order exactly, which is the clause's
+  own stated purpose.
+- **The WARN clause is phase 4's.** It lives in the SPAWN path, in
+  `forge-control/src/lib/project-tick.ts`, a file §10 of `04-phases.md` assigns
+  to phases 4 and 5 and which phase 2 does not write. Phase 2 could satisfy it
+  only by writing outside its ownership; phase 4 owns the spawn path and takes
+  it, as numbered deliverable 10 of Phase 4. R17 therefore appears in the phase
+  4 row of §K below and of `04-phases.md` §9, as a deliberate split, exactly as
+  R18 does across phases 1 and 2.
+
+*How proved:* **contention (phase 2)** — unit: the replay fixture has empty
+write-sets throughout and still produces the identical order; `conflicts()`'s
+empty-set table cases. **Warn (phase 4)** — unit: the warning fires for
+`builder` and not for `scout`.
+
+**R18. The replica proof.** `task-graph-replay.test.ts` replays the R9 fixture through
 two implementations of the promotion rule — `legacyRoundReady()` and
 `graphReady()` — driving a simulated tick loop until every task is `done`, and
 asserts the two produce **identical promotion order**: the same set of tasks
@@ -190,6 +210,20 @@ The harness's graph side dispatches on the `depends_on` sentinel through
 `readyRule()`, so a mixed input's legacy rows are judged by the legacy branch —
 the same two-branch shape as the SQL, rather than a `graphReady()` widened to
 understand NULL.
+
+**FILE NAME CORRECTED, round 202.** Through round 106 this paragraph opened
+`task-graph.test.ts`. It was the **odd one out**: `03-quality.md` §2.1 and
+`04-phases.md` Phase 1 both said `task-graph-replay.test.ts`, and the file
+phase 1 shipped is `forge-control/src/lib/task-graph-replay.test.ts`. Round 103
+recorded the discrepancy rather than resolving it silently, which was right at
+the time and is no longer enough: phase 2 created `task-graph.test.ts` as a
+**separate, real file** for the pure-function cases (`readyRule`, `graphReady`,
+`taskDepth`, `conflicts`, `selectClaimable`), so the old prose now points at a
+file that exists and does not contain the replay. That is a pin which reads as
+authoritative and is wrong — the exact failure mode standing rule 1 exists to
+kill — so it is corrected here rather than carried another round. The two files
+are distinct by design and `03-quality.md` §2.1 says why: the replica proof is
+the single most important test in the project and must be findable.
 
 **R19. Derived depth.** `taskDepth(tasks)` in `task-graph.ts` returns the
 longest-path depth from the roots for every task, in one pass over a topological
@@ -619,12 +653,18 @@ budget written into the assertion message.
 | 1 — Schema, fixture, replica harness | R1–R9, R18 (harness only), NF3 |
 | 2 — Graph scheduler | R10–R21, R69, R18 (proof), NF1, NF6 |
 | 3 — Task creation, validation, cycles | R22–R31, NF4 |
-| 4 — Workstream worktrees, integration, consolidation | R32–R46, NF1, NF5 |
+| 4 — Workstream worktrees, integration, consolidation | R32–R46, R17 (warn clause), NF1, NF5 |
 | 5 — Prompts | R47–R53, NF7 |
 | 6 — Observability, plan API, Kanban | R54–R58 |
 | 7 — Measurement instrument | R59–R62 |
 | 8 — Deploy and verify | R63–R68, NF2, NF5 |
 
-Every requirement appears in exactly one phase. `04-phases.md` restates the
+Every requirement has exactly one **primary owner** phase. Two ids appear in two
+rows and each is deliberate and named where it appears: **R18** (phase 1 builds
+the harness, phase 2 makes it pass) and, from round 202, **R17** (phase 2 the
+contention clause, phase 4 the `console.warn` on the spawn path — see R17). NF1
+and NF5 are audits performed at two phases. `04-phases.md` §9 restates the
 mapping from the phase side and must agree with this table exactly; if they
 disagree, **this table is a finding**, not a discrepancy to reconcile silently.
+`check-corpus-map.py` in this directory enforces the agreement mechanically —
+run it after editing either table.

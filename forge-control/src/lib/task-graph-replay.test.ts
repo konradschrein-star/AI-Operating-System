@@ -33,14 +33,14 @@
  * reviewer found that; R69 (the legacy-row term on the graph branch) is the
  * ruling that closes it, and case (f) is what fails without it.
  *
- * PHASE 1 STATE. `graphReady()` throws until phase 2 lands, so all six R18
- * comparison cases (a–f) are declared `todo` with their BODIES WRITTEN IN FULL:
- * phase 2 deletes the `{ todo: … }` option and nothing else. `04-phases.md`
- * Phase 1 deliverable 4 and `03-quality.md` §3.2 both say this harness must RUN
- * and report at this phase, not that it must pass. A failing `todo` body was
- * verified empirically — not assumed — to leave `# fail 0` and exit 0 under
- * node v22.22.2 + tsx, so `03-quality.md` §3.1's "all green, zero skipped" gate
- * stays satisfiable here; the numbers are in this task's report.
+ * PHASE 2 STATE — the six cases are LIVE. Through phase 1 `graphReady()` threw,
+ * so all six R18 comparison cases (a–f) carried a `{ todo: … }` option with
+ * their BODIES WRITTEN IN FULL, and the contract was that phase 2 deletes the
+ * option and nothing else. Phase 2 has landed and this file honours that
+ * contract exactly: the six `todo` options are gone, the six bodies are
+ * unchanged from the text phase 1 committed, and no expected value was moved.
+ * They now pass — the evidence, per case, is
+ * `docs/plan/engine-task-graph/evidence/phase2-replay.md`.
  *
  * WHAT WOULD MAKE THIS INSTRUMENT REPORT A PASS WRONGLY (standing rule 3;
  * `03-quality.md` §3.2 Phase 2 requires the reviewer to answer this):
@@ -91,11 +91,8 @@ import {
   legacyRoundReady,
   graphReady,
   readyRule,
-  taskDepth,
   computeRound,
   findCycle,
-  conflicts,
-  selectClaimable,
   groupKey,
   normaliseWritePath,
   validateWorkstream,
@@ -272,8 +269,17 @@ interface ClosureRow {
  *  - a canonical lowercase uuid text is fixed-width with hyphens at fixed
  *    positions, so its lexicographic order is its byte order.
  * `Date.parse` was rejected: it truncates the microseconds Postgres orders on.
+ *
+ * EXPORTED, in phase 2, for the THREE-WAY DIFF and for nothing else. The diff
+ * described above is a requirement of this phase, and a diff that re-types this
+ * function into a scratch script compares the script against the SQL — not this
+ * function against the SQL — which is precisely the mistake the paragraph above
+ * warns about. So the real symbol is exported and called. The comparison itself
+ * is not a unit test because its third input is a Postgres database, which
+ * `pnpm test` must never touch (NF3); it lives in
+ * `evidence/phase2-replay.md` §4, with the transcript and the command.
  */
-function backfillClosure(tasks: readonly ClosureRow[]): Map<string, string[]> {
+export function backfillClosure(tasks: readonly ClosureRow[]): Map<string, string[]> {
   const ordered = [...tasks].sort(
     (a, b) =>
       a.round - b.round ||
@@ -605,9 +611,29 @@ function formatDivergence(legacy: SimResult, graph: SimResult): string {
  */
 interface ReplicaOptions extends SimOptions, GraphInputOptions {}
 
+/**
+ * Every comparison this file performs, keyed by its label, recorded by
+ * `assertReplica()` from the RUN IT ASSERTED ON — never re-simulated afterwards
+ * for reporting.
+ *
+ * Why it exists: `evidence/phase2-replay.md` has to state a tick count and a
+ * promotion total per case on BOTH sides, and round 103 predicted those numbers
+ * from an independent throwaway model before any of this ran. A number a builder
+ * re-derives in a scratch script beside the test is a number nobody can check;
+ * these come out of the harness's own mouth, on the same input, in the same
+ * process, and `"the round-103 prediction"` below pins them so a later edit to
+ * `simulate()`'s ordering fails LOUDLY instead of quietly proving nothing —
+ * the same argument as the base schedule's pinned 14.
+ *
+ * Recorded BEFORE the assertions, deliberately: a diverging case must still
+ * leave its numbers behind for the report.
+ */
+const MEASURED = new Map<string, { legacy: SimResult; graph: SimResult }>();
+
 function assertReplica(label: string, rows: readonly FixtureRow[], opts: ReplicaOptions = {}): void {
   const legacy = simulate(legacyInput(rows), LEGACY_RULE, opts);
   const graph = simulate(graphInput(rows, opts), GRAPH_RULE, opts);
+  MEASURED.set(label, { legacy, graph });
 
   assert.ok(
     legacy.promotedTotal > 0,
@@ -1140,18 +1166,29 @@ describe("F13 — a row inserted after 0040 is named by no frozen closure", () =
 /* -------------------------------------------------------------------------- *
  * STUB DISCIPLINE
  *
- * RETIRED BY PHASE 2 (R10/R18) — delete with the stubs, in the same commit.
- *
- * Every unimplemented export of task-graph.ts must THROW, never return a
+ * Every STILL-unimplemented export of task-graph.ts must THROW, never return a
  * plausible default. `graphReady() → false` would let the replay pass for the
  * wrong reason on a fixture where nothing was promotable, and `conflicts() →
  * false` would silently disable the contention belt. This block is the guard
- * that stops that, and standing rule 4 says it is deleted in the same commit as
- * the stubs it guards — not left to rot into a test that asserts phase 2 never
- * happened.
+ * that stops that, and standing rule 4 says each clause is deleted in the same
+ * commit as the stub it guards — not left to rot into a test that asserts a
+ * phase never happened.
+ *
+ * PARTIALLY RETIRED IN PHASE 2 (standing rule 4, named in the commit message).
+ * `graphReady` (R11/R14/R69), `readyRule` (R12), `taskDepth` (R19), `conflicts`
+ * (R16/R17) and `selectClaimable` (R16) are implemented as of phase 2A, so
+ * their clauses retire here, WITH the requirement they guarded — the guard was
+ * "the phase-2 exports throw until phase 2", and phase 2 is what this commit
+ * is. Leaving them would be a test asserting phase 2 never landed.
+ *
+ * THE FIVE THAT REMAIN ARE NOT A DEFECT, and they are listed by requirement id
+ * rather than by phase prose because requirement ids are authoritative
+ * (`04-phases.md` §10 is the map): `computeRound` (R23) and `findCycle`
+ * (R25, R26) land in phase 3 with `normaliseWritePath` and `validateWorkstream`
+ * (R28); `groupKey` (R40) lands in phase 4. Each retires with its own phase.
  * -------------------------------------------------------------------------- */
 
-describe("phase 1 stub discipline — every unimplemented export throws", () => {
+describe("stub discipline — every export not yet implemented throws", () => {
   const t: GraphTask = {
     id: "00000000-0000-4000-8000-0000000000ff",
     round: 1,
@@ -1162,13 +1199,8 @@ describe("phase 1 stub discipline — every unimplemented export throws", () => 
   };
 
   const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-    ["graphReady", () => graphReady(t, new Map())],
-    ["readyRule", () => readyRule(t)],
-    ["taskDepth", () => taskDepth([t])],
     ["computeRound", () => computeRound([])],
     ["findCycle", () => findCycle({ id: t.id, depends_on: [] }, new Map())],
-    ["conflicts", () => conflicts([], [])],
-    ["selectClaimable", () => selectClaimable([], [])],
     ["groupKey", () => groupKey({ round: 1, workstream: "main" })],
     ["normaliseWritePath", () => normaliseWritePath("src/a.ts")],
     ["validateWorkstream", () => validateWorkstream("main")],
@@ -1190,30 +1222,33 @@ describe("phase 1 stub discipline — every unimplemented export throws", () => 
 /* -------------------------------------------------------------------------- *
  * THE SIX R18 COMPARISON CASES (a–f)
  *
- * `todo` in phase 1 because `graphReady()` throws until phase 2 lands. The
- * bodies are complete: phase 2 deletes the `{ todo: … }` option and nothing
- * else. Verified empirically under node v22.22.2 + tsx: a failing `todo` body
- * reports `# fail 0` and exits 0, so this block cannot make `03-quality.md`
- * §3.1's "pnpm test green, zero skipped" gate unsatisfiable for phase 1.
+ * `todo` through phase 1 because `graphReady()` threw until phase 2 landed. The
+ * option is now deleted and NOTHING ELSE in these bodies moved — no expected
+ * value was relaxed, no assertion dropped, no snapshot widened. `git diff` over
+ * this block against phase 1's HEAD is the check, and it is quoted in
+ * `evidence/phase2-replay.md`.
  *
  * EVERY BODY PUTS ITS LEGACY-SIDE EXPECTATIONS FIRST, before the call that
- * reaches the graph side. Those halves therefore RUN today, and each todo's
- * reported error is evidence rather than noise: if a case reports anything
- * other than `task-graph: readyRule() lands in phase 2 (R12)` — the first stub
- * `GRAPH_RULE` touches, since round 106 made it dispatch on the sentinel — its
- * legacy-side expectation is wrong and phase 2 would have inherited a body that
- * was never exercised. Phase 2's reviewer should re-read this paragraph before
- * deleting the `todo` options.
+ * reaches the graph side. That ordering ran through phase 1 — each `todo`
+ * reported `task-graph: readyRule() lands in phase 2 (R12)`, the first stub
+ * `GRAPH_RULE` touched, which is how phase 2 inherited six bodies whose legacy
+ * halves had already been exercised rather than six that had never run at all.
+ * Keep the ordering: it is what makes a future divergence report the LEGACY
+ * side's disagreement rather than a stub's message.
+ *
+ * CASE (f) MUST NOT BE MADE TO PASS BY WIDENING `graphInput()`'s
+ * migration-time snapshot (`03-quality.md` §3.2, Phase 2). That is the one edit
+ * that turns it green while leaving F13 wide open, and the mutation transcripts
+ * in `evidence/phase2-replay.md` §5 are what prove the term, not the snapshot,
+ * is carrying it.
  * -------------------------------------------------------------------------- */
 
-const TODO_PHASE_2 = { todo: "phase 2: graphReady() is stubbed (R18)" } as const;
-
 describe("R18 — the graph is an exact replica of today's rounds", () => {
-  test("(a) the base fixture, straight through", TODO_PHASE_2, () => {
+  test("(a) the base fixture, straight through", () => {
     assertReplica("R18-a base fixture", caseA());
   });
 
-  test("(b) an early round retried to ready after a later round drained", TODO_PHASE_2, () => {
+  test("(b) an early round retried to ready after a later round drained", () => {
     const built = caseB();
 
     // The point of the case, asserted rather than implied: the task inserted at
@@ -1233,7 +1268,7 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
     assertReplica("R18-b retry under a drained later round", built);
   });
 
-  test("(c) a task inserted into an already-drained round", TODO_PHASE_2, () => {
+  test("(c) a task inserted into an already-drained round", () => {
     const built = caseC();
 
     const legacy = simulate(legacyInput(built), LEGACY_RULE);
@@ -1245,7 +1280,7 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
     assertReplica("R18-c insertion into a drained round", built);
   });
 
-  test("(d) a project paused mid-run and resumed", TODO_PHASE_2, () => {
+  test("(d) a project paused mid-run and resumed", () => {
     const built = caseA();
 
     const paused = simulate(legacyInput(built), LEGACY_RULE, { pausedTicks: PAUSED_TICKS });
@@ -1264,7 +1299,7 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
     assertReplica("R18-d pause and resume", built, { pausedTicks: PAUSED_TICKS });
   });
 
-  test("(e) a permanently failed task — both schedulers wedge identically", TODO_PHASE_2, () => {
+  test("(e) a permanently failed task — both schedulers wedge identically", () => {
     const built = caseE();
     const stuck = (r: SimResult): string[] =>
       [...r.finalStatus.entries()].filter(([, s]) => s !== "done").map(([id]) => id).sort();
@@ -1279,7 +1314,7 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
     assert.deepEqual(stuck(graph), stuck(legacy), "the two schedulers wedged on different tasks");
   });
 
-  test("(f) a fix chain inserted by the OLD engine AFTER 0040 was applied", TODO_PHASE_2, () => {
+  test("(f) a fix chain inserted by the OLD engine AFTER 0040 was applied", () => {
     const { rows: built, snapshot } = caseF();
 
     // Legacy-side expectations first, so this half runs today (see the block
@@ -1300,5 +1335,108 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
     // This case is the reason R69 exists; it must not be made to pass by
     // widening the snapshot.
     assertReplica("R18-f fix chain inserted after the migration", built, { snapshot });
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * THE ROUND-103 PREDICTION, PINNED
+ *
+ * Before `graphReady()` existed, round 103 ran an INDEPENDENT throwaway model
+ * (Python, same fixture, no database, deliberately not committed) and predicted
+ * what a closure-based graph rule would produce: ticks 14/16/15/15/4 and
+ * promotion totals 8/9/9/8/1 for cases (a)–(e), with case (e) wedging 7 tasks on
+ * both sides. Round 106 added case (f) and confirmed it agrees once R69's term
+ * is present. That prediction is worth exactly as much as its being CHECKED,
+ * so it is checked here rather than quoted in a document.
+ *
+ * WHY A SEPARATE TEST AND NOT SIX MORE ASSERTIONS INSIDE THE CASES: the six
+ * bodies were written in phase 1 and phase 2's contract was to delete their
+ * `todo` option and nothing else. This block adds the pin without touching them,
+ * and reads its numbers out of `MEASURED` — the results the six cases actually
+ * asserted on, in this same process — so it can neither re-simulate a different
+ * input nor disagree with what was proved above.
+ *
+ * A DEVIATION HERE IS A FINDING, NOT A NUMBER TO UPDATE. The prediction was made
+ * by a model with no shared code with this harness; the two agreeing is the
+ * evidence. If a later edit makes them disagree, the honest response is a
+ * written argument in `evidence/phase2-replay.md`, per this task's ordering of
+ * hypotheses — not a quiet edit to the table below.
+ * -------------------------------------------------------------------------- */
+
+interface CasePin {
+  /** The `assertReplica()` label the case recorded under. */
+  label: string;
+  ticks: number;
+  promoted: number;
+  /** Rows not `done` when the loop returned — case (e)'s wedge. */
+  wedged: number;
+  /** `true` where the number came from round 103/106, `false` where it did not. */
+  predicted: boolean;
+}
+
+const CASE_PINS: readonly CasePin[] = [
+  { label: "R18-a base fixture", ticks: 14, promoted: 8, wedged: 0, predicted: true },
+  { label: "R18-b retry under a drained later round", ticks: 16, promoted: 9, wedged: 0, predicted: true },
+  { label: "R18-c insertion into a drained round", ticks: 15, promoted: 9, wedged: 0, predicted: true },
+  { label: "R18-d pause and resume", ticks: 15, promoted: 8, wedged: 0, predicted: true },
+  { label: "R18-e permanent failure", ticks: 4, promoted: 1, wedged: 7, predicted: true },
+  // Case (f) carried no round-103 number — it did not exist until round 106,
+  // which established only that the two sides AGREE, not what they agree on.
+  // Pinned from this round's measurement and labelled as such, so the next
+  // reader knows which of these six numbers is a prediction that held and which
+  // is a baseline this round set.
+  { label: "R18-f fix chain inserted after the migration", ticks: 17, promoted: 10, wedged: 0, predicted: false },
+];
+
+describe("R18 — the schedules match the round-103 prediction, on both sides", () => {
+  test("every case recorded a measurement", () => {
+    // A case that threw before recording, or a label edited on one side only,
+    // must fail here rather than let the pins below silently skip it.
+    assert.deepEqual(
+      [...MEASURED.keys()].sort(),
+      CASE_PINS.map((p) => p.label).sort(),
+      "the recorded comparisons are not exactly the six pinned cases",
+    );
+  });
+
+  for (const pin of CASE_PINS) {
+    test(`${pin.label} — ${pin.ticks} ticks, ${pin.promoted} promoted, both sides`, () => {
+      const m = MEASURED.get(pin.label);
+      assert.ok(m, `no measurement recorded for ${pin.label} — did the case run?`);
+
+      const wedged = (r: SimResult): number =>
+        [...r.finalStatus.values()].filter((s) => s !== "done").length;
+
+      // Stated per side rather than "legacy === graph": the six cases above
+      // already prove the two sides equal, so repeating that here would add
+      // nothing. What this adds is the ABSOLUTE number, which is what an
+      // independent model can be compared against.
+      for (const [side, r] of [["legacy", m.legacy], ["graph", m.graph]] as const) {
+        assert.equal(r.ticks, pin.ticks, `${pin.label}: ${side} side used ${r.ticks} ticks, pinned ${pin.ticks}`);
+        assert.equal(
+          r.promotedTotal,
+          pin.promoted,
+          `${pin.label}: ${side} side promoted ${r.promotedTotal}, pinned ${pin.promoted}`,
+        );
+        assert.equal(wedged(r), pin.wedged, `${pin.label}: ${side} side wedged ${wedged(r)}, pinned ${pin.wedged}`);
+      }
+    });
+  }
+
+  test("prints the per-case table the evidence record quotes", () => {
+    // Printed from `MEASURED`, not from `CASE_PINS`: a table printed from the
+    // pins would restate what a reader already typed and would keep printing
+    // the right answer while the harness produced a different one.
+    for (const pin of CASE_PINS) {
+      const m = MEASURED.get(pin.label)!;
+      const wedged = (r: SimResult): number =>
+        [...r.finalStatus.values()].filter((s) => s !== "done").length;
+      console.log(
+        `task-graph-replay: CASE     ${pin.label.padEnd(44)} ` +
+          `legacy ${m.legacy.ticks}t/${m.legacy.promotedTotal}p/${wedged(m.legacy)}w  ` +
+          `graph ${m.graph.ticks}t/${m.graph.promotedTotal}p/${wedged(m.graph)}w  ` +
+          `[${pin.predicted ? "round-103 prediction" : "baseline set this round"}]`,
+      );
+    }
   });
 });
