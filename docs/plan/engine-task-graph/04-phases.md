@@ -72,6 +72,25 @@ The fixture is the one live read. If 8ea0cc08's task list is still growing when
 it is captured, the fixture is a snapshot — that is fine and must be **stated**
 in the fixture's sibling `.md` with the capture timestamp, not left implied.
 
+**The fixture will not match the design spec's round table, and that is
+expected.** Konrad hand-renumbered roughly a dozen `pending` tasks on
+`operator-visibility` during the night of 2026-08-16/17, after the measurement in
+the spec §1 and in `00-vision.md` §2 was taken at 03:04 (confirmed on the record
+— `02-architecture.md` §2.3.3). A fixture captured now therefore carries
+post-renumber round values.
+
+This does **not** weaken the replay proof. The proof is self-consistent by
+construction: the legacy rule reads the fixture's own rounds, and the backfilled
+`depends_on` is derived from those same rounds by closure, so both schedulers are
+judged against one ground truth whatever the numbers are. A hand-edited fixture
+is arguably the *better* input — it is what this engine's data actually looks
+like.
+
+What it does mean: **do not "correct" the fixture toward the vision document's
+table**, and do not report the mismatch as a data-integrity finding. Record the
+capture timestamp and note that renumbering occurred. Phase 7 owns the
+consequence (see its acceptance criteria).
+
 ---
 
 ## Phase 2 — The graph scheduler
@@ -348,6 +367,19 @@ docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md            (new)
   script wins and §2 is corrected in the same commit**, with the discrepancy
   named. A recomputed baseline that quietly disagrees with the vision document is
   exactly the instrument-lies failure.
+- **A divergence is expected, and one cause is already known — do not chase it as
+  a phantom.** `00-vision.md` §2's table was measured at 03:04 on 2026-08-17;
+  Konrad hand-renumbered roughly a dozen `pending` tasks on `operator-visibility`
+  after that (`02-architecture.md` §2.3.3, confirmed on the record). The
+  round/task distribution therefore moved for a reason that has nothing to do
+  with the engine. Name that cause in the correction — and, importantly, **do not
+  stop there**: rule it in or out as the *whole* explanation before attributing
+  the remainder to it. "Konrad renumbered some tasks" is a real cause and a very
+  convenient one, which is exactly what makes it worth being sceptical of.
+- The headline metrics S1 and S2 are computed from run timestamps and wall clock,
+  not from the round distribution, so they are **unaffected** by the renumbering.
+  Say so explicitly in the baseline document; a reader who sees the round table
+  move will otherwise assume the whole measurement is soft.
 - Universal gate.
 
 ---

@@ -292,10 +292,67 @@ Three consequences, and they are not symmetric:
    the *point* of the project — after it lands there is no longer a reason to
    renumber, because the graph already grants the concurrency the renumbering
    was buying. Phase 5's prompt work and the phase-8 report both say so
-   explicitly. Enforcing immutability in the database (a trigger, a rule) is
-   **rejected**: it would take away Konrad's own escape hatch on a system he
-   operates by hand at 3am, to defend an invariant the engine already respects.
-   Boring beats clever, and the operator is not the adversary here.
+   explicitly.
+
+#### 2.3.2 Why there is no immutability trigger — the reasoning, not just the decision
+
+Enforcing `round` immutability in the database — a trigger, a rule, a
+`CHECK` — is **rejected**, and the reasoning is recorded at Konrad's explicit
+request because it outlives the decision.
+
+The invariant is already respected by every path that has an opinion. No engine
+code writes `round` after insert (`grep -n "SET round"` over the deployed tree:
+nothing). So a trigger would defend the invariant against exactly one actor: the
+operator at a psql prompt. That actor is not the adversary. He is the person who
+unwedges this system at 3am, and tonight he was using the renumber as the only
+concurrency lever the engine gave him — which is the observation that produced
+this whole project.
+
+A trigger would therefore buy protection against a failure mode that has never
+fired, and pay for it by removing the escape hatch the operator uses when the
+engine is the thing that is broken. That is the wrong trade in a single-operator
+system: **operability beats invariant purity, and a guardrail that fires only on
+the human holding the fire extinguisher is a guardrail pointed the wrong way.**
+
+The correct mitigation is that after this project there is no longer a *reason*
+to renumber, because the graph grants the concurrency the renumbering was buying.
+Remove the motive, not the capability.
+
+If this is ever revisited, the argument to beat is not "round should be
+immutable" — it is "the operator now has a better lever than psql, and here it
+is."
+
+#### 2.3.3 Operator confirmation and the evidence, 2026-08-17
+
+Konrad confirmed the renumber on the record: a bare psql `UPDATE`, applied to
+scout `e7548096` here and to roughly a dozen `pending` tasks on
+`operator-visibility` tonight, promoting non-contending work into the live round
+after grepping briefs for write-sets. (That grep is the manual version of
+`write_set`; R5 exists to replace it.)
+
+He checked the §2.3.1 consequence-2 exposure before answering rather than
+assuming innocence, and the result narrows phase 4's attack usefully:
+
+```sql
+select project_id, chain_key, count(*) from project_tasks
+ where chain_key is not null group by 1,2 having count(*)>1;    -- EMPTY
+```
+
+- **No duplicate chain within any project.** Collisions on `fix:1:1` /
+  `rereview:1:1` exist only *across different projects*, which the partial unique
+  index on `(project_id, chain_key)` permits by design — that is the index doing
+  its job, not a near miss.
+- `operator-visibility`'s fix chains sit at rounds 1305/1306, 808/809, 705/706,
+  606/607 — **none of them in a round he touched.**
+- Every renumbered task was `pending`, with no run and no chain.
+
+So the defect is real and was not fired. **That is luck plus a habit, not a
+guarantee** — which is precisely why it stays on phase 4's red-team list rather
+than being closed. Konrad's ruling, recorded so a later round does not reopen it:
+it is a pre-existing defect, out of this project's scope, owned by phase 4's red
+team with an instruction to report the answer either way. **A later round must
+not quietly fold it into a fix.** A known bug with a named owner is worth more
+than an unscheduled repair.
 
 ### 2.4 `write_set`
 
@@ -723,10 +780,28 @@ states Konrad's default; the project brief restates it as a hard requirement and
 adds *"if Konrad has answered otherwise in the meantime, follow his answer and
 say so."* He has not, so N3/R38 stand as written.
 
-Both escalations are sent as reminders from this round and reported to the
-manager chat. Neither blocks planning: if Konrad answers differently, the change
-lands in phase 1 (E2, one line of DDL) or phases 1–3 (E1, and the corpus says
-exactly which requirements move).
+Both escalations were sent as reminders from this round and reported to the
+manager chat. Neither blocked planning: if Konrad had answered differently, the
+change would have landed in phase 1 (E2, one line of DDL) or phases 1–3 (E1, and
+the corpus says exactly which requirements move).
+
+### 9.1 Resolution — 2026-08-17, round 0
+
+**Konrad's answer: "Proceed to phase 1. Nothing here needs my ruling."**
+
+E1 and E2 are therefore **settled on the defaults above**, on the record, and
+this section is the citation for it:
+
+- **E1 — `round` stays a stored, engine-computed integer.** Settled. §0's design
+  is the design.
+- **E2 — `depends_on` defaults to `NULL`, not `'{}'`.** Settled. R3 stands as
+  written, against the project brief's `default '{}'`; the deploy-race reasoning
+  in §2.2 is why, and it is the reason of record.
+
+A later round that wants to change either must argue with §0 and §2.2, not
+rediscover the question. **Neither is an open question any more, and neither is
+a silent decision** — the difference matters, because an unrecorded default and
+a ruled-on default look identical in the code six phases later.
 
 ---
 
