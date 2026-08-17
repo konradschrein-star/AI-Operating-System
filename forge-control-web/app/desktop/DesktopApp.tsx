@@ -47,7 +47,12 @@ import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
 import { ContextGauge } from "./chat/ContextGauge";
-import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
+import {
+  ResizeHandle,
+  useResizablePanel,
+  usePersistentState,
+  useNarrowViewport,
+} from "./_ui/ResizableSplit";
 import {
   SurfaceErrorBoundary,
   ErrorPanel,
@@ -78,6 +83,34 @@ type Surface =
   | "map"
   | "search"
   | "settings";
+
+/* ── Reload keeps your place (round 1871, finding 7) ──────────────────────────
+ *
+ * The customer test: "F5 while reading a worker transcript returns to TODAY —
+ * chat, worker and scroll all gone, URL still `/desktop`." All of it was
+ * `useState` in a single-route app, so a refresh was a cold start of a console
+ * you had spent a minute navigating into.
+ *
+ * The surface is restored here; ChatSurface restores the open chat and the
+ * drill-in stack on the same mechanism (`forge.chat.*`). Scroll position is
+ * deliberately NOT restored — the transcript's height depends on a poll that
+ * has not landed yet at mount, so a restored offset would land in the wrong
+ * place and read as a bug rather than as a courtesy.
+ *
+ * localStorage rather than the URL. The URL is the honest home for this and
+ * `/desktop?surface=chat&chat=<id>` is where it should end up — but the app
+ * has exactly one route today and every surface, panel and rail reads its
+ * state from React, so routing is a redesign, not a fix. This restores the
+ * place in one line per piece of state and does not stand in the way of that.
+ */
+const SURFACES: readonly Surface[] = [
+  "today", "inbox", "chat", "tasks", "pipeline", "library", "money",
+  "businesses", "skills", "memory", "live", "control", "autonomy",
+  "automation", "goals", "journal", "map", "search", "settings",
+];
+
+const isSurface = (v: unknown): v is Surface =>
+  typeof v === "string" && (SURFACES as readonly string[]).includes(v);
 
 interface NavItem {
   key: Surface;
@@ -272,9 +305,15 @@ const actionStyle = (variant: InboxAction["variant"]): CSSProperties => {
  * Root
  * -------------------------------------------------------------------------- */
 export function DesktopApp() {
-  const [surface, setSurface] = useState<Surface>("today");
+  const [surface, setSurface] = usePersistentState<Surface>(
+    "forge.desktop.surface",
+    "today",
+    isSurface,
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQ, setPaletteQ] = useState("");
+  /** Phone-width, or a narrow window on a desktop. See `useNarrowViewport`. */
+  const narrow = useNarrowViewport();
 
   // Nav rail width — draggable and remembered. 120 still shows the labels;
   // 360 is as wide as this rail can be without stealing the surface.
@@ -374,13 +413,24 @@ export function DesktopApp() {
         badges={inboxBadges}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <LeftRail
-          surface={surface}
-          onNav={setSurface}
-          badges={inboxBadges}
-          width={navRail.size}
-        />
-        <ResizeHandle {...navRail.handleProps} title="Resize navigation · double-click to reset" />
+        {/* Round 1871, finding 8: below 900px the nav rail and its handle are
+            184 + 5 of the 390 pixels a phone has, and TopNav already carries
+            every destination the rail does. So the rail goes and the surface
+            gets the width. Nothing becomes unreachable — that was the bug. */}
+        {!narrow && (
+          <>
+            <LeftRail
+              surface={surface}
+              onNav={setSurface}
+              badges={inboxBadges}
+              width={navRail.size}
+            />
+            <ResizeHandle
+              {...navRail.handleProps}
+              title="Resize navigation · double-click to reset"
+            />
+          </>
+        )}
         <div
           style={{
             flex: 1,

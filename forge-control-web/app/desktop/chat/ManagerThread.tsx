@@ -26,25 +26,40 @@
  * exists (comms-identity.ts).
  */
 
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { RunDetail } from "../../api";
 import { AssistantThread } from "./AssistantThread";
+import type { PeerFacts } from "./comms-identity";
 import type { RichActions } from "./RichMessage";
 import { fetchChatTeam, type TeamNode, type TeamResponse } from "../team/teamApi";
 
-/** run id → `metadata.role`, for every run node in the tree.
+/** run id → what the tree knows about that run: its `metadata.role` and its
+ *  task title.
  *
  *  Sub-agents are deliberately included: their `id` is a Task `tool_use_id`,
  *  which can never collide with a run uuid, and a relay addressed at one
  *  (`meta.comms.subagent_id`) is the one case where that id is what the
- *  transcript holds. Nodes with no role contribute nothing rather than an
- *  empty string — "absent" and "" must not become the same answer. */
-export function buildPeerRoles(team: TeamResponse | undefined): ReadonlyMap<string, string> {
-  const map = new Map<string, string>();
+ *  transcript holds.
+ *
+ *  ROUND 1871 — `description` joins `role` here. It is the peer's task title
+ *  ("Fix cycle 1"), and it is what a comms card now leads with; a node with
+ *  neither still contributes an entry, because knowing a peer exists in this
+ *  team is itself worth more than the raw uuid the card fell back to. Both
+ *  fields are null rather than "" when absent: "absent" and "" must not become
+ *  the same answer. */
+export function buildPeerRoles(
+  team: TeamResponse | undefined,
+): ReadonlyMap<string, PeerFacts> {
+  const map = new Map<string, PeerFacts>();
   if (!team) return map;
+  const nonEmpty = (v: string | null | undefined): string | null =>
+    typeof v === "string" && v.trim() !== "" ? v : null;
   const add = (node: TeamNode) => {
-    if (typeof node.role === "string" && node.role !== "") map.set(node.id, node.role);
+    map.set(node.id, {
+      role: nonEmpty(node.role),
+      description: nonEmpty(node.description),
+    });
     for (const sub of node.subagents) add(sub);
   };
   add(team.manager);
@@ -60,7 +75,31 @@ export interface ManagerThreadProps {
   onOpenSecret: (name: string) => void;
 }
 
-export function ManagerThread({ run, onInsertDraft, onOpenSecret }: ManagerThreadProps) {
+/**
+ * ── ROUND 1871: THIS MEMO IS THE TYPING FIX ───────────────────────────────
+ *
+ * Measured on this box, worktree build, chat `bfd1283a` (117 comms cards, 449
+ * tool rows): 60 keystrokes into the composer cost **79 ms/key** against a
+ * **1.05 ms/key** bare-textarea control in the same page, with 9–24 long tasks
+ * per six-second burst. The mechanism is one line of React:
+ * `ChatThread` owns `draft`, and `ChatThread` renders this component. Every
+ * keystroke therefore re-rendered the entire transcript — every `CommsMessage`,
+ * every `ToolCallRow`, every assistant-ui message wrapper — to change the value
+ * of one `<textarea>`.
+ *
+ * `memo` stops that at this boundary, and the boundary is the right one: the
+ * transcript's inputs are `run`, `peers` and `actions`, and NONE of them is a
+ * function of the draft. What makes the bail-out actually happen is the caller:
+ * `ChatThread` hoists `onInsertDraft`/`onOpenSecret` into `useCallback`s with
+ * no changing dependencies, so the two props keep their identity across a
+ * keystroke. A fresh arrow at the call site would defeat this entirely and the
+ * measurement would silently go back to 79 ms/key — which is why the check
+ * `scripts/checks/check-typing-memo.ts` asserts both halves.
+ *
+ * `run` comes from react-query and keeps its identity between polls, so typing
+ * bails out and a poll still re-renders. That is exactly the split wanted.
+ */
+function ManagerThreadImpl({ run, onInsertDraft, onOpenSecret }: ManagerThreadProps) {
   const teamQ = useQuery<TeamResponse, Error>({
     queryKey: ["chat-team", run.id],
     // Required by the adapter and never called while `enabled` is false. It is
@@ -79,5 +118,7 @@ export function ManagerThread({ run, onInsertDraft, onOpenSecret }: ManagerThrea
 
   return <AssistantThread run={run} peers={peers} actions={actions} />;
 }
+
+export const ManagerThread = memo(ManagerThreadImpl);
 
 export default ManagerThread;

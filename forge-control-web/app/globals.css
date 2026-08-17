@@ -149,6 +149,25 @@ body {
   text-decoration: underline;
 }
 
+/* round 1871: the phase header and the task chip became clickable, so they
+ * have to LOOK clickable — the customer test found both with `cursor:auto` and
+ * no handler and read them, correctly, as decoration. Same CSS-only bargain
+ * as everything above: `text-decoration` on the header's title text and a
+ * paint-only tint on the chip. No layout property, no React hover state, so
+ * NFU2's "hover mounts and measures nothing" survives the change. Colour comes
+ * from `currentColor`, so both themes are covered without a literal (NFU1). */
+.plan-phase-header:hover,
+.plan-phase-header:focus-visible {
+  text-decoration: underline;
+}
+.plan-task-chip {
+  outline-offset: -1px;
+}
+.plan-task-chip:hover,
+.plan-task-chip:focus-visible {
+  outline: 1px solid currentColor;
+}
+
 /* v3 phase 600 (U20/NFU8): in-chat drill-in navigation. CSS only — there is
  * no animation dependency in this app and none is being added; transform and
  * opacity are the only properties touched, so the browser composites both and

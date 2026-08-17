@@ -1,0 +1,1099 @@
+{
+  "label": "before",
+  "base": "http://127.0.0.1:7780",
+  "chat": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+  "keysPerWindow": 60,
+  "pairsPerSurface": 3,
+  "when": "2026-08-17T09:11:19.251Z",
+  "host": {
+    "cpus": 16,
+    "uptimeS": 2216710
+  },
+  "transcript": {
+    "commsCards": 118,
+    "toolRows": 451,
+    "teamRows": 17
+  },
+  "summary": {
+    "composer": {
+      "pairs": 3,
+      "msPerKeyMedian": 79.12,
+      "msPerKeyAll": [
+        70.82,
+        79.12,
+        82.47
+      ],
+      "typeLongTasks": [
+        24,
+        11,
+        9
+      ],
+      "idleLongTasks": [
+        0,
+        0,
+        0
+      ],
+      "typeBlockedMs": [
+        1291,
+        575,
+        534
+      ],
+      "idleBlockedMs": [
+        0,
+        0,
+        0
+      ],
+      "attributableLongTasks": [
+        24,
+        11,
+        9
+      ],
+      "scriptMsPerWindow": [
+        4472,
+        3775,
+        4275
+      ],
+      "allKeystrokesLanded": true
+    },
+    "search": {
+      "pairs": 3,
+      "msPerKeyMedian": 68.95,
+      "msPerKeyAll": [
+        63.38,
+        68.95,
+        74.07
+      ],
+      "typeLongTasks": [
+        18,
+        7,
+        22
+      ],
+      "idleLongTasks": [
+        0,
+        0,
+        0
+      ],
+      "typeBlockedMs": [
+        1041,
+        432,
+        1201
+      ],
+      "idleBlockedMs": [
+        0,
+        0,
+        0
+      ],
+      "attributableLongTasks": [
+        18,
+        7,
+        22
+      ],
+      "scriptMsPerWindow": [
+        3557,
+        3874,
+        4168
+      ],
+      "allKeystrokesLanded": true
+    },
+    "control-textarea": {
+      "pairs": 3,
+      "msPerKeyMedian": 1.05,
+      "msPerKeyAll": [
+        0.93,
+        1.05,
+        1.12
+      ],
+      "typeLongTasks": [
+        0,
+        0,
+        0
+      ],
+      "idleLongTasks": [
+        0,
+        2,
+        0
+      ],
+      "typeBlockedMs": [
+        0,
+        0,
+        0
+      ],
+      "idleBlockedMs": [
+        0,
+        110,
+        0
+      ],
+      "attributableLongTasks": [
+        0,
+        -2,
+        0
+      ],
+      "scriptMsPerWindow": [
+        4,
+        3,
+        2
+      ],
+      "allKeystrokesLanded": true
+    }
+  },
+  "pairs": [
+    {
+      "pair": 1,
+      "surface": "composer",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3009,
+        "wallMs": 3003,
+        "scriptMs": 0,
+        "styleMs": 2,
+        "layoutMs": 0,
+        "taskMs": 14,
+        "label": "composer:idle"
+      },
+      "type": {
+        "longTasks": 24,
+        "blockedMs": 1291,
+        "maxLongTaskMs": 77,
+        "longTaskDetail": [
+          {
+            "startTime": 12544.1,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 12746.3,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 12843.4,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 12943.2,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 13044.8,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 13291.4,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 13352.5,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 13499.4,
+            "duration": 58,
+            "name": "self"
+          },
+          {
+            "startTime": 13831.5,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 13964,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 14098.7,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 14195.8,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 14293.5,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 14764.8,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 14863,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 14961.9,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 15094.8,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 15187.7,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 15416.7,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 15548.2,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 15678.3,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 15907.1,
+            "duration": 77,
+            "name": "self"
+          },
+          {
+            "startTime": 16750.8,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 17157.9,
+            "duration": 50,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 4989,
+        "wallMs": 4948,
+        "scriptMs": 4472,
+        "styleMs": 32,
+        "layoutMs": 25,
+        "taskMs": 4940,
+        "label": "composer:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 82.47
+      },
+      "attributable": {
+        "longTasks": 24,
+        "blockedMs": 1291
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.59,
+          2.1,
+          2
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.5,
+          2.09,
+          2
+        ]
+      }
+    },
+    {
+      "pair": 1,
+      "surface": "search",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3006,
+        "wallMs": 3003,
+        "scriptMs": 0,
+        "styleMs": 2,
+        "layoutMs": 0,
+        "taskMs": 18,
+        "label": "search:idle"
+      },
+      "type": {
+        "longTasks": 18,
+        "blockedMs": 1041,
+        "maxLongTaskMs": 90,
+        "longTaskDetail": [
+          {
+            "startTime": 20608.8,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 20883.1,
+            "duration": 61,
+            "name": "self"
+          },
+          {
+            "startTime": 21028.3,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 21208.9,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 21465,
+            "duration": 55,
+            "name": "self"
+          },
+          {
+            "startTime": 21614.8,
+            "duration": 90,
+            "name": "self"
+          },
+          {
+            "startTime": 21834.3,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 22060.7,
+            "duration": 58,
+            "name": "self"
+          },
+          {
+            "startTime": 22285.9,
+            "duration": 57,
+            "name": "self"
+          },
+          {
+            "startTime": 22749.2,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 22880.1,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 23100.1,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 23227.7,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 23368.2,
+            "duration": 55,
+            "name": "self"
+          },
+          {
+            "startTime": 23779.3,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 23920.4,
+            "duration": 58,
+            "name": "self"
+          },
+          {
+            "startTime": 24057.6,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 24230.8,
+            "duration": 81,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 3859,
+        "wallMs": 3803,
+        "scriptMs": 3557,
+        "styleMs": 15,
+        "layoutMs": 8,
+        "taskMs": 3789,
+        "label": "search:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 63.38
+      },
+      "attributable": {
+        "longTasks": 18,
+        "blockedMs": 1041
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.5,
+          2.09,
+          2
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.86,
+          2.18,
+          2.03
+        ]
+      }
+    },
+    {
+      "pair": 1,
+      "surface": "control-textarea",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3003,
+        "wallMs": 3001,
+        "scriptMs": 0,
+        "styleMs": 6,
+        "layoutMs": 0,
+        "taskMs": 94,
+        "label": "control-textarea:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 65,
+        "wallMs": 63,
+        "scriptMs": 4,
+        "styleMs": 1,
+        "layoutMs": 2,
+        "taskMs": 39,
+        "label": "control-textarea:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 1.05
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.86,
+          2.18,
+          2.03
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          3.19,
+          2.26,
+          2.05
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "surface": "composer",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3002,
+        "wallMs": 3000,
+        "scriptMs": 1,
+        "styleMs": 6,
+        "layoutMs": 0,
+        "taskMs": 40,
+        "label": "composer:idle"
+      },
+      "type": {
+        "longTasks": 11,
+        "blockedMs": 575,
+        "maxLongTaskMs": 59,
+        "longTaskDetail": [
+          {
+            "startTime": 30903,
+            "duration": 55,
+            "name": "self"
+          },
+          {
+            "startTime": 31269.3,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 31361.7,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 31548.6,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 32416.9,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 32514.5,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 33042,
+            "duration": 59,
+            "name": "self"
+          },
+          {
+            "startTime": 33454.7,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 33679.1,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 34350.4,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 34801.3,
+            "duration": 55,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 4299,
+        "wallMs": 4249,
+        "scriptMs": 3775,
+        "styleMs": 30,
+        "layoutMs": 25,
+        "taskMs": 4244,
+        "label": "composer:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 70.82
+      },
+      "attributable": {
+        "longTasks": 11,
+        "blockedMs": 575
+      },
+      "loadBefore": {
+        "loadavg": [
+          3.19,
+          2.26,
+          2.05
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          3.34,
+          2.3,
+          2.07
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "surface": "search",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3007,
+        "wallMs": 3003,
+        "scriptMs": 0,
+        "styleMs": 2,
+        "layoutMs": 0,
+        "taskMs": 11,
+        "label": "search:idle"
+      },
+      "type": {
+        "longTasks": 7,
+        "blockedMs": 432,
+        "maxLongTaskMs": 83,
+        "longTaskDetail": [
+          {
+            "startTime": 38774.6,
+            "duration": 83,
+            "name": "self"
+          },
+          {
+            "startTime": 38953.7,
+            "duration": 57,
+            "name": "self"
+          },
+          {
+            "startTime": 41002,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 41144.9,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 41412.9,
+            "duration": 76,
+            "name": "self"
+          },
+          {
+            "startTime": 41534.1,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 41933.3,
+            "duration": 51,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 4182,
+        "wallMs": 4137,
+        "scriptMs": 3874,
+        "styleMs": 19,
+        "layoutMs": 23,
+        "taskMs": 4132,
+        "label": "search:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 68.95
+      },
+      "attributable": {
+        "longTasks": 7,
+        "blockedMs": 432
+      },
+      "loadBefore": {
+        "loadavg": [
+          3.34,
+          2.3,
+          2.07
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          3.15,
+          2.29,
+          2.07
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "surface": "control-textarea",
+      "idle": {
+        "longTasks": 2,
+        "blockedMs": 110,
+        "maxLongTaskMs": 56,
+        "longTaskDetail": [
+          {
+            "startTime": 45059.1,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 45116.4,
+            "duration": 54,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 3003,
+        "wallMs": 3000,
+        "scriptMs": 112,
+        "styleMs": 4,
+        "layoutMs": 0,
+        "taskMs": 139,
+        "label": "control-textarea:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 70,
+        "wallMs": 67,
+        "scriptMs": 3,
+        "styleMs": 1,
+        "layoutMs": 2,
+        "taskMs": 38,
+        "label": "control-textarea:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 1.12
+      },
+      "attributable": {
+        "longTasks": -2,
+        "blockedMs": -110
+      },
+      "loadBefore": {
+        "loadavg": [
+          3.15,
+          2.29,
+          2.07
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          3.15,
+          2.29,
+          2.07
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "surface": "composer",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3004,
+        "wallMs": 3001,
+        "scriptMs": 1,
+        "styleMs": 3,
+        "layoutMs": 0,
+        "taskMs": 72,
+        "label": "composer:idle"
+      },
+      "type": {
+        "longTasks": 9,
+        "blockedMs": 534,
+        "maxLongTaskMs": 92,
+        "longTaskDetail": [
+          {
+            "startTime": 48615.2,
+            "duration": 92,
+            "name": "self"
+          },
+          {
+            "startTime": 48890.4,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 49030.7,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 49506.5,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 49601.3,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 50791.2,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 51241.3,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 51369.6,
+            "duration": 77,
+            "name": "self"
+          },
+          {
+            "startTime": 51535.7,
+            "duration": 55,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 4796,
+        "wallMs": 4747,
+        "scriptMs": 4275,
+        "styleMs": 32,
+        "layoutMs": 25,
+        "taskMs": 4740,
+        "label": "composer:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 79.12
+      },
+      "attributable": {
+        "longTasks": 9,
+        "blockedMs": 534
+      },
+      "loadBefore": {
+        "loadavg": [
+          3.15,
+          2.29,
+          2.07
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          3.12,
+          2.32,
+          2.08
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "surface": "search",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3008,
+        "wallMs": 3003,
+        "scriptMs": 0,
+        "styleMs": 3,
+        "layoutMs": 0,
+        "taskMs": 19,
+        "label": "search:idle"
+      },
+      "type": {
+        "longTasks": 22,
+        "blockedMs": 1201,
+        "maxLongTaskMs": 74,
+        "longTaskDetail": [
+          {
+            "startTime": 57086.5,
+            "duration": 68,
+            "name": "self"
+          },
+          {
+            "startTime": 57454.2,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 57577.3,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 57668.4,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 57793.2,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 58222.1,
+            "duration": 51,
+            "name": "self"
+          },
+          {
+            "startTime": 58400,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 58524.1,
+            "duration": 57,
+            "name": "self"
+          },
+          {
+            "startTime": 58657.2,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 58752.8,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 58850.5,
+            "duration": 55,
+            "name": "self"
+          },
+          {
+            "startTime": 59224.7,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 59320.2,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 59414.6,
+            "duration": 56,
+            "name": "self"
+          },
+          {
+            "startTime": 59643.9,
+            "duration": 54,
+            "name": "self"
+          },
+          {
+            "startTime": 59785.3,
+            "duration": 74,
+            "name": "self"
+          },
+          {
+            "startTime": 60158.6,
+            "duration": 57,
+            "name": "self"
+          },
+          {
+            "startTime": 60290.4,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 60382.3,
+            "duration": 53,
+            "name": "self"
+          },
+          {
+            "startTime": 60476.1,
+            "duration": 50,
+            "name": "self"
+          },
+          {
+            "startTime": 60613.2,
+            "duration": 52,
+            "name": "self"
+          },
+          {
+            "startTime": 60825.1,
+            "duration": 50,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 4489,
+        "wallMs": 4444,
+        "scriptMs": 4168,
+        "styleMs": 20,
+        "layoutMs": 22,
+        "taskMs": 4439,
+        "label": "search:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 74.07
+      },
+      "attributable": {
+        "longTasks": 22,
+        "blockedMs": 1201
+      },
+      "loadBefore": {
+        "loadavg": [
+          3.12,
+          2.32,
+          2.08
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.95,
+          2.29,
+          2.07
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "surface": "control-textarea",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3004,
+        "wallMs": 3000,
+        "scriptMs": 2,
+        "styleMs": 3,
+        "layoutMs": 0,
+        "taskMs": 31,
+        "label": "control-textarea:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 58,
+        "wallMs": 56,
+        "scriptMs": 2,
+        "styleMs": 0,
+        "layoutMs": 1,
+        "taskMs": 27,
+        "label": "control-textarea:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 0.93
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.95,
+          2.29,
+          2.07
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.71,
+          2.26,
+          2.06
+        ]
+      }
+    }
+  ]
+}

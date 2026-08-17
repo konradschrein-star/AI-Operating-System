@@ -147,11 +147,55 @@ checkDeep("manager → worker", crumbs(d1), [
   { depth: 0, kind: "manager", id: null, label: "manager chat" },
   { depth: 1, kind: "agent", id: "3853c154-e07b-4318-9313-2b34f4a33342", label: "session 3853c154" },
 ]);
+/* ROUND 1871 — this expectation used to be `sub-agent toolu_01`, and it was
+ * asserting the defect. `toolu_01` is the Anthropic tool_use_id PREFIX: every
+ * sub-agent that has ever run produced that identical crumb, so the trail named
+ * nothing and could not tell two sub-agents of one run apart. The customer test
+ * reported it as "machinery leaking into prose". The label now drops the prefix
+ * and takes eight characters of the part that actually varies. */
 checkDeep("manager → worker → sub-agent", crumbs(d2), [
   { depth: 0, kind: "manager", id: null, label: "manager chat" },
   { depth: 1, kind: "agent", id: "3853c154-e07b-4318-9313-2b34f4a33342", label: "session 3853c154" },
-  { depth: 2, kind: "subagent", id: "toolu_01ABCDEFGHIJKLMNOP", label: "sub-agent toolu_01" },
+  { depth: 2, kind: "subagent", id: "toolu_01ABCDEFGHIJKLMNOP", label: "sub-agent ABCDEFGH" },
 ]);
+check(
+  "two sub-agents of one run get DIFFERENT crumbs (they did not before r1871)",
+  crumbs(push(d1, { kind: "agent", runId: WORKER.runId, subagentId: "toolu_01ZZZZZZZZ" }))[2]
+    .label !==
+    crumbs(d2)[2].label,
+  true,
+);
+check(
+  "a caller-supplied label wins over the id",
+  crumbs(
+    push(d1, {
+      kind: "agent",
+      runId: WORKER.runId,
+      subagentId: "toolu_01ABCDEFGHIJKLMNOP",
+      label: "Recon: what timing data the runs take",
+    }),
+  )[2].label,
+  "Recon: what timing data the runs take",
+);
+/* A DIFFERENT run id, deliberately: pushing WORKER's own id back onto d1 is a
+ * no-op by design (`sameFrame`), so these two would index past the end. */
+const OTHER_RUN = "9f2c1a55-0000-4000-8000-000000000001";
+check(
+  "an over-long label is clipped to fit a 260px header",
+  crumbs(push(d1, { kind: "agent", runId: OTHER_RUN, label: "x".repeat(80) }))[2].label
+    .length,
+  42,
+);
+check(
+  "a blank label falls back to the id rather than rendering an empty crumb",
+  crumbs(push(d1, { kind: "agent", runId: OTHER_RUN, label: "   " }))[2].label,
+  `session ${OTHER_RUN.slice(0, 8)}`,
+);
+check(
+  "a label does NOT change frame identity — re-clicking the same row is still idempotent",
+  push(d1, { ...WORKER, label: "named now" }),
+  d1,
+);
 check("a plan doc crumb is its file name, verbatim", crumbs(d3)[3].label, "13-ui-v3-architecture.md");
 check("crumbs length is always depth + 1", crumbs(d3).length, d3.length + 1);
 

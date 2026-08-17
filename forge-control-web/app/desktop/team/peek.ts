@@ -92,9 +92,17 @@ export const RESTORE_ALL_LABEL = "restore all";
 
 /** The armed label. Carries the GLOBAL id count — the number the operator
  *  cannot see from this panel, and the exact number round 1354's reviewer lost
- *  without being told. */
+ *  without being told.
+ *
+ *  ROUND 1871 — "everywhere" is in the LABEL now, not only in the tooltip. The
+ *  customer test read `restore all 2?` beside a panel showing exactly two
+ *  hidden rows and concluded this was "the harmless direction" being made
+ *  harder than dismissal. It is not harmless: two happened to be the machine's
+ *  whole count that day, and the same button with forty behind it wipes
+ *  dismissals in other projects and in /live. A bare number cannot distinguish
+ *  those two situations; the word can. */
 export function restoreAllArmedLabel(totalDismissedIds: number): string {
-  return `restore all ${totalDismissedIds}?`;
+  return `restore all ${totalDismissedIds} everywhere?`;
 }
 
 /** Rendered only by the chat team panel (`ChatTeamPanel.tsx` is the sole

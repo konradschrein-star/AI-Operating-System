@@ -77,6 +77,7 @@ import {
   ResizeHandle,
   useResizablePanel,
   usePersistentState,
+  useNarrowViewport,
   isBool,
 } from "./_ui/ResizableSplit";
 import { toastError } from "./_ui/Toasts";
@@ -126,6 +127,52 @@ const NO_SECRETS: readonly SecretMeta[] = [];
  */
 const dismissedSecretRequests = new Set<string>();
 
+/* ── What survives a reload, and the guards on reading it back ──────────────
+ *
+ * Round 1871, finding 7. Everything below is read out of `localStorage` at
+ * mount, which means it is UNTRUSTED INPUT: a stale value written by an older
+ * build, a hand-edited key, or a half-written JSON blob. Each validator is
+ * total over `unknown` and rejects rather than coerces — a chat id that is not
+ * a uuid must not reach `GET /api/chat/:id`, and a nav frame with no `runId`
+ * must not reach the drill-in view, which would render a fetch for
+ * `undefined`.
+ */
+
+const CHAT_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const isChatId = (v: unknown): v is string | null =>
+  v === null || (typeof v === "string" && CHAT_ID_RE.test(v));
+
+/** The drill-in stack as stored: the frames PLUS the chat they belong to.
+ *  Without the owner a stack restored under a different chat would claim that
+ *  worker is this chat's, which is exactly the lie `openChat` resets to avoid. */
+interface StoredNav {
+  chatId: string;
+  frames: NavFrame[];
+}
+
+const NO_STORED_NAV: StoredNav | null = null;
+
+function isNavFrame(v: unknown): v is NavFrame {
+  if (typeof v !== "object" || v === null) return false;
+  const f = v as Record<string, unknown>;
+  if (f.kind === "plandoc") return typeof f.name === "string" && f.name !== "";
+  if (f.kind !== "agent") return false;
+  if (typeof f.runId !== "string" || !CHAT_ID_RE.test(f.runId)) return false;
+  if (f.subagentId !== undefined && typeof f.subagentId !== "string") return false;
+  if (f.label !== undefined && typeof f.label !== "string") return false;
+  return true;
+}
+
+const isStoredNav = (v: unknown): v is StoredNav | null => {
+  if (v === null) return true;
+  if (typeof v !== "object") return false;
+  const s = v as Record<string, unknown>;
+  if (typeof s.chatId !== "string" || !CHAT_ID_RE.test(s.chatId)) return false;
+  return Array.isArray(s.frames) && s.frames.every(isNavFrame);
+};
+
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
   running: tokens.accent,
@@ -174,7 +221,7 @@ function SidePanel({
   tab: "team" | "files";
   onTab: (t: "team" | "files") => void;
   onOpenNode: (node: TeamNode) => void;
-  onOpenDoc: (name: string) => void;
+  onOpenDoc: (name: string, projectId?: string) => void;
   fileAtt: ReturnType<typeof useAttachments> | null;
   /** The OPEN chat (U14: no selector of the panel's own — the chat decides what
    *  the panel shows). `null` = nothing open, so there is no team to fetch. */
@@ -411,17 +458,80 @@ export function ChatSurface({
    * The raw setter is deliberately private to `openChat` below: every chat
    * switch must reset the stack, and the way to guarantee that is to leave no
    * other way to switch. */
-  const [selId, setSelIdRaw] = useState<string | null>(null);
-  const [navStack, setNavStack] = useState<NavStack>(reset());
+  /* ── Reload keeps your place (round 1871, finding 7) ─────────────────────
+   *
+   * "F5 while reading a worker transcript returns to TODAY — chat, worker and
+   * scroll all gone." DesktopApp restores the SURFACE; these two restore the
+   * open chat and how deep into it you were. Both go through the same
+   * `usePersistentState` every panel width in this app already uses, and both
+   * validate what they read: a chat id that is not a uuid, or a stack whose
+   * frames do not typecheck, is discarded rather than fed to a fetch.
+   *
+   * The stack is stored WITH the chat it belongs to. Restoring a drill-in
+   * against a different chat would assert that worker belongs to this chat,
+   * which is the same lie `openChat` resets the stack to avoid — so a stored
+   * stack whose `chatId` does not match the restored `selId` is dropped. */
+  const [selId, setSelIdRaw] = usePersistentState<string | null>(
+    "forge.chat.selected",
+    null,
+    isChatId,
+  );
+  const [storedNav, setStoredNav] = usePersistentState<StoredNav | null>(
+    "forge.chat.navStack",
+    NO_STORED_NAV,
+    isStoredNav,
+  );
+  const [navStack, setNavStackRaw] = useState<NavStack>(reset());
+
+  /** Restore the drill-in once, on mount, and only for the chat it was taken
+   *  from. `storedNav` is written on every change below, so this effect must
+   *  not depend on it or it would fight the writes. */
+  const restoredNav = useRef(false);
+  useEffect(() => {
+    if (restoredNav.current) return;
+    restoredNav.current = true;
+    if (storedNav === null) return;
+    if (selId === null || storedNav.chatId !== selId) return;
+    if (storedNav.frames.length === 0) return;
+    setNavStackRaw(storedNav.frames);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+
+  /** Every write to the stack goes through here, so persistence cannot be
+   *  forgotten at one of the call sites. */
+  const setNavStack = useCallback(
+    (next: NavStack | ((prev: NavStack) => NavStack)) => {
+      setNavStackRaw((prev) => {
+        const value = typeof next === "function" ? next(prev) : next;
+        setStoredNav(
+          value.length === 0 || selIdRef.current === null
+            ? NO_STORED_NAV
+            : { chatId: selIdRef.current, frames: [...value] },
+        );
+        return value;
+      });
+    },
+    [setStoredNav],
+  );
+
+  /** `selId` as a ref, so `setNavStack` can stamp the owning chat without
+   *  taking a dependency that would give it a new identity per selection. */
+  const selIdRef = useRef(selId);
+  selIdRef.current = selId;
 
   /** Open a chat. Resets the drill-in stack — a worker view left standing
    *  under a newly opened chat asserts that worker belongs to the new chat,
    *  which is false. `reset()` returns one shared frozen array, so resetting
    *  an already-empty stack is a React bail-out and costs nothing. */
-  const openChat = useCallback((id: string | null) => {
-    setSelIdRaw(id);
-    setNavStack(reset());
-  }, []);
+  const openChat = useCallback(
+    (id: string | null) => {
+      selIdRef.current = id;
+      setSelIdRaw(id);
+      setNavStackRaw(reset());
+      setStoredNav(NO_STORED_NAV);
+    },
+    [setSelIdRaw, setStoredNav],
+  );
 
   /** Descend one level from a clicked team row.
    *
@@ -442,10 +552,21 @@ export function ChatSurface({
    *  would leak straight through that ref's effect. */
   const openNode = useCallback((node: TeamNode) => {
     setComposing(false);
+    /* Round 1871: the row knows what this thing is called, so the crumb trail
+     * does not have to guess from an id. `description` is the worker's task
+     * title or the sub-agent's spawn description; `role` is the fallback for a
+     * node that has neither. Never the id — `sub-agent toolu_01` was the whole
+     * complaint (nav-stack.ts, `NavFrame.label`). */
+    const label = node.description ?? node.role ?? undefined;
     const frame: NavFrame =
       node.kind === "subagent"
-        ? { kind: "agent", runId: node.parent_id ?? node.id, subagentId: node.id }
-        : { kind: "agent", runId: node.id };
+        ? {
+            kind: "agent",
+            runId: node.parent_id ?? node.id,
+            subagentId: node.id,
+            label,
+          }
+        : { kind: "agent", runId: node.id, label };
     setNavStack((s) => push(s, frame));
   }, []);
 
@@ -461,9 +582,13 @@ export function ChatSurface({
    *  PlanKanban holds it in a ref so that every memoized phase card keeps the
    *  same callback prop, and a fresh arrow per render here would leak straight
    *  through that ref's effect. */
-  const openPlanDoc = useCallback((name: string) => {
+  const openPlanDoc = useCallback((name: string, projectId?: string) => {
     setComposing(false);
-    setNavStack((s) => push(s, { kind: "plandoc", name }));
+    /* `projectId` is only present when the chat started more than one project
+     * and the team panel's switcher chose one (round 1871). It travels on the
+     * frame because the same file name can exist in two corpora, and the
+     * reader must open the one that was clicked. */
+    setNavStack((s) => push(s, { kind: "plandoc", name, projectId }));
   }, []);
 
   /** Climb one level. At depth 1 that is the manager chat (`pop` says so). */
@@ -577,6 +702,8 @@ export function ChatSurface({
   // the whole migration: the type guard rejects a stored "live", so a reader
   // who was on the old Live tab lands on "team" and one who was on "files"
   // keeps "files". No mapper, no stale value presented as valid.
+  /** Phone-width, or a narrow window. Drives the one-column layout below. */
+  const narrow = useNarrowViewport();
   const [panelTab, setPanelTab] = usePersistentState<"team" | "files">(
     "forge.layout.chat.panelTab",
     "team",
@@ -598,11 +725,20 @@ export function ChatSurface({
     enabled: searching,
   });
 
+  /* Open the newest chat on arrival — but NOT on a phone (round 1871).
+   *
+   * At desktop width the list and the thread are both on screen, so choosing
+   * one for you is a courtesy. Narrow, they are two views of one column: an
+   * auto-selection means you land inside a thread you did not pick and never
+   * see the list you came for. Measured at 390px before this guard — 0 chat
+   * rows rendered, a transcript already open. The list IS the phone's home for
+   * this surface, so on a narrow viewport nothing is chosen for you. */
   useEffect(() => {
+    if (narrow) return;
     if (!selId && (listQ.data?.runs.length ?? 0) > 0) {
       openChat(listQ.data!.runs[0].id);
     }
-  }, [listQ.data, selId, openChat]);
+  }, [listQ.data, selId, openChat, narrow]);
 
   // v2.0: SSE stream is the primary sync path; the query interval is only
   // a safety net (tight when the stream is down, lazy when it's live).
@@ -718,16 +854,50 @@ export function ChatSurface({
   // which is honest: an unresolved link makes no claim about how it was made.
   const linkage: ChatLinkage | undefined = linkQ.data;
 
+  /* ── One column at a time on a phone (round 1871, finding 8) ─────────────
+   *
+   * This surface is three fixed columns. At 390px they do not fit and the two
+   * on the right were laid out past the edge of an `overflow: hidden` box,
+   * which is why the tester could not reach the chat at all.
+   *
+   * Narrow, the rail and the thread become a two-state view of the same width:
+   * no chat open → the list; a chat open → the thread, with the rail one tap
+   * away. `showRail` and `showThread` are the whole of it, and both are true at
+   * desktop width, so nothing about the existing layout moves. The side panel
+   * follows the same rule via `panelOpen`. */
+  const showRail = !narrow || (selId === null && !composing);
+  const showThread = !narrow || selId !== null || composing;
+
+  /* The 260px side panel is two thirds of a phone, so entering narrow collapses
+   * it to its edge strip — ONCE. It is not forced: the strip is a control the
+   * panel already has, so the team tree is one tap away rather than clipped
+   * away, and a deliberate tap to open it is honoured. Forcing `collapsed` on
+   * every render instead would have made that tap do nothing, which is the
+   * silent no-op this codebase keeps refusing to ship. */
+  const collapsedForNarrow = useRef(false);
+  useEffect(() => {
+    if (!narrow) {
+      collapsedForNarrow.current = false;
+      return;
+    }
+    if (collapsedForNarrow.current) return;
+    collapsedForNarrow.current = true;
+    setPanelCollapsed(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [narrow]);
+
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
       {/* Left rail — chat list */}
+      {showRail && (
       <div
         style={{
-          width: rail.size,
-          flex: "none",
+          width: narrow ? "100%" : rail.size,
+          flex: narrow ? 1 : "none",
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          minWidth: 0,
           overflow: "hidden",
         }}
       >
@@ -961,14 +1131,18 @@ export function ChatSurface({
           )}
         </div>
       </div>
+      )}
 
-      <ResizeHandle
-        {...rail.handleProps}
-        title="Resize chat list · double-click to reset"
-      />
+      {showRail && showThread && (
+        <ResizeHandle
+          {...rail.handleProps}
+          title="Resize chat list · double-click to reset"
+        />
+      )}
 
       {/* Thread + canvas share one flex region so the split handle measures
           exactly the space it divides. */}
+      {showThread && (
       <div style={{ flex: 1, minWidth: 0, display: "flex", minHeight: 0 }}>
       {/* Right pane — thread/composer, optionally split with the canvas */}
       <div
@@ -1031,6 +1205,7 @@ export function ChatSurface({
             ) : (
               <PlanDocView
                 name={drilled.name}
+                projectId={drilled.projectId}
                 stack={navStack}
                 onBack={goBack}
                 backLabel={backLabel}
@@ -1057,6 +1232,30 @@ export function ChatSurface({
             onResume={() => resumeM.mutate(detailQ.data!.id)}
             onNavigate={onNavigate}
             headerExtra={
+              <>
+              {/* Narrow only: the rail is not on screen, so the way back to it
+                  has to be. At desktop width the list is right there and this
+                  would be a second control for a thing you can already see. */}
+              {narrow && (
+                <button
+                  data-narrow-back-to-list
+                  onClick={() => openChat(null)}
+                  title="Back to the chat list"
+                  className="mono"
+                  style={{
+                    flex: "none",
+                    fontSize: 11,
+                    color: tokens.textMuted,
+                    background: "transparent",
+                    border: `1px solid ${tokens.border}`,
+                    borderRadius: 6,
+                    padding: "4px 9px",
+                    cursor: "pointer",
+                  }}
+                >
+                  ← chats
+                </button>
+              )}
               <button
                 onClick={() => setCanvasOpen(!canvasOpen)}
                 className="mono"
@@ -1079,6 +1278,7 @@ export function ChatSurface({
               >
                 CANVAS
               </button>
+              </>
             }
             isSending={sendM.isPending}
             isResuming={resumeM.isPending}
@@ -1126,6 +1326,7 @@ export function ChatSurface({
         </>
       )}
       </div>
+      )}
 
       <SidePanel
         collapsed={panelCollapsed}
@@ -1537,6 +1738,12 @@ function ChatThread({
   linkAmbiguous?: boolean;
 }) {
   const [draft, setDraft] = useState("");
+  /** Narrow → the composer's control row wraps under a full-width textarea
+   *  (round 1871). Read here rather than passed down: it is one matchMedia
+   *  subscription and it keeps `ChatThread`'s props unchanged, which matters
+   *  because a new prop on this component is a new prop on the memo boundary
+   *  below it. */
+  const narrowComposer = useNarrowViewport();
   const [localSys, setLocalSys] = useState<
     Array<{ text: string; ts: string }>
   >([]);
@@ -1677,6 +1884,39 @@ function ChatThread({
     // would re-run the decision every time he closed it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingKey]);
+
+  /* ── The two props that keep memo(ManagerThread) able to bail out ─────────
+   *
+   * Round 1871. These were inline arrows on the `<ManagerThread>` element, so
+   * they were a new identity on every render of this component — i.e. on every
+   * keystroke — and any `memo` on the transcript would have been dead weight.
+   * See the header comment in ManagerThread.tsx for the measurement.
+   *
+   * `insertDraft` needs nothing but the two stable handles (`setDraft` is
+   * React's, `composerRef` is a ref), so its dependency list is genuinely
+   * empty. `openSecretByName` needs the CURRENT pending list, which changes
+   * whenever the secrets query refetches; it reads it through a ref rather than
+   * closing over it, because a dependency on `pending` would put the identity
+   * back on the poll clock. The ref is written during render on purpose — it is
+   * a plain mirror of a derived value, never read during the same render. */
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+
+  const insertDraft = useCallback((text: string) => {
+    setDraft((d) => (d ? `${d} ${text}` : text));
+    composerRef.current?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const openSecretByName = useCallback((name: string) => {
+    /* Answer mode when the agent has actually raised the request server-side,
+       free-form otherwise — the same two states the pending badge opens,
+       decided by the same helper. */
+    const match = pendingRef.current.find((r) => r.name === name) ?? null;
+    setAnswering(match);
+    setSecretOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pushSys = (text: string) =>
     setLocalSys((prev) => [...prev, { text, ts: new Date().toISOString() }]);
@@ -1858,18 +2098,8 @@ function ChatThread({
           sends, and it never carries a credential. */}
       <ManagerThread
         run={run}
-        onInsertDraft={(text) => {
-          setDraft((d) => (d ? `${d} ${text}` : text));
-          composerRef.current?.focus();
-        }}
-        onOpenSecret={(name) => {
-          /* Answer mode when the agent has actually raised the request
-             server-side, free-form otherwise — the same two states the
-             pending badge opens, decided by the same helper. */
-          const match = pending.find((r) => r.name === name) ?? null;
-          setAnswering(match);
-          setSecretOpen(true);
-        }}
+        onInsertDraft={insertDraft}
+        onOpenSecret={openSecretByName}
       />
       {localSys.length > 0 && (
         <div
@@ -1963,7 +2193,23 @@ function ChatThread({
           onRemove={att.remove}
         />
         <QuotaStrip />
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginTop: 8 }}>
+        {/* Round 1871: the composer row WRAPS on a narrow viewport. Its four
+            trailing controls (engine picker, secret, send, and the slash
+            popover's anchor) are all `flex: none`, so at 390px they took 300 of
+            the 390 pixels and squeezed the textarea to 56 — measured. Wrapping
+            puts the buttons on their own line under a full-width input, which
+            is the only arrangement in which a phone composer is usable.
+            `flexWrap` is inert at desktop width: the row has never come close
+            to overflowing there. */}
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-end",
+            marginTop: 8,
+            flexWrap: narrowComposer ? "wrap" : "nowrap",
+          }}
+        >
           <SlashPopover
             ref={popoverRef}
             input={draft}
@@ -2013,6 +2259,11 @@ function ChatThread({
             rows={COMPOSER_ROWS.minRows}
             style={{
               flex: 1,
+              /* With the row wrapped, `flex: 1` alone still lets the input
+                 shrink to fit beside the buttons on the FIRST line. A basis of
+                 100% forces it onto a line of its own. Inert unwrapped. */
+              flexBasis: narrowComposer ? "100%" : "auto",
+              minWidth: 0,
               resize: "none",
               background: tokens.bgCard,
               border: `1px solid ${tokens.border}`,
@@ -2218,27 +2469,43 @@ function NewChat({
             </button>
           );
         })}
-        <select
-          value={effort}
-          onChange={(e) => setEffort(e.target.value)}
-          className="mono"
-          title="Reasoning effort"
-          style={{
-            fontSize: 10.5,
-            color: tokens.textMuted,
-            border: `1px solid ${tokens.border}`,
-            background: tokens.bgCard,
-            borderRadius: 6,
-            padding: "4px 8px",
-            cursor: "pointer",
-          }}
-        >
-          {ENGINE_EFFORT_CHOICES.map((e) => (
-            <option key={e} value={e}>
-              {e} effort
-            </option>
-          ))}
-        </select>
+        {/* ROUND 1871, finding 11: ONE effort control, not two.
+            This was a native, uncoloured `<select>` while the in-chat composer
+            two hundred lines up rendered the U29 colour ramp — the same
+            setting, in the same app, with two different interaction models and
+            two different vocabularies ("high effort" here, "high" there). The
+            customer test found both and could not tell whether they were the
+            same thing. They are, and they now look and behave identically:
+            the same `ENGINE_EFFORT_CHOICES` in the same order, through the
+            same `effortRamp`, with the same selected treatment. */}
+        {ENGINE_EFFORT_CHOICES.map((e) => {
+          const on = e === effort;
+          const ramp = effortRamp(e);
+          return (
+            <button
+              key={e}
+              data-new-chat-effort={e}
+              aria-pressed={on}
+              onClick={() => setEffort(e)}
+              className="mono"
+              title={`Reasoning effort — ${e}`}
+              style={{
+                fontSize: 10.5,
+                color: on ? ramp.fg : tokens.textMuted,
+                border: `1px solid ${ramp.border}`,
+                background: on ? ramp.bg : "transparent",
+                boxShadow: on ? `inset 0 0 0 1px ${ramp.border}` : "none",
+                opacity: on ? 1 : 0.55,
+                fontWeight: on ? 600 : 400,
+                borderRadius: 6,
+                padding: "4px 10px",
+                cursor: "pointer",
+              }}
+            >
+              {e}
+            </button>
+          );
+        })}
       </div>
       <input
         value={title}

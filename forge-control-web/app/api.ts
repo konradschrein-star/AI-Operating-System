@@ -733,7 +733,13 @@ export const DEFAULT_ENGINE_MODEL = "claude-opus-5";
 
 /** Effort choices offered in the web UI. "xhigh" is exposed here (it was
  *  API/Telegram-only); "max" still stays off the UI. */
-export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh"] as const;
+/** ROUND 1871: `max` joins the list. It was always accepted by the engine —
+ *  `EFFORT_LEVELS` in forge-control/src/lib/cc-runner.ts has held all five
+ *  since it was written — and it was reachable from the API and from Telegram,
+ *  but the UI offered four. The customer test found the gap ("No 'max' offered
+ *  in either"), and a setting Konrad can reach from his phone but not from his
+ *  own console is an omission, not a policy. */
+export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export const setChatEffort = async (id: string, effort: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/effort`, { effort });

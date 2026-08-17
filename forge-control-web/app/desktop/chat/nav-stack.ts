@@ -51,8 +51,40 @@
  *  a phase card's `doc_path` or the flat `docs[]` list. The U6 doc endpoint it
  *  reads (`GET /api/chat/:id/plan/doc?name=`) shipped in phase 300. */
 export type NavFrame =
-  | { kind: "agent"; runId: string; subagentId?: string }
-  | { kind: "plandoc"; name: string };
+  | {
+      kind: "agent";
+      runId: string;
+      subagentId?: string;
+      /** What to CALL this frame in the crumb trail, when the caller knows.
+       *
+       *  Round 1871: the breadcrumb read `manager chat › sub-agent toolu_01`,
+       *  which names nothing — every Anthropic tool_use_id begins `toolu_01`,
+       *  so eight characters of one is a constant. The team row that opens a
+       *  node already holds its description ("Recon: what timing data the runs
+       *  take"), so it passes it here instead of leaving the trail to guess
+       *  from an id.
+       *
+       *  IDENTITY DOES NOT INCLUDE IT. `sameFrame` and `frameKey` ignore this
+       *  field on purpose: two frames for the same sub-agent are the same
+       *  place whether or not one of them was opened from a surface that knew
+       *  its name, and letting a label split them would break the idempotent
+       *  re-click and replay the drill-in animation for nothing. */
+      label?: string;
+    }
+  | {
+      kind: "plandoc";
+      name: string;
+      /** Which of the chat's projects this document belongs to (round 1871).
+       *  Absent = the server's ranked default, which is every case except a
+       *  chat that started more than one project and had its team panel
+       *  switched. Without it, switching to project B and clicking B's
+       *  document would read A's corpus — a silent wrong answer, which is
+       *  the class of bug this whole surface exists to remove.
+       *
+       *  Part of identity, unlike `label`: the same file NAME can exist in two
+       *  corpora, and those are two different documents. */
+      projectId?: string;
+    };
 
 /** Immutable by contract — every function here returns a fresh array and the
  *  caller stores it in React state. Nothing mutates a stack in place. */
@@ -71,7 +103,11 @@ export function sameFrame(a: NavFrame, b: NavFrame): boolean {
   if (a.kind === "agent" && b.kind === "agent") {
     return a.runId === b.runId && (a.subagentId ?? null) === (b.subagentId ?? null);
   }
-  if (a.kind === "plandoc" && b.kind === "plandoc") return a.name === b.name;
+  if (a.kind === "plandoc" && b.kind === "plandoc") {
+    return (
+      a.name === b.name && (a.projectId ?? null) === (b.projectId ?? null)
+    );
+  }
   return false;
 }
 
@@ -132,6 +168,27 @@ function shortId(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
 }
 
+/** The discriminating part of a Task `tool_use_id`.
+ *
+ *  `toolu_01AeuQskZPyHpsYrHayvrqrT` → `AeuQskZP`. `shortId` gave `toolu_01`
+ *  for every sub-agent that has ever run, because that prefix is a constant of
+ *  the Anthropic API — the crumb was literally the same eight characters on
+ *  every descent. This drops the prefix and the two-byte version before
+ *  taking its eight, so two sub-agents of one run are told apart. */
+function shortSubagentId(id: string): string {
+  const stripped = /^toolu_\d*/.exec(id) ? id.replace(/^toolu_\d*/, "") : id;
+  const body = stripped !== "" ? stripped : id;
+  return body.length > 8 ? body.slice(0, 8) : body;
+}
+
+/** A caller-supplied label, cleaned up for a 260px header, or null. */
+function tidyLabel(label: string | undefined): string | null {
+  if (typeof label !== "string") return null;
+  const flat = label.replace(/\s+/g, " ").trim();
+  if (flat === "") return null;
+  return flat.length > 42 ? `${flat.slice(0, 41)}…` : flat;
+}
+
 /** The whole stack as a readable trail, manager first. Always at least one
  *  crumb: the manager chat is a place, not the absence of one. */
 export function crumbs(stack: NavStack): NavCrumb[] {
@@ -143,12 +200,13 @@ export function crumbs(stack: NavStack): NavCrumb[] {
       out.push({ depth: i + 1, kind: "plandoc", id: frame.name, label: frame.name });
       return;
     }
+    const given = tidyLabel(frame.label);
     if (frame.subagentId !== undefined) {
       out.push({
         depth: i + 1,
         kind: "subagent",
         id: frame.subagentId,
-        label: `sub-agent ${shortId(frame.subagentId)}`,
+        label: given ?? `sub-agent ${shortSubagentId(frame.subagentId)}`,
       });
       return;
     }
@@ -156,7 +214,7 @@ export function crumbs(stack: NavStack): NavCrumb[] {
       depth: i + 1,
       kind: "agent",
       id: frame.runId,
-      label: `session ${shortId(frame.runId)}`,
+      label: given ?? `session ${shortId(frame.runId)}`,
     });
   });
   return out;

@@ -1,0 +1,660 @@
+{
+  "label": "after",
+  "base": "http://127.0.0.1:7780",
+  "chat": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+  "keysPerWindow": 60,
+  "pairsPerSurface": 3,
+  "when": "2026-08-17T09:47:43.349Z",
+  "host": {
+    "cpus": 16,
+    "uptimeS": 2218894
+  },
+  "transcript": {
+    "commsCards": 118,
+    "toolRows": 451,
+    "teamRows": 17
+  },
+  "summary": {
+    "composer": {
+      "pairs": 3,
+      "msPerKeyMedian": 3.27,
+      "msPerKeyAll": [
+        3.03,
+        3.27,
+        3.37
+      ],
+      "typeLongTasks": [
+        0,
+        0,
+        0
+      ],
+      "idleLongTasks": [
+        0,
+        0,
+        3
+      ],
+      "typeBlockedMs": [
+        0,
+        0,
+        0
+      ],
+      "idleBlockedMs": [
+        0,
+        0,
+        204
+      ],
+      "attributableLongTasks": [
+        0,
+        0,
+        -3
+      ],
+      "scriptMsPerWindow": [
+        38,
+        35,
+        37
+      ],
+      "allKeystrokesLanded": true
+    },
+    "search": {
+      "pairs": 3,
+      "msPerKeyMedian": 4.9,
+      "msPerKeyAll": [
+        3.73,
+        4.9,
+        5.3
+      ],
+      "typeLongTasks": [
+        0,
+        0,
+        0
+      ],
+      "idleLongTasks": [
+        2,
+        0,
+        0
+      ],
+      "typeBlockedMs": [
+        0,
+        0,
+        0
+      ],
+      "idleBlockedMs": [
+        129,
+        0,
+        0
+      ],
+      "attributableLongTasks": [
+        -2,
+        0,
+        0
+      ],
+      "scriptMsPerWindow": [
+        129,
+        106,
+        78
+      ],
+      "allKeystrokesLanded": true
+    },
+    "control-textarea": {
+      "pairs": 3,
+      "msPerKeyMedian": 1,
+      "msPerKeyAll": [
+        0.93,
+        1,
+        1.1
+      ],
+      "typeLongTasks": [
+        0,
+        0,
+        0
+      ],
+      "idleLongTasks": [
+        0,
+        0,
+        1
+      ],
+      "typeBlockedMs": [
+        0,
+        0,
+        0
+      ],
+      "idleBlockedMs": [
+        0,
+        0,
+        51
+      ],
+      "attributableLongTasks": [
+        0,
+        0,
+        -1
+      ],
+      "scriptMsPerWindow": [
+        3,
+        3,
+        3
+      ],
+      "allKeystrokesLanded": true
+    }
+  },
+  "pairs": [
+    {
+      "pair": 1,
+      "surface": "composer",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3006,
+        "wallMs": 3003,
+        "scriptMs": 0,
+        "styleMs": 1,
+        "layoutMs": 0,
+        "taskMs": 13,
+        "label": "composer:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 198,
+        "wallMs": 196,
+        "scriptMs": 38,
+        "styleMs": 9,
+        "layoutMs": 15,
+        "taskMs": 166,
+        "label": "composer:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 3.27
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          1.78,
+          2.72,
+          2.62
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          1.78,
+          2.72,
+          2.62
+        ]
+      }
+    },
+    {
+      "pair": 1,
+      "surface": "search",
+      "idle": {
+        "longTasks": 2,
+        "blockedMs": 129,
+        "maxLongTaskMs": 65,
+        "longTaskDetail": [
+          {
+            "startTime": 15146.4,
+            "duration": 64,
+            "name": "self"
+          },
+          {
+            "startTime": 15212.1,
+            "duration": 65,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 3004,
+        "wallMs": 3001,
+        "scriptMs": 132,
+        "styleMs": 3,
+        "layoutMs": 0,
+        "taskMs": 205,
+        "label": "search:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 320,
+        "wallMs": 318,
+        "scriptMs": 129,
+        "styleMs": 6,
+        "layoutMs": 8,
+        "taskMs": 256,
+        "label": "search:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 5.3
+      },
+      "attributable": {
+        "longTasks": -2,
+        "blockedMs": -129
+      },
+      "loadBefore": {
+        "loadavg": [
+          1.78,
+          2.72,
+          2.62
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          1.8,
+          2.71,
+          2.62
+        ]
+      }
+    },
+    {
+      "pair": 1,
+      "surface": "control-textarea",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3003,
+        "wallMs": 3000,
+        "scriptMs": 0,
+        "styleMs": 11,
+        "layoutMs": 2,
+        "taskMs": 64,
+        "label": "control-textarea:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 62,
+        "wallMs": 60,
+        "scriptMs": 3,
+        "styleMs": 1,
+        "layoutMs": 2,
+        "taskMs": 35,
+        "label": "control-textarea:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 1
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          1.8,
+          2.71,
+          2.62
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.14,
+          2.76,
+          2.64
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "surface": "composer",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3003,
+        "wallMs": 3000,
+        "scriptMs": 1,
+        "styleMs": 6,
+        "layoutMs": 0,
+        "taskMs": 43,
+        "label": "composer:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 184,
+        "wallMs": 182,
+        "scriptMs": 35,
+        "styleMs": 9,
+        "layoutMs": 13,
+        "taskMs": 149,
+        "label": "composer:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 3.03
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.14,
+          2.76,
+          2.64
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.14,
+          2.76,
+          2.64
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "surface": "search",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3003,
+        "wallMs": 3000,
+        "scriptMs": 6,
+        "styleMs": 8,
+        "layoutMs": 1,
+        "taskMs": 114,
+        "label": "search:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 296,
+        "wallMs": 294,
+        "scriptMs": 106,
+        "styleMs": 9,
+        "layoutMs": 20,
+        "taskMs": 255,
+        "label": "search:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 4.9
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.14,
+          2.76,
+          2.64
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.45,
+          2.82,
+          2.66
+        ]
+      }
+    },
+    {
+      "pair": 2,
+      "surface": "control-textarea",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3004,
+        "wallMs": 3001,
+        "scriptMs": 1,
+        "styleMs": 7,
+        "layoutMs": 2,
+        "taskMs": 45,
+        "label": "control-textarea:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 58,
+        "wallMs": 56,
+        "scriptMs": 3,
+        "styleMs": 1,
+        "layoutMs": 2,
+        "taskMs": 32,
+        "label": "control-textarea:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 0.93
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.45,
+          2.82,
+          2.66
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.73,
+          2.87,
+          2.67
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "surface": "composer",
+      "idle": {
+        "longTasks": 3,
+        "blockedMs": 204,
+        "maxLongTaskMs": 85,
+        "longTaskDetail": [
+          {
+            "startTime": 28842.4,
+            "duration": 63,
+            "name": "self"
+          },
+          {
+            "startTime": 29978.9,
+            "duration": 85,
+            "name": "self"
+          },
+          {
+            "startTime": 30067.6,
+            "duration": 56,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 3005,
+        "wallMs": 3002,
+        "scriptMs": 149,
+        "styleMs": 6,
+        "layoutMs": 3,
+        "taskMs": 276,
+        "label": "composer:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 210,
+        "wallMs": 202,
+        "scriptMs": 37,
+        "styleMs": 11,
+        "layoutMs": 15,
+        "taskMs": 168,
+        "label": "composer:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 3.37
+      },
+      "attributable": {
+        "longTasks": -3,
+        "blockedMs": -204
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.73,
+          2.87,
+          2.67
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.73,
+          2.87,
+          2.67
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "surface": "search",
+      "idle": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 3003,
+        "wallMs": 3001,
+        "scriptMs": 1,
+        "styleMs": 3,
+        "layoutMs": 0,
+        "taskMs": 25,
+        "label": "search:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 227,
+        "wallMs": 224,
+        "scriptMs": 78,
+        "styleMs": 7,
+        "layoutMs": 18,
+        "taskMs": 194,
+        "label": "search:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 3.73
+      },
+      "attributable": {
+        "longTasks": 0,
+        "blockedMs": 0
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.73,
+          2.87,
+          2.67
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.83,
+          2.89,
+          2.68
+        ]
+      }
+    },
+    {
+      "pair": 3,
+      "surface": "control-textarea",
+      "idle": {
+        "longTasks": 1,
+        "blockedMs": 51,
+        "maxLongTaskMs": 51,
+        "longTaskDetail": [
+          {
+            "startTime": 36148.4,
+            "duration": 51,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "windowMs": 3005,
+        "wallMs": 3003,
+        "scriptMs": 99,
+        "styleMs": 3,
+        "layoutMs": 0,
+        "taskMs": 124,
+        "label": "control-textarea:idle"
+      },
+      "type": {
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "windowMs": 70,
+        "wallMs": 66,
+        "scriptMs": 3,
+        "styleMs": 1,
+        "layoutMs": 2,
+        "taskMs": 35,
+        "label": "control-textarea:type",
+        "keys": 60,
+        "keysLanded": 60,
+        "keystrokesOk": true,
+        "msPerKey": 1.1
+      },
+      "attributable": {
+        "longTasks": -1,
+        "blockedMs": -51
+      },
+      "loadBefore": {
+        "loadavg": [
+          2.83,
+          2.89,
+          2.68
+        ]
+      },
+      "loadAfter": {
+        "loadavg": [
+          2.69,
+          2.86,
+          2.67
+        ]
+      }
+    }
+  ]
+}

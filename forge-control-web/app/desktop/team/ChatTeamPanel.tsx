@@ -248,9 +248,36 @@ export function ChatTeamPanel({
 }: ChatTeamPanelProps) {
   const enabled = visible && Boolean(chatId);
 
+  /* ── Which project's team, when the chat started more than one ────────────
+   *
+   * Round 1871, finding 3: chat `bfd1283a` owns operator-visibility (active)
+   * and engine-task-graph (paused), and the panel showed the paused one's
+   * seventeen workers with a nine-pixel "linkage ambiguous" as the only
+   * disclosure. The server now RANKS (live before dormant, newest as the
+   * tie-break) and ships every candidate; this is the other half — the
+   * operator can pick.
+   *
+   * THE QUERY KEY DELIBERATELY DOES NOT CHANGE. `["chat-team", chatId]` is a
+   * contract: `ManagerThread` subscribes to that exact entry with
+   * `enabled: false` to name the transcript's comms peers without issuing a
+   * request of its own. Adding the project to the key would leave that
+   * subscription reading an entry nobody fills. So the override travels in a
+   * ref and the switch forces a refetch — the cache entry keeps its name and
+   * always holds "the team currently on screen", which is precisely what the
+   * transcript wants for peer names.
+   *
+   * Reset on chat change: a project id from the previous chat is not one of
+   * this chat's candidates and the server would 400 it. */
+  const [projectOverride, setProjectOverride] = useState<string | null>(null);
+  const projectOverrideRef = useRef<string | null>(null);
+  projectOverrideRef.current = projectOverride;
+  useEffect(() => {
+    setProjectOverride(null);
+  }, [chatId]);
+
   const team = useQuery<TeamResponse, Error>({
     queryKey: ["chat-team", chatId],
-    queryFn: () => fetchChatTeam(chatId),
+    queryFn: () => fetchChatTeam(chatId, projectOverrideRef.current),
     refetchInterval: TEAM_POLL_MS,
     enabled,
     refetchOnWindowFocus: false,
@@ -428,6 +455,17 @@ export function ChatTeamPanel({
         armedRef.current = null;
         setArmedId(null);
         dismissRef.current(decision.id);
+        /* Round 1871, finding 12. The customer read "dismiss fires on one click
+         * with no confirm" as the confirmation being backwards. It is not — a
+         * dismissal is REVERSIBLE and a confirm on it would be friction on the
+         * cheap direction — but nothing on screen said so at the moment of the
+         * click, so the asymmetry looked arbitrary. This does: the row goes,
+         * and the toast names the way back. A confirm dialogue would make the
+         * common, undoable action slower; a sentence makes it legible. */
+        toast(
+          `row hidden — bring it back from “N dismissed · show” below`,
+          "info",
+        );
         return;
       case "arm":
       case "rearm":
@@ -574,7 +612,82 @@ export function ChatTeamPanel({
                 </span>
               </div>
             )}
-            {data?.link_ambiguous && (
+            {/* ROUND 1871, finding 3. This used to be a nine-pixel
+                "linkage ambiguous" and nothing else — a confession with no
+                remedy, beside seventeen workers belonging to a project the
+                reader had not asked for. A chat that started two projects
+                gets a real choice instead. One project: nothing renders, as
+                before. */}
+            {(data?.candidates?.length ?? 0) > 1 && (
+              <div
+                data-project-switcher
+                style={{
+                  padding: "6px 10px",
+                  borderBottom: `1px solid ${tokens.borderDivider}`,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <span
+                  className="mono"
+                  title={
+                    "This chat started more than one project. The panel opens on " +
+                    "the liveliest one; pick another to see its team and its board."
+                  }
+                  style={{
+                    fontSize: 9,
+                    color: tokens.textFaint,
+                    letterSpacing: "0.08em",
+                    marginRight: 2,
+                  }}
+                >
+                  PROJECT
+                </span>
+                {data?.candidates?.map((p) => {
+                  const on = p.id === data.project?.id;
+                  return (
+                    <button
+                      key={p.id}
+                      data-project-choice={p.id}
+                      aria-pressed={on}
+                      title={`${p.name ?? p.id} — ${p.status} · ${p.id}`}
+                      onClick={() => {
+                        if (on) return;
+                        setProjectOverride(p.id);
+                        /* The key is unchanged by design (see the query
+                           above), so the switch has to ask for the refetch
+                           itself. Awaiting is pointless — react-query renders
+                           the pending state. */
+                        void team.refetch();
+                      }}
+                      className="mono"
+                      style={{
+                        fontSize: 9.5,
+                        maxWidth: 150,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: on ? tokens.accent : tokens.textMuted,
+                        background: on ? tokens.primaryActionBg : "transparent",
+                        border: `1px solid ${on ? tokens.accent : tokens.border}`,
+                        borderRadius: 5,
+                        padding: "2px 7px",
+                        cursor: on ? "default" : "pointer",
+                      }}
+                    >
+                      {p.name ?? p.id.slice(0, 8)}
+                      <span style={{ color: tokens.textFaint }}> · {p.status}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* Kept for the case the switcher cannot serve: a scan that found
+                several ids of which only one survived validation still says
+                the link was contested. */}
+            {data?.link_ambiguous && (data.candidates?.length ?? 0) <= 1 && (
               <div style={{ padding: "6px 10px 0" }}>
                 <span
                   data-link-marker="ambiguous"
@@ -750,7 +863,16 @@ export function ChatTeamPanel({
           </>
         )}
       </div>
-      <PlanKanban chatId={chatId} onOpenDoc={onOpenDoc} visible={visible} />
+      {/* The board follows the switcher above. `data.project.id` rather than
+          `projectOverride`: the server had the last word on which project this
+          is (it validates the override and ranks the default), and the two
+          zones must agree with the SERVER, not with each other. */}
+      <PlanKanban
+        chatId={chatId}
+        onOpenDoc={onOpenDoc}
+        visible={visible}
+        projectId={data?.project?.id ?? null}
+      />
     </div>
   );
 }

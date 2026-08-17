@@ -88,7 +88,13 @@ import {
   PEEK_OPACITY,
   RESTORE_ROW_TITLE,
 } from "./peek";
-import { fmtTokens, fmtWorkingTime, type TeamNode } from "./teamApi";
+import {
+  fmtTokens,
+  fmtWorkingTime,
+  tokensMeasured,
+  NOT_RECORDED,
+  type TeamNode,
+} from "./teamApi";
 import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
 import { useTick } from "./tickStore";
 
@@ -480,6 +486,7 @@ function TeamRowViewImpl({
       : `working time, still running${sourceNote ? ` (${sourceNote})` : ""}`;
 
   const description = n.description ?? (degradedTasks ? EM_DASH : "(no description)");
+  const measured = tokensMeasured(n);
 
   return (
     <div
@@ -543,11 +550,26 @@ function TeamRowViewImpl({
         >
           {roleLabel(n.role)}
         </span>
+        {/* Round 1871: a bare "—" here answered nothing. When the model was
+            never recorded the cell says so in words and the tooltip says WHY —
+            an unpinned Task sub-agent's model is chosen inside the CLI process
+            and never reaches this run's thread. Borrowing the parent's model
+            would be a guess presented as a fact, which is the one thing this
+            panel does not do. */}
         <span
           data-model-cell
+          data-model-known={n.model === null ? "false" : "true"}
           className="mono"
+          title={
+            n.model !== null
+              ? n.model
+              : n.kind === "subagent"
+                ? "model not recorded — this sub-agent's spawn call pinned no model, " +
+                  "and the one the CLI chose for it was never written to the transcript"
+                : "model not recorded for this run"
+          }
           style={{
-            color: modelColor(n.model),
+            color: n.model === null ? tokens.textGhost : modelColor(n.model),
             flex: 1,
             minWidth: 0,
             overflow: "hidden",
@@ -556,7 +578,7 @@ function TeamRowViewImpl({
             fontSize: 9.5,
           }}
         >
-          {modelDisplay(n.model)}
+          {n.model === null ? "model n/a" : modelDisplay(n.model)}
         </span>
 
         {/* Always mounted, revealed by CSS only (.team-row rules in
@@ -724,17 +746,27 @@ function TeamRowViewImpl({
         >
           {description}
         </span>
+        {/* U15a's sibling for tokens (round 1871). `0` on an unmeasured row is
+            the same class of lie as a ticking settled clock: it asserts a
+            measurement that was never taken. `tokens_measured: false` means no
+            thread entry was ever attributed to this sub-agent, so the cell says
+            "n/a" and the tooltip says why. */}
         <span
           data-tokens-cell
+          data-tokens-measured={measured ? "true" : "false"}
           className="mono"
           title={
-            `${n.tokens.total.toLocaleString()} tokens total — ` +
-            `in ${n.tokens.input.toLocaleString()}, out ${n.tokens.output.toLocaleString()}, ` +
-            `cache read ${n.tokens.cache_read.toLocaleString()}, ` +
-            `cache write ${n.tokens.cache_creation.toLocaleString()}`
+            measured
+              ? `${n.tokens.total.toLocaleString()} tokens total — ` +
+                `in ${n.tokens.input.toLocaleString()}, out ${n.tokens.output.toLocaleString()}, ` +
+                `cache read ${n.tokens.cache_read.toLocaleString()}, ` +
+                `cache write ${n.tokens.cache_creation.toLocaleString()}`
+              : "token spend was never recorded for this sub-agent — none of this " +
+                "run's thread entries carry its parent_tool_use_id, so there is " +
+                "nothing to count. Not zero: unknown."
           }
           style={{
-            color: tokens.textFaint,
+            color: measured ? tokens.textFaint : tokens.textGhost,
             minWidth: TOKENS_COL,
             textAlign: "right",
             flex: "none",
@@ -742,7 +774,7 @@ function TeamRowViewImpl({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {fmtTokens(n.tokens.total)}
+          {measured ? fmtTokens(n.tokens.total) : NOT_RECORDED}
         </span>
         {/* The structural half of U16: settled rows get a component that has
             no access to the clock at all. A running row whose working time the

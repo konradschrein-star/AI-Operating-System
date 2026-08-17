@@ -84,15 +84,25 @@ const UUID_SCAN_RE =
  * PART A — the resolver (U2)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/** One project that claims this chat, as the switcher renders it. */
+export interface ChatProjectCandidate {
+  id: string;
+  name: string | null;
+  status: string;
+}
+
 export interface ChatProjectLink {
   project_id: string | null;
   project_status: string | null;
   /** How the link was established. `null` iff `project_id` is null. */
   link_source: "metadata" | "thread_scan" | null;
-  /** True when more than one project claims this chat. The newest is returned
-   *  anyway; the UI renders a marker rather than pretending the answer is
-   *  clean (NFU6 — never guess silently). */
+  /** True when more than one project claims this chat. The RANKED winner is
+   *  returned (see `rankCandidates`), and `candidates` carries the rest so the
+   *  UI can offer them instead of only confessing to a problem. */
   link_ambiguous: boolean;
+  /** Every project that claims this chat, best first. One entry in the normal
+   *  case; empty only when `project_id` is null. */
+  candidates: ChatProjectCandidate[];
 }
 
 const UNLINKED: ChatProjectLink = {
@@ -100,6 +110,7 @@ const UNLINKED: ChatProjectLink = {
   project_status: null,
   link_source: null,
   link_ambiguous: false,
+  candidates: [],
 };
 
 /** A `runs.thread` entry, narrowed to what the scan reads. The full shape is
@@ -111,7 +122,68 @@ interface ThreadEntryLite {
 
 interface ProjectLinkRow {
   id: string;
+  name: string | null;
   status: string;
+}
+
+/* ── Which project a chat is ABOUT, when it started more than one ────────────
+ *
+ * Round 1871. Chat `bfd1283a…` created two projects: `operator-visibility`
+ * (active, 5 Aug) and `engine-task-graph` (paused, 17 Aug). "Newest wins"
+ * handed the panel the PAUSED one, so the chat that is running
+ * operator-visibility rendered engine-task-graph's seventeen workers and its
+ * 16/27 board, and the only disclosure was a nine-pixel "ambiguous link".
+ * Konrad's reading of that, correctly: this is not my chat's team.
+ *
+ * Creation order is the weakest possible signal for "what is this chat about
+ * right now". LIVENESS is the strong one — a project still running is the one
+ * whose workers are moving, and it is the reason the panel is open. So:
+ *
+ *   1. RUNNING statuses first — the project that still has agents in it.
+ *   2. Then dormant-but-unfinished, then finished, then abandoned.
+ *   3. Newest first inside a tier — the old tie-break, demoted to a tie-break.
+ *
+ * An unranked status (a new one nobody taught this map about) sorts with the
+ * dormant tier rather than last: an unrecognised status is not evidence of
+ * being finished, and burying it would hide a project entirely.
+ *
+ * The ranking decides a DEFAULT, not a verdict. Every candidate ships on the
+ * wire and the panel offers them, which is the half that makes a wrong default
+ * a click rather than a dead end.
+ */
+const STATUS_RANK: Record<string, number> = {
+  active: 0,
+  running: 0,
+  planning: 1,
+  paused: 2,
+  blocked: 2,
+  completed: 3,
+  done: 3,
+  failed: 4,
+  cancelled: 4,
+  archived: 5,
+};
+
+const STATUS_RANK_UNKNOWN = 2;
+
+export function statusRank(status: string): number {
+  return STATUS_RANK[status] ?? STATUS_RANK_UNKNOWN;
+}
+
+/**
+ * Order the projects claiming one chat, best first. Pure and exported so
+ * `scripts/checks` can assert the tie-break without a database.
+ *
+ * `rows` MUST already be ordered `created_at DESC` — the sort below is stable
+ * (V8's `Array.prototype.sort` is, and has been since Node 11), so equal ranks
+ * keep the query's newest-first order and no created_at travels on the wire.
+ */
+export function rankCandidates(rows: ProjectLinkRow[]): ProjectLinkRow[] {
+  return [...rows].sort((a, b) => statusRank(a.status) - statusRank(b.status));
+}
+
+function toCandidates(rows: ProjectLinkRow[]): ChatProjectCandidate[] {
+  return rows.map((r) => ({ id: r.id, name: r.name, status: r.status }));
 }
 
 /* ── Scan bounds — the bound IS the feature ──────────────────────────────────
@@ -217,24 +289,25 @@ export async function resolveChatProject(
     throw new Error(`resolveChatProject: chat id is not a uuid: ${chatId}`);
   }
 
-  // ── 1. PRIMARY: metadata. Newest wins if more than one project claims the
-  //       chat — which is exactly what an operator chat that created two
-  //       projects will look like once both are backfilled.
+  // ── 1. PRIMARY: metadata. When more than one project claims the chat the
+  //       LIVEST wins, not the newest — see `rankCandidates`. Both travel.
   const byMeta = await q<ProjectLinkRow>(
     "resolve/metadata",
-    `SELECT id::text, status
+    `SELECT id::text, name, status
        FROM projects
       WHERE metadata->>'origin_chat_id' = $1
       ORDER BY created_at DESC`,
     [chatId],
   );
   if (byMeta.rows.length > 0) {
-    const winner = byMeta.rows[0]!;
+    const ranked = rankCandidates(byMeta.rows);
+    const winner = ranked[0]!;
     return {
       project_id: winner.id,
       project_status: winner.status,
       link_source: "metadata",
-      link_ambiguous: byMeta.rows.length > 1,
+      link_ambiguous: ranked.length > 1,
+      candidates: toCandidates(ranked),
     };
   }
 
@@ -255,7 +328,7 @@ export async function resolveChatProject(
   // Bound 4: only uuids that are actually project rows survive.
   const real = await q<ProjectLinkRow>(
     "resolve/validate-candidates",
-    `SELECT id::text, status
+    `SELECT id::text, name, status
        FROM projects
       WHERE id = ANY($1::uuid[])
       ORDER BY created_at DESC`,
@@ -263,8 +336,9 @@ export async function resolveChatProject(
   );
   if (real.rows.length === 0) return UNLINKED;
 
-  const winner = real.rows[0]!;
-  const ambiguous = real.rows.length > 1;
+  const ranked = rankCandidates(real.rows);
+  const winner = ranked[0]!;
+  const ambiguous = ranked.length > 1;
 
   // ── 3. BACKFILL — the only write in phase 300, and deliberately the
   //       narrowest one possible. It fires ONLY on an unambiguous scan hit:
@@ -280,6 +354,7 @@ export async function resolveChatProject(
     project_status: winner.status,
     link_source: "thread_scan",
     link_ambiguous: ambiguous,
+    candidates: toCandidates(ranked),
   };
 }
 

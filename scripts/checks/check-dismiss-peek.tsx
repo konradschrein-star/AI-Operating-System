@@ -280,7 +280,20 @@ if (src(PANEL).includes("data-team-dismissed-toggle") && src(PANEL).includes("da
     true,
   );
   check("the label says the verb out loud", RESTORE_ALL_LABEL, "restore all");
-  check("the armed label names the global count", restoreAllArmedLabel(11), "restore all 11?");
+  /* ROUND 1871, finding 12. The count alone was not enough: the customer test
+   * saw "restore all 2?" beside a panel showing exactly two hidden rows and
+   * read it as a two-row action being made harder than a one-click dismissal.
+   * The scope now travels in the LABEL, not only in the tooltip. */
+  check(
+    "the armed label names the global count",
+    restoreAllArmedLabel(11),
+    "restore all 11 everywhere?",
+  );
+  check(
+    "…and says the count is not just this panel's",
+    restoreAllArmedLabel(2).includes("everywhere"),
+    true,
+  );
   check(
     "…and the tooltip warns it crosses panels",
     restoreAllTitle(11).includes("Live panel") && restoreAllTitle(11).includes("all 11"),

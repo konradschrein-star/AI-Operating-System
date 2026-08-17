@@ -71,6 +71,15 @@ export interface Subagent {
    *  rendering") — persisted by the rollup, dropped on the wire until now. */
   description: string | null;
   usage: Usage;
+  /** False when the zeros in `usage` are IGNORANCE, not measurement.
+   *
+   *  A spawn-only row (round 1871) is reconstructed from the Task call alone:
+   *  no thread entry was ever stamped with its `parent_tool_use_id`, so nothing
+   *  about its token spend was ever attributable to it. The counters are zero
+   *  because nobody counted, and a panel that prints `0` there is asserting
+   *  "this agent burned no tokens" — which is false for an architect that ran
+   *  for four minutes. The flag lets the client print "n/a" instead. */
+  tokens_measured: boolean;
   event_count: number;
   latest_activity: {
     kind: string;
@@ -218,6 +227,69 @@ export function pickCurrentActivity(src: unknown): CurrentActivity | null {
   };
 }
 
+/* ── Reading a spawn's arguments back out of a CLIPPED payload ──────────────
+ *
+ * Round 1871. `meta.input` on a Task/Agent `tool_call` is the tool's JSON
+ * arguments — `{"description":"…","subagent_type":"builder","prompt":"…"}` —
+ * but the executor stores it CLIPPED AT 1500 CHARACTERS, and the `prompt` is
+ * routinely thousands. Measured on chat 11dd264b (7 spawns): six inputs are
+ * exactly 1501 chars and end mid-sentence; one is 1203 and ends with `"}`.
+ *
+ * `JSON.parse` therefore threw on six of seven, and the catch dropped BOTH the
+ * role and the description on the floor. That is the whole of "7 of 8
+ * sub-agent rows are blank": the panel printed `agent` / `(no description)`
+ * for an architect, three builders and two scouts whose names were sitting in
+ * the first eighty characters of the string it refused to read.
+ *
+ * So: parse properly when the payload is whole, and when it is not, read the
+ * one field asked for out of the prefix that survived. The scan only accepts a
+ * value it saw CLOSE — an unterminated string is a value the clip ate, and
+ * half of a description is not a description.
+ */
+
+/** `"key"` followed by a COMPLETE JSON string literal. The body allows escaped
+ *  characters (`\"`, `\n`, `\\`) so a quote inside the value cannot end the
+ *  match early, and the trailing `"` is required, which is what makes a
+ *  clipped value fail to match rather than match short. */
+function spawnFieldPattern(key: string): RegExp {
+  return new RegExp(`"${key}"\\s*:\\s*("(?:[^"\\\\]|\\\\.)*")`);
+}
+
+/**
+ * One top-level string argument of a spawn call, from an input that may have
+ * been clipped mid-value.
+ *
+ * Returns null — never a guess, never a partial — when the field is absent,
+ * is not a string, or was cut off before its closing quote.
+ *
+ * Exported for `scripts/checks`: the clip tolerance is the entire reason the
+ * sub-agent rows have names again, so it has to be testable without a database.
+ */
+export function readSpawnField(input: unknown, key: string): string | null {
+  if (typeof input !== "string" || input === "") return null;
+  // Whole payload: the parser is authoritative — it understands nesting, and
+  // it will not be fooled by the key appearing inside the prompt text.
+  try {
+    const parsed: unknown = JSON.parse(input);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const v = (parsed as Record<string, unknown>)[key];
+      return typeof v === "string" && v !== "" ? v : null;
+    }
+  } catch {
+    /* Clipped, or not JSON at all. Fall through to the scan. */
+  }
+  const m = spawnFieldPattern(key).exec(input);
+  if (!m) return null;
+  try {
+    // Re-parse the literal alone so `\n` and `\"` come back as characters
+    // rather than as the two bytes the raw slice holds.
+    const v: unknown = JSON.parse(m[1]!);
+    return typeof v === "string" && v !== "" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Fold sub-agent events out of the thread. Anything with
  *  meta.parent_tool_use_id is one; group by that id so an architect that
  *  ran 40 tool calls collapses to one row with its latest activity.
@@ -228,7 +300,10 @@ export function pickCurrentActivity(src: unknown): CurrentActivity | null {
 export function foldSubagents(thread: ThreadEntry[]): Subagent[] {
   if (!Array.isArray(thread) || thread.length === 0) return [];
   // 1) Registry: tool_use_id of every Task spawn → its declared role.
-  const spawn = new Map<string, { role: string; model: string | null; ts: string }>();
+  const spawn = new Map<
+    string,
+    { role: string; model: string | null; description: string | null; ts: string }
+  >();
   // 2) Completion: set of Task tool_use_ids whose result has arrived.
   const completed = new Set<string>();
   for (const e of thread) {
@@ -244,27 +319,30 @@ export function foldSubagents(thread: ThreadEntry[]): Subagent[] {
       typeof meta.tool_use_id === "string"
     ) {
       // Prefer an explicit label; otherwise read the spawn's own input, which
-      // carries {"subagent_type":"builder","description":"..."}.
+      // carries {"subagent_type":"builder","description":"..."}. Both reads go
+      // through `readSpawnField`, which survives the 1500-char clip that used
+      // to lose them (see the comment block above it).
+      const description = readSpawnField(meta.input, "description");
       let role =
         typeof meta.spawns_subagent_role === "string"
           ? meta.spawns_subagent_role
           : "";
-      if (!role && typeof meta.input === "string") {
-        try {
-          const parsed = JSON.parse(meta.input) as Record<string, unknown>;
-          if (typeof parsed.subagent_type === "string") {
-            role = parsed.subagent_type;
-          } else if (typeof parsed.description === "string") {
-            role = parsed.description;
-          }
-        } catch {
-          /* input isn't JSON — fall through to the default */
-        }
-      }
-      if (!role) role = "agent";
+      if (!role) role = readSpawnField(meta.input, "subagent_type") ?? "";
+      // Last resort, unchanged in intent: a spawn with no declared type but a
+      // description at least says what it was for. `"agent"` remains the
+      // honest "nobody named this".
+      if (!role) role = description ?? "agent";
       spawn.set(meta.tool_use_id, {
         role,
-        model: typeof meta.model === "string" ? meta.model : null,
+        // The spawn's own `model` argument when the caller pinned one; the
+        // entry's `meta.model` otherwise. Usually neither exists — an
+        // unpinned sub-agent's model is decided inside the CLI process and
+        // never reaches this thread, which is why the row says so rather than
+        // borrowing the parent's.
+        model:
+          readSpawnField(meta.input, "model") ??
+          (typeof meta.model === "string" ? meta.model : null),
+        description,
         ts: e.ts,
       });
     }
@@ -301,18 +379,26 @@ export function foldSubagents(thread: ThreadEntry[]): Subagent[] {
       model: seed.model,
       started_at: seed.ts,
       updated_at: seed.ts,
-      // Thread fallback: the rollup owns the settle stamp and the spawn
-      // description; neither is recoverable from the raw thread here, so we
-      // say null and let the client show its visible fallback rather than
-      // inventing a timestamp.
+      // Thread fallback: the rollup owns the settle stamp, and it is NOT
+      // recoverable here. The spawn's own `tool_result` looks like a candidate
+      // and is not one — measured on chat 11dd264b, all seven results land
+      // 6–120 ms after their call, because the executor acks the spawn rather
+      // than waiting for the agent. Using it would report four minutes of work
+      // as 11 ms, so we say null and let the client show its visible fallback.
       ended_at: null,
-      description: null,
+      // Round 1871: this one IS recoverable, from the same clipped input the
+      // role now comes from.
+      description: seed.description,
       usage: {
         input_tokens: 0,
         output_tokens: 0,
         cache_read_input_tokens: 0,
         cache_creation_input_tokens: 0,
       },
+      // Nothing has been attributed to this row yet. The loop below flips it
+      // the moment a parent-tagged entry lands; if none ever does, the zeros
+      // stay unmeasured and the client prints "n/a" rather than "0".
+      tokens_measured: false,
       event_count: 0,
       latest_activity: null,
       status: completed.has(id) ? "done" : "running",
@@ -337,13 +423,14 @@ export function foldSubagents(thread: ThreadEntry[]): Subagent[] {
         started_at: seed.ts,
         updated_at: e.ts,
         ended_at: null,
-        description: null,
+        description: seed.description,
         usage: {
           input_tokens: 0,
           output_tokens: 0,
           cache_read_input_tokens: 0,
           cache_creation_input_tokens: 0,
         },
+        tokens_measured: false,
         event_count: 0,
         latest_activity: null,
         status: completed.has(parent) ? "done" : "running",
@@ -352,6 +439,10 @@ export function foldSubagents(thread: ThreadEntry[]): Subagent[] {
     }
     row.event_count += 1;
     row.updated_at = e.ts;
+    // An entry belongs to this sub-agent, so its counters are now a
+    // measurement — including a measurement of zero, which is a real answer
+    // for an agent that has only made tool calls so far.
+    row.tokens_measured = true;
     // Any thread entry belonging to this subagent may carry a
     // meta.usage object stamped by the executor when it saw an assistant
     // frame arrive under this parent_tool_use_id. Sum them so the row
@@ -446,6 +537,7 @@ export function subagentsFromRollup(src: unknown): Subagent[] {
     const s = raw as Record<string, unknown>;
     if (typeof s.tool_use_id !== "string") continue;
     const la = s.latest_activity as Record<string, unknown> | null | undefined;
+    const usage = pickUsage(s.usage);
     out.push({
       kind: "subagent",
       tool_use_id: s.tool_use_id,
@@ -455,7 +547,18 @@ export function subagentsFromRollup(src: unknown): Subagent[] {
       updated_at: typeof s.updated_at === "string" ? s.updated_at : "",
       ended_at: typeof s.ended_at === "string" ? s.ended_at : null,
       description: typeof s.description === "string" ? s.description : null,
-      usage: pickUsage(s.usage),
+      usage,
+      /* The rollup counts a sub-agent's tokens from its own frames, so a row
+       * that recorded ANY event measured its spend — even when the answer is
+       * zero. A rollup row with no events and no tokens was written from the
+       * spawn alone and is in exactly the same position as the thread
+       * fallback's spawn-only rows: unmeasured, not empty. */
+      tokens_measured:
+        numOr0(s.event_count) > 0 ||
+        usage.input_tokens > 0 ||
+        usage.output_tokens > 0 ||
+        usage.cache_read_input_tokens > 0 ||
+        usage.cache_creation_input_tokens > 0,
       event_count: numOr0(s.event_count),
       latest_activity:
         la && typeof la === "object"

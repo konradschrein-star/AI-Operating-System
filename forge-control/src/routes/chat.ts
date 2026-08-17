@@ -37,6 +37,8 @@ import { sanitizeEffort } from "../lib/cc-runner.ts";
 import {
   resolveChatProject,
   rollupChatProjects,
+  type ChatProjectCandidate,
+  type ChatProjectLink,
 } from "./chat-linkage.ts";
 /* phase 300h (U4) — the team tree reuses the SHAPING that /api/agents already
  * ships (frozen elapsed, agent_kind, sub-agent rollup + thread fallback). Only
@@ -366,6 +368,10 @@ interface TeamNode {
   model: string | null;
   status: string;
   tokens: TeamTokens;
+  /** False when the zeros in `tokens` mean "nobody counted" rather than
+   *  "counted, and it was zero" — see `Subagent.tokens_measured`. Always true
+   *  on a run node: a run's usage is rolled up from its own turns. */
+  tokens_measured: boolean;
   /** Milliseconds of attributed work, or null when it is not measurable:
    *  the working-time query failed (see `errors[]`), or this is a sub-agent
    *  whose rollup has no independent end stamp (`subagentWorkingTime`).
@@ -410,6 +416,10 @@ interface TeamResponse {
   project: { id: string; status: string | null } | null;
   link_source: "metadata" | "thread_scan" | null;
   link_ambiguous: boolean;
+  /** Every project this chat started, best first (round 1871). The panel
+   *  renders a switcher when there is more than one, so an ambiguous chat is a
+   *  choice rather than a nine-pixel apology. */
+  candidates: ChatProjectCandidate[];
   manager: TeamNode;
   workers: TeamNode[];
   /** False when any enrichment failed. A client that shows numbers must check
@@ -513,6 +523,7 @@ function teamNodeFromRun(
       model: sub.model,
       status: sub.status,
       tokens: teamTokens(sub.usage),
+      tokens_measured: sub.tokens_measured,
       working_ms: wt ? wt.working_ms : null,
       working_ms_source: wt ? wt.working_ms_source : null,
       started_at: sub.started_at || null,
@@ -533,6 +544,7 @@ function teamNodeFromRun(
     model: run.model,
     status: run.status,
     tokens: teamTokens(run.usage_total),
+    tokens_measured: true,
     working_ms: runWorking,
     working_ms_source: timing ? "thread" : null,
     started_at: run.started_at,
@@ -542,6 +554,43 @@ function teamNodeFromRun(
     dismissed_at: run.dismissed_at,
     subagents,
     task,
+  };
+}
+
+/* ── Which of a chat's projects the caller wants (round 1871) ────────────────
+ *
+ * `resolveChatProject` ranks the projects claiming a chat and picks a default.
+ * `?project_id=` lets the panel's switcher override it. The override is
+ * VALIDATED against the candidate list rather than trusted: this endpoint's
+ * whole contract is "the team of the project THIS CHAT started", and honouring
+ * an arbitrary uuid would turn it into a general project reader that any
+ * caller could point anywhere.
+ *
+ * An id that is not a candidate is a 400, not a silent fallback to the
+ * default — a switcher that quietly shows you a different project than the one
+ * you clicked is the exact failure this round is fixing.
+ */
+type ProjectChoice =
+  | { ok: true; link: ChatProjectLink }
+  | { ok: false; message: string };
+
+function chooseProject(
+  link: ChatProjectLink,
+  requested: string | undefined,
+): ProjectChoice {
+  if (requested === undefined || requested === "") return { ok: true, link };
+  const match = link.candidates.find((p) => p.id === requested);
+  if (!match) {
+    return {
+      ok: false,
+      message:
+        `project_id ${requested} is not one of this chat's projects ` +
+        `(${link.candidates.map((p) => p.id).join(", ") || "none"})`,
+    };
+  }
+  return {
+    ok: true,
+    link: { ...link, project_id: match.id, project_status: match.status },
   };
 }
 
@@ -582,13 +631,17 @@ r.get("/:id/team", async (c) => {
   }
   if (!managerRow) return c.json({ error: "run not found" }, 404);
 
-  // ── 2. Linkage (U2). Round 304 owns the rule; this route only asks.
-  let link;
+  // ── 2. Linkage (U2). Round 304 owns the rule; this route only asks. Round
+  //       1871: `?project_id=` overrides the ranked default, validated.
+  let link: ChatProjectLink;
   try {
     link = await resolveChatProject(id);
   } catch (e) {
     return c.json(teamFailure("linkage resolution", e), 500);
   }
+  const chosen = chooseProject(link, c.req.query("project_id"));
+  if (!chosen.ok) return c.json({ error: chosen.message }, 400);
+  link = chosen.link;
 
   // ── 3. The workers. Empty by definition when the chat owns no project.
   let workerRows: AgentRowRaw[] = [];
@@ -681,6 +734,7 @@ r.get("/:id/team", async (c) => {
       : null,
     link_source: link.link_source,
     link_ambiguous: link.link_ambiguous,
+    candidates: link.candidates,
     manager: shape(managerRow),
     workers: workerRows.map(shape),
     complete: errors.length === 0,
@@ -748,6 +802,8 @@ interface PlanResponse {
   project: { id: string; status: string | null } | null;
   link_source: "metadata" | "thread_scan" | null;
   link_ambiguous: boolean;
+  /** As on the team response — every project this chat started, best first. */
+  candidates: ChatProjectCandidate[];
   phases: PlanPhase[];
   /** File names (not paths) of the project corpus's `*.md`, sorted. Names, not
    *  paths, is what makes `/plan/doc?name=` safe to keep bare: the client
@@ -763,8 +819,45 @@ interface PlanResponse {
   /** Set when the docs listing failed — U6/NFU6: `docs: []` on its own would
    *  read as "this project has no plan corpus", which is a different fact from
    *  "the corpus could not be read, and here is why". The phases are unaffected
-   *  and still present when this is set. */
+   *  and still present when this is set.
+   *
+   *  ROUND 1871 — THIS FIELD IS PROSE, and the panel prints it verbatim. It
+   *  used to be `plan docs unreadable at /opt/…/docs/plan: ENOENT: no such
+   *  file or directory, scandir '…'` — a Node error object stringified into
+   *  Konrad's UI, which tells a reader nothing they can act on and reads as a
+   *  crash. The machine-readable half now lives in `error_detail`. */
   error?: string;
+  /** The raw fs error behind `error`, for the log and for a diagnostic
+   *  disclosure — never the headline. */
+  error_detail?: string;
+}
+
+/**
+ * `error`'s prose, from an fs failure.
+ *
+ * Named codes get a sentence that says what happened AND what it means for the
+ * board, because "the phases below are still real" is the part a reader needs;
+ * anything else falls back to a generic sentence rather than to the exception's
+ * own text. The directory is deliberately absent: it is a server path, it is
+ * long enough to wrap the panel twice, and `error_detail` has it.
+ */
+function describeCorpusError(e: unknown, projectName: string): string {
+  const code =
+    e && typeof e === "object" && "code" in e ? String((e as { code: unknown }).code) : "";
+  if (code === "ENOENT") {
+    return (
+      `${projectName} has no plan-docs directory yet — its planning corpus ` +
+      `has not been written, or the worktree moved. The phases below are ` +
+      `read from the database and are unaffected.`
+    );
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return `The plan-docs directory for ${projectName} could not be read (permission denied).`;
+  }
+  if (code === "ENOTDIR") {
+    return `The plan-docs path for ${projectName} is a file, not a directory.`;
+  }
+  return `The plan docs for ${projectName} could not be listed.`;
 }
 
 /** Tasks of one project, oldest round first. `created_at` breaks ties inside a
@@ -880,9 +973,37 @@ function groupPlanPhases(rows: PlanTaskRow[], docs: string[]): PlanPhase[] {
  */
 function matchPhaseDoc(roundBase: number, docs: string[]): string | undefined {
   const want = String(roundBase);
-  return docs.find((name) =>
+  const exact = docs.find((name) =>
     (name.match(/\d+/g) ?? []).some((run) => run === want),
   );
+  if (exact) return exact;
+
+  /* ── The corpus convention (round 1871) ───────────────────────────────────
+   *
+   * The rule above matches a document that spells the round base — `800-…md`.
+   * No corpus in this database is named that way. Every planning corpus the
+   * engine writes is a WATERFALL, numbered from zero in reading order:
+   *
+   *     00-vision.md  01-requirements.md  02-architecture.md
+   *     03-quality.md 04-phases.md
+   *
+   * and the hundreds-blocks run 0, 100, 200, … in the same order. So block
+   * `N*100` is document `N`, zero-padded to the width the corpus uses. On
+   * engine-task-graph that matches five of ten blocks and — correctly —
+   * nothing for 500-900, which have no document at all.
+   *
+   * IT IS A CONVENTION, NOT A FACT, and it is only allowed to fire on a name
+   * whose number is the LEADING token: `04-phases.md` matches block 400,
+   * `check-corpus-map.py` and `16-ui-v3-graph-research.md` cannot be dragged in
+   * by a digit somewhere in the middle. The UI labels what it opens with the
+   * file name, so a reader always sees which document a click produced.
+   */
+  const index = roundBase / 100;
+  if (!Number.isInteger(index) || index < 0) return undefined;
+  return docs.find((name) => {
+    const lead = /^(\d+)[-_.]/.exec(name);
+    return lead !== null && Number(lead[1]) === index;
+  });
 }
 
 /** A load-bearing plan query failed: 500, naming the step. Mirrors
@@ -911,12 +1032,17 @@ r.get("/:id/plan", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
 
-  let link;
+  let link: ChatProjectLink;
   try {
     link = await resolveChatProject(id);
   } catch (e) {
     return c.json(planFailure("linkage resolution", e), 500);
   }
+  /* Same override, same validation as `/team` — the two panels sit side by
+   * side and must never be looking at different projects. */
+  const chosen = chooseProject(link, c.req.query("project_id"));
+  if (!chosen.ok) return c.json({ error: chosen.message }, 400);
+  link = chosen.link;
 
   if (!link.project_id) {
     const empty: PlanResponse = {
@@ -924,6 +1050,7 @@ r.get("/:id/plan", async (c) => {
       project: null,
       link_source: link.link_source,
       link_ambiguous: link.link_ambiguous,
+      candidates: link.candidates,
       phases: [],
       docs: [],
     };
@@ -965,6 +1092,7 @@ r.get("/:id/plan", async (c) => {
   // contract between two endpoints that must agree by construction.
   let docs: string[] = [];
   let docsError: string | undefined;
+  let docsDetail: string | undefined;
   let corpus: { dir: string; namespaced: boolean } | undefined;
   const dir = await selectPlanCorpus(
     projectRow.workspace_dir,
@@ -984,7 +1112,8 @@ r.get("/:id/plan", async (c) => {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error("[chat plan] docs readdir failed:", message);
-      docsError = `plan docs unreadable at ${dir.dir}: ${message}`;
+      docsError = describeCorpusError(e, projectRow.name);
+      docsDetail = `readdir ${dir.dir}: ${message}`;
     }
   }
 
@@ -993,11 +1122,13 @@ r.get("/:id/plan", async (c) => {
     project: { id: link.project_id, status: projectRow.status },
     link_source: link.link_source,
     link_ambiguous: link.link_ambiguous,
+    candidates: link.candidates,
     phases: groupPlanPhases(taskRows, docs),
     docs,
   };
   if (corpus) body.corpus = corpus;
   if (docsError) body.error = docsError;
+  if (docsDetail) body.error_detail = docsDetail;
   return c.json(body);
 });
 
@@ -1019,12 +1150,17 @@ r.get("/:id/plan/doc", async (c) => {
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
   const name = c.req.query("name") ?? "";
 
-  let link;
+  let link: ChatProjectLink;
   try {
     link = await resolveChatProject(id);
   } catch (e) {
     return c.json(planFailure("linkage resolution", e), 500);
   }
+  /* The switcher travels here too, or a chat showing its second project's
+   * board would open the FIRST project's documents. */
+  const chosen = chooseProject(link, c.req.query("project_id"));
+  if (!chosen.ok) return c.json({ error: chosen.message }, 400);
+  link = chosen.link;
   if (!link.project_id) {
     return c.json({ error: "chat is not linked to a project — no plan documents" }, 404);
   }

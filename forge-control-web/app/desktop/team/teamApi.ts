@@ -70,6 +70,17 @@ export interface TeamNode {
   model: string | null;
   status: string;
   tokens: TeamTokens;
+  /** False when the zeros in `tokens` are IGNORANCE rather than measurement
+   *  (round 1871). A spawn-only sub-agent — one whose individual steps were
+   *  never stamped with its `parent_tool_use_id` — has no token record at all,
+   *  and printing `0` for it asserts "this agent burned nothing", which is
+   *  false for an architect that ran for four minutes. The row prints "n/a".
+   *
+   *  Optional on the type, not on the wire: a client running against a
+   *  pre-1871 API sees `undefined`, and `tokensMeasured()` reads that as the
+   *  old behaviour rather than as "unmeasured" — the panel must not start
+   *  claiming ignorance about every run because the server is older. */
+  tokens_measured?: boolean;
   /** Milliseconds of attributed work, or `null` when it is NOT MEASURABLE —
    *  the working-time query failed, or a sub-agent has no independent end
    *  stamp. Never 0-as-unknown: 0 means measured, and it was zero. A client
@@ -97,6 +108,14 @@ export interface TeamNode {
   task: TeamTask | null;
 }
 
+/** One project that claims this chat. Mirrors `ChatProjectCandidate` in
+ *  forge-control/src/routes/chat-linkage.ts. */
+export interface ChatProjectCandidate {
+  id: string;
+  name: string | null;
+  status: string;
+}
+
 /** A named failure of one enrichment step. The tree still renders; the panel
  *  shows this text instead of pretending the missing numbers are zero. */
 export interface TeamError {
@@ -115,6 +134,11 @@ export interface TeamResponse {
    *  the panel marks it "linked heuristically" (U2/NFU6). */
   link_source: "metadata" | "thread_scan" | null;
   link_ambiguous: boolean;
+  /** Every project this chat started, best first (round 1871). More than one
+   *  entry means the chat is ambiguous and the panel offers the choice instead
+   *  of only labelling the problem. Optional so a pre-1871 server degrades to
+   *  "no switcher" rather than to a crash. */
+  candidates?: ChatProjectCandidate[];
   manager: TeamNode;
   workers: TeamNode[];
   /** False when any enrichment failed. A panel that shows numbers must check
@@ -145,8 +169,15 @@ export interface CapabilitiesResponse {
  * the thrown error; the panel renders it inline.
  */
 
-export const fetchChatTeam = async (chatId: string): Promise<TeamResponse> => {
-  const r = await fetch(`${ROOT}/chat/${encodeURIComponent(chatId)}/team`, {
+/** `projectId` overrides the server's ranked default (round 1871). The server
+ *  validates it against this chat's own candidates and 400s anything else, so
+ *  the panel cannot be pointed at an unrelated project by a stale value. */
+export const fetchChatTeam = async (
+  chatId: string,
+  projectId?: string | null,
+): Promise<TeamResponse> => {
+  const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+  const r = await fetch(`${ROOT}/chat/${encodeURIComponent(chatId)}/team${q}`, {
     headers: { accept: "application/json" },
   });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /chat/:id/team`);
@@ -275,4 +306,19 @@ export function fmtTokens(n: number): string {
   }
   const M = n / 1_000_000;
   return `${M < 10 ? M.toFixed(2) : M.toFixed(1)}M`;
+}
+
+/** What an unmeasured cell prints. Three characters, so it fits the same fixed
+ *  column the numbers do and the reveal still moves no pixel. */
+export const NOT_RECORDED = "n/a";
+
+/**
+ * Did anybody count this node's tokens? (round 1871)
+ *
+ * `undefined` — a pre-1871 server — reads as YES, because that is what the
+ * panel assumed before the field existed and a newer client must not start
+ * printing "n/a" against every row of an older API.
+ */
+export function tokensMeasured(node: TeamNode): boolean {
+  return node.tokens_measured !== false;
 }

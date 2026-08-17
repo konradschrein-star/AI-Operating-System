@@ -241,7 +241,60 @@ export function shortRunId(id: string | null | undefined): string {
   return id.slice(0, 8);
 }
 
+/* ── The one-line preview (round 1871) ────────────────────────────────────
+ *
+ * The customer test, on 117 of these cards: "a wall of text … 0 collapse
+ * controls … full payload always expanded — directly above Bash rows that
+ * collapse to one line with `done ▸`". The card needs the same grammar the
+ * tool row has: a line you can skim, and a payload you ask for.
+ *
+ * This is that line. It is derived from the SAME body string the expanded card
+ * renders — no second source, nothing fetched — and it is deliberately dumb
+ * about markdown: the first line of prose, with the syntax that would render as
+ * decoration stripped so a report beginning `## Phase 800 planned` previews as
+ * `Phase 800 planned` rather than as two hashes.
+ */
+
+/** Markdown that is structure rather than words, at the START of a line. */
+const LEADING_SYNTAX = /^\s*(?:[#>]+\s*|[-*+]\s+|\d+[.)]\s+|```[\w-]*\s*)/;
+
+export const COMMS_PREVIEW_CHARS = 120;
+
+/**
+ * The collapsed card's one-liner.
+ *
+ * Takes the first line that has words in it, so a report that opens with a
+ * fence or a blank line still previews its actual first sentence. Truncation is
+ * on a character budget with a real ellipsis; the full text is one click away
+ * and is never modified by this function.
+ *
+ * Pure and total: any input, including an empty body, produces a string.
+ */
+export function commsPreview(body: string, limit = COMMS_PREVIEW_CHARS): string {
+  if (typeof body !== "string") return "(empty)";
+  for (const raw of body.split("\n")) {
+    const line = raw.replace(LEADING_SYNTAX, "").trim();
+    if (line === "") continue;
+    // Inline emphasis is noise in a 120-character skim line, and stripping the
+    // markers never changes which WORDS appear.
+    const flat = line.replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+    if (flat === "") continue;
+    return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+  }
+  return "(empty)";
+}
+
 /* ── The header line ──────────────────────────────────────────────────────── */
+
+/** What the caller knows about a peer run, beyond its role. Supplied from the
+ *  team panel's already-polled cache; never fetched by this module. */
+export interface PeerFacts {
+  role: string | null;
+  /** The worker's task title — "Fix cycle 1", "Phase 1 gating review". This is
+   *  the NAME a human would use for that agent, and round 1871 puts it in the
+   *  card header in place of eight hex characters. */
+  description: string | null;
+}
 
 export interface CommsHeader {
   /** `◂` received, `▸` sent. A glyph, not an icon dependency (NFU8). */
@@ -254,6 +307,12 @@ export interface CommsHeader {
   role: string;
   /** 8-char peer run id, or the em dash. */
   peer: string;
+  /** WHO this is, in as many words as anybody could supply: the peer's task
+   *  title when the team cache knows it, else its role, else its short id,
+   *  else the actor word. Round 1871 — the collapsed card leads with this, and
+   *  `peer` moves to the tooltip, because "c8bc5ffa · unknown role" is not a
+   *  name and Konrad said so. Never empty. */
+  name: string;
   /** Set when this line is a relay addressed at a sub-agent. */
   subagent: string | null;
   identity: RoleIdentity;
@@ -272,13 +331,28 @@ export interface CommsHeader {
  */
 export function commsHeader(
   facts: CommsFacts,
-  resolvedRole?: string | null,
+  resolved?: string | PeerFacts | null,
 ): CommsHeader {
-  const role = facts.peerRole ?? resolvedRole ?? null;
+  /* The fallback used to be a bare role string and several callers still pass
+   * one. Both shapes are accepted rather than forcing a migration on a check
+   * script that only ever knew about roles. */
+  const peerFacts: PeerFacts =
+    typeof resolved === "string"
+      ? { role: resolved, description: null }
+      : (resolved ?? { role: null, description: null });
+  const role = facts.peerRole ?? peerFacts.role ?? null;
   const identity = roleIdentity(facts.from === "konrad" ? null : role);
   const arrow = facts.direction === "in" ? "◂" : "▸";
   const preposition = facts.direction === "in" ? "from" : "to";
   const peer = shortRunId(facts.peerRunId);
+  /* Best available name, in descending order of how much it tells a reader.
+   * Konrad is named by the one word that is always right for him. */
+  const name =
+    facts.from === "konrad"
+      ? "konrad"
+      : (peerFacts.description ??
+        (identity.role !== null ? identity.label : null) ??
+        (peer !== "—" ? peer : facts.from));
   /* "◂ from worker · builder · c8bc5ffa" — actor, role, id, in that order,
    * because that is the order the eye needs them: what it is, what it does,
    * which one it was. Konrad gets no role segment; he is not an agent. */
@@ -296,6 +370,7 @@ export function commsHeader(
     actor: facts.from,
     role: identity.label,
     peer,
+    name,
     subagent: facts.subagentId,
     identity,
     summary,
