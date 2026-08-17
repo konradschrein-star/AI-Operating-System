@@ -1,7 +1,8 @@
 # notification-gap.md — what agent→operator traffic reaches `runs.thread`, and what dies
 
 **Deliverable for R19** (`docs/plan/operator-visibility/01-requirements.md`), gated by
-`03-quality.md` phase 4. Written round 1350.
+`docs/plan/operator-visibility/03-quality.md` phase 4. Written round 1350; §1 re-pinned
+and §3's client claim corrected in round 1353, from round 1352's review.
 
 **Status: OPEN — but far narrower than the corpus claimed.**
 Two of the three agent→operator paths are fully covered today. One is not. The blanket
@@ -18,26 +19,74 @@ commit as this doc. What remains open is one specific payload: the harness's
 |---|---|
 | Quotes read at | `fc49e35b1c72d20f7b2221666bcfd4c689eb5850` |
 | Re-verified at | `b02aa6268777d0c42cd8e0ba01a6754c9213f967` — HEAD moved mid-task (two sibling commits in this shared worktree). Every cited range is **identical at both SHAs**; `git diff fc49e35 b02aa62` touches one cited file, `tool-summary.ts`, but not its cited lines 384–386. |
+| **Re-pinned at** | **`852b089ce67b212d8a0503ff711ae9a8ce9e4f8e`** (round 1353). Six pins were wrong — four rotted, two transposed; see the correction table below. **Every pin in this document was re-resolved against the tree, not only the ones the review named**, and all are current at this SHA. |
 | Branch | `project/8ea0cc08` |
-| Worktree state of quoted files | all nine cited files **clean** at `b02aa62` (`git status --porcelain` empty for each) |
+| Worktree state of quoted files | all nine cited files **clean** at `852b089` (`git status --porcelain` empty for each) |
 | Read-only | every file below was opened read-only; `cc-runner.ts`, `executor.ts`, `run-control-rules.ts` are owned by **engine-v2-research-lane** |
 
-Every quote below is **byte-identical** to its source range, machine-checked by extracting
-each fenced block from this doc and diffing it against `sed -n 'S,Ep' <file>` — 9 of 9
-blocks matched. To detect drift:
+Every quote below is **byte-identical** to its source range. Round 1350 checked that by
+hand; round 1352's reviewer checked it by hand again and found a pin that had rotted
+underneath it. A claim re-verified by hand every round is a claim that will eventually be
+verified by nobody — so from round 1353 **the check is a script**:
 
 ```sh
-git diff b02aa6268777d0c42cd8e0ba01a6754c9213f967 -- \
+node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs
+```
+
+It parses every pinned heading in this file, reads the range out of the working tree and
+diffs. Exit 0 means every quote matches. At `852b089`: **11 of 11 pinned quotes PASS**
+(round 1350's nine, plus §3a's two new `thread-mapping.ts` blocks). An unmapped file name
+is a hard error, and finding zero quotes is a failure, so the script cannot pass vacuously.
+
+The script deliberately does **not** check the SHA — it verifies quotes against the tree
+as it stands. Whether this doc's pins are still *current* is the other half, and that is
+what this command answers:
+
+```sh
+git diff 852b089ce67b212d8a0503ff711ae9a8ce9e4f8e -- \
   forge-control/src/lib/cc-runner.ts \
   forge-control/src/executor.ts \
   forge-control/src/db/runs.ts \
-  forge-control/src/lib/run-control-rules.ts
+  forge-control/src/lib/run-control-rules.ts \
+  forge-control/src/routes/run-control.ts \
+  forge-control-web/app/desktop/chat/AssistantThread.tsx \
+  forge-control-web/app/desktop/chat/thread-mapping.ts \
+  forge-control-web/app/desktop/chat/tool-summary.ts \
+  forge-control-web/app/desktop/chat/subagent-slice.ts
 ```
 
 Non-empty output means the line pins in this doc may be stale — re-derive them with
 `grep -n` before trusting any `file:line` here. Per the standing citation rule
 (`01-requirements.md:5-11`), every quote below is headed by its **stable symbol anchor**
 first and its line pin second; if the pin rots, `grep` the symbol.
+
+**Round 1352's reviewer caught this command watching the wrong half of the corpus, and
+was right.** It listed only the four engine files, so the three *client* files this doc
+cites — `AssistantThread.tsx`, `tool-summary.ts`, `subagent-slice.ts` — could rot
+unwatched, and one of them promptly did: sibling commit `0938385` (browser shots),
+landing in this shared worktree after the doc's own commit `91b0fa7`, inserted two lines
+into `AssistantThread.tsx` above every pin this doc holds on it. The command above now
+covers all nine cited files, not four.
+
+Rather than correct only the three pins the review named, **every pin in this file was
+re-resolved** — which turned up two more the review had not looked at:
+
+| Pin | Was | Now (`852b089`) | Cause |
+|---|---|---|---|
+| `AssistantThread.tsx` `CommsMessage()` | `:147-151` | `:149-153` | `0938385`, +2 lines above |
+| `AssistantThread.tsx` `UserMessage` dispatch | `:233-235` | `:235-237` | same |
+| `AssistantThread.tsx` `AssistantMessage` dispatch | `:277-278` | `:279-281` | same |
+| `tool-summary.ts` "Async agent launched" banner note | `:384-386` | `:406-409` | `852b089`, this round's own `EMPTY_GIST` edit above it |
+| §2c `POST /:id/message` | `:214` | `:149` | **transposed in round 1350** — never right, at any SHA |
+| §2c `toThreadEntry` | `:149` | `:214` | same transposition, the other half |
+| `subagent-slice.ts` the inline-entries fact | `:11-17` | `:11-17` | unchanged |
+
+Two lessons, both mechanical rather than editorial. **A drift command must list every file
+the document cites** — the one file it omitted is the one that moved. And **a rotted pin
+and a wrong pin fail identically for the reader**: the transposed pair had been wrong
+since the day it was written, survived one review, and no `git diff` would ever have
+flagged it. Only re-resolving each pin against its symbol catches that class, which is why
+the verifier script now exists.
 
 **How the previous pins rotted — and the useful thing that falls out of it.** R19 was
 written against `cc-runner.ts:170–188` / `:417–429`. At `b02aa62`, `:170–188` is
@@ -71,7 +120,7 @@ gap it found is real; the sentence it wrote about the gap was not.
 The CLI emits the sub-agent's final report as a `tool_result` block on a `user` event.
 `cc-runner` forwards exactly that block shape:
 
-`cc-runner.ts` — the `evt.type === "user"` branch of the stream-line handler (`:502-514` @ `b02aa62`)
+`cc-runner.ts` — the `evt.type === "user"` branch of the stream-line handler (`:502-514` @ `852b089`)
 ```ts
       } else if (evt.type === "user") {
         const msg = evt.message as { content?: StreamBlock[] } | undefined;
@@ -90,7 +139,7 @@ The CLI emits the sub-agent's final report as a `tool_result` block on a `user` 
 
 `executor.ts` maps that event to a thread entry:
 
-`executor.ts` — the `tool_result` branch of `onEvent` (`:982-986` @ `b02aa62`)
+`executor.ts` — the `tool_result` branch of `onEvent` (`:982-986` @ `852b089`)
 ```ts
     } else if (e.type === "tool_result") {
       const entry = toolResultEntry(e);
@@ -99,7 +148,7 @@ The CLI emits the sub-agent's final report as a `tool_result` block on a `user` 
   };
 ```
 
-`executor.ts` — `toolResultEntry()` (`:800-817` @ `b02aa62`)
+`executor.ts` — `toolResultEntry()` (`:800-817` @ `852b089`)
 ```ts
 function toolResultEntry(e: CcEvent): ThreadEntry {
   let text = e.text ?? "";
@@ -130,7 +179,7 @@ is told. Not part of R19.
 Every stream event a Task sub-agent produces is stamped by the CLI with a top-level
 `parent_tool_use_id`, and `cc-runner` lifts it onto **every** event it emits:
 
-`cc-runner.ts` — the `parentToolUseId` lift (`:459-465` @ `b02aa62`)
+`cc-runner.ts` — the `parentToolUseId` lift (`:459-465` @ `852b089`)
 ```ts
       // parent_tool_use_id equal to the spawning Task tool_use_id. This
       // is the ONLY reliable way to attribute a stream event back to the
@@ -156,8 +205,8 @@ acknowledgement**, not the report. That is established fact in this corpus, from
 independent places:
 
 - `docs/plan/artifacts/phase1/ended-at-is-a-launch-ack.md` — the entire artifact.
-- `forge-control-web/app/desktop/chat/tool-summary.ts:384-386` — *"An async spawn returns
-  the harness's `Async agent launched successfully…` banner"*.
+- `forge-control-web/app/desktop/chat/tool-summary.ts:406-409` (@ `852b089`) — *"An async
+  spawn returns the harness's `Async agent launched successfully…` banner"*.
 
 The real completion is delivered by the harness as content injected into the parent's
 **next user turn**. It is not a `tool_result` block. And `cc-runner`'s `user` handler,
@@ -167,17 +216,17 @@ on the floor, silently.
 
 Even if that branch existed, there is nothing to emit — the event union is closed:
 
-`cc-runner.ts` — the `CcEvent` union (`:234-235` @ `b02aa62`)
+`cc-runner.ts` — the `CcEvent` union (`:234-235` @ `852b089`)
 ```ts
 export interface CcEvent {
   type: "init" | "assistant_text" | "tool_call" | "tool_result";
 ```
 
 And nothing downstream would know what to do with it. `executor.ts`'s `onEvent`
-(`:952-991`) has exactly four branches — `init`, `assistant_text`, `tool_call`,
+(`:952-986` @ `852b089`) has exactly four branches — `init`, `assistant_text`, `tool_call`,
 `tool_result` — and the persisted entry kind is a closed union too:
 
-`db/runs.ts` — `ThreadEntry["kind"]` (`:52` @ `b02aa62`)
+`db/runs.ts` — `ThreadEntry["kind"]` (`:52` @ `852b089`)
 ```ts
   kind?: "text" | "tool_call" | "tool_result" | "heartbeat" | "error" | "comms";
 ```
@@ -199,10 +248,15 @@ no thread entry carries the completion banner. Everything else here stands on co
 This is the path the steward raised as counter-evidence, and the steward was right. It is
 complete, and it is the reason the old blanket claim was wrong.
 
-`forge-control/src/routes/run-control.ts:214` → `commsEntries` → `toThreadEntry`
-(`run-control.ts:149`) → `appendCommsEntry` → `runs.thread`.
+`POST /:id/message` (`run-control.ts:149` @ `852b089`) → `commsEntries` → `toThreadEntry`
+(`run-control.ts:214` @ `852b089`) → `appendCommsEntry` → `runs.thread`.
 
-`routes/run-control.ts` — the `commsEntries(...)` call in `POST /:id/message` (`:259-266` @ `b02aa62`)
+*(Round 1353: these two pins were **transposed** in round 1350's text — it put the route
+at `:214` and `toThreadEntry` at `:149`, which is exactly backwards. Not caught by round
+1352's review, caught by re-resolving every pin in this file rather than only the ones the
+review named. Both numbers were right; the labels on them were not.)*
+
+`routes/run-control.ts` — the `commsEntries(...)` call in `POST /:id/message` (`:259-266` @ `852b089`)
 ```ts
   const { receiver, echo } = commsEntries({
     text,
@@ -214,7 +268,7 @@ complete, and it is the reason the old blanket claim was wrong.
     targetRole: typeof run.metadata.role === "string" ? run.metadata.role : null,
 ```
 
-`run-control-rules.ts` — the `receiver` literal in `commsEntries()` (`:491-498` @ `b02aa62`)
+`run-control-rules.ts` — the `receiver` literal in `commsEntries()` (`:491-498` @ `852b089`)
 ```ts
   const receiver: CommsThreadEntry = {
     // role "user" so BOTH prompt builders deliver it unchanged —
@@ -231,7 +285,7 @@ asserts the receiver/echo role+kind contract and the `[message from …]` prefix
 
 Rendered client-side as a direction-marked card, not an anonymous user bubble:
 
-`AssistantThread.tsx` — `CommsMessage()` (`:147-151` @ `b02aa62`)
+`AssistantThread.tsx` — `CommsMessage()` (`:149-153` @ `852b089`)
 ```tsx
 function CommsMessage({ facts }: { facts: CommsFacts }) {
   const peers = useContext(PeerRolesContext);
@@ -240,8 +294,8 @@ function CommsMessage({ facts }: { facts: CommsFacts }) {
   const { identity } = header;
 ```
 
-dispatched from `AssistantThread.tsx:233-235` (`UserMessage`) and `:277-278`
-(`AssistantMessage`, for the outbound echo), with identity/colour resolved in
+dispatched from `AssistantThread.tsx:235-237` (`UserMessage`) and `:279-281`
+(`AssistantMessage`, for the outbound echo) @ `852b089`, with identity/colour resolved in
 `comms-identity.ts`.
 
 **Consequence:** every worker report, manager instruction and Konrad message that crosses
@@ -261,15 +315,106 @@ Small, and entirely inside files this project may not touch. Four edits:
    event (carrying `parentToolUseId`, already in scope at `:462`).
 3. **`db/runs.ts:52`** — add `| "task_notification"` to `ThreadEntry["kind"]`. No
    migration: `thread` is `jsonb` (same free ride `"comms"` took, C21).
-4. **`executor.ts`** — one more branch in `onEvent` (`:952-991`) → an entry builder beside
+4. **`executor.ts`** — one more branch in `onEvent` (`:952-986` @ `852b089`) → an entry builder beside
    `toolResultEntry` (`:800-817`).
 
-The client needs **nothing**: phase 4's renderers were built so an unrecognised `kind`
-falls through to a visible block rather than being dropped (R20). A `task_notification`
-entry would show up the day the engine emits one.
+### 3a. The client — what round 1352 got wrong, and what round 1353 did about it
+
+**The sentence that used to stand here was false, and it was the one sentence of this
+document the receiving lane would act on.** It read: *"The client needs **nothing**:
+phase 4's renderers were built so an unrecognised `kind` falls through to a visible block
+rather than being dropped (R20). A `task_notification` entry would show up the day the
+engine emits one."*
+
+R20 (`01-requirements.md:112-113`) did **not** hold on the `role: "tool"` path. Item 4
+above says to build the entry beside `toolResultEntry`, and `toolResultEntry` returns
+`role: "tool"` (`executor.ts:806`). At `b02aa62` the mapper's final branch for that role
+was an unconditional `silent++` with the comment *"the walk has never rendered these and
+this round does not change that"* — correct about the kinds it named, wrong as a
+catch-all. An implementer following item 4 verbatim would have written the notification
+into `runs.thread`, watched it disappear, and had this document's word that no client
+change was needed. Round 1352's reviewer probed it and got `rendered=false, silent=1`.
+
+**The fix taken was (a): the client was changed, so that the claim is now true.** It is
+this project's own file, so weakening the recipe was the wrong trade — a spec that says
+"and also edit the client" is a spec with a second thing to get wrong.
+
+`thread-mapping.ts` — `SILENT_TOOL_KINDS` (`:158-165` @ `852b089`)
+```ts
+const SILENT_TOOL_KINDS: ReadonlySet<string> = new Set([
+  "heartbeat",
+  "continue_marker",
+  "error",
+  "stuck_notice",
+  "text",
+  "",
+]);
+```
+
+`thread-mapping.ts` — the walk's final branch (`:375-380` @ `852b089`)
+```ts
+    if (SILENT_TOOL_KINDS.has(e.kind ?? "")) {
+      silent++;
+      return;
+    }
+    if (content.trim()) openParts.push({ type: "text", text: content });
+    else silent++;
+```
+
+The distinction is **deliberate-vs-unknown**, not known-vs-all. A kind on the whitelist is
+skipped on purpose and still counted into `coverage.silent`; anything the client has never
+heard of degrades to a visible text part, exactly as an orphaned `tool_result` already
+does. Every kind on the wire today is on the whitelist, so output on all existing threads
+is byte-identical — `check-thread-mapping.ts`'s "the default did not move" table and the
+285-entry real-fixture conservation table both still pass.
+
+**Evidence, not assertion.** `scripts/checks/check-thread-mapping.ts` gained a section
+"R20 ON THE TOOL ROLE", run with
+`cd forge-control-web && ../forge-control/node_modules/.bin/tsx ../scripts/checks/check-thread-mapping.ts`:
+
+```
+── R20 ON THE TOOL ROLE: an UNKNOWN kind renders (round 1353) ─
+PASS  an unknown kind produces one assistant message
+PASS  …carrying its payload verbatim
+PASS  …and is NOT counted silent
+PASS  …conservation holds
+PASS  …and for kind "agent_completed" too
+PASS  …and for kind "some_kind_nobody_has_written_yet" too
+PASS  an unknown kind with no content is silent — never a blank bubble
+PASS  …and produces no message
+PASS  deliberate silence kept: tool/heartbeat renders nothing
+PASS  deliberate silence kept: tool/continue_marker renders nothing
+PASS  deliberate silence kept: tool/error renders nothing
+PASS  deliberate silence kept: tool/stuck_notice renders nothing
+PASS  deliberate silence kept: tool/text renders nothing
+PASS  deliberate silence kept: tool/(no kind) renders nothing
+```
+
+The test builds its `task_notification` entry with a **cast**, deliberately, because the
+client's `ThreadEntry["kind"]` union does *not* contain it and must not have to: the
+engine lane widens `db/runs.ts:52`, and the client renders the payload with no
+coordinated type change on this side. That is the only thing "the client needs nothing"
+can honestly mean, and it is now executable rather than asserted.
+
+**So, for the receiving lane, precisely:**
+
+- The four edits above are the whole fix. **No fifth edit.**
+- The entry may carry `role: "tool"` — `toolResultEntry`'s shape, item 4's natural
+  reading — and it will render. It will render on `assistant`, `system` and `user` too.
+- It renders as a **plain text part inside the assistant turn**, carrying `content`
+  verbatim. It does *not* get the collapsible tool-block treatment: that is reserved for
+  `kind: "tool_call"` / `"tool_result"` pairs, which need a `meta.tool_use_id` to bind on.
+  If the collapsible block is what you want, emit the notification in that shape instead —
+  a `tool_result` bound to the spawning Agent call's `tool_use_id` would attach to the
+  existing Agent row and read as "this is how that spawn ended", which is arguably the
+  better design. Either shape works; **only the second is collapsible.** Say which you
+  chose in the engine PR.
+- `content` must be non-empty. An entry with blank content is counted `silent` on purpose —
+  the client will not draw an empty bubble.
 
 **Ownership: `engine-v2-research-lane`.** All four files are theirs this cycle. This
-project deliberately changed none of them.
+project deliberately changed none of them; the one file it did change,
+`thread-mapping.ts`, is its own.
 
 ---
 
@@ -291,6 +436,13 @@ Per the standing rule — never silently drop, never quietly pass:
   list, carried the same rotted pin and the same over-broad claim; it was missed by a
   first grep pass that truncated its output, and caught by re-running it. Recorded here
   because a gate that greps for the old pin should find the reason, not a survivor.)
+- **R20 was cited for something it did not cover, and the gap is closed rather than
+  reworded** (round 1353, from round 1352's review). §3's old closing sentence asserted
+  R20 held for `role: "tool"`; `thread-mapping.ts`'s catch-all `silent++` was an explicit,
+  commented exception to it, and the reviewer's probe returned `rendered=false`. The
+  citation is not softened and the recipe is not lengthened: the client was changed so
+  that R20 is true on that path, with an executable table as the evidence (§3a). R20
+  itself needs no amendment — it always said what it should; the code did not honour it.
 - **Two stale references knowingly left in place**, both dated evidence artifacts outside
   this task's writable set. Rewriting evidence after the fact is worse than leaving it
   stale; noted here so the next reader who greps `417-429` finds the explanation rather
