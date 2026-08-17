@@ -62,6 +62,7 @@ for (const tool of [
   "Glob",
   "Task",
   "Agent",
+  "SendMessage",
   "Skill",
   "WebFetch",
   "WebSearch",
@@ -248,6 +249,126 @@ checkSummary(
   summarizeTool("Agent", j({ subagent_type: "builder", description: "601A" }), null, false),
   { label: "spawn", gist: "builder · 601A", outcome: "running…", tone: "pending" },
 );
+
+console.log("\n── SendMessage (operator ↔ agent) ──────────────────────────");
+{
+  // Verbatim payload from run a86cf7b3-9283-4315-a389-ab60bd2ea4df
+  // (2026-08-04, entry sending to agent ac297fd2f48689773), read read-only
+  // from the live DB — the CLI duplicates `to`/`recipient` and
+  // `message`/`content` on every real call, exactly as the row expects.
+  const CASE1_ARGS_TEXT =
+    "{\"to\":\"ac297fd2f48689773\",\"summary\":\"Resume RAG recovery — verify partial work first\",\"message\":\"You were cut off mid-task when the operator process restarted. Resume the RAG index recovery. IMPORTANT: first re-verify actual current state before redoing anything — check whether your credential fixes to km-indexer.js/km-server.js are already on disk, whether knowledge-indexer-watch was restarted (pm2 shows uptime 3 days, so probably NOT), and whether any index changes landed. Then continue from wherever reality says you are, following the same instructions as before: env-based DB creds via ecosystem config, retry-on-failure for bulk indexing, watermark precision fix, .excalidraw.md exclusion + oversize chunk splitting, targeted purge of derived noise rows (no DROP/TRUNCATE, record before/after counts), restart knowledge-indexer-watch (NEVER forge-executor/forge-control), full reindex gated on sidecar health, then the verification battery (index coverage vs vault count, 3 previously-failed fact queries against /api/memory/search, watcher stable 2+ min, watermark no longer re-processing). Write the work log to /opt/ai-os/workspace/rework-2026-08-04/03b-rag-recovery-log.md and append a dated section to the vault note \\\"AI OS/Operator Log.md\\\". Return: what changed, verification results, anything still broken.\",\"type\":\"message\",\"recipient\":\"ac297fd2f48689773\",\"content\":\"You were cut off mid-task when the operator proce…\"}";
+  const CASE1_RESULT =
+    "{\"success\":true,\"message\":\"Agent \\\"ac297fd2f48689773\\\" had no active task; resumed from transcript in the background with your message. You'll be notified when it finishes. Output: /tmp/claude-0/-opt-ai-os-workspace/61d1935f-0407-40c3-8ae4-a3d68ce41302/tasks/ac297fd2f48689773.output\",\"resumedAgentId\":\"ac297fd2f48689773\",\"pin\":{\"id\":\"ac297fd2f48689773\",\"name\":\"ac297fd2f48689773\",\"ref\":\"a7c2e0\"}}";
+
+  checkSummary(
+    "(1) verbatim to/message payload from a86cf7b3",
+    summarizeTool("SendMessage", CASE1_ARGS_TEXT, CASE1_RESULT, false),
+    {
+      label: "send",
+      gist: "-> ac297fd2f48689773 · You were cut off mid-task when the operator proc…",
+      outcome:
+        '{"success":true,"message":"Agent \\"ac297fd2f48689773\\" had no a…',
+      tone: "ok",
+    },
+  );
+
+  checkSummary(
+    "(2) recipient/content variant",
+    summarizeTool(
+      "SendMessage",
+      j({ recipient: "ae1df398", content: "Resume the build please" }),
+      "Understood, resuming now.",
+      false,
+    ),
+    {
+      label: "send",
+      gist: "-> ae1df398 · Resume the build please",
+      outcome: "Understood, resuming now.",
+      tone: "ok",
+    },
+  );
+
+  checkSummary(
+    "(3) both duplicate pairs present — prefers to/message",
+    summarizeTool(
+      "SendMessage",
+      j({
+        to: "PRIMARY",
+        recipient: "DUPLICATE",
+        message: "primary message body",
+        content: "duplicate content body",
+      }),
+      "ack",
+      false,
+    ),
+    { label: "send", gist: "-> PRIMARY · primary message body", outcome: "ack", tone: "ok" },
+  );
+
+  checkSummary(
+    "(4) missing recipient — gist is just the message",
+    summarizeTool("SendMessage", j({ message: "just a body, no recipient" }), "ok", false),
+    { label: "send", gist: "just a body, no recipient", outcome: "ok", tone: "ok" },
+  );
+
+  checkSummary(
+    "(5) missing body — gist is just the recipient",
+    summarizeTool("SendMessage", j({ to: "ae1df398" }), "ok", false),
+    { label: "send", gist: "-> ae1df398", outcome: "ok", tone: "ok" },
+  );
+
+  {
+    // A real-shaped payload clipped mid-string at ~1500 chars, same as the
+    // executor does for any large tool_call: salvage recovers `to` (a
+    // leading scalar) but the huge `message` value is cut before its
+    // closing quote, so it is never guessed at (same contract as write/edit).
+    const longPayload = j({
+      to: "ac297fd2f48689773",
+      summary: "x".repeat(50),
+      message: CASE1_ARGS_TEXT.repeat(3),
+    });
+    const truncated = longPayload.slice(0, 1500);
+    checkSummary(
+      "(6) args JSON truncated mid-string at ~1500 chars — still renders",
+      summarizeTool("SendMessage", truncated, "ok", false),
+      { label: "send", gist: "-> ac297fd2f48689773", outcome: "ok", tone: "ok" },
+    );
+  }
+
+  checkSummary(
+    "(7) no tool_result yet — pending, not an error",
+    summarizeTool("SendMessage", j({ to: "x", message: "hi" }), null, false),
+    { label: "send", gist: "-> x · hi", outcome: "running…", tone: "pending" },
+  );
+
+  checkSummary(
+    "(8) is_error result — tone error",
+    summarizeTool("SendMessage", j({ to: "x", message: "hi" }), "Agent not found: x", true),
+    { label: "send", gist: "-> x · hi", outcome: "Agent not found: x", tone: "error" },
+  );
+
+  checkSummary(
+    "(9) a 4000-char message clips the gist, never unbounded",
+    summarizeTool("SendMessage", j({ to: "agent1", message: "z".repeat(4000) }), "reply", false),
+    {
+      label: "send",
+      gist: `-> agent1 · ${"z".repeat(59)}…`,
+      outcome: "reply",
+      tone: "ok",
+    },
+  );
+
+  checkSummary(
+    "both recipient and body missing falls back to the raw payload",
+    summarizeTool("SendMessage", j({ summary: "no to, no message here" }), "ok", false),
+    {
+      label: "send",
+      gist: '{"summary":"no to, no message here"}',
+      outcome: "ok",
+      tone: "ok",
+    },
+  );
+}
 
 console.log("\n── Skill / WebFetch / WebSearch / TodoWrite ────────────────");
 checkSummary(

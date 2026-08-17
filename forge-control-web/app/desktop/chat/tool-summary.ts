@@ -406,6 +406,34 @@ const spawn: Formatter = (input) => {
   };
 };
 
+/**
+ * SendMessage — the operator's own outbound line to a sub-agent or fellow
+ * session. The CLI duplicates both ends of the call (`to`/`recipient` name
+ * the recipient, `message`/`content` carry the body); prefer the primary
+ * name and fall back to the duplicate so a payload carrying only one pair
+ * still renders.
+ */
+const sendMessage: Formatter = (input) => {
+  const to = str(input.args, "to") ?? str(input.args, "recipient");
+  const message = str(input.args, "message") ?? str(input.args, "content");
+  let gist: string;
+  if (to === null && message === null) {
+    gist = rawGist(input);
+  } else {
+    const raw =
+      to === null ? (message ?? "") : message === null ? `-> ${to}` : `-> ${to} · ${message}`;
+    gist = clip(collapse(raw), GIST_MAX);
+  }
+  return {
+    label: "send",
+    gist,
+    outcome:
+      input.result === null || input.result.trim() === ""
+        ? "no reply"
+        : clip(collapse(firstNonEmptyLine(input.result)), OUTCOME_MAX),
+  };
+};
+
 const skill: Formatter = (input) => {
   const name = str(input.args, "skill") ?? str(input.args, "name");
   const skillArgs = str(input.args, "args");
@@ -497,6 +525,7 @@ export const TOOL_FORMATTERS: Record<string, Formatter> = {
   Glob: glob,
   Task: spawn,
   Agent: spawn,
+  SendMessage: sendMessage,
   Skill: skill,
   WebFetch: webFetch,
   WebSearch: webSearch,
