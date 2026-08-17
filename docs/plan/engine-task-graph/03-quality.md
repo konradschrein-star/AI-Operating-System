@@ -315,6 +315,17 @@ project **and lose the work**. Prove that cannot happen or find that it can.
 Delete a workstream worktree from disk mid-run. Provision the same workstream
 from two processes at once. Merge with a conflict and check nothing resolved it.
 
+**The hand-renumber attack** (`02-architecture.md` §2.3.1, observed live during
+round 0): with a fix chain already written for a group, change that group's
+`round` by hand in the database and force a re-consolidation. Does the replay
+compute a different `chain_key`, miss its own chain, and insert a second one?
+`grep -n "SET round"` over the tree returns nothing — **no engine path writes
+`round` after insert** — so this is reachable only by an operator with `psql`,
+and an operator did exactly that to this project's own scout task at ~03:31 on
+2026-08-17. The hazard predates this project and this project does not claim to
+fix it. **Report the answer either way**; do not silently repair it in phase 4,
+and do not report PASS on the grounds that it is pre-existing.
+
 Both red-team briefs must say explicitly: **your job is to find the case where
 this reports success and is wrong.** A red-team reviewer that returns PASS
 without having attempted a named attack has not done the job, and its own

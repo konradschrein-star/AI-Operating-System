@@ -240,10 +240,62 @@ Therefore every task's `round` is decided once, at insert, from values that can
 no longer change. It is safe inside `project_tasks_identity_idx` and safe as the
 input to `chainKeys()`.
 
-The one way to break this is to add a "re-plan" feature that rewires an existing
-task's dependencies. **Don't.** A re-plan creates new tasks. This is written into
-N7 as a non-goal so a future project has to argue with it rather than discover
-it.
+The one way for the **engine** to break this is a "re-plan" feature that rewires
+an existing task's dependencies. **Don't.** A re-plan creates new tasks. This is
+written into N7 as a non-goal so a future project has to argue with it rather
+than discover it.
+
+#### 2.3.1 The operator with `psql` is outside all three properties — observed
+
+Stability above is a property of the *engine*, not of the *database*. Observed
+during this very planning round, 2026-08-17 ~03:31:
+
+- The scout task `e7548096-a914-473e-9c3c-e0b96e926f04` was created by
+  `POST /api/projects/:id/tasks` at **round 699** — the API answered `201` with
+  that value, and a listing taken immediately afterwards showed `r699`.
+- A listing minutes later showed the same task id at **round 100**.
+- Its `updated_at` is byte-identical to its `created_at`.
+
+What is **proved**: something outside the engine changed `project_tasks.round`,
+and it did not set `updated_at`. `grep -n "SET round" ` over the deployed tree
+at `/opt/forge-ai-os` returns nothing — **no code path in this system writes
+`round` after insert.** What is **not proved**: who. A bare
+`UPDATE project_tasks SET round = 100 WHERE id = …` from a psql prompt matches
+every observation, and hand-renumbering is the exact operator move the design
+spec §1 describes Konrad performing ("renumbering five builders by hand took
+live runs from 1 → 6 instantly"). It is the most likely explanation and it is
+not the only one. Recorded as an observation, not a conclusion.
+
+Three consequences, and they are not symmetric:
+
+1. **`round` is not immutable in practice, only in code.** §2.3's three
+   properties hold against every path the engine has; they hold against nobody
+   with a database client. Any argument in this corpus that leans on stability
+   must lean on it only for engine-written values.
+2. **A hand renumber can already fork a fix chain, today, before this project
+   changes anything.** `chainKeys(round, cycle)` is computed from the round at
+   consolidation time. Renumber a task after its chain exists and a replayed
+   consolidation computes a *different* key, misses its own chain, and inserts a
+   second one — bug 1 of the engine's first night, reachable by hand. This
+   project does not create the hazard and does not fix it; it inherits it. It is
+   added to phase 4's red-team attack list so it is at least *known* rather than
+   discovered at 3am.
+3. **After this project, renumbering stops working, which is the dangerous
+   part.** Today an operator renumbers to buy concurrency and it works
+   instantly. Once `round` no longer gates, the same action has **no scheduling
+   effect at all** — while still silently drifting `round` away from depth,
+   breaking the Kanban's hundreds-block grouping and exposing consequence 2. An
+   operator who reaches for the old lever will find it disconnected and may pull
+   harder.
+
+   Mitigation, and it is deliberately documentation rather than code: this is
+   the *point* of the project — after it lands there is no longer a reason to
+   renumber, because the graph already grants the concurrency the renumbering
+   was buying. Phase 5's prompt work and the phase-8 report both say so
+   explicitly. Enforcing immutability in the database (a trigger, a rule) is
+   **rejected**: it would take away Konrad's own escape hatch on a system he
+   operates by hand at 3am, to defend an invariant the engine already respects.
+   Boring beats clever, and the operator is not the adversary here.
 
 ### 2.4 `write_set`
 

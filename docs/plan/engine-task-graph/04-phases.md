@@ -524,3 +524,52 @@ serialising on it.
 | DoD-4 a cycle cannot be inserted | Phase 3's table + phase 8's live 400 |
 | DoD-5 planners write no round numbers | Phase 5 |
 | DoD-6 deployed via safe-restart, measurement reported | Phase 8 |
+
+---
+
+## 12. Errata — corrections to briefs already seeded
+
+Task briefs are immutable once created (there is no update route, and re-issuing
+a curl answers `409` with the existing row). Corrections therefore live here, and
+**this section overrides any brief it contradicts.**
+
+### E-1 — the phase-7 scout's output path (round 0, 2026-08-17)
+
+The scout task `e7548096-a914-473e-9c3c-e0b96e926f04` was seeded at round 699
+and is now at **round 100** — renumbered out of band, see
+`02-architecture.md` §2.3.1. Two consequences, both citation rot of exactly the
+kind standing rule 1 warns about, in briefs I wrote:
+
+1. **Its own brief and its engine-generated prompt now disagree.** The brief says
+   write to `docs/research/round-699-schedule-metrics.md`. The scout branch of
+   `buildPrompt` in `lib/project-tick.ts` builds the path as
+   `docs/research/round-<task.round>-<task.id first 8>.md`, which is now
+   `docs/research/round-100-e7548096.md`. Either file may appear.
+2. **Phase 7's planner brief cites the 699 path**, which may never exist.
+
+**Correction.** Phase 7's planner must **not** open a hard-coded path. It
+resolves the scout's findings by globbing
+`docs/research/*schedule-metrics*.md` and `docs/research/round-100-e7548096*.md`,
+and by checking the commits of task `e7548096-a914-473e-9c3c-e0b96e926f04`
+directly:
+
+```bash
+ls docs/research/ | grep -Ei 'schedule|metric|e7548096'
+git log --oneline --name-only --all -- 'docs/research/*'
+```
+
+If no such file exists, that is a **finding to report** — phase 7 plans against
+whatever the scout actually committed, or states plainly that the recon is
+missing and plans the instrument conservatively. It does not proceed quietly on
+the assumption that a cited file exists. **A pin you cannot resolve is a finding
+you report, not a footnote you quietly reinterpret** — including when the
+architect wrote the pin.
+
+### E-2 — the scout now runs in phase 1's round
+
+At round 100 the scout runs concurrently with phase 1's planner rather than
+ahead of phase 7. This is **harmless and slightly better**: the scout writes only
+its own file under `docs/research/`, the phase-1 planner writes no files at all
+(it creates tasks), so their write-sets are disjoint — and the recon lands six
+phases before the phase that needs it. No action required. Recorded so a later
+reader does not "fix" it back to 699.
