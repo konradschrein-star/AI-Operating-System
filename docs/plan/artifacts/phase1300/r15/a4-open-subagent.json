@@ -1,0 +1,33 @@
+{
+  "meta": {
+    "round": 1303,
+    "requirement": "R15",
+    "build_sha": "92aeb0ff953efca5f67bc9d6146c5d2db3b95a9b",
+    "base_url": "http://127.0.0.1:7793",
+    "api_url": "http://127.0.0.1:7798",
+    "viewport": "1440x900",
+    "generated_at": "2026-08-17T01:53:07.765Z"
+  },
+  "assertion": "A4/subagent — clicking a [data-team-row] navigates the middle surface to that node",
+  "observable": "AgentChatView renders `data-agent-chat-view` with `data-run-id={frame.runId}` and `data-subagent-id`. ChatSurface.openNode builds the frame: a worker → {runId: node.id}; a sub-agent → {runId: node.parent_id, subagentId: node.id}.",
+  "row_clicked": {
+    "node_id": "toolu_014raMUrJcAiXV61BerokrjN",
+    "kind": "subagent",
+    "role": "Explore",
+    "dom_index": 2
+  },
+  "team_rows_in_dom": 112,
+  "windowing_note": "round 1302 did NOT ship windowing (L3, commit 92aeb0f: it would have removed the keyboard-reachable ✕ from rows outside the slice, which R15 protects). All 112 rows are in the DOM; the row was reached by scrollIntoViewIfNeeded.",
+  "expected_run_id": "3853c154-e07b-4378-9313-2b34f4a33342",
+  "opened_view": {
+    "run_id": "3853c154-e07b-4378-9313-2b34f4a33342",
+    "subagent_id": "toolu_014raMUrJcAiXV61BerokrjN",
+    "depth": "1",
+    "header_text": "← manager chat\nmanager chat › sub-agent toolu_01\nsub-agent\nExplore\n·\nopus-5\n·\nRecon chat Bash block rendering\nround —\nended:\nwriting\n# Recon Report — Desktop chat transcript rendering All paths absolu"
+  },
+  "screenshots": {
+    "light": "a4-open-subagent-light.png",
+    "dark": "a4-open-subagent-dark.png"
+  },
+  "verdict": "PASS — opened run 3853c154-e07b-4378-9313-2b34f4a33342 sliced to sub-agent toolu_014raMUrJcAiXV61BerokrjN"
+}

@@ -175,7 +175,7 @@ construction. The load-bearing evidence is the idle floor and the poll alignment
 |---|---|---|
 | **(a)** zero tasks > 50 ms during the sweep window that the trace attributes to script/hover handling; GC and unrelated poll work called out explicitly if present | **PASS** | Round 1291, 5 interleaved idle/hover pairs per surface, run twice: median attributable long tasks **0 (team run1), 0 (team run2), 0 (rail run1), −1 (rail run2)**. Pooled, sweeping produced fewer long tasks than parking (rail 6 vs 10, team 5 vs 6). Phase 900's two production runs alongside: −1, +1, −1, 0 — a single +1 at 61 ms against an idle floor emitting 50–59 ms tasks unprovoked. The unrelated poll work is called out and named in §2.1: `TEAM_POLL_MS`. No GC population exists to call out. |
 | **(b)** total scripting ms reduced ≥ 50 % vs baseline, if baseline ≥ 120 ms | **NOT VERIFIABLE AS WRITTEN** | **The baseline number does not exist.** No instrument measured scripting ms until round 1291, which ran after the fix — see `docs/plan/perf/baseline.md` §3 for the per-instrument table and the counting command that proves it. A reduction cannot be computed against a baseline that was never captured. See §3.1 for what *is* measured, offered in its place and explicitly not as a pass. |
-| **R15** — no behaviour regression: chat rail still selects on click, shows the ✕ on hover, marks the selected row, updates status dots live; side-panel task list still opens runs | **PARTIAL — one half evidenced, one half OPEN** | See §3.2. |
+| **R15** — no behaviour regression: chat rail still selects on click, shows the ✕ on hover, marks the selected row, updates status dots live; side-panel task list still opens runs | **PASS — CLOSED, round 1303, all four assertions driven on the post-fix build** | See §3.2. Artifacts: `docs/plan/artifacts/phase1300/r15/` (`README.md` indexes them). |
 | **Honesty rule** — no cadence slowing to pass the gate | **PASS** | §3.3. |
 | **Honesty rule** — no hover affordance removed to pass (the ✕ must survive, R15) | **PASS** | §3.3. |
 | **Honesty rule** — traces committed raw | **PASS, with a caveat about what "trace" means here** | §3.3. |
@@ -227,7 +227,27 @@ counterpart to be compared against.
 
 ### 3.2 R15 — no behaviour regression
 
-**Evidenced (the affordance survived the perf fix):**
+**CLOSED, round 1303.** All four assertions this section previously marked OPEN
+were driven in a real browser against the **post-fix build**
+(`92aeb0ff953efca5f67bc9d6146c5d2db3b95a9b` — worktree HEAD after round 1302),
+one committed artifact per assertion, every screenshot in both themes, viewport
+1440×900. Round 1303 changed no application code. The harness and its index live
+in `docs/plan/artifacts/phase1300/r15/` (`README.md`, `r15-clickthrough.cjs`).
+
+| Assertion (`01-requirements.md`, requirement **R15**) | Verdict | Evidence |
+|---|---|---|
+| row click **SELECTS** | **PASS** | `phase1300/r15/a1-select.json` — the open chat moved `bfd1283a…` → `e178d084…`, observed on the two requests keyed on `selId` (`GET /api/proxy/chat/:id/team`, which `SidePanel` fires for `chatId={selId}`, and the `["chat","run",selId]` detail fetch). Screenshots `a1-select-{light,dark}.png`. |
+| the selected row is **MARKED** | **PASS** | `phase1300/r15/a2-marked.json` — computed styles before/after on every row. Clicked row: `border-left-color` `rgba(0,0,0,0)` → `rgb(87,160,107)`, background → `rgb(16,16,19)` (`tokens.selectedBg`), title `rgb(202,202,208)` (`textLabel`) → `rgb(237,237,238)` (`text`). Marked rows `[0]` → `[1]`: **exactly one**, and it is the clicked row. A transparent border is still 2 px wide, so the check requires the border to be *painted*. Screenshots `a2-marked-{light,dark}.png`. |
+| status dots are **LIVE** | **PASS** | `phase1300/r15/a3-live-transition.json` — a **real** transition, sampled at 2 s: row 0 `completed → running` at +28.1 s (dot `rgb(87,160,107)` → `rgb(91,141,239)`, `animation: none` → **`pulse`**) and back at +39.5 s. Colour tracked the status text in every sample; no settled row ever pulsed. The transition was produced by posting round 1303's required manager report through the app's own `POST /api/runs/:id/message` — **nothing was written to the `runs` table by hand**. `a3-dots.json` holds the static pass (7 rail rows, all settled, 3 rail polls in a 23 s window) and the 112-row side-panel corroboration of the running/settled split. Screenshots `a3-live-running-{light,dark}.png`, `a3-dots-{light,dark}.png`. |
+| the side panel **OPENS the run** — worker path | **PASS** | `phase1300/r15/a4-open-worker.json` — clicking `[data-team-row][data-kind="worker"]` navigated the middle surface to `data-agent-chat-view` with `data-run-id=3853c154…`, `data-subagent-id=""`. Screenshots `a4-open-worker-{light,dark}.png`. |
+| …and the **sub-agent** path | **PASS** | `phase1300/r15/a4-open-subagent.json` — the other branch of `onOpenNode`: a sub-agent's id is a `tool_use_id`, so it resolves to its parent's run *sliced*. Opened `data-run-id=3853c154…`, `data-subagent-id=toolu_014raMUrJcAiXV61BerokrjN`. Screenshots `a4-open-subagent-{light,dark}.png`. |
+
+**The windowing regression the brief flagged does not exist:** round 1302 did not
+ship windowing (commit `92aeb0f`, L3 — it would have removed the keyboard-reachable
+✕ from every row outside the visible slice, which R15 protects). All 112 team rows
+are in the DOM; the A4 artifacts record `team_rows_in_dom`.
+
+**Already evidenced before round 1303 (the affordance survived the perf fix):**
 
 | Claim | Evidence |
 |---|---|
@@ -237,15 +257,32 @@ counterpart to be compared against.
 | team-panel controls are inert until deliberately used | `docs/plan/artifacts/phase500/control-inert.json` — `verdict: "PASS"` |
 | dismissal persists | `docs/plan/artifacts/phase500/dismiss-persist.json` — `verdict: "PASS"` |
 
-**OPEN for the reviewer / phase 1300:** the *full* R15 click-through as
-`01-requirements.md:75` words it — "selects on click, marks selected row, updates
-status dots live; side-panel task list still opens runs" — has **no single
-committed artifact in this corpus that exercises all four in one pass**. The pieces
-above cover the ✕ affordance and the panel controls; they do not cover selection
+**What was OPEN until round 1303, kept for history:** the *full* R15 click-through
+as `01-requirements.md`, requirement **R15**, words it — "selects on click, marks
+selected row, updates status dots live; side-panel task list still opens runs" —
+had **no committed artifact in this corpus that exercised it**. The five rows above
+cover the ✕ affordance and the panel controls; they never covered selection
 marking, live status dots, or the side-panel task list opening runs.
-`docs/plan/operator-visibility/artifacts/phase1300/scope-ruling.md` §5 already
-lists "Re-verify R15 click-through" as something phase 1300 MAY do. **This document
-marks it OPEN rather than claiming it.**
+`docs/plan/operator-visibility/artifacts/phase1300/scope-ruling.md` §5 listed
+"Re-verify R15 click-through" as something phase 1300 MAY do; round 1303 did it,
+and the table at the top of this section is the result.
+
+> **Citation convention, adopted round 1303 — cite by identity, not by position.**
+> The paragraph above used to read `01-requirements.md:75`. Round 1301 inserted the
+> clause-(b)-retirement cross-reference under R14 and R15's heading moved to :76,
+> so a citation written that same day was already wrong. Requirements are cited by
+> their id ("`01-requirements.md`, requirement **R15**") and sections by heading
+> from here on. Line numbers are for *code*, where a commit SHA pins them. Convert
+> what you touch; do not sweep the corpus.
+
+**Two statements elsewhere in this file are now stale and round 1303 was not
+permitted to fix them** — same situation §6.3 already records for a different line,
+and the same remedy: name them here rather than reach outside the allowed edit.
+(i) §5 item 3, "R15's full click-through is unverified in one pass", is false as of
+this round — §3.2 above is that pass. (ii) §6.1's path list predates
+`docs/plan/artifacts/phase1300/r15/`; the six paths this section newly cites all
+resolve, verified with §6.1's own extraction loop, but they are not yet in its
+table. Whoever next holds §5 and §6 should close both.
 
 ### 3.3 The honesty rules, with the greps that prove them
 

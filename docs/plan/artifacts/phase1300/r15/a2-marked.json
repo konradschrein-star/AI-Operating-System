@@ -1,0 +1,181 @@
+{
+  "meta": {
+    "round": 1303,
+    "requirement": "R15",
+    "build_sha": "92aeb0ff953efca5f67bc9d6146c5d2db3b95a9b",
+    "base_url": "http://127.0.0.1:7793",
+    "api_url": "http://127.0.0.1:7798",
+    "viewport": "1440x900",
+    "generated_at": "2026-08-17T01:53:07.765Z"
+  },
+  "assertion": "A2 — the clicked row gains the selection marking, and exactly one row in the rail carries it",
+  "marking_under_test": "ChatSurface.tsx ChatListItem: borderLeft `2px solid <status colour>` when selected (transparent otherwise), background tokens.selectedBg, title colour tokens.text when selected vs tokens.textLabel when not. Read as COMPUTED styles.",
+  "marked_row_indexes_before": [
+    0
+  ],
+  "marked_row_indexes_after": [
+    1
+  ],
+  "clicked_row_index": 1,
+  "clicked_row_before": {
+    "index": 1,
+    "status_text": "completed",
+    "status_text_color": "rgb(87, 160, 107)",
+    "dot_background": "rgb(87, 160, 107)",
+    "dot_animation_name": "none",
+    "dot_width": "7px",
+    "border_left_width": "2px",
+    "border_left_style": "solid",
+    "border_left_color": "rgba(0, 0, 0, 0)",
+    "background_color": "rgba(0, 0, 0, 0)",
+    "title_text": "190 ms is ok",
+    "title_color": "rgb(202, 202, 208)"
+  },
+  "clicked_row_after": {
+    "index": 1,
+    "status_text": "completed",
+    "status_text_color": "rgb(87, 160, 107)",
+    "dot_background": "rgb(87, 160, 107)",
+    "dot_animation_name": "none",
+    "dot_width": "7px",
+    "border_left_width": "2px",
+    "border_left_style": "solid",
+    "border_left_color": "rgb(87, 160, 107)",
+    "background_color": "rgb(16, 16, 19)",
+    "title_text": "190 ms is ok",
+    "title_color": "rgb(237, 237, 238)"
+  },
+  "previously_marked_row_before": {
+    "index": 0,
+    "status_text": "completed",
+    "status_text_color": "rgb(87, 160, 107)",
+    "dot_background": "rgb(87, 160, 107)",
+    "dot_animation_name": "none",
+    "dot_width": "7px",
+    "border_left_width": "2px",
+    "border_left_style": "solid",
+    "border_left_color": "rgb(87, 160, 107)",
+    "background_color": "rgb(16, 16, 19)",
+    "title_text": "Okay when I click the file section, things still",
+    "title_color": "rgb(237, 237, 238)"
+  },
+  "previously_marked_row_after": {
+    "index": 0,
+    "status_text": "completed",
+    "status_text_color": "rgb(87, 160, 107)",
+    "dot_background": "rgb(87, 160, 107)",
+    "dot_animation_name": "none",
+    "dot_width": "7px",
+    "border_left_width": "2px",
+    "border_left_style": "solid",
+    "border_left_color": "rgba(0, 0, 0, 0)",
+    "background_color": "rgba(0, 0, 0, 0)",
+    "title_text": "Okay when I click the file section, things still",
+    "title_color": "rgb(202, 202, 208)"
+  },
+  "all_rows_after": [
+    {
+      "index": 0,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgba(0, 0, 0, 0)",
+      "background_color": "rgba(0, 0, 0, 0)",
+      "title_text": "Okay when I click the file section, things still",
+      "title_color": "rgb(202, 202, 208)"
+    },
+    {
+      "index": 1,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgb(87, 160, 107)",
+      "background_color": "rgb(16, 16, 19)",
+      "title_text": "190 ms is ok",
+      "title_color": "rgb(237, 237, 238)"
+    },
+    {
+      "index": 2,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgba(0, 0, 0, 0)",
+      "background_color": "rgba(0, 0, 0, 0)",
+      "title_text": "let's make the AI operating system into a more c",
+      "title_color": "rgb(202, 202, 208)"
+    },
+    {
+      "index": 3,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgba(0, 0, 0, 0)",
+      "background_color": "rgba(0, 0, 0, 0)",
+      "title_text": "Execute AI OS/Specs/CRM Integration Plan (Twenty",
+      "title_color": "rgb(202, 202, 208)"
+    },
+    {
+      "index": 4,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgba(0, 0, 0, 0)",
+      "background_color": "rgba(0, 0, 0, 0)",
+      "title_text": "Okay this session is very important as I want to",
+      "title_color": "rgb(202, 202, 208)"
+    },
+    {
+      "index": 5,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgba(0, 0, 0, 0)",
+      "background_color": "rgba(0, 0, 0, 0)",
+      "title_text": "Really quick, where are all the videos from reel",
+      "title_color": "rgb(202, 202, 208)"
+    },
+    {
+      "index": 6,
+      "status_text": "completed",
+      "status_text_color": "rgb(87, 160, 107)",
+      "dot_background": "rgb(87, 160, 107)",
+      "dot_animation_name": "none",
+      "dot_width": "7px",
+      "border_left_width": "2px",
+      "border_left_style": "solid",
+      "border_left_color": "rgba(0, 0, 0, 0)",
+      "background_color": "rgba(0, 0, 0, 0)",
+      "title_text": "Directory",
+      "title_color": "rgb(202, 202, 208)"
+    }
+  ],
+  "screenshots": {
+    "light": "a2-marked-light.png",
+    "dark": "a2-marked-dark.png"
+  },
+  "verdict": "PASS — marking moved to the clicked row and exactly one row carries it"
+}
