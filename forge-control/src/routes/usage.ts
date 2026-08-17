@@ -17,6 +17,16 @@
 
 import { Hono } from "hono";
 import { readFile } from "node:fs/promises";
+import pg from "pg";
+import {
+  ATTRIBUTION,
+  DEFAULT_EUR_PER_USD,
+  RateValidationError,
+  getRate,
+  setRate,
+  usdToEur,
+  type Querier,
+} from "../lib/usage-sampler.ts";
 
 const r = new Hono();
 
@@ -168,6 +178,196 @@ r.get("/quota", async (c) => {
     console.error("[usage/quota]", msg);
     if (cache) return c.json({ ...cache, cached: true, error: msg });
     return c.json({ error: msg }, 502);
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Usage series — token + shadow-cost history.
+ *
+ *   GET /api/usage/series   → hourly (24h), daily (30d), weekly (~12w)
+ *   GET /api/usage/rate     → the EUR-per-USD display rate and where it came from
+ *   PUT /api/usage/rate     → set it (0.1..10)
+ *
+ * Every series reads `usage_hourly` and ONLY `usage_hourly`. The table is
+ * written once an hour by lib/usage-sampler.ts. Nothing here touches `runs` or
+ * `spend_log`: a chart polled by an always-open dashboard must not fold a
+ * growing JSONB table on every request — that read-time-aggregation shape is
+ * what made the Live panel bog the machine down, and this endpoint is the
+ * place it would have come back.
+ *
+ * Consequence worth stating rather than hiding: the series is only as fresh as
+ * the last closed hour, so `sampled_through` is returned and the UI is expected
+ * to say "through 13:00" instead of implying live numbers.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+const { Pool } = pg;
+
+let seriesPool: pg.Pool | null = null;
+
+/** Own lazy pool, same DSN as the sampler. Lazy so importing this router (the
+ *  single-router probe harness does exactly that) never opens a socket until a
+ *  request needs one. */
+function db(): Querier {
+  if (!seriesPool) {
+    const url = process.env.DATABASE_URL;
+    if (!url) {
+      throw new Error(
+        "DATABASE_URL is not set. usage_hourly lives in content_forge " +
+          "(127.0.0.1:5432); /api/usage/series refuses to guess a DSN.",
+      );
+    }
+    seriesPool = new Pool({
+      connectionString: url,
+      max: 2,
+      idleTimeoutMillis: 10_000,
+      connectionTimeoutMillis: 5_000,
+    });
+    seriesPool.on("error", (e) => console.error("[usage/series pool]", e.message));
+  }
+  return seriesPool;
+}
+
+interface SeriesPoint {
+  bucket_start: string;
+  tokens_in: number;
+  tokens_out: number;
+  cache_read: number;
+  cache_write: number;
+  shadow_usd: number;
+  eur: number;
+  run_count: number;
+}
+
+interface SeriesRow {
+  bucket_start: Date | string;
+  tokens_in: string;
+  tokens_out: string;
+  cache_read: string;
+  cache_write: string;
+  shadow_usd: string;
+  run_count: string;
+}
+
+function toPoint(row: SeriesRow, eurPerUsd: number): SeriesPoint {
+  const usd = Number(row.shadow_usd);
+  return {
+    bucket_start:
+      row.bucket_start instanceof Date
+        ? row.bucket_start.toISOString()
+        : new Date(row.bucket_start).toISOString(),
+    tokens_in: Number(row.tokens_in),
+    tokens_out: Number(row.tokens_out),
+    cache_read: Number(row.cache_read),
+    cache_write: Number(row.cache_write),
+    shadow_usd: usd,
+    eur: usdToEur(usd, eurPerUsd),
+    run_count: Number(row.run_count),
+  };
+}
+
+/** Roll usage_hourly up to a coarser grain. `grain` is a compile-time literal
+ *  from the two call sites below — never request input — so it is safe inline. */
+function rollupSql(grain: "day" | "week"): string {
+  return `SELECT date_trunc('${grain}', bucket_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS bucket_start,
+                 COALESCE(SUM(tokens_in), 0)::text   AS tokens_in,
+                 COALESCE(SUM(tokens_out), 0)::text  AS tokens_out,
+                 COALESCE(SUM(cache_read), 0)::text  AS cache_read,
+                 COALESCE(SUM(cache_write), 0)::text AS cache_write,
+                 COALESCE(SUM(shadow_usd), 0)::text  AS shadow_usd,
+                 COALESCE(SUM(run_count), 0)::text   AS run_count
+            FROM usage_hourly
+           WHERE bucket_start >= $1::timestamptz
+           GROUP BY 1
+           ORDER BY 1`;
+}
+
+r.get("/series", async (c) => {
+  try {
+    const q = db();
+    const rate = await getRate(q);
+    const now = Date.now();
+    // Hour buckets are UTC; date_trunc('week') is ISO (Monday-start) in
+    // Postgres, which is what "ISO weeks" means on the UI side too.
+    const from24h = new Date(now - 24 * 3_600_000).toISOString();
+    const from30d = new Date(now - 30 * 24 * 3_600_000).toISOString();
+    const from12w = new Date(now - 12 * 7 * 24 * 3_600_000).toISOString();
+
+    const [hourly, daily, weekly, through] = await Promise.all([
+      q.query<SeriesRow>(
+        `SELECT bucket_start,
+                tokens_in::text, tokens_out::text, cache_read::text,
+                cache_write::text, shadow_usd::text, run_count::text
+           FROM usage_hourly
+          WHERE bucket_start >= $1::timestamptz
+          ORDER BY bucket_start`,
+        [from24h],
+      ),
+      q.query<SeriesRow>(rollupSql("day"), [from30d]),
+      q.query<SeriesRow>(rollupSql("week"), [from12w]),
+      q.query<{ max: Date | string | null }>(
+        `SELECT MAX(bucket_start) AS max FROM usage_hourly`,
+      ),
+    ]);
+
+    const maxBucket = through.rows[0]?.max ?? null;
+    return c.json({
+      hourly: hourly.rows.map((row) => toPoint(row, rate.eur_per_usd)),
+      daily: daily.rows.map((row) => toPoint(row, rate.eur_per_usd)),
+      weekly: weekly.rows.map((row) => toPoint(row, rate.eur_per_usd)),
+      eur_per_usd: rate.eur_per_usd,
+      rate_source: rate.source,
+      // The rule the numbers obey, shipped with them so the UI can print it
+      // instead of the reader guessing why a long run is one spike.
+      attribution: ATTRIBUTION,
+      // Newest closed hour on record. null on a database where the sampler has
+      // never run — an empty chart with a reason beats an empty chart.
+      sampled_through:
+        maxBucket === null
+          ? null
+          : maxBucket instanceof Date
+            ? maxBucket.toISOString()
+            : new Date(maxBucket).toISOString(),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[usage/series]", msg);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+r.get("/rate", async (c) => {
+  try {
+    const rate = await getRate(db());
+    return c.json({ ...rate, default_eur_per_usd: DEFAULT_EUR_PER_USD });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[usage/rate]", msg);
+    return c.json({ error: msg }, 500);
+  }
+});
+
+r.put("/rate", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "body must be JSON: {\"eur_per_usd\": <number>}" }, 400);
+  }
+  const value =
+    body !== null && typeof body === "object"
+      ? (body as Record<string, unknown>).eur_per_usd
+      : undefined;
+  try {
+    const rate = await setRate(value, db());
+    return c.json({ ...rate, default_eur_per_usd: DEFAULT_EUR_PER_USD });
+  } catch (e) {
+    // A bad number is the caller's fault (400); anything else is ours (500).
+    if (e instanceof RateValidationError) {
+      return c.json({ error: e.message }, 400);
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[usage/rate PUT]", msg);
+    return c.json({ error: msg }, 500);
   }
 });
 
