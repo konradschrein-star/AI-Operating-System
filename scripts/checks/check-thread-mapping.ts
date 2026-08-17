@@ -296,6 +296,70 @@ console.log("\n── EDGE CASES ───────────────�
   check("…still inside `visible`, so conservation holds", view.coverage.ok, true);
 }
 
+console.log("\n── R20 ON THE TOOL ROLE: an UNKNOWN kind renders (round 1353) ─");
+/* Round 1352's reviewer found the hole and was right about it. The walk's
+ * final branch was an unconditional `silent++` — every `role: "tool"` entry
+ * whose kind was neither tool_call nor tool_result vanished, including a kind
+ * this client has never seen. `notification-gap.md` §3 prescribes exactly such
+ * a kind (`task_notification`) built beside `executor.ts`'s `toolResultEntry`,
+ * and `toolResultEntry` returns `role: "tool"` — so the one payload that
+ * deliverable exists to surface would have died here without a sound.
+ *
+ * THE CAST IS THE POINT. `task_notification` is deliberately NOT added to
+ * `ThreadEntry["kind"]` here: that union is the engine lane's to widen. The
+ * client has to render the entry the day it appears, with no coordinated type
+ * change on this side — which is the only thing "the client needs nothing" can
+ * honestly mean. This table is that claim, executable. */
+{
+  const TS = "2026-08-17T10:00:00.000Z";
+  /** A tool-role entry with a kind the client's union does not contain. */
+  const wire = (kind: string, content: string): ThreadEntry =>
+    ({ role: "tool", content, ts: TS, kind, meta: {} }) as unknown as ThreadEntry;
+
+  const payload = "Agent scout-1 finished: 3 files changed, 0 tests failing.";
+  const view = mapThreadView([wire("task_notification", payload)]);
+  const m = view.messages as unknown as AnyMessage[];
+  check("an unknown kind produces one assistant message", m.length, 1);
+  check("…carrying its payload verbatim", textParts(m).join(""), payload);
+  check("…and is NOT counted silent", view.coverage.silent, 0);
+  check("…conservation holds", view.coverage.ok, true);
+
+  // Two more names, so the branch is proved general and not special-cased.
+  for (const kind of ["agent_completed", "some_kind_nobody_has_written_yet"]) {
+    const v = mapThreadView([wire(kind, `payload of ${kind}`)]);
+    check(
+      `…and for kind "${kind}" too`,
+      textParts(v.messages as unknown as AnyMessage[]).join(""),
+      `payload of ${kind}`,
+    );
+  }
+
+  const blank = mapThreadView([wire("task_notification", "   ")]);
+  check(
+    "an unknown kind with no content is silent — never a blank bubble",
+    blank.coverage.silent,
+    1,
+  );
+  check("…and produces no message", blank.messages.length, 0);
+
+  // The other half of the contract: deliberate silence stayed silent. If this
+  // table ever goes green-to-red, the fix is the SILENT_TOOL_KINDS list, not
+  // the branch.
+  for (const kind of ["heartbeat", "continue_marker", "error", "stuck_notice", "text", ""]) {
+    const v = mapThreadView([wire(kind, "would be noise in the transcript")]);
+    const label = kind === "" ? "(no kind)" : kind;
+    check(`deliberate silence kept: tool/${label} renders nothing`, v.messages.length, 0);
+    check(`…and is accounted silent, not lost`, v.coverage.silent, 1);
+  }
+
+  // An entry with `kind` absent altogether takes the same legacy path.
+  const legacy = mapThreadView([
+    { role: "tool", content: "pre-kind legacy entry", ts: TS } as ThreadEntry,
+  ]);
+  check("a tool entry with no `kind` field at all stays silent", legacy.messages.length, 0);
+  check("…and is accounted", legacy.coverage.silent, 1);
+}
+
 console.log("\n── REAL FIXTURE: run 3853c154 (285 entries, 196 sub-agent) ──");
 {
   const fixtureUrl = new URL(

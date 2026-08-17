@@ -645,6 +645,62 @@ console.log("\n── REAL FIXTURE: run 3853c154 (285 entries, 136 tool calls) �
   );
 }
 
+console.log("\n── NO ROW EVER RENDERS A BLANK GIST (round 1353) ───────────");
+/* Round 1352's reviewer probed `rawGist("")` and got `""` back. The row still
+ * drew — dot, label, outcome, chevron — but with an empty middle, which reads
+ * as "this call had no arguments worth showing" when the truth is "nothing
+ * arrived". Criterion (b) forbids it.
+ *
+ * Not reachable through the live engine: `executor.ts` writes
+ * `JSON.stringify(e.toolInput ?? {})`, so `meta.input` is at minimum `"{}"`,
+ * and `thread-mapping.ts` falls back to the entry `content` when `meta.input`
+ * is absent. Reachable from a fixture, from any future writer that does not go
+ * through the executor, and from every caller of the exported `summarizeTool`.
+ * Fixed in the shared helper, so it is asserted table-wide rather than for the
+ * one row that happened to be under review. */
+{
+  const EMPTY_PAYLOADS: ReadonlyArray<readonly [string, string | null | undefined]> = [
+    ['""', ""],
+    ['"   "', "   "],
+    ['"\\n\\t"', "\n\t"],
+    ["null", null],
+    ["undefined", undefined],
+  ];
+  for (const tool of Object.keys(TOOL_FORMATTERS)) {
+    for (const [name, argsText] of EMPTY_PAYLOADS) {
+      const s = summarizeTool(tool, argsText, "ok", false);
+      check(`${tool} · args ${name} · gist is not blank`, s.gist !== "", true);
+      check(`${tool} · args ${name} · label is not blank`, s.label !== "", true);
+      check(`${tool} · args ${name} · outcome is not blank`, s.outcome !== "", true);
+    }
+  }
+
+  // The placeholder itself is pinned, not merely "something non-empty" — three
+  // rows that reach it by different routes: the Fallback row, a row whose key
+  // is missing (Bash), and a row that reaches rawGist directly (SendMessage).
+  check(
+    "an unknown tool with an empty payload says so",
+    summarizeTool("NoSuchToolExists", "", "ok", false).gist,
+    "no arguments",
+  );
+  check(
+    "bash with an empty payload says so",
+    summarizeTool("Bash", "", "ok", false).gist,
+    "no arguments",
+  );
+  check(
+    "SendMessage with an empty payload says so",
+    summarizeTool("SendMessage", "", "ok", false).gist,
+    "no arguments",
+  );
+  // …and a payload that IS present is untouched by the guard.
+  check(
+    "an empty JSON OBJECT is not an empty payload — it renders verbatim",
+    summarizeTool("SendMessage", "{}", "ok", false).gist,
+    "{}",
+  );
+}
+
 console.log(
   `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — tool summary table`,
 );
