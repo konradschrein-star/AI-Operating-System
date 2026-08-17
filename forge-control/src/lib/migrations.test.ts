@@ -112,4 +112,104 @@ describe("db/migrations re-runnability", () => {
     // would turn a hygiene fix into a migration that cannot apply at all.
     assert.match(idx, /WHERE CHAIN_KEY IS NOT NULL/);
   });
+
+  // Named guard for 0040 (R1, R2). The generic lint above already proves every
+  // statement carries its IF NOT EXISTS; this case pins the *specific* shape the
+  // graph scheduler depends on, so that losing a piece of it reads as the bug it
+  // is rather than as a silently smaller migration.
+  test("0040 (task graph) adds three guarded columns, two named indexes, and a no-op-on-replay backfill", () => {
+    // The generic per-file lint is driven by readdirSync + .endsWith(".sql").
+    // Assert 0040 is in that list rather than assuming it: a file this case
+    // reads directly by path but that FILES never enumerated would be linted by
+    // nothing, and this whole suite would report a pass over an unexamined
+    // migration.
+    assert.ok(
+      FILES.includes("0040_task_graph.sql"),
+      `0040_task_graph.sql is not in the enumerated corpus (${FILES.join(", ")}) — ` +
+        `the per-file lint never saw it, so its green result means nothing`,
+    );
+
+    const sql = readFileSync(`${MIGRATIONS_DIR}/0040_task_graph.sql`, "utf8");
+    const stmts = statements(sql);
+
+    // Select on the UNGUARDED pattern, so the selector cannot presuppose the
+    // guard the assertion is about to check.
+    const adds = stmts.filter((s) => /\bADD COLUMN\b/.test(s));
+    assert.equal(
+      adds.length,
+      3,
+      `expected exactly three ADD COLUMN statements (depends_on, workstream, write_set), found ${adds.length}: ${adds.join(" | ")}`,
+    );
+
+    /** The one ADD COLUMN statement for `col`. Never a COMMENT ON that merely
+     *  mentions the column name — the search space is the ADD COLUMN list. */
+    const addFor = (col: string): string => {
+      const hits = adds.filter((s) => new RegExp(`\\bIF NOT EXISTS ${col}\\b`).test(s));
+      assert.equal(
+        hits.length,
+        1,
+        `expected exactly one guarded ADD COLUMN for ${col}, found ${hits.length}: ${adds.join(" | ")}`,
+      );
+      return hits[0]!;
+    };
+
+    const dependsOn = addFor("DEPENDS_ON");
+    assert.match(dependsOn, /ADD COLUMN IF NOT EXISTS DEPENDS_ON UUID\[\]/);
+    assert.match(addFor("WORKSTREAM"), /ADD COLUMN IF NOT EXISTS WORKSTREAM TEXT NOT NULL DEFAULT 'MAIN'/);
+    assert.match(addFor("WRITE_SET"), /ADD COLUMN IF NOT EXISTS WRITE_SET TEXT\[\] NOT NULL DEFAULT '\{\}'/);
+
+    // R3. depends_on must carry NO default clause at all. NULL is a sentinel
+    // meaning "never graph-scheduled, apply the legacy round rule"; '{}' means
+    // "graph-scheduled, explicitly a root, promote now". A DEFAULT '{}' here
+    // makes every row the OLD engine writes between `psql -f` and the executor
+    // restart a graph root, releasing re-reviews before their fix builders run.
+    assert.doesNotMatch(
+      dependsOn,
+      /\bDEFAULT\b/,
+      `depends_on must have NO DEFAULT clause: the NULL sentinel is load-bearing; ` +
+        `see 02-architecture.md 2.2 and 9.1 (Konrad ruled on it, escalation E2). ` +
+        `Statement: ${dependsOn}`,
+    );
+
+    // R7. Both indexes, by name — a renamed index is a silently missing one.
+    const indexes = stmts.filter((s) => /\bCREATE (UNIQUE )?INDEX\b/.test(s));
+    assert.ok(
+      indexes.some((s) =>
+        /CREATE INDEX IF NOT EXISTS PROJECT_TASKS_DEPENDS_ON_GIN ON PROJECT_TASKS USING GIN \(DEPENDS_ON\)/.test(s),
+      ),
+      `0040 no longer creates project_tasks_depends_on_gin (R7). Indexes found: ${indexes.join(" | ")}`,
+    );
+    assert.ok(
+      indexes.some((s) =>
+        /CREATE INDEX IF NOT EXISTS PROJECT_TASKS_WORKSTREAM_IDX ON PROJECT_TASKS \(PROJECT_ID, WORKSTREAM, STATUS\)/.test(s),
+      ),
+      `0040 no longer creates project_tasks_workstream_idx (R7). Indexes found: ${indexes.join(" | ")}`,
+    );
+
+    // R2 + R6. The backfill is the migration's only non-DDL statement, and the
+    // WHERE guard is the entire reason a second `psql -f` changes zero rows
+    // instead of overwriting graph-scheduled edges with round-derived ones.
+    const backfill = stmts.filter((s) => s.startsWith("UPDATE PROJECT_TASKS"));
+    assert.equal(
+      backfill.length,
+      1,
+      `expected exactly one backfill UPDATE, found ${backfill.length}: ${backfill.join(" | ")}`,
+    );
+    assert.match(
+      backfill[0]!,
+      /WHERE PT\.DEPENDS_ON IS NULL/,
+      `the backfill UPDATE must be guarded by WHERE pt.depends_on IS NULL — without it a ` +
+        `second application rewrites every graph-scheduled row's edges from its round (R2, R6). ` +
+        `Statement: ${backfill[0]}`,
+    );
+    // R6: the closure, not the previous round. `e.round < pt.round` is the whole
+    // claim; `= pt.round - 1` would diverge from today's engine under retry.
+    assert.match(
+      backfill[0]!,
+      /E\.ROUND < PT\.ROUND/,
+      `the backfill must be the full transitive closure (every strictly lower round), not the ` +
+        `previous round only — see 02-architecture.md 3.3 for the retryTask() divergence. ` +
+        `Statement: ${backfill[0]}`,
+    );
+  });
 });
