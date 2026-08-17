@@ -50,7 +50,14 @@
  * be the regression the round was written to avoid.
  */
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
 import { RunShotsIndicator } from "../chat/BrowserShots";
@@ -59,6 +66,21 @@ import {
   useDismissals,
   useDismissalsLoaded,
 } from "../team/dismissals";
+/* The dismissal confirm machine, shared with the chat team panel rather than
+ * re-implemented: one gesture, one set of rules, one set of words. See
+ * ../team/confirm's header for why the guard is proportional to the blast
+ * radius instead of attached to the verb. */
+import {
+  ARM_WINDOW_MS,
+  confirmStripText,
+  decideXClick,
+  dismissTitle,
+  isSpuriousActivation,
+  needsConfirm,
+  type ArmedState,
+  type DismissScope,
+} from "../team/confirm";
+import { toast } from "../_ui/Toasts";
 import {
   DISMISSAL_SURFACES,
   DISMISSED_GROUP_LABEL,
@@ -280,8 +302,13 @@ interface RowProps {
    *  chat team panel — its node id is a `tool_use_id`, which never appears at
    *  top level here — does not reappear under its parent in this panel. */
   dismissed: ReadonlySet<string>;
-  /** Hide this row. The server cascades; see `useDismissals`. */
-  onDismiss: (id: string) => void;
+  /** Hide this row. The server cascades; see `useDismissals`. `hidesRows` and
+   *  `widerReach` are what the panel needs to decide whether the click has to be
+   *  confirmed — they travel with it for the same reason the team panel's do:
+   *  the handler upstairs has no per-row lookup and must not grow one. */
+  onDismiss: (id: string, hidesRows: number, widerReach: boolean) => void;
+  /** Is THIS row's ✕ armed? One boolean per row, off one panel-level id. */
+  armed?: boolean;
   /** Un-hide it. Only ever called from the peek list below the fold. */
   onRestore: (id: string) => void;
   /** True when this row is being PEEKED: it IS dismissed, and the operator
@@ -326,6 +353,7 @@ function AgentRunLine({
   onDismiss,
   onRestore,
   peeked = false,
+  armed = false,
 }: RowProps) {
   const live = a.status === "running";
   const elapsed = runElapsedMs(a, now);
@@ -340,6 +368,24 @@ function AgentRunLine({
   const kind = agentKindOf(a);
   const lineage = lineageTitle(a, kind);
   const model = modelDisplay(a.model);
+
+  /* ── What this row's ✕ would cost (round 1873, finding 2) ────────────────
+   *
+   * The gesture is the same server call the team panel makes, and it cascades
+   * the same way — one click on an operator row hid 165 of 166 rows there. This
+   * panel can count its own sub-agent lines exactly; it CANNOT count the
+   * finished workers of a project this chat started, because `/api/agents` says
+   * which project a worker belongs to but never which chat began it. So an
+   * operator row declares `widerReach` and the words say "and any project this
+   * chat started" instead of naming a number this feed cannot know. */
+  const hidesRows =
+    1 + (a.subagents ?? []).filter((sub) => !dismissed.has(sub.tool_use_id)).length;
+  const scope: DismissScope = {
+    settled: a.settled,
+    hidesRows,
+    widerReach: kind === "operator",
+  };
+  const confirms = needsConfirm(scope);
 
   return (
     // Lineage lives on the row container (operator-visibility/02-architecture
@@ -449,16 +495,39 @@ function AgentRunLine({
             a.settled && (
               <button
                 data-live-x={a.id}
+                data-confirm={armed ? "armed" : "idle"}
+                data-x-hides={hidesRows}
+                data-x-confirms={confirms}
                 type="button"
-                title={
-                  "Hide this row — and everything settled under it. " +
-                  "Reversible from “N dismissed · show” in the header."
-                }
-                onClick={() => onDismiss(a.id)}
+                title={dismissTitle(scope)}
+                onClick={(e) => {
+                  // Same two drops the team panel makes before the machine sees
+                  // the click: the trailing half of a double-click is one
+                  // gesture, not two decisions.
+                  if (isSpuriousActivation({ detail: e.detail, repeat: false })) return;
+                  onDismiss(a.id, hidesRows, scope.widerReach === true);
+                }}
+                onKeyDown={(e) => {
+                  if (isSpuriousActivation({ detail: 0, repeat: e.repeat })) {
+                    e.preventDefault();
+                  }
+                }}
                 className="mono"
-                style={{ ...CONTROL_STYLE, color: tokens.bleed }}
+                style={{
+                  ...CONTROL_STYLE,
+                  color: tokens.bleed,
+                  ...(armed
+                    ? {
+                        background: tokens.dangerActionBg,
+                        borderColor: tokens.dangerActionBorder,
+                      }
+                    : {}),
+                }}
               >
-                ✕
+                {/* Two characters, not "hide?": `CONTROLS_COL` is 20px and the
+                    whole point of a reserved slot is that arming moves nothing.
+                    The sentence lives in the strip below. */}
+                {armed ? "✕?" : "✕"}
               </button>
             )
           )}
@@ -508,6 +577,25 @@ function AgentRunLine({
           </span>
         )}
       </div>
+
+      {/* The armed confirm, and only while armed. Same words the team panel
+          uses (./team/confirm), because it is the same gesture with the same
+          blast radius — a customer who learns it on one panel has learned it on
+          both. */}
+      {armed && (
+        <div
+          data-live-confirm-strip
+          className="mono"
+          style={{
+            padding: "0 8px 4px 24px",
+            fontSize: 9.5,
+            lineHeight: 1.5,
+            color: tokens.bleed,
+          }}
+        >
+          {confirmStripText(scope)}
+        </div>
+      )}
 
       {/* What this run LOOKED at (round 1350). Absent — not empty, absent —
           for a run that photographed nothing. Click, never hover: this panel
@@ -689,7 +777,76 @@ export function AgentActivity({
 
   /* Dismissals, shared with the chat team panel (../team/dismissals). The
    * `null` is the hook's vestigial chat id — the set is global. */
-  const { dismissed, dismiss, restore } = useDismissals(null);
+  const { dismissed, dismiss, restore, restoreMany } = useDismissals(null);
+
+  /* ── The ✕ is guarded here too (round 1873, finding 2) ───────────────────
+   *
+   * The tester found it on the team panel; the defect is this panel's as well,
+   * because both call one cascading endpoint. The machine is ./team/confirm's,
+   * unchanged and unforked: `needsConfirm` decides whether a click arms or
+   * fires, `decideXClick` runs the same two-click window, and the row shows the
+   * same sentence. What is NOT shared is the state — one armed id per panel,
+   * so arming here does not arm a row in a chat's team tree. */
+  const [armedId, setArmedId] = useState<string | null>(null);
+  const armedRef = useRef<ArmedState | null>(null);
+
+  useEffect(() => {
+    if (armedId === null) return;
+    const t = setTimeout(() => {
+      armedRef.current = null;
+      setArmedId(null);
+    }, ARM_WINDOW_MS);
+    return () => clearTimeout(t);
+  }, [armedId]);
+
+  const handleDismiss = useCallback(
+    (id: string, hidesRows: number, widerReach: boolean) => {
+      const nowMs = Date.now();
+      const decision = decideXClick({
+        nodeId: id,
+        // Only settled rows carry a ✕ in this panel at all (see the button), so
+        // this is a statement of that fact rather than a branch: the terminate
+        // path of `decideXClick` is unreachable from here.
+        settled: true,
+        hidesRows: widerReach ? Number.MAX_SAFE_INTEGER : hidesRows,
+        armed: armedRef.current,
+        nowMs,
+        canTerminate: false,
+      });
+      switch (decision.action) {
+        case "arm":
+        case "rearm":
+          armedRef.current = { id: decision.id, at: nowMs };
+          setArmedId(decision.id);
+          return;
+        case "dismiss":
+          armedRef.current = null;
+          setArmedId(null);
+          dismiss(decision.id, (ids) => {
+            const n = ids.length;
+            toast(
+              n === 1
+                ? "row hidden"
+                : `${n} rows hidden — this row and everything settled under it`,
+              "info",
+              undefined,
+              {
+                action: { label: "undo", onClick: () => restoreMany(ids) },
+                ttlMs: 12_000,
+              },
+            );
+          });
+          return;
+        case "blocked":
+        case "terminate":
+          // Unreachable: `canTerminate` is false and `settled` is true, so the
+          // machine cannot return either. Named rather than defaulted, so a
+          // future edit to the machine breaks the compile instead of the panel.
+          return;
+      }
+    },
+    [dismiss, restoreMany],
+  );
   const dismissalsLoaded = useDismissalsLoaded();
   const payloadDismissed = useMemo(
     () =>
@@ -857,8 +1014,9 @@ export function AgentActivity({
             a={a}
             now={now}
             dismissed={hiddenBy}
-            onDismiss={dismiss}
+            onDismiss={handleDismiss}
             onRestore={restore}
+            armed={armedId === a.id}
           />
         ))}
 
@@ -881,8 +1039,9 @@ export function AgentActivity({
                 a={a}
                 now={now}
                 dismissed={hiddenBy}
-                onDismiss={dismiss}
+                onDismiss={handleDismiss}
                 onRestore={restore}
+                armed={armedId === a.id}
               />
             ))}
           </>
@@ -911,7 +1070,7 @@ export function AgentActivity({
                 a={a}
                 now={now}
                 dismissed={hiddenBy}
-                onDismiss={dismiss}
+                onDismiss={handleDismiss}
                 onRestore={restore}
                 peeked
               />

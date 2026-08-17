@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
@@ -63,6 +70,14 @@ import {
   type NavFrame,
   type NavStack,
 } from "./chat/nav-stack";
+import {
+  CHAT_STORAGE_KEYS,
+  NO_STORED_NAV,
+  isChatId,
+  isStoredNav,
+  readRestoredNavStack,
+  type StoredNav,
+} from "./chat/stored-nav";
 import { CanvasPane } from "./CanvasPane";
 import { SecretField } from "./chat/SecretField";
 import {
@@ -127,51 +142,17 @@ const NO_SECRETS: readonly SecretMeta[] = [];
  */
 const dismissedSecretRequests = new Set<string>();
 
-/* ── What survives a reload, and the guards on reading it back ──────────────
+/* ── What survives a reload ─────────────────────────────────────────────────
  *
- * Round 1871, finding 7. Everything below is read out of `localStorage` at
- * mount, which means it is UNTRUSTED INPUT: a stale value written by an older
- * build, a hand-edited key, or a half-written JSON blob. Each validator is
- * total over `unknown` and rejects rather than coerces — a chat id that is not
- * a uuid must not reach `GET /api/chat/:id`, and a nav frame with no `runId`
- * must not reach the drill-in view, which would render a fetch for
- * `undefined`.
+ * The keys, the validators and the restore DECISION moved to ./chat/stored-nav
+ * in round 1873. Not tidying: round 1872's tester found the drill-in restore
+ * silently dead — `forge.chat.navStack` held the right frames and the reload
+ * still landed on the manager thread — because the effect that read it ran
+ * before `usePersistentState` had hydrated `selId`, saw `null`, and burned its
+ * one-shot guard. That module states the decision as a pure function over the
+ * two raw strings, so there is no hydration order left to get wrong and
+ * `scripts/checks/check-stored-nav.ts` asserts the table directly.
  */
-
-const CHAT_ID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const isChatId = (v: unknown): v is string | null =>
-  v === null || (typeof v === "string" && CHAT_ID_RE.test(v));
-
-/** The drill-in stack as stored: the frames PLUS the chat they belong to.
- *  Without the owner a stack restored under a different chat would claim that
- *  worker is this chat's, which is exactly the lie `openChat` resets to avoid. */
-interface StoredNav {
-  chatId: string;
-  frames: NavFrame[];
-}
-
-const NO_STORED_NAV: StoredNav | null = null;
-
-function isNavFrame(v: unknown): v is NavFrame {
-  if (typeof v !== "object" || v === null) return false;
-  const f = v as Record<string, unknown>;
-  if (f.kind === "plandoc") return typeof f.name === "string" && f.name !== "";
-  if (f.kind !== "agent") return false;
-  if (typeof f.runId !== "string" || !CHAT_ID_RE.test(f.runId)) return false;
-  if (f.subagentId !== undefined && typeof f.subagentId !== "string") return false;
-  if (f.label !== undefined && typeof f.label !== "string") return false;
-  return true;
-}
-
-const isStoredNav = (v: unknown): v is StoredNav | null => {
-  if (v === null) return true;
-  if (typeof v !== "object") return false;
-  const s = v as Record<string, unknown>;
-  if (typeof s.chatId !== "string" || !CHAT_ID_RE.test(s.chatId)) return false;
-  return Array.isArray(s.frames) && s.frames.every(isNavFrame);
-};
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   queued: tokens.textMuted,
@@ -458,44 +439,46 @@ export function ChatSurface({
    * The raw setter is deliberately private to `openChat` below: every chat
    * switch must reset the stack, and the way to guarantee that is to leave no
    * other way to switch. */
-  /* ── Reload keeps your place (round 1871, finding 7) ─────────────────────
+  /* ── Reload keeps your place (round 1871 finding 7; fixed round 1873) ────
    *
    * "F5 while reading a worker transcript returns to TODAY — chat, worker and
-   * scroll all gone." DesktopApp restores the SURFACE; these two restore the
-   * open chat and how deep into it you were. Both go through the same
-   * `usePersistentState` every panel width in this app already uses, and both
-   * validate what they read: a chat id that is not a uuid, or a stack whose
-   * frames do not typecheck, is discarded rather than fed to a fetch.
+   * scroll all gone." DesktopApp restores the SURFACE; these restore the open
+   * chat and how deep into it you were. Both validate what they read: a chat id
+   * that is not a uuid, or a stack whose frames do not typecheck, is discarded
+   * rather than fed to a fetch (./chat/stored-nav).
    *
    * The stack is stored WITH the chat it belongs to. Restoring a drill-in
    * against a different chat would assert that worker belongs to this chat,
    * which is the same lie `openChat` resets the stack to avoid — so a stored
-   * stack whose `chatId` does not match the restored `selId` is dropped. */
+   * stack whose `chatId` does not match the stored `selId` is dropped.
+   *
+   * WHY THE STACK DOES NOT USE `usePersistentState` FOR ITS READ. That hook
+   * hydrates in a layout effect, so `selId` is `null` on the first render and
+   * arrives one commit later. Round 1871's restore was a passive effect keyed on
+   * `selId` with a one-shot ref: it ran on that first render, saw `null`, burned
+   * the ref, and never restored anything — the defect round 1872's tester
+   * measured at +6s, +14s and +22s. The read below happens ONCE, before paint,
+   * straight out of `localStorage`, and depends on no state at all. The WRITE
+   * still goes through `usePersistentState`, which is what keeps the key in
+   * sync with every stack change. */
   const [selId, setSelIdRaw] = usePersistentState<string | null>(
-    "forge.chat.selected",
+    CHAT_STORAGE_KEYS.selected,
     null,
     isChatId,
   );
-  const [storedNav, setStoredNav] = usePersistentState<StoredNav | null>(
-    "forge.chat.navStack",
+  const [, setStoredNav] = usePersistentState<StoredNav | null>(
+    CHAT_STORAGE_KEYS.navStack,
     NO_STORED_NAV,
     isStoredNav,
   );
   const [navStack, setNavStackRaw] = useState<NavStack>(reset());
 
-  /** Restore the drill-in once, on mount, and only for the chat it was taken
-   *  from. `storedNav` is written on every change below, so this effect must
-   *  not depend on it or it would fight the writes. */
-  const restoredNav = useRef(false);
-  useEffect(() => {
-    if (restoredNav.current) return;
-    restoredNav.current = true;
-    if (storedNav === null) return;
-    if (selId === null || storedNav.chatId !== selId) return;
-    if (storedNav.frames.length === 0) return;
-    setNavStackRaw(storedNav.frames);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selId]);
+  /** The drill-in, restored once, before the first paint. `restoredNavStack`
+   *  owns every rejection rule; this effect owns only "once, on mount". */
+  useLayoutEffect(() => {
+    const restored = readRestoredNavStack();
+    if (restored !== null) setNavStackRaw(restored);
+  }, []);
 
   /** Every write to the stack goes through here, so persistence cannot be
    *  forgotten at one of the call sites. */

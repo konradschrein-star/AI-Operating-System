@@ -22,6 +22,23 @@ export interface TeamRow {
    *  (13 §6: hover is CSS + `title`, never a mounted tooltip). Null on the
    *  manager, which has no parent. */
   parentDescription: string | null;
+  /** HOW MANY ROWS THIS ROW'S ✕ WOULD TAKE OFF THE PANEL, itself included —
+   *  this node and its visible sub-agents. Never below 1: a dismissal always
+   *  hides at least the row you clicked.
+   *
+   *  Round 1873, finding 2. One click on the manager's ✕ hid 165 of 166 rows,
+   *  with no confirm and no undo, because a dismissal cascades (`resolveCascade`
+   *  in forge-control/src/lib/dismissals.ts) and nothing on screen said so. The
+   *  panel now guards the click IN PROPORTION to this number — see
+   *  `decideXClick` in ./confirm — so it has to be a fact carried on the row
+   *  rather than something the handler estimates: it is a prop that changes only
+   *  when the row's own subtree changes, which is what keeps
+   *  `memo(TeamRowView)` bailing out on a hover sweep (NFU2).
+   *
+   *  It counts ROWS ON THIS PANEL, and only the ones under THIS row —
+   *  `cascadeRowCount` states at length why the manager's project-wide reach is
+   *  expressed in words (`widerReach`) rather than folded into this number. */
+  hidesRows: number;
   /** The working-time value this row displays BEFORE any client
    *  interpolation: `node.working_ms` verbatim, null included.
    *
@@ -125,6 +142,7 @@ function sameRow(prev: TeamRow, next: TeamRow): boolean {
     prev.node === next.node &&
     prev.depth === next.depth &&
     prev.parentDescription === next.parentDescription &&
+    prev.hidesRows === next.hidesRows &&
     prev.displayWorkingMs === next.displayWorkingMs
   );
 }
@@ -135,6 +153,49 @@ function subtreeSize(node: TeamNode): number {
   let n = 1;
   for (const sub of node.subagents) n += subtreeSize(sub);
   return n;
+}
+
+/** `subtreeSize` counting only what is CURRENTLY ON SCREEN: a node already
+ *  covered by a dismissal contributes nothing, and neither does anything under
+ *  it (the panel is not rendering it, so hiding it again removes no row). */
+function visibleSubtreeSize(node: TeamNode, dismissed: ReadonlySet<string>): number {
+  if (dismissed.has(node.id)) return 0;
+  let n = 1;
+  for (const sub of node.subagents) n += visibleSubtreeSize(sub, dismissed);
+  return n;
+}
+
+/**
+ * The blast radius of one ✕, in rows this panel is showing right now.
+ *
+ *   • a sub-agent → 1. It has no descendants, by construction.
+ *   • a run       → itself plus its visible sub-agents.
+ *
+ * WHAT IT DELIBERATELY DOES NOT COUNT, and why the manager row says "N+"
+ * instead. The server's cascade (`resolveCascade` in
+ * forge-control/src/lib/dismissals.ts) reaches further than a subtree when the
+ * target is a chat that STARTED a project: every settled run of that project
+ * goes too — which is how round 1872's tester turned one click into 174
+ * dismissals and 165 vanished rows. This function could add up the settled
+ * workers as well, and the first draft of round 1873 did.
+ *
+ * It was withdrawn for a measured reason. `hidesRows` is a ROW PROP, compared by
+ * `sameRow`; a count that reads the manager's SIBLINGS changes the manager's
+ * wrapper every time any worker settles or is hidden, which breaks the identity
+ * invariant round 1302 established ("one node changed → exactly one fresh
+ * wrapper", asserted in scripts/checks/check-team-rows.ts) and makes a row
+ * re-render for a fact about a different row. So the count stays local, and the
+ * manager's ✕ — which is `kind === "operator"`, the one row this applies to —
+ * declares `widerReach` instead: it always takes the confirm, and its words say
+ * "and any project this chat started", which is the honest description of a set
+ * this panel cannot enumerate anyway (the tree lists the project's CURRENT runs,
+ * `ui_dismissals` also collects its finished ones).
+ */
+export function cascadeRowCount(
+  node: TeamNode,
+  dismissed: ReadonlySet<string>,
+): number {
+  return Math.max(1, visibleSubtreeSize(node, dismissed));
 }
 
 /**
@@ -198,7 +259,15 @@ export function flattenTeam(
     isRoot: boolean,
   ): void => {
     hiddenRows.push({
-      row: { node, depth, parentDescription, displayWorkingMs: node.working_ms },
+      /* `hidesRows: 0` — a row that is already hidden hides nothing further,
+         and its ✕ is not what a peeked row wears anyway (it wears ↺). */
+      row: {
+        node,
+        depth,
+        parentDescription,
+        hidesRows: 0,
+        displayWorkingMs: node.working_ms,
+      },
       restorable: isRoot,
     });
     for (const sub of node.subagents) {
@@ -224,6 +293,7 @@ export function flattenTeam(
       node,
       depth,
       parentDescription,
+      hidesRows: cascadeRowCount(node, dismissed),
       displayWorkingMs: node.working_ms,
     };
     const prev = prevById?.get(node.id);

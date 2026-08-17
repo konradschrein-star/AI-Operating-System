@@ -78,9 +78,14 @@ import {
 } from "../live/agentsApi";
 import {
   SETTLED_STOP_TITLE,
+  armedXLabel,
   capabilityTitle,
+  confirmStripText,
+  dismissTitle,
   isSpuriousActivation,
+  needsConfirm,
   stopBlockReason,
+  type DismissScope,
 } from "./confirm";
 import {
   HIDDEN_WITH_PARENT_MARK,
@@ -408,7 +413,16 @@ interface TeamRowBaseProps {
    *  node map this design avoids. */
   onOpenNode: (node: TeamNode) => void;
   onStop: (nodeId: string, settled: boolean) => void;
-  onX: (nodeId: string, settled: boolean) => void;
+  /** `hidesRows` and `widerReach` travel WITH the click rather than being looked
+   *  up: the handler in ChatTeamPanel is dependency-free by design (one identity
+   *  for the life of the panel, so every memoized row keeps its prop), and it
+   *  therefore has no tree to consult. Same argument as `settled` beside it. */
+  onX: (
+    nodeId: string,
+    settled: boolean,
+    hidesRows: number,
+    widerReach: boolean,
+  ) => void;
 }
 
 /**
@@ -469,6 +483,20 @@ function TeamRowViewImpl({
   const stopBlock = stopBlockReason({ settled, canStop });
 
   const sourceNote = workingSourceNote(n);
+
+  /* ── What this row's ✕ costs (round 1873, finding 2) ─────────────────────
+   *
+   * `hidesRows` is this row and its visible sub-agents, counted by
+   * `cascadeRowCount`. `widerReach` is the manager's extra clause: dismissing an
+   * OPERATOR row also hides the settled runs of any project this chat started —
+   * including finished ones this tree never listed — so the number is a floor and
+   * the words say so. Every operator row therefore takes the confirm, whatever
+   * its subtree size. */
+  const scope: DismissScope = {
+    settled,
+    hidesRows: row.hidesRows,
+    widerReach: n.kind === "operator",
+  };
 
   /* U15a / DoD #1, stated once and with no exception: every row shows its
    * working time. The only thing that suppresses the number is the server
@@ -673,14 +701,21 @@ function TeamRowViewImpl({
           <button
             data-team-x
             data-confirm={armed ? "armed" : "idle"}
+            /* The blast radius, on the element, before anything is clicked —
+               round 1873, finding 2. A reviewer can read what one ✕ would cost
+               without taking the tooltip's word for it, and the check harness
+               can assert that the guarded rows are exactly the ones that hide
+               more than themselves. */
+            data-x-hides={row.hidesRows}
+            data-x-wider-reach={scope.widerReach ? "true" : undefined}
+            data-x-confirms={needsConfirm(scope)}
             type="button"
             /* Settled X is a local, reversible dismissal — always available.
                Running X is terminate, and terminate is capability-gated. */
             disabled={!settled && !canTerminate}
             title={
               settled
-                ? "Hide this row — and everything settled under it. Reversible " +
-                  "from “N dismissed · show” below"
+                ? dismissTitle(scope)
                 : canTerminate
                   ? "Terminate this agent — click again to confirm"
                   : capabilityTitle("terminate")
@@ -700,7 +735,7 @@ function TeamRowViewImpl({
               // browser telling us this was one gesture, not two decisions.
               // Keyboard activation reports detail 0 and passes through.
               if (isSpuriousActivation({ detail: e.detail, repeat: false })) return;
-              onX(n.id, settled);
+              onX(n.id, settled, row.hidesRows, scope.widerReach === true);
             }}
             className="mono"
             style={{
@@ -716,7 +751,7 @@ function TeamRowViewImpl({
                 : {}),
             }}
           >
-            {armed ? "sure?" : "✕"}
+            {armed ? armedXLabel(scope) : "✕"}
           </button>
             </>
           )}
@@ -799,6 +834,30 @@ function TeamRowViewImpl({
           its parent's run directory because it inherits that process's
           FORGE_RUN_ID. */}
       <RunShotsIndicator runId={n.kind === "subagent" ? null : n.id} paddingLeft={13} />
+
+      {/* line 4 — the armed confirm, and ONLY while armed (round 1873, finding
+          2). The ✕'s own label cannot carry a number without reflowing the row
+          (see `armedXLabel`), so the number lives here, where there is room for
+          the sentence: "hide 165 rows — this one and the 164 settled under it?".
+          It renders for both armed jobs, terminate included, because the same
+          argument applies to a running row: "sure?" is not a statement of what
+          is about to happen. */}
+      {armed && (
+        <div
+          data-team-confirm-strip
+          className="mono"
+          style={{
+            marginTop: 3,
+            paddingLeft: 13,
+            fontSize: 9.5,
+            lineHeight: 1.5,
+            color: tokens.bleed,
+            whiteSpace: "normal",
+          }}
+        >
+          {confirmStripText(scope)}
+        </div>
+      )}
     </div>
   );
 }

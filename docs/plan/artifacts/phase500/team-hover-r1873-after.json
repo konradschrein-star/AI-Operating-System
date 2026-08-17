@@ -1,0 +1,68 @@
+{
+  "label": "r1873-after",
+  "base": "http://127.0.0.1:7823",
+  "chat": "Okay when I click the file section",
+  "rows_on_screen": 20,
+  "rows_total": 20,
+  "window_ms": 10000,
+  "crossings": 75,
+  "idle": {
+    "commits": 12,
+    "mutations": 9
+  },
+  "hover": {
+    "commits": 14,
+    "mutations": 10
+  },
+  "attributable_to_hover": {
+    "commits": 2,
+    "mutations": 1
+  },
+  "layout_shift": false,
+  "geom_before": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2:140x43x260",
+    "4702dd4b-dcb3-4975-904c-76bc3547a1db:183x43x260",
+    "b3e225fd-58fc-4849-b364-efd2d94f99b6:226x43x260",
+    "dd8e3131-57ad-4f9b-a77e-a7aa43cdf8a8:269x43x260",
+    "ecc74b0f-695a-45be-a36d-6c24537941c7:312x43x260",
+    "0bab20d0-c950-43bf-a277-69b39e10cd27:355x43x260",
+    "3f273fd2-c3af-4c14-80e7-eae5d4cfed14:398x43x260",
+    "f6838a8c-670d-4e15-81fa-55232d93fa9a:441x43x260",
+    "ad37034a-57dc-47f3-b586-e6fb8ccafbfb:484x43x260",
+    "a3eb31ea-6350-468c-8974-dc139e7ce953:527x43x260",
+    "fd6a1cba-b5cc-4cfe-9c1e-194b533b5152:570x43x260",
+    "2c6e45d5-db81-4ff8-ac68-fcf98c579e75:613x43x260",
+    "f924fd72-b8a9-4f20-95ae-1970989f3db2:656x43x260",
+    "d521ff04-a4f0-415b-85dd-9bcdf1d17734:699x43x260",
+    "f1773e99-952e-458c-8079-8800e0ff70df:742x43x260",
+    "c87d2349-e775-4c97-b472-e3c84617e43c:785x43x260",
+    "6e043044-bbc5-46ab-a9be-6f0ef5c23389:828x43x260",
+    "dbb6f217-c0c0-446d-812a-2c7e683531dc:871x43x260",
+    "c4270a2f-9ed5-47b9-882c-26117d660529:914x43x260",
+    "1faffba6-1b69-4c44-a361-dba3604962b7:957x43x260"
+  ],
+  "geom_during": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2:140x43x260",
+    "4702dd4b-dcb3-4975-904c-76bc3547a1db:183x43x260",
+    "b3e225fd-58fc-4849-b364-efd2d94f99b6:226x43x260",
+    "dd8e3131-57ad-4f9b-a77e-a7aa43cdf8a8:269x43x260",
+    "ecc74b0f-695a-45be-a36d-6c24537941c7:312x43x260",
+    "0bab20d0-c950-43bf-a277-69b39e10cd27:355x43x260",
+    "3f273fd2-c3af-4c14-80e7-eae5d4cfed14:398x43x260",
+    "f6838a8c-670d-4e15-81fa-55232d93fa9a:441x43x260",
+    "ad37034a-57dc-47f3-b586-e6fb8ccafbfb:484x43x260",
+    "a3eb31ea-6350-468c-8974-dc139e7ce953:527x43x260",
+    "fd6a1cba-b5cc-4cfe-9c1e-194b533b5152:570x43x260",
+    "2c6e45d5-db81-4ff8-ac68-fcf98c579e75:613x43x260",
+    "f924fd72-b8a9-4f20-95ae-1970989f3db2:656x43x260",
+    "d521ff04-a4f0-415b-85dd-9bcdf1d17734:699x43x260",
+    "f1773e99-952e-458c-8079-8800e0ff70df:742x43x260",
+    "c87d2349-e775-4c97-b472-e3c84617e43c:785x43x260",
+    "6e043044-bbc5-46ab-a9be-6f0ef5c23389:828x43x260",
+    "dbb6f217-c0c0-446d-812a-2c7e683531dc:871x43x260",
+    "c4270a2f-9ed5-47b9-882c-26117d660529:914x43x260",
+    "1faffba6-1b69-4c44-a361-dba3604962b7:957x43x260"
+  ],
+  "gate": "zero commits attributable to hover, and zero layout shift",
+  "verdict": "FAIL"
+}

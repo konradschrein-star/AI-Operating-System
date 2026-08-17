@@ -68,15 +68,29 @@
  * ── One deviation from the round-501b evidence harness, stated here ───────
  * `docs/plan/artifacts/phase500/capture-team.cjs` shoots its "armed" case by
  * clicking the FIRST `[data-team-x]` once and waiting for
- * `data-confirm="armed"`. Under the rules this round implements, that click
- * arms only on a RUNNING row, and a running row's X is `disabled` today
- * (terminate is capability-gated). On a settled row the same click dismisses
- * in one go, because a dismissal is reversible and a confirm step in front of
- * a reversible action is how people learn to click through confirms. So round
- * 504 must reach the armed screenshot the way the reviewer reaches it: strip
- * the `disabled` attribute in the page, then click a running row's X. The
- * second click is what dead-ends in the guard — which is exactly the property
- * worth photographing.
+ * `data-confirm="armed"`. Under the rules this file implements, that click arms
+ * on a running row (whose X is `disabled` today — terminate is
+ * capability-gated) and, since round 1873, on any row whose ✕ would take other
+ * rows with it. It still dismisses in one go on a SETTLED LEAF, which is the
+ * cheap reversible gesture the confirm is deliberately kept out of. So the
+ * armed screenshot is reachable two ways now: strip `disabled` and click a
+ * running row's X, or click the ✕ of a row that owns sub-agents and read the
+ * count in `[data-team-confirm-strip]`.
+ *
+ * ── What ✕ costs, and where that is decided (round 1873, finding 2) ───────
+ * Round 1872's tester clicked one ✕ on the manager row and hid 174 nodes — 165
+ * of the 166 rows on screen — with no confirm, no undo toast, and only the
+ * fleet-wide "restore all" as a way back. Three changes, none of them a dialog:
+ *   1. the guard is PROPORTIONAL. `needsConfirm` in ./confirm arms any click
+ *      that hides more than the row it was aimed at; a leaf still goes in one.
+ *   2. the row SAYS THE NUMBER before the second click
+ *      (`[data-team-confirm-strip]`, `dismissTitle`).
+ *   3. the toast carries a real UNDO of exactly that gesture — `restoreMany`
+ *      over the id list the server cascaded, not `restore` on the row, which
+ *      would have left its 173 companions hidden.
+ * The manager row is the one case the tree cannot count (its cascade reaches
+ * finished runs of its project that this response never listed), so it declares
+ * `widerReach`: always confirmed, and described in words instead of a number.
  */
 
 import {
@@ -202,7 +216,18 @@ const FOOTER_BTN_STYLE: CSSProperties = {
  *  of them is a deliberate render — there is no sixth "blank" case where the
  *  panel shows nothing and leaves you guessing which of the five you are in
  *  (NFU6, U19). */
-type TeamState = "loading" | "error" | "empty" | "unlinked" | "ready";
+type TeamState =
+  | "loading"
+  | "error"
+  | "empty"
+  | "unlinked"
+  | "ready"
+  /** A project switch is in flight: the rows are the PREVIOUS project's and are
+   *  dimmed, the chip the operator clicked is pressed, and the panel says so on
+   *  this attribute (round 1873, finding 1). Transient by construction — the
+   *  response clears it, and it is only reachable on a chat that started more
+   *  than one project. */
+  | "switching";
 
 export interface ChatTeamPanelProps {
   chatId: string;
@@ -271,8 +296,34 @@ export function ChatTeamPanel({
   const [projectOverride, setProjectOverride] = useState<string | null>(null);
   const projectOverrideRef = useRef<string | null>(null);
   projectOverrideRef.current = projectOverride;
+
+  /* ── The switch has to ANSWER IN THE SAME FRAME (round 1873, finding 1) ────
+   *
+   * Round 1872's tester clicked `engine-task-graph` and waited 6,828ms — no
+   * pressed state, no dimming, `data-team-state` still "ready" — then all 17
+   * rows appeared at once. Two separate defects, both here:
+   *
+   *   1. THE REFETCH FETCHED THE OLD PROJECT. `projectOverrideRef` was assigned
+   *      DURING RENDER, and `team.refetch()` was called from the click handler —
+   *      i.e. before that render happened. So the queryFn read the previous
+   *      value, the response was identical to what was on screen, and the switch
+   *      only landed on the next 6s poll. The handler now writes the ref itself;
+   *      the render-time assignment stays as the backstop for a poll that fires
+   *      in between.
+   *   2. NOTHING SAID IT WAS WORKING. `aria-pressed` was derived from the
+   *      RESPONSE, which by definition had not arrived yet. `switchingTo` is the
+   *      operator's own answer to "which one did I ask for", available in the
+   *      same tick as the click, and it is what the chips and the panel state
+   *      render from until the server agrees.
+   *
+   * It clears when the response names the project we asked for, or on an error —
+   * never on a timer. A pending marker that expires while the request is still
+   * in flight is the "looks dead" bug again, one layer down. */
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+
   useEffect(() => {
     setProjectOverride(null);
+    setSwitchingTo(null);
   }, [chatId]);
 
   const team = useQuery<TeamResponse, Error>({
@@ -292,6 +343,18 @@ export function ChatTeamPanel({
     retry: 0,
   });
 
+  /* The switch is over when the server says which project it answered with — or
+   * when it fails, which is not a pending state either. Both readings come from
+   * the query itself; nothing here guesses. */
+  useEffect(() => {
+    if (switchingTo === null) return;
+    if (team.isError) {
+      setSwitchingTo(null);
+      return;
+    }
+    if (team.data?.project?.id === switchingTo) setSwitchingTo(null);
+  }, [switchingTo, team.data, team.isError]);
+
   const capabilities = useQuery<CapabilitiesResponse, Error>({
     queryKey: ["capabilities"],
     queryFn: fetchCapabilities,
@@ -309,7 +372,9 @@ export function ChatTeamPanel({
    *
    * `chatId` is passed for the call site's sake only — dismissals are global
    * since round 1350 and the hook does not read it. */
-  const { dismissed, dismiss, restore, restoreAll } = useDismissals(chatId || null);
+  const { dismissed, dismiss, restore, restoreMany, restoreAll } = useDismissals(
+    chatId || null,
+  );
   const dismissalsLoaded = useDismissalsLoaded();
 
   /** Is the DISMISSED group open? Panel state, one boolean — see the header. */
@@ -333,6 +398,10 @@ export function ChatTeamPanel({
   const openNodeRef = useRef(onOpenNode);
   const dismissRef = useRef(dismiss);
   const restoreRef = useRef(restore);
+  /** The undo verb, behind the same ref discipline as the rest — the toast's
+   *  button outlives the render that created it, and a stale closure over a
+   *  react-query mutation is how an undo silently stops working. */
+  const restoreManyRef = useRef(restoreMany);
   useEffect(() => {
     capsRef.current = caps;
   }, [caps]);
@@ -345,6 +414,9 @@ export function ChatTeamPanel({
   useEffect(() => {
     restoreRef.current = restore;
   }, [restore]);
+  useEffect(() => {
+    restoreManyRef.current = restoreMany;
+  }, [restoreMany]);
 
   /* The team query's own refetch, reachable from the two dependency-free
    * handlers below. Same ref discipline as `capsRef`/`openNodeRef` above and
@@ -441,71 +513,102 @@ export function ChatTeamPanel({
       .catch((e: unknown) => toastError("Stop failed", e));
   }, []);
 
-  const handleX = useCallback((nodeId: string, settled: boolean) => {
-    const nowMs = Date.now();
-    const decision = decideXClick({
-      nodeId,
-      settled,
-      armed: armedRef.current,
-      nowMs,
-      canTerminate: capsRef.current.terminate,
-    });
-    switch (decision.action) {
-      case "dismiss":
-        armedRef.current = null;
-        setArmedId(null);
-        dismissRef.current(decision.id);
-        /* Round 1871, finding 12. The customer read "dismiss fires on one click
-         * with no confirm" as the confirmation being backwards. It is not — a
-         * dismissal is REVERSIBLE and a confirm on it would be friction on the
-         * cheap direction — but nothing on screen said so at the moment of the
-         * click, so the asymmetry looked arbitrary. This does: the row goes,
-         * and the toast names the way back. A confirm dialogue would make the
-         * common, undoable action slower; a sentence makes it legible. */
-        toast(
-          `row hidden — bring it back from “N dismissed · show” below`,
-          "info",
-        );
-        return;
-      case "arm":
-      case "rearm":
-        // Same write for both. `rearm` is a too-fast click PUSHING THE WINDOW
-        // BACK to its own clock, which is what stops a click stream from
-        // accumulating 150ms of separation and firing on its own (round 505
-        // finding #1). `setArmedId` with an unchanged id is a React bail-out,
-        // so the visual disarm timer keeps running from the FIRST arm — it
-        // disarms earlier than the ref would, which is the safe direction.
-        armedRef.current = { id: decision.id, at: nowMs };
-        setArmedId(decision.id);
-        return;
-      case "blocked":
-        // The capability dead end. Says nothing to the network, and leaves the
-        // arming alone — the user may still be mid-confirm.
-        return;
-      case "terminate":
-        // GUARD (redundant, deliberate — see handleStop).
-        if (!capsRef.current.terminate) return;
-        armedRef.current = null;
-        setArmedId(null);
-        /* Refetch, not a per-row pending flag — the same decision as
-         * `handleStop` above, taken for the same memo-bail-out reason; the
-         * long form is written out there.
-         *
-         * LIVE since round 1353 (8ec83cc flipped `terminate` in
-         * capabilities.ts): this path is reached whenever the engine answers
-         * `terminate:true`, and it was driven end to end in a browser —
-         * armed ✕, confirmed, 202 `{"terminating":true}`. It stays
-         * capability-gated on that flag, so an engine that withdraws it puts
-         * the row straight back to a disabled button with a stated reason. */
-        void postRunTerminate(decision.id)
-          .then(() => {
-            toast(`terminate sent — ${decision.id.slice(0, 8)}`, "ok");
-            void refetchTeamRef.current();
-          })
-          .catch((e: unknown) => toastError("Terminate failed", e));
-        return;
-    }
-  }, []);
+  const handleX = useCallback(
+    (nodeId: string, settled: boolean, hidesRows: number, widerReach: boolean) => {
+      const nowMs = Date.now();
+      const decision = decideXClick({
+        nodeId,
+        settled,
+        /* An operator row's cascade reaches its whole project, including finished
+         * runs this tree never listed, so the count it carries is a floor. Passing
+         * the floor here would let a 1-row operator chat dismiss on a single click;
+         * `MAX_SAFE_INTEGER` says "more than one, and unknown", which is the truth
+         * and lands on the confirm. The WORDS come from `widerReach` (TeamRow's
+         * `scope`), which is why both travel. */
+        hidesRows: widerReach ? Number.MAX_SAFE_INTEGER : hidesRows,
+        armed: armedRef.current,
+        nowMs,
+        canTerminate: capsRef.current.terminate,
+      });
+      switch (decision.action) {
+        case "dismiss":
+          armedRef.current = null;
+          setArmedId(null);
+          /* Round 1873, finding 2 — THE UNDO.
+           *
+           * Round 1871 answered "one click, no confirm" with a toast naming the
+           * footer control. Round 1872's tester then lost 165 of 166 rows to one
+           * click and found that footer control could only give them back by
+           * wiping every dismissal on the machine. Two things changed:
+           *
+           *   · a click that hides more than its own row now has to be confirmed
+           *     (`decideXClick`, and the strip in TeamRow says how many);
+           *   · the toast carries a REAL undo of exactly this gesture, built from
+           *     the id list the server cascaded — `restoreMany`, not `restore`,
+           *     because restoring the clicked row alone would leave its
+           *     descendants hidden.
+           *
+           * The toast is raised from the callback rather than here, so it names
+           * the count the SERVER hid rather than the count we predicted, and so
+           * the undo button cannot exist before the ids it would restore do. */
+          dismissRef.current(decision.id, (ids) => {
+            const n = ids.length;
+            toast(
+              n === 1
+                ? "row hidden"
+                : `${n} rows hidden — this row and everything settled under it`,
+              "info",
+              undefined,
+              {
+                action: { label: "undo", onClick: () => restoreManyRef.current(ids) },
+                /* Long enough to notice 165 rows leaving and reach for the undo;
+                   the peek below is the durable way back after that. */
+                ttlMs: 12_000,
+              },
+            );
+          });
+          return;
+        case "arm":
+        case "rearm":
+          // Same write for both. `rearm` is a too-fast click PUSHING THE WINDOW
+          // BACK to its own clock, which is what stops a click stream from
+          // accumulating 150ms of separation and firing on its own (round 505
+          // finding #1). `setArmedId` with an unchanged id is a React bail-out,
+          // so the visual disarm timer keeps running from the FIRST arm — it
+          // disarms earlier than the ref would, which is the safe direction.
+          armedRef.current = { id: decision.id, at: nowMs };
+          setArmedId(decision.id);
+          return;
+        case "blocked":
+          // The capability dead end. Says nothing to the network, and leaves the
+          // arming alone — the user may still be mid-confirm.
+          return;
+        case "terminate":
+          // GUARD (redundant, deliberate — see handleStop).
+          if (!capsRef.current.terminate) return;
+          armedRef.current = null;
+          setArmedId(null);
+          /* Refetch, not a per-row pending flag — the same decision as
+           * `handleStop` above, taken for the same memo-bail-out reason; the
+           * long form is written out there.
+           *
+           * LIVE since round 1353 (8ec83cc flipped `terminate` in
+           * capabilities.ts): this path is reached whenever the engine answers
+           * `terminate:true`, and it was driven end to end in a browser —
+           * armed ✕, confirmed, 202 `{"terminating":true}`. It stays
+           * capability-gated on that flag, so an engine that withdraws it puts
+           * the row straight back to a disabled button with a stated reason. */
+          void postRunTerminate(decision.id)
+            .then(() => {
+              toast(`terminate sent — ${decision.id.slice(0, 8)}`, "ok");
+              void refetchTeamRef.current();
+            })
+            .catch((e: unknown) => toastError("Terminate failed", e));
+          return;
+      }
+    },
+    [],
+  );
 
   const data = team.data;
 
@@ -549,7 +652,9 @@ export function ChatTeamPanel({
     [data],
   );
 
-  const state: TeamState = team.isError
+  /** What the tree ON SCREEN is. Drives the notes below — a switch must not
+   *  turn "no project linked" into a spinner. */
+  const dataState: TeamState = team.isError
     ? "error"
     : !data
       ? "loading"
@@ -558,6 +663,11 @@ export function ChatTeamPanel({
         : data.workers.length === 0
           ? "empty"
           : "ready";
+
+  /** What the PANEL is doing, which is what `data-team-state` reports. A switch
+   *  in flight is its own state: the rows below still belong to the previous
+   *  project and saying "ready" over them was finding 1's silence. */
+  const state: TeamState = switchingTo !== null && !team.isError ? "switching" : dataState;
 
   /* Two zones, one panel (13 §1: ChatTeamPanel = TeamTree + PlanKanban).
    * The team tree keeps `flex: 1, minHeight: 0` and therefore keeps every
@@ -579,7 +689,7 @@ export function ChatTeamPanel({
           borderBottom: `1px solid ${tokens.borderSoft}`,
         }}
       >
-        {state === "error" ? (
+        {dataState === "error" ? (
           /* NFU6: the cached tree is NOT rendered next to this. Stale rows beside
            * an error read as fresh rows, which is the exact failure the whole
            * project exists to remove. */
@@ -646,20 +756,37 @@ export function ChatTeamPanel({
                   PROJECT
                 </span>
                 {data?.candidates?.map((p) => {
-                  const on = p.id === data.project?.id;
+                  /* WHAT THE OPERATOR ASKED FOR, not what has arrived: the chip
+                     goes pressed in the tick of the click and stays pressed while
+                     the fetch runs. `switchingTo` is cleared by the response, so
+                     a server that ranks differently than we asked still has the
+                     last word — it just does not get to leave the button looking
+                     unclicked for six seconds first. */
+                  const on = p.id === (switchingTo ?? data.project?.id);
+                  const pending = switchingTo === p.id;
                   return (
                     <button
                       key={p.id}
                       data-project-choice={p.id}
+                      data-project-pending={pending ? "true" : undefined}
                       aria-pressed={on}
+                      aria-busy={pending || undefined}
                       title={`${p.name ?? p.id} — ${p.status} · ${p.id}`}
                       onClick={() => {
                         if (on) return;
+                        /* THE REF FIRST, and from the handler rather than from
+                           the next render: `queryFn` reads it, and `refetch()`
+                           below reads it before React has re-rendered. This one
+                           line is finding 1's actual bug — without it the switch
+                           refetched the project already on screen and the new one
+                           arrived on the next 6s poll. */
+                        projectOverrideRef.current = p.id;
                         setProjectOverride(p.id);
+                        setSwitchingTo(p.id);
                         /* The key is unchanged by design (see the query
                            above), so the switch has to ask for the refetch
-                           itself. Awaiting is pointless — react-query renders
-                           the pending state. */
+                           itself. Awaiting is pointless — `switchingTo` is the
+                           pending state and the response clears it. */
                         void team.refetch();
                       }}
                       className="mono"
@@ -678,7 +805,10 @@ export function ChatTeamPanel({
                       }}
                     >
                       {p.name ?? p.id.slice(0, 8)}
-                      <span style={{ color: tokens.textFaint }}> · {p.status}</span>
+                      <span style={{ color: tokens.textFaint }}>
+                        {" "}
+                        · {pending ? "loading…" : p.status}
+                      </span>
                     </button>
                   );
                 })}
@@ -714,7 +844,32 @@ export function ChatTeamPanel({
               </Note>
             )}
 
-            <div data-team-scroll style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+            {/* The rows below this line belong to the project we are LEAVING.
+                Saying so costs one muted line and is the difference between a
+                switch that is working and a button that looks broken. */}
+            {switchingTo !== null && (
+              <Note>
+                switching to{" "}
+                {data?.candidates?.find((p) => p.id === switchingTo)?.name ??
+                  switchingTo.slice(0, 8)}
+                … — the rows below are still the previous project’s
+              </Note>
+            )}
+
+            <div
+              data-team-scroll
+              aria-busy={switchingTo !== null || undefined}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                /* Dimmed, not emptied: the previous tree is still true until the
+                   response lands, and blanking it would trade one silence for
+                   another. Pointer events stay ON — a click that opens a worker
+                   of the project you are leaving still opens that worker. */
+                ...(switchingTo !== null ? { opacity: 0.45 } : {}),
+              }}
+            >
               {/* The response clock reaches the live rows' time cells THROUGH
                   this provider, never as a row prop (round 1302, L1). It is a
                   new number every poll; as a prop it re-rendered all 108 rows
@@ -738,11 +893,11 @@ export function ChatTeamPanel({
                   />
                 ))}
 
-              {state === "loading" && (
+              {dataState === "loading" && (
                 <Note>{enabled ? "loading team…" : "no chat open"}</Note>
               )}
-              {state === "unlinked" && <Note>no project linked to this chat</Note>}
-              {state === "empty" && <Note>no agents yet</Note>}
+              {dataState === "unlinked" && <Note>no project linked to this chat</Note>}
+              {dataState === "empty" && <Note>no agents yet</Note>}
 
               {/* The peek. Below everything, behind its own heading, visibly
                   quieter: these rows ARE hidden and the panel says so rather

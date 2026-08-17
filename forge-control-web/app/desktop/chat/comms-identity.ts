@@ -376,3 +376,95 @@ export function commsHeader(
     summary,
   };
 }
+
+/* ── The ledger: what THIS transcript holds of the traffic ────────────────────
+ *
+ * Round 1873, finding 6. DoD 4 asks for "messages the operator sends to agents
+ * and results it receives back" as first-class blocks. Round 1871 shipped the
+ * card; the tester then counted 119 cards in the operator chat and found every
+ * single one `direction="in"`, which is not a rendering bug — it is what the
+ * data says. The reciprocal records exist, on the WORKERS' threads, because of
+ * where `commsEntries` writes them (forge-control/src/lib/run-control-rules.ts):
+ *
+ *   · the RECEIVER's thread always gets the `in` entry;
+ *   · the SENDER's thread gets the `out` echo ONLY IF the sender is a run —
+ *     `if (!senderRunId) return { receiver, echo: null }`.
+ *
+ * A worker reports up with `sender_run_id=$FORGE_RUN_UUID`, so it keeps an `out`
+ * echo of its own report and the manager holds the matching `in`. The operator
+ * chat's own traffic downward is not written through that route at all — it
+ * starts projects (`POST /api/projects`) and the engine seeds the tasks — so
+ * there is no `out` entry to render here, and there is no client fix for that:
+ * the payload does not exist. Measured on 2026-08-17 against the live `runs`
+ * table: 123 `out` entries across 103 runs fleet-wide, 0 of them on chat
+ * `bfd1283a`, whose 120 comms entries are all `in`.
+ *
+ * The brief's instruction for exactly this case is "document exactly what is
+ * missing instead of building new plumbing". The census below is that
+ * documentation, rendered in the transcript where the reader is counting cards
+ * rather than in a file nobody opens.
+ */
+
+/** How many relayed messages this thread holds, by direction. */
+export interface CommsCensus {
+  in: number;
+  out: number;
+}
+
+const NO_COMMS: CommsCensus = { in: 0, out: 0 };
+
+/**
+ * Count the comms entries in a thread.
+ *
+ * Total over `unknown[]`: it reads the same `meta.comms` the cards do, through
+ * the same `readComms` validator, so a card that renders and an entry that
+ * counts are the same set by construction — a census derived from a looser test
+ * would eventually disagree with the cards it is describing.
+ */
+export function commsCensus(
+  thread: readonly { meta?: unknown }[] | null | undefined,
+): CommsCensus {
+  if (!thread || thread.length === 0) return NO_COMMS;
+  let inbound = 0;
+  let outbound = 0;
+  for (const entry of thread) {
+    const facts = readComms(entry.meta);
+    if (facts === null) continue;
+    if (facts.direction === "in") inbound += 1;
+    else outbound += 1;
+  }
+  return inbound === 0 && outbound === 0 ? NO_COMMS : { in: inbound, out: outbound };
+}
+
+/** The one line the transcript prints, or null when there is no traffic to
+ *  describe (most runs) and therefore nothing to say. */
+export function commsLedgerLine(c: CommsCensus): string | null {
+  if (c.in === 0 && c.out === 0) return null;
+  const parts = [`${c.in} received`, `${c.out} sent`];
+  if (c.out === 0) {
+    parts.push("this run holds no outbound records — see the tooltip");
+  }
+  return `AGENT COMMS · ${parts.join(" · ")}`;
+}
+
+/** The long form, on hover. States the mechanism rather than the symptom, so a
+ *  reader who wants to check it knows where to look. */
+export function commsLedgerTitle(c: CommsCensus): string {
+  const counted =
+    `This transcript holds ${c.in} inbound and ${c.out} outbound relayed ` +
+    `message${c.out === 1 ? "" : "s"}, each rendered as one collapsible card.`;
+  if (c.out > 0) {
+    return (
+      `${counted} “received” is a message this run was sent; “sent” is the echo ` +
+      `of one it sent to someone else.`
+    );
+  }
+  return (
+    `${counted} There is no outbound half to show, and that is a property of the ` +
+    `DATA, not of this view: an echo is only written to a sender that has a run ` +
+    `of its own (commsEntries in forge-control/src/lib/run-control-rules.ts). ` +
+    `Messages this operator sent DOWN to an agent are recorded on that agent's ` +
+    `own thread — open the worker from the team panel and its transcript shows ` +
+    `them as “sent” cards. Nothing is being hidden here; nothing was written.`
+  );
+}

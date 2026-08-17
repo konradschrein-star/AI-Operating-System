@@ -41,8 +41,13 @@
  *  is one DELETE away — reachable per row from the "N dismissed · show" peek
  *  that both surfaces now render (./peek, round 1355).
  *
- *  ── `restore` vs `restoreAll` — not interchangeable ──────────────────────
- *  `restore(id)` is the way back a row's own ↺ calls. `restoreAll()` deletes
+ *  ── `restore` vs `restoreMany` vs `restoreAll` — three different sizes ───
+ *  `restore(id)` is the way back a row's own ↺ calls. `restoreMany(ids)` is the
+ *  UNDO OF ONE GESTURE (round 1873): a cascade hides the target plus everything
+ *  settled under it, so the reversal has to name that same set — `restore(id)`
+ *  on the clicked row would leave its 173 companions hidden, which is how round
+ *  1872's tester ended up with "restore all" as their only option.
+ *  `restoreAll()` deletes
  *  EVERY dismissal on the machine, across projects and both panels, and the
  *  operator cannot reconstruct the set afterwards. Round 1354's review found
  *  the team panel calling the second from a control labelled "show" and lost
@@ -58,6 +63,7 @@ import {
   deleteDismissal,
   fetchDismissals,
   postDismissal,
+  postDismissalsRestore,
 } from "../live/agentsApi";
 import { toastError } from "../_ui/Toasts";
 
@@ -95,6 +101,15 @@ function withIds(prev: string[], ids: readonly string[]): string[] {
 
 function withoutId(prev: string[], id: string): string[] {
   return prev.includes(id) ? prev.filter((x) => x !== id) : prev;
+}
+
+/** The same, for a whole gesture's worth of ids. Returns `prev` UNCHANGED when
+ *  none of them was hidden, so an undo of nothing is a react-query bail-out
+ *  rather than a re-render of the tree. */
+function withoutIds(prev: string[], ids: readonly string[]): string[] {
+  const drop = new Set(ids);
+  const next = prev.filter((x) => !drop.has(x));
+  return next.length === prev.length ? prev : next;
 }
 
 /** The shared query. Called by both hooks below; react-query dedupes it to one
@@ -149,8 +164,19 @@ export function seededDismissals(
 export interface Dismissals {
   /** Node ids to filter out of the tree — feed straight to `flattenTeam`. */
   dismissed: ReadonlySet<string>;
-  dismiss(id: string): void;
+  /** Hide `id` and whatever the server cascades with it.
+   *
+   *  `onDismissed` is called with the SERVER'S id list once the write lands, and
+   *  is how the caller offers an undo of the whole gesture (round 1873, finding
+   *  2): the client cannot know that list in advance — the cascade is resolved
+   *  from live status — so an undo built from the clicked id alone would leave
+   *  the other 173 rows hidden. Not called if the write fails; the row comes back
+   *  and an error toast names the reason instead. */
+  dismiss(id: string, onDismissed?: (ids: readonly string[]) => void): void;
   restore(id: string): void;
+  /** Un-hide exactly these ids — the reversal of ONE dismissal gesture, not of
+   *  every dismissal on the machine. See `restoreAll` for that. */
+  restoreMany(ids: readonly string[]): void;
   restoreAll(): void;
 }
 
@@ -194,8 +220,14 @@ export function useDismissals(chatId: string | null): Dismissals {
   );
 
   const dismiss = useCallback(
-    (id: string) => {
-      const wasHidden = cached(qc).includes(id);
+    (id: string, onDismissed?: (ids: readonly string[]) => void) => {
+      /* What was hidden BEFORE this gesture. Two readers: the rollback below,
+         and the undo — an undo must put back exactly what THIS click hid, and
+         `POST /dismissals` reports state rather than delta (it is idempotent, so
+         its list includes ids that were already hidden last week). Restoring
+         those too would make one undo silently reverse three earlier decisions. */
+      const before = new Set(cached(qc));
+      const wasHidden = before.has(id);
       writeCache(qc, (prev) => withIds(prev, [id]));
       void postDismissal(id, CASCADE)
         .then((ids) => {
@@ -203,6 +235,14 @@ export function useDismissals(chatId: string | null): Dismissals {
           // NOW rather than into the snapshot we took before the request — a
           // second dismissal may have landed while this one was in flight.
           writeCache(qc, (prev) => withIds(prev, ids));
+          /* AFTER the adoption, and only on success: the caller's undo is built
+             from this list, so offering it before the cascade is in the cache
+             would let an undo race the write it is undoing. Narrowed to what
+             this gesture actually added — see `before`. */
+          if (onDismissed) {
+            const added = ids.filter((x) => !before.has(x));
+            onDismissed(added.length > 0 ? added : [id]);
+          }
         })
         .catch((e: unknown) => {
           // Roll back this id only, and only if we are the ones who added it.
@@ -225,6 +265,27 @@ export function useDismissals(chatId: string | null): Dismissals {
     [qc],
   );
 
+  /* The undo of one gesture. Optimistic in the same shape as `dismiss`: the
+   * rows come back in this frame, the request follows, and a failure puts the
+   * hiding back rather than leaving the panel disagreeing with the server.
+   *
+   * `withoutIds` rather than a loop of `restore(id)`: 174 separate DELETEs for
+   * one undo is a request storm, and each would rewrite the cache. One POST,
+   * one cache write. */
+  const restoreMany = useCallback(
+    (ids: readonly string[]) => {
+      if (ids.length === 0) return;
+      const hidden = new Set(cached(qc));
+      const wereHidden = ids.filter((id) => hidden.has(id));
+      writeCache(qc, (prev) => withoutIds(prev, ids));
+      void postDismissalsRestore(ids).catch((e: unknown) => {
+        if (wereHidden.length > 0) writeCache(qc, (prev) => withIds(prev, wereHidden));
+        toastError(`Undo failed — ${ids.length} row${ids.length === 1 ? "" : "s"}`, e);
+      });
+    },
+    [qc],
+  );
+
   const restoreAll = useCallback(() => {
     const before = cached(qc);
     writeCache(qc, () => []);
@@ -236,5 +297,5 @@ export function useDismissals(chatId: string | null): Dismissals {
     });
   }, [qc]);
 
-  return { dismissed, dismiss, restore, restoreAll };
+  return { dismissed, dismiss, restore, restoreMany, restoreAll };
 }

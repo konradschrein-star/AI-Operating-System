@@ -77,10 +77,16 @@ const RUNNING = "worker-a";
 const OTHER = "worker-b";
 const SETTLED = "worker-done";
 
-/** The world as it is today: every control-plane flag false (U8). */
-const TODAY = { canTerminate: false } as const;
+/** The world as it is today: every control-plane flag false (U8).
+ *
+ *  ROUND 1873 folded `hidesRows: 1` in here, and the value is load-bearing: it
+ *  is the LEAF case — a row whose ✕ takes nothing but itself — which is the only
+ *  dismissal that still fires on one click. Every case below that means to
+ *  exercise a cascade says so explicitly, and the cascade section at the bottom
+ *  is where the new rule is asserted. */
+const TODAY = { canTerminate: false, hidesRows: 1 } as const;
 /** The world after engine-v2-research-lane ships the contract. */
-const LATER = { canTerminate: true } as const;
+const LATER = { canTerminate: true, hidesRows: 1 } as const;
 
 const armedAt = (id: string, at: number): ArmedState => ({ id, at });
 
@@ -428,6 +434,7 @@ console.log("\n── exhaustive sweep: nothing fires today ──────�
           armed,
           nowMs,
           canTerminate: false,
+          hidesRows: 1,
         });
         if (d.action === "terminate") terminates++;
       }

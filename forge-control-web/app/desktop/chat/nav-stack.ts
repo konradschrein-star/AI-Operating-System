@@ -220,6 +220,38 @@ export function crumbs(stack: NavStack): NavCrumb[] {
   return out;
 }
 
+/**
+ * What the frame you are LOOKING AT is called — round 1873, finding 5.
+ *
+ * `crumbs()` above can only name a frame from the stack; this is the same
+ * question asked by the view, which has also loaded the thing and may know more.
+ * The order is the finding:
+ *
+ *   1. THE LABEL THE CLICK CARRIED. The team row said "Recon chat Bash block
+ *      rendering", so that is the name the customer expects to see at the top of
+ *      what it opened. Round 1871 put this label on the frame and then rendered
+ *      `sub-agent ${id.slice(0, 8)}` anyway (AgentChatView.tsx:463) — so the
+ *      crumb still read `manager chat › sub-agent toolu_01`, character for
+ *      character the string finding 10 quoted, while the data to fix it sat
+ *      unread on the frame.
+ *   2. WHAT THE VIEW LEARNED — the sub-agent's spawn description, or the run's
+ *      title. Covers a frame pushed from somewhere that had no label.
+ *   3. The id, shortened, and for a sub-agent with the `toolu_01` prefix
+ *      dropped, because that prefix is a constant of the Anthropic API and
+ *      eight characters of it name nothing.
+ *
+ * Never the raw id, and never a guess about the other kind: a session that
+ * cannot be named says "session", a sub-agent says "sub-agent".
+ */
+export function currentFrameLabel(frame: NavFrame, learned: string | null): string {
+  if (frame.kind === "plandoc") return frame.name;
+  const given = tidyLabel(frame.label) ?? tidyLabel(learned ?? undefined);
+  if (given !== null) return given;
+  return frame.subagentId !== undefined
+    ? `sub-agent ${shortSubagentId(frame.subagentId)}`
+    : `session ${shortId(frame.runId)}`;
+}
+
 /** A stable React key for the frame on top. Drives the drill-in animation:
  *  remounting on a changed key is what replays it, and a key that changed for
  *  a frame that did not would replay it for nothing. */

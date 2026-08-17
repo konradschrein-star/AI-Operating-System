@@ -73,3 +73,35 @@ Numbering: `U#` functional, `NFU#` non-functional. These extend (do not replace)
 - **NFU7 — Build gates.** `npx tsc --noEmit` clean in both repos and `pnpm build` green in forge-control-web at the end of EVERY phase, not just deploy.
 - **NFU8 — No new runtime deps** without a one-line justification in the phase plan; animation via CSS only; markdown via the existing react-markdown stack. (`@xyflow/react` explicitly NOT added this project — reserved for the future graph phase.)
 - **NFU9 — Worktree discipline.** All build-phase work inside this worktree; /opt/forge-ai-os touched only in Phase 900.
+
+## H. Known data gaps — the honest half of DoD 4 (round 1873)
+
+The brief's DoD 4 asks for "messages the operator sends to agents **and** results
+it receives back" as first-class collapsible blocks, and adds: "If specific
+payloads truly are not in the thread, document exactly what is missing instead of
+building new plumbing." One of the two directions falls under that clause, so it
+is recorded here as a requirement of the DATA rather than a defect of the view.
+
+- **U35 — The outbound half of a comms pair may not exist, and the transcript
+  must say so.** `commsEntries`
+  (`forge-control/src/lib/run-control-rules.ts`) writes the `in` entry to the
+  RECEIVER's thread unconditionally, and the `out` echo to the sender's thread
+  **only when the sender is itself a run** (`if (!senderRunId) return {receiver,
+  echo: null}`). Consequences, measured against live `runs` on 2026-08-17: 123
+  `out` entries exist across 103 runs — all of them on WORKER threads, echoing
+  reports those workers sent up — and 0 on the operator chat `bfd1283a`, whose
+  120 comms entries are all `in`. The operator's own traffic downward does not go
+  through that route at all: it starts projects (`POST /api/projects`) and the
+  engine seeds the tasks.
+  So a manager transcript showing 120 inbound cards and no outbound ones is
+  correct. What was missing was the disclosure: the panel must state the census
+  in both directions and, when one is empty, name the mechanism and where those
+  records DO live (the worker's own transcript, one drill-in away). Rendered as
+  the pinned `[data-comms-ledger]` line above the thread; `commsCensus` reads the
+  same validator the cards do, so the count and the cards cannot disagree.
+  Test: `check-r1873-fixes.ts` (census + wording), and the browser assertion that
+  ledger counts equal rendered card counts.
+  **This requirement is satisfied by a sentence, not by a pipeline.** Writing an
+  `out` echo for a sender that has no run would mean inventing an author; that is
+  the engine's contract to change, in the lane that owns
+  `run-control-rules.ts`, not this project's to fake.

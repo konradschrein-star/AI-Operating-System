@@ -438,6 +438,63 @@ r.post("/dismissals", async (c) => {
   return c.json({ dismissed: ids });
 });
 
+/**
+ * POST /api/agents/dismissals/restore  {ids: string[]} → {restored: string[]}
+ *
+ * UNDO FOR ONE GESTURE — round 1873, finding 2.
+ *
+ * A cascade is one click that can hide a hundred and seventy rows, and until
+ * this route the only ways back were one `DELETE /dismissals/:id` per hidden id
+ * or `DELETE /dismissals`, which drops every dismissal on the machine including
+ * the ones this gesture did not create. So the panel had a destructive action
+ * with no proportionate reversal, and round 1872's tester lost 165 of 166 rows
+ * to a single click and could only get them back by wiping the global set.
+ *
+ * This is the reversal: hand back exactly the id list `POST /dismissals`
+ * returned and those rows — and only those — come back. A POST rather than a
+ * DELETE because the id list can be hundreds of ids long and a body is the only
+ * honest place for it; `DELETE` with a body is legal but widely dropped by
+ * proxies, and this API sits behind one (`/api/proxy` in the web app).
+ *
+ * `restored` is what was actually deleted, so a caller can tell "nothing was
+ * hidden any more" from "everything came back". Ids that were not hidden are
+ * not an error, exactly as in `DELETE /dismissals/:id`.
+ */
+r.post("/dismissals/restore", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch (e) {
+    return c.json(
+      { error: "invalid JSON body", message: e instanceof Error ? e.message : String(e) },
+      400,
+    );
+  }
+  const raw = (body ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(raw.ids)) return c.json({ error: "ids must be an array" }, 400);
+  if (raw.ids.length === 0) return c.json({ error: "ids must not be empty" }, 400);
+  // A cascade over Konrad's whole fleet is in the low hundreds; 2000 is far
+  // above any real gesture and keeps an unbounded body out of the query.
+  if (raw.ids.length > 2000) {
+    return c.json({ error: "ids must hold at most 2000 entries" }, 400);
+  }
+  const ids: string[] = [];
+  for (const candidate of raw.ids) {
+    const reason = badNodeId(candidate);
+    if (reason) return c.json({ error: `ids: ${reason}` }, 400);
+    ids.push((candidate as string).trim());
+  }
+  try {
+    const res = await pool.query<{ node_id: string }>(
+      `DELETE FROM ui_dismissals WHERE node_id = ANY($1::text[]) RETURNING node_id`,
+      [ids],
+    );
+    return c.json({ restored: res.rows.map((row) => row.node_id) });
+  } catch (e) {
+    return c.json(dismissalFailure("restore many", e), 500);
+  }
+});
+
 /** DELETE /api/agents/dismissals — restore everything. The escape hatch behind
  *  the panel's "show all", and the only un-cascade there is. */
 r.delete("/dismissals", async (c) => {

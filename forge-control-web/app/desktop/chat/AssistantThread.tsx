@@ -48,7 +48,10 @@ import type { RunDetail } from "../../api";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { RichActionsProvider, RichMessage, type RichActions } from "./RichMessage";
 import {
+  commsCensus,
   commsHeader,
+  commsLedgerLine,
+  commsLedgerTitle,
   commsPreview,
   stripCommsPrefix,
   type CommsFacts,
@@ -820,6 +823,46 @@ function ActivityStrip({ run }: { run: RunDetail }) {
   );
 }
 
+/**
+ * The comms ledger — one line above the transcript, when there is traffic in it.
+ *
+ * Round 1873, finding 6: 119 inbound cards and zero outbound ones is the honest
+ * rendering of this thread, and the panel said nothing about it, so a customer
+ * reading it concludes the operator never speaks to its agents. This line states
+ * the count in both directions and, when one of them is empty, says why and
+ * where those records actually live (`commsLedgerTitle`).
+ *
+ * ABOVE the viewport rather than inside it, deliberately: assistant-ui scrolls
+ * its viewport to the bottom, so a note at the top of a 460-entry transcript is
+ * a note nobody sees. It is `flex: none` and 9.5px — the same register as the
+ * other structural lines on this surface, not a banner.
+ */
+function CommsLedger({ thread }: { thread: RunDetail["thread"] }) {
+  const census = useMemo(() => commsCensus(thread), [thread]);
+  const line = commsLedgerLine(census);
+  if (line === null) return null;
+  return (
+    <div
+      data-comms-ledger
+      data-comms-in={census.in}
+      data-comms-out={census.out}
+      className="mono"
+      title={commsLedgerTitle(census)}
+      style={{
+        flex: "none",
+        padding: "6px 28px",
+        fontSize: 9.5,
+        letterSpacing: "0.04em",
+        lineHeight: 1.5,
+        color: census.out === 0 ? tokens.warn : tokens.textFaint,
+        borderBottom: `1px solid ${tokens.borderDivider}`,
+      }}
+    >
+      {line}
+    </div>
+  );
+}
+
 /** Nothing is actionable unless a caller says so. A drilled worker view has no
  *  composer, and its controls must render disabled-with-a-reason rather than
  *  appear live and do nothing (RichMessage.tsx). */
@@ -886,6 +929,7 @@ export function AssistantThread({
             <ThreadPrimitive.Root
               style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
             >
+              <CommsLedger thread={run.thread} />
               <ThreadPrimitive.Viewport
                 className="scroll-tinted"
                 style={{

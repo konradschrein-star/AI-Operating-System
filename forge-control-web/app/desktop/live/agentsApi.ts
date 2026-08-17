@@ -463,6 +463,29 @@ export async function deleteDismissal(id: string): Promise<string[]> {
   return stringArray(body, "restored", "DELETE /agents/dismissals/:id");
 }
 
+/**
+ * Un-hide exactly these ids — the undo of one cascade (round 1873, finding 2).
+ *
+ * Hand it the list `postDismissal` returned and the gesture is reversed, which
+ * `deleteDismissal` cannot do (it restores the clicked row and leaves the
+ * hundred-odd ids the server cascaded behind) and `deleteAllDismissals` does
+ * too much of (it also drops dismissals this gesture never made).
+ */
+export async function postDismissalsRestore(
+  ids: readonly string[],
+): Promise<string[]> {
+  const body = await dismissalRequest(
+    "/restore",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ids }),
+    },
+    "POST /agents/dismissals/restore",
+  );
+  return stringArray(body, "restored", "POST /agents/dismissals/restore");
+}
+
 /** Un-hide everything. Returns how many rows the server deleted. */
 export async function deleteAllDismissals(): Promise<number> {
   const body = await dismissalRequest(

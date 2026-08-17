@@ -61,6 +61,11 @@ function decideXClickPre506(i: {
   armed: ArmedState | null;
   nowMs: number;
   canTerminate: boolean;
+  /** Round 1873 added this to the LIVE machine (a dismissal that cascades now
+   *  takes the confirm too). Accepted and ignored here: this function is a
+   *  frozen copy of the pre-506 code, and the whole point of the comparison is
+   *  that it behaves exactly as it did. */
+  hidesRows?: number;
 }): OldDecision {
   if (i.settled) return { action: "dismiss", id: i.nodeId };
   if (i.armed === null || i.armed.id !== i.nodeId) return { action: "arm", id: i.nodeId };
@@ -81,6 +86,7 @@ function replay(
     armed: ArmedState | null;
     nowMs: number;
     canTerminate: boolean;
+    hidesRows: number;
   }) => { action: string; id?: string },
   times: number[],
   canTerminate: boolean,
@@ -89,7 +95,9 @@ function replay(
   let terminates = 0;
   const firedAt: number[] = [];
   for (const nowMs of times) {
-    const d = decide({ nodeId: ROW, settled: false, armed, nowMs, canTerminate });
+    // `hidesRows: 1` — this harness replays clicks on a RUNNING row, where the
+    // blast radius plays no part: terminate always confirms.
+    const d = decide({ nodeId: ROW, settled: false, armed, nowMs, canTerminate, hidesRows: 1 });
     if (d.action === "arm" || d.action === "rearm") armed = { id: ROW, at: nowMs };
     else if (d.action === "terminate") {
       terminates++;

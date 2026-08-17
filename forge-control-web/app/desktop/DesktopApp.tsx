@@ -59,85 +59,17 @@ import {
   errorDetail,
 } from "./_ui/SurfaceErrorBoundary";
 import { ToastHost, toastError } from "./_ui/Toasts";
+import {
+  MOBILE_NAV_GROUPS,
+  NAV,
+  isSurface,
+  type NavItem,
+  type Surface,
+} from "./nav-items";
 
-/* ----------------------------------------------------------------------------
- * Surface keys — match the design's surface routing
- * -------------------------------------------------------------------------- */
-type Surface =
-  | "today"
-  | "inbox"
-  | "chat"
-  | "tasks"
-  | "pipeline"
-  | "library"
-  | "money"
-  | "businesses"
-  | "skills"
-  | "memory"
-  | "live"
-  | "control"
-  | "autonomy"
-  | "automation"
-  | "goals"
-  | "journal"
-  | "map"
-  | "search"
-  | "settings";
-
-/* ── Reload keeps your place (round 1871, finding 7) ──────────────────────────
- *
- * The customer test: "F5 while reading a worker transcript returns to TODAY —
- * chat, worker and scroll all gone, URL still `/desktop`." All of it was
- * `useState` in a single-route app, so a refresh was a cold start of a console
- * you had spent a minute navigating into.
- *
- * The surface is restored here; ChatSurface restores the open chat and the
- * drill-in stack on the same mechanism (`forge.chat.*`). Scroll position is
- * deliberately NOT restored — the transcript's height depends on a poll that
- * has not landed yet at mount, so a restored offset would land in the wrong
- * place and read as a bug rather than as a courtesy.
- *
- * localStorage rather than the URL. The URL is the honest home for this and
- * `/desktop?surface=chat&chat=<id>` is where it should end up — but the app
- * has exactly one route today and every surface, panel and rail reads its
- * state from React, so routing is a redesign, not a fix. This restores the
- * place in one line per piece of state and does not stand in the way of that.
- */
-const SURFACES: readonly Surface[] = [
-  "today", "inbox", "chat", "tasks", "pipeline", "library", "money",
-  "businesses", "skills", "memory", "live", "control", "autonomy",
-  "automation", "goals", "journal", "map", "search", "settings",
-];
-
-const isSurface = (v: unknown): v is Surface =>
-  typeof v === "string" && (SURFACES as readonly string[]).includes(v);
-
-interface NavItem {
-  key: Surface;
-  label: string;
-  badge?: string;
-  group: "operator" | "work" | "ai" | "recall";
-}
-
-const NAV: NavItem[] = [
-  { key: "today", label: "TODAY", group: "operator" },
-  { key: "inbox", label: "INBOX", group: "operator" },
-  { key: "chat", label: "CHAT", group: "operator" },
-  { key: "tasks", label: "PROJECTS", group: "work" },
-  { key: "pipeline", label: "PIPELINE", group: "work" },
-  { key: "library", label: "LIBRARY", group: "work" },
-  { key: "money", label: "MONEY", group: "work" },
-  { key: "businesses", label: "BUSINESSES", group: "work" },
-  { key: "skills", label: "SKILLS", group: "ai" },
-  { key: "memory", label: "MEMORY", group: "ai" },
-  { key: "live", label: "LIVE", group: "ai" },
-  { key: "control", label: "CONTROL", group: "ai" },
-  { key: "autonomy", label: "AUTONOMY", group: "ai" },
-  { key: "automation", label: "AUTOMATION", group: "ai" },
-  { key: "goals", label: "GOALS", group: "recall" },
-  { key: "journal", label: "JOURNAL", group: "recall" },
-  { key: "map", label: "MAP", group: "recall" },
-];
+/* Surfaces and the navigation model moved to ./nav-items in round 1873 — the
+ * phone sheet below is a third consumer of the same list, and a list with three
+ * readers does not live inside one of them. */
 
 const PLACEHOLDER_SURFACES: Record<
   string,
@@ -405,6 +337,7 @@ export function DesktopApp() {
     >
       <TopNav
         surface={surface}
+        narrow={narrow}
         onNav={setSurface}
         onPalette={() => {
           setPaletteOpen(true);
@@ -589,12 +522,17 @@ function TopNav({
   onNav,
   onPalette,
   badges,
+  narrow,
 }: {
   surface: Surface;
   onNav: (s: Surface) => void;
   onPalette: () => void;
   badges: Record<string, string>;
+  /** Phone width. Below it the horizontal strip cannot hold the destinations
+   *  and is replaced by one button that opens all of them — see `MobileNav`. */
+  narrow: boolean;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const navStyle = (key: Surface): CSSProperties => ({
     display: "flex",
     alignItems: "center",
@@ -623,7 +561,8 @@ function TopNav({
           display: "flex",
           alignItems: "center",
           gap: 9,
-          paddingRight: 20,
+          paddingRight: narrow ? 10 : 20,
+          minWidth: 0,
         }}
       >
         <div
@@ -632,6 +571,7 @@ function TopNav({
             height: 15,
             background: tokens.accent,
             borderRadius: 2,
+            flex: "none",
           }}
         />
         <span
@@ -645,8 +585,44 @@ function TopNav({
         >
           forge
         </span>
+        {/* On a phone the strip below is gone, so the only thing that says where
+            you ARE is this. It is the destination name, not a decoration. */}
+        {narrow && (
+          <span
+            data-nav-current
+            className="mono"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              color: tokens.textMuted,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+            }}
+          >
+            {NAV.find((n) => n.key === surface)?.label ?? surface.toUpperCase()}
+          </span>
+        )}
       </div>
-      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+      {/* ROUND 1873, FINDING 3. This strip is 1,138px of destinations. At 390px
+          it used to render anyway, inside a container with no scroll and no
+          overflow affordance: TODAY, CHAT and PROJECTS were inside the viewport
+          and the other eleven — LIVE, the panel this project is about, at x=914 —
+          could not be reached by swipe, wheel or `window.scrollX`, because the
+          shell root is `overflow: hidden` and the strip's `scrollWidth` equalled
+          its `clientWidth`. Three of fourteen destinations reachable on a phone.
+          Below 900px the strip is now replaced by one button that opens ALL of
+          them, the four rail groups included — the rail is hidden at this width
+          too (round 1871, finding 8), so a menu that only mirrored this strip
+          would still have stranded GOALS, JOURNAL, MAP and SETTINGS. */}
+      <div
+        style={{
+          display: narrow ? "none" : "flex",
+          alignItems: "stretch",
+          height: "100%",
+        }}
+      >
         {groups.map((g, gi) => (
           <Group key={g} divider={gi > 0}>
             {NAV.filter((n) => n.group === g).map((n) => (
@@ -688,26 +664,232 @@ function TopNav({
           borderRadius: 7,
           padding: "6px 10px",
           cursor: "pointer",
-          minWidth: 172,
+          /* On a phone the words and the ⌘K hint go and the affordance becomes
+             the icon: 172px of search box next to a menu button is how the strip
+             ran out of room in the first place. */
+          minWidth: narrow ? 0 : 172,
         }}
       >
         <span className="ms" style={{ fontSize: 14, color: tokens.textFaint }}>
           search
         </span>
-        <span style={{ color: tokens.textMuted2 }}>search everything</span>
-        <span style={{ flex: 1 }} />
-        <span
-          style={{
-            color: tokens.textGhost,
-            border: `1px solid ${tokens.borderEmphasis}`,
-            borderRadius: 4,
-            padding: "0 4px",
-          }}
-        >
-          ⌘K
-        </span>
+        {!narrow && (
+          <>
+            <span style={{ color: tokens.textMuted2 }}>search everything</span>
+            <span style={{ flex: 1 }} />
+            <span
+              style={{
+                color: tokens.textGhost,
+                border: `1px solid ${tokens.borderEmphasis}`,
+                borderRadius: 4,
+                padding: "0 4px",
+              }}
+            >
+              ⌘K
+            </span>
+          </>
+        )}
       </div>
       <ThemeToggle />
+      {narrow && (
+        <button
+          data-nav-menu
+          type="button"
+          aria-label="Open navigation menu"
+          aria-expanded={menuOpen}
+          aria-controls="forge-mobile-nav"
+          title="All destinations"
+          onClick={() => setMenuOpen((v) => !v)}
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginLeft: 8,
+            width: 34,
+            height: 34,
+            flex: "none",
+            borderRadius: 7,
+            cursor: "pointer",
+            color: menuOpen ? tokens.accent : tokens.textMuted,
+            background: menuOpen ? tokens.primaryActionBg : "transparent",
+            border: `1px solid ${menuOpen ? tokens.accent : tokens.borderEmphasis}`,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 18 }}>
+            {menuOpen ? "close" : "menu"}
+          </span>
+        </button>
+      )}
+      {narrow && menuOpen && (
+        <MobileNav
+          surface={surface}
+          badges={badges}
+          onNav={(s) => {
+            onNav(s);
+            setMenuOpen(false);
+          }}
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Every destination, on a phone — round 1873, finding 3.
+ *
+ * A sheet under the top bar rather than a slide-out drawer: the shell is
+ * `overflow: hidden` and 390px wide, so there is nothing to slide over and a
+ * transform would only buy an animation. It lists the FOUR rail groups plus
+ * SETTINGS — 18 destinations — because at this width the left rail is hidden
+ * too, and a menu that mirrored only the top strip would have left GOALS,
+ * JOURNAL, MAP and SETTINGS unreachable, which is the same bug one row down.
+ *
+ * Closes on Escape, on the backdrop, and on any choice. It does NOT trap focus:
+ * that needs a focus-scope this app has no primitive for, and half a trap is
+ * worse than none — the list is a flat set of buttons in DOM order, so a phone's
+ * screen reader and a keyboard both walk it top to bottom.
+ */
+function MobileNav({
+  surface,
+  badges,
+  onNav,
+  onClose,
+}: {
+  surface: Surface;
+  badges: Record<string, string>;
+  onNav: (s: Surface) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  /* From the model, not from a copy of it: `mobileNavDestinations()` in
+     ./nav-items is the same walk, and the check script compares its output
+     against `NAV` so a fifth group cannot be added without landing here. */
+  const groups = MOBILE_NAV_GROUPS.map((g) => ({
+    label: g.label,
+    items: NAV.filter((n) => n.group === g.group),
+  }));
+
+  return (
+    <div
+      data-nav-menu-backdrop
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        top: 46,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 900,
+        background: tokens.bgBody,
+        overflowY: "auto",
+      }}
+    >
+      <nav
+        id="forge-mobile-nav"
+        data-nav-menu-panel
+        aria-label="All destinations"
+        /* The sheet IS the backdrop's child and swallows the click that would
+           close it — a tap on a destination must not also register as "close by
+           backdrop" and race the navigation. */
+        onClick={(e) => e.stopPropagation()}
+        style={{ padding: "6px 0 40px" }}
+      >
+        {groups.map((g) => (
+          <div key={g.label}>
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.1em",
+                color: tokens.textGhost,
+                padding: "12px 18px 4px",
+              }}
+            >
+              {g.label}
+            </div>
+            {g.items.map((n) => (
+              <button
+                key={n.key}
+                data-nav-menu-item={n.key}
+                type="button"
+                aria-current={surface === n.key ? "page" : undefined}
+                onClick={() => onNav(n.key)}
+                className="mono"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  width: "100%",
+                  /* 44px: a thumb target, not a mouse target. Every row in this
+                     sheet is tappable at arm's length on a moving train, which
+                     is where Konrad reads this thing. */
+                  minHeight: 44,
+                  padding: "0 18px",
+                  fontSize: 13,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: surface === n.key ? tokens.text : tokens.textMuted,
+                  background: surface === n.key ? tokens.selectedBg : "transparent",
+                  border: "none",
+                  borderLeft: `2px solid ${surface === n.key ? tokens.accent : "transparent"}`,
+                }}
+              >
+                {n.label}
+                <span style={{ flex: 1 }} />
+                {badges[n.key] && (
+                  <span style={{ fontSize: 11, color: tokens.textFaint }}>
+                    {badges[n.key]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        ))}
+        <div
+          style={{
+            height: 1,
+            background: tokens.borderDivider,
+            margin: "14px 18px 0",
+          }}
+        />
+        {/* Not in NAV — it never was; the desktop reaches it from the rail's
+            own footer entry, which does not exist at this width. */}
+        <button
+          data-nav-menu-item="settings"
+          type="button"
+          aria-current={surface === "settings" ? "page" : undefined}
+          onClick={() => onNav("settings")}
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            minHeight: 44,
+            padding: "0 18px",
+            fontSize: 13,
+            textAlign: "left",
+            cursor: "pointer",
+            color: surface === "settings" ? tokens.text : tokens.textMuted,
+            background: surface === "settings" ? tokens.selectedBg : "transparent",
+            border: "none",
+            borderLeft: `2px solid ${surface === "settings" ? tokens.accent : "transparent"}`,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 15 }}>
+            settings
+          </span>
+          SETTINGS
+        </button>
+      </nav>
     </div>
   );
 }
