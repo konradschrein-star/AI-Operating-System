@@ -15,10 +15,22 @@
 -- at (`meta->>'run_id'`).
 --
 -- ATTRIBUTION, stated once and carried into the API payload so the UI can
--- label it: a run's WHOLE usage lands in the hour it COMPLETED, because that
--- is when the spend_log row is written. A four-hour run shows up as one spike,
--- not a smear across four buckets. Smearing would need per-turn timestamps we
--- do not persist, and inventing them silently is worse than a labelled spike.
+-- label it: a run's WHOLE token usage lands in the hour of its LAST BILLED
+-- TURN, and cost lands per turn in the turn's own hour.
+--
+-- This paragraph said "the hour it COMPLETED, because that is when the
+-- spend_log row is written" until round 1354. Both halves were wrong. The
+-- executor writes a spend row per INVOCATION and a chat run is re-entered for
+-- every turn, so a run carries many rows across many hours — 14 live run ids
+-- carried more than one, one carried 123 across 15 hours. Tokens are stored
+-- CUMULATIVELY per run (metadata.usage_total_running), so folding "every run
+-- billed in this hour" counted the same total once per hour touched: 4.9%
+-- phantom tokens over 24h, unbounded as a chat grows. The sampler now keeps a
+-- run only in the hour of its most recent claude-code spend row.
+--
+-- A four-hour run is therefore one token spike at its end plus four small cost
+-- bars. Smearing tokens would need per-turn token deltas we do not persist,
+-- and inventing them silently is worse than a labelled spike.
 --
 -- shadow_usd is USD on purpose. executor.ts converts USD→EUR with a hardcoded
 -- CC_USD_EUR (default 0.86) when it writes spend_log.amount_eur; storing EUR

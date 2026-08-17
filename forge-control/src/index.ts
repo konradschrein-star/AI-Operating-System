@@ -59,9 +59,16 @@ app.use("*", async (c, next) => {
 // Permissive CORS for the local mobile UI on :7701 and Tailscale traffic.
 app.use("/api/*", async (c, next) => {
   c.res.headers.set("Access-Control-Allow-Origin", "*");
-  // PUT is here for /api/usage/rate — without it the browser's preflight
-  // rejects the write and the setting is only changeable by curl.
-  c.res.headers.set("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
+  // PUT is here for /api/usage/rate and DELETE for /api/integrations/gemini/key
+  // — without them the browser's preflight rejects the write and the setting is
+  // only changeable by curl. The web UI reaches the API through a same-origin
+  // Next rewrite and so never preflights, but any other origin (the :7701
+  // mobile UI, Tailscale) does, and a verb the router exposes must be a verb
+  // CORS admits.
+  c.res.headers.set(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,DELETE,OPTIONS",
+  );
   c.res.headers.set("Access-Control-Allow-Headers", "content-type");
   if (c.req.method === "OPTIONS") return c.body(null, 204);
   await next();

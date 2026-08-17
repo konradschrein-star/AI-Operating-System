@@ -64,6 +64,8 @@ import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
   ARM_WINDOW_MS,
+  SETTLED_STOP_TITLE,
+  capabilityTitle,
   decideStopClick,
   decideXClick,
   type ArmedState,
@@ -287,7 +289,20 @@ export function ChatTeamPanel({
       settled,
       canStop: capsRef.current.stop,
     });
-    if (decision.action !== "stop") return;
+    if (decision.action !== "stop") {
+      /* The button is disabled for both blocked reasons (`stopBlockReason` in
+       * confirm.ts drives `disabled` off this very decision), so a pointer
+       * cannot get here. A reviewer who strips `disabled` in devtools CAN —
+       * and dropping their click on the floor is the silent no-op NFU6
+       * forbids, at one remove. It says why instead. */
+      toast(
+        decision.reason === "settled"
+          ? SETTLED_STOP_TITLE
+          : capabilityTitle("stop"),
+        "info",
+      );
+      return;
+    }
     // GUARD (redundant with the decision above, and deliberately so — the
     // reviewer strips `disabled` in devtools and clicks).
     if (!capsRef.current.stop) return;
@@ -347,9 +362,14 @@ export function ChatTeamPanel({
         setArmedId(null);
         /* Refetch, not a per-row pending flag — the same decision as
          * `handleStop` above, taken for the same memo-bail-out reason; the
-         * long form is written out there. Still unreachable today: with an
-         * all-false capabilities response `decideXClick` never returns this
-         * action, and the flag flips on the engine lane's side first. */
+         * long form is written out there.
+         *
+         * LIVE since round 1353 (8ec83cc flipped `terminate` in
+         * capabilities.ts): this path is reached whenever the engine answers
+         * `terminate:true`, and it was driven end to end in a browser —
+         * armed ✕, confirmed, 202 `{"terminating":true}`. It stays
+         * capability-gated on that flag, so an engine that withdraws it puts
+         * the row straight back to a disabled button with a stated reason. */
         void postRunTerminate(decision.id)
           .then(() => {
             toast(`terminate sent — ${decision.id.slice(0, 8)}`, "ok");

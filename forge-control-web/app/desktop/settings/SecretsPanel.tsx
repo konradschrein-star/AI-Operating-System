@@ -25,6 +25,17 @@
  * chosen to be as specific about INTENT as possible (`a[href="/settings"]`,
  * not "the first link"), so if that page is restyled the override either still
  * matches or visibly stops mattering — it cannot silently hide new content.
+ *
+ * That last claim is why the h1 rule is PATH-BOUND rather than `h1` alone.
+ * `[data-settings-embed="secrets"] h1` is a descendant selector: it hides
+ * every h1 the embedded tree ever grows, including one a future section adds
+ * three levels down — silently, which is the exact failure the paragraph above
+ * promises cannot happen (round 1353 review, finding 4). The rule now names
+ * the one element it means: the page title, which sits at
+ * `embed > page-root > maxWidth-wrapper > h1` and is that wrapper's first h1
+ * (`app/settings/secrets/page.tsx:89`, directly under the `maxWidth: 780`
+ * div at :76). A second h1 anywhere — deeper, or later in the same wrapper —
+ * renders normally and is therefore VISIBLE, which is the honest default.
  */
 
 import { type JSX } from "react";
@@ -43,7 +54,7 @@ const EMBED_CSS = `
 [data-settings-embed="secrets"] a[href="/settings"] {
   display: none !important;
 }
-[data-settings-embed="secrets"] h1 {
+[data-settings-embed="secrets"] > div > div > h1:first-of-type {
   display: none !important;
 }
 `;

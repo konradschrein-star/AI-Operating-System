@@ -9,15 +9,29 @@
  * the same trap one table over, so it gets the same fix — aggregate on write.
  *
  * ── ATTRIBUTION RULE ────────────────────────────────────────────────────────
- * A run's WHOLE usage lands in the hour it COMPLETED.
+ * A run's WHOLE usage lands in the hour of its LAST BILLED TURN.
  *
- * `spend_log` gets exactly one row per finished run, written by executor.ts at
- * completion (provider='claude-code', meta={usd, run_id}). That row's
- * created_at is the only per-run timestamp we can trust after the fact, so it
- * is the bucket. A four-hour run is one spike at its end, not a smear over
- * four buckets. Smearing would require per-turn timestamps we do not persist —
- * inventing a plausible curve is worse than a labelled spike, so the rule is
- * returned in the API payload (`attribution`) for the UI to print.
+ * The original wording here was "the hour it COMPLETED", justified by "spend_log
+ * gets exactly one row per finished run". That premise was wrong, and round
+ * 1353's review caught what it cost. `executor.ts:1147` calls `recordSpend`
+ * once per EXECUTOR INVOCATION — and a chat run is re-entered for every turn,
+ * so a run accumulates one spend row per turn, spread across as many hours as
+ * it lives. Live proof at the time: 14 run ids carried more than one spend row,
+ * and one carried 123 across 15 of the last 24 hours.
+ *
+ * TOKENS are cumulative per run (`usage_total_running`), so they may be folded
+ * into exactly ONE bucket or they multiply. That bucket is the hour holding the
+ * run's most recent claude-code spend row — see the `linked` CTE. For a
+ * finished run that IS its completion hour, so the old sentence stays true
+ * where it was ever true; for a run still talking, the total travels forward
+ * with it and the earlier hour gives it up rather than double-counting it.
+ *
+ * COST is per-turn and is summed as it stands — every spend row's usd counts in
+ * its own hour. A four-hour run is four small cost bars and one token spike at
+ * the end. Smearing tokens across the hours would need per-turn token deltas we
+ * do not persist; inventing a plausible curve is worse than a labelled spike,
+ * so the rule is returned in the API payload (`attribution`) for the UI to
+ * print.
  *
  * ── WHERE THE NUMBERS ACTUALLY COME FROM ────────────────────────────────────
  * Cost: spend_log.meta->>'usd' — the USD truth. NOT amount_eur, which
@@ -41,11 +55,15 @@
  *                                   parent total, so they are added on top.
  *
  * The rollup is per-executor-process and resets if the executor restarts
- * mid-run, so token counts are a floor, not a guarantee. Cost is not affected
- * (it comes from the CLI's own total_cost_usd) — which is why cost, not
- * tokens, is the number the panel should lead with. Runs that carry no rollup
- * at all are counted in `meta.runs_without_usage` on the bucket rather than
- * silently rounded away.
+ * mid-run, so token counts UNDER-count when that happens. They were also
+ * OVER-counting until round 1354 (the multi-bucket fold above), which is why
+ * the word "floor" has been removed from this header: a floor is a promise,
+ * and the number was not one in both directions. What can be said now is that
+ * each run's rollup is counted exactly once, and that an executor restart
+ * loses part of it. Cost is unaffected either way (it comes from the CLI's own
+ * total_cost_usd) — which is why cost, not tokens, is the number the panel
+ * should lead with. Runs that carry no rollup at all are counted in
+ * `meta.runs_without_usage` on the bucket rather than silently rounded away.
  *
  * Schema: db/migrations/0040_usage_hourly.sql.
  */
@@ -337,6 +355,33 @@ export async function sampleHour(
   const start = floorHour(bucketStart);
   const end = new Date(start.getTime() + HOUR_MS);
 
+  /* ── LINKED: one bucket per run, the newest one ──────────────────────────
+   *
+   * `billed` holds every claude-code spend row in this hour, and spend_log gets
+   * one row per TURN — executor.ts:1147 runs once per invocation and a chat run
+   * is re-entered for every turn — so a run that lives four hours is billed in
+   * four buckets. `parent` folds that run's CUMULATIVE `usage_total_running`,
+   * so the previous `linked` (SELECT DISTINCT run_id FROM billed) counted the
+   * run's whole total once per hour it touched. Round 1353's reviewer measured
+   * 4.9% phantom tokens over 24h of live data, unbounded as a chat grows.
+   *
+   * The anti-join keeps a run only when NO claude-code spend row for it exists
+   * at or after this bucket's end — i.e. its latest turn is in THIS hour. Every
+   * run lands in exactly one bucket, every token is counted exactly once.
+   *
+   * It also fixes the stability half of the same defect. RESAMPLE_LOOKBACK
+   * re-closes the previous hour on every tick, and re-closing used to re-read a
+   * still-growing run's counter and rewrite an already-settled number upward
+   * (1000 → 5000 in the reviewer's repro). Now a run that has spoken since
+   * simply leaves the earlier bucket for the later one it belongs to.
+   *
+   * Cost is deliberately NOT deduped this way: `cost` aggregates `billed`
+   * directly, because each spend row carries its OWN turn's usd and summing
+   * them is exactly right. The bug was only ever in the token fold.
+   *
+   * Proved against a real Postgres by scripts/checks/check-usage-fold.ts —
+   * which fails on the pre-fix SQL with precisely the reviewer's numbers.
+   */
   const sql = `
     WITH billed AS (
       SELECT s.meta AS meta,
@@ -355,8 +400,17 @@ export async function sampleHour(
              COUNT(*) FILTER (WHERE run_id IS NULL)::bigint AS rows_without_run_id
         FROM billed
     ),
+    -- ONE BUCKET PER RUN: the newest hour it is billed in. See LINKED above.
     linked AS (
-      SELECT DISTINCT run_id FROM billed WHERE run_id IS NOT NULL
+      SELECT b.run_id
+        FROM (SELECT DISTINCT run_id FROM billed WHERE run_id IS NOT NULL) b
+       WHERE NOT EXISTS (
+               SELECT 1
+                 FROM spend_log s2
+                WHERE s2.provider = 'claude-code'
+                  AND s2.created_at >= $2::timestamptz
+                  AND s2.meta->>'run_id' = b.run_id::text
+             )
     ),
     parent AS (
       SELECT COALESCE(SUM(${num(PARENT_USAGE, "input_tokens")}), 0)::bigint AS tokens_in,
@@ -453,9 +507,21 @@ export async function sampleHour(
   };
 }
 
-/** The attribution rule, in the one wording that ships everywhere: written
- *  into each bucket's meta and returned by GET /api/usage/series. */
-export const ATTRIBUTION = "counted at run completion";
+/**
+ * The attribution rule, in the one wording that ships everywhere: written into
+ * each bucket's meta and returned by GET /api/usage/series, which the panel
+ * prints verbatim.
+ *
+ * It said "counted at run completion" until round 1354. That was the claim the
+ * broken fold made, and it was wrong twice over — a run was counted in every
+ * hour it was billed in, not at completion, and "completion" is not a thing
+ * spend_log records. The wording now names what the SQL does: the hour of the
+ * run's last billed turn, tokens whole, cost per turn. Buckets written before
+ * this round carry the old string in their own `meta`, which is the point of
+ * stamping it per row — a reader can tell which rule produced which number.
+ */
+export const ATTRIBUTION =
+  "tokens counted once, in the hour of the run's last billed turn; cost per turn";
 
 function toIso(v: Date | string): string {
   return v instanceof Date ? v.toISOString() : new Date(v).toISOString();

@@ -48,7 +48,12 @@ export interface UsageSeries {
   weekly: UsagePoint[];
   eur_per_usd: number;
   rate_source: RateSource;
-  /** "counted at run completion" — the rule the numbers obey, printed as-is. */
+  /** The rule the numbers obey, printed as-is. Today: "tokens counted once, in
+   *  the hour of the run's last billed turn; cost per turn". Never hardcode it
+   *  here — the server stamps the rule that actually produced the buckets, and
+   *  round 1354 changed it once already (the previous "counted at run
+   *  completion" described a fold that counted a run in every hour it touched).
+   *  Buckets written under the old rule still carry the old string. */
   attribution: string;
   /** Newest closed hour on record; null on a database the sampler never ran on. */
   sampled_through: string | null;

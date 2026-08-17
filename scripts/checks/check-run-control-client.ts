@@ -4,11 +4,31 @@
  * in `forge-control-web/app/desktop/team/teamApi.ts`).
  *
  * Round 1350 wires the team panel's two disabled buttons to
- * `POST /api/runs/:id/stop|terminate`. Capabilities are still all-false in this
- * worktree, so the code path is UNREACHABLE at runtime today — which means a
- * browser cannot prove anything about it, and the only honest proof is this:
- * stub `globalThis.fetch`, hand the client the four answers the engine actually
- * emits, and assert what comes back out.
+ * `POST /api/runs/:id/stop|terminate`.
+ *
+ * ── What changed under this script, and why it still exists ────────────────
+ * The header used to say the path was UNREACHABLE at runtime — all-false
+ * capabilities, therefore no browser could prove anything, therefore this
+ * script was the only honest proof. That justification died in round 1353:
+ * commit 8ec83cc flipped `stop`, `terminate`, `message_into_session` and
+ * `resume_finished` to true in `forge-control/src/routes/capabilities.ts`, and
+ * the round's reviewer drove both buttons in real Chrome against a scratch run
+ * — ⏸ → 202 `{"stopping":true}` with the run confirmed `paused` in psql, and
+ * armed ✕ → 202 `{"terminating":true}`. A browser CAN prove it now, and a
+ * browser proof should be taken every round the panel changes.
+ *
+ * The script's VALUE is undiminished, for a reason that never depended on the
+ * flag: a browser can only produce the answers the engine chooses to give it.
+ * It cannot make the engine reply 404, or 500 with an HTML proxy page, or a
+ * 2xx whose body is torn mid-JSON, and it cannot type a "/" into a run id.
+ * Those four wire shapes are exactly where a client silently degrades a
+ * refusal into a success — so they are stubbed here: hand the client each
+ * answer the engine can actually emit and assert what comes back out.
+ *
+ * Read it as the wire-shape half of the proof. The reachability half is the
+ * browser's, and `scripts/checks/check-stop-affordance.tsx` holds the third
+ * piece — that the BUTTON's disabled state agrees with what a click does,
+ * which is the gap the capability flip opened (round 1353 review, finding 1).
  *
  * The claim under test is NFU6 applied to a mutation: a refusal must NEVER
  * resolve, and the sentence the operator reads in the toast must be the

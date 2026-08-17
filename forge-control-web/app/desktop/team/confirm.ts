@@ -221,6 +221,33 @@ export function decideStopClick(i: {
   return { action: "stop", id: i.nodeId };
 }
 
+/**
+ * Why the ⏸ is disabled, or `null` when it is not.
+ *
+ * This is `decideStopClick` with the id dropped, and it is a separate export
+ * rather than a second predicate BECAUSE it is the same predicate: the button's
+ * `disabled` and the handler's decision are now two readings of one function,
+ * so a row cannot look clickable and act settled.
+ *
+ * Round 1353 shipped `disabled={!canStop}` — capability only. While
+ * `capabilities.stop` was false that was indistinguishable from the truth;
+ * the moment the flag flipped, every COMPLETED row grew an enabled ⏸ with
+ * `cursor: pointer` and the title "Stop this agent", whose click reached
+ * `{action:"blocked", reason:"settled"}` and died there. Zero requests, zero
+ * toasts — precisely the silent no-op NFU6 forbids.
+ */
+export function stopBlockReason(i: {
+  settled: boolean;
+  canStop: boolean;
+}): "capability" | "settled" | null {
+  const d = decideStopClick({ nodeId: "", settled: i.settled, canStop: i.canStop });
+  return d.action === "blocked" ? d.reason : null;
+}
+
+/** The tooltip a ⏸ wears when the row has nothing left to stop. Says what is
+ *  true rather than blaming the engine — the capability may well be present. */
+export const SETTLED_STOP_TITLE = "Run has already settled — nothing to stop";
+
 /** The exact tooltip a capability-gated control wears (NFU6: disabled with a
  *  reason, never hidden, never a silent no-op). The flag name is in the text
  *  on purpose — it is the string to grep for in

@@ -319,7 +319,43 @@ describe("sampleHour", () => {
     const { db, calls } = fakeDb([[pgRow()]]);
     await sampleHour(new Date("2026-08-17T09:00:00.000Z"), db);
     assert.equal(calls[0]?.params?.[2], ATTRIBUTION);
-    assert.equal(ATTRIBUTION, "counted at run completion");
+    // Pinned verbatim: this string is printed to Konrad by UsagePanel and
+    // stamped into every bucket's meta, so changing it is a decision, not a
+    // refactor. Round 1354 changed it once — "counted at run completion"
+    // described a fold that counted a run in every hour it was billed in.
+    assert.equal(
+      ATTRIBUTION,
+      "tokens counted once, in the hour of the run's last billed turn; cost per turn",
+    );
+  });
+
+  test("the token fold keeps a run in ONE bucket — its newest", async () => {
+    // A fake Querier cannot execute SQL, so it cannot prove the arithmetic;
+    // scripts/checks/check-usage-fold.ts does that against a real Postgres and
+    // fails on the pre-1354 statement with the reviewer's own numbers. What
+    // CAN be proved here, and is worth proving because `pnpm test` runs on
+    // every machine while the DB check needs a server, is that the anti-join
+    // is still in the statement at all. Reverting `linked` to
+    // `SELECT DISTINCT run_id FROM billed` — the shape that double-counted —
+    // turns this red without anyone needing a database.
+    const { db, calls } = fakeDb([[pgRow()]]);
+    await sampleHour(new Date("2026-08-17T09:00:00.000Z"), db);
+    const sql = calls[0]?.sql ?? "";
+    assert.match(
+      sql,
+      /linked AS \(\s*SELECT b\.run_id/,
+      "`linked` no longer selects through the anti-join wrapper",
+    );
+    assert.match(
+      sql,
+      /NOT EXISTS[\s\S]*s2\.created_at >= \$2::timestamptz[\s\S]*s2\.meta->>'run_id' = b\.run_id::text/,
+      "the 'no later spend row for this run' anti-join is gone — a run spanning " +
+        "N hours will be counted N times again",
+    );
+    // Cost must NOT be deduped the same way: each spend row carries its own
+    // turn's usd. If `cost` ever starts reading from `linked`, hours lose the
+    // cost of every turn but the last.
+    assert.match(sql, /FROM billed\s*\),\s*--/, "`cost` no longer aggregates `billed` directly");
   });
 
   test("token extraction guards every cast against non-numeric JSON", async () => {

@@ -65,6 +65,14 @@ gate() {
 }
 
 # A gate whose body is shell rather than one command.
+#
+# `set -o pipefail` is not decoration — without it this helper LIED. Round
+# 1353's review, finding 2: gate 8 runs `bash scripts/checks/dollar-sweep.sh |
+# tail -6`, the sweep exited 1, and the pipeline reported `tail`'s status — so a
+# RED gate printed EXIT=0 and the summary line said "RED: 0". Gates 9, 10, 15
+# and 16 pipe the same way and were swallowing the same way. Every gate here
+# exists to fail loudly; one that cannot fail is worse than one that is absent,
+# because it is counted in the total.
 gate_sh() {
   local name="$1" script="$2"
   n=$((n + 1))
@@ -72,7 +80,9 @@ gate_sh() {
   echo "########## GATE $n — $name ##########"
   echo "\$ $script"
   echo
-  bash -c "$script"
+  # Set inside `bash -c`, not on this shell: the gate body is the only thing
+  # whose pipelines this may change.
+  bash -c "set -o pipefail; $script"
   local code=$?
   echo
   echo "EXIT=$code"
@@ -150,6 +160,34 @@ gate_sh "check-working-sql-agreement.ts — standalone typecheck (the file round
   "cd forge-control && npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler \
      --lib ES2022 --strict --skipLibCheck --allowImportingTsExtensions --isolatedModules --types node \
      ../scripts/checks/check-working-sql-agreement.ts"
+
+# ── Round 1354's two new checks ────────────────────────────────────────────
+# Both are here rather than in a runbook because round 1353's review found the
+# two defects they cover by driving a browser and by reading live SQL — work no
+# reviewer should have to repeat by hand to learn the same thing twice.
+
+gate_sh "check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-stop-affordance.tsx | tail -3"
+
+# Needs a Postgres SERVER. It creates its own scratch database and issues no
+# statement against the one named in DATABASE_URL — but with no DSN at all there
+# is nothing to connect to, so it is SKIPPED rather than reported as passing.
+if [ -n "${DATABASE_URL:-}" ]; then
+  gate_sh "check-usage-fold.ts — hourly token fold, against a real Postgres" \
+    "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-usage-fold.ts | tail -3"
+else
+  skip "check-usage-fold.ts — hourly token fold" \
+    "DATABASE_URL is unset; this gate needs a Postgres server to build its scratch db on"
+fi
+
+gate_sh "check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig)" \
+  "cd forge-control && npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler \
+     --lib ES2022 --strict --skipLibCheck --allowImportingTsExtensions --isolatedModules --types node \
+     ../scripts/checks/check-usage-fold.ts"
+
+gate_sh "pnpm test — forge-control unit suite" \
+  "cd forge-control && pnpm test 2>&1 | grep -E '^# (tests|pass|fail)'"
 
 gate_sh "psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard" \
   "node docs/plan/artifacts/phase800/psql-argv-leak.cjs | tail -4"

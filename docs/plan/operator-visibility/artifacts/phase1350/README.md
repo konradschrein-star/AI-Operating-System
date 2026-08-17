@@ -68,7 +68,68 @@ parent holds a live sub-agent id to relay to without fabricating a DB row.
 Flip it on a CP4-style proof against a real fleet run with a running sub-agent,
 and add its row to the announcement table.
 
+## Deploy notes — MIGRATIONS FIRST, then the restart
+
+**There is no migration runner in this repo.** `forge-control` does not apply
+schema on boot and nothing else does either, so a deploy that restarts the API
+before the SQL is applied ships a 500. Both findings 4 (r1353 CP-flip review)
+and 5 (r1353 settings review) are this, from two directions.
+
+Apply, in this order, **before** `pm2 restart forge-control`:
+
+```bash
+cd /opt/forge-ai-os
+set -a; . /opt/ai-os/.secrets/forge-control.env; set +a   # or read DATABASE_URL from pm2 env
+psql "$DATABASE_URL" -f db/migrations/0040_usage_hourly.sql
+psql "$DATABASE_URL" -f db/migrations/0041_ui_dismissals.sql
+```
+
+Both are re-runnable — every statement is `IF NOT EXISTS`, verified by applying
+0040 twice into a scratch database (second run: all NOTICE/skip). Running them
+against a database that already has them is a no-op, so "am I sure it was
+applied?" is answered by applying it again.
+
+What breaks if you skip them, precisely:
+
+| skipped | symptom |
+|---|---|
+| `0041_ui_dismissals.sql` | `GET /api/chat/:id/team` → 500 `relation "ui_dismissals" does not exist`; `/api/agents/dismissals` fails; **the team panel does not render at all** |
+| `0040_usage_hourly.sql` | `GET /api/usage/series` → 500; the usage sampler logs an error every hour; `PUT /api/usage/rate` throws its own "has migration 0040 been applied" diagnostic |
+
+Boot cost is not a concern: the sampler's backfill measured **9.06 ms** per
+bucket against live data (574 runs / 673 spend rows), so a full 720-bucket
+30-day backfill is ≈6.5 s, once, on the first boot after 0040 lands.
+
+Verify before restarting:
+
+```bash
+psql "$DATABASE_URL" -tAc \
+  "SELECT to_regclass('public.usage_hourly'), to_regclass('public.ui_dismissals'), to_regclass('public.app_settings')"
+# expects: usage_hourly|ui_dismissals|app_settings — a NULL in any column means that migration did not land
+```
+
+## Deploy-time cleanup left by round 1353's reviewer
+
+Proving the team panel without `ui_dismissals` required an isolated auxiliary
+schema in `content_forge`: **`rev1353_shim`**, holding one empty
+`ui_dismissals` table. Nothing in `public` was altered, the schema is off every
+default `search_path`, and nothing reads it.
+
+It is dead weight, not a hazard. Removing it is a `DROP`, which no build task
+here is authorised to issue, so it is recorded rather than performed:
+
+```sql
+DROP SCHEMA rev1353_shim CASCADE;   -- needs Konrad's explicit go-ahead
+```
+
+Leaving it in place breaks nothing. Do it during the deploy phase, or not at
+all; do not let it block the deploy.
+
 ## Rollback
 
-`git revert 8ec83cc` restores the all-false constant and the buttons re-disable
-with their existing tooltip; then blank the `flipped?` cells written above.
+1. `git revert 8ec83cc` restores the all-false constant and the buttons
+   re-disable with their existing tooltip; then blank the `flipped?` cells
+   written above.
+2. The migrations do **not** need reverting — `usage_hourly`, `app_settings`
+   and `ui_dismissals` are additive tables that no reverted code reads. Dropping
+   them would destroy the dismissal set Konrad has built up. Leave them.

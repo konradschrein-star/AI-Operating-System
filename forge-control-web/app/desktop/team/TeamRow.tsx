@@ -69,7 +69,12 @@ import {
   roleTokenName,
   type RoleTokenName,
 } from "../live/agentsApi";
-import { capabilityTitle, isSpuriousActivation } from "./confirm";
+import {
+  SETTLED_STOP_TITLE,
+  capabilityTitle,
+  isSpuriousActivation,
+  stopBlockReason,
+} from "./confirm";
 import { fmtTokens, fmtWorkingTime, type TeamNode } from "./teamApi";
 import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
 import { useTick } from "./tickStore";
@@ -413,6 +418,12 @@ function TeamRowViewImpl({
    * clickable. */
   const clickable = n.kind === "worker" || n.kind === "subagent";
 
+  /* Why the ⏸ is dead, or null when it is not — derived from the SAME predicate
+   * the click handler runs, so the two cannot disagree about a row (round 1353
+   * review, finding 1: they did, and the result was an enabled button that sent
+   * nothing). `stopBlockReason` is `decideStopClick` with the id dropped. */
+  const stopBlock = stopBlockReason({ settled, canStop });
+
   const sourceNote = workingSourceNote(n);
 
   /* U15a / DoD #1, stated once and with no exception: every row shows its
@@ -518,11 +529,28 @@ function TeamRowViewImpl({
             gap: 2,
           }}
         >
+          {/* Two independent reasons this button can be dead, and BOTH have to
+              reach `disabled` — `canStop` alone is a capability answer, and a
+              capability answer says nothing about whether THIS row still has a
+              process to stop. While capabilities were all-false the two were
+              indistinguishable; round 1353 flipped `stop` to true and the gap
+              became a settled row wearing an enabled ⏸ that fired
+              `decideStopClick` → `{blocked, "settled"}` → nothing. NFU6 forbids
+              a silent no-op, so the settled case is disabled here and named in
+              the title. `stopBlock` keeps the three-way choice in one
+              place so the title, the colour and the cursor cannot drift apart. */}
           <button
             data-team-stop
             type="button"
-            disabled={!canStop}
-            title={canStop ? "Stop this agent" : capabilityTitle("stop")}
+            data-stop-blocked={stopBlock ?? "none"}
+            disabled={stopBlock !== null}
+            title={
+              stopBlock === null
+                ? "Stop this agent"
+                : stopBlock === "settled"
+                  ? SETTLED_STOP_TITLE
+                  : capabilityTitle("stop")
+            }
             onClick={(e) => {
               e.stopPropagation();
               onStop(n.id, settled);
@@ -530,8 +558,8 @@ function TeamRowViewImpl({
             className="mono"
             style={{
               ...BTN_STYLE,
-              color: canStop ? tokens.warn : tokens.textGhost,
-              cursor: canStop ? "pointer" : "not-allowed",
+              color: stopBlock === null ? tokens.warn : tokens.textGhost,
+              cursor: stopBlock === null ? "pointer" : "not-allowed",
             }}
           >
             ⏸

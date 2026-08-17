@@ -30,8 +30,11 @@
  *    is printed with its age. A chart that implies live numbers when the
  *    sampler last ran at 02:00 is the same class of lie the Live panel spent
  *    three rounds removing.
- *  • `attribution` ("counted at run completion") is printed verbatim from the
- *    API, because it explains why a four-hour run is one spike.
+ *  • `attribution` is printed verbatim from the API, because it explains why a
+ *    four-hour run is one token spike with cost spread beneath it. Verbatim
+ *    matters: the server stamps the rule that produced each bucket, and the
+ *    rule changed in round 1354 — a panel that hardcoded the old wording would
+ *    now be labelling the new numbers with the old promise.
  *
  * ── Constraints honoured ─────────────────────────────────────────────────
  *  • Charts are hand-rolled inline SVG. This repo has no chart library and

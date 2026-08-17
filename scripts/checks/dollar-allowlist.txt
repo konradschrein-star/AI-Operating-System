@@ -25,6 +25,26 @@ forge-control-web/app/desktop/team/teamApi.ts	M < 10 \? M\.toFixed\(2\)	toFixed(
 forge-control-web/app/desktop/chat/slash-registry.ts	spend	/rules and /cap configure real autonomy spend-cap guardrails — a control surface (a number Konrad SETS), not a display of a dollar amount charged. Kept.
 forge-control-web/app/desktop/chat/effort-ramp.ts	spending real tokens	Prose in the file's header comment explaining WHY `high` is amber ("it should read as 'you are spending real tokens'"). A rationale sentence about token cost, not a rendered value — effort-ramp.ts exports four token references and nothing else. Landed round 801 (206323d), unlisted until round 808. The pattern is the sentence, not `.*`: a real dollar arriving in this file still fails the gate.
 forge-control-web/app/desktop/_ui/ResizableSplit.tsx	spent 904px	Prose in the file's header comment stating the audit measurement that motivated the primitive ("the chat surface spent 904px on chrome before the thread got a pixel"). A PIXEL count, not currency — the naive `\bspen[dt]` anchor cannot tell the two apart. Came in from `main`, not from phase 800. The pattern is the measurement, not `.*`.
+# ── Rounds 1351–1352: the CREDIT TRACKER, and the one place money is allowed ──
+#
+# U11's rule was never "no money anywhere in the OS" — it is "no agent-cost
+# noise on the working surfaces". 10-ui-v3-spec.md gives SETTINGS as the
+# sanctioned destination for it, the same standing exemption MoneySurface.tsx
+# has carried since phase 400. These six files are that destination, its wire
+# types, and two comments that state the rule. Listed in round 1354 after round 1353's review found the gate had
+# been reporting EXIT=0 on a sweep that exits 1 (gates-808.sh:75 lacked
+# `pipefail`) — the files were never waived, the failure was never read.
+#
+# Patterns are scoped to what each file legitimately contains, not `.*`, so a
+# NEW kind of dollar arriving in any of them still fails the gate.
+
+forge-control-web/app/desktop/settings/UsagePanel.tsx	usd|USD|eur_per_usd|€|shadow|spent	The Credit Tracker itself — the settings panel whose entire subject is tokens and shadow cost. Money is its content, not a leak into a working surface. Landed round 1352.
+forge-control-web/app/desktop/settings/usageApi.ts	usd|USD|eur_per_usd|€|spend|toFixed\(2\)	UsagePanel's wire types and formatters (shadow_usd, eur_per_usd, eurOf, fmtEur/fmtUsd, and a toFixed(2) inside the G/M token-magnitude formatter). Same destination, one file down.
+forge-control-web/app/desktop/settings/IntegrationsPanel.tsx	spen[dt]|€|toFixed	Per-integration METERED spend — real provider invoices outside the flat-rate Claude Code subscription, which is the business number MoneySurface.tsx is already excused for. Settings is where it belongs.
+forge-control-web/app/desktop/settings/SettingsSurface.tsx	spend	The section blurb "Tokens and spend — the one place in this UI money numbers belong." Prose stating the rule, in the surface that is its exception. Not a rendered amount.
+forge-control-web/app/desktop/chat/QuotaStrip.tsx	spend	QuotaStrip.tsx:8 — a header COMMENT ("the credit tracker in Settings is the one place spend numbers are allowed"), naming the rule the strip obeys. The strip renders percentages and a refresh age; it renders no currency at all, which is exactly what the comment promises.
+forge-control-web/app/desktop/chat/context-window.ts	m < 10 \? m\.toFixed\(2\) : m\.toFixed\(1\)	toFixed(2) inside the "M" branch of a TOKEN-magnitude formatter (e.g. "1.23M"), identical in shape and reason to the already-listed AgentActivity.tsx humanTokens() and teamApi.ts fmtTokens() entries. A false positive of the naive toFixed(2) anchor.
+
 # forge-control-web/app/desktop/ChatSurface.tsx — REMOVED in round 402.
 # 401b listed the chat header's "spent $X / cap $Y" line here as a documented
 # OPEN ITEM ("round 402 must remove it"). Round 402 removed it (U12 slim
