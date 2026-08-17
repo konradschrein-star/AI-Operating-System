@@ -7,6 +7,12 @@ import { Hono } from "hono";
 import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
 import { resolvePlanDoc, selectPlanCorpus } from "../lib/plan-corpus.ts";
+/* phase 6 (R55) — the DERIVED depth the plan panel groups and orders by.
+ * lib/task-graph.ts is a pure leaf: its only import is `import type
+ * { TaskStatus }`, which erases, so it opens no pool and pulls no db module in
+ * behind it. Importing it into a route is therefore safe in a way importing
+ * db/projects.ts would not be. */
+import { GraphIntegrityError, taskDepth, type GraphTask } from "../lib/task-graph.ts";
 import {
   loadCanvas,
   renderDelta,
@@ -664,6 +670,20 @@ interface PlanTask {
    *  value here — the engine picks a default for tier-less tasks. */
   tier: string | null;
   deps: string[];
+  /** Which workstream worktree the task runs in (R55). `'main'` for every row
+   *  that predates migration 0040 and every row that does not ask for another,
+   *  so this is never null and never absent — the column is NOT NULL DEFAULT
+   *  'main'. The Kanban chip shows it only when it is not `'main'`. */
+  workstream: string;
+  /** DERIVED longest-path depth from the graph roots (R55, R19), computed by
+   *  `taskDepth()` and never stored. It is not `round`: `round` is the
+   *  planner's narrative phase number, `depth` is how far down the dependency
+   *  chain this task actually sits. They agree only by coincidence.
+   *
+   *  When the stored graph cannot be ordered at all, every task's depth falls
+   *  back to its own `round` and `PlanResponse.graph_error` says so — see
+   *  `planDepths`. Silent on neither side. */
+  depth: number;
 }
 
 interface PlanPhase {
@@ -703,12 +723,35 @@ interface PlanResponse {
    *  "the corpus could not be read, and here is why". The phases are unaffected
    *  and still present when this is set. */
   error?: string;
+  /** Set when `taskDepth()` refused to order the stored graph — a cycle in
+   *  `depends_on` (R19's throw, R25/R26's display-side belt). Carries the
+   *  thrown message VERBATIM, including the ids it names, and every task's
+   *  `depth` is then its own `round`.
+   *
+   *  A SEPARATE field from `error` on purpose: `error` means "the docs listing
+   *  failed" and its doc-comment above says exactly that. Overloading it would
+   *  make two unrelated degradations indistinguishable to the one reader who
+   *  has to act on them. Same idiom, NFU6 — "a null with a reason is a fact";
+   *  the phases are still real and still drawn. */
+  graph_error?: string;
 }
 
 /** Tasks of one project, oldest round first. `created_at` breaks ties inside a
  *  round so the four round-303 siblings keep the order the planner wrote them.
- *  Route-local by phase-300 law (13 §3): db/projects.ts is the engine lane's. */
-const PLAN_TASKS_SQL = `SELECT id::text, round, role, title, status, tier
+ *  Route-local by phase-300 law (13 §3): db/projects.ts is the engine lane's.
+ *
+ *  R54/R55 joined `depends_on`, `workstream` and `write_set`. `depends_on` is
+ *  selected as `depends_on::text[]` to match the `id::text` convention here and
+ *  the same cast in db/projects.ts's `TASK_COLS` — read the doc-comment on
+ *  `ProjectTask.depends_on` there for why it is deliberate rather than
+ *  necessary: a raw `uuid[]` already arrives as `string[]` on this host's pg,
+ *  and the cast is what stops a future pg without the `_uuid` parser turning
+ *  this field into the raw string `'{a,b}'` behind the comparison below.
+ *  `write_set` is read but not published — it is the contention input the
+ *  scheduler owns, and `PlanTask` gaining a field nothing draws would be a
+ *  shape change bought for nothing (N4: the renderer is a different project). */
+const PLAN_TASKS_SQL = `SELECT id::text, round, role, title, status, tier,
+       depends_on::text[], workstream, write_set
   FROM project_tasks
  WHERE project_id = $1
  ORDER BY round, created_at`;
@@ -734,26 +777,129 @@ interface PlanTaskRow {
   title: string;
   status: string;
   tier: string | null;
+  /** THE SENTINEL, unchanged from db/projects.ts's `ProjectTask.depends_on`:
+   *  `null` means "never graph-scheduled, apply the legacy round rule", while
+   *  a non-null array INCLUDING `[]` means "these ids and no others". Read here
+   *  with `=== null` and nothing else. */
+  depends_on: string[] | null;
+  workstream: string;
+  write_set: string[];
 }
 
 /**
- * Group tasks into hundreds-blocks and attach `deps`.
+ * Longest-path depth for every task, or the disclosed fallback when the stored
+ * graph has a cycle (R55, R19).
  *
- * DEPS, PRECISELY: every task id in a STRICTLY LOWER round of the same project.
- * That is the engine's real ordering rule made explicit (13 §3) — project-tick
- * releases a round only once every task below it has settled, so "lower round"
- * IS "must happen first". It is COARSE: round 306 genuinely depends on 305
- * (same file) but only bureaucratically on 101, and the edge set says both.
- * It is nonetheless TRUE — no edge here is a lie, only some are uninteresting.
+ * ONE call to `taskDepth()`, and the `try` wraps exactly that call. Read its
+ * doc-comment in lib/task-graph.ts before changing anything here: it is TOTAL
+ * by construction — a legacy row seeds its own `round`, an absent dep
+ * contributes no edge, a duplicate dep is one edge — so the ONLY thing it
+ * throws on is a cycle, and it throws rather than returning the part of the map
+ * it managed to compute. That is a deliberate inherited decision (phase 2A) and
+ * this function does not soften it: it does not catch inside a per-task loop,
+ * and it does not keep a partial map.
  *
- * Refining it later (file-overlap, explicit `depends_on` column) changes which
- * ids appear in this array and NOTHING about the response shape, so the Kanban
- * and the future graph both survive the refinement untouched.
- *
- * Same-round siblings are never each other's deps: the four round-303 builders
- * ran in parallel, by design, on disjoint files.
+ * THE DEGRADATION IS DISCLOSED, NOT SWALLOWED (NF1, NFU6). On a cycle the panel
+ * still renders — every task's depth becomes its own `round`, which is the
+ * number the operator was reading before this project existed — and the thrown
+ * message travels to the client VERBATIM as `PlanResponse.graph_error`, ids and
+ * all. The alternative, a 500, would take the Kanban down over a row it can
+ * simply draw; the other alternative, a silent `depth = round`, would show an
+ * operator a plausible board computed from a graph that cannot drain. Only
+ * `GraphIntegrityError` is caught: anything else coming out of a pure function
+ * over rows this route just read is a defect in the module, and defects belong
+ * in `planFailure`'s 500, not in a field labelled "cycle".
  */
-function groupPlanPhases(rows: PlanTaskRow[], docs: string[]): PlanPhase[] {
+function planDepths(rows: PlanTaskRow[]): { depth: Map<string, number>; graph_error?: string } {
+  /* `PlanTaskRow.status` is a plain `string` (the wire shape) while
+   * `GraphTask.status` is the `TaskStatus` union. The cast is sound because
+   * `project_tasks.status` carries
+   * `CHECK (status IN ('pending','ready','running','done','failed','blocked'))`
+   * — db/migrations/0030_coding_projects.sql lines 44-45 at git SHA 7efa36b,
+   * resolved before this comment was written — which is exactly that union.
+   * `taskDepth()` reads only `id`, `round` and `depends_on` in any case. */
+  const graph: GraphTask[] = rows.map((row) => ({
+    id: row.id,
+    round: row.round,
+    workstream: row.workstream,
+    status: row.status as GraphTask["status"],
+    depends_on: row.depends_on,
+    write_set: row.write_set,
+  }));
+
+  try {
+    return { depth: taskDepth(graph) };
+  } catch (e) {
+    if (!(e instanceof GraphIntegrityError)) throw e;
+    console.error("[chat plan] taskDepth refused the stored graph:", e.message);
+    const fallback = new Map<string, number>();
+    for (const row of rows) fallback.set(row.id, row.round);
+    return { depth: fallback, graph_error: e.message };
+  }
+}
+
+/**
+ * Group tasks into hundreds-blocks and attach `deps`, `workstream` and `depth`.
+ *
+ * DEPS, PRECISELY — two branches since R54, chosen by the `depends_on` sentinel
+ * and by nothing else:
+ *
+ *  - `depends_on` NON-NULL, INCLUDING `[]`: those ids, verbatim, in that order.
+ *    `[]` is an EXPLICIT graph root and yields `deps: []` — not the synthesised
+ *    set, because a root that renders with inherited edges is a lie about the
+ *    graph the scheduler will actually run. The array is COPIED, never aliased:
+ *    the row belongs to the caller's result set.
+ *  - `depends_on` NULL — the legacy sentinel: every task id in a STRICTLY LOWER
+ *    round of the same project, byte-identical to what this function has always
+ *    returned. That is the pre-graph engine's real ordering rule made explicit
+ *    (13 §3) — project-tick released a round only once every task below it had
+ *    settled, so "lower round" IS "must happen first". It is COARSE: round 306
+ *    genuinely depends on 305 (same file) but only bureaucratically on 101, and
+ *    the edge set says both. It is nonetheless TRUE for a row scheduled that
+ *    way — no edge is a lie, only some are uninteresting.
+ *
+ * The sentinel is read with ONE `=== null` test. Never `?? []`, never
+ * truthiness: `[]` and `null` are the two values a defaulting operator would
+ * merge, and they are precisely the two this branch has to tell apart.
+ * `readyRule()` in lib/task-graph.ts is the single interpreter of this sentinel
+ * on the SCHEDULING path (phase 2A, commit bac02ec) and is deliberately not
+ * imported here — this is display code, it decides nothing, and reaching for
+ * `graphReady()`/`readyRule()` would put a scheduling decision in a route. It
+ * reads the sentinel the same WAY, which is the part that must not drift.
+ *
+ * A DEP ID NAMING NO ROW IN THIS RESULT SET IS EMITTED ANYWAY, verbatim. R27
+ * makes a dangling dep unreachable through the API, so one appearing here means
+ * a corrupt row got in some other way; suppressing it would hide that from the
+ * one surface an operator actually looks at, and hand back a tidy graph that
+ * the scheduler will never drain. (`taskDepth()` takes the opposite decision
+ * for its own arithmetic — an absent dep contributes no edge — because a
+ * missing node cannot be given a longest path. Both are display; only this one
+ * is a report.)
+ *
+ * PROMISE KEPT, R54, commit feat(engine-task-graph/phase-6, round 222). The
+ * paragraph this comment replaced promised that "refining it later
+ * (file-overlap, explicit `depends_on` column) changes which ids appear in this
+ * array and NOTHING about the response shape". That refinement is this one, and
+ * the promise held: `PlanTask` gained `workstream` and `depth` and lost
+ * nothing, `deps` is still `string[]`, and the phase blocks still group by
+ * `floor(round / 100) * 100`.
+ *
+ * Same-round siblings are never each other's deps under the legacy branch: the
+ * four round-303 builders ran in parallel, by design, on disjoint files. The
+ * running accumulator that guarantees it is unchanged, and graph rows still
+ * feed it — a legacy row's "everything strictly below me" must include the
+ * graph-scheduled rows below it, or a straddling project would read as two
+ * disconnected boards.
+ *
+ * @param depth `planDepths()`'s map. Passed in rather than computed here so the
+ *              single `taskDepth()` call and its one catch live in one named
+ *              place instead of inside this loop.
+ */
+function groupPlanPhases(
+  rows: PlanTaskRow[],
+  docs: string[],
+  depth: ReadonlyMap<string, number>,
+): PlanPhase[] {
   const phases: PlanPhase[] = [];
   const byBase = new Map<number, PlanPhase>();
   /** ids of every task in a strictly lower round than the cursor. */
@@ -781,6 +927,20 @@ function groupPlanPhases(rows: PlanTaskRow[], docs: string[]): PlanPhase[] {
     }
     if (row.round === base) phase.title = row.title;
 
+    /* `taskDepth()` returns a value for EVERY row it was given, and `planDepths`
+     * gave it exactly these rows, so a miss is a defect in one of the two — not
+     * a case to default away. Written as an explicit refusal rather than
+     * `?? row.round`, which would be indistinguishable from a real depth that
+     * happens to equal the round, and would therefore hide the defect on the
+     * one surface built to expose it. */
+    const rowDepth = depth.get(row.id);
+    if (rowDepth === undefined) {
+      throw new Error(
+        `groupPlanPhases: no depth computed for task ${row.id} — planDepths() and ` +
+          "this grouping disagree about the row set (this is a bug, not a data state)",
+      );
+    }
+
     phase.tasks.push({
       id: row.id,
       round: row.round,
@@ -788,7 +948,9 @@ function groupPlanPhases(rows: PlanTaskRow[], docs: string[]): PlanPhase[] {
       title: row.title,
       status: row.status,
       tier: row.tier,
-      deps: [...lower],
+      deps: row.depends_on === null ? [...lower] : [...row.depends_on],
+      workstream: row.workstream,
+      depth: rowDepth,
     });
     pending.push(row.id);
   }
@@ -839,7 +1001,13 @@ function planFailure(step: string, e: unknown): { error: string; step: string; m
  * no project (`{project: null, phases: [], docs: []}`; "not a coding chat" is
  * a fact, not an error), and including an unreadable docs directory (the
  * phases are real; `error` names what could not be read). 500 only when the
- * task query or the project row itself fails.
+ * task query or the project row itself fails, or when the pure grouping throws
+ * something that is not a graph cycle — a defect, and defects are not fields.
+ *
+ * A CYCLE IN THE STORED GRAPH IS ALSO A 200 (R55). `depth` falls back to each
+ * task's own `round` and `graph_error` carries the refusal verbatim; the phases
+ * are real either way, and taking the panel down over a drawable board would be
+ * the outage-in-place-of-a-diagram `taskDepth`'s own doc-comment rules out.
  *
  * Cost: 1–3 linkage queries (chat-linkage.ts) + 1 project row + 1 task query +
  * 1 readdir. No index, no cache — 13 §3: plan dirs are a dozen files and this
@@ -926,16 +1094,31 @@ r.get("/:id/plan", async (c) => {
     }
   }
 
+  // R55: depth is derived here, once, and handed to the grouping. A cycle in
+  // the stored graph is NOT a failure — it degrades to `depth = round` and says
+  // so in `graph_error` (see `planDepths`). Anything else escaping these two
+  // pure calls is a defect in this route, and a defect gets the 500 with
+  // diagnostics that `planFailure` writes rather than a half-built body.
+  let depths: { depth: Map<string, number>; graph_error?: string };
+  let phases: PlanPhase[];
+  try {
+    depths = planDepths(taskRows);
+    phases = groupPlanPhases(taskRows, docs, depths.depth);
+  } catch (e) {
+    return c.json(planFailure("phase grouping", e), 500);
+  }
+
   const body: PlanResponse = {
     chat_id: id,
     project: { id: link.project_id, status: projectRow.status },
     link_source: link.link_source,
     link_ambiguous: link.link_ambiguous,
-    phases: groupPlanPhases(taskRows, docs),
+    phases,
     docs,
   };
   if (corpus) body.corpus = corpus;
   if (docsError) body.error = docsError;
+  if (depths.graph_error) body.graph_error = depths.graph_error;
   return c.json(body);
 });
 
