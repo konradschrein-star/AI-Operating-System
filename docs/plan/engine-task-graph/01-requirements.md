@@ -239,6 +239,16 @@ reviewers that disclose-and-proceed is normal.
   4 row of §K below and of `04-phases.md` §9, as a deliberate split, exactly as
   R18 does across phases 1 and 2.
 
+  **DELIVERED, round 222 (phase 4C).** `emptyWriteSetWarning(task, projectName)`
+  in `lib/project-tick.ts` returns the message or `null`; `spawnTaskRuns()` calls
+  it exactly once, immediately after the `[project-tick] spawned …` line, so the
+  warning is one per SPAWN and not one per tick. It is a function rather than an
+  inline `if` precisely so that this requirement's stated proof — *"the warning
+  fires for `builder` and not for `scout`"* — is a unit test over the rule and
+  its text rather than a regex over a source file. Both clauses of R17 have now
+  landed; the requirement is complete and the split can be retired whenever R17
+  itself is.
+
 *How proved:* **contention (phase 2)** — unit: `conflicts()`'s empty-set table
 cases and `selectClaimable()`'s *"empty write-sets are always claimable"* case in
 `task-graph.test.ts`; `check`: case 7 of `check-scheduler-sql.sh`, which drives
@@ -615,6 +625,86 @@ distinct workstreams, and neither is phase 3's to introduce.
 
 *How proved:* unit (the `400`, phase 3 — `scripts/checks/check-task-api.ts`);
 `check-workstream-e2e.sh` (the provisioning half, phase 4).
+
+**R70. No project closes on an unmerged workstream branch. ADDED ROUND 222,
+because the named attack SUCCEEDED against the shipped code.** `03-quality.md`
+§5 briefs phase 4's red team to ask: *"a workstream whose integration task is
+skipped — does the project close with the branch unmerged?"* Phase 4C read the
+statement rather than guessing, and the answer was yes.
+`closeFinishedProjects()` was
+
+```sql
+UPDATE projects p SET status='done' WHERE p.status='active'
+  AND EXISTS (SELECT 1 FROM project_tasks WHERE project_id=p.id)
+  AND NOT EXISTS (SELECT 1 FROM project_tasks WHERE project_id=p.id AND status<>'done')
+```
+
+— no git term, no workstream term. Every task of workstream W `done` means
+nothing is non-done, the project closes, and `project/<id8>-W` is stranded with
+all of its work on it. **R38 is a defence only while the planner REMEMBERS to
+create the integration task.** Planner discipline is not a defence; that is what
+this requirement is for.
+
+**The rule.** `closeFinishedProjects()` must not close a project while some
+workstream W <> `main` has at least one task and there is NO task with
+workstream = `main` whose `depends_on` covers every task id of W. The refusal is
+**loud, not silent** (NF1): the project stays `active` and a notification names
+the project and the un-integrated workstream(s), once per crossing rather than
+once per tick.
+
+**It needs no new column, and that is why it is a requirement rather than a
+hack.** `project_tasks` has no `metadata` column to flag an integration task
+with — `TASK_COLS` in `db/projects.ts` is exactly id, project_id, round, role,
+title, brief, status, run_id, fix_cycle, tier, attempt, chain_key, depends_on,
+workstream, write_set, created_at, updated_at — and a title convention would rot.
+R38 already *defines* the integration task structurally, as the one that depends
+on every task of its workstream, so `depends_on` alone identifies it. Phase 1
+owns migrations and 0040 has landed; no 0041 was needed and none was written.
+
+**Membership, decided rather than left open.** The integration task and the
+reviewer that follows it are tasks of `main` (R38, `02-architecture.md` §4.4):
+the merge lands in the main worktree and the conflict must be visible there.
+They are therefore **not** members of W and are never required to depend on
+themselves — get this wrong and no project with a workstream could ever close,
+which is a worse bug than the one being fixed. A covering task that lives in
+another workstream integrates nothing: it would merge in the wrong worktree.
+
+**Coverage is ⊇, not =.** An integration task routinely depends on more than W
+(its planner's ordering edges, the phase's other roots), so the test is that W's
+ids are a subset of what it names.
+
+**Legacy projects are untouched, and every live project is a legacy project.**
+`workstream` defaults to `main` and `depends_on` may be NULL
+(`02-architecture.md` §2.2 — nullable IS the migration strategy). With every row
+in `main` the term is vacuously true and the statement is the one that ran
+before.
+
+**Implemented as one extra `NOT EXISTS` term, not a pre-pass**, with the
+readable definition in `unintegratedWorkstreams()` (`lib/project-tick.ts`) and
+the term as its SQL mirror — the same split `promoteReadyTasks()` documents, and
+for the same reason: the decision must be unit-testable without a database. The
+choice of the SQL term over a TS pre-pass is what keeps the close ATOMIC; a
+pre-pass would read the tasks, decide, and then update, with a window in which a
+task created in between makes the decision stale. **The refusal set costs no
+second copy of the rule:** `held` is the OLD condition re-run after the UPDATE,
+so a project that would have closed before and did not close now was refused by
+the new term and by nothing else. Both halves of the rule are written exactly
+once.
+
+*How proved:* unit — the `unintegratedWorkstreams()` table in
+`project-tick.test.ts` (legacy, graph-`main`-only, the attack, the integrated
+case, the MEMBERSHIP case, partial coverage, the foreign integrator, coverage as
+a superset, two workstreams judged independently); `check` — **new**
+`scripts/checks/check-close-gate.ts` drives the SHIPPED
+`closeFinishedProjects()` against real rows in a throwaway schema, 27/27, with a
+POSITIVE CONTROL that runs the pre-R70 predicate over the same rows and asserts
+it *would* have closed every held project — so the refusal cannot be credited to
+anything but this term. Both instruments were observed FAILING under mutation:
+deleting `w.workstream <> 'main'` (10 failures), deleting `i.workstream =
+'main'` (6 failures), and weakening coverage from `every` to `some` (1 unit
+failure). The `i.workstream = 'main'` mutation initially SURVIVED both suites
+and the fixtures were rebuilt until it did not — recorded because a mutation
+that survives silently is exactly the instrument failure standing rule 3 names.
 
 ---
 
@@ -1163,7 +1253,7 @@ budget written into the assertion message.
 | 1 — Schema, fixture, replica harness | R1–R9, R18 (harness only), NF3 |
 | 2 — Graph scheduler | R10–R21, R69, R18 (proof), NF1, NF6 |
 | 3 — Task creation, validation, cycles | R22–R31, NF4 |
-| 4 — Workstream worktrees, integration, consolidation | R32–R46, R17 (warn clause), NF1, NF5 |
+| 4 — Workstream worktrees, integration, consolidation | R32–R46, R70, R17 (warn clause), NF1, NF5 |
 | 5 — Prompts | R47–R53, NF7 |
 | 6 — Observability, plan API, Kanban | R54–R58 |
 | 7 — Measurement instrument | R59–R62 |

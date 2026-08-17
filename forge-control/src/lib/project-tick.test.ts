@@ -1119,3 +1119,580 @@ describe("T19 consolidation precondition (red-team S4)", () => {
     assert.deepEqual(bare, [], "markGroupDone's return value must never be discarded");
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * PHASE 4C (round 222) — the spawn path per workstream, the reviewer's diff
+ * base, R17's warn, and the project that must not close on an unmerged branch.
+ *
+ * Requirements: R36, R37, R17 (warn clause), R70, and the operator's ruling of
+ * round 222 (at most one running task per (project, workstream)).
+ *
+ * APPENDED ONLY. Nothing above this line was modified — `git diff main --
+ * forge-control/src/lib/project-tick.test.ts` is one hunk at EOF.
+ *
+ * ── WHAT WOULD MAKE THIS INSTRUMENT REPORT A PASS WRONGLY ─────────────────
+ *
+ * (a) "The 'main' path looks byte-identical because the test computes the
+ *     expected string with the same changed code." That is the failure mode
+ *     this file is most exposed to, and it is closed by PRIOR_TICK below: the
+ *     expected bytes are read out of git at commit 4244b20 — the tree as it
+ *     stood BEFORE this phase — and the substitution into them is mechanical
+ *     and visible. A test that built its expectation by calling buildPrompt()
+ *     with different arguments would prove only that the new code agrees with
+ *     itself.
+ * (b) "The R70 tests pass because the fixture has no non-main workstream at
+ *     all." Every R70 case below states the workstreams its fixture contains,
+ *     and `closeGate.selfCheck` asserts the fixture actually holds a non-main
+ *     row before the case is allowed to assert anything about it — a case whose
+ *     premise evaporated fails instead of passing vacuously.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+import {
+  buildPrompt as buildPromptPhase4C,
+  emptyWriteSetWarning,
+  unintegratedWorkstreams,
+  partitionByWorkstream,
+  busyWorkstreams,
+  workstreamKey,
+  type CloseGateTask,
+} from "./project-tick.ts";
+import { fileURLToPath } from "node:url";
+import { WORKSTREAM_MAIN } from "./workspace.ts";
+import { MAIN_WORKSTREAM } from "./project-reconcile.ts";
+
+/** The tree as it stood BEFORE phase 4C — round 221's last commit, phase 4B.
+ *  Pinned by SHA rather than by `main` or `HEAD~1`, both of which move. This is
+ *  the standing rule about line numbers applied to bytes: an expectation taken
+ *  from history carries the commit it was taken from. */
+const PRIOR_SHA = "4244b20225ec85c2d5dde907d0430d3ff1febce5";
+
+const PRIOR_TICK = (() => {
+  const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+  const out = execFileSync(
+    "git",
+    ["show", `${PRIOR_SHA}:forge-control/src/lib/project-tick.ts`],
+    { cwd: repoRoot, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+  );
+  assert.ok(
+    out.length > 10_000,
+    `git show ${PRIOR_SHA.slice(0, 7)} returned ${out.length} bytes — the pin does not resolve ` +
+      "to the pre-phase-4C project-tick.ts and every byte-identity claim below would be vacuous",
+  );
+  return out;
+})();
+
+/** Pull ONE template literal line out of the prior source and render it with
+ *  the fixture's values. Mechanical substitution, no evaluation: what comes back
+ *  is what the OLD code emitted for these inputs.
+ *
+ *  Both ends are checked. An unmatched anchor would make `line` empty and every
+ *  `includes()` below trivially true — the self-certifying shape standing rule 3
+ *  exists to forbid. */
+function priorLine(anchor: string, subs: Record<string, string>): string {
+  const idx = PRIOR_TICK.indexOf(anchor);
+  assert.ok(idx > 0, `anchor ${JSON.stringify(anchor)} not found at ${PRIOR_SHA.slice(0, 7)}`);
+  const start = PRIOR_TICK.lastIndexOf("`", idx);
+  const end = PRIOR_TICK.indexOf("`", idx);
+  assert.ok(start > 0 && end > idx, `could not delimit the template around ${JSON.stringify(anchor)}`);
+  let line = PRIOR_TICK.slice(start + 1, end);
+  for (const [expr, value] of Object.entries(subs)) {
+    assert.ok(line.includes(expr), `prior template no longer interpolates ${expr}: ${line}`);
+    line = line.split(expr).join(value);
+  }
+  assert.doesNotMatch(line, /\$\{/, `unsubstituted interpolation left in: ${line}`);
+  return line.replace(/\\n/g, "\n");
+}
+
+describe("R36/R37 the `main` workstream is byte-identical to the tree before phase 4C", () => {
+  const proj = project({ repo: "ai-os", work_branch: "project/8c591d6c", base_branch: "main" });
+
+  test("the worktree header line is the one commit 4244b20 emitted", () => {
+    const expected = priorLine("you are already inside its worktree", {
+      "${project.repo}": proj.repo,
+      "${project.work_branch}": proj.work_branch!,
+      "${project.base_branch}": proj.base_branch,
+    });
+    for (const role of ROLES) {
+      const prompt = buildPromptPhase4C(task({ role }), proj);
+      assert.ok(
+        prompt.includes(expected),
+        `role ${role}: header line diverged from ${PRIOR_SHA.slice(0, 7)}\n` +
+          `expected substring: ${JSON.stringify(expected)}`,
+      );
+    }
+  });
+
+  test("the reviewer's diff base is still ${project.base_branch}...HEAD", () => {
+    const expected = priorLine("Review the actual diff", {
+      "${project.base_branch}": proj.base_branch,
+    });
+    const prompt = buildPromptPhase4C(task({ role: "reviewer" }), proj);
+    assert.ok(prompt.includes(expected), `reviewer diff base diverged: ${JSON.stringify(expected)}`);
+    assert.ok(prompt.includes("git diff main...HEAD"), "the literal form R37 must preserve");
+    assert.ok(
+      !prompt.includes("merge-base"),
+      "a `main` reviewer must never be handed the workstream fork-point form",
+    );
+  });
+
+  test("the builder is still told the project's own branch", () => {
+    const expected = priorLine("is already checked out", {
+      "${project.work_branch}": proj.work_branch!,
+    });
+    const prompt = buildPromptPhase4C(task({ role: "builder" }), proj);
+    assert.ok(prompt.includes(expected), `builder branch line diverged: ${JSON.stringify(expected)}`);
+  });
+
+  test("passing the resolved workspace explicitly changes nothing for `main`", () => {
+    // The spawn path always passes it; every test above omits it. If the two
+    // paths could differ, half this file would be proving the wrong thing.
+    for (const role of ROLES) {
+      const implicit = buildPromptPhase4C(task({ role }), proj);
+      const explicit = buildPromptPhase4C(task({ role }), proj, {
+        workstream: "main",
+        work_branch: proj.work_branch,
+      });
+      assert.equal(explicit, implicit, `role ${role}: explicit 'main' workspace changed the prompt`);
+    }
+  });
+
+  test("R37 — WORKTREE_POLICY and REVIEWER_LIVE_CHECK are unchanged in wording", () => {
+    // R37 says the policy needs no rewording because "the directory you are
+    // already in" now correctly describes a per-workstream worktree. Asserted
+    // against the prior bytes rather than trusted: this is the one requirement
+    // in this phase whose deliverable is that a string did NOT change.
+    for (const name of ["WORKTREE_POLICY", "REVIEWER_LIVE_CHECK"]) {
+      const marker = `export function ${name}(liveCheckout: string): string {`;
+      const cut = (src: string): string => {
+        const s = src.indexOf(marker);
+        assert.ok(s > 0, `${name} not found — this test has gone stale`);
+        const e = src.indexOf("\n}\n", s);
+        assert.ok(e > s, `${name} body not delimited`);
+        return src.slice(s, e);
+      };
+      assert.equal(
+        cut(readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8")),
+        cut(PRIOR_TICK),
+        `${name} was reworded — R37 says it must not be`,
+      );
+    }
+  });
+});
+
+describe("R37 the reviewer's diff base inside a workstream worktree", () => {
+  const proj = project({ repo: "ai-os", work_branch: "project/8c591d6c", base_branch: "main" });
+  const uiTask = task({ role: "reviewer", workstream: "ui" });
+  const uiWorkspace = { workstream: "ui", work_branch: "project/8c591d6c-ui" };
+
+  test("a non-`main` reviewer diffs against the workstream's fork point", () => {
+    const prompt = buildPromptPhase4C(uiTask, proj, uiWorkspace);
+    assert.ok(
+      prompt.includes("git diff $(git merge-base project/8c591d6c HEAD)...HEAD"),
+      "the merge-base form R37 specifies is missing",
+    );
+    assert.ok(
+      !prompt.includes("git diff main...HEAD"),
+      "diffing a workstream against base_branch shows every other workstream's merged work",
+    );
+  });
+
+  test("the header names the workstream's branch, not the project's", () => {
+    const prompt = buildPromptPhase4C(task({ role: "builder", workstream: "ui" }), proj, uiWorkspace);
+    assert.ok(
+      prompt.includes("(branch project/8c591d6c-ui, off project/8c591d6c)"),
+      "a worker told the wrong branch pushes the wrong ref",
+    );
+    assert.ok(
+      prompt.includes("branch project/8c591d6c-ui is already checked out"),
+      "the builder branch must name the workstream's branch",
+    );
+    assert.match(prompt, /NEVER merge this branch/, "R38: the worker must not merge itself");
+  });
+
+  test("a workstream task with no resolved workspace is REFUSED, not defaulted", () => {
+    // The only available default is project.work_branch, which for a workstream
+    // row is the wrong branch. NF1: a fallback-for-invalid is forbidden.
+    assert.throws(
+      () => buildPromptPhase4C(task({ role: "builder", workstream: "ui" }), proj),
+      /no resolved TaskWorkspace was passed/,
+    );
+  });
+
+  test("a workstream on a project with no work_branch is REFUSED", () => {
+    assert.throws(
+      () =>
+        buildPromptPhase4C(
+          task({ role: "reviewer", workstream: "ui" }),
+          project({ work_branch: null }),
+          uiWorkspace,
+        ),
+      /has no work_branch/,
+    );
+  });
+
+  test("the two `main` constants cannot drift apart", () => {
+    // lib/workspace.ts spells it WORKSTREAM_MAIN, lib/project-reconcile.ts
+    // spells it MAIN_WORKSTREAM, and this file's spawn path uses one to call
+    // the other's module. Two names for one value is survivable; two VALUES
+    // would repoint a live project's worktree.
+    assert.equal(MAIN_WORKSTREAM, WORKSTREAM_MAIN);
+    assert.equal(MAIN_WORKSTREAM, "main");
+  });
+});
+
+describe("R36 the spawn path resolves per task and writes back only `main`", () => {
+  const TICK4C = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+
+  function slice(from: string, to: string): string {
+    const s = TICK4C.indexOf(from);
+    assert.ok(s > 0, `${from} not found — this test has gone stale`);
+    const e = TICK4C.indexOf(to, s);
+    assert.ok(e > s, `${to} does not follow ${from} — this test has gone stale`);
+    return TICK4C.slice(s, e);
+  }
+
+  test("setProjectWorkspace is reached from the `main` branch and nowhere else", () => {
+    // The single most dangerous line in this phase's diff: writing a
+    // workstream's directory into `projects.workspace_dir` would silently
+    // repoint every later task, every Kanban link and the deploy's pre-merge
+    // check at a branch that is not the project's.
+    // `await setProjectWorkspace(` and not `setProjectWorkspace(`: the second
+    // form also matches the prose in resolveTaskWorkspace's own comment block,
+    // and a gate that counts its own documentation is a gate that fails when
+    // someone explains it better.
+    const calls = TICK4C.match(/await setProjectWorkspace\(/g) ?? [];
+    assert.equal(calls.length, 1, "setProjectWorkspace must be called exactly once in this file");
+    const mainBranch = slice(
+      "if (task.workstream === MAIN_WORKSTREAM) {",
+      "  } else {",
+    );
+    assert.match(mainBranch, /setProjectWorkspace\(task\.project_id, ws\)/);
+    const workstreamBranch = slice("  } else {", "  if (!existsSync(resolved.workspace_dir))");
+    assert.doesNotMatch(
+      workstreamBranch,
+      /setProjectWorkspace/,
+      "a workstream must never write the project's workspace_dir",
+    );
+    assert.match(workstreamBranch, /provisionWorkstream\(task\.project, task\.workstream\)/);
+  });
+
+  test("the run's cwd is the resolved workstream directory, not the project's", () => {
+    const spawn = slice("async function spawnTaskRuns(", "/** Narrow a DB row's role");
+    assert.match(spawn, /const ws = await resolveTaskWorkspace\(task\)/);
+    assert.match(spawn, /workspace_dir: ws\.workspace_dir,/);
+    assert.doesNotMatch(
+      spawn,
+      /workspace_dir: task\.project\.workspace_dir/,
+      "R36: the run's cwd must come from the task's workstream, not the project row",
+    );
+  });
+
+  test("executor.ts is not modified by this phase", () => {
+    // 04-phases.md §10 lists executor.ts as written by NO phase. It already
+    // uses run.metadata.workspace_dir as the child's cwd, which is why a
+    // workstream gets its own directory without touching it.
+    const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+    const diff = execFileSync(
+      "git",
+      ["diff", PRIOR_SHA, "--", "forge-control/src/executor.ts"],
+      { cwd: repoRoot, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+    );
+    assert.equal(diff, "", `executor.ts changed since ${PRIOR_SHA.slice(0, 7)}:\n${diff}`);
+  });
+
+  test("a missing workspace is a named refusal, for `main` and for a workstream alike", () => {
+    const resolver = slice("async function resolveTaskWorkspace(", "async function spawnTaskRuns(");
+    assert.match(resolver, /if \(!existsSync\(resolved\.workspace_dir\)\)/);
+    assert.match(resolver, /refusing to spawn a run whose cwd is missing/);
+    // The check is AFTER the if/else, so it covers both branches — a check
+    // inside the `main` branch alone would leave the workstream recovery
+    // asserted-by-comment, which is what R36's third property forbids.
+    assert.ok(
+      resolver.indexOf("} else {") < resolver.indexOf("if (!existsSync(resolved.workspace_dir))"),
+      "the existence gate must sit after both branches, not inside one",
+    );
+  });
+});
+
+describe("R17 warn clause — an undeclared builder is named at spawn", () => {
+  const cases: Array<{ role: TaskRole; write_set: string[]; warns: boolean }> = [
+    { role: "builder", write_set: [], warns: true },
+    { role: "builder", write_set: ["src/a.ts"], warns: false },
+    { role: "scout", write_set: [], warns: false },
+    { role: "reviewer", write_set: [], warns: false },
+    { role: "planner", write_set: [], warns: false },
+    { role: "researcher", write_set: [], warns: false },
+    { role: "tester", write_set: [], warns: false },
+    { role: "architect", write_set: [], warns: false },
+  ];
+
+  for (const c of cases) {
+    test(`${c.role} with ${c.write_set.length} declared path(s) ${c.warns ? "warns" : "is silent"}`, () => {
+      const out = emptyWriteSetWarning(task({ role: c.role, write_set: c.write_set }), "Test Project");
+      if (!c.warns) {
+        assert.equal(out, null);
+        return;
+      }
+      assert.ok(out !== null);
+      assert.match(out, /t1/, "R17: the warning must NAME the task");
+      assert.match(out, /EMPTY write_set/);
+      assert.match(out, /R17/);
+    });
+  }
+
+  test("the spawn path emits it once per spawn, beside the spawn line", () => {
+    const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+    const spawn = src.slice(
+      src.indexOf("async function spawnTaskRuns("),
+      src.indexOf("/** Narrow a DB row's role"),
+    );
+    const spawnedLog = spawn.indexOf("[project-tick] spawned ${task.role}");
+    const warnCall = spawn.indexOf("emptyWriteSetWarning(task, task.project.name)");
+    assert.ok(spawnedLog > 0 && warnCall > spawnedLog, "the warn belongs beside the spawn record");
+    assert.equal(
+      (spawn.match(/emptyWriteSetWarning\(/g) ?? []).length,
+      1,
+      "one call site — one warning per spawn, never one per tick",
+    );
+  });
+});
+
+describe("the operator's ruling — one running task per (project, workstream)", () => {
+  const t = (id: string, workstream: string, project_id = "p1") => ({ id, project_id, workstream });
+
+  test("two tasks of one workstream do not spawn together; two workstreams do", () => {
+    const same = partitionByWorkstream([t("a", "main"), t("b", "main")], new Set());
+    assert.deepEqual(same.spawn.map((x) => x.id), ["a"]);
+    assert.deepEqual(same.deferred.map((x) => x.id), ["b"]);
+
+    const split = partitionByWorkstream([t("a", "main"), t("b", "ui")], new Set());
+    assert.deepEqual(split.spawn.map((x) => x.id), ["a", "b"]);
+    assert.deepEqual(split.deferred, []);
+  });
+
+  test("POSITIVE CONTROL — the constraint removed, both tasks spawn", () => {
+    // "Observed failing with the constraint removed", not asserted to be
+    // load-bearing. This is `partitionByWorkstream` with its one accumulating
+    // line (`taken.add(key)`) deleted: the same fixture that defers `b` above
+    // now spawns it, so the deferral above cannot be credited to anything else.
+    const withoutConstraint = <T extends { id: string; project_id: string; workstream: string }>(
+      claimed: readonly T[],
+      busy: ReadonlySet<string>,
+    ): T[] => claimed.filter((x) => !busy.has(workstreamKey(x.project_id, x.workstream)));
+    assert.deepEqual(
+      withoutConstraint([t("a", "main"), t("b", "main")], new Set()).map((x) => x.id),
+      ["a", "b"],
+      "if this ever defers b, the positive control has stopped being a control",
+    );
+  });
+
+  test("two projects with a same-named workstream do not serialise against each other", () => {
+    const out = partitionByWorkstream([t("a", "ui", "p1"), t("b", "ui", "p2")], new Set());
+    assert.deepEqual(out.spawn.map((x) => x.id), ["a", "b"]);
+  });
+
+  test("a workstream busy from an earlier tick defers this tick's candidate", () => {
+    const busy = new Set([workstreamKey("p1", "ui")]);
+    const out = partitionByWorkstream([t("a", "ui"), t("b", "api")], busy);
+    assert.deepEqual(out.spawn.map((x) => x.id), ["b"]);
+    assert.deepEqual(out.deferred.map((x) => x.id), ["a"]);
+  });
+
+  test("busyWorkstreams excludes this pass's own claims — the deadlock trap", () => {
+    // claimReadyTasks() flips its winners to 'running' inside its transaction,
+    // so without this exclusion every task would find its own workstream busy
+    // and the engine would spawn nothing, ever.
+    const rows = [
+      { id: "a", project_id: "p1", workstream: "main", status: "running" as const },
+      { id: "b", project_id: "p1", workstream: "ui", status: "running" as const },
+      { id: "c", project_id: "p1", workstream: "api", status: "done" as const },
+    ];
+    assert.deepEqual([...busyWorkstreams(rows, new Set(["a"]))], [workstreamKey("p1", "ui")]);
+    assert.deepEqual([...busyWorkstreams(rows, new Set(["a", "b"]))], []);
+    assert.deepEqual(
+      [...busyWorkstreams(rows, new Set())].sort(),
+      [workstreamKey("p1", "main"), workstreamKey("p1", "ui")].sort(),
+      "a 'done' task never makes its workstream busy",
+    );
+  });
+
+  test("a deferred task is handed back to 'ready', never failed or dropped", () => {
+    const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+    const spawn = src.slice(
+      src.indexOf("async function spawnTaskRuns("),
+      src.indexOf("/** Narrow a DB row's role"),
+    );
+    assert.match(spawn, /partitionByWorkstream\(eligible, busy\)\.deferred/);
+    const branch = spawn.slice(spawn.indexOf("if (deferred.has(task.id))"));
+    assert.match(branch.slice(0, 400), /setTaskStatus\(task\.id, "ready"\)/);
+    assert.match(branch.slice(0, 600), /already has a task running/);
+  });
+});
+
+describe("R70 a project may not close on an unmerged workstream branch", () => {
+  /** Build a fixture and assert its own premise. A R70 case whose fixture
+   *  contains no non-`main` row proves nothing about workstreams, and would
+   *  pass whatever the predicate did — the exact vacuous pass this phase's
+   *  brief names. `expectWorkstreams` is that premise, stated per case. */
+  function gate(
+    tasks: CloseGateTask[],
+    expectWorkstreams: string[],
+  ): { tasks: CloseGateTask[]; open: string[] } {
+    const present = [...new Set(tasks.map((t) => t.workstream))].filter((w) => w !== "main").sort();
+    assert.deepEqual(
+      present,
+      [...expectWorkstreams].sort(),
+      "fixture premise failed: it does not contain the non-main workstreams this case is about",
+    );
+    return { tasks, open: unintegratedWorkstreams(tasks) };
+  }
+
+  const t = (id: string, workstream: string, depends_on: string[] | null): CloseGateTask => ({
+    id,
+    workstream,
+    depends_on,
+  });
+
+  test("a legacy project — every row 'main', every depends_on NULL — is untouched", () => {
+    const { open } = gate([t("1", "main", null), t("2", "main", null)], []);
+    assert.deepEqual(open, [], "every live project today is this shape; it must close as it always did");
+  });
+
+  test("a graph project with only workstream 'main' closes exactly as today", () => {
+    const { open } = gate([t("1", "main", []), t("2", "main", ["1"])], []);
+    assert.deepEqual(open, []);
+  });
+
+  test("an empty project has no workstream to hold it open", () => {
+    assert.deepEqual(unintegratedWorkstreams([]), []);
+  });
+
+  test("THE ATTACK — a workstream with no integration task holds the project open", () => {
+    // 03-quality.md §5's named attack, which succeeded against the statement
+    // that stood before R70: every task of `ui` is done, nothing is non-done,
+    // the project closes, and project/<id8>-ui is stranded with all its work.
+    const { open } = gate([t("1", "main", []), t("2", "ui", ["1"]), t("3", "ui", ["1"])], ["ui"]);
+    assert.deepEqual(open, ["ui"]);
+  });
+
+  test("an integration task covering every task of the workstream releases it", () => {
+    const { open } = gate(
+      [t("1", "main", []), t("2", "ui", ["1"]), t("3", "ui", ["1"]), t("4", "main", ["2", "3"])],
+      ["ui"],
+    );
+    assert.deepEqual(open, []);
+  });
+
+  test("THE MEMBERSHIP CASE — the integration task and its reviewer are 'main', and are not members of W", () => {
+    // Get this wrong and NO project with a workstream can ever close, which is
+    // a worse bug than the one R70 fixes: the integrator would have to depend
+    // on itself. R38 and 02-architecture.md §4.4 put both rows in `main`.
+    const tasks = [
+      t("1", "main", []), //            the plan
+      t("2", "ui", ["1"]), //           workstream work
+      t("3", "ui", ["1"]),
+      t("4", "main", ["2", "3"]), //    integration task  — merges project/<id8>-ui
+      t("5", "main", ["4"]), //         its reviewer      — depends only on the integration
+    ];
+    const { open } = gate(tasks, ["ui"]);
+    assert.deepEqual(open, [], "the integrator must not be required to depend on itself");
+  });
+
+  test("covering only PART of the workstream does not release it", () => {
+    const { open } = gate(
+      [t("1", "main", []), t("2", "ui", ["1"]), t("3", "ui", ["1"]), t("4", "main", ["2"])],
+      ["ui"],
+    );
+    assert.deepEqual(open, ["ui"], "an integration that merges half a workstream strands the rest");
+  });
+
+  test("a legacy 'main' row (depends_on NULL) can never be the integrator", () => {
+    const { open } = gate([t("1", "main", null), t("2", "ui", null)], ["ui"]);
+    assert.deepEqual(open, ["ui"], "NULL names nothing — a pre-graph row integrates nothing");
+  });
+
+  test("an 'integration task' placed INSIDE the workstream does not count", () => {
+    // It would run in the wrong worktree and its merge would land nowhere the
+    // project branch can see. Holding the project is the correct outcome.
+    const { open } = gate([t("1", "main", []), t("2", "ui", ["1"]), t("3", "ui", ["1", "2"])], ["ui"]);
+    assert.deepEqual(open, ["ui"]);
+  });
+
+  test("a task in ANOTHER workstream that covers all of W does not release W", () => {
+    // Found by mutation, not by inspection: deleting `workstream === 'main'`
+    // from the integrator filter left every case above green. A covering task
+    // in workstream `api` runs in api's worktree — its merge would land on
+    // project/<id8>-api, not on the project branch — so it integrates nothing.
+    // Both workstreams are therefore open, and `api` is open on its own account.
+    const { open } = gate(
+      [t("1", "main", []), t("2", "ui", ["1"]), t("3", "ui", ["1"]), t("4", "api", ["2", "3"])],
+      ["api", "ui"],
+    );
+    assert.deepEqual(open, ["api", "ui"], "only a 'main' task can be an integration task (R38)");
+  });
+
+  test("an integrator depending on MORE than the workstream still releases it", () => {
+    // Coverage is ⊇, not =: R38's reviewer chain and ordinary planner edges
+    // routinely add dependencies to the integration task.
+    const { open } = gate(
+      [t("1", "main", []), t("2", "ui", ["1"]), t("9", "main", []), t("4", "main", ["1", "2", "9"])],
+      ["ui"],
+    );
+    assert.deepEqual(open, []);
+  });
+
+  test("two workstreams are judged independently and reported sorted", () => {
+    const { open } = gate(
+      [
+        t("1", "main", []),
+        t("2", "ui", ["1"]),
+        t("3", "api", ["1"]),
+        t("4", "main", ["2"]), // integrates ui only
+      ],
+      ["api", "ui"],
+    );
+    assert.deepEqual(open, ["api"], "ui is integrated; api is not; the answer names only api");
+  });
+
+  test("the SQL mirror in db/projects.ts carries R70's three quantifiers", () => {
+    // The pure predicate above is the definition; the statement is its mirror.
+    // A mirror that quietly lost a term would let the attack through while
+    // every test on this page stayed green, so the statement's shape is
+    // asserted here — and the behavioural proof against real rows is
+    // scripts/checks/check-close-gate.ts, which drives the shipped function.
+    const src = readFileSync(fileURLToPath(new URL("../db/projects.ts", import.meta.url)), "utf8");
+    const start = src.indexOf("export async function closeFinishedProjects(");
+    assert.ok(start > 0, "closeFinishedProjects moved — this test has gone stale");
+    const fn = src.slice(start, src.indexOf("\n/**", start));
+    assert.match(fn, /w\.workstream <> 'main'/, "the workstream term");
+    assert.match(fn, /i\.workstream = 'main'/, "the integrator must be a 'main' task");
+    assert.match(fn, /i\.depends_on IS NOT NULL/, "a legacy row integrates nothing");
+    assert.match(fn, /NOT \(m\.id = ANY \(i\.depends_on\)\)/, "the coverage term");
+    assert.equal(
+      (fn.match(/AND [a-z]\.project_id = p\.id/g) ?? []).length +
+        (fn.match(/WHERE [a-z]\.project_id = p\.id/g) ?? []).length,
+      3,
+      "all three levels must be correlated on project_id, or another project's task can vouch for this one",
+    );
+    // The refusal must be reported, not swallowed (NF1).
+    assert.match(fn, /held: held\.rows/);
+  });
+
+  test("the tick reports a held project loudly, once", () => {
+    const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+    const fn = src.slice(
+      src.indexOf("async function reportUnintegratedWorkstreams("),
+      src.indexOf("export async function projectTick("),
+    );
+    assert.ok(fn.length > 0, "reportUnintegratedWorkstreams not found");
+    assert.match(fn, /queueNotification\(/, "NF1 forbids the silent variant");
+    assert.match(fn, /if \(r70Escalated\.has\(p\.id\)\) continue;/, "no notification storm");
+    assert.match(fn, /r70Escalated\.delete\(id\)/, "it must re-arm when the project stops being held");
+    assert.match(fn, /unintegratedWorkstreams\(await listTasksForProject\(p\.id\)\)/);
+    assert.match(
+      fn,
+      /have drifted apart/,
+      "a held project the pure side cannot explain is a mirror disagreement and must say so",
+    );
+  });
+});

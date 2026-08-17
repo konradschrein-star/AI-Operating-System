@@ -587,6 +587,49 @@ order of size:
 
 ## 4. Workstreams and worktrees
 
+### 4.0 Declared write-sets prevent SOURCE conflicts. Only directory isolation prevents ARTIFACT conflicts.
+
+Read this before proposing a shared build directory for speed, because the
+argument for one is superficially strong and it is wrong.
+
+A `write_set` is a list of **source files a task intends to edit**. That is what
+a planner can know and what R28 can validate, and the contention belt is exact
+about it (R16: string equality, no prefix semantics). It is therefore complete
+for exactly one class of collision — two agents editing one file — and blind to
+every other.
+
+**Nobody declares their compiler's scratch space.** `next build` writes `.next`,
+`tsc` writes `tsbuildinfo`, `pnpm` writes `node_modules/.pnpm`, a test run writes
+coverage output. None of it appears in any brief, none of it is knowable at
+planning time, and all of it is shared the moment two tasks share a directory.
+On 2026-08-17 this box hit it twice in one project — operator-visibility rounds
+1353 and 1357, `next build` dying on ENOENT with a sibling building against the
+same directory — and **both pairs of tasks had entirely disjoint source
+write-sets**. Perfect declarations; a collision anyway.
+
+So the two mechanisms are not alternatives and neither substitutes for the
+other:
+
+| collision | prevented by |
+|---|---|
+| two tasks editing `DesktopApp.tsx` | declared write-sets (R16/R17), *within* a workstream |
+| two tasks sharing one `.next` | **a separate directory, and nothing else** |
+
+Round 221's builder A priced the isolation rather than hand-waving it; the
+numbers — real installs, real disk, and why `du` overstates the cost by ~40× —
+are in `evidence/phase4-workstreams.md` §D1 and are deliberately **not restated
+here**, so there is one source and no drift.
+
+The consequence for the scheduler is stated at 04-phases Phase 4 deliverable 13
+and enforced in the spawn path: **two tasks of the same workstream never run
+concurrently.** They share a directory, so the second class of collision is
+reachable between them, and the workstream is the unit of parallelism precisely
+because tasks placed in one were placed there to contend. Buying concurrency
+back inside that unit — with an isolated build dir per task — was considered and
+rejected at round 222: it is a second isolation mechanism to reason about, and it
+leaves declared write-sets as the only defence *inside* the workstream, which
+this section has just shown is insufficient.
+
 ### 4.1 Naming — the spec's form does not work
 
 Spec §3 writes the branch as `project/<id>/<workstream>`. Git will not create it
@@ -645,6 +688,42 @@ Cap: `PROJECT_MAX_WORKSTREAMS = 6` (R39), enforced at task creation with a `400`
 naming the count. A full checkout of `ai-os` is not free and a goal project that
 fans out 40 teams would fill the disk quietly.
 
+**Where the constant lives — reviewed round 222, and it STAYS in
+`routes/projects.ts` behind `lib/workspace.ts`'s dynamic `import()`.** Round 4A
+proposed moving it to `lib/task-graph.ts` (the pure leaf both layers already
+import statically, and the owner of `validateWorkstream()`/R28) and deferred the
+move because phase 4B held that file. Phase 4C is after 4B and did not take it
+either, for two reasons, the second of which corrects the first's own record:
+
+1. **Ownership.** The move writes `lib/task-graph.ts` and `lib/workspace.ts`.
+   §10 gives `task-graph.ts` to phases 1–3, and phase 4C's brief excludes both
+   files by name. Taking it would be a silent write outside a declared set in
+   the project whose entire deliverable is computing contention from *declared*
+   write-sets.
+2. **The stated justification for the dynamic import is not the true one, and
+   the difference matters to whoever finally moves it.** 4A recorded that a
+   static import of `routes/projects.ts` "would put three pg Pools into
+   `pnpm test`", because `lib/project-tick.test.ts` value-imports
+   `lib/workspace.ts`. Measured on 2026-08-17 with a counting `pg.Pool`
+   subclass: importing **`lib/project-tick.ts` alone constructs 5 pools**, and
+   `lib/project-tick.test.ts` value-imports that module for `buildPrompt`, so
+   `pnpm test` constructs those 5 pools TODAY, before any of this. Importing
+   `routes/projects.ts` on top adds **zero** — its pools are the same
+   already-loaded db modules. NF3 is not violated by either, because a `pg.Pool`
+   constructs lazily and connects only on the first query: the rule is that
+   tests never *touch* a database, and none does.
+
+   So the dynamic import buys nothing measurable in pool count. What it does buy
+   is the **import direction**: `lib/` must not depend on `routes/`, and a
+   static import would make the leaf module of the workspace layer depend on the
+   HTTP layer. That is a real and sufficient reason to keep it, and it is the one
+   that should be quoted — a correct decision resting on a measurement that does
+   not hold is one audit away from being reversed for the wrong reason.
+
+The clean end state is unchanged: the constant belongs in `lib/task-graph.ts`,
+and the phase that owns that file should take it and delete
+`maxWorkstreams()`'s dynamic import in the same commit.
+
 ### 4.4 Integration — explicit, reviewed, never automatic
 
 Per workstream other than `main`, the planner creates:
@@ -664,6 +743,19 @@ Per workstream other than `main`, the planner creates:
 
 The integration task lives in `main` because that is where the merge lands and
 where the conflict must be visible.
+
+**R38's structural definition is now ENFORCED, not merely stated (R70, round
+222).** The shape above — an integration task in `main` that depends on every
+task of W — was a description of what a planner ought to create. It is now the
+predicate the engine closes projects by: `closeFinishedProjects()` refuses to
+close a project while some workstream has no `main` task whose `depends_on`
+covers all of it, and says so out loud. That is what turns "integration is an
+explicit task" from a convention a planner can forget into something the engine
+will not let a project finish without. It needs no new column and no naming
+convention precisely because the definition above is already structural — see
+R70 in `01-requirements.md` for the membership ruling (the integration task and
+its reviewer are `main`, so they are never required to depend on themselves) and
+for the mutation record.
 
 **There is no auto-merge path anywhere in the tree** (R38, N3). Auto-merge
 resolves conflicts in favour of whoever finishes last, which is silent
@@ -685,6 +777,24 @@ git diff $(git merge-base project/<id8> HEAD)...HEAD
 ```
 
 `main` keeps today's form byte-identically.
+
+**Landed round 222 (phase 4C), with the byte-identity taken from history rather
+than from the new code.** `buildPrompt()` gained an optional third argument, the
+resolved `TaskWorkspace` — the workstream and the branch actually checked out —
+which `spawnTaskRuns()` always passes and which nothing else can guess: a
+workstream row's branch is not derivable from `project.work_branch`, so omitting
+it for a non-`main` task is a refusal, not a default (NF1). Three strings vary on
+it: the diff base above, the header's branch, and the builder's "already checked
+out". For `main` all three are the bytes commit `4244b20` emitted, and the test
+that says so reads that commit out of git and substitutes into ITS template —
+because a test that built its expectation by calling the new `buildPrompt()`
+again would prove only that the new code agrees with itself.
+
+`WORKTREE_POLICY()` and `REVIEWER_LIVE_CHECK()` are **unchanged in wording**, as
+R37 requires, and that is asserted the same way: their bodies are compared
+character for character against `4244b20`. `REVIEWER_LIVE_CHECK` in particular
+needed no change on inspection either — `git -C <live> status --porcelain` is
+about the LIVE checkout, which no workstream worktree touches.
 
 ---
 

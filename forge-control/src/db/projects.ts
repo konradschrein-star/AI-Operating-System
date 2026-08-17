@@ -450,10 +450,64 @@ export async function createTask(input: {
 /** Mark 'active' projects 'done' once every one of their tasks has settled
  *  into 'done' (and none are failed/blocked). Run after each reconciliation
  *  pass — cheap, and the only place project completion is decided. Returns
- *  the finished projects so the tick can push a completion notification. */
-export async function closeFinishedProjects(): Promise<
-  Array<{ id: string; name: string }>
-> {
+ *  the finished projects so the tick can push a completion notification, and
+ *  the projects R70 REFUSED to close so the tick can say so out loud.
+ *
+ *  ── R70 (phase 4C): NO PROJECT CLOSES ON AN UNMERGED WORKSTREAM BRANCH ────
+ *
+ *  The attack 03-quality.md §5 briefs the red team to run SUCCEEDED against
+ *  the statement that stood here: it had no git term and no workstream term,
+ *  so every task of workstream `ui` being 'done' made the project 'done' —
+ *  with `project/<id8>-ui` never merged and all of its work stranded on a
+ *  branch nobody would look at again. R38's integration task is a defence only
+ *  while the PLANNER REMEMBERS to create one; planner discipline is not a
+ *  defence, which is why this term exists.
+ *
+ *  THE TEST IS STRUCTURAL, and deliberately so. `project_tasks` has no
+ *  `metadata` column to flag an integration task with (see TASK_COLS), and a
+ *  title convention would rot the first time someone renamed a task. R38 already
+ *  defines the integration task as the one that DEPENDS ON EVERY TASK OF ITS
+ *  WORKSTREAM and lives in `main` — so `depends_on` alone identifies it, with no
+ *  new column and nothing to keep in sync. In words: a project may not close
+ *  while some workstream W <> 'main' has at least one task and no `main` task's
+ *  `depends_on` covers every task id of W.
+ *
+ *  MEMBERSHIP, decided here rather than left to be discovered (it is the
+ *  difference between this term and a bug that no workstream project could ever
+ *  survive): the integration task and the reviewer that follows it are tasks of
+ *  `main`, per R38 and 02-architecture.md §4.4 — the merge lands in the main
+ *  worktree and the conflict must be visible there. They are therefore NOT
+ *  members of W, and are never required to depend on themselves. An integration
+ *  task mistakenly placed IN W is a member of W, cannot cover itself, and the
+ *  project is held — loudly, by the caller — which is the correct outcome: it is
+ *  not an integration task by R38's definition and its merge would run in the
+ *  wrong worktree.
+ *
+ *  A LEGACY PROJECT IS UNTOUCHED. `workstream` defaults to 'main' and
+ *  `depends_on` may be NULL (02-architecture.md §2.2 — nullable IS the migration
+ *  strategy). With every row in 'main' the correlated subquery finds no `w` at
+ *  all, the term is vacuously true, and the statement is the one that ran
+ *  before. Every live project today is such a project.
+ *
+ *  SQL MIRROR — as on promoteReadyTasks() above, this module owns no decision
+ *  (02-architecture.md §1.2). The readable definition is
+ *  `unintegratedWorkstreams()` in lib/project-tick.ts, which the tick runs over
+ *  the same rows to NAME the offending workstreams for NF1's notification; the
+ *  term below is its set-based mirror. If the two ever disagree the pure side is
+ *  right and this statement is the bug — and the disagreement is observable at
+ *  runtime rather than only in a test, because a `held` row the pure side cannot
+ *  explain is reported by the tick as exactly that.
+ *
+ *  `held` COSTS NO SECOND COPY OF THE RULE. It is the OLD condition re-run after
+ *  the UPDATE: a project that would have closed under the pre-R70 statement and
+ *  is still 'active' was refused by the new term and by nothing else, because the
+ *  new term is the only thing that changed. The R70 predicate is written once. */
+export async function closeFinishedProjects(): Promise<{
+  closed: Array<{ id: string; name: string }>;
+  /** Projects whose every task is 'done' and which R70 held open. NF1 forbids
+   *  the silent variant: the caller must say which workstreams are unmerged. */
+  held: Array<{ id: string; name: string }>;
+}> {
   const r = await pool.query<{ id: string; name: string }>(
     `UPDATE projects p
         SET status = 'done', updated_at = now()
@@ -463,9 +517,45 @@ export async function closeFinishedProjects(): Promise<
           SELECT 1 FROM project_tasks
            WHERE project_id = p.id AND status <> 'done'
         )
+        AND NOT EXISTS (
+          -- R70. "There is no workstream W <> 'main' of this project for which
+          -- no 'main' task covers every task of W." The three levels are
+          -- exactly that sentence's three quantifiers; correlating each on
+          -- project_id is the same precaution promoteReadyTasks() takes (R27),
+          -- and here it is what stops another project's integration task
+          -- vouching for this one's workstream.
+          SELECT 1 FROM project_tasks w
+           WHERE w.project_id = p.id
+             AND w.workstream <> 'main'
+             AND NOT EXISTS (
+               SELECT 1 FROM project_tasks i
+                WHERE i.project_id = p.id
+                  AND i.workstream = 'main'
+                  -- A legacy row names nothing and cannot integrate anything.
+                  -- Explicit because ANY(NULL) is NULL, not false, and a
+                  -- three-valued accident is not a rule anyone can read.
+                  AND i.depends_on IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM project_tasks m
+                     WHERE m.project_id = p.id
+                       AND m.workstream = w.workstream
+                       AND NOT (m.id = ANY (i.depends_on))
+                  )
+             )
+        )
       RETURNING p.id::text, p.name`,
   );
-  return r.rows;
+  const held = await pool.query<{ id: string; name: string }>(
+    `SELECT p.id::text, p.name FROM projects p
+      WHERE p.status = 'active'
+        AND EXISTS (SELECT 1 FROM project_tasks WHERE project_id = p.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM project_tasks
+           WHERE project_id = p.id AND status <> 'done'
+        )
+      ORDER BY p.updated_at ASC`,
+  );
+  return { closed: r.rows, held: held.rows };
 }
 
 /** Shallow-merge a patch into projects.metadata. Used by goal-mode

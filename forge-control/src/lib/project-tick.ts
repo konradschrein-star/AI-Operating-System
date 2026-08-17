@@ -37,12 +37,14 @@ import {
   setProjectStatus,
   setProjectWorkspace,
   closeFinishedProjects,
+  listTasksForProject,
   getProject,
   managerChatRunId,
   type ProjectTask,
   type Project,
   type SettledRunningTask,
   type TaskRole,
+  type TaskStatus,
   type TaskTier,
 } from "../db/projects.ts";
 import {
@@ -78,7 +80,7 @@ import {
   USAGE_WALL_NOTIFICATION_SOURCE,
 } from "./usage-wall.ts";
 import { projectSlug } from "./run-control-rules.ts";
-import { provisionWorkspace, liveCheckoutPath } from "./workspace.ts";
+import { provisionWorkstream, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
 import { sanitizeModel, sanitizeEffort } from "./cc-runner.ts";
 import { requeueRunAfterUsageWall } from "../db/runs.ts";
@@ -555,8 +557,74 @@ export function MANAGER_COMMS(managerRunId: string, role: TaskRole): string {
   );
 }
 
-export function buildPrompt(task: ProjectTask, project: Project): string {
+/** The worktree a task actually runs in (R36/R37) — the workstream it was
+ *  declared in and the branch checked out in that workstream's directory.
+ *  `provisionWorkstream()` produced both; nothing here recomputes them, so the
+ *  prompt can never name a branch the run is not standing on.
+ *
+ *  For `main` this is `{ 'main', project.work_branch }` and every prompt is
+ *  byte-identical to the one built before phase 4 — the property the deploy
+ *  rests on, asserted in project-tick.test.ts rather than asserted here. */
+export interface TaskWorkspace {
+  workstream: string;
+  /** `null` only for a `main` workstream on a project whose worktree has not
+   *  been provisioned yet — `Project.work_branch` is nullable and the header
+   *  has always interpolated it raw. Kept nullable so that case renders the
+   *  bytes it rendered before phase 4 rather than a tidier empty string. */
+  work_branch: string | null;
+}
+
+/** The workspace a caller that did not resolve one meant (test call sites, and
+ *  only those — `spawnTaskRuns()` always passes the real one).
+ *
+ *  It REFUSES for a non-`main` workstream instead of defaulting. The default
+ *  would have to be `project.work_branch`, which for a workstream row is the
+ *  wrong branch: the prompt would tell a builder in `project/<id8>-ui` that it
+ *  is standing on `project/<id8>`, and its `git-sync-branch.sh` would push the
+ *  wrong ref. NF1 — a fallback-for-invalid is the shape this fleet forbids;
+ *  a default-for-omitted is only legitimate while the omitted value is
+ *  recoverable, and here it is not. */
+function promptWorkspace(
+  task: ProjectTask,
+  project: Project,
+  given: TaskWorkspace | undefined,
+): TaskWorkspace {
+  if (given) return given;
+  if (task.workstream !== MAIN_WORKSTREAM) {
+    throw new Error(
+      `buildPrompt: task ${task.id} is in workstream "${task.workstream}" but no ` +
+        "resolved TaskWorkspace was passed — the branch cannot be derived from " +
+        "the project row (R37). The spawn path passes the result of " +
+        "provisionWorkstream(); a caller that has not provisioned one must.",
+    );
+  }
+  return { workstream: MAIN_WORKSTREAM, work_branch: project.work_branch };
+}
+
+/** The project's own branch — the merge base a workstream reviewer diffs
+ *  against (R37). It cannot be null on this path: a workstream worktree is
+ *  branched off `project/<id8>` and `provisionWorkstream()` throws before
+ *  returning if that branch does not exist. Asserting it anyway keeps the
+ *  refusal a named error here instead of the string "null" reaching a
+ *  reviewer's shell as a git revision. */
+function requireProjectBranch(project: Project, task: ProjectTask): string {
+  if (!project.work_branch) {
+    throw new Error(
+      `buildPrompt: task ${task.id} is in workstream "${task.workstream}" but project ` +
+        `${project.id} has no work_branch — the workstream's fork point is undefined (R37).`,
+    );
+  }
+  return project.work_branch;
+}
+
+export function buildPrompt(
+  task: ProjectTask,
+  project: Project,
+  workspace?: TaskWorkspace,
+): string {
   const mission = roleConfig(task.role).mission;
+  const ws = promptWorkspace(task, project, workspace);
+  const isMainWorkstream = ws.workstream === MAIN_WORKSTREAM;
   // null for scratch projects: no live checkout exists, so none of the
   // live-checkout policy blocks apply (and interpolating "null" into a path
   // would be worse than saying nothing).
@@ -607,10 +675,25 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
       ? `${policed}\n\n${MANAGER_COMMS(managerRun, task.role)}`
       : policed;
   };
+  // R36/R37. For `main` — every live project today — this is the string it has
+  // always been, character for character: `ws.work_branch` IS
+  // `project.work_branch` and the workstream line is absent. For a workstream
+  // the branch named is the one actually checked out in that worktree, because
+  // a worker told the wrong branch pushes the wrong ref, and the one added line
+  // says the two things a worker in an isolated worktree cannot infer from its
+  // surroundings: its neighbours are elsewhere, and it does not merge itself
+  // (R38 — integration is a task with a reviewer, and there is no auto-merge
+  // path anywhere in the tree).
+  const worktreeLine = isMainWorkstream
+    ? `Repo: ${project.repo} — you are already inside its worktree (branch ${ws.work_branch}, off ${project.base_branch}).\n`
+    : `Repo: ${project.repo} — you are already inside its worktree (branch ${ws.work_branch}, off ${project.work_branch}).\n` +
+      `Workstream: ${ws.workstream} — an isolated worktree of this project. Other workstreams are working in ` +
+      `other directories on the same files; you never see their commits and you NEVER merge this branch ` +
+      `yourself. A separate integration task, with its own reviewer, merges it back.\n`;
   const header =
     `${mission}\n\n---\n\n` +
     `Project: ${project.name}\n` +
-    `Repo: ${project.repo} — you are already inside its worktree (branch ${project.work_branch}, off ${project.base_branch}).\n` +
+    worktreeLine +
     `Project brief: ${project.brief}\n\n` +
     `Your task (round ${task.round}): ${task.title}\n${task.brief}\n`;
 
@@ -713,9 +796,25 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
     );
   }
   if (task.role === "reviewer") {
+    // R37 — THE DIFF BASE. `main` keeps `${project.base_branch}...HEAD`, byte
+    // for byte: that is what makes this change invisible to every live project,
+    // and project-tick.test.ts asserts the whole prompt against a string built
+    // from `project.base_branch` rather than from this expression.
+    //
+    // A workstream worktree branches off the PROJECT branch, and the project
+    // branch collects every other workstream's integration merges. Diffed
+    // against `base_branch` a workstream reviewer would be shown every other
+    // team's merged work as though this task had written it — it would either
+    // review work it did not commission or drown. The fork point is the only
+    // base that answers "what did THIS workstream do": `git merge-base` is
+    // resolved by the agent's shell at review time, so the base moves with the
+    // project branch instead of being frozen into the prompt.
+    const diffBase = isMainWorkstream
+      ? project.base_branch
+      : `$(git merge-base ${requireProjectBranch(project, task)} HEAD)`;
     return withPolicy(
       header +
-      `\nReview the actual diff (git diff ${project.base_branch}...HEAD) and the code itself, not just the ` +
+      `\nReview the actual diff (git diff ${diffBase}...HEAD) and the code itself, not just the ` +
       `plan or commit messages. Run the tests and checks named in your brief, plus the project's quality gates ` +
       `— at ${corpus}/03-quality.md for a project planned under the per-project layout, or at ` +
       `docs/plan/03-quality.md for a project whose corpus predates it. Look at BOTH paths, read whichever ` +
@@ -755,7 +854,7 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   if (task.role === "builder") {
     return withPolicy(
       header +
-      `\nImplement this directly in the worktree (branch ${project.work_branch} is already checked out). ` +
+      `\nImplement this directly in the worktree (branch ${ws.work_branch} is already checked out). ` +
       `Commit your changes with a clear message when done. Verify your own work before reporting done — run ` +
       `the tests your brief names, and write the tests it asks for.\n\n` +
       `${BROWSER_FIRST}`
@@ -764,8 +863,233 @@ export function buildPrompt(task: ProjectTask, project: Project): string {
   return withPolicy(header);
 }
 
+/** The serialisation unit: one workstream of one project. Two projects that
+ *  both have a workstream called `ui` hold two different worktrees and must not
+ *  serialise against each other, so the project id is part of the key — the
+ *  same partition-by-project the contention belt makes in `claimReadyTasks()`.
+ *  NUL as the separator because a uuid cannot contain one and a workstream name
+ *  cannot either (R28's validator). */
+export function workstreamKey(projectId: string, workstream: string): string {
+  return `${projectId}\u0000${workstream}`;
+}
+
+/**
+ * Which workstreams already have a task in flight — the input to the
+ * serialisation belt below.
+ *
+ * `claimedIds` IS LOAD-BEARING AND IS THE TRAP IN THIS FUNCTION.
+ * `claimReadyTasks()` flips its winners to 'running' INSIDE its own
+ * transaction, so by the time the spawn path reads the project's tasks back,
+ * every task it is about to spawn is already 'running'. Counted naively, each
+ * task would find its own workstream busy and defer itself, and the engine would
+ * spawn nothing, ever. Excluding this pass's own ids is what makes the set mean
+ * "runners that PREDATE this pass".
+ */
+export function busyWorkstreams(
+  tasks: readonly { id: string; project_id: string; workstream: string; status: TaskStatus }[],
+  claimedIds: ReadonlySet<string>,
+): Set<string> {
+  const busy = new Set<string>();
+  for (const t of tasks) {
+    if (t.status !== "running") continue;
+    if (claimedIds.has(t.id)) continue;
+    busy.add(workstreamKey(t.project_id, t.workstream));
+  }
+  return busy;
+}
+
+/**
+ * AT MOST ONE RUNNING TASK PER (project, workstream) — the operator's ruling of
+ * round 222, closing the edge phase 4A reported and did not choose on.
+ *
+ * The workstream IS the unit of parallelism. Two tasks placed in one workstream
+ * were placed there BECAUSE they contend — that is what the name means — and the
+ * write-set belt cannot see the whole of that contention: declared write-sets
+ * cover SOURCE files, and nobody declares their compiler's scratch space. Two
+ * tasks of one workstream with entirely disjoint source write-sets still share
+ * one `.next`, which is how `next build` died with ENOENT twice on this box on
+ * 2026-08-17 (operator-visibility r1353 and r1357). Isolating workstreams while
+ * leaving that configuration reachable would have fixed the observed instance
+ * and left the mechanism intact. The spec settles it in as many words —
+ * "tasks in the same workstream share a worktree and serialize among
+ * themselves" (`AI OS/Spec - Task Graph and Workstream Worktrees` §3) — so this
+ * is the implementation catching up with the design, not a new trade-off.
+ *
+ * ORDER-STABLE, and by the same argument as `selectClaimable()`: `claimed`
+ * arrives in `ORDER BY pt.round ASC, pt.created_at ASC`, so the shallower and
+ * older task of a workstream wins the pass and the loser is handed back to
+ * 'ready' and claimed on a later tick. Nothing fails, nothing is dropped.
+ *
+ * IT IS A BELT, NOT THE GATE, and says so rather than pretending otherwise: it
+ * runs outside `claimReadyTasks()`'s transaction, because the durable gate
+ * would be one term in `selectClaimable()` (lib/task-graph.ts) and that file
+ * belongs to phase 3 in the ownership table — reported to the manager chat
+ * rather than taken here. The belt is sufficient in practice because a single
+ * executor runs `projectTick()`, and it is strictly safe: it can only WITHHOLD a
+ * spawn, never create one.
+ */
+export function partitionByWorkstream<
+  T extends { id: string; project_id: string; workstream: string },
+>(
+  claimed: readonly T[],
+  busy: ReadonlySet<string>,
+): { spawn: T[]; deferred: T[] } {
+  const taken = new Set(busy);
+  const spawn: T[] = [];
+  const deferred: T[] = [];
+  for (const task of claimed) {
+    const key = workstreamKey(task.project_id, task.workstream);
+    if (taken.has(key)) {
+      deferred.push(task);
+      continue;
+    }
+    taken.add(key);
+    spawn.push(task);
+  }
+  return { spawn, deferred };
+}
+
+/**
+ * R17's WARN CLAUSE — the message a spawn owes an undeclared builder, or `null`
+ * when it owes none. Relocated to phase 4 by 01-requirements R17 and 04-phases
+ * Phase 4 deliverable 10, because it lives in the spawn path in this file, which
+ * §10 assigns to phases 4 and 5 and which phase 2 does not write.
+ *
+ * WHY IT IS NOT COSMETIC. An empty `write_set` says "this task writes nothing",
+ * and under the contention model that makes it intersect NOBODY: `conflicts()`
+ * returns false the moment either side is empty (R17's other clause), so the
+ * task is always claimable and runs alongside anything. A builder that simply
+ * FORGOT to declare its writes therefore receives MAXIMUM parallelism and
+ * MAXIMUM chance of clobbering — exactly backwards. Nothing else in the engine
+ * can tell that omission from a task that genuinely writes nothing, so this line
+ * is the only thing that surfaces it.
+ *
+ * `builder` ONLY. A reviewer, planner, researcher, scout or tester legitimately
+ * writes nothing, and warning about them would make the warning noise, which is
+ * the same as deleting it.
+ *
+ * A FUNCTION AND NOT AN INLINE `if`, so that R17's stated proof — "the warning
+ * fires for `builder` and not for `scout`" — is a unit test over the rule and
+ * its text rather than a regex over this file's source.
+ */
+export function emptyWriteSetWarning(
+  task: Pick<ProjectTask, "id" | "role" | "title" | "workstream" | "write_set">,
+  projectName: string,
+): string | null {
+  if (task.role !== "builder") return null;
+  if (task.write_set.length > 0) return null;
+  return (
+    `[project-tick] builder task ${task.id} ("${task.title}", project ${projectName}, ` +
+    `workstream ${task.workstream}) has an EMPTY write_set — it contends with nothing ` +
+    "and will run alongside anything (R17). Declare the files it writes."
+  );
+}
+
+/**
+ * The worktree ONE TASK's run gets as its cwd (R36).
+ *
+ * Before phase 4 this resolved one directory per PROJECT, off
+ * `task.project.workspace_dir`. It now resolves one per TASK, off
+ * `task.workstream`, and three properties of the old code survive deliberately:
+ *
+ *  1. `executor.ts` IS NOT TOUCHED. It already uses `run.metadata.workspace_dir`
+ *     as the child's cwd, and 04-phases.md §10 lists it as written by no phase.
+ *     Handing `createRunForTask()` a different directory is the whole change.
+ *  2. `setProjectWorkspace()` KEEPS RECEIVING THE 'main' WORKTREE AND ONLY THAT.
+ *     It writes `projects.workspace_dir`, which the Kanban links, the deploy's
+ *     pre-merge check and every later task read. Writing a workstream's
+ *     directory into the project row would silently repoint all of them at a
+ *     branch that is not the project's. It is called in the `main` branch below
+ *     and nowhere else in this file.
+ *  3. THE `wsMissing` RECOVERY WORKS FOR A WORKSTREAM TOO. Both 2026-07-30
+ *     worktrees were deleted from disk while the DB kept the paths (E8) and a
+ *     resumed task spawned `claude` with a cwd that was not there. For `main`
+ *     the stored path is probed and re-provisioned exactly as before; for a
+ *     workstream there is no stored path to go stale — `provisionWorkstream()`
+ *     is called every time and its `lookupWorktree()` runs `git worktree prune`
+ *     FIRST, so a directory deleted from disk is deregistered and re-added on
+ *     the same call. The `existsSync` gate at the end is what makes that
+ *     CHECKED rather than assumed, for both workstreams: a directory that is
+ *     still missing after provisioning is a named spawn failure that blocks the
+ *     project, not an obscure ENOENT inside a child process.
+ *
+ * For `task.workstream === 'main'` the returned directory and branch are
+ * byte-identical to what this code returned before phase 4 —
+ * `provisionWorkstream(p, 'main')` DELEGATES to `provisionWorkspace(p)` (R33/R34)
+ * rather than recomputing anything, so no live project can change directory
+ * when this ships.
+ */
+async function resolveTaskWorkspace(
+  task: ProjectTask & { project: Project },
+): Promise<{ workspace_dir: string; work_branch: string }> {
+  let resolved: { workspace_dir: string; work_branch: string };
+
+  if (task.workstream === MAIN_WORKSTREAM) {
+    // A stored workspace_dir is not evidence the directory still exists (E8).
+    const wsMissing =
+      !!task.project.workspace_dir && !existsSync(task.project.workspace_dir);
+    if (wsMissing) {
+      console.warn(
+        `[project-tick] workspace ${task.project.workspace_dir} for project ` +
+          `${task.project_id} is gone from disk — re-provisioning`,
+      );
+    }
+    if (!task.project.workspace_dir || !task.project.work_branch || wsMissing) {
+      // Normally the API route provisions synchronously at project creation,
+      // but this tick can claim the round-0 architect task inside that
+      // window, so the fallback is a real path — and it must write the
+      // result back, or every later tick re-provisions from scratch.
+      const ws = await provisionWorkstream(task.project, MAIN_WORKSTREAM);
+      task.project.workspace_dir = ws.workspace_dir;
+      task.project.work_branch = ws.work_branch;
+      await setProjectWorkspace(task.project_id, ws).catch(() => {});
+    }
+    resolved = {
+      workspace_dir: task.project.workspace_dir,
+      work_branch: task.project.work_branch,
+    };
+  } else {
+    // NO WRITE-BACK, deliberately — see property 2 above. The workstream's
+    // directory is derived from the project id and the workstream name every
+    // time, so there is no cached path that could point at a directory the
+    // project no longer owns.
+    resolved = await provisionWorkstream(task.project, task.workstream);
+  }
+
+  if (!existsSync(resolved.workspace_dir)) {
+    throw new Error(
+      `[project-tick] workspace ${resolved.workspace_dir} for task ${task.id} ` +
+        `(project ${task.project_id}, workstream ${task.workstream}) does not exist ` +
+        "after provisioning — refusing to spawn a run whose cwd is missing",
+    );
+  }
+  return resolved;
+}
+
 async function spawnTaskRuns(): Promise<void> {
   const claimed = await claimReadyTasks();
+  if (claimed.length === 0) return;
+
+  // The serialisation belt's input. `projectAcceptsWork` is consulted here as
+  // well as in the loop below — it is pure and free — so that a task whose
+  // project stopped accepting work cannot consume its workstream's one slot and
+  // defer a healthy sibling for a tick.
+  const eligible = claimed.filter((t) => projectAcceptsWork(t.project.status));
+  const claimedIds = new Set(claimed.map((t) => t.id));
+  const busy = new Set<string>();
+  for (const projectId of new Set(eligible.map((t) => t.project_id))) {
+    const rows = await listTasksForProject(projectId);
+    for (const key of busyWorkstreams(
+      rows.map((t) => ({ ...t, project_id: projectId })),
+      claimedIds,
+    )) {
+      busy.add(key);
+    }
+  }
+  const deferred = new Set(
+    partitionByWorkstream(eligible, busy).deferred.map((t) => t.id),
+  );
+
   for (const task of claimed) {
     try {
       // Belt to the SQL gate's braces (R10). claimReadyTasks() already joins on
@@ -782,31 +1106,29 @@ async function spawnTaskRuns(): Promise<void> {
         );
         continue;
       }
-      // A stored workspace_dir is not evidence the directory still exists.
-      // Both 2026-07-30 worktrees were deleted from disk while the DB kept the
-      // paths (E8); a resumed task would have spawned `claude` with a cwd that
-      // isn't there and died at spawn() with an obscure error. provisionWorkspace
-      // is idempotent and prunes stale worktree registrations, so re-running it
-      // is the cheap, correct repair.
-      const wsMissing =
-        !!task.project.workspace_dir && !existsSync(task.project.workspace_dir);
-      if (wsMissing) {
-        console.warn(
-          `[project-tick] workspace ${task.project.workspace_dir} for project ` +
-            `${task.project_id} is gone from disk — re-provisioning`,
+      // The operator's ruling of round 222, enforced. The task keeps its place
+      // in the queue: it is handed back to 'ready' exactly as the belt above
+      // hands back a paused project's task, and the next tick claims it once
+      // its workstream is free. Logged, because a tick that withholds work must
+      // not look like a tick that had none (E4's argument, applied to the
+      // opposite outcome).
+      if (deferred.has(task.id)) {
+        await setTaskStatus(task.id, "ready");
+        console.log(
+          `[project-tick] holding ${task.role} task ${task.id} — workstream ` +
+            `"${task.workstream}" of project ${task.project_id} already has a task running ` +
+            "(one running task per workstream)",
         );
+        continue;
       }
-      if (!task.project.workspace_dir || !task.project.work_branch || wsMissing) {
-        // Normally the API route provisions synchronously at project creation,
-        // but this tick can claim the round-0 architect task inside that
-        // window, so the fallback is a real path — and it must write the
-        // result back, or every later tick re-provisions from scratch.
-        const ws = await provisionWorkspace(task.project);
-        task.project.workspace_dir = ws.workspace_dir;
-        task.project.work_branch = ws.work_branch;
-        await setProjectWorkspace(task.project_id, ws).catch(() => {});
-      }
-      const prompt = buildPrompt(task, task.project);
+      // R36 — the run's cwd is its TASK's workstream worktree, not the
+      // project's one directory. `main` resolves to exactly what this line
+      // resolved to before phase 4.
+      const ws = await resolveTaskWorkspace(task);
+      const prompt = buildPrompt(task, task.project, {
+        workstream: task.workstream,
+        work_branch: ws.work_branch,
+      });
       const cfg = roleConfig(task.role);
       const tierCfg = task.tier ? TIER_MODELS[task.tier] : null;
       const run = await createRunForTask({
@@ -815,7 +1137,11 @@ async function spawnTaskRuns(): Promise<void> {
         role: task.role,
         project_id: task.project_id,
         task_id: task.id,
-        workspace_dir: task.project.workspace_dir,
+        // R36. `createRunForTask` puts this in `runs.metadata.workspace_dir`
+        // and executor.ts uses it verbatim as the child's cwd — which is why
+        // executor.ts needs no change at all for a workstream to get its own
+        // directory.
+        workspace_dir: ws.workspace_dir,
         // C16: the run inherits the project's manager-chat linkage, if any.
         // createRunForTask owns the key and the presence check.
         project_metadata: task.project.metadata,
@@ -834,6 +1160,10 @@ async function spawnTaskRuns(): Promise<void> {
           `(round ${task.round}, tier ${task.tier ?? "role-default"}) — ` +
           `${task.project.name} · ${task.title}`,
       );
+      // R17's warn clause. ONE PER SPAWN, not one per tick — which is why it
+      // sits beside the spawn line above rather than in the tick body.
+      const undeclared = emptyWriteSetWarning(task, task.project.name);
+      if (undeclared) console.warn(undeclared);
     } catch (e) {
       console.error(
         `[project-tick] failed to spawn run for task ${task.id} (${task.role}):`,
@@ -1550,6 +1880,118 @@ async function goalHeartbeats(): Promise<void> {
   }
 }
 
+/** The three columns R70 decides over, and nothing else — the same narrowing
+ *  `GraphTask` makes for the scheduler, for the same reason: a completion
+ *  decision must not be able to start depending on a title, a status or a
+ *  round. */
+export interface CloseGateTask {
+  id: string;
+  workstream: string;
+  depends_on: string[] | null;
+}
+
+/**
+ * R70 — which workstreams of this project have NO integration task, and are
+ * therefore holding it open. Empty means the project may close.
+ *
+ * The readable definition; `closeFinishedProjects()` in db/projects.ts carries
+ * its set-based SQL mirror, and if the two disagree THIS ONE IS RIGHT.
+ *
+ * R38 defines the integration task structurally — a `main` task that DEPENDS ON
+ * EVERY TASK OF THE WORKSTREAM — so nothing here matches a title, reads a
+ * naming convention or needs a column `project_tasks` does not have (there is no
+ * `metadata` column on it; `TASK_COLS` in db/projects.ts is the whole list).
+ *
+ * MEMBERSHIP: the integration task and its reviewer live in `main` (R38,
+ * 02-architecture.md §4.4) because that is where the merge lands and where a
+ * conflict must be visible. They are NOT members of W, so they are never
+ * required to depend on themselves — get that wrong and no project with a
+ * workstream could ever close, which is a worse bug than the one R70 fixes.
+ *
+ * LEGACY ROWS: `depends_on` is nullable and that IS the migration strategy
+ * (02-architecture.md §2.2). A NULL names nothing, so a legacy `main` task can
+ * never be an integrator; and a pre-graph project, every row of which is in
+ * `main`, has no W at all and comes back empty. Every live project today is
+ * such a project.
+ *
+ * COVERAGE IS ⊇, NOT =. The integration task may depend on more than W — R38's
+ * reviewer chain and the planner's own ordering routinely add edges — so the
+ * test is that W's ids are a SUBSET of what it names. Requiring equality would
+ * make a correct integration task fail the moment anyone added an edge to it.
+ */
+export function unintegratedWorkstreams(tasks: readonly CloseGateTask[]): string[] {
+  const members = new Map<string, string[]>();
+  for (const t of tasks) {
+    if (t.workstream === MAIN_WORKSTREAM) continue;
+    const ids = members.get(t.workstream);
+    if (ids) ids.push(t.id);
+    else members.set(t.workstream, [t.id]);
+  }
+  if (members.size === 0) return [];
+
+  const integrators = tasks
+    .filter((t) => t.workstream === MAIN_WORKSTREAM && t.depends_on !== null)
+    .map((t) => new Set(t.depends_on as string[]));
+
+  const open: string[] = [];
+  for (const [workstream, ids] of members) {
+    const integrated = integrators.some((deps) => ids.every((id) => deps.has(id)));
+    if (!integrated) open.push(workstream);
+  }
+  return open.sort();
+}
+
+/** Projects already escalated for R70, so a refusal that persists — and it
+ *  persists until a human creates the missing task — pushes ONCE rather than
+ *  every ten seconds. `noteGroupFailure`'s shape: escalate on the crossing,
+ *  re-arm when the condition clears. Process-local for the same reason: it is
+ *  notification hygiene, not state the DB should own, and a restart legitimately
+ *  re-announces a project that is still stuck. */
+const r70Escalated = new Set<string>();
+
+/**
+ * NF1's loud half of R70. `closeFinishedProjects()` REFUSED to close these
+ * projects; a refusal nobody is told about is the silent variant NF1 forbids,
+ * and it would present as a project that simply sits at 100% done forever.
+ */
+async function reportUnintegratedWorkstreams(
+  held: Array<{ id: string; name: string }>,
+): Promise<void> {
+  const heldIds = new Set(held.map((p) => p.id));
+  for (const id of r70Escalated) if (!heldIds.has(id)) r70Escalated.delete(id);
+
+  for (const p of held) {
+    const open = unintegratedWorkstreams(await listTasksForProject(p.id));
+    if (open.length === 0) {
+      // The pure side and the SQL mirror disagree — OR a task was created
+      // between the UPDATE and the SELECT, which is benign and the common case.
+      // Either way it is not something to push to Konrad's phone, and it is not
+      // something to swallow: the log names both sides so the disagreement can
+      // be told from the race by looking at the row count.
+      console.warn(
+        `[project-tick] project ${p.id} ("${p.name}") did not close and ` +
+          "unintegratedWorkstreams() names no workstream — either a task was created " +
+          "between the close attempt and this read, or the R70 SQL term in " +
+          "closeFinishedProjects() and this predicate have drifted apart",
+      );
+      continue;
+    }
+    if (r70Escalated.has(p.id)) continue;
+    r70Escalated.add(p.id);
+    console.warn(
+      `[project-tick] project ${p.id} held open by unintegrated workstream(s): ${open.join(", ")}`,
+    );
+    await queueNotification(
+      `⛔ Project "${p.name}" cannot close — every task is done, but workstream(s) ` +
+        `${open.join(", ")} have no integration task. Their branches are unmerged and ` +
+        "their work would be stranded (R38/R70). Create a builder task in workstream " +
+        "'main' that depends on every task of each workstream and merges its branch, " +
+        "plus a reviewer for it, and the project will close.",
+      "project",
+    ).catch(() => {});
+  }
+}
+
 export async function projectTick(): Promise<void> {
   try {
     // promote/reconcile/close are pure bookkeeping (no new `runs` rows, no
@@ -1574,12 +2016,16 @@ export async function projectTick(): Promise<void> {
     }
     await reconcileSettledTasks();
     const finished = await closeFinishedProjects();
-    for (const p of finished) {
+    for (const p of finished.closed) {
       await queueNotification(
         `✅ Project "${p.name}" is done — every task completed and the reviewer passed it.`,
         "project",
       ).catch(() => {});
     }
+    // R70/NF1. `held` is what the close refused; saying so is the requirement's
+    // second half, and it is done here rather than in db/projects.ts because
+    // naming the workstreams runs the pure predicate, which lives in this file.
+    await reportUnintegratedWorkstreams(finished.held);
     await goalHeartbeats();
   } catch (e) {
     console.error("[project-tick] tick failed:", e instanceof Error ? e.message : e);

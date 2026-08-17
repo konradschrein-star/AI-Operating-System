@@ -253,7 +253,7 @@ docs/plan/engine-task-graph/evidence/phase3-api.md     (new)
 
 ## Phase 4 — Workstream worktrees, integration, consolidation
 **Planner round 400. Adversarial review required.**
-**Requirements: R32–R46, R17 (warn clause), NF1, NF5.**
+**Requirements: R32–R46, R70, R17 (warn clause), NF1, NF5.**
 
 ### Scope
 The other half of the design: teams get isolated worktrees, and the verdict
@@ -311,6 +311,26 @@ sequential. Sequential is cheaper here.
     something immutable (the gating task ids, by R29) or add a guard that makes a
     second chain for one group impossible — and record the choice in R41 with its
     reasoning. Doing neither is a decision too, and it may not be taken silently.
+
+12. **R70 — the close gate (ADDED ROUND 222).** The named attack in the
+    acceptance criteria below is not hypothetical: phase 4C read
+    `closeFinishedProjects()` and found it has no workstream term, so a project
+    whose planner forgot the integration task closes with the branch stranded.
+    R70 is the structural fix, and it falls out of R38's own wording — the
+    integration task is detectable from `depends_on` alone, so no migration and
+    no new column. Deliverable: the extra `NOT EXISTS` term, the pure mirror
+    `unintegratedWorkstreams()`, NF1's loud refusal, and
+    `scripts/checks/check-close-gate.ts` proving it against real rows with a
+    pre-R70 positive control.
+13. **One running task per (project, workstream)** — the operator's ruling of
+    round 222, closing the edge phase 4A reported without choosing on. Two tasks
+    of ONE workstream may not run concurrently: they share a directory, and
+    declared write-sets cover source files only, so a shared `.next` is
+    reachable between them (the two `next build` ENOENT deaths of 2026-08-17).
+    Enforced in the spawn path — `partitionByWorkstream()` — because the
+    durable gate would be a term in `selectClaimable()`, which §10 gives to
+    phase 3. Asserted with a positive control that observes the constraint
+    removed.
 
 ### Acceptance criteria
 - `git diff main -- forge-control/src/lib/project-reconcile.test.ts
@@ -645,7 +665,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R18 (harness only), NF3 |
 | 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
-| 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, R17, NF1, NF5 |
+| 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, R70, R17, NF1, NF5 |
 | 5 | R47, R48, R49, R50, R51, R52, R53, NF7 |
 | 6 | R54, R55, R56, R57, R58 |
 | 7 | R59, R60, R61, R62 |
@@ -734,6 +754,16 @@ rule's whole point.
 | `docs/plan/engine-task-graph/evidence/phase3-fix-1.md` | §2b, round 216's advisory finding 3. |
 | `forge-control/src/lib/schedule-metrics.test.ts` | section 7c — five tests pinning what step 2b actually yields. |
 | `docs/plan/engine-task-graph/evidence/fix-cycle-2.md` | **new.** This round's transcript. |
+
+**Round 222's two writes outside its declared set (phase 4C), declared in the
+commit that makes them.** Phase 4C's brief names five files. Two more were
+required and neither could be avoided; disclosed here rather than at the site
+alone, because §10 is where the next audit looks.
+
+| file | why phase 4C writes it |
+|---|---|
+| `scripts/checks/check-close-gate.ts` | **new.** R70's behavioural half. The requirement is a property of a SQL statement, and NF3 forbids the unit suite from touching a database, so the only place it can be proved is a `scripts/checks/` script — which R70's brief explicitly offers. Without it the extra `NOT EXISTS` term would ship asserted by a unit test of its MIRROR and never once executed. |
+| `docs/plan/engine-task-graph/04-phases.md` | **standing rule 2 — amend the gate where it is enforced.** Adding R70 to `01-requirements.md` §K without adding it to §9 above and to Phase 4's header makes `check-corpus-map.py` exit non-zero: the three statements of the map must agree, and two of the three live in this file. Deliverables 12 and 13 and this row are the rest of that same edit. |
 
 Within a phase, the planner splits builders so that **no two builders in the
 same workstream declare the same file**. Where a split is impossible — two
