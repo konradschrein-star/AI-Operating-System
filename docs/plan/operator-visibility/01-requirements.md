@@ -2,6 +2,14 @@
 
 Every requirement is numbered and testable. **Verify** is the exact check a reviewer runs. **Phase** maps each requirement to exactly one phase (`04-phases.md`). File references are to the worktree.
 
+> **Citation rule — standing, added 2026-08-17 by the operator after the third consecutive round found rotted line pins.**
+> A bare `file.ts:170–188` pin is a **claim with an expiry date**. This corpus has now produced three of them that silently came to point at unrelated code: R15's `01-requirements.md:75`, R19's `cc-runner.ts:170–188` (today: `buildSystemPrompt` text) and `:417–429` (today: the idle-timeout kill). A reader who trusts a rotted pin is not reading stale information — they are reading *different* information that looks authoritative.
+> Therefore, when you cite code:
+> 1. **Anchor to something stable** — a symbol name, a requirement id, a `grep`-able string. `the CcEvent union in cc-runner.ts` survives every edit above it; `cc-runner.ts:234` does not.
+> 2. **If a line number genuinely helps, pin it to a recorded SHA** and write the SHA next to it. A pin without a SHA is unfalsifiable.
+> 3. **A pin you cannot resolve is a finding, not a footnote.** Say so in your report; do not quietly re-derive what the author probably meant.
+> 4. **Retire a requirement and its gate clause together, in one commit, explicitly.** A requirement whose subject no longer exists must not leave an orphaned gate behind for a later round to fail against.
+
 ## A. Time truth (Phase 1)
 
 **R1 — Server-side settled duration.**
