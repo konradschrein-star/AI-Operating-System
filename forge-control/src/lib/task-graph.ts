@@ -154,10 +154,39 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  * Graph rule (R11). Ready when every id in `depends_on` names a task that is
  * `done`; an empty array is trivially satisfied and promotes immediately.
  *
- * Throws `GraphIntegrityError` on a dangling dep — an id absent from `byId`
- * (R14). Never `false`, never `true`: a vanished dependency reading as
- * satisfied is the silent-fallback shape this fleet forbids, and a task stuck
- * at `pending` forever is the failure this project exists to end.
+ * Throws `GraphIntegrityError` on a CORRUPT `depends_on` (R14). Never `false`,
+ * never `true`: a vanished dependency reading as satisfied is the
+ * silent-fallback shape this fleet forbids, and a task stuck at `pending`
+ * forever is the failure this project exists to end.
+ *
+ * TWO SHAPES OF CORRUPTION HERE, THREE IN SQL, AND THEY ARE THE SAME RULE
+ * (round 204, red-team finding 2). R14 is written in terms of
+ * `cardinality(depends_on)` against the number of same-project rows the array
+ * names, and the SQL implements it that way; this function must therefore refuse
+ * every input that mismatch refuses, which membership testing alone did not:
+ *
+ *  - AN ID ABSENT from `byId` — F1's dangling dep. Because `byId` holds the tasks
+ *    of ONE project (precondition 2), a CROSS-PROJECT id is absent too, so the
+ *    SQL's third shape (`foreign_ids`, a row of another project) lands here as
+ *    the same refusal. The SQL distinguishes them only to write a truthful
+ *    notification.
+ *  - THE SAME ID TWICE. `cardinality` counts elements, the comparison counts
+ *    rows, so a duplicate mismatches and the SQL blocks the project over it.
+ *    Membership testing called it ready. That divergence made the pure side and
+ *    the shipped statement disagree on one input, under a doc-comment declaring
+ *    the pure side authoritative — so this arm exists to make the mirror true,
+ *    and R14 now states the semantics it settles on.
+ *
+ * WHY CORRUPTION AND NOT A HARMLESS TIDY-UP: nothing in this engine writes a
+ * duplicate. The R6 backfill aggregates over distinct rows of one project, and
+ * phase 3's API normalises before storage (R28). A duplicate in the column
+ * therefore means an UNVALIDATED writer — an operator `psql`, an import, a
+ * script — and the safe reading of an array no validator produced is that the
+ * writer's intent is unknown, which is exactly what `blocked` plus a
+ * notification is for. `taskDepth()` still treats a duplicate as one edge and
+ * still refuses to crash on an absent id, for the reason recorded there: it is
+ * DISPLAY code, and R14's hard error belongs to the path where a corrupt array
+ * changes what the engine DOES.
  *
  * AND THE LEGACY-ROW TERM (R69). `depends_on` is a FROZEN closure: the backfill
  * (R6) writes the ids of the rows that existed AT MIGRATION TIME, and 0040 is
@@ -196,8 +225,9 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  *
  * ORDER OF EVALUATION, and it is not arbitrary:
  *   1. not `pending`            → `false`
- *   2. a dep id absent from `byId` → THROW (R14). Integrity beats scheduling, so
- *      it precedes both remaining terms; never `false`, never `true`.
+ *   2. a corrupt `depends_on` — an id absent from `byId`, or an id twice →
+ *      THROW (R14). Integrity beats scheduling, so it precedes both remaining
+ *      terms; never `false`, never `true`.
  *   3. every dep `done`         → otherwise `false`
  *   4. the legacy-row term (R69) → otherwise `false`
  *
@@ -236,15 +266,37 @@ export function graphReady(task: GraphTask, byId: ReadonlyMap<string, GraphTask>
   // 1. The `pending` term (see the doc-comment's ruling).
   if (task.status !== "pending") return false;
 
-  // 2. R14 — dangling first. Report EVERY missing id, not just the first one:
-  //    the operator fixing a corrupt graph needs the whole list, and F1's
-  //    notification quotes this message.
+  // 2. R14 — integrity first, both shapes in one pass. Report EVERY offending
+  //    id of EVERY shape, not just the first: the operator fixing a corrupt
+  //    graph needs the whole list, and F1's notification quotes this wording.
+  //    Both clauses appear when both fire, because a row can exhibit both and a
+  //    message naming one of two problems sends the operator back twice.
   const missing = deps.filter((id) => !byId.has(id));
-  if (missing.length > 0) {
+  const seen = new Set<string>();
+  const duplicated: string[] = [];
+  for (const id of deps) {
+    if (seen.has(id)) {
+      if (!duplicated.includes(id)) duplicated.push(id);
+    } else {
+      seen.add(id);
+    }
+  }
+  if (missing.length > 0 || duplicated.length > 0) {
+    const clauses: string[] = [];
+    if (missing.length > 0) {
+      clauses.push(
+        `names ${missing.length} dependenc${missing.length === 1 ? "y" : "ies"} ` +
+          `that no longer exist${missing.length === 1 ? "s" : ""}: ${missing.join(", ")}`,
+      );
+    }
+    if (duplicated.length > 0) {
+      clauses.push(
+        `names ${duplicated.length} duplicated dependency ` +
+          `id${duplicated.length === 1 ? "" : "s"}: ${duplicated.join(", ")}`,
+      );
+    }
     throw new GraphIntegrityError(
-      `task-graph: graphReady(): task ${task.id} names ${missing.length} ` +
-        `dependenc${missing.length === 1 ? "y" : "ies"} that no longer exist: ` +
-        `${missing.join(", ")} (R14)`,
+      `task-graph: graphReady(): task ${task.id} ${clauses.join("; and ")} (R14)`,
     );
   }
 
@@ -306,7 +358,12 @@ export function readyRule(task: GraphTask): "graph" | "legacy" {
  *    code — R14's hard error belongs to the promotion path, where a dangling dep
  *    changes what the engine DOES, and duplicating it here would take the Kanban
  *    down over a row it could simply draw at the top.
- *  - A DUPLICATE dep id inside one `depends_on` is one edge, not two.
+ *  - A DUPLICATE dep id inside one `depends_on` is one edge, not two. The
+ *    PROMOTION path disagrees deliberately and the split is the same one as
+ *    above: `graphReady()` throws on a duplicate (R14 — a mismatched cardinality
+ *    means an unvalidated writer), while here it changes nothing that can be
+ *    drawn, and refusing to render a board over it would be an outage in place of
+ *    a diagram.
  *  - A CYCLE cannot be topologically ordered and so cannot be given a
  *    longest-path depth at all. It throws `GraphIntegrityError` naming the
  *    unorderable ids rather than returning a partial map that a caller would
@@ -424,15 +481,25 @@ export function findCycle(
  *
  * An EMPTY write-set intersects nothing and is therefore always claimable
  * (R17). That is today's behaviour exactly — every task shares one worktree
- * and runs in parallel — and it is what keeps R18's replica exact, because the
- * replay fixture's rows all carry empty write-sets.
+ * and runs in parallel.
+ *
+ * WHAT PROVES R17, precisely (corrected round 204, gating finding 2): this
+ * function's own empty-set cases in `task-graph.test.ts`, and case 7 of
+ * `scripts/checks/check-scheduler-sql.sh`, which drives the shipped
+ * `claimReadyTasks()` against a real Postgres and asserts the empty-write-set
+ * row is claimed. NOT the R18 replay, which was credited here and in three other
+ * places until round 204: `task-graph-replay.test.ts` imports neither
+ * `conflicts` nor `selectClaimable`, and its `simulate()` moves rows
+ * `pending → running` with no claim step, so it cannot observe contention at
+ * all. Measured before striking the claim: inverting the empty-set rule to
+ * `return true` leaves all 35 replay tests green, including every R18 case.
  */
 export function conflicts(a: readonly string[], b: readonly string[]): boolean {
-  // R17, stated before anything else because it is the clause that keeps the
-  // replica exact: the replay fixture's every row has an empty write-set, and an
-  // empty set that conflicted would serialize the whole fixture and diverge on
-  // tick 1. The loop below would already return false here; the early exit is
-  // the requirement made visible.
+  // R17, stated before anything else because it is a requirement rather than an
+  // optimisation: an empty write-set is today's every task, and a `conflicts()`
+  // that answered `true` for one would serialize a whole project. The loop below
+  // would already return false here; the early exit is the requirement made
+  // visible.
   if (a.length === 0 || b.length === 0) return false;
 
   // R16 — EXACT string equality, never a prefix test. `src/` does not own

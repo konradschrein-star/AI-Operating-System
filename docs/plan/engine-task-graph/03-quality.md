@@ -41,30 +41,40 @@ specifically. Phase 1 adds an equivalent named case for `0040_task_graph.sql`.
 The bulk of the proof lives here, because the bulk of the *decisions* live in
 `lib/task-graph.ts` by design (`02-architecture.md` §1.1).
 
-**`task-graph.test.ts`** — new file. Cases, grouped:
+**`task-graph.test.ts`** — new file. Cases, grouped, **each group labelled with
+the phase that owns it** (added round 204). The groups are not all phase 2's: the
+file is created in phase 2 and grows in 3 and 4 as the functions they own land, and
+an unlabelled list read as one phase's checklist is how phase 2 came to be judged
+against a `computeRound` that R23 assigns to phase 3.
 
-*Readiness*
+*Readiness* — **phase 2**
 - `readyRule` returns `legacy` for `depends_on: null` and `graph` for `[]` and
   for a populated array. Three cases, because the sentinel is the whole
   migration strategy and a mistake here is silent.
 - `graphReady`: empty deps → ready; one done dep → ready; one pending dep → not
   ready; mixed done/failed → not ready; **dep id absent from the map → throws
-  `GraphIntegrityError`** (R14, never `false`, never `true`).
+  `GraphIntegrityError`** (R14, never `false`, never `true`); **a duplicated dep id
+  → throws too**, naming it (added round 204: R14 is a cardinality rule, the
+  shipped SQL blocks the project over a duplicate, and membership testing alone
+  made the pure mirror disagree with the statement it mirrors); a duplicate across
+  two DIFFERENT tasks — a fan-in — stays silent, or every diamond would block.
 - `legacyRoundReady`: reproduces today's rule exactly, including "*every*
   strictly lower round", not "the previous one".
 
-*Depth*
+*Depth* — **phase 2**
 - `taskDepth` over: a chain, a diamond, a wide fan-out, two disjoint roots, a
   mixture of NULL and array rows (the NULL row contributes its own `round`).
 - Determinism: same input twice → identical map.
 
-*Round computation*
+*Round computation* — **phase 3** (R23; struck from phase 2's deliverable 5 in
+round 204, standing rules 2 and 4 — `computeRound()` throws until phase 3 and
+that is not a defect)
 - `computeRound([])` → 0; `computeRound([r=5, r=7])` → 8; the architect's
   explicit `k*100` passes through untouched; the block-overflow refusal at 99
   levels (R24) — **a 99-deep chain passes and the 100th is refused**, which is
   the case that proves the gate is satisfiable rather than decorative.
 
-*Cycles* — table-driven (R25)
+*Cycles* — table-driven (R25) — **phase 3**
 
 | graph | expect |
 |---|---|
@@ -79,7 +89,7 @@ The bulk of the proof lives here, because the bulk of the *decisions* live in
 Each cycle case asserts the returned path's **ids in order**, not just its
 length — a detector that finds "a cycle exists" without naming it fails R25.
 
-*Contention*
+*Contention* — **phase 2**
 - `conflicts`: disjoint → false; identical → true; one shared entry → true;
   `{}` vs anything → **false** (R17); `src/a.ts` vs `src/a.tsx` → false (no
   prefix semantics); `src/` vs `src/a.ts` → false, with a comment saying this is
@@ -89,7 +99,7 @@ length — a detector that finds "a cycle exists" without naming it fails R25.
   task conflicting with a *running* task → not claimed; three-way chain
   a↔b, b↔c, a∌c → a and c claimed, b deferred (order-stable and asserted).
 
-*Validators*
+*Validators* — **phase 3** (R28)
 - `validateWorkstream`: `main`, `ui`, `api-v2` pass; `Main`, `-ui`, `ui_`, a
   41-char name, `../x`, empty all throw.
 - `normaliseWritePath`: `./src/a.ts` → `src/a.ts`; `src//a.ts` → `src/a.ts`;
@@ -135,7 +145,7 @@ suite stays hermetic (NF3).
 | Script | Proves | How |
 |---|---|---|
 | `scripts/checks/check-migration-0040.sh` | R2, R6, R7 | Creates a throwaway schema in a **local scratch database**, seeds it from the replay fixture, applies 0040 **twice**, diffs the resulting `project_tasks` rows, asserts the second application changed zero rows and the indexes exist. |
-| `scripts/checks/check-scheduler-sql.sh` | R11–R14 | Against the same scratch schema: a graph-ready task promotes with its round undrained; a NULL-deps task does not; a dangling dep yields `blocked`, not `ready`. |
+| `scripts/checks/check-scheduler-sql.sh` | R11–R14, R16, R17, R27 (SQL half), R69 | Against the same scratch schema: a graph-ready task promotes with its round undrained; a NULL-deps task does not; a dangling dep yields `blocked`, not `ready`. **Round 204 added cases 8, 8b, 9, 10:** `retryTask()` refuses a corrupt row and the following claim does not claim it; a corrupt row written straight to `ready` is still swept; a duplicated id blocks and `graphReady()` agrees; a cross-project id resolves to nothing on both sides. Each new case also drives the real `graphReady()` over the same rows, so the mirror is measured rather than asserted in prose. |
 | `scripts/checks/check-workstream-e2e.sh` | R32–R35, R38 | In a throwaway git repo under `/tmp`: provision `main` + two workstreams, assert branch names and sibling directories, assert `git status --porcelain` in `main` is **empty**, have two workstreams write the same file, run the integration merge, assert it exits non-zero and names the conflicting file, assert nothing was auto-resolved. |
 | `scripts/checks/check-task-api.ts` | R22–R31 | Mounts **only** `routes/projects.ts` on a spare port against the scratch database (the single-router probe pattern — `src/index.ts` starts cron/telegram/vault ticks and must not be booted), then drives the 400s and the 409. |
 | `scripts/checks/check-plan-store.ts` | R54–R56 | Extended: real edges in, `planEdges()` out, phase grouping intact. |
@@ -244,6 +254,22 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
   re-serialize projects that have no legacy rows left.
 - `check-scheduler-sql.sh` green, including the dangling-dependency case landing
   on `blocked` and **not** on `ready`.
+- **Added round 204, from the fix cycle.** R14 is a guarantee about every route
+  into `running`, not about the promote statement alone, and the reviewer checks
+  all four of the paths the round-203 review found open: `retryTask()` (and
+  therefore `unwedgeProject()` and `POST /api/tasks/:id/retry`) refuses a row
+  whose `depends_on` is still corrupt, naming the ids, and is not overridable with
+  `force`; a corrupt row sitting at `ready` with no run is swept; a duplicated id
+  is refused by `graphReady()` and by the SQL alike; a cross-project id resolves
+  to nothing in both. Cases 8, 8b, 9 and 10 of `check-scheduler-sql.sh` are the
+  proof, each observed failing against the unfixed code
+  (`evidence/phase2-fix-cycle-1.md` §4).
+- **The reviewer asks of any claim in a doc-comment or in this corpus: does the
+  named instrument actually execute it?** Round 203 found four places crediting
+  the R18 replay with proving R17's contention clause, which it cannot — it
+  imports neither `conflicts` nor `selectClaimable` and has no claim step. The
+  check is mechanical: mutate the rule the claim is about and watch the named
+  instrument. If it stays green, the claim is wrong.
 - The reviewer states, in its own words, what would have made the replay test
   report a pass **wrongly** — e.g. a harness that runs both rules over the same
   backfilled array without actually applying the legacy rule; a fixture whose

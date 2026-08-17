@@ -43,12 +43,29 @@ TOKEN_RE = re.compile(r"(R\d+|NF\d+)(?:\s*[–-]\s*(R\d+|NF\d+))?")
 
 
 def sha(path: pathlib.Path) -> str:
+    """The last commit that touched this path — plus, and this is the point, a
+    DIRTY marker when the bytes just read are not that commit's.
+
+    Added round 204. A provenance line naming a commit while the checker read an
+    edited working copy is the failure mode this project has hit twice: "a sha
+    naming the worktree rather than the build". The byte size below distinguishes
+    them, but only to a reader who thinks to compare it.
+    """
     try:
         out = subprocess.run(
             ["git", "-C", str(HERE), "log", "-1", "--format=%h", "--", str(path)],
             capture_output=True, text=True, timeout=10,
         )
-        return (out.stdout.strip() or "uncommitted") if out.returncode == 0 else "unknown"
+        if out.returncode != 0:
+            return "unknown"
+        rev = out.stdout.strip() or "uncommitted"
+        dirt = subprocess.run(
+            ["git", "-C", str(HERE), "status", "--porcelain", "--", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if dirt.returncode == 0 and dirt.stdout.strip():
+            return f"{rev} + UNCOMMITTED EDITS (the bytes read are NOT {rev})"
+        return rev
     except Exception:
         return "unknown"
 

@@ -8,6 +8,25 @@
 # never on `ready`) and R69 (the legacy-row term holds a frozen closure behind
 # a post-migration legacy row).
 #
+# ROUND 204 ADDED CASES 8, 8b, 9 AND 10, each the measured shape of a round-203
+# finding. R14 was a guarantee with holes in it, and they are closed here against
+# the shipped functions rather than argued in a comment:
+#   8  — THE OPERATOR PATH. `retryTask()` moved a corrupt `blocked` row to
+#        `ready`, past a sweep scoped to `pending`, into `claimReadyTasks()`.
+#   8b — THE OUT-OF-BAND PATH. A corrupt row written straight to `ready` by
+#        anything that is not the promote statement — `psql`, an import, a future
+#        writer — was invisible to the sweep forever.
+#   9  — DUPLICATED IDS. `cardinality` counts elements and the comparison counts
+#        rows, so the SQL blocked the project while `graphReady()` called the row
+#        ready: the pure mirror and the statement disagreed on one input.
+#   10 — CROSS-PROJECT IDS. Neither dependency subquery was correlated on
+#        `project_id`, so another project's `done` row satisfied a dependency and
+#        another project's `pending` row stalled one forever, silently.
+# Every one of the four also asserts THE MIRROR (02-architecture.md §1.2): the
+# `mirror` driver step loads the project's rows and calls the real `graphReady()`
+# on the same row, so "the pure side and the SQL agree" is a measurement here and
+# not a doc-comment's promise.
+#
 # 03-quality.md §2.2 names this script and what it must prove:
 #   "Against the same scratch schema: a graph-ready task promotes with its
 #    round undrained; a NULL-deps task does not; a dangling dep yields
@@ -93,15 +112,22 @@
 #       sweep whose probes miss must fail, never certify itself.
 #
 # A NOTE ON WHAT CASE 3 CAN AND CANNOT SEE, recorded rather than glossed.
-# R14's two halves are EXACT COMPLEMENTS by construction: the sweep's predicate
-# is the literal negation of the promote branch's cardinality term, and the
-# sweep runs FIRST in the same function call. So there is no input for which
-# the promote statement refuses a row the sweep did not already block, and case
-# 3 cannot observe the front half in isolation through the public function.
-# What it CAN assert, and does: the corrupt row is not among the ids promoted,
-# and after the call NO pending row of an active project is left carrying a
-# cardinality mismatch — the complement property itself, asserted mechanically
-# instead of claimed in a comment.
+# The sweep's cardinality predicate is the literal negation of the promote
+# branch's, and the sweep runs FIRST in the same function call, so there is no
+# input for which the promote statement refuses a row the sweep did not already
+# block, and case 3 cannot observe the front half in isolation through the public
+# function. What it CAN assert, and does: the corrupt row is not among the ids
+# promoted, and after the call NO unstarted row of an active project is left
+# carrying a cardinality mismatch — the complement property itself, asserted
+# mechanically instead of claimed in a comment.
+#
+# AMENDED ROUND 204: the sweep is now a SUPERSET of the promote branch's
+# refusal, not its exact complement. It covers `pending` rows, which promote
+# judges, AND `ready` rows with no run attached, which promote never looks at —
+# because that is the state `retryTask()` and an out-of-band write produce, and a
+# row there was invisible to R14 entirely. Still not `running`, and still not a
+# `ready` row that already has a `run_id`: blocking one of those would strand a
+# live run. The complement assertion below is scoped to match.
 #
 # Usage:  SCRATCH_DATABASE_URL=... scripts/checks/check-scheduler-sql.sh
 # Exit:   0 = every assertion passed and every assertion ran.
@@ -121,12 +147,13 @@ cd "$REPO_ROOT"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
-EXPECTED_ASSERTIONS=40
+EXPECTED_ASSERTIONS=82
 ASSERTIONS_RUN=0
-# Every row the seed inserts: 3 + 2 + 2 + 3 + 2 + 4 across the six cases.
-# T3_GHOST is NOT among them — it is the id case 3 names and nobody inserts.
-# Guard against failure mode (a).
-SEED_EXPECTED_ROWS=16
+# Every row the seed inserts: 3 + 2 + 2 + 3 + 2 + 4 across cases 1–7, plus
+# 2 + 2 + 2 + 2 + 2 for cases 8, 8b, 9, 10 and case 10's foreign project.
+# T3_GHOST and T8_GHOST are NOT among them — they are the ids cases 3 and 8 name
+# and nobody inserts. Guard against failure mode (a).
+SEED_EXPECTED_ROWS=26
 
 pass() {
   ASSERTIONS_RUN=$((ASSERTIONS_RUN + 1))
@@ -279,10 +306,17 @@ assert_eq 'notifications starts empty (failure mode (d))' '0' \
 echo
 
 # ---------------------------------------------------------------------------
-# 3. Seed. Seven synthetic projects, one per case, so that a project-scoped
+# 3. Seed. Eleven synthetic projects, one per case, so that a project-scoped
 #    rule (the legacy branch, R69's term, the sweep's project block) cannot
 #    leak between cases. Every id is a literal, so every assertion names the
 #    row it is about (failure mode (b), (c)).
+#
+#    CASES 8–10 ARE SEEDED PAUSED and activated in section 9. Their corrupt rows
+#    would otherwise be swept on tick 1 and the notification census of case 4
+#    ("exactly one notification") would be counting five runs' worth of work
+#    instead of its own. Every pre-existing assertion is therefore untouched by
+#    the new cases — which is the point: a new case that quietly moves an old
+#    case's expected number has changed what the old case proved.
 # ---------------------------------------------------------------------------
 echo '--- 3. seed -------------------------------------------------------------------'
 P1='00000000-0000-4000-8000-0000000000c1'   # R11
@@ -291,6 +325,11 @@ P3='00000000-0000-4000-8000-0000000000c3'   # R14
 P5='00000000-0000-4000-8000-0000000000c5'   # R69
 P6='00000000-0000-4000-8000-0000000000c6'   # R13
 P7='00000000-0000-4000-8000-0000000000c7'   # R16/R17 claim belt
+P8='00000000-0000-4000-8000-0000000000c8'   # R14 via retryTask (round 204)
+P8B='00000000-0000-4000-8000-0000000000cb'  # R14 via an out-of-band 'ready' write
+P9='00000000-0000-4000-8000-0000000000c9'   # R14, duplicated ids
+P10='00000000-0000-4000-8000-0000000000ca'  # R14/R27, cross-project ids
+P10F='00000000-0000-4000-8000-0000000000cf' # the FOREIGN project cases 10 names
 
 T1_LOW='00000000-0000-4000-8000-00000000110a'   # graph, undrained, lower round
 T1_DEP='00000000-0000-4000-8000-00000000110b'   # graph, done, the real dependency
@@ -309,6 +348,17 @@ T7_A='00000000-0000-4000-8000-00000000160a'
 T7_B='00000000-0000-4000-8000-00000000160b'
 T7_C='00000000-0000-4000-8000-00000000160c'
 T7_D='00000000-0000-4000-8000-00000000160d'
+T8_DEP='00000000-0000-4000-8000-00000000180a'
+T8_CAND='00000000-0000-4000-8000-00000000180c'
+T8_GHOST='00000000-0000-4000-8000-0000000018ff'  # named by T8_CAND, inserted NOWHERE
+T8B_DEP='00000000-0000-4000-8000-0000000018ba'
+T8B_CAND='00000000-0000-4000-8000-0000000018bc'  # seeded 'ready' AND corrupt
+T9_DEP='00000000-0000-4000-8000-00000000190a'
+T9_CAND='00000000-0000-4000-8000-00000000190c'
+T10_CAND='00000000-0000-4000-8000-000000001a0c'   # names a FOREIGN done row
+T10_CAND2='00000000-0000-4000-8000-000000001a0d'  # names a FOREIGN pending row
+T10F_DONE='00000000-0000-4000-8000-000000001f0a'
+T10F_PENDING='00000000-0000-4000-8000-000000001f0b'
 
 psql_run -q >/dev/null <<SQL
 INSERT INTO projects (id, name, brief, repo, status) VALUES
@@ -317,7 +367,16 @@ INSERT INTO projects (id, name, brief, repo, status) VALUES
   ('$P3','case3+4-R14','synthetic','ai-os','active'),
   ('$P5','case5-R69','synthetic','ai-os','active'),
   ('$P6','case6-R13','synthetic','ai-os','paused'),
-  ('$P7','case7-R16','synthetic','ai-os','active');
+  ('$P7','case7-R16','synthetic','ai-os','active'),
+  -- Cases 8–10 start PAUSED so their sweep happens in section 9, after case 4's
+  -- notification census has been taken against its own single notification.
+  ('$P8','case8-R14-retry','synthetic','ai-os','paused'),
+  ('$P8B','case8b-R14-outofband','synthetic','ai-os','paused'),
+  ('$P9','case9-R14-duplicate','synthetic','ai-os','paused'),
+  ('$P10','case10-R27-crossproject','synthetic','ai-os','paused'),
+  -- Never activated: it exists only to own the rows case 10 points at from
+  -- another project. Its own rows must not promote and must not be swept.
+  ('$P10F','case10-foreign-project','synthetic','ai-os','paused');
 
 -- CASE 1 (R11). The candidate's round is 200 and round 100 is UNDRAINED, so
 -- today's rule would refuse it and the graph branch must not.
@@ -373,9 +432,42 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
   ('$T7_B','$P7',100,'builder','c7 b writes src/x.ts in main','x','pending','{}','main','{src/x.ts}', now() - interval '3 min'),
   ('$T7_C','$P7',100,'builder','c7 c writes src/x.ts in ui','x','pending','{}','ui','{src/x.ts}', now() - interval '2 min'),
   ('$T7_D','$P7',100,'builder','c7 d declares nothing','x','pending','{}','main','{}', now() - interval '1 min');
+
+-- CASE 8 (R14 on the OPERATOR PATH, round 204 gating finding 1 / red-team
+-- finding 1). Shape identical to case 3 — one real done dep, one ghost — but the
+-- assertions continue past the block: retryTask() must REFUSE this row instead
+-- of moving it to 'ready', and claimReadyTasks() must never see it.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
+  ('$T8_DEP','$P8',100,'builder','c8 the real dependency','x','done','{}','main','{}'),
+  ('$T8_CAND','$P8',200,'reviewer','c8 candidate naming a ghost','x','pending','{$T8_DEP,$T8_GHOST}','main','{}');
+
+-- CASE 8b (the OUT-OF-BAND path). The candidate is seeded ALREADY 'ready' with
+-- no run attached and a dangling dep — the state an operator psql, an import, or
+-- a retry against an older build leaves behind. A sweep scoped to 'pending'
+-- could never see it and claimReadyTasks() would spawn a run for it.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
+  ('$T8B_DEP','$P8B',100,'builder','c8b the real dependency','x','done','{}','main','{}'),
+  ('$T8B_CAND','$P8B',200,'reviewer','c8b corrupt row already READY','x','ready','{$T8B_DEP,$T8_GHOST}','main','{}');
+
+-- CASE 9 (R14, DUPLICATED IDS — round 204 red-team finding 2). Every id
+-- resolves, and to a done row of this project; the array is nevertheless longer
+-- than the rows it names. The SQL blocks it; graphReady() must now agree.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
+  ('$T9_DEP','$P9',100,'builder','c9 the only real dependency','x','done','{}','main','{}'),
+  ('$T9_CAND','$P9',200,'reviewer','c9 candidate naming one dep twice','x','pending','{$T9_DEP,$T9_DEP}','main','{}');
+
+-- CASE 10 (R14/R27, CROSS-PROJECT IDS — round 204 red-team finding 3). Both
+-- candidates name a row that EXISTS, of another project: one 'done' (which used
+-- to satisfy the dependency and promote) and one 'pending' (which used to stall
+-- forever with a matching cardinality that the sweep could not see).
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
+  ('$T10F_DONE','$P10F',100,'builder','c10 foreign done row','x','done','{}','main','{}'),
+  ('$T10F_PENDING','$P10F',100,'builder','c10 foreign pending row','x','pending','{}','main','{}'),
+  ('$T10_CAND','$P10',200,'reviewer','c10 candidate naming a foreign DONE row','x','pending','{$T10F_DONE}','main','{}'),
+  ('$T10_CAND2','$P10',200,'reviewer','c10 candidate naming a foreign PENDING row','x','pending','{$T10F_PENDING}','main','{}');
 SQL
 SEEDED="$(q 'SELECT count(*) FROM project_tasks')"
-echo "  seeded rows        : $SEEDED across 6 projects"
+echo "  seeded rows        : $SEEDED across 11 projects"
 assert_eq 'seed inserted exactly the rows the cases name' "$SEED_EXPECTED_ROWS" "$SEEDED"
 echo
 
@@ -411,6 +503,59 @@ if (step === "promote") {
 } else if (step === "claim") {
   const claimed = await projects.claimReadyTasks();
   console.log(\`CLAIMED_IDS=\${claimed.map((t) => t.id).sort().join(",")}\`);
+} else if (step === "retry") {
+  // The OPERATOR path (round 204). Drives the shipped retryTask(), which is what
+  // POST /api/tasks/:id/retry and unwedgeProject() both call.
+  const out = await projects.retryTask(process.argv[3]);
+  console.log(\`RETRY_OK=\${out.ok}\`);
+  console.log(\`RETRY_REASON=\${out.ok ? "-" : out.reason}\`);
+  console.log(
+    \`RETRY_STATUS=\${out.ok ? out.task.status : (out.task?.status ?? "-")}\`,
+  );
+  console.log(
+    \`RETRY_DETAIL=\${
+      !out.ok && out.reason === "dependencies_corrupt"
+        ? projects.describeDepsCorruption(out.corruption) ?? "(unexplained)"
+        : "-"
+    }\`,
+  );
+} else if (step === "mirror") {
+  // THE MIRROR, measured (02-architecture.md §1.2): load the named row's project
+  // exactly as promoteReadyTasks() would see it, and ask the PURE decision. A
+  // divergence between this answer and the row's SQL fate is the bug the
+  // doc-comments claim cannot exist.
+  const graph = await import("$REPO_ROOT/forge-control/src/lib/task-graph.ts");
+  const probe = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const row = await probe.query<{ project_id: string }>(
+    "select project_id::text from project_tasks where id = \$1",
+    [process.argv[3]],
+  );
+  if (row.rows.length !== 1) {
+    console.error("mirror: no such task");
+    process.exit(5);
+  }
+  const all = await probe.query<import("$REPO_ROOT/forge-control/src/lib/task-graph.ts").GraphTask>(
+    "select id::text, round, workstream, status, depends_on::text[] as depends_on, write_set" +
+      " from project_tasks where project_id = \$1",
+    [row.rows[0].project_id],
+  );
+  await probe.end();
+  const byId = new Map(all.rows.map((t) => [t.id, t]));
+  const task = byId.get(process.argv[3]);
+  if (!task) {
+    console.error("mirror: the row is not in its own project's row set");
+    process.exit(6);
+  }
+  try {
+    const rule = graph.readyRule(task);
+    console.log(\`MIRROR_RULE=\${rule}\`);
+    console.log(
+      \`MIRROR=\${rule === "graph" ? String(graph.graphReady(task, byId)) : "n/a"}\`,
+    );
+  } catch (e) {
+    console.log(\`MIRROR=threw:\${e instanceof Error ? e.constructor.name : "?"}\`);
+    console.log(\`MIRROR_MESSAGE=\${e instanceof Error ? e.message : String(e)}\`);
+  }
 } else {
   console.error(\`unknown step: \${step}\`);
   process.exit(4);
@@ -483,10 +628,13 @@ assert_eq 'R14 front: corrupt row NOT among the promoted ids' 'no' "$(inset "$T3
 # pending row of an active project left carrying a cardinality mismatch. This
 # is what makes "the promote branch never has to refuse a row the sweep missed"
 # a measurement instead of a claim.
-assert_eq 'R14 front: no pending row of an active project keeps a mismatch' '0' \
+assert_eq 'R14 front: no unstarted row of an active project keeps a mismatch' '0' \
   "$(q "SELECT count(*) FROM project_tasks pt JOIN projects p ON p.id = pt.project_id
-         WHERE p.status = 'active' AND pt.status = 'pending' AND pt.depends_on IS NOT NULL
-           AND cardinality(pt.depends_on) <> (SELECT count(*) FROM project_tasks d WHERE d.id = ANY(pt.depends_on))")"
+         WHERE p.status = 'active' AND pt.status IN ('pending','ready') AND pt.run_id IS NULL
+           AND pt.depends_on IS NOT NULL
+           AND cardinality(pt.depends_on) <> (SELECT count(*) FROM project_tasks d
+                                               WHERE d.id = ANY(pt.depends_on)
+                                                 AND d.project_id = pt.project_id)")"
 assert_eq 'R14 back: the corrupt task is blocked' 'blocked' "$(st "$T3_CAND")"
 # Asserted explicitly and separately, because "not ready" is the outcome R14
 # exists to guarantee and a status of 'ready' is the one result that must never
@@ -567,12 +715,158 @@ assert_eq 'R16: a is running' 'running' "$(st "$T7_A")"
 echo
 
 # ---------------------------------------------------------------------------
+# 9. ROUND 204 — the three holes in R14, each driven through the shipped
+#    functions. Cases 8–10 are activated only now, so every assertion above was
+#    measured against the same six-case world it was written for.
+# ---------------------------------------------------------------------------
+echo '--- 9. cases 8-10: activate the four round-204 projects ------------------------'
+psql_run -q >/dev/null <<SQL
+UPDATE projects SET status = 'active' WHERE id IN ('$P8','$P8B','$P9','$P10');
+SQL
+# The premise, asserted rather than assumed: the corrupt rows are still in the
+# state the case is about at the moment the sweep runs.
+assert_eq 'case 8 premise: the candidate is pending, unswept' 'pending' "$(st "$T8_CAND")"
+assert_eq 'case 8b premise: the candidate is READY with no run attached' 'ready|' \
+  "$(q "SELECT status || '|' || coalesce(run_id::text,'') FROM project_tasks WHERE id = '$T8B_CAND'")"
+assert_eq 'case 9 premise: the duplicated id resolves to a DONE row' 'done' "$(st "$T9_DEP")"
+assert_eq 'case 10 premise: the foreign done row exists, in another project' "$P10F" \
+  "$(q "SELECT project_id FROM project_tasks WHERE id = '$T10F_DONE'")"
+
+# THE MIRROR PROBES ARE TAKEN NOW, BEFORE THE TICK, AND THAT IS NOT A
+# CONVENIENCE. `graphReady()`'s first term is `pending` (operator ruling, round
+# 102), so once the sweep has moved a row to `blocked` the pure function answers
+# `false` for a reason that has nothing to do with its dependencies — asking it
+# then would report agreement it never expressed. The honest moment to ask the
+# pure side what it makes of a row is while the row is in the state the promote
+# statement is about to judge. Case 8b has no mirror assertion for the same
+# reason, stated rather than omitted: its row is `ready`, which `graphReady()` is
+# silent about by design, and covering exactly what the pure promotion decision
+# cannot see is what the sweep is FOR.
+MIRROR8="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T8_CAND" 2>/dev/null)"
+MIRROR9="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T9_CAND" 2>/dev/null)"
+MIRROR10="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T10_CAND" 2>/dev/null)"
+snapshot "$WORK/s4.txt"
+DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" promote | sed 's/^/  | /'
+snapshot "$WORK/s5.txt"
+PROMOTED3="$(promoted "$WORK/s4.txt" "$WORK/s5.txt")"
+echo "  promoted on tick 3 : ${PROMOTED3:-<none>}"
+note_for() { q "SELECT text FROM notifications WHERE text LIKE '%$1%' ORDER BY created_at LIMIT 1"; }
+echo
+
+echo '--- 9. case 8 — R14 through retryTask(): the operator path ---------------------'
+assert_eq 'case 8: the corrupt row was swept to blocked' 'blocked' "$(st "$T8_CAND")"
+assert_eq 'case 8: its project was blocked' 'blocked' "$(pst "$P8")"
+assert_eq 'case 8: it was NOT promoted' 'no' "$(inset "$T8_CAND" "$PROMOTED3")"
+# THE FINDING ITSELF. Before round 204 this call answered {ok:true,
+# status:'ready'} and the next claim gave the row a run.
+RETRY_OUT="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" retry "$T8_CAND" 2>/dev/null)"
+echo "$RETRY_OUT" | sed 's/^/  | /'
+assert_eq 'case 8: retryTask REFUSED the corrupt row' 'RETRY_OK=false' \
+  "$(printf '%s\n' "$RETRY_OUT" | grep '^RETRY_OK=')"
+assert_eq 'case 8: … with reason dependencies_corrupt' 'RETRY_REASON=dependencies_corrupt' \
+  "$(printf '%s\n' "$RETRY_OUT" | grep '^RETRY_REASON=')"
+assert_has 'case 8: the refusal names the missing id' \
+  "$(printf '%s\n' "$RETRY_OUT" | grep '^RETRY_DETAIL=')" "$T8_GHOST"
+assert_eq 'case 8: the row is STILL blocked after the retry' 'blocked' "$(st "$T8_CAND")"
+assert_eq 'case 8: the row is NOT ready after the retry' 'no' \
+  "$([ "$(st "$T8_CAND")" = 'ready' ] && echo yes || echo no)"
+assert_eq 'case 8: the project was NOT resumed by the refused retry' 'blocked' "$(pst "$P8")"
+assert_eq 'case 8: the attempt counter was not spent on a refusal' '0' \
+  "$(q "SELECT attempt FROM project_tasks WHERE id = '$T8_CAND'")"
+CLAIMED8="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" claim | sed -n 's/^CLAIMED_IDS=//p')"
+assert_eq 'case 8: claimReadyTasks() did NOT claim it' 'no' "$(inset "$T8_CAND" "$CLAIMED8")"
+assert_eq 'case 8: it never reached running' 'blocked' "$(st "$T8_CAND")"
+assert_eq 'case 8 MIRROR: graphReady() throws GraphIntegrityError on the same row' \
+  'MIRROR=threw:GraphIntegrityError' "$(printf '%s\n' "$MIRROR8" | grep '^MIRROR=')"
+echo
+
+echo '--- 9. case 8b — R14 on a row written straight to ready ------------------------'
+assert_eq 'case 8b: the sweep reached a READY row (decision 2, widened)' 'blocked' "$(st "$T8B_CAND")"
+assert_eq 'case 8b: its project was blocked' 'blocked' "$(pst "$P8B")"
+NOTE8B="$(note_for 'c8b corrupt row already READY')"
+echo "  notification       : $NOTE8B"
+assert_has 'case 8b: the notification says which state it was swept from' "$NOTE8B" '(ready)'
+assert_has 'case 8b: … and names the missing id' "$NOTE8B" "$T8_GHOST"
+echo
+
+echo '--- 9. case 9 — R14 on DUPLICATED ids: SQL and graphReady() agree -------------'
+assert_eq 'case 9: the duplicate-bearing row was NOT promoted' 'no' "$(inset "$T9_CAND" "$PROMOTED3")"
+assert_eq 'case 9: it was swept to blocked' 'blocked' "$(st "$T9_CAND")"
+NOTE9="$(note_for 'c9 candidate naming one dep twice')"
+echo "  notification       : $NOTE9"
+assert_has 'case 9: the notification names the DUPLICATE shape' "$NOTE9" 'duplicated ids'
+assert_has 'case 9: … and names the id' "$NOTE9" "$T9_DEP"
+echo "$MIRROR9" | sed 's/^/  | /'
+assert_eq 'case 9 MIRROR: graphReady() no longer calls a duplicate READY' \
+  'MIRROR=threw:GraphIntegrityError' "$(printf '%s\n' "$MIRROR9" | grep '^MIRROR=')"
+assert_has 'case 9 MIRROR: the pure message names the duplicate' \
+  "$(printf '%s\n' "$MIRROR9" | grep '^MIRROR_MESSAGE=')" 'duplicated dependency id'
+echo
+
+echo '--- 9. case 10 — R27 in SQL: a cross-project dep resolves to nothing ----------'
+assert_eq 'case 10: naming a foreign DONE row did NOT promote' 'no' "$(inset "$T10_CAND" "$PROMOTED3")"
+assert_eq 'case 10: … it was swept to blocked instead of stalling' 'blocked' "$(st "$T10_CAND")"
+assert_eq 'case 10: naming a foreign PENDING row did NOT promote' 'no' "$(inset "$T10_CAND2" "$PROMOTED3")"
+assert_eq 'case 10: … and it too was swept rather than silently held' 'blocked' "$(st "$T10_CAND2")"
+NOTE10="$(note_for 'c10 candidate naming a foreign DONE row')"
+echo "  notification       : $NOTE10"
+assert_has 'case 10: the notification names the CROSS-PROJECT shape' "$NOTE10" 'ANOTHER project'
+assert_has 'case 10: … and names the foreign id' "$NOTE10" "$T10F_DONE"
+assert_eq 'case 10 MIRROR: graphReady() throws on the identical row' \
+  'MIRROR=threw:GraphIntegrityError' "$(printf '%s\n' "$MIRROR10" | grep '^MIRROR=')"
+# The foreign project is untouched: the sweep must not reach into it, and its own
+# pending row must not have been promoted by a tick it does not belong to.
+assert_eq 'case 10: the FOREIGN project was not blocked' 'paused' "$(pst "$P10F")"
+assert_eq 'case 10: the foreign pending row was not touched' 'pending' "$(st "$T10F_PENDING")"
+echo
+
+echo '--- 9. the census: every notification of this run is accounted for -------------'
+# Five corrupt rows across the run (case 3, 8, 8b, 9 and two in case 10 = six),
+# each notified exactly once. Asserted as a total AND as a per-row count, because
+# a total alone would pass if one row notified twice and another not at all.
+assert_eq 'notifications: exactly one per corrupt row, six rows' '6' \
+  "$(q 'SELECT count(*) FROM notifications')"
+assert_eq 'notifications: no corrupt row notified twice' '0' \
+  "$(q "SELECT count(*) FROM (SELECT text FROM notifications GROUP BY text HAVING count(*) > 1) d")"
+assert_eq 'notifications: every one of them came from project-graph' '6' \
+  "$(q "SELECT count(*) FROM notifications WHERE source = 'project-graph'")"
+# Idempotence across a further tick, for the widened predicate too.
+DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" promote >/dev/null 2>&1
+assert_eq 'notifications: a fourth tick added none — the sweep is still idempotent' '6' \
+  "$(q 'SELECT count(*) FROM notifications')"
+assert_eq 'no unstarted row of an ACTIVE project is left corrupt, run-wide' '0' \
+  "$(q "SELECT count(*) FROM project_tasks pt JOIN projects p ON p.id = pt.project_id
+         WHERE p.status = 'active' AND pt.status IN ('pending','ready') AND pt.run_id IS NULL
+           AND pt.depends_on IS NOT NULL
+           AND cardinality(pt.depends_on) <> (SELECT count(*) FROM project_tasks d
+                                               WHERE d.id = ANY(pt.depends_on)
+                                                 AND d.project_id = pt.project_id)")"
+assert_eq 'no corrupt row anywhere reached running' '0' \
+  "$(q "SELECT count(*) FROM project_tasks pt
+         WHERE pt.status = 'running' AND pt.depends_on IS NOT NULL
+           AND cardinality(pt.depends_on) <> (SELECT count(*) FROM project_tasks d
+                                               WHERE d.id = ANY(pt.depends_on)
+                                                 AND d.project_id = pt.project_id)")"
+echo
+
+# ---------------------------------------------------------------------------
 # 8. Did every probe actually fire? A sweep whose probes miss must fail, never
 #    certify itself (standing rule 3).
 # ---------------------------------------------------------------------------
 echo '--- 8. assertion census -------------------------------------------------------'
+# EXPECTED_ASSERTIONS is maintained by hand, so it is ALSO checked against the
+# file (round 204). Otherwise the only failure mode left is the tempting one: an
+# author whose new case never runs edits the constant to match the run, and the
+# census then certifies its own drift. Two independent numbers, both printed.
+DEFINED_IN_FILE="$(grep -c "^assert_eq \|^assert_has \|^pass " "${BASH_SOURCE[0]}")"
 echo "  assertions executed: $ASSERTIONS_RUN"
-echo "  assertions defined : $EXPECTED_ASSERTIONS"
+echo "  assertions declared: $EXPECTED_ASSERTIONS"
+echo "  assertion CALLS in this file: $DEFINED_IN_FILE"
+if [ "$DEFINED_IN_FILE" -ne "$EXPECTED_ASSERTIONS" ]; then
+  echo "  FAIL: the file contains $DEFINED_IN_FILE assertion calls but declares" >&2
+  echo "        EXPECTED_ASSERTIONS=$EXPECTED_ASSERTIONS — update the constant with the case." >&2
+  exit 1
+fi
 if [ "$ASSERTIONS_RUN" -ne "$EXPECTED_ASSERTIONS" ]; then
   echo "  FAIL: $ASSERTIONS_RUN assertions ran but $EXPECTED_ASSERTIONS are defined — refusing to certify." >&2
   exit 1
@@ -582,5 +876,8 @@ echo "PASS — the graph branch promotes past an undrained round (R11), the lega
 echo "       branch still waits (R12), the active gate is a filter (R13), a dangling"
 echo "       dependency lands on blocked and notifies (R14), the legacy-row term holds"
 echo "       a frozen closure (R69), and the contention belt defers rather than fails"
-echo "       (R16/R17)."
+echo "       (R16/R17). Round 204: no route into 'running' survives a corrupt"
+echo "       depends_on — not promote, not retryTask, not an out-of-band 'ready'"
+echo "       write — a duplicated id is refused by BOTH sides, and a cross-project"
+echo "       id resolves to nothing in the SQL as well as in graphReady() (R27)."
 echo "       git $HEAD_SHA · sha256(projects.ts)=${SUBJECT_SHA256:0:16}… · db=$DB_NAME · schema=$SCHEMA"

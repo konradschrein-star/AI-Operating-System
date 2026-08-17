@@ -115,12 +115,36 @@ turns green. This is the phase that removes the barrier.
 
 ### Files this phase writes
 ```
-forge-control/src/lib/task-graph.ts                    (fill in every stub)
+forge-control/src/lib/task-graph.ts                    (the stubs of deliverable 5)
 forge-control/src/lib/task-graph.test.ts               (new)
 forge-control/src/lib/task-graph-replay.test.ts        (cases turn green)
-forge-control/src/db/projects.ts                       (promote, claim, TASK_COLS, ProjectTask)
+forge-control/src/db/projects.ts                       (promote, claim, sweep, retry, TASK_COLS, ProjectTask)
 scripts/checks/check-scheduler-sql.sh                  (new)
 docs/plan/engine-task-graph/evidence/phase2-replay.md  (new)
+
+RETROACTIVE AMENDMENT, round 204 — two files phase 2 wrote in c54f860 that this
+list did not name. §3.1 item 4 makes an undeclared write a finding, and it was
+reported as one. Recorded here rather than quietly tolerated, because the reason
+matters beyond bookkeeping: both edits were FORCED by widening the shared
+`ProjectTask` type, which is exactly the shape of omission that clobbers once
+workstreams are live (see R47's companion-files clause, added in the same commit).
+forge-control/src/lib/cp3-linkage.test.ts               (object factory: 3 additive fields at schema defaults)
+forge-control/src/lib/project-tick.test.ts              (object factory: same)
+
+ADDED BY THE FIX CYCLE (round 204), for the five gating findings and the four
+red-team findings:
+forge-control/src/routes/tasks.ts                       (the retry refusal's 409, naming the ids)
+forge-control/src/routes/projects.ts                     (unwedge's warning composed per reason)
+docs/plan/engine-task-graph/01-requirements.md            (R14, R17, R27, R41, R47)
+docs/plan/engine-task-graph/03-quality.md                 (§2.1 phase labels, §2.2, §3.2)
+docs/plan/engine-task-graph/04-phases.md                  (this list, deliverable 5, phases 4 and 5)
+docs/plan/engine-task-graph/evidence/phase2-replay.md     (§7.4, §9, §10 corrections)
+docs/plan/engine-task-graph/evidence/phase2-fix-cycle-1.md (new — the fix cycle's record)
+docs/plan/engine-task-graph/check-corpus-map.py           (provenance: a DIRTY marker on the sha it prints)
+scripts/checks/check-scheduler-sql.sh                     (cases 8, 8b, 9, 10; the mirror driver step)
+forge-control/src/lib/task-graph.ts                       (R14's duplicate arm; R17's proof base)
+forge-control/src/lib/task-graph.test.ts                  (four duplicate/fan-in cases)
+forge-control/src/lib/task-graph-replay.test.ts            (header: what this proof does NOT cover)
 ```
 
 ### Deliverables
@@ -135,9 +159,17 @@ docs/plan/engine-task-graph/evidence/phase2-replay.md  (new)
    for computed contention within a workstream.
 4. `ProjectTask`, `TASK_COLS`, `TASK_COLS_PT` carry the three new columns. Both
    column lists updated **together** — their existing doc-comment demands it.
-5. Every stub in `task-graph.ts` implemented, with `taskDepth`, `computeRound`,
-   `conflicts`, `selectClaimable`, `graphReady`, `readyRule`,
-   `GraphIntegrityError`.
+5. The stubs this phase owns implemented: `taskDepth`, `conflicts`,
+   `selectClaimable`, `graphReady`, `readyRule`, `GraphIntegrityError`.
+   **`computeRound` STRUCK ROUND 204** (standing rules 2 and 4): R23 assigns it
+   to phase 3, `check-corpus-map.py` agrees, and requirement ids are
+   authoritative over any prose enumeration of phases (round 102). As written,
+   this clause made phase 2 close with a deliverable its own plan said it had not
+   completed — a gate that could not be passed inside the phase's own scope. The
+   matching case block in `03-quality.md` §2.1 is relabelled in the same commit.
+   `findCycle`, `normaliseWritePath`, `validateWorkstream` (phase 3) and
+   `groupKey` (phase 4) are likewise not this phase's, and their throwing is not
+   a defect.
 6. `TODO(R12-retire)` at every legacy-branch site, and nowhere else.
 7. **The legacy-row term (R69)** in the graph branch of the same statement, and
    in `graphReady()`, which its doc-comment already specifies: a graph row is
@@ -152,6 +184,11 @@ docs/plan/engine-task-graph/evidence/phase2-replay.md  (new)
 ### Acceptance criteria
 - **The replay test passes, all six cases (a–f).** Output pasted.
 - `check-scheduler-sql.sh` green, dangling case landing on `blocked`.
+- **Added round 204, from the fix cycle:** R14 holds on **every** route into
+  `running`, not only the promote statement — cases 8, 8b, 9 and 10 of
+  `check-scheduler-sql.sh` green, each having been observed failing against the
+  unfixed code, and each asserting that `graphReady()` and the SQL agree on the
+  same row.
 - `grep -n "round" forge-control/src/db/projects.ts` with a justification per hit.
 - The reviewer names ≥ 2 mechanisms that could have made the replay report a
   pass wrongly and shows each is impossible.
@@ -254,6 +291,15 @@ sequential. Sequential is cheaper here.
     `project-tick.ts`, which §10 below assigns to phases 4 and 5, so phase 2
     could not satisfy it without writing outside its declared file ownership.
     Phase 2 keeps R17's contention clause; this is the other half.
+11. **The hand-renumber hazard on the chain key** (R41, recorded round 204 from
+    phase 2's red team). Deliverable 4 keeps `round` in the key, so an operator
+    who renumbers a group after its fix chain exists lands a SECOND chain: the new
+    `chain_key` collides with neither unique index, `insertChainRow()`'s
+    `ON CONFLICT DO NOTHING` succeeds, and the `occupied` branch never fires
+    because it is only reached on a conflict. Either rebase the identity onto
+    something immutable (the gating task ids, by R29) or add a guard that makes a
+    second chain for one group impossible — and record the choice in R41 with its
+    reasoning. Doing neither is a decision too, and it may not be taken silently.
 
 ### Acceptance criteria
 - `git diff main -- forge-control/src/lib/project-reconcile.test.ts
@@ -265,6 +311,9 @@ sequential. Sequential is cheaper here.
 - `grep -rn "merge" forge-control/src` justified hit by hit; no auto-merge path.
 - **Adversarial reviewer** per `03-quality.md` §5, including the named attack:
   *can a project close with an unmerged workstream branch?*
+- **Added round 204:** a test that a renumbered group cannot produce a second fix
+  chain, or R41 amended to say why the hazard is accepted and what makes it
+  survivable (deliverable 11).
 - Universal gate.
 
 ### Risks
@@ -306,6 +355,13 @@ docs/plan/engine-task-graph/evidence/phase5-prompts.md  (new)
    of any write outside it.
 7. The reviewer branch gains the write-set audit (R57) and the workstream diff
    base (R37).
+8. **The companion-files clause** (R47, added round 204): the planner prompt
+   states that a task changing a shared type, an exported signature or a fixture
+   shape must include in its `write_set` the test factories and call sites that
+   change with it. Phase 2 lived the failure — widening `ProjectTask` forced edits
+   to two test files' object factories that no declared write-set named — and
+   under workstreams that omission is not a bookkeeping finding but the exact
+   input that lets two workstreams be scheduled in parallel over one file.
 
 ### Acceptance criteria
 - `grep -rn "consecutive rounds" forge-control/` **empty**.

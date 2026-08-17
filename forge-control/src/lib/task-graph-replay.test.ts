@@ -76,6 +76,27 @@
  *     record's own sha, `git rev-parse --short HEAD`, and whether the two files
  *     that define this instrument are dirty against that HEAD. A sha naming the
  *     worktree rather than the build is the failure this last line answers.
+ *  5. A CLAIM CREDITED TO THIS PROOF THAT IT DOES NOT PERFORM — found in round
+ *     203 and struck in 204. Four places (this list's own subject aside:
+ *     `conflicts()`, `claimReadyTasks()`, R17 in `01-requirements.md`, and §9 of
+ *     `evidence/phase2-replay.md`) said the replay proved R17's contention
+ *     clause, because every fixture row carries an empty `write_set`. It does
+ *     not. THIS FILE SCHEDULES ONLY, and the boundary is worth stating rather
+ *     than leaving to be inferred from an import list:
+ *       - IT PROVES: that `graphReady()` over the backfilled closure promotes
+ *         exactly what `legacyRoundReady()` over the round rule promotes, tick
+ *         for tick, across the six R18 cases.
+ *       - IT IS SILENT ABOUT: contention and the claim path. `conflicts()` and
+ *         `selectClaimable()` are not imported here, and `simulate()` moves rows
+ *         `pending → running` with no claim step, so no write-set of any shape
+ *         is ever consulted. Measured: inverting `conflicts()`'s empty-set rule
+ *         to `return true` leaves all 35 tests in this file green.
+ *       - WHERE THAT HALF IS PROVED: `conflicts()`/`selectClaimable()`'s table
+ *         cases in `task-graph.test.ts`, and case 7 of
+ *         `scripts/checks/check-scheduler-sql.sh`, which drives the shipped
+ *         `claimReadyTasks()` against a real Postgres.
+ *     An import added here that changes that is a change to what this file
+ *     claims, and the paragraph above must change with it.
  *
  * NF3: `db/*` is imported TYPE-ONLY. A value import would open a pg Pool in the
  * test process; this suite runs with Postgres stopped.

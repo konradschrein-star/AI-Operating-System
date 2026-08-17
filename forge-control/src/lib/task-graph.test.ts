@@ -184,6 +184,61 @@ describe("graphReady — the graph branch (R11, R14, R69)", () => {
     );
   });
 
+  test("a DUPLICATED dep id throws, naming it (R14 — cardinality, not membership)", () => {
+    // Round 204, red-team finding 2. R14 is written as `cardinality(depends_on)`
+    // against the number of same-project rows named, and the shipped SQL blocks
+    // the task AND the project on a duplicate. Membership testing called this
+    // input ready, so the pure side — declared authoritative by
+    // promoteReadyTasks()'s own doc-comment — disagreed with the statement it
+    // mirrors on one input. It no longer does.
+    const dep = gt("dep", { status: "done" });
+    const a = gt("a", { depends_on: ["dep", "dep"] });
+    assert.throws(
+      () => graphReady(a, byId(dep, a)),
+      (err: unknown) => {
+        assert.ok(err instanceof GraphIntegrityError, `threw ${String(err)}, not GraphIntegrityError`);
+        assert.match(err.message, /duplicated dependency id: dep/);
+        assert.match(err.message, /R14/);
+        return true;
+      },
+    );
+  });
+
+  test("the same dep id THREE times is reported once, not three times", () => {
+    const dep = gt("dep", { status: "done" });
+    const a = gt("a", { depends_on: ["dep", "dep", "dep"] });
+    assert.throws(
+      () => graphReady(a, byId(dep, a)),
+      throwsMessageMatching(/names 1 duplicated dependency id: dep/, "graphReady"),
+    );
+  });
+
+  test("a duplicate and a ghost together are BOTH named in one message", () => {
+    // One trip to the operator, not two: a message naming one of two problems
+    // sends them back to read the array by hand anyway.
+    const dep = gt("dep", { status: "done" });
+    const a = gt("a", { depends_on: ["dep", "dep", "ghost"] });
+    assert.throws(
+      () => graphReady(a, byId(dep, a)),
+      (err: unknown) => {
+        assert.match((err as Error).message, /1 dependency that no longer exist.*ghost/);
+        assert.match((err as Error).message, /duplicated dependency id: dep/);
+        return true;
+      },
+    );
+  });
+
+  test("distinct ids that merely repeat across DIFFERENT tasks are not duplicates", () => {
+    // The corruption is a repeat WITHIN one array. Two dependents naming the
+    // same dependency is the commonest shape in a real graph — a fan-in — and
+    // must stay silent, or every diamond would block its project.
+    const dep = gt("dep", { status: "done" });
+    const a = gt("a", { depends_on: ["dep"] });
+    const b = gt("b", { depends_on: ["dep"] });
+    assert.equal(graphReady(a, byId(dep, a, b)), true);
+    assert.equal(graphReady(b, byId(dep, a, b)), true);
+  });
+
   test("dangling is checked BEFORE the deps-done term (R14: integrity beats scheduling)", () => {
     // A pending dep would answer `false` on its own. It must not mask the
     // corruption — a dangling dep read as "not ready yet" is the silent stall

@@ -1,12 +1,39 @@
 /**
- * Coding projects — data access. Schema in migration 0030_coding_projects.sql.
+ * Coding projects — data access. Schema in migrations 0030_coding_projects.sql
+ * and 0040_task_graph.sql.
  *
- * A project is a git worktree (ai-os or content-forge) plus a brief. Work
- * happens in rounds: round 0 is always a single architect task; nothing in
- * round N+1 becomes 'ready' until every task in round < N+1 for that
- * project is 'done'. Each task, once ready, becomes exactly one `runs` row
- * — this module never talks to the CC engine directly, it only creates
- * `runs` rows via db/runs.ts and lets the existing executor pick them up.
+ * A project is a git worktree (ai-os or content-forge) plus a brief. Round 0 is
+ * always a single architect task. Each task, once ready, becomes exactly one
+ * `runs` row — this module never talks to the CC engine directly, it only
+ * creates `runs` rows via db/runs.ts and lets the existing executor pick them
+ * up.
+ *
+ * WHAT MAKES A TASK 'ready' (engine-task-graph phase 2, R11/R12/R69). Not a
+ * round draining. `project_tasks.depends_on` is a `uuid[]` whose NULL is a
+ * SENTINEL, and it selects one of two rules — the split is stated once here and
+ * implemented once, in `promoteReadyTasks()` below, mirroring `readyRule()` in
+ * lib/task-graph.ts:
+ *
+ *  - `depends_on IS NOT NULL` — the GRAPH rule. Ready when every id it names
+ *    belongs to a `done` task OF THE SAME PROJECT. `'{}'` names nothing, is
+ *    trivially satisfied, and promotes immediately: an explicit root. `round` is
+ *    not consulted, which is the entire point — a reviewer's 32 minutes no
+ *    longer hold seven builders that never depended on it.
+ *  - `depends_on IS NULL` — the LEGACY rule, which is what this header described
+ *    in the present tense until round 204: nothing in round N+1 becomes 'ready'
+ *    until every task of that project in a round < N+1 is 'done'. It survives
+ *    for rows the old engine wrote, and only for those. TODO(R12-retire)
+ *
+ * `round` therefore no longer schedules anything. It remains a stored,
+ * engine-computed integer (E1) for Kanban grouping, consolidation keys and human
+ * conversation, plus ONE legacy-surface predicate: R69's term, which holds a
+ * graph row behind a lower-round LEGACY row so a project that straddles the
+ * deploy behaves exactly as it did before it (F13).
+ *
+ * A `depends_on` whose cardinality does not match the same-project rows it names
+ * is CORRUPTION, never a schedule: it blocks the task, blocks the project and
+ * notifies (R14, `sweepDanglingDependencies()`), and no route — promote, claim,
+ * retry or unwedge — may turn it into a run.
  */
 
 import pg from "pg";
@@ -470,17 +497,96 @@ export async function listGoalProgress(): Promise<GoalProgress[]> {
   return r.rows;
 }
 
+/** The THREE shapes of `depends_on` corruption, per row — the complete
+ *  explanation of a cardinality mismatch, and the only three that exist.
+ *  `cardinality(depends_on)` counts array ELEMENTS; the comparison counts
+ *  same-project ROWS named by them, so a mismatch means at least one element
+ *  names no row at all (`missing`), names a row of another project
+ *  (`foreign_ids`, R27's precondition violated), or appears twice
+ *  (`duplicated`). Nothing else can make the two numbers differ: the row count
+ *  is over distinct primary keys, so it can never exceed the element count.
+ *
+ *  That exhaustiveness is an argument, so the sweep does not trust it — a row
+ *  whose mismatch none of the three explains gets its own message rather than a
+ *  clause that would name zero ids (an instrument lying about what it found). */
+export interface DepsCorruption {
+  missing: string[] | null;
+  foreign_ids: string[] | null;
+  duplicated: string[] | null;
+}
+
 /** One corrupt row found by sweepDanglingDependencies(), carrying everything
  *  the notification needs so the caller never has to go back to the database
- *  for a name. `missing` and `duplicated` are the two ways an array's
- *  cardinality can exceed the number of rows it names — see the sweep. */
-interface DanglingSweepRow {
+ *  for a name. `status` is carried because it distinguishes the two routes a
+ *  corrupt row reaches the sweep by — still `pending`, or released to `ready`
+ *  by an operator retry — and a notification that did not say which would leave
+ *  the operator guessing (R14, round 204 finding 1). */
+interface DanglingSweepRow extends DepsCorruption {
   id: string;
   title: string;
   project_id: string;
   project_name: string;
-  missing: string[] | null;
-  duplicated: string[] | null;
+  status: TaskStatus;
+}
+
+/** The SQL that decides whether ONE row's `depends_on` is corrupt, written
+ *  once and interpolated into both places that must agree: the sweep's `corrupt`
+ *  CTE and `dependencyCorruption()`'s single-row probe on the retry path. Two
+ *  hand-copied predicates that must stay identical is how the retry path came to
+ *  disagree with the promote path in the first place.
+ *
+ *  `pt` must be the `project_tasks` alias in scope. Project-scoped in BOTH the
+ *  count and the arms: `graphReady()` documents "the tasks of ONE project" as a
+ *  precondition and throws `GraphIntegrityError` on an id it cannot resolve
+ *  inside that project, so the SQL enforces the precondition rather than
+ *  trusting the write path to have upheld it (R27; round 204, red-team
+ *  finding 3). */
+const DEPS_MISMATCH_SQL = `pt.depends_on IS NOT NULL
+          AND cardinality(pt.depends_on)
+              <> (SELECT count(*) FROM project_tasks d
+                   WHERE d.id = ANY(pt.depends_on)
+                     AND d.project_id = pt.project_id)`;
+
+const DEPS_CORRUPTION_COLS = `(SELECT array_agg(DISTINCT d::text ORDER BY d::text)
+                 FROM unnest(pt.depends_on) AS d
+                WHERE NOT EXISTS (SELECT 1 FROM project_tasks x WHERE x.id = d))
+                                   AS missing,
+              (SELECT array_agg(DISTINCT d::text ORDER BY d::text)
+                 FROM unnest(pt.depends_on) AS d
+                WHERE EXISTS (SELECT 1 FROM project_tasks x
+                               WHERE x.id = d AND x.project_id <> pt.project_id))
+                                   AS foreign_ids,
+              (SELECT array_agg(d::text ORDER BY d::text)
+                 FROM (SELECT d FROM unnest(pt.depends_on) AS d
+                        GROUP BY d HAVING count(*) > 1) AS dup(d))
+                                   AS duplicated`;
+
+/** English for one corrupt row, naming every id of every shape it exhibits —
+ *  the text of the notification (F1) and of the retry refusal, so an operator
+ *  reads the same diagnosis whichever surface reported it. Returns `null` when
+ *  none of the three shapes fired, which is the caller's cue to say so rather
+ *  than to compose a sentence that names nothing. */
+export function describeDepsCorruption(c: DepsCorruption): string | null {
+  const clauses: string[] = [];
+  const missing = c.missing ?? [];
+  const foreignIds = c.foreign_ids ?? [];
+  const duplicated = c.duplicated ?? [];
+  if (missing.length > 0) {
+    clauses.push(
+      `${missing.length} dependenc${missing.length === 1 ? "y" : "ies"} that no ` +
+        `longer exist${missing.length === 1 ? "s" : ""}: ${missing.join(", ")}`,
+    );
+  }
+  if (foreignIds.length > 0) {
+    clauses.push(
+      `${foreignIds.length} dependenc${foreignIds.length === 1 ? "y" : "ies"} ` +
+        `belonging to ANOTHER project: ${foreignIds.join(", ")}`,
+    );
+  }
+  if (duplicated.length > 0) {
+    clauses.push(`duplicated ids ${duplicated.join(", ")}`);
+  }
+  return clauses.length > 0 ? `names ${clauses.join("; and ")}` : null;
 }
 
 /**
@@ -505,31 +611,51 @@ interface DanglingSweepRow {
  *     finds the project already `blocked` and promotes nothing else for it on
  *     this tick — the gate doing exactly the job it already does for a paused
  *     project, with no new mechanism.
- *  2. SCOPED TO `pending` ROWS OF `active` PROJECTS, and to nothing else.
- *     - Not `ready`/`running` rows: those were already released, and flipping
- *       one to `blocked` under a live run would strand the run and lose its
- *       output. That is the same reasoning that already makes pausing a
+ *  2. SCOPED TO UNSTARTED ROWS (`pending`, or `ready` WITH NO RUN ATTACHED) OF
+ *     `active` PROJECTS, and to nothing else. WIDENED FROM `pending` ALONE IN
+ *     ROUND 204, and the reason is the finding, not a tidy-up: `retryTask()`
+ *     moves a `blocked` row to `ready`, so the sweep's own notification invited
+ *     an operator recovery that walked the corrupt row straight past a
+ *     `pending`-only sweep and into `claimReadyTasks()`, which never re-checks
+ *     dependency integrity. R14's headline is "never a silent promotion"; that
+ *     was one.
+ *     - Still NOT `running` rows, and still not a `ready` row that already has
+ *       a `run_id`: flipping one to `blocked` under a live run would strand the
+ *       run and lose its output — the same reasoning that makes pausing a
  *       project stop new claims without killing runs in flight
- *       (claimReadyTasks below).
+ *       (claimReadyTasks below). `run_id IS NULL` is the precise form of "not
+ *       started yet", and it is the same term `claimReadyTasks()` itself uses to
+ *       decide a row is unclaimed, so the two agree by construction rather than
+ *       by coincidence. The status/run_id terms are repeated on the
+ *       `blocked_tasks` UPDATE for a reason recorded there.
  *     - Not `paused`/`blocked`/`done`/`cancelled` projects: blocking a paused
  *       project would destroy the pause — an operator who resumed it would
  *       find `blocked`, which is a different state with a different meaning,
  *       and the corruption is not going anywhere in the meantime.
  *  3. IDEMPOTENT BY CONSTRUCTION, which is the whole anti-spam argument: a
- *     swept task is no longer `pending`, so the next tick's sweep does not
- *     find it and does not notify again. Nothing remembers anything; the row's
- *     own status is the memory.
+ *     swept task is neither `pending` nor `ready`, so the next tick's sweep does
+ *     not find it and does not notify again. Nothing remembers anything; the
+ *     row's own status is the memory.
+ *  4. THE SWEEP IS THE LOUD HALF, AND THAT IS WHY THE CLAIM PATH GOT NO NEW
+ *     FILTER. A candidate `SELECT` in `claimReadyTasks()` that quietly skipped a
+ *     corrupt `ready` row would leave it `ready` forever with nobody told —
+ *     trading a silent promotion for a silent stall, which is the same disease
+ *     in a new costume. The sweep runs FIRST in this same function, and
+ *     `projectTick()` calls `promoteReadyTasks()` before `spawnTaskRuns()`, so a
+ *     corrupt `ready` row is blocked and notified BEFORE any claim can see it,
+ *     on the same tick. The three routes into `running` are therefore each
+ *     closed loudly: promote by the cardinality equality (R14 front half), retry
+ *     and unwedge by `retryTask()`'s `dependencies_corrupt` refusal, and any
+ *     out-of-band write (`psql`, an import, a future writer) by this sweep.
  *
- * TWO SHAPES OF CORRUPTION, both loud. `cardinality(depends_on)` can exceed
- * the number of `project_tasks` rows it names either because an id names no
- * row (F1, the case R14 describes) or because the SAME id appears twice (the
- * count is over rows, not over array elements). The second is not reachable
- * from any writer today — the R6 backfill aggregates over distinct rows — but
- * the promote term refuses both identically, so the sweep must report both or
- * a duplicate-bearing row would be held by the front half and swept by
- * nothing. It gets its own message rather than being forced into F1's wording:
- * "names 0 dependencies that no longer exist" is an instrument lying about
- * what it found.
+ * THREE SHAPES OF CORRUPTION, all loud — see `DepsCorruption`. A missing id
+ * (F1, the case R14 describes), an id naming a row of ANOTHER project (R27's
+ * precondition, which only the API can enforce and only for its own callers),
+ * and the same id twice (the count is over rows, not over array elements).
+ * Neither of the last two is reachable from any writer today — the R6 backfill
+ * aggregates over distinct rows of one project — but the promote term refuses
+ * all three identically, so the sweep must report all three or a row would be
+ * held by the front half and swept by nothing.
  *
  * @returns the rows it blocked, for the caller's log line
  */
@@ -540,26 +666,26 @@ async function sweepDanglingDependencies(): Promise<DanglingSweepRow[]> {
               pt.title             AS title,
               pt.project_id::text  AS project_id,
               p.name               AS project_name,
-              (SELECT array_agg(DISTINCT d::text ORDER BY d::text)
-                 FROM unnest(pt.depends_on) AS d
-                WHERE NOT EXISTS (SELECT 1 FROM project_tasks x WHERE x.id = d))
-                                   AS missing,
-              (SELECT array_agg(d::text ORDER BY d::text)
-                 FROM (SELECT d FROM unnest(pt.depends_on) AS d
-                        GROUP BY d HAVING count(*) > 1) AS dup(d))
-                                   AS duplicated
+              pt.status            AS status,
+              ${DEPS_CORRUPTION_COLS}
          FROM project_tasks pt
          JOIN projects p ON p.id = pt.project_id
         WHERE p.status = 'active'
-          AND pt.status = 'pending'
-          AND pt.depends_on IS NOT NULL
-          AND cardinality(pt.depends_on)
-              <> (SELECT count(*) FROM project_tasks d
-                   WHERE d.id = ANY(pt.depends_on))
+          AND pt.status IN ('pending','ready')     -- decision 2, round 204
+          AND pt.run_id IS NULL
+          AND ${DEPS_MISMATCH_SQL}
      ),
      blocked_tasks AS (
+       -- The status and run_id terms are REPEATED here, not just inherited from
+       -- the CTE. An UPDATE re-checks its own WHERE against the row version it
+       -- actually locks (EvalPlanQual), so if a concurrent claim commits between
+       -- the CTE's snapshot and this write, these two terms are what make the
+       -- sweep skip the now-'running' row instead of blocking a task whose agent
+       -- is already working. The CTE's copy alone would match on id and clobber.
        UPDATE project_tasks t SET status = 'blocked', updated_at = now()
         WHERE t.id IN (SELECT id::uuid FROM corrupt)
+          AND t.status IN ('pending','ready')
+          AND t.run_id IS NULL
        RETURNING t.id
      ),
      blocked_projects AS (
@@ -567,29 +693,48 @@ async function sweepDanglingDependencies(): Promise<DanglingSweepRow[]> {
         WHERE p.id IN (SELECT project_id::uuid FROM corrupt)
        RETURNING p.id
      )
-     SELECT id, title, project_id, project_name, missing, duplicated
+     SELECT id, title, project_id, project_name, status, missing, foreign_ids, duplicated
        FROM corrupt`,
   );
   for (const row of r.rows) {
-    const missing = row.missing ?? [];
-    const duplicated = row.duplicated ?? [];
+    const what = describeDepsCorruption(row);
     const text =
-      missing.length > 0
-        ? `🚫 Project "${row.project_name}" — task "${row.title}" names ` +
-          `${missing.length} dependencies that no longer exist: ${missing.join(", ")}`
-        : `🚫 Project "${row.project_name}" — task "${row.title}" has a ` +
-          `depends_on array longer than the tasks it names, with every id ` +
-          `resolvable: duplicated ids ${duplicated.join(", ")}`;
+      what !== null
+        ? `🚫 Project "${row.project_name}" — task "${row.title}" (${row.status}) ${what}`
+        : `🚫 Project "${row.project_name}" — task "${row.title}" (${row.status}) has a ` +
+          `depends_on array whose length does not match the same-project tasks it ` +
+          `names, and none of the three known shapes explains it — read the row by hand`;
     // queueNotification never throws by construction (db/notifications.ts) —
     // a lost push must not fail a tick — so this is not a swallowed error, and
     // the block itself has already happened in the statement above regardless.
     await queueNotification(text, "project-graph");
     console.error(
-      `[project-graph] R14: task ${row.id} blocked, project ${row.project_id} blocked — ` +
-        `missing [${missing.join(",")}] duplicated [${duplicated.join(",")}]`,
+      `[project-graph] R14: task ${row.id} (${row.status}) blocked, project ` +
+        `${row.project_id} blocked — missing [${(row.missing ?? []).join(",")}] ` +
+        `foreign [${(row.foreign_ids ?? []).join(",")}] ` +
+        `duplicated [${(row.duplicated ?? []).join(",")}]`,
     );
   }
   return r.rows;
+}
+
+/** Is ONE row's `depends_on` corrupt, and how? `null` means sound — the same
+ *  predicate the sweep applies, from the same constant, so the retry path can
+ *  refuse exactly what the tick would block (R14, round 204 finding 1).
+ *
+ *  Scoped to the row's id and nothing else: unlike the sweep it does NOT filter
+ *  on task status, run_id or project status, because its caller is asking about
+ *  a `failed`/`blocked` row and about a project that is by definition not
+ *  advancing. */
+async function dependencyCorruption(taskId: string): Promise<DepsCorruption | null> {
+  const r = await pool.query<DepsCorruption>(
+    `SELECT ${DEPS_CORRUPTION_COLS}
+       FROM project_tasks pt
+      WHERE pt.id = $1
+        AND ${DEPS_MISMATCH_SQL}`,
+    [taskId],
+  );
+  return r.rows[0] ?? null;
 }
 
 /** Promote every 'pending' task whose dependencies are all satisfied to
@@ -638,6 +783,15 @@ async function sweepDanglingDependencies(): Promise<DanglingSweepRow[]> {
  *  task — the silent-fallback shape this fleet forbids. Its back half is
  *  sweepDanglingDependencies() above, called first, in the same tick.
  *
+ *  BOTH DEPENDENCY SUBQUERIES ARE CORRELATED ON `project_id` (round 204,
+ *  red-team finding 3). Without it a `depends_on` naming another project's
+ *  `done` row promoted, and one naming another project's `pending` row stalled
+ *  forever with a matching cardinality that the sweep could not see — while
+ *  `graphReady()` threw `GraphIntegrityError` on the identical input, because its
+ *  `byId` holds one project's rows. R27 closes the API path; this closes the
+ *  path an operator `psql`, an import or a future writer opens, so the SQL
+ *  enforces the precondition the pure side documents instead of trusting it.
+ *
  *  THE LEGACY-ROW TERM (R69, ruled as E3 in 02-architecture.md §9.2) is the
  *  graph branch's only reference to `round`, and it reads it only ABOUT legacy
  *  rows. `depends_on` is a FROZEN closure: the R6 backfill writes the rows that
@@ -680,8 +834,12 @@ export async function promoteReadyTasks(): Promise<number> {
           -- GRAPH BRANCH
           (pt.depends_on IS NOT NULL
            AND NOT EXISTS (SELECT 1 FROM project_tasks d
-                            WHERE d.id = ANY(pt.depends_on) AND d.status <> 'done')
-           AND (SELECT count(*) FROM project_tasks d WHERE d.id = ANY(pt.depends_on))
+                            WHERE d.id = ANY(pt.depends_on)
+                              AND d.project_id = pt.project_id   -- R27, round 204
+                              AND d.status <> 'done')
+           AND (SELECT count(*) FROM project_tasks d
+                 WHERE d.id = ANY(pt.depends_on)
+                   AND d.project_id = pt.project_id)     -- R27, round 204
                = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
            AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3: the legacy-row term
                             WHERE l.project_id = pt.project_id
@@ -744,8 +902,17 @@ export async function promoteReadyTasks(): Promise<number> {
  *
  *     An EMPTY `write_set` intersects nothing and is therefore always
  *     claimable (R17). That is today's behaviour exactly — every task shares
- *     one worktree and runs in parallel — and it is what keeps R18's replica
- *     exact, because every row of the replay fixture carries `'{}'`.
+ *     one worktree and runs in parallel.
+ *
+ *     WHAT PROVES IT, precisely (corrected round 204, gating finding 2): the
+ *     `conflicts()` empty-set cases in `task-graph.test.ts`, and case 7 of
+ *     `scripts/checks/check-scheduler-sql.sh`, which drives THIS function
+ *     against a real Postgres and asserts the empty-write-set row is claimed.
+ *     NOT the R18 replay: its `simulate()` has no claim step at all — it moves
+ *     rows `pending → running` and never calls `selectClaimable()` — so the
+ *     replay is silent about contention, and crediting it here inflated R17's
+ *     proof base. Measured: inverting the empty-set rule leaves all 35 replay
+ *     tests green.
  *
  *     PARTITIONED BY PROJECT before the pure call. `GraphTask` deliberately
  *     carries no `project_id` and every task-graph function taking a
@@ -997,7 +1164,12 @@ export const MAX_TASK_ATTEMPTS = 2;
 
 export type RetryOutcome =
   | { ok: true; task: ProjectTask; project_resumed: boolean }
-  | { ok: false; reason: "not_found" | "not_retryable" | "attempts_exhausted"; task: ProjectTask | null };
+  | { ok: false; reason: "not_found" | "not_retryable" | "attempts_exhausted"; task: ProjectTask | null }
+  /** R14 on the operator path: the row's `depends_on` is still corrupt, so
+   *  `ready` is not a state it may occupy. Carries the ids so the API can name
+   *  them — a refusal that does not say which dependency is broken tells the
+   *  operator to go and read the array by hand. */
+  | { ok: false; reason: "dependencies_corrupt"; task: ProjectTask; corruption: DepsCorruption };
 
 /** failed|blocked -> ready: drop the dead run reference, count the attempt,
  *  and un-block the project so the tick can actually pick it up again (after
@@ -1005,7 +1177,20 @@ export type RetryOutcome =
  *  project status alone would make retry a silent no-op).
  *
  *  `force` is the operator override for the attempt cap — reachable from the
- *  API, never from the tick. */
+ *  API, never from the tick.
+ *
+ *  R14 IS RE-ASSERTED HERE (round 204, gating finding 1 / red-team finding 1).
+ *  This function is the one route that moves a row INTO `ready` without
+ *  consulting the graph, and `sweepDanglingDependencies()` used to scope itself
+ *  to `pending`, so a task blocked for naming a dependency that does not exist
+ *  could be retried into `ready`, claimed on the next tick, and given a run —
+ *  with the corrupt `depends_on` untouched. The sweep's own notification is what
+ *  invited the operator to do it. Integrity is checked BEFORE the attempt cap
+ *  and is NOT bypassable by `force`, for the same reason `graphReady()` checks
+ *  it before the deps-done term: `force` is an override of a budget, not of a
+ *  fact, and offering "re-send with force" for a graph that cannot drain would
+ *  be an instrument inviting a nonsense. The operator's real repair is to fix
+ *  the array (or delete the row), which is why the refusal names the ids. */
 export async function retryTask(
   id: string,
   opts: { force?: boolean } = {},
@@ -1014,6 +1199,10 @@ export async function retryTask(
   if (!task) return { ok: false, reason: "not_found", task: null };
   if (task.status !== "failed" && task.status !== "blocked") {
     return { ok: false, reason: "not_retryable", task };
+  }
+  if (task.depends_on !== null) {
+    const corruption = await dependencyCorruption(id);
+    if (corruption) return { ok: false, reason: "dependencies_corrupt", task, corruption };
   }
   if (task.attempt >= MAX_TASK_ATTEMPTS && !opts.force) {
     return { ok: false, reason: "attempts_exhausted", task };
@@ -1041,18 +1230,29 @@ export async function retryTask(
 
 /** Retry every failed task in the EARLIEST round that has one. Later rounds
  *  are left alone deliberately: they are gated behind this round anyway, and
- *  re-running them before the blocker is fixed just burns tokens. */
+ *  re-running them before the blocker is fixed just burns tokens.
+ *
+ *  `skipped_reasons` is additive and exists because this function became able to
+ *  skip for TWO unrelated reasons in round 204 — the attempt cap, and R14's
+ *  `dependencies_corrupt` refusal — and the API's "exceeded the retry cap,
+ *  re-send with force" warning was true of only one of them. A caller that reads
+ *  `skipped` alone still sees exactly what it saw before. */
 export async function unwedgeProject(
   projectId: string,
   opts: { force?: boolean } = {},
-): Promise<{ round: number | null; retried: ProjectTask[]; skipped: ProjectTask[] }> {
+): Promise<{
+  round: number | null;
+  retried: ProjectTask[];
+  skipped: ProjectTask[];
+  skipped_reasons: Array<{ id: string; reason: string; detail: string | null }>;
+}> {
   const blocking = await pool.query<{ round: number }>(
     `SELECT MIN(round)::int AS round FROM project_tasks
       WHERE project_id = $1 AND status IN ('failed','blocked')`,
     [projectId],
   );
   const round = blocking.rows[0]?.round ?? null;
-  if (round === null) return { round: null, retried: [], skipped: [] };
+  if (round === null) return { round: null, retried: [], skipped: [], skipped_reasons: [] };
 
   const candidates = await pool.query<ProjectTask>(
     `SELECT ${TASK_COLS} FROM project_tasks
@@ -1063,12 +1263,22 @@ export async function unwedgeProject(
 
   const retried: ProjectTask[] = [];
   const skipped: ProjectTask[] = [];
+  const skipped_reasons: Array<{ id: string; reason: string; detail: string | null }> = [];
   for (const c of candidates.rows) {
     const out = await retryTask(c.id, opts);
-    if (out.ok) retried.push(out.task);
-    else skipped.push(c);
+    if (out.ok) {
+      retried.push(out.task);
+      continue;
+    }
+    skipped.push(c);
+    skipped_reasons.push({
+      id: c.id,
+      reason: out.reason,
+      detail:
+        out.reason === "dependencies_corrupt" ? describeDepsCorruption(out.corruption) : null,
+    });
   }
-  return { round, retried, skipped };
+  return { round, retried, skipped, skipped_reasons };
 }
 
 export async function bumpFixCycle(id: string): Promise<number> {

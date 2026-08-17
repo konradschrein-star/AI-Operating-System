@@ -277,18 +277,31 @@ r.post("/:id/unwedge", async (c) => {
     `[projects] unwedge ${id} round ${out.round}: ${out.retried.length} retried, ` +
       `${out.skipped.length} skipped`,
   );
+  /* The warning is composed per REASON (round 204). Until R14 gained its retry
+   * refusal, "exceeded the retry cap" was the only way a task could be skipped;
+   * telling an operator to re-send with {"force":true} for a task whose
+   * depends_on is corrupt would send them round a loop force cannot open. */
+  const corrupt = out.skipped_reasons.filter((s) => s.reason === "dependencies_corrupt");
+  const capped = out.skipped_reasons.filter((s) => s.reason === "attempts_exhausted");
+  const other = out.skipped_reasons.filter(
+    (s) => s.reason !== "dependencies_corrupt" && s.reason !== "attempts_exhausted",
+  );
+  const warnings = [
+    ...(capped.length > 0
+      ? [`${capped.length} task(s) exceeded the retry cap — re-send with {"force":true} to override`]
+      : []),
+    ...corrupt.map(
+      (s) => `task ${s.id} was NOT retried: its depends_on ${s.detail ?? "is corrupt"} (R14) — force does not override this`,
+    ),
+    ...other.map((s) => `task ${s.id} was NOT retried: ${s.reason}`),
+  ];
   return c.json({
     project: await getProject(id),
     round: out.round,
     retried: out.retried,
     skipped: out.skipped,
-    ...(out.skipped.length > 0
-      ? {
-          warning:
-            `${out.skipped.length} task(s) exceeded the retry cap — re-send with ` +
-            `{"force":true} to override`,
-        }
-      : {}),
+    skipped_reasons: out.skipped_reasons,
+    ...(warnings.length > 0 ? { warning: warnings.join("; ") } : {}),
   });
 });
 

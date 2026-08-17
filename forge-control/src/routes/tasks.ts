@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import {
   getTask,
   retryTask,
+  describeDepsCorruption,
   MAX_TASK_ATTEMPTS,
 } from "../db/projects.ts";
 
@@ -51,6 +52,23 @@ r.post("/:id/retry", async (c) => {
     });
   }
   if (out.reason === "not_found") return c.json({ error: "task not found" }, 404);
+  /* R14 on the operator path: the row's depends_on is still corrupt, so 'ready'
+   * is not a state it may occupy. NOT overridable with {"force":true} — force
+   * lifts the attempt cap, not a graph that cannot drain — so the message asks
+   * for the repair the operator can actually make and names the ids. */
+  if (out.reason === "dependencies_corrupt") {
+    return c.json(
+      {
+        error:
+          `task ${out.task.id} cannot be retried: its depends_on ` +
+          `${describeDepsCorruption(out.corruption) ?? "does not match the same-project tasks it names"}. ` +
+          `Repair depends_on (or delete the task) — {"force":true} does not override this.`,
+        task: out.task,
+        corruption: out.corruption,
+      },
+      409,
+    );
+  }
   if (out.reason === "attempts_exhausted") {
     return c.json(
       {

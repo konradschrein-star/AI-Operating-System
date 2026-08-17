@@ -520,7 +520,7 @@ over all 85 and sum to 85 together with §§7.1–7.3's twelve:
 
 | Symbol(s) | Hits | Attribution — none of these is a scheduling predicate |
 |---|---|---|
-| `(module preamble)` | 2 | The module header's description of what rounds *were*. Prose. |
+| `(module preamble)` | 2 | **CORRECTED ROUND 204 — this attribution did not hold.** The header described the round rule in the PRESENT TENSE (*"nothing in round N+1 becomes 'ready' until…"*), which after this phase is false for every graph row, and it is the first thing any reader or agent sees. Calling it "what rounds *were*" was a reinterpretation the text did not support. The preamble now states the two-branch rule and the NULL sentinel, and says which of the two survives only for rows the old engine wrote. |
 | `ProjectTask`, `TASK_COLS`, `TASK_COLS_PT`, `toGraphTask` | 7 | **The column exists and must be selected.** E1 rules that `round` stays a stored, engine-computed integer for Kanban grouping and human conversation (R19/R20). Selecting a stored column is not reading it to schedule. `toGraphTask` maps it into `GraphTask`, whose `round` field R69's term and `taskDepth()`'s legacy seed both need. |
 | `createProject`, `createTask`, `insertChainRow`, `createFixChain` | 26 | **Task creation and identity.** `(project_id, round, role, title)` is the identity index (migration 0035) and the `ON CONFLICT` target that makes creation idempotent; `createFixChain` places its rows at `round + 1` / `round + 2`. Creation, not scheduling — and R42 gives phase 4 the job of writing `depends_on` on those chain rows. |
 | `listTasksForProject`, `getProject`, `getTask` | 3 | **Display ordering and projection.** `ORDER BY round ASC, created_at ASC` on a read used by the Kanban and the plan endpoint. |
@@ -616,10 +616,10 @@ Every requirement phase 2 owns, and the **symbol or test** that proves it.
 | **R11** | `graphReady()`; `task-graph.test.ts` → *"empty deps → ready"*, *"one done dep → ready"*, *"one pending dep → not ready"*. SQL: `check-scheduler-sql.sh` R11 assertions. | done |
 | **R12** | `readyRule()` — the only interpreter of the sentinel; `task-graph.test.ts` → the three `readyRule` cases; `promoteReadyTasks()`'s `-- LEGACY BRANCH`. Replay: every case exercises it as the legacy side. | done |
 | **R13** | Structural — `GraphTask` carries no project field, so `p.status = 'active'` cannot be smuggled into a per-task predicate. `check-scheduler-sql.sh` → *"R13: paused project promoted nothing"* / *"resumed project promotes"*. | done |
-| **R14** | `GraphIntegrityError` from `graphReady()`; `task-graph.test.ts` → *"a dep id absent from the map throws"*, *"names EVERY missing id"*, *"dangling is checked BEFORE the deps-done term"*. SQL: `sweepDanglingDependencies()` + `check-scheduler-sql.sh` → `blocked`, one notification, idempotent. | done |
+| **R14** | `GraphIntegrityError` from `graphReady()`; `task-graph.test.ts` → *"a dep id absent from the map throws"*, *"names EVERY missing id"*, *"dangling is checked BEFORE the deps-done term"*. SQL: `sweepDanglingDependencies()` + `check-scheduler-sql.sh` → `blocked`, one notification, idempotent. **INCOMPLETE AS SHIPPED HERE — round 203 found three routes past it** (the retry path, a row written straight to `ready`, and a duplicated or cross-project id), all closed in the fix cycle with four new `check` cases and two new unit cases. R14's text is restated in `01-requirements.md`; the measurements are in `evidence/phase2-fix-cycle-1.md`. | **done — see the fix cycle** |
 | **R15** | `claimReadyTasks()` — `FOR UPDATE OF pt SKIP LOCKED`, the `active` join, `LIMIT 32`, `ORDER BY pt.round ASC, pt.created_at ASC` all unchanged; §7.2 above. | done (2B) |
 | **R16** | `conflicts()`, `selectClaimable()`; `task-graph.test.ts` → the fifteen `conflicts`/`selectClaimable` cases incl. *"same path, DIFFERENT workstream → both claimed"* and the a↔b↔c non-transitivity case. SQL: `check-scheduler-sql.sh` case 7. | done |
-| **R17** — contention half | `conflicts()`'s empty-set early exit; `task-graph.test.ts` → *"an EMPTY write-set intersects nothing (R17)"*, *"empty write-sets are always claimable"*; **and the replay itself**, whose 131 fixture rows all carry `'{}'` and still reproduce today's order exactly (§4). | done |
+| **R17** — contention half | `conflicts()`'s empty-set early exit; `task-graph.test.ts` → *"an EMPTY write-set intersects nothing (R17)"*, *"empty write-sets are always claimable"*; `check-scheduler-sql.sh` case 7, which drives the shipped `claimReadyTasks()`. **THE REPLAY IS STRUCK FROM THIS ROW (round 204).** It was credited here and in three other places; it never executes the rule — no `conflicts`/`selectClaimable` import, no claim step in `simulate()`. Measured: inverting the empty-set rule leaves all 35 replay tests green. | done |
 | **R17** — warn half | **RELOCATED TO PHASE 4.** Amended in `01-requirements.md` R17 (*"TWO CLAUSES, TWO PHASES"*) and added as `04-phases.md` **Phase 4 deliverable 10**; R17 now appears in the phase 4 row of `01-requirements.md` §K and `04-phases.md` §9. Reason: the clause lives in the spawn path in `project-tick.ts`, which §10 assigns to phases 4 and 5 — unsatisfiable inside phase 2's file ownership. | **not done — phase 4** |
 | **R18** | `task-graph-replay.test.ts` — six cases (a)–(f), all green (§2), plus the round-103 pins (§4) and the mutation transcripts (§6). | **done — this task** |
 | **R19** | `taskDepth()`; `task-graph.test.ts` → chain, diamond, wide fan-out, disjoint roots, NULL/array mixture, absent dep, duplicate dep, empty collection, cycle-throws, determinism. | done (2A) |
@@ -675,6 +675,16 @@ $ python3 docs/plan/engine-task-graph/check-corpus-map.py
 OK — R1..R69 and NF1..NF7 complete, all three statements of the map agree.
 exit=0
 ```
+
+**(c) THREE MORE AMENDMENTS LANDED IN THE ROUND-204 FIX CYCLE**, and are recorded
+in `evidence/phase2-fix-cycle-1.md` §5 rather than duplicated here: R14 restated
+(three shapes of corruption, every route into `running`), R17's proof base
+corrected in all four places that inflated it, `computeRound` struck from Phase
+2's deliverable 5 with `03-quality.md` §2.1's round-computation block relabelled
+phase 3, and two undeclared writes added to Phase 2's file list. Two findings were
+recorded as obligations on later phases rather than fixed here — R41's
+hand-renumber hazard (phase 4) and R27's `400` (phase 3, whose SQL half landed in
+the fix cycle).
 
 ---
 

@@ -132,14 +132,64 @@ a resumed project continues exactly where it stopped.
 *How proved:* unit + review; the existing behaviour is documented on
 `promoteReadyTasks` in `db/projects.ts` and must survive verbatim.
 
-**R14.** **A dangling dependency is a hard error, never a silent promotion.** If
-`cardinality(depends_on)` exceeds the number of `project_tasks` rows whose id
-appears in it, the task is moved to `blocked`, the project is set `blocked`, and
-a notification names the task and the missing ids. A `NOT EXISTS (... status <>
-'done')` predicate alone would read a vanished dependency as satisfied and
-release the task — the silent-fallback shape this fleet forbids.
-*How proved:* unit (the pure classifier) + `check` (delete a dependency row and
-assert `blocked`, not `ready`).
+**R14.** **A corrupt `depends_on` is a hard error, never a silent promotion.** If
+`cardinality(depends_on)` differs from the number of `project_tasks` rows **of
+the same project** whose id appears in it, the task is moved to `blocked`, the
+project is set `blocked`, and a notification names the task and the offending
+ids. A `NOT EXISTS (... status <> 'done')` predicate alone would read a vanished
+dependency as satisfied and release the task — the silent-fallback shape this
+fleet forbids.
+
+**RESTATED IN ROUND 204, WHERE IT IS ENFORCED (standing rule 2), because as
+shipped it was a guarantee with three holes in it.** Each was measured against
+the shipped functions, not argued; the fixes and their negative controls are in
+`evidence/phase2-fix-cycle-1.md`. The requirement now says what it must, in three
+parts:
+
+- **THE THREE SHAPES OF CORRUPTION, and the semantics for each.** A mismatch has
+  exactly three possible causes, and all three are corruption: an id naming **no
+  row** (the dangling dep this requirement was written for); an id naming a row
+  **of another project** (R27's precondition violated — the count is
+  project-scoped, so a foreign row satisfies nothing); and **the same id twice**
+  (`cardinality` counts elements, the comparison counts rows). The duplicate case
+  is settled here rather than left to two functions to disagree about: it is
+  corruption, because nothing in this engine writes one — the R6 backfill
+  aggregates over distinct rows of one project and R28 normalises before storage
+  — so a duplicate in the column means an **unvalidated writer**, whose intent is
+  unknown. `graphReady()` and the SQL must refuse all three **identically**;
+  where the SQL distinguishes them it is only to write a truthful notification.
+  `taskDepth()` is the deliberate exception and stays benign for both an absent
+  id and a duplicate: it is DISPLAY code, and refusing to draw a board is an
+  outage where the promotion path's refusal is a repair.
+- **NO ROUTE INTO `running` MAY BYPASS IT.** There are three, and closing only
+  the first is what made this a guarantee that did not hold. (i) `promote` — the
+  cardinality equality in the graph branch. (ii) `retryTask()`, and therefore
+  `unwedgeProject()` and `POST /api/tasks/:id/retry` — a `blocked` row whose
+  `depends_on` is still corrupt is refused with a reason naming the ids, checked
+  before the attempt cap and **not** overridable by `force`, because `force`
+  overrides a budget and not a fact. Without this the sweep's own notification
+  invited the operator to walk the row into `ready`, where a `pending`-scoped
+  sweep could not see it and `claimReadyTasks()` — which re-checks contention but
+  never dependency integrity — gave it a run. (iii) Any **out-of-band** write
+  (`psql`, an import, a future writer) that leaves a corrupt row at `ready`: the
+  sweep covers `pending` rows AND `ready` rows with no `run_id`, and runs before
+  the claim in the same tick. Still never a `running` row, and never a `ready`
+  row with a run attached — blocking one of those would strand a live run and
+  lose its output.
+- **THE LOUD HALF IS THE SWEEP, NOT A CLAIM-SIDE FILTER.** A candidate `SELECT`
+  in `claimReadyTasks()` that quietly skipped a corrupt `ready` row would trade a
+  silent promotion for a silent stall — the same disease in a new costume. The
+  sweep blocks and notifies instead.
+
+*How proved:* unit — `graphReady()` throws `GraphIntegrityError` on an absent id
+and on a duplicated id, naming every offender of every shape. `check` —
+`check-scheduler-sql.sh` cases 3/4 (dangling → `blocked`, one notification), 8
+(the retry refusal, then a claim that does not claim it), 8b (a corrupt row
+written straight to `ready` is still swept), 9 (a duplicate blocks, and
+`graphReady()` agrees), 10 (a cross-project id resolves to nothing on both
+sides). Each of the four new cases asserts **the mirror** by driving the real
+`graphReady()` over the same rows, and each was observed failing against the
+unfixed code.
 
 **R15.** `claimReadyTasks()` keeps `FOR UPDATE OF pt SKIP LOCKED`, keeps the
 `p.status = 'active'` join, keeps marking `running` inside the same transaction,
@@ -159,8 +209,8 @@ files).
 
 **R17.** An **empty** `write_set` intersects nothing and is therefore always
 claimable — this is exactly today's behaviour (all tasks share one worktree and
-run in parallel) and is what keeps R18's replica exact. The engine logs one
-`console.warn` per spawn naming a `builder`-role task with an empty write set.
+run in parallel). The engine logs one `console.warn` per spawn naming a
+`builder`-role task with an empty write set.
 
 **TWO CLAUSES, TWO PHASES. Amended round 202, where it is enforced (standing
 rule 2), because as written it was unsatisfiable inside phase 2's declared file
@@ -168,10 +218,19 @@ ownership** — and an unsatisfiable gate disclosed-and-proceeded is what teache
 reviewers that disclose-and-proceed is normal.
 
 - **The CONTENTION clause is phase 2's** and is discharged there: `conflicts()`
-  returns `false` the moment either side is empty, `selectClaimable()` therefore
-  claims such a task unconditionally, and the R18 replay — whose every fixture
-  row carries `'{}'` — reproduces today's order exactly, which is the clause's
-  own stated purpose.
+  returns `false` the moment either side is empty, and `selectClaimable()`
+  therefore claims such a task unconditionally.
+
+  **THE R18 REPLAY IS NOT ITS PROOF, and said so here until round 204.** Four
+  places credited it, on the reasoning that every fixture row carries `'{}'` and
+  the replay still reproduces today's order. The replay never executes the rule:
+  `task-graph-replay.test.ts` imports neither `conflicts` nor `selectClaimable`,
+  and its `simulate()` moves rows `pending → running` with no claim step, so no
+  write-set of any shape is ever consulted. Measured before the claim was struck:
+  inverting the empty-set rule to `return true` leaves all 35 replay tests green,
+  including all six R18 cases. An instrument credited with a proof it does not
+  perform is standing rule 3's exact failure mode, and it inflated this
+  requirement's proof base in the corpus itself. The real proof is named below.
 - **The WARN clause is phase 4's.** It lives in the SPAWN path, in
   `forge-control/src/lib/project-tick.ts`, a file §10 of `04-phases.md` assigns
   to phases 4 and 5 and which phase 2 does not write. Phase 2 could satisfy it
@@ -180,10 +239,13 @@ reviewers that disclose-and-proceed is normal.
   4 row of §K below and of `04-phases.md` §9, as a deliberate split, exactly as
   R18 does across phases 1 and 2.
 
-*How proved:* **contention (phase 2)** — unit: the replay fixture has empty
-write-sets throughout and still produces the identical order; `conflicts()`'s
-empty-set table cases. **Warn (phase 4)** — unit: the warning fires for
-`builder` and not for `scout`.
+*How proved:* **contention (phase 2)** — unit: `conflicts()`'s empty-set table
+cases and `selectClaimable()`'s *"empty write-sets are always claimable"* case in
+`task-graph.test.ts`; `check`: case 7 of `check-scheduler-sql.sh`, which drives
+the shipped `claimReadyTasks()` against a real Postgres and asserts the
+empty-write-set row is claimed while a colliding sibling is deferred. That is the
+whole of its proof base — **not** the R18 replay, for the reason recorded above.
+**Warn (phase 4)** — unit: the warning fires for `builder` and not for `scout`.
 
 **R18. The replica proof.** `task-graph-replay.test.ts` replays the R9 fixture through
 two implementations of the promotion rule — `legacyRoundReady()` and
@@ -291,7 +353,24 @@ person who proves it never fires.
 **R27.** Every id in `depends_on` must name an existing `project_tasks` row **of
 the same project**. A dangling id or a cross-project id is a `400` naming the
 offending ids. Never a warning, never a silent drop.
-*How proved:* unit + `check`.
+
+**THE SQL HALF LANDED EARLY, IN PHASE 2 (round 204, red-team finding 3), and
+phase 3 must not re-open it.** This requirement closes the API path; it said
+nothing about the engine, and neither dependency subquery in
+`promoteReadyTasks()`'s graph branch nor in `sweepDanglingDependencies()` was
+correlated on `project_id`. Measured: a task naming another project's `done` row
+**promoted**, and one naming another project's `pending` row sat `pending`
+forever with a matching cardinality that the sweep could not see — while
+`graphReady()` threw on the identical input, because its `byId` holds one
+project's rows. Leaving a known silent-promotion hole open across a phase boundary
+for bookkeeping reasons is the disclose-and-proceed habit this project is under
+orders not to repeat, so `AND d.project_id = pt.project_id` was added to all
+three subqueries in phase 2's fix cycle, with case 10 of
+`check-scheduler-sql.sh` as its proof. Phase 3 still owes the `400`: the SQL now
+enforces the precondition rather than trusting the write path, which is not the
+same thing as telling the caller.
+*How proved:* unit + `check` (the `400`, phase 3); `check-scheduler-sql.sh` case
+10 (the SQL, phase 2 — done).
 
 **R28.** `workstream` is validated against R4's regex; `write_set` entries are
 validated as repo-relative POSIX paths: non-empty, no leading `/`, no `..`
@@ -414,8 +493,29 @@ workstreams**: `main` keeps `fix:<round>:<cycle>` / `rereview:<round>:<cycle>` /
 `retest:<round>:<cycle>` byte-identically, so every historical chain replays
 against the row it already wrote. Other workstreams get
 `fix:<workstream>:<round>:<cycle>` and so on.
+
+**THE HAND-RENUMBER HAZARD, recorded round 204 (red-team finding 4) so that phase
+4 owns it explicitly rather than inheriting it.** `chainKeys(round, cycle)`
+embeds `round`, so an operator who renumbers a group **after** its fix chain
+exists produces `fix:<new>:<cycle>`, which collides with neither
+`project_tasks_chain_key_uniq` (the chain_key differs) nor
+`project_tasks_identity_idx` (the round differs): `insertChainRow()`'s
+`INSERT … ON CONFLICT DO NOTHING` succeeds, a **second fix chain lands**, and the
+`occupied` branch never fires because it is only reached on a conflict. Found by
+reading the code, not run against a chain. It is operator-only —
+`grep -n "SET round"` over the tree is empty, no engine path writes `round` after
+insert — and an operator did exactly that to this project's own scout task at
+~03:31 on 2026-08-17. Phase 2 neither causes nor worsens it: `project-reconcile.ts`
+and both reconcile test files are untouched by phase 2's diff (R43 holds).
+**Phase 4's obligation:** either rebase the chain identity onto something an
+operator cannot renumber (the gating task ids are immutable by R29, unlike the
+round), or add a guard that makes a second chain for the same group impossible,
+and record the choice **here** with its reasoning. Keeping `round` in the key and
+saying nothing is not one of the options — R40's own group key keeps it, so the
+hazard survives phase 4 by default unless phase 4 decides otherwise on purpose.
 *How proved:* unit — the existing `chainKeys` cases pass **unmodified**, plus new
-cases for a named workstream.
+cases for a named workstream, plus (phase 4) a case that a renumbered group
+cannot produce a second chain.
 
 **R42.** Fix-chain rows created by `createFixChain()` carry the graph fields:
 the fix builder `depends_on` = the gating task ids, `workstream` = the group's
@@ -456,8 +556,23 @@ workstreams at once.
 **R47.** The planner prompt in `project-tick.ts` instructs the planner to
 declare, for every task it creates: `depends_on` (task ids returned by earlier
 curls), `workstream`, and `write_set`. It contains **no** instruction to choose a
-round. *How proved:* unit — `project-tick.test.ts` asserts the planner prompt
-contains `depends_on` and does not contain the string `Your round is`.
+round.
+
+**A DECLARED WRITE-SET MUST NAME THE COMPANION FILES A CHANGE FORCES** — added
+round 204, from a bookkeeping finding that is not only bookkeeping. Phase 2
+changed a shared type (`ProjectTask` gained three columns) and that change forced
+edits to two test files' object factories (`cp3-linkage.test.ts`,
+`project-tick.test.ts`) which no declared write-set named. Today the consequence
+is a finding; once workstreams are live it is a **clobber**, because contention is
+computed from the declared set and two workstreams whose write-sets both omit the
+same forced companion will be scheduled in parallel over it. The prompt must
+therefore say, in these terms: when a task changes a shared type, an exported
+signature, or a fixture shape, its `write_set` includes the **test factories and
+call sites that change with it**, not merely the file whose behaviour is the
+point. A write-set is an input to a scheduling decision, not a summary of intent.
+*How proved:* unit — `project-tick.test.ts` asserts the planner prompt contains
+`depends_on`, does not contain the string `Your round is`, and contains the
+companion-files instruction.
 
 **R48.** The prompt states the three fan-out rules from spec §4 explicitly:
 research fans out wide and early (independent questions share no files and have
