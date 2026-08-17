@@ -46,8 +46,12 @@ bound it — `guardrail_rules['agent.spawn_cap']`.
 
 ## 2. The measurement that motivates it
 
+### 2.1 The measurement of record — 2026-08-17 03:04
+
 Project `operator-visibility`, 2026-08-16 22:51 → 2026-08-17 03:04 (Konrad's
-own numbers, recorded in the design spec §1):
+own numbers, recorded in the design spec §1). **Taken at 03:04 on 2026-08-17 and
+preserved verbatim.** §4's thresholds are derived from these figures; they are
+the measurement that motivated the project and they are not edited.
 
 | round | tasks | round | tasks |
 |---|---|---|---|
@@ -68,6 +72,66 @@ own numbers, recorded in the design spec §1):
 
 That last line is the whole justification. The latency was not compute, not the
 spawn cap, not the model, not the account. It was an integer.
+
+### 2.2 The recomputation — phase 7, `instrument-sha256` `80ef1123…`
+
+Phase 7's acceptance criteria require the instrument to recompute §2.1 and, if
+the two disagree, **the script wins and this section is corrected in the same
+commit, with the discrepancy named**. It disagrees in exactly one cell. The
+recomputation, every number of it printed by `scripts/measure-schedule.ts` at
+`instrument-sha256`
+`80ef11235ffe3e2cc12dd58404533070d4b7575a050ff96d44acf49226ef6afb` over the
+phase-1 fixture `sha256=e0cb69a5…`, is committed in full at
+`evidence/baseline-8ea0cc08.md`. Its tables, in summary:
+
+| round | §2.1 (03:04) | fixture rows created ≤ 03:04:00 | fixture, whole project |
+|---|---|---|---|
+| 1290 | 1 | 1 | 1 |
+| 1291 | 3 | 3 | 3 |
+| 1292 | 2 | 2 | 2 |
+| 1293 | 1 | 1 | 1 |
+| 1300 | 1 | 1 | 1 |
+| 1301 | 2 | 2 | 2 |
+| 1302 | 3 | 3 | 3 |
+| 1303 | 1 | 1 | 1 |
+| 1304 | 2 | 2 | 2 |
+| 1305 | 1 | 1 | 1 |
+| 1306 | 1 | 1 | 1 |
+| **1350** | **3** | **16** | **20** |
+
+**Eleven of twelve rounds diverge by zero.** §2.1 was an accurate snapshot, not
+an approximation. The whole discrepancy is round 1350, and it has **two** causes,
+quantified rather than asserted:
+
+1. **The hand-renumber — the dominant cause, 13 of the 17 divergent rows.**
+   Konrad promoted roughly a dozen `pending` tasks into the live round after
+   03:04 (`02-architecture.md` §2.3.3, confirmed on the record). Sixteen rows
+   that read 1350 in the fixture already existed at 03:04, and §2.1 counted three
+   of them; the other thirteen carried a different number at the time. The
+   fixture cannot say *which* number — `project_tasks` keeps no history of
+   `round`, so `created_at` is immutable and `round` is not.
+2. **New work — 4 of the 17.** Four rows at round 1350 were created *after*
+   03:04 and did not exist when §2.1 was written. No renumber can account for a
+   row that had not been created. **§2.1 was a true snapshot of a window that
+   then kept moving.**
+
+The renumber is therefore ruled **in** as the dominant cause and **out** as the
+whole explanation. The baseline document also records a **finding against the
+phase-7 brief's window flags**: converting Konrad's quoted times as CEST
+(`20:51Z .. 01:04Z`) does not reproduce §2.1 — rounds 1305 and 1306 do not yet
+exist at that cut, and §2.1 lists both — whereas reading them on the fixture's
+own clock reproduces eleven of twelve rounds cell for cell.
+
+**S1, S2 and S3 are NOT COMPUTED for 8ea0cc08.** The phase-1 fixture carries six
+keys per row and no run linkage, so run count, mean duration, wall clock and both
+headline ratios are not derivable from any artifact in this worktree, and a live
+read is phase 8's authority (`03-quality.md` §2.3). `full` mode exits non-zero
+rather than printing a smaller table. That half of the baseline is deferred to
+phase 8 by erratum **E-3** (`04-phases.md` §12) and by the amended R62. The
+figures in §4's "Note on S2's denominator" are therefore **untouched**: they are
+computed from run durations, nothing measured in phase 7 touches them, and
+correcting a paragraph no instrument has yet weighed would be exactly the failure
+this project keeps catching.
 
 ## 3. Definition of done
 

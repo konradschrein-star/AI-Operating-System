@@ -699,6 +699,39 @@ with the reason rather than printing a smaller, prettier table.
 script, so the before and after are measured by one instrument.
 *How proved:* the file exists and its header names the script's SHA.
 
+**Amended round 213 — the baseline lands in two parts, one instrument.** This is
+a **split, not a retirement**: nothing is dropped and no gate clause is relaxed,
+so standing rule 4's retire-together does not apply. R62 is discharged in two
+appends to one file:
+
+- **Part 1 — phase 7, from the committed fixture.** The round/task table of
+  `00-vision.md` §2, whole-project and windowed, plus the correction of §2 and
+  the discrepancy analysis. **Landed** — the file exists and its header names the
+  script's self-computed `instrument-sha256`, which is what "How proved" above
+  asks for and is satisfiable without a database.
+- **Part 2 — phase 8, from the one authorised live read.** S1, S2, S3, run
+  count, mean run duration and wall clock. They are **not derivable in phase 7**:
+  the phase-1 fixture carries exactly six keys per row (assertion A3 of
+  `forge-control/src/lib/fixtures/replay-operator-visibility.md`) with no
+  `run_id` and no run timestamps, and `03-quality.md` §2.3 gives live reads to the
+  deploy/verify task alone. `measure-schedule.ts full` exits non-zero over that
+  fixture rather than printing a smaller table (R61), and that refusal is the
+  mechanical form of this split. Phase 8 runs
+  `measure-schedule.ts full --project 8ea0cc08-28d9-4301-9f28-c98e1c5d6838`
+  against the live database **before** the after-measurement of DoD-6 and
+  **appends** its output to the same file, so the before and the after are still
+  produced by one instrument as this requirement requires.
+
+The binding statement of the phase-8 obligation is erratum **E-3** in
+`04-phases.md` §12, which overrides any brief it contradicts;
+`evidence/baseline-8ea0cc08.md` is listed in phase 8's "Files this phase writes"
+in the same commit, so the append is not an undeclared write (`03-quality.md`
+§3.1 item 4).
+
+R62's **primary owner phase is unchanged: phase 7.** Phase 8 discharges part 2
+under R63–R68's deploy sequence and acquires no new requirement id — §K's mapping
+and `04-phases.md` §9 are untouched by this amendment.
+
 ---
 
 ## I. Deploy — phase 8

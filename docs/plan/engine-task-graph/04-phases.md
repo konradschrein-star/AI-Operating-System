@@ -490,8 +490,17 @@ endpoint.
 ```
 docs/plan/engine-task-graph/evidence/phase8-deploy.md      (new)
 docs/plan/engine-task-graph/evidence/after-<project-id>.md (new — the DoD-6 measurement)
+docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md  (APPEND — see E-3; phase 7 wrote part 1)
 docs/plan/engine-task-graph/00-vision.md                   (only if the baseline corrected §2)
 ```
+
+`baseline-8ea0cc08.md` was added to this list in round 213, in the same commit
+that created the file, because E-3 makes phase 8 write it. An undeclared write is
+a finding under `03-quality.md` §3.1 item 4, and a phase that discovers its own
+write-set by archaeology is the thing this project exists to stop.
+`00-vision.md` §2 **was** corrected by the baseline, so the last line is now a
+live obligation rather than a conditional one — phase 8 touches it only if its
+own numbers move it further.
 
 ### The deploy sequence, in order
 
@@ -707,3 +716,55 @@ its own file under `docs/research/`, the phase-1 planner writes no files at all
 (it creates tasks), so their write-sets are disjoint — and the recon lands six
 phases before the phase that needs it. No action required. Recorded so a later
 reader does not "fix" it back to 699.
+
+### E-3 — the 8ea0cc08 baseline lands in two parts; phase 8 owes the second (round 213, 2026-08-17)
+
+**R62's baseline could not be completed in phase 7, and the cause is structural
+rather than an omission.** The phase-1 fixture
+`forge-control/src/lib/fixtures/replay-operator-visibility.json` carries exactly
+six keys per row — `{id, round, role, title, status, created_at}`, asserted as
+**A3** of its sibling capture record — with **no run linkage and no run
+timestamps**. Run count, mean run duration, wall clock, S1, S2 and S3 are
+therefore not derivable from any artifact in this worktree, and `03-quality.md`
+§2.3 gives the live read that would produce them to the deploy/verify task alone.
+`measure-schedule.ts full` over that fixture exits non-zero naming
+`fixture-has-no-runs` rather than printing a smaller table, which is R61 working;
+the refusal is pasted in `evidence/baseline-8ea0cc08.md` §3.
+
+Phase 7 therefore landed **part 1** — the round/task tables, the correction of
+`00-vision.md` §2 and the discrepancy analysis, all from the committed fixture.
+
+**Phase 8 owes part 2, and this is the binding statement of that obligation.**
+As part of its deploy/verify sequence and **BEFORE** the after-measurement of
+DoD-6, phase 8 runs
+
+```bash
+cd forge-control && ./node_modules/.bin/tsx ../scripts/measure-schedule.ts full \
+  --project 8ea0cc08-28d9-4301-9f28-c98e1c5d6838
+```
+
+and **appends** its output — header first, as the script emits it — to
+`docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md`. Appended, never
+rewritten: part 1's tables and its §5 disproofs stay as they were written. The
+ordering matters for one reason and it is not bookkeeping: R62 requires the
+before and the after to be produced by **one instrument**, and an after-number
+measured before its before-number has no instrument-identity guarantee to offer.
+Run it before, from the same commit, and the two headers name the same
+`instrument-sha256`.
+
+Three consequences, stated so nobody has to infer them:
+
+1. `evidence/baseline-8ea0cc08.md` is now in phase 8's "Files this phase writes"
+   list above, added in the same commit as this erratum. An undeclared write is a
+   finding under `03-quality.md` §3.1 item 4.
+2. `01-requirements.md` §H's R62 carries the matching amendment. R62's primary
+   owner is still **phase 7** and phase 8 gains no new requirement id, so §K and
+   §9 of this document are unchanged and `check-corpus-map.py` still agrees.
+3. Phase 7's acceptance criterion that S1 and S2 are **unaffected** by the
+   renumbering still holds and is still **unverified**. It is an argument about
+   what could perturb a number — S1 and S2 read run timestamps, never
+   `project_tasks.round` — not a statement of the number. Nothing licenses
+   quoting an S1 or an S2 for the 8ea0cc08 baseline until this append lands.
+
+**This section overrides any brief it contradicts**, which is why the obligation
+lives here and not only in a final message a later planner may never read.
