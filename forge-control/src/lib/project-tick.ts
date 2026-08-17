@@ -285,10 +285,27 @@ function isGoalMode(project: Project): boolean {
   return (project.metadata as { mode?: string } | null)?.mode === "goal";
 }
 
+/** R53 — the shipped fan-out example, in the graph vocabulary.
+ *
+ *  It OMITS `round`. The route computes one from `depends_on` when the field is
+ *  absent, and a template that renders an unset shell variable into
+ *  `"round": ""` is refused outright (round 214 finding 1's type clause in
+ *  `routes/projects.ts`'s round guard) — which is the safe end of the failure
+ *  the old example invited, a task landing at round 0 with its dependencies at
+ *  300. The architect branch is the one caller that adds the field back, for
+ *  R51's phase label.
+ *
+ *  It CAPTURES THE ID, because a fan-out is unusable without it: the created
+ *  task's id is at `.task.id` on the 201 and on the 409 a repeat answers alike,
+ *  so this one line is correct whether the curl is the first attempt or a retry
+ *  (R50). `jq` is present at /usr/bin/jq on every host this fleet spawns on —
+ *  verified round 239 with `command -v jq`; a python3 fallback would cost the
+ *  prompt budget (NF7) a line that no host here needs. */
 function taskCurl(projectId: string): string {
   return (
-    `curl -sX POST http://127.0.0.1:7700/api/projects/${projectId}/tasks -H 'content-type: application/json' ` +
-    `-d '{"role":"builder","round":1,"title":"...","brief":"...","tier":"standard"}'`
+    `ID=$(curl -sX POST http://127.0.0.1:7700/api/projects/${projectId}/tasks -H 'content-type: application/json' ` +
+    `-d '{"role":"builder","title":"...","brief":"...","tier":"standard","depends_on":["<id a curl returned>"],` +
+    `"workstream":"main","write_set":["src/lib/thing.ts","src/lib/thing.test.ts"]}' | jq -r .task.id)`
   );
 }
 
@@ -299,15 +316,65 @@ const TIER_GUIDE =
   `needs the strongest model. Omit tier to fall back to the role default (Opus). Flagship is the expensive ` +
   `one — reserve it for design-heavy or genuinely hard tasks.`;
 
-const IDEMPOTENCY_NOTE =
+/** R50 — the idempotency contract, restated for a computed round.
+ *
+ *  Identity is STILL `(project, round, role, title)` (migration 0035's unique
+ *  index), and the round in that tuple is now the one `computeRound()` derives.
+ *  Stating both halves is the point: a planner that believed a computed round
+ *  might come out differently on the second attempt would stop retrying and
+ *  either lose a task or create a duplicate under a new title. It cannot —
+ *  `depends_on` is immutable after insert (R29), so the same body computes the
+ *  same round and hits the same unique index.
+ *
+ *  Exported, like `GRAPH_GUIDE` below, so R50's gate asserts the PROMPT contains
+ *  the constant's own output instead of a hand-copied substring that could
+ *  silently desync from it — this file's header states that convention. */
+export const IDEMPOTENCY_NOTE =
   `A task's identity is (project, round, role, title), so titles must be distinct within one round and role. ` +
-  `Repeating a curl answers 409 with the task that already exists instead of creating a second one — re-issuing ` +
-  `a call you are not sure landed is safe, and can never fan out duplicate agents into the same worktree.`;
+  `Round is now COMPUTED from depends_on, and the same depends_on always computes the same round, so an ` +
+  `identical repeated curl still answers 409 with the task that already exists instead of creating a second ` +
+  `one — re-issuing a call you are not sure landed is safe, the 409 body carries the original task at ` +
+  `.task.id, and it can never fan out duplicate agents into the same worktree.`;
 
-const PARALLELISM_GUIDE =
-  `Tasks in the SAME round run in PARALLEL inside the SAME worktree — only put tasks in one round when they ` +
-  `touch disjoint files. Anything that could collide goes in consecutive rounds instead. Rounds only gate ` +
-  `ordering (round N+1 starts when everything <= N is done); gaps in round numbers are fine and cost nothing.`;
+/** R47/R48/R38 — the scheduling vocabulary, and the replacement for the round
+ *  guide retired here in the commit that names R49.
+ *
+ *  Its predecessor told a planner to put anything that might collide into later
+ *  rounds one after another, which under the graph is not merely stale but
+ *  actively wrong: ordering is `depends_on`, contention is `write_set`, and a
+ *  round is a derived label that neither of them reads. A planner following the
+ *  old text would serialise by hand the very tasks this engine exists to run at
+ *  once. Neither the retired identifier nor its wording survives anywhere in
+ *  this file — INCLUDING IN THIS COMMENT, which is why the sentence above
+ *  paraphrases rather than quotes it. R49's gate greps the source, and a
+ *  doc-comment is source; it caught this comment quoting the retired phrase on
+ *  the first run (`project-tick.test.ts`, "R49 the retired round guide").
+ *
+ *  Interpolated by the goal-mode architect branch and the planner branch — the
+ *  two roles that create tasks. It is as dense as it is because NF7 budgets the
+ *  planner prompt: the reasoning lives in doc-comments, which cost the prompt
+ *  nothing, and only the rules a planner must act on are in the string. */
+export const GRAPH_GUIDE =
+  `SCHEDULING IS A GRAPH, NOT A ROUND NUMBER. Every task you create declares three fields and never a round:\n` +
+  `- "depends_on": ids of the tasks it waits for, as your earlier curls returned them ([] = starts at once). ` +
+  `A task is ready when every id in it is done: that is the ONLY ordering. Its round is computed as 1 + the ` +
+  `highest dependency round.\n` +
+  `- "workstream": a name like "ui", matching /^[a-z0-9][a-z0-9-]{0,39}$/, default "main". One workstream is ` +
+  `one git worktree whose tasks run one at a time; two are isolated directories that may write the SAME file ` +
+  `at once. A project may hold at most PROJECT_MAX_WORKSTREAMS distinct ones (6 unless the host overrides ` +
+  `it) and a task opening a new one past that is refused with a 400 naming the count — so open a second only ` +
+  `when two teams truly need one file concurrently.\n` +
+  `- "write_set": every repo-relative path the task writes (max 200) — the contention input. No two builders ` +
+  `in ONE workstream may declare the same file; where a split is impossible, one builder writes that file ` +
+  `twice rather than two builders serialising on it.\n` +
+  `FAN-OUT: RESEARCH wide and early — independent questions share no files and have no ordering, the ` +
+  `cheapest parallelism there is — one task each, depends_on []. BUILDERS by FILE OWNERSHIP, one write_set ` +
+  `each. REVIEWERS are a genuine join: one reviewer depending on EVERY builder of its group.\n` +
+  `INTEGRATION, NEVER AUTO-MERGE: every workstream but "main" ends in an integration task (role builder, ` +
+  `workstream "main") depending on every task of that workstream, carrying the union of their write_sets, ` +
+  `that merges its branch back and on conflict STOPS and reports the conflicting files verbatim, unresolved ` +
+  `— plus a reviewer depending on it. Auto-merge resolves in favour of whoever finishes last: silent ` +
+  `clobbering in a new costume.`;
 
 /** R12 — the worktree-only rule, appended to EVERY role prompt on a
  *  repo-backed project. Bug 3 of the first night: fleet agents edited the live
@@ -723,12 +790,24 @@ export function buildPrompt(
         `   Depth beats brevity here — thousands of lines across the corpus is normal for a real goal. ` +
         `Research with your tools (codebase, vault, web) before deciding; never plan from guesswork.\n\n` +
         `2) SEED THE PIPELINE. Create ONE planner task per phase via the API:\n${taskCurl(project.id)}\n` +
-        `   Phase k's planner goes at round k*100 (100, 200, 300, ...) — the gaps leave room for fix cycles ` +
-        `without colliding with the next phase. Each planner brief: "Plan phase k per ${corpus}/04-phases.md" ` +
+        // R51 — the one legitimate hand-written round left in the system, and the
+        // reason this branch has to spell out a field taskCurl() no longer
+        // carries. Every other caller lets the route compute the round; the
+        // architect's phase blocks are a LABEL humans and the Kanban group by,
+        // and no dependency edge could produce them because a phase-k planner
+        // has no dependency on phase k-1 (the phases are planned up front and
+        // gated by their reviewers, not by planner edges). If this branch stayed
+        // silent about the field, the architect would faithfully omit it and
+        // every planner would compute to round 0.
+        `   YOU are the one role that adds a round to that body — "round": 100 for phase 1's planner, 200 for ` +
+        `phase 2, and so on. That number is a PHASE LABEL, not a schedule: it is what lets a human and the ` +
+        `Kanban say "phase 4", and the gaps leave room for fix cycles. Your planners inherit nothing else ` +
+        `about rounds — they declare dependencies and let the engine compute every round below yours. Each ` +
+        `planner brief: "Plan phase k per ${corpus}/04-phases.md" ` +
         `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
         `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
         `reviewer briefed to attack, not just check).\n` +
-        `   ${PARALLELISM_GUIDE}\n   ${TIER_GUIDE}\n   ${IDEMPOTENCY_NOTE}\n\n` +
+        `   ${GRAPH_GUIDE}\n   ${TIER_GUIDE}\n   ${IDEMPOTENCY_NOTE}\n\n` +
         // R14/R16/R17. Gated on `live` like every other policy block: a scratch
         // project has no live checkout to deploy to and no executor to restart,
         // so this guidance would be noise at best and a wrong instruction at worst.
@@ -760,13 +839,26 @@ export function buildPrompt(
       `both and read whichever exists. Then, with the current state of the worktree, ` +
       `break YOUR assigned scope into concrete builder tasks by calling forge-control:\n` +
       `${taskCurl(project.id)}\n` +
-      `Your round is ${task.round}. Create builder tasks at round ${task.round + 1} (and ${task.round + 2}, ` +
-      `${task.round + 3}, ... if they must run sequentially), and ALWAYS finish with exactly one reviewer task ` +
-      `in the round after your last builder round, briefed with the phase's acceptance criteria and exactly ` +
-      `which tests/commands to run. Each builder brief must be self-contained: files to touch, the approach, ` +
-      `and how the builder verifies its own work (tests to write/run). Do not exceed round ${task.round + 20} — ` +
-      `the space beyond that belongs to fix cycles and the next phase.\n` +
-      `${PARALLELISM_GUIDE}\n${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}\n` +
+      // ORDER MATTERS, and it was wrong until it was read aloud. GRAPH_GUIDE
+      // DEFINES write_set; the two clauses below both constrain it. Printed the
+      // other way round — as this branch first shipped in draft — the prompt told
+      // a planner what belongs in a write_set two paragraphs before saying what a
+      // write_set is. `.includes()` gates cannot see that, and a planner cannot
+      // miss it.
+      `${GRAPH_GUIDE}\n` +
+      `ALWAYS finish with exactly one reviewer task DEPENDING ON every builder you created — the join, not ` +
+      `"the round after the last builder" — briefed with the phase's acceptance criteria and exactly which ` +
+      `tests/commands to run. Each builder brief is self-contained: the files it will write, the approach, ` +
+      `and how it verifies its own work (tests to write/run).\n` +
+      `COMPANION FILES: a write_set names every file that must change for the task's requirement to be ` +
+      `satisfied AND its gate to be honest — implementation, test and gate clause alike, even across another ` +
+      `phase's nominal ownership, and then the brief says why. A task changing a shared type, an exported ` +
+      `signature or a fixture shape includes the TEST FACTORIES AND CALL SITES that change with it, not ` +
+      `merely the file whose behaviour is the point. A write_set is an input to a scheduling decision, not a ` +
+      `summary of intent: phase 2 of this very project widened a shared type and forced edits to two test ` +
+      `files' object factories no write_set named — a finding then, a clobber under workstreams, where two ` +
+      `sets omitting the same forced companion are scheduled in parallel over it.\n` +
+      `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}\n` +
       `Do not write implementation code yourself — plan, then fan out.` +
       // R16: the planner writes the reviewer briefs, so it needs the push rule
       // in hand to put it into them.
@@ -820,7 +912,19 @@ export function buildPrompt(
       `docs/plan/03-quality.md for a project whose corpus predates it. Look at BOTH paths, read whichever ` +
       `exists, and name in your review which one you used; if neither exists, say so explicitly rather than ` +
       `reviewing without gates and staying quiet about it. ` +
-      `A review without executed checks is not a review. End your final message with a line starting ` +
+      `A review without executed checks is not a review.\n` +
+      // R57 — the write-set audit, the enforcement point for R52. The "why it is
+      // satisfiable" sentence is not decoration: 03-quality.md §4 records three
+      // consecutive reviewers disclosing-and-proceeding against a gate that could
+      // not be passed, and a reviewer who assumes THIS gate needs archaeology
+      // (grepping briefs for prose file lists) would do the same. Write-sets are
+      // declared, stored on the row, and rendered into the builder's own prompt.
+      `WRITE-SET AUDIT (one gate, mandatory): for every builder task in this group, compare the paths its ` +
+      `commits actually touched (git log --name-only over that task's commits) against the write_set it ` +
+      `declared and restated in its report. An undeclared write is a FINDING, not a footnote. This gate is ` +
+      `satisfiable by construction — write-sets are DECLARED on the task row, never archaeologically ` +
+      `reconstructed by grepping briefs — so there is nothing here to disclose and proceed past.\n` +
+      `End your final message with a line starting ` +
       `exactly with "VERDICT: PASS" if it's genuinely ready, or "VERDICT: NEEDS_FIXES" followed by a concrete ` +
       `numbered list (file:line, the problem, the fix) if not. Never skip the VERDICT line.` +
       // R13 + R16: the reviewer is the round's gate, so both the cleanliness
@@ -856,7 +960,18 @@ export function buildPrompt(
       header +
       `\nImplement this directly in the worktree (branch ${ws.work_branch} is already checked out). ` +
       `Commit your changes with a clear message when done. Verify your own work before reporting done — run ` +
-      `the tests your brief names, and write the tests it asks for.\n\n` +
+      `the tests your brief names, and write the tests it asks for.\n` +
+      // R52 — the declared write_set is only a scheduling input if somebody
+      // checks it, and the reviewer's R57 gate is that somebody. Naming the gate
+      // here is deliberate: a builder that knows its writes will be compared
+      // against its declaration discloses the overflow itself, which is what
+      // rounds 213 and 222 did and what §10 of 04-phases.md records. The list is
+      // rendered from `task.write_set`, so a builder cannot restate a set the
+      // scheduler did not actually store.
+      `YOUR DECLARED WRITE-SET is ${task.write_set.length > 0 ? task.write_set.join(", ") : "(empty — nothing was declared)"}. ` +
+      `Restate it in your final report, and if you wrote ANY file outside it, say so LOUDLY: name each ` +
+      `undeclared file and why it had to change. Your reviewer compares the paths your commits touched ` +
+      `against this list and reports an undeclared write as a finding — disclose it first.\n\n` +
       `${BROWSER_FIRST}`
     );
   }

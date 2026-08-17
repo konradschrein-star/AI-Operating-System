@@ -486,10 +486,24 @@ r.post("/:id/tasks", async (c) => {
    * expression disagreed, so this is enforcement catching up to prose rather
    * than a new rule. `typeof !== "number"` and NOT a `Number.isInteger(raw)`
    * probe, because the two differ on exactly the values worth refusing loudly.
-   * Safe: taskCurl()'s shipped example in project-tick.ts sends `"round": 1`,
-   * a JSON number, so no real caller regresses — a JSON body cannot carry a
-   * numeric string by accident unless someone quoted it, and quoting it is the
-   * typo. The message is REUSED verbatim rather than given its own: unlike
+   *
+   * SAFE — AND AMENDED AT ROUND 239 WHERE IT IS ENFORCED (standing rule 2; the
+   * planner's finding F-B). This sentence read that `taskCurl()`'s shipped
+   * example in `project-tick.ts` sends `"round": 1`, a JSON number, so no real
+   * caller regresses. R53 falsified it the moment phase 5 landed: `taskCurl()`
+   * now OMITS `round` entirely, a planner's curl does not send the field, and the
+   * round is COMPUTED from `depends_on` by the `!roundSupplied` branch below.
+   * The reasoning survives intact — stronger, in fact, which is why the guard
+   * itself is unchanged: the ONLY caller left that supplies a round is the
+   * goal-mode architect branch, whose prompt shows the field as a literal JSON
+   * number (`"round": 100`, R51's phase label). Nothing in the tree sends a
+   * quoted round, a JSON body cannot carry a numeric string by accident unless
+   * someone quoted it, and quoting it is the typo. Leaving the stale sentence
+   * would have left the next reader with a false premise about the very call this
+   * prompt now teaches — the ABSENT-round path, which is the case this guard
+   * exists to hold apart from a supplied one.
+   *
+   * The message is REUSED verbatim rather than given its own: unlike
    * ruling 2's out-of-range case, `[]` and `"1"` are genuinely not
    * non-negative integers, so the existing sentence is true of them. */
   const roundSupplied = body.round !== undefined && body.round !== null;

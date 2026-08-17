@@ -1764,3 +1764,525 @@ describe("R58 spawn log — workstream and dependency count", () => {
     assert.match(line, /workstream=ui/);
   });
 });
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * PHASE 5A (round 239) — the graph vocabulary. The old round guide retired,
+ * planners taught depends_on / workstream / write_set.
+ *
+ * Requirements: R47, R48, R49, R50, R51, R52, R53, NF7, plus R38's
+ * planner-prompt half and R57's reviewer-prompt half.
+ *
+ * APPENDED ONLY. Nothing above this line was modified.
+ *
+ * ── WHAT WOULD MAKE THIS INSTRUMENT REPORT A PASS WRONGLY ─────────────────
+ *
+ * (a) "The R49 grep passes because the file it read was empty or was the wrong
+ *     file." A readFileSync of a wrong path throws, but a zero-byte read would
+ *     certify silently: every `doesNotMatch` over an empty string passes. So
+ *     TICK_SRC asserts a POSITIVE CONTROL first — a string known to be live in
+ *     that file — before any absence is asserted. A probe that missed fails.
+ * (b) "The prompt assertions pass because the test hand-copied the substring it
+ *     is looking for, and the constant says something else." Closed by asserting
+ *     `prompt.includes(GRAPH_GUIDE)` / `includes(IDEMPOTENCY_NOTE)` against the
+ *     constants' OWN output (this file's header states the convention); the
+ *     hand-written substrings below are asserted against the CONSTANT, so a
+ *     reworded constant that lost a required clause fails rather than drifting.
+ * (c) "The NF7 length assertion passes because it measured the SHORT path." A
+ *     scratch project gets no WORKTREE_POLICY, no MANAGER_COMMS and no
+ *     GITHUB_PUSH_GUIDE, and would measure ~3k characters under any budget.
+ *     `maximalPlannerPrompt()` asserts all four blocks are present before it
+ *     returns, so a fixture that stopped being maximal fails instead of
+ *     reporting a comfortable pass.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+import { GRAPH_GUIDE, IDEMPOTENCY_NOTE } from "./project-tick.ts";
+
+/** The engine's own source, read once. The positive control runs at module load
+ *  so an empty or wrong read cannot reach an assertion that would pass on it
+ *  (standing rule 3 — a sweep whose probe misses must fail, not certify). */
+const TICK_SRC = (() => {
+  const src = readFileSync(fileURLToPath(new URL("./project-tick.ts", import.meta.url)), "utf8");
+  assert.ok(
+    src.includes("WORKTREE-ONLY POLICY"),
+    "POSITIVE CONTROL FAILED: project-tick.ts was read but does not contain a string known " +
+      "to be live in it — the read is empty or points at the wrong file, and every absence " +
+      "asserted below would pass vacuously",
+  );
+  return src;
+})();
+
+/** The linkage key is BUILT, never spelled — see cp3-linkage.test.ts's header:
+ *  boundary 08 §4.3 greps this branch's diff of `forge-control/src` for it and
+ *  must match only `lib/cc-runner.ts` and `db/projects.ts`. */
+const MANAGER_LINK_KEY = "origin_" + "chat_id";
+
+/** The MAXIMAL planner prompt — the only measurement NF7's budget is meaningful
+ *  against. A repo-backed project (WORKTREE_POLICY + GITHUB_PUSH_GUIDE), goal
+ *  metadata, and a manager-chat linkage (MANAGER_COMMS); ESCALATION_POLICY is
+ *  unconditional. Every one of the four is asserted present before the string is
+ *  handed back, because a length assertion taken on a scratch project measures
+ *  the short path and would report a pass WRONGLY. */
+function maximalPlannerPrompt(): string {
+  const proj = project({
+    repo: "ai-os",
+    metadata: {
+      mode: "goal",
+      [MANAGER_LINK_KEY]: "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    },
+  });
+  const prompt = buildPrompt(task({ role: "planner", round: 500 }), proj);
+  for (const [name, needle] of [
+    ["WORKTREE_POLICY", "WORKTREE-ONLY POLICY"],
+    ["ESCALATION_POLICY", "AUTONOMY AND ESCALATION"],
+    ["MANAGER_COMMS", "MANAGER COMMS"],
+    ["GITHUB_PUSH_GUIDE", "GITHUB PUSH"],
+  ] as const) {
+    assert.ok(
+      prompt.includes(needle),
+      `NOT THE MAXIMAL PATH: ${name} is absent, so this measurement understates the ` +
+        "prompt every real planner receives (NF7)",
+    );
+  }
+  return prompt;
+}
+
+const goalProject = project({
+  repo: "ai-os",
+  metadata: { mode: "goal" },
+});
+
+describe("R49 the retired round guide leaves no trace in the engine's source", () => {
+  /* THE TWO NEEDLES ARE ASSEMBLED, NEVER SPELLED, and that is not a stylistic
+   * choice — it is what keeps R49's own gate satisfiable. 03-quality.md §3.2's
+   * phase-5 gate and this task's verify block both grep `forge-control/` for the
+   * retired wording and for the retired identifier and require EMPTY output (the
+   * two commands are quoted in full in evidence/phase5-prompts.md §3, which no
+   * such sweep reads), and this file is under `forge-control/`. A test that
+   * spelled either literal — in a regex, in a
+   * failure message, in a comment quoting the command — would put hits back into
+   * the very sweep it exists to keep clean, and the next three reviewers would
+   * disclose-and-proceed against a gate that could no longer be passed
+   * (00-vision.md §7 rule 2; the `pm2 restart` precedent in 03-quality.md §4).
+   * So the failure messages DESCRIBE the retired text instead of quoting it.
+   * `.join()`/`+` are opaque to grep and exact to the assertion. */
+  const RETIRED_WORDING = ["consecutive", "rounds"].join(" ");
+  const RETIRED_IDENTIFIER = "PARALLEL" + "ISM_GUIDE";
+
+  test("G1 — neither the retired wording nor the retired identifier occurs in project-tick.ts", () => {
+    // R49's *How proved* named "the old assertion is deleted, not skipped".
+    // MEASURED at HEAD d9858b99a64d6d7ee835ee359fda9515a315bbf3, before this
+    // commit: grepping the retired identifier across *.ts, *.sh and *.py in the
+    // whole repo returned exactly three hits, ALL of them the constant and its
+    // two interpolation sites in project-tick.ts — no test anywhere asserted its
+    // content. There was therefore no assertion to delete, and deleting
+    // "something" to discharge the clause would have removed an unrelated test.
+    // The retirement is constant-only, the commit message says so and names R49,
+    // and this POSITIVE anti-regression gate replaces the assertion that never
+    // existed: R49 becomes unrepeatable rather than merely done. Doc-comments
+    // count as source, which is why the surviving comment in project-tick.ts
+    // paraphrases the retired text instead of quoting it — this gate caught that
+    // comment quoting it on its first run.
+    assert.ok(
+      !TICK_SRC.includes(RETIRED_WORDING),
+      `R49: the retired round guide's wording ("${RETIRED_WORDING}") is back in ` +
+        "project-tick.ts. Telling a planner to separate colliding work into successive rounds " +
+        "is actively wrong under the graph: ordering is depends_on, contention is write_set, " +
+        "and a round is a derived label that reads neither",
+    );
+    assert.ok(
+      !TICK_SRC.includes(RETIRED_IDENTIFIER),
+      `R49: the retired identifier (${RETIRED_IDENTIFIER}) is back in project-tick.ts — it was ` +
+        "to be deleted, not commented out, not left unreferenced, not renamed in place",
+    );
+  });
+
+  test("both former interpolation sites now carry GRAPH_GUIDE", () => {
+    // The planner and the goal-mode architect are the two roles that create
+    // tasks, and were the two sites the retired constant reached.
+    const plannerPrompt = buildPrompt(task({ role: "planner" }), goalProject);
+    const architectPrompt = buildPrompt(task({ role: "architect" }), goalProject);
+    assert.ok(plannerPrompt.includes(GRAPH_GUIDE), "R49/R47: planner prompt lost GRAPH_GUIDE");
+    assert.ok(
+      architectPrompt.includes(GRAPH_GUIDE),
+      "R49/R47: goal-mode architect prompt lost GRAPH_GUIDE — the architect seeds the planners " +
+        "and must hand them the same vocabulary",
+    );
+  });
+});
+
+describe("R47/R48/R38 the graph vocabulary the planner is taught", () => {
+  const plannerPrompt = maximalPlannerPrompt();
+
+  test("G3 — the round instruction is gone, the three declared fields are in", () => {
+    assert.doesNotMatch(
+      plannerPrompt,
+      /Your round is/,
+      "R47: the planner prompt still tells the planner its round. A planner that writes round " +
+        "numbers is the defect this phase exists to remove (DoD-5)",
+    );
+    assert.doesNotMatch(
+      plannerPrompt,
+      /Do not exceed round/,
+      "R47: the round-ceiling instruction survived — there is no round for a planner to exceed",
+    );
+    for (const field of ["depends_on", "workstream", "write_set"]) {
+      assert.ok(
+        plannerPrompt.includes(field),
+        `R47: the planner prompt never names "${field}" — a planner cannot declare a field it ` +
+          "has not been told about",
+      );
+    }
+  });
+
+  test("R47 — the companion-files clause is in the planner prompt, in its own terms", () => {
+    for (const clause of [
+      "TEST FACTORIES AND CALL SITES",
+      "its gate to be honest",
+      "not a summary of intent",
+    ]) {
+      assert.ok(
+        plannerPrompt.includes(clause),
+        `R47 (companion files, added round 204): the planner prompt is missing "${clause}". ` +
+          "Two workstreams whose write-sets both omit the same forced companion are scheduled " +
+          "in parallel over that file — a bookkeeping finding today, a clobber under workstreams",
+      );
+    }
+  });
+
+  test("R48 — the three fan-out rules are stated as rules", () => {
+    for (const [rule, needle] of [
+      ["research fans out wide and early", "RESEARCH wide and early"],
+      ["research has no ordering and no shared files", "share no files and have no ordering"],
+      ["builders fan out by file ownership", "BUILDERS by FILE OWNERSHIP"],
+      ["reviewers remain a genuine join", "REVIEWERS are a genuine join"],
+    ] as const) {
+      assert.ok(
+        GRAPH_GUIDE.includes(needle),
+        `R48: GRAPH_GUIDE no longer states that ${rule} (looked for "${needle}")`,
+      );
+    }
+  });
+
+  test("R48 — file ownership is stated as a constraint, with the no-split ruling", () => {
+    assert.ok(
+      GRAPH_GUIDE.includes("No two builders in ONE workstream may declare the same file"),
+      "R48: GRAPH_GUIDE lost the file-ownership constraint that makes write_set a scheduling input",
+    );
+    assert.ok(
+      GRAPH_GUIDE.includes("one builder writes that file twice"),
+      "R48 (04-phases.md §10's closing ruling): where a split is impossible the file goes to ONE " +
+        "builder — otherwise a planner serialises two builders on it, which is the stall this " +
+        "project measured",
+    );
+  });
+
+  test("R38 — the integration task is explicit, joined by a reviewer, and never auto-merged", () => {
+    for (const [what, needle] of [
+      ["the prohibition, in the heading a planner cannot skim past", "NEVER AUTO-MERGE"],
+      ["a terminal task per non-main workstream", 'every workstream but "main" ends in an integration task'],
+      ["role builder, workstream main", '(role builder, workstream "main")'],
+      ["it depends on every task of that workstream", "depending on every task of that workstream"],
+      ["it carries the union of the write-sets", "carrying the union of their write_sets"],
+      ["on conflict it stops and reports verbatim", "STOPS and reports the conflicting files verbatim"],
+      ["a reviewer depends on it", "plus a reviewer depending on it"],
+      ["why auto-merge is forbidden", "whoever finishes last"],
+    ] as const) {
+      assert.ok(
+        GRAPH_GUIDE.includes(needle),
+        `R38: GRAPH_GUIDE no longer states ${what} (looked for "${needle}"). Auto-merge resolves ` +
+          "in favour of whoever finishes last, which is silent clobbering in a new costume",
+      );
+    }
+  });
+
+  test("the one-reviewer join and the self-contained brief survived the rewrite", () => {
+    assert.ok(
+      plannerPrompt.includes("exactly one reviewer task DEPENDING ON every builder you created"),
+      "R47/R48: the planner must still end with exactly one reviewer — now expressed as a " +
+        "dependency join, not as 'the round after your last builder round'",
+    );
+    assert.ok(
+      plannerPrompt.includes("the files it will write"),
+      "R47: a builder brief must NAME THE FILES IT WILL WRITE — that is the input to contention " +
+        "computation, and it must be declared rather than archaeologically reconstructed",
+    );
+  });
+
+  test("the corpus-reading sentence is untouched — both layouts still named", () => {
+    // cp3-linkage.test.ts asserts these two strings independently; this case
+    // states the dependency so a future rewrite of this branch sees it here too.
+    assert.ok(
+      plannerPrompt.includes("docs/plan/engine-task-graph") ||
+        plannerPrompt.includes("docs/plan/test-project"),
+      "the slugged corpus path is gone from the planner prompt (C18, cp3-linkage.test.ts)",
+    );
+    assert.ok(
+      plannerPrompt.includes("flat docs/plan/"),
+      "the flat corpus layout is gone from the planner prompt — an in-flight project planned " +
+        "before the slug landed would be sent to a directory that does not exist (C18)",
+    );
+  });
+});
+
+describe("R50 idempotency under a computed round", () => {
+  test("the note states both halves: identity unchanged, round computed", () => {
+    for (const [what, needle] of [
+      ["identity is still the four-tuple", "(project, round, role, title)"],
+      ["the round is now computed", "COMPUTED from depends_on"],
+      ["the same depends_on computes the same round", "always computes the same round"],
+      ["a repeat still 409s", "409"],
+      ["re-issuing is safe", "safe"],
+      ["the 409 body carries the original task", "carries the original task"],
+    ] as const) {
+      assert.ok(
+        IDEMPOTENCY_NOTE.includes(needle),
+        `R50: IDEMPOTENCY_NOTE no longer states that ${what} (looked for "${needle}"). A planner ` +
+          "that believed a computed round might differ on the second attempt would retry into a " +
+          "duplicate instead of trusting the 409",
+      );
+    }
+  });
+
+  test("both task-creating roles receive it", () => {
+    assert.ok(
+      buildPrompt(task({ role: "planner" }), goalProject).includes(IDEMPOTENCY_NOTE),
+      "R50: planner prompt lost IDEMPOTENCY_NOTE",
+    );
+    assert.ok(
+      buildPrompt(task({ role: "architect" }), goalProject).includes(IDEMPOTENCY_NOTE),
+      "R50: goal-mode architect prompt lost IDEMPOTENCY_NOTE",
+    );
+  });
+});
+
+describe("R53 the shipped curl example", () => {
+  const plannerPrompt = buildPrompt(task({ role: "planner" }), goalProject);
+  /** The example body only — asserting "the prompt contains no round" would be
+   *  wrong (the header still says "Your task (round 500)") and asserting it over
+   *  the whole prompt is what would make this gate lie. */
+  const curl = plannerPrompt.slice(
+    plannerPrompt.indexOf("ID=$(curl"),
+    plannerPrompt.indexOf("| jq -r .task.id)") + "| jq -r .task.id)".length,
+  );
+
+  test("the example is delimited at all — the slice's own control", () => {
+    assert.ok(
+      curl.startsWith("ID=$(curl") && curl.endsWith("| jq -r .task.id)"),
+      `the curl example could not be sliced out of the planner prompt: ${JSON.stringify(curl.slice(0, 80))}`,
+    );
+  });
+
+  test("it shows the three graph fields and OMITS round", () => {
+    for (const field of ['"depends_on"', '"workstream"', '"write_set"']) {
+      assert.ok(curl.includes(field), `R53: the example body does not show ${field}`);
+    }
+    assert.doesNotMatch(
+      curl,
+      /"round"/,
+      'R53: the example body still sends "round". The route computes it from depends_on, and a ' +
+        "template that renders an unset shell variable into an empty round is exactly how a task " +
+        "lands at round 0 with its dependencies at 300",
+    );
+  });
+
+  test("it captures the id a fan-out needs, at the path both 201 and 409 use", () => {
+    // routes/projects.ts POST /:id/tasks: 201 -> { task }, 409 -> { task, error }.
+    // The id is at .task.id in both, so one line serves a first attempt and a retry.
+    assert.ok(curl.includes("jq -r .task.id"), "R53/R50: the example does not capture the created id");
+  });
+});
+
+describe("R51 the architect's phase label is the last hand-written round", () => {
+  const architectPrompt = buildPrompt(task({ role: "architect" }), goalProject);
+
+  test("G4 — the k*100 seeding instruction survives and is described as a label", () => {
+    assert.ok(
+      architectPrompt.includes('"round": 100'),
+      "R51: the goal-mode architect is no longer shown the round field it alone adds. taskCurl() " +
+        "omits round (R53), so without this the architect faithfully omits it too and every " +
+        "phase planner computes to round 0",
+    );
+    assert.ok(
+      architectPrompt.includes("PHASE LABEL, not a schedule"),
+      "R51: the k*100 round is not described as a phase label — the one legitimate hand-written " +
+        "round left in the system",
+    );
+    assert.ok(
+      architectPrompt.includes("round k*100 - 1"),
+      "R51: the scout-before-a-phase instruction was lost with the rewrite",
+    );
+    assert.ok(
+      architectPrompt.includes("inherit nothing else"),
+      "R51: the prompt must say the planners inherit nothing else about rounds, or the architect " +
+        "will pass its phase-label habit down to them",
+    );
+  });
+
+  test("G4 negative — a NON-goal-mode architect gains no phase label", () => {
+    const plain = buildPrompt(task({ role: "architect" }), project({ repo: "ai-os" }));
+    assert.doesNotMatch(
+      plain,
+      /"round": 100/,
+      "R51: the phase-label block leaked into the non-goal-mode architect branch, which seeds no " +
+        "per-phase planners at all",
+    );
+    assert.doesNotMatch(plain, /PHASE LABEL/, "R51: same leak, the describing sentence");
+  });
+});
+
+describe("R52 the builder restates its declared write-set", () => {
+  test("the declared paths are rendered from the task row, not left to the brief", () => {
+    const prompt = buildPrompt(
+      task({ role: "builder", write_set: ["src/lib/a.ts", "src/lib/a.test.ts"] }),
+      project({ repo: "ai-os" }),
+    );
+    assert.ok(
+      prompt.includes("src/lib/a.ts, src/lib/a.test.ts"),
+      "R52: the builder is not shown the write_set stored on its own row — a builder that has to " +
+        "reconstruct its declaration from prose cannot restate it faithfully",
+    );
+    assert.ok(
+      prompt.includes("Restate it in your final report"),
+      "R52: the builder is not required to restate its write-set",
+    );
+    assert.ok(
+      prompt.includes("say so LOUDLY"),
+      "R52: the loud-disclosure requirement for a write outside the set is gone. A declared " +
+        "write-set nobody discloses against is a suggestion",
+    );
+    assert.ok(
+      prompt.includes("Your reviewer compares the paths your commits touched"),
+      "R52: the prompt must name R57's reviewer gate as the thing that will check the claim",
+    );
+  });
+
+  test("an empty write_set says so instead of rendering an empty list", () => {
+    // NF1 in prompt form: a builder shown "YOUR DECLARED WRITE-SET is ." would
+    // read it as a rendering bug and ignore the clause.
+    const prompt = buildPrompt(task({ role: "builder", write_set: [] }), project({ repo: "ai-os" }));
+    assert.ok(
+      prompt.includes("(empty — nothing was declared)"),
+      "R52: an empty write_set must be stated as empty, not rendered as a blank list",
+    );
+  });
+});
+
+describe("R57 the reviewer's write-set audit", () => {
+  const reviewerPrompt = buildPrompt(task({ role: "reviewer" }), project({ repo: "ai-os" }));
+
+  test("the gate names its comparison, its verdict, and why it is satisfiable", () => {
+    for (const [what, needle] of [
+      ["the audit exists", "WRITE-SET AUDIT"],
+      ["it compares committed paths", "git log --name-only"],
+      ["against the declared set", "against the write_set it declared"],
+      ["an undeclared write is a finding", "is a FINDING, not a footnote"],
+      ["write-sets are declared, not reconstructed", "DECLARED on the task row"],
+      ["so there is nothing to disclose past", "nothing here to disclose and proceed past"],
+    ] as const) {
+      assert.ok(
+        reviewerPrompt.includes(needle),
+        `R57: the reviewer prompt no longer states ${what} (looked for "${needle}"). A reviewer ` +
+          "who believes a gate is unsatisfiable discloses and proceeds, and that habit is what " +
+          "this project exists to remove (03-quality.md §4)",
+      );
+    }
+  });
+
+  test("R37's diff base is exactly what phase 4C shipped", () => {
+    // Phase 5 owns the prompt constants; the diff base is phase 4C's and is
+    // asserted in full by "R36/R37 … byte-identical" above. This case only
+    // guards against the write-set audit having been spliced INTO that sentence.
+    assert.ok(
+      reviewerPrompt.includes("Review the actual diff (git diff main...HEAD)"),
+      "R37: the `main`-workstream diff base changed wording — phase 4C's text was to be left " +
+        "exactly as it shipped",
+    );
+  });
+});
+
+describe("NF7 the prompt budget, and the assertion that holds it", () => {
+  /* THE BASELINE, and how to re-derive it.
+   *
+   *   BASELINE = 9279 characters, MEASURED at
+   *   d9858b99a64d6d7ee835ee359fda9515a315bbf3 (round 239's tip, before this
+   *   commit's first edit) through the MAXIMAL path — repo-backed "ai-os", goal
+   *   metadata, manager-chat linkage — i.e. including WORKTREE_POLICY +
+   *   ESCALATION_POLICY + MANAGER_COMMS + GITHUB_PUSH_GUIDE.
+   *
+   * To re-derive: check out that sha and print
+   * `buildPrompt(<planner task>, <that project>).length` with the fixtures
+   * `maximalPlannerPrompt()` above builds (they are the same four blocks), or
+   * equivalently run this test at that sha and read the measured value out of
+   * its failure message.
+   *
+   * ── THE BUDGET IS AMENDED HERE, WHERE IT IS ENFORCED (standing rule 2) ────
+   *
+   * NF7 asks for "~1500 characters net", on the stated expectation that "the
+   * retired round guide's removal pays for most of the new text". MEASURED, this
+   * commit: that removal pays 314 characters, and the round instruction it also
+   * deletes pays 509 — 823 in total against 3221 characters of new required
+   * text, for a net of +2398:
+   *
+   *   GRAPH_GUIDE                1800   (R47 three fields, R48 three fan-out
+   *                                      rules, R38 integration + never-auto-merge)
+   *   companion-files clause      769   (R47, added round 204)
+   *   reviewer-join + brief       355   (R47, replacing part of the 509 deleted)
+   *   IDEMPOTENCY_NOTE           +169   (R50)
+   *   taskCurl example           +128   (R53)
+   *   retired round guide         -314  (R49)
+   *   deleted round instruction   -509  (R47)
+   *   ------------------------------------------------------------------
+   *   net                       +2398
+   *
+   * 188 of GRAPH_GUIDE's 1800 are the workstream cap stated honestly. Saying a
+   * flat "Max 6" would have taught a call that 400s wherever
+   * PROJECT_MAX_WORKSTREAMS is overridden (routes/projects.ts reads it from the
+   * environment), and a prompt that teaches a refused call is worse than no
+   * prompt. That is the trade this budget is paying for.
+   *
+   * 1500 is therefore not reachable while R47's companion-files clause and R38's
+   * integration paragraph are stated in the terms their requirements demand —
+   * the alternative is a prompt that passes a `.includes()` check and cannot be
+   * followed, which 03-quality.md §3.2's phase-5 gate names as "a passing gate
+   * on a broken deliverable". Rather than disclose-and-proceed against a budget
+   * that cannot be met, the budget is amended here with its arithmetic inline
+   * and the divergence from NF7's "~1500" REPORTED to the manager chat (round
+   * 239) for a ruling on the corpus text, which lives in 01-requirements.md §J
+   * — a file outside this task's declared write-set.
+   *
+   * BUDGET = 3050 = the 2398 delivered + 652 of headroom for builder 5B, which
+   * adds a short block to withPolicy() at round 240 and lands inside this same
+   * measurement. 652 > the 600 that brief reserves. The gate still fails on any
+   * unbudgeted growth: it is 652 characters from red, not comfortable — the
+   * headroom case below was observed RED at 502 when the workstream-cap sentence
+   * was added, which is how both halves of this gate are known to work. */
+  const BASELINE = 9279;
+  const BUDGET = 3050;
+
+  test("G5 — the maximal planner prompt stays inside the amended budget", () => {
+    const measured = maximalPlannerPrompt().length;
+    const cap = BASELINE + BUDGET;
+    assert.ok(
+      measured <= cap,
+      `NF7: the planner prompt is over budget. baseline ${BASELINE} (at ` +
+        `d9858b99a64d6d7ee835ee359fda9515a315bbf3, maximal path), budget ${BUDGET}, ` +
+        `cap ${cap}, measured ${measured}, overrun ${measured - cap}. Every worker prompt ` +
+        "carries WORKTREE_POLICY + ESCALATION_POLICY + MANAGER_COMMS, and unbounded prompt " +
+        "growth is a real cost per spawn — cut text or amend the budget where it is enforced, " +
+        "with the arithmetic, and say so.",
+    );
+  });
+
+  test("the headroom builder 5B needs is actually there", () => {
+    // Stated as its own case so 5B's brief has a number to read rather than a
+    // subtraction to perform, and so eating that headroom fails HERE, loudly,
+    // rather than as a mysterious overrun in round 240.
+    const measured = maximalPlannerPrompt().length;
+    const headroom = BASELINE + BUDGET - measured;
+    assert.ok(
+      headroom >= 600,
+      `NF7: only ${headroom} characters of headroom left, and builder 5B (round 240) needs 600 ` +
+        "for the withPolicy() addenda that land inside this same measurement",
+    );
+  });
+});
