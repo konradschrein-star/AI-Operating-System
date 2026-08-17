@@ -104,7 +104,9 @@ Parts carrying `parentToolUseId` render with a visible sub-agent marker (indent/
 *Verify:* fixture test + screenshot of run `3853c154-…` where sub-agent Bash calls show the marker.
 
 **R19 — Notification gap documented, not plumbed.**
-`docs/plan/notification-gap.md`: exactly what is missing (agent completion payloads never reach `runs.thread`), where it dies (`cc-runner.ts:417–429`, closed `CcEvent` union at :170–188), what a fix would take (new event type + `ThreadEntry.kind` + mapping branch), and why it is out of scope here (engine files owned by engine-v2-research-lane). No code change for this item.
+`docs/plan/notification-gap.md`: exactly what is missing (the harness's **async task-completion notification** — narrowed round 1350, see below), where it dies (`cc-runner.ts:502–514`, closed `CcEvent` union at :234–235), what a fix would take (new event type + `ThreadEntry.kind` + mapping branch), and why it is out of scope here (engine files owned by engine-v2-research-lane). No code change for this item. **Status: OPEN.**
+*Pins drifted:* the original `:417–429` / `:170–188` were written against an older `cc-runner.ts` and now point at the idle-timeout kill logic and `buildSystemPrompt` respectively; corrected above against `b02aa62`.
+*Claim narrowed (round 1350):* "agent completion payloads never reach `runs.thread`" was over-broad and is **false** for synchronous sub-agent results, for async sub-agents' own inline entries (`meta.parent_tool_use_id`), and for peer traffic via `POST /api/runs/:id/message` (`kind: "comms"`). Only the async completion notification is genuinely uncovered.
 *Verify:* doc exists, claims match the quoted code, and no diff touches `cc-runner.ts`.
 
 **R20 — No silent drops in the transcript.**

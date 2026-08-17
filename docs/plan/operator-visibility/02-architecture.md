@@ -46,7 +46,7 @@ runs.thread jsonb ──GET /api/chat/:id──► ChatSurface(detailQ) ──�
                                                         dot(color), preview 110 chars, ARGS/RESULT <pre> sections
 ```
 
-Facts that gate design: there is no per-tool dispatch anywhere today (`tools.by_name` unused; verified supported by installed assistant-ui 0.14.24); `thread-mapping.ts` drops `parent_tool_use_id` and the call-side `is_error`; `Agent` (not `Task`) is the CLI's spawn tool name (63 occurrences vs 0); task-completion notifications never reach the thread (`cc-runner.ts:417–429` forwards only `tool_result` blocks; closed `CcEvent` union).
+Facts that gate design: there is no per-tool dispatch anywhere today (`tools.by_name` unused; verified supported by installed assistant-ui 0.14.24); `thread-mapping.ts` drops `parent_tool_use_id` and the call-side `is_error`; `Agent` (not `Task`) is the CLI's spawn tool name (63 occurrences vs 0); the harness's **async task-completion notification** never reaches the thread (the `evt.type === "user"` branch of `cc-runner.ts`, `:502–514` @ `b02aa62`, forwards only `tool_result` blocks; closed `CcEvent` union at `:234–235`) — *pins corrected round 1350, old `:417–429` drifted; see `docs/plan/notification-gap.md` §2b, and note this is narrower than "completion payloads never reach the thread", which is false*.
 
 ### 2.3 Kind signals in `runs` (verified against live data, 245 rows)
 
@@ -184,7 +184,9 @@ Sub-agent attribution (R18): parts with `parentToolUseId` get a left-rail marker
 
 ### 6.3 What is knowingly absent (R19)
 
-Agent completion payloads (the result text a background agent returns) are not in the thread — the operator's *reaction* to them is, but the notification itself dies in `cc-runner.ts:417–429`. `docs/plan/notification-gap.md` records: exact code path, the closed `CcEvent` union (:170–188), the minimal future fix (new event type → `appendThreadEntry` with a new `kind: "task_notification"` → one mapping branch → these same renderers pick it up), and ownership (engine-v2-research-lane). The renderers are built so that if that `kind` ever appears, the fallback path shows it rather than dropping it.
+The harness's **async task-completion notification** — the banner announcing a background agent finished — is not in the thread; it dies in `cc-runner.ts:502–514`, whose `user`-event loop forwards `tool_result` blocks and nothing else. `docs/plan/notification-gap.md` records: exact code path, the closed `CcEvent` union (`:234–235`), the minimal future fix (new event type → `appendThreadEntry` with a new `kind: "task_notification"` → one mapping branch → these same renderers pick it up), and ownership (engine-v2-research-lane). The renderers are built so that if that `kind` ever appears, the fallback path shows it rather than dropping it. *Old pins `:417–429` / `:170–188` drifted and were corrected round 1350 against `b02aa62`.*
+
+Scope correction (round 1350): this section previously read "agent completion payloads … are not in the thread", which was too broad. A **synchronous** sub-agent's final text *is* in the thread as a `tool_result` entry, an **async** sub-agent's own entries are inline under `meta.parent_tool_use_id`, and peer-run traffic arrives via `POST /api/runs/:id/message` as `kind: "comms"`. Only the notification itself is absent.
 
 ## 7. Interfaces changed (complete list)
 
