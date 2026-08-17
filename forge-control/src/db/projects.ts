@@ -27,8 +27,17 @@
  * `round` therefore no longer schedules anything. It remains a stored,
  * engine-computed integer (E1) for Kanban grouping, consolidation keys and human
  * conversation, plus ONE legacy-surface predicate: R69's term, which holds a
- * graph row behind a lower-round LEGACY row so a project that straddles the
- * deploy behaves exactly as it did before it (F13).
+ * graph row behind a lower-round LEGACY row so that in a project straddling the
+ * deploy, every row created under the OLD semantics still schedules under them
+ * (F13).
+ *
+ * NARROWED ROUND 223 — comment only, the statement below is unchanged. This
+ * read "so a project that straddles the deploy behaves exactly as it did before
+ * it", which is wider than the term delivers: a fix chain the NEW engine creates
+ * after the restart carries real graph fields (R42), so `depends_on IS NULL`
+ * cannot see it and a frozen row above it promotes where today's engine holds
+ * it. Accepted and bounded as E4 (`02-architecture.md` §9.3), blast radius in
+ * §3.2.2, tabled as F14, measured by `scripts/checks/check-r69-straddle.sh`.
  *
  * A `depends_on` whose cardinality does not match the same-project rows it names
  * is CORRUPTION, never a schedule: it blocks the task, blocks the project and

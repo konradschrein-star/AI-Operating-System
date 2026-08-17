@@ -597,3 +597,325 @@ prints absolute `mktemp -d` paths that differ on every invocation.
   and `git worktree list` shows them to whoever removes it by hand.
 - **Live verification** belongs to phase 8. Nothing here touched
   `/opt/forge-ai-os`, a live endpoint, a live service or the live database.
+
+---
+
+# Phase 4D — the R69 straddle, ruled by experiment
+
+Round 223, the last phase-4 builder. **One decision, decided by measurement.**
+Requirement touched: **R69** (narrowed, not deleted). Escalation recorded:
+**E4** in `02-architecture.md` §9.3. Failure mode tabled: **F14**. Files written
+by this round: `scripts/checks/check-r69-straddle.sh` (new),
+`docs/plan/engine-task-graph/02-architecture.md` (§3.2, §3.2.1, §3.2.2 new, §6's
+F14 row, §9's heading, §9.3 new), `docs/plan/engine-task-graph/01-requirements.md`
+(R6's matching clause, R69), `forge-control/src/db/projects.ts` (**one
+doc-comment clause — no statement changed**), and this section.
+
+Phase 6's round-223 builder was committing into the same worktree while this ran
+(`9b04039`, `6426893`); nothing above is touched by it and nothing here touches
+`forge-control/src/routes/` or the web types.
+
+## 5. The R69 straddle experiment
+
+### 5.1 The question, and why it could not be settled on paper
+
+R69 holds a frozen row — one whose closure `0040_task_graph.sql` computed at
+migration time — behind LEGACY rows only, rows carrying `depends_on IS NULL`.
+R42 (round 221) gives a fix chain created by the **new** engine real graph
+fields. So a row the new engine inserts below a frozen row is invisible to R69's
+term. `02-architecture.md` §3.2 said a straddling project *"finishes under its
+original semantics"*, which is wider than that.
+
+The root is not a bug: `depends_on` is immutable by design (§2.3, §2.3.2), and
+that immutability is exactly what lets `round` be computed once and never move.
+A fix chain created after a row was frozen **cannot** be added to that row's
+dependencies. The edge cannot exist, so the graph branch cannot see it.
+
+Two options, both defensible — A, widen R69's predicate for frozen rows only;
+B, narrow §3.2 and state the blast radius. The operator's instruction:
+
+> *"treat it as a hypothesis to test, not a ruling. Overrule it with evidence and
+> I will endorse the overrule."*
+> *"Prove your choice the way phase 1 proved R69 — fill the stubs both ways in a
+> scratch repo and show what diverges — rather than reasoning about it on paper."*
+
+### 5.2 The instrument
+
+`scripts/checks/check-r69-straddle.sh`. **No database**: it is a tick simulation
+over pure functions and the committed R9 fixture, so it needs neither
+`$DATABASE_URL` nor `$SCRATCH_DATABASE_URL`, and probe `0e` says so from inside
+the driver rather than leaving it to be believed.
+
+**No arm re-implements the rule under test.** `NARROW` is `readyRule()` plus the
+SHIPPED `graphReady()` — the same composition the replay harness's `GRAPH_RULE`
+uses. Every widened arm is `wide(gate)`, which calls `NARROW` first and can only
+ever take readiness away. "The narrow arm ran the shipped predicate" is therefore
+structural, not a claim.
+
+Three fixtures:
+
+| | what it is | why it is here |
+|---|---|---|
+| **S1** | the 131-row R9 fixture, every row frozen (closure over the migration-time snapshot), plus a post-restart fix chain at **1307/1308** carrying real `depends_on` | a straddle with **no gap row** — the case R69 was never designed for |
+| **S2** | S1 **plus one row**: `…04d3`, status `done`, `depends_on NULL`, round 1306 | a straddle **with** a gap row. Under R69 that row is inert — R69 only refuses on a legacy row that is *not* `done` |
+| **S3** | 1 planner, 1 long reviewer, 7 unrelated builders numbered above it | `00-vision.md` §2's measured motivating case. It carries the **price** of each option |
+
+Six arms: `LEGACY`, `NARROW`, and four widenings — gated on the NULL sentinel,
+on `isClosureShaped()`, on a `created_at` horizon, and ungated.
+
+**Reachability is derived, not assumed.** The chain hangs off the fixture's
+highest `done` reviewer (round 1306, derived exactly as the replay harness's case
+(f) derives it), and the instrument refuses if the pair does not land strictly
+below every non-`done` row. Why a post-restart consolidation is *likely* rather
+than merely possible: `safe-restart.sh` waits for a **quiet** fleet, and quiet
+means the last run has just finished — so the last group's consolidation is the
+one guaranteed to land after the restart, under the new engine, with R42's
+fields.
+
+### 5.3 What would have made this experiment lie, and why it did not
+
+Two were named in the brief. Both are answered by a counter, not by a paragraph.
+
+**"Both arms of my experiment ran the same code because the widened predicate was
+never actually reached."** Every widened arm counts three things and prints all
+three, per arm per fixture: how many graph rows the widening was **evaluated**
+on, how many times its gate **opened**, and how many times the term actually
+**fired** — changed an answer from ready to not-ready. An arm asserted to be
+silent must show `gate-open 0`; an arm asserted to close the divergence must show
+`fired > 0`. On S1: `WIDE-SENTINEL` evaluated 52, gate-open **0**, fired 0 —
+genuinely silent, and the probe fails if it is not. `WIDE-UNGATED` evaluated 76,
+gate-open 76, fired **6** — genuinely different code, and the probe fails if it
+is not.
+
+**"My straddling fixture was not straddling — every row had real graph fields, so
+the frozen branch never ran."** Probe `0b`: on S1, `graph-branch=133`,
+`legacy-branch=0`, `frozen=131`, `post-restart=2`, and — the number that matters
+— **8** frozen `pending` rows sit above the chain with a closure that cannot name
+it, with `graphReady()` answering for **8/8** of them. Zero on any of those is a
+refusal, not a footnote.
+
+Three more the instrument guards that the brief did not name:
+
+- **A transcription that drifted.** `simulate()` here is a transcription of the
+  replay harness's tick loop. Probe `0a` re-derives the tick count the harness
+  **pins at 14** for the base fixture under the legacy rule, and gets 14, with
+  8 promotions.
+- **A second definition of `isClosureShaped()`.** It is module-private in
+  `lib/schedule-metrics.ts` and cannot be imported, so the driver transcribes it
+  — and probe `0d` asserts the transcription's per-row count equals the SHIPPED
+  `inputCensus().closureShapedRows` on **all three** fixtures (102/102, 102/102,
+  2/2). Checked on every run, not at review time.
+- **A sha naming the worktree rather than the build.** The header prints `git
+  rev-parse HEAD`, the branch, the sha256 of all four files it exercises, and
+  **which of them are dirty against that HEAD** — and it refuses outright to run
+  inside `/opt/forge-ai-os`.
+
+One gate was **amended where it is enforced** (standing rule 2) rather than
+disclosed and worked around: `simulate()`'s tick cap is `2n + 2`, not the
+harness's `n + 2`. A row settles the tick *after* it promotes, so a fully
+serialized project needs two ticks per task — and the `WIDE-UNGATED` arm
+serializes by construction, which is the cost this experiment exists to price. An
+`n + 2` cap would make the instrument REFUSE the one arm it was built to measure.
+The reasoning is inline at the constant. `2n + 2` is still a live guard: only a
+rule that promotes nothing while something is in flight can exceed it.
+
+Two stale pins in this script's own header were found and fixed before it was
+committed — it claimed "FOUR PROMOTION ARMS" after a fifth widening was added,
+and cited a probe `0c` that does not exist. Recorded because the standing rule
+that produced them applies to the instrument as much as to the corpus.
+
+### 5.4 The transcript
+
+Run at `6426893`, with `check-r69-straddle.sh` itself untracked at the time of
+the run and committed unchanged in this commit; the four sha256 values in the
+header are what actually executed.
+
+```
+--- 1. the divergence R69 does not close --------------------------------------
+  S1 — straddle, NO gap row — 131 frozen rows + a post-restart fix chain at 1307/1308
+      LEGACY         ticks= 17 promoted= 10 widest-tick= 2
+      NARROW         ticks= 14 promoted= 10 widest-tick= 2
+      WIDE-SENTINEL  ticks= 14 promoted= 10 widest-tick= 2   widening: evaluated=52 gate-open=0 fired=0
+      WIDE-CLOSURE   ticks= 14 promoted= 10 widest-tick= 2   widening: evaluated=52 gate-open=0 fired=0
+      WIDE-HORIZON   ticks= 17 promoted= 10 widest-tick= 2   widening: evaluated=76 gate-open=72 fired=6
+      WIDE-UNGATED   ticks= 17 promoted= 10 widest-tick= 2   widening: evaluated=76 gate-open=76 fired=6
+  S2 — S1 + ONE already-done row carrying the NULL sentinel (inert under R69)
+      LEGACY         ticks= 17 promoted= 10 widest-tick= 2
+      NARROW         ticks= 14 promoted= 10 widest-tick= 2
+      WIDE-SENTINEL  ticks= 17 promoted= 10 widest-tick= 2   widening: evaluated=76 gate-open=76 fired=6
+      WIDE-CLOSURE   ticks= 14 promoted= 10 widest-tick= 2   widening: evaluated=52 gate-open=0 fired=0
+      WIDE-HORIZON   ticks= 17 promoted= 10 widest-tick= 2   widening: evaluated=76 gate-open=72 fired=6
+      WIDE-UNGATED   ticks= 17 promoted= 10 widest-tick= 2   widening: evaluated=76 gate-open=76 fired=6
+  S3 — post-restart project — 1 planner, 1 long reviewer, 7 unrelated builders numbered above it
+      LEGACY         ticks= 17 promoted=  8 widest-tick= 1
+      NARROW         ticks=  3 promoted=  8 widest-tick= 8
+      WIDE-SENTINEL  ticks=  3 promoted=  8 widest-tick= 8   widening: evaluated=8 gate-open=0 fired=0
+      WIDE-CLOSURE   ticks=  3 promoted=  8 widest-tick= 8   widening: evaluated=8 gate-open=1 fired=0
+      WIDE-HORIZON   ticks= 17 promoted=  8 widest-tick= 1   widening: evaluated=64 gate-open=64 fired=56
+      WIDE-UNGATED   ticks= 17 promoted=  8 widest-tick= 1   widening: evaluated=64 gate-open=64 fired=56
+  ok   1  S1: the SHIPPED engine (NARROW) diverges from today's engine on a straddling project
+         first divergence, legacy vs narrow — tick 2: only-first []; only-second [511070c9, 608dbecb]
+         legacy ticks=17, narrow ticks=14
+
+--- 4. probe accounting --------------------------------------------------------
+  registered 11   ran 11   passed 11   failed 0   never-ran 0
+```
+
+The full per-probe output is reproduced by running the script; the paragraphs
+below quote the numbers that decided the question.
+
+### 5.5 Finding 1 — the divergence is real, and it is F13's own divergence
+
+Legacy takes **17 ticks**; the shipped engine takes **14**. First divergence on
+**tick 2**, on **`511070c9…` and `608dbecb…`**.
+
+Those are, to the id and to the tick, the two rows `02-architecture.md` §3.2.1
+records for phase 1's closure-only measurement of F13 — *"case (f) diverging on
+tick 2 — legacy promoted [], graph promoted [511070c9…, 608dbecb…]"*. **The
+divergence R69 closed and the divergence it does not close are the same
+divergence**, on the same two rows, on the same tick. Only the provenance of the
+row doing the blocking differs: a NULL sentinel there, real graph fields here.
+
+That is what makes this a genuine gap rather than a philosophical one, and it is
+why it could not be left as *"phase 1 read it as intended DAG behaviour"*.
+
+### 5.6 Finding 2 — option A's arithmetic is right
+
+`WIDE-UNGATED` on S1: the widened term fired **6** times and the graph reproduced
+today's schedule **exactly, tick for tick** (probe 2d). The operator's proposal
+computes the right answer. Everything that follows is about its gate.
+
+### 5.7 Finding 3 — option A has no gate, and this is where it was decided
+
+*"While a row is frozen"* is not a predicate this schema can evaluate. The
+migration records nothing that distinguishes a closure it wrote from a dependency
+set a planner declared — `0040_task_graph.sql` adds three columns and sets
+`depends_on`, and that is all. Four stand-ins exist. Each was built and measured.
+
+**(a) Gate on the NULL sentinel — "this project contains a legacy row".** The
+only gate expressible at zero cost, and it costs nothing on a post-restart
+project (S3: gate-open **0**, schedule unchanged at 3 ticks / 8-wide). On S1 it
+is **silent**: gate-open **0/52**. The reason is structural and worth stating
+plainly — **0040's backfill overwrites the sentinel on every pre-existing row**,
+so a straddle in which the old engine happened to insert nothing in the deploy
+gap holds *no legacy row at all*.
+
+**(b) The same gate, on S2.** S2 is S1 plus one row: `…04d3`, `done`,
+`depends_on NULL`, scheduling-inert under R69. The gate opens 76 times, fires 6,
+and the divergence **closes** — while `NARROW` on the same fixture still diverges
+at tick 2 on the same two rows. So the same straddling project is scheduled
+correctly or incorrectly according to whether an unrelated, already-finished row
+happens to carry NULL. **That is not a predicate. It is a coincidence**, and
+building a correctness property on it means the property holds when the old
+engine was busy during the deploy window and lapses when it was idle.
+
+**(c) Gate on `isClosureShaped()` — the corpus's own frozen-row detector.** The
+closest thing to "while a row is frozen" that exists anywhere in this system;
+round 215 added it precisely to recognise 0040's backfill signature. It **goes
+blind exactly where it is needed**. It compares a row's closure against the
+CURRENT row list, so a post-migration row at a lower round breaks the signature
+of every frozen row above it:
+
+| | closure-shaped, whole project | **of the 8 exposed rows** |
+|---|---|---|
+| before the post-restart chain exists | 131/131 | **8/8** |
+| after it exists | 102/133 | **0/8** |
+
+The 102 that survive are the rows *below* the chain, which need nothing. The
+detector is sighted on every row the widening does not care about and blind on
+every row it does. Fired **0** times.
+
+**(d) Gate on a `created_at` horizon taken from the row's own closure.** The
+cleverest gate the data can express, and it repairs (c)'s defect exactly: take
+the newest `created_at` among the ids a row names, and ask whether it names every
+lower-round row that existed *then*. A genuinely frozen row does by construction,
+and every row it fails to name was created after the migration. No stored
+timestamp is needed.
+
+It is **right on the straddle**: S1 identical to legacy, tick for tick, fired 6.
+And it is **ruinous everywhere else**. On S3 — where not one row is frozen and
+not one carries the sentinel — it fires **56** times and takes the schedule from
+**3 ticks / 8-wide to 17 ticks / 1-wide**, which is today's engine, number for
+number. The reason is one sentence: *a builder created before its siblings names
+every lower-round row that existed when it was created, because they had not been
+created yet.* The gate cannot tell "my closure is complete because a migration
+wrote it" from "my closure is complete because I was first".
+
+**(e) No gate.** The same collapse: S3 goes 3 → 17 ticks, 8-wide → 1-wide,
+identical to `LEGACY`. This is the measurement `00-vision.md` §2 exists to
+delete — 255 minutes of wall clock for work that at a concurrency of 6 is about
+45 — reintroduced by the mitigation.
+
+### 5.8 The ruling — option B
+
+Recorded as **E4** in `02-architecture.md` §9.3, in the register E1–E3 are
+recorded in. §3.2's sentence is retired and R69's description narrowed **in the
+same commit** (standing rule 4). Before narrowing, the sentence was grepped for
+across the whole corpus and both source trees: it is asserted in **no gate
+anywhere**, so nothing retires with it beyond R6's matching clause and one
+over-wide sentence in `db/projects.ts`'s module preamble. The gates that touch
+R69 — `03-quality.md` §3.2's phase-2 gate, `check-scheduler-sql.sh`, R18 case (f)
+— all test the narrow term, which is **unchanged**.
+
+**Why B is the right line and not a concession.** `depends_on IS NULL` does not
+mean "old row" by accident. It means *created under the old semantics*. Holding a
+frozen row behind such a row replays the rule that row was born under, which is
+what R18's replica claim is about. Refusing to hold it behind a NEW-semantics row
+is the graph doing its job: that row declared its dependencies, the frozen row is
+not among them, and inventing an edge out of a round number is the exact
+conflation this project exists to end. **R69's sentinel is the semantic boundary,
+not an implementation detail that happens to sit near one.**
+
+**The blast radius, stated so it cannot be discovered at 3am.** In a straddling
+project, a row the new engine inserts at a lower round does not hold a frozen row
+above it. A fix builder repairing round-1306 work may run beside a frozen builder
+at 1352 that today's engine would have held. Both are `workstream = 'main'`, so
+both are in one worktree; both carry `write_set = '{}'`, because the backfill
+gives frozen rows an empty write-set, so R17's contention filter does not
+separate them either. **R63 requires the deploy's own target (`8ea0cc08`) to have
+no `running` and no `pending` task before anything happens**, so the project
+§3.2.1 built its reachability argument on is drained at the moment the risk would
+begin. What remains is any *other* project holding frozen `pending` rows that
+later produces a lower-round insertion. Tabled as **F14** in §6, which is where a
+reader looking for accepted risk will look.
+
+### 5.9 What reopens it, priced
+
+Option A becomes implementable the moment a frozen row is **marked** rather than
+**inferred**: one more additive statement in 0040 —
+
+```sql
+ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS graph_frozen boolean NOT NULL DEFAULT false;
+-- …and the backfill UPDATE sets graph_frozen = true on the rows it writes.
+```
+
+after which the gate is `pt.graph_frozen`, every objection in §5.7 evaporates,
+and §3.2's original sentence comes back. It is **cheap only while 0040 is
+un-applied**, which is true until phase 8 runs `psql -f`, and impossible to do
+honestly afterwards — a column added later cannot know which closures were
+frozen.
+
+It is a phase-1 change touching six files across three phases:
+`db/migrations/0040_task_graph.sql`, `forge-control/src/db/projects.ts`,
+`forge-control/src/lib/task-graph.ts` (the pure mirror `graphReady()`, which
+`db/projects.ts`'s own preamble names as the definition the SQL mirrors — so the
+SQL cannot be widened alone), `task-graph.test.ts`, `task-graph-replay.test.ts`
+(a case (g) for the post-restart order), and `scripts/checks/check-scheduler-sql.sh`,
+plus R3/R6/R69. **Round 223's write set covers none of it**, which is a second,
+independent reason option A could not have been landed in this round even had it
+won on the merits — and it is recorded here so the next round does not rediscover
+it. It was reported to the manager chat as an explicit choice, not described in
+prose.
+
+### 5.10 What this round did not do
+
+- **It did not modify `task-graph.ts` or `task-graph-replay.test.ts`.** They are
+  phase 3's and phase 1's, and they are the instruments this experiment is
+  measured against; a builder that edits its own reference is measuring itself.
+  The experiment composes them from the outside instead.
+- **It did not change any promotion predicate.** `db/projects.ts` is touched in
+  **comments only** — one over-wide clause in the module preamble. The statement
+  is byte-identical, which is exactly what phase 2's replay proof would have
+  caught had it not been.
+- **It did not touch a live endpoint, a live service, the live database, or
+  `/opt/forge-ai-os`.** The instrument refuses to run inside the live checkout.

@@ -59,9 +59,20 @@ it can never learn of a row inserted afterwards. Because 0040 is applied before
 the restart (R64), the old engine goes on inserting NULL-deps rows in the gap,
 and none of them appear in any frozen closure. R6 alone is therefore **not** an
 exact replica of today's rule for a project that straddles the deploy; R69 is
-the term that makes it one, `02-architecture.md` §3.2.1 is the reasoning, F13 is
-the failure mode, and R18 case (f) is the test. Widening the backfill is *not*
-an alternative — it would have to name rows that do not yet exist.
+the term that restores it **for every row created under the old semantics**,
+`02-architecture.md` §3.2.1 is the reasoning, F13 is the failure mode, and R18
+case (f) is the test. Widening the backfill is *not* an alternative — it would
+have to name rows that do not yet exist.
+
+**NARROWED ROUND 223 (E4, `02-architecture.md` §9.3).** This clause read *"R69
+is the term that makes it one"* — one meaning an exact replica for the whole
+straddling project. It is not: a row the NEW engine inserts after the restart
+carries real graph fields (R42), so R69's `depends_on IS NULL` term cannot see
+it, and a frozen row above it promotes where today's engine holds it. Measured,
+not conceded: `scripts/checks/check-r69-straddle.sh` puts the divergence on tick
+2, on the same two rows §3.2.1 records for F13. R69 and its wider description
+are narrowed together in one commit, per standing rule 4; §3.2.2 carries the
+blast radius and §9.3 the four mitigations that were tried and failed.
 *How proved:* unit (R18's replay test over the committed fixture) + `check`
 (`scripts/checks/check-migration-0040.sh` applies 0040 twice to a throwaway
 Postgres schema seeded from the fixture and diffs the resulting rows).
@@ -124,6 +135,39 @@ It is part of the legacy surface: **deleted in the same commit as R12's branch
 and R18 case (f)**, when no NULL row remains (NF6, standing rule 4).
 *How proved:* unit — R18 case (f) fails without it and passes with it, shown by
 mutation test in `evidence/phase1-migration.md` §13.4; + `check` for the SQL.
+
+**WHAT R69 DOES NOT HOLD — bounded round 223, ruled as E4 in
+`02-architecture.md` §9.3, blast radius in §3.2.2, tabled as F14.** The term
+tests `depends_on IS NULL`, so it sees rows the OLD engine wrote and nothing
+else. A fix chain the NEW engine creates after the restart carries real graph
+fields (R42), and a frozen row above it therefore promotes where today's engine
+would hold it. **This is accepted, not overlooked.** Two things make it the
+right line rather than a concession:
+
+1. **The sentinel is the semantic boundary.** `depends_on IS NULL` means
+   *created under the old semantics*. Holding a frozen row behind such a row
+   replays the rule that row was born under — which is what R18's replica claim
+   is about. Refusing to hold it behind a NEW-semantics row is the graph doing
+   its job: that row declared its dependencies, the frozen row is not among
+   them, and inventing an edge out of a round number is the conflation
+   `00-vision.md` §2 exists to end.
+2. **The alternative has no implementable gate.** Widening the term "while a row
+   is frozen" requires distinguishing a backfilled closure from a declared
+   dependency set, and nothing records that distinction. Four gates were built
+   and measured (§9.3's table): the sentinel gate is silent on a straddle with
+   no gap row and fires on one only by coincidence; `isClosureShaped()` — the
+   corpus's own frozen-row detector — reads 8/8 exposed rows as frozen before
+   the post-restart chain exists and 0/8 after; a `created_at` horizon gate is
+   right on the straddle and takes a post-restart project from 3 ticks / 8-wide
+   to 17 ticks / 1-wide; ungated is the same collapse.
+
+*How the boundary is proved:* `check` —
+`scripts/checks/check-r69-straddle.sh`, 11 probes, which is also the instrument
+that would catch a later round quietly widening the term. It needs no database:
+it composes the SHIPPED `graphReady()` with each candidate widening over the R9
+fixture, and it exits non-zero if a probe did not run.
+*Reopened by:* one additive column in 0040 marking a backfilled row, priced in
+§9.3 — cheap only while 0040 is un-applied.
 
 **R13.** `promoteReadyTasks()` keeps the `AND p.status = 'active'` gate joined
 from `projects`, unchanged in meaning: paused, blocked, done and cancelled
