@@ -99,7 +99,40 @@ const PAIRS = Number(process.env.HOVER_PAIRS ?? 5);
 const WINDOW_MS = Number(process.env.HOVER_WINDOW_MS ?? 10_000);
 const RUN_LABEL = (process.env.HOVER_RUN_LABEL ?? "run1").trim();
 const CONTROL = process.env.HOVER_CONTROL === "1";
-const OUT = __dirname;
+
+/**
+ * WHERE THE OUTPUT GOES — and why it is no longer `__dirname` (round 1301).
+ *
+ * Until round 1301 this was `const OUT = __dirname;`, unconditionally. Running
+ * the README's own §7 reproduce block therefore OVERWROTE `hover-1291.json` —
+ * the committed evidence the run is meant to verify against. Round 1293 had to
+ * copy this script to /tmp to work around it, and this project has already been
+ * bitten once by a round clobbering a predecessor's committed evidence.
+ *
+ * So: the default target is an uncommitted temp directory, and writing anywhere
+ * inside the repo is an EXPLICIT opt-in — `HOVER_OUT=<dir>` naming the artifact
+ * directory, or `--commit-artifact` meaning "yes, into `__dirname`, on purpose".
+ * The guard below is a backstop rather than a routine path: with neither opt-in
+ * the target is /tmp and cannot resolve into the repo unless someone edits the
+ * default. It exists so that editing the default is loud instead of silent.
+ *
+ * ONLY output-path resolution changed. No measurement logic was touched, so the
+ * numbers this script produces stay comparable to `hover-1291.json`.
+ */
+const REPO_ROOT = path.resolve(__dirname, "../../../../..");
+const COMMIT_ARTIFACT = process.argv.includes("--commit-artifact");
+const HOVER_OUT = (process.env.HOVER_OUT ?? "").trim();
+const OUT = path.resolve(HOVER_OUT || (COMMIT_ARTIFACT ? __dirname : "/tmp/hover-1291-out"));
+const OPTED_IN = COMMIT_ARTIFACT || HOVER_OUT !== "";
+if (!OPTED_IN && (OUT === REPO_ROOT || OUT.startsWith(REPO_ROOT + path.sep))) {
+  throw new Error(
+    `hover-1291.cjs refuses to write inside the repo without an explicit opt-in.\n` +
+      `  resolved output dir: ${OUT}\n` +
+      `  repo root:           ${REPO_ROOT}\n` +
+      `  pass --commit-artifact to write into ${__dirname}, or set HOVER_OUT=<dir>.`,
+  );
+}
+fs.mkdirSync(OUT, { recursive: true });
 
 if (!COOKIE) throw new Error("FORGE_SESSION_COOKIE is empty — mint it per the README §Reproduce");
 if (BASE.includes("os.schreinercontentsystems.com")) {
@@ -694,7 +727,9 @@ async function runControl(page, cdp, report, ms) {
     report.longTaskCadence = { fits: null, note: "control run — no sweep, no surfaces; see report.control" };
     const ls = writeMerged(path.join(OUT, "hover-1291.json"), RUN_LABEL, report);
     console.log(`\nerrors: ${report.errors.length}`);
-    console.log(`wrote ${RUN_LABEL} → hover-1291.json (runs now: ${ls.join(", ")})`);
+    console.log(
+      `wrote ${RUN_LABEL} → ${path.join(OUT, "hover-1291.json")} (runs now: ${ls.join(", ")})`,
+    );
     await browser.close();
     return;
   }
@@ -770,7 +805,9 @@ async function runControl(page, cdp, report, ms) {
     `cadence: ${c.events} long tasks in the session, base period ${c.basePeriodMs}ms, ` +
       `worst residual ${c.worstResidualMs}ms (${c.worstResidualPctOfPeriod}% of period), fits=${c.fits}`,
   );
-  console.log(`wrote ${RUN_LABEL} → hover-1291.json (runs now: ${labels.join(", ")})`);
+  console.log(
+    `wrote ${RUN_LABEL} → ${path.join(OUT, "hover-1291.json")} (runs now: ${labels.join(", ")})`,
+  );
   await browser.close();
 })().catch((e) => {
   console.error("FATAL", e);

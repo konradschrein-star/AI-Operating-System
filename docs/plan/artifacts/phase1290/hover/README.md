@@ -419,6 +419,15 @@ Occupied ports at the time of writing: 7700, 7701, 7798, 7811, 7814, 7815, 7817
 never kill another round's process.** The recipe is `phase500/README.md` §2,
 steps A–E, with the copy and port moved.
 
+> **Changed 2026-08-17 (round 1301): step E now writes to `/tmp`, not to this
+> directory.** `hover-1291.cjs` used to resolve its output to `__dirname`
+> unconditionally, so running this very block **overwrote `hover-1291.json` —
+> the committed evidence the reproduce is meant to check against**. Round 1293
+> had to copy the script to /tmp to work around it. The default is now
+> `/tmp/hover-1291-out`; writing into `docs/plan/` requires `--commit-artifact`
+> (into this directory) or `HOVER_OUT=<dir>`. Only output-path resolution
+> changed — no measurement logic was touched, so numbers stay comparable.
+
 ```bash
 cd /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838
 
@@ -456,6 +465,8 @@ export FORGE_SESSION_COOKIE="$(cat /tmp/session-cookie-phase1291.txt)"
 export HOVER_BASE_URL=http://127.0.0.1:7790
 export HOVER_BUILD_SHA="$(git rev-parse HEAD)" HOVER_UPTIME="$(uptime)"
 
+# these write to /tmp/hover-1291-out/hover-1291.json — the committed artifact
+# is NOT touched. Add --commit-artifact only when you mean to replace it.
 HOVER_RUN_LABEL=run1 node docs/plan/artifacts/phase1290/hover/hover-1291.cjs
 HOVER_RUN_LABEL=run2 node docs/plan/artifacts/phase1290/hover/hover-1291.cjs
 HOVER_RUN_LABEL=control HOVER_CONTROL=1 node docs/plan/artifacts/phase1290/hover/hover-1291.cjs
@@ -466,10 +477,12 @@ HOVER_RUN_LABEL=control HOVER_CONTROL=1 node docs/plan/artifacts/phase1290/hover
 git status --short
 ```
 
-Each invocation merges its result into `hover-1291.json` under `runs.<label>`;
-delete the file first for a clean set. Knobs: `HOVER_PAIRS` (default 5),
-`HOVER_WINDOW_MS` (default 10000), `HOVER_CONTROL=1` (mechanism check instead of
-sweep). Wall-clock: ~4 min per 5-pair run, ~2 min for the control.
+Each invocation merges its result into `<OUT>/hover-1291.json` under
+`runs.<label>`; delete that file first for a clean set. Knobs: `HOVER_PAIRS`
+(default 5), `HOVER_WINDOW_MS` (default 10000), `HOVER_CONTROL=1` (mechanism
+check instead of sweep), `HOVER_OUT` / `--commit-artifact` (output directory —
+see the note above; default `/tmp/hover-1291-out`). Wall-clock: ~4 min per
+5-pair run, ~2 min for the control.
 
 ---
 
@@ -507,8 +520,8 @@ findings handed forward; phase 1300 decides.
 
 | File | What |
 |---|---|
-| `hover-1291.cjs` | the instrument — five interleaved idle/hover pairs per surface, long-task attribution, crossing alignment, CDP metric deltas, and the `HOVER_CONTROL=1` mechanism check |
-| `hover-1291.json` | raw output, committed unfiltered: `runs.run1`, `runs.run2`, `runs.control` |
+| `hover-1291.cjs` | the instrument — five interleaved idle/hover pairs per surface, long-task attribution, crossing alignment, CDP metric deltas, and the `HOVER_CONTROL=1` mechanism check. **Writes to `/tmp/hover-1291-out` by default since round 1301**; `--commit-artifact` or `HOVER_OUT=<dir>` to write elsewhere, and it throws rather than writing inside the repo without one of them |
+| `hover-1291.json` | raw output of ROUND 1291, committed unfiltered: `runs.run1`, `runs.run2`, `runs.control`. Round 1301's re-run of the control leg lives in `docs/plan/artifacts/phase1300/baseline/` and did not touch this file |
 | `README.md` | this file |
 
 `docs/plan/artifacts/phase1290/invalidation/` and
