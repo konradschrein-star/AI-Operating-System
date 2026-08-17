@@ -75,12 +75,14 @@ import {
   confirmStripText,
   decideXClick,
   dismissTitle,
+  hideToastText,
   isSpuriousActivation,
   needsConfirm,
   type ArmedState,
   type DismissScope,
 } from "../team/confirm";
 import { toast } from "../_ui/Toasts";
+import { shortNodeId } from "../short-id";
 import {
   DISMISSAL_SURFACES,
   DISMISSED_GROUP_LABEL,
@@ -96,6 +98,7 @@ import {
   modelDisplay,
   roleLabel,
   roleTokenName,
+  rowsHiddenBy,
   runElapsedMs,
   subagentElapsedMs,
   type AgentKind,
@@ -223,10 +226,11 @@ function kindDetailColor(kind: AgentKind, role: string | null | undefined): stri
   return kind === "worker" ? roleColor(role) : tokens.textFaint;
 }
 
-/** First 8 chars of a UUID — enough to grep the database with, short enough
- *  to read inside a native tooltip. */
+/** Eight characters that identify the node — a uuid's first eight, or a
+ *  sub-agent id's first eight AFTER the constant `toolu_01` prefix. Same rule
+ *  as the team panel's rows and the chat's comms cards (../short-id). */
 function short(id: string | null | undefined): string {
-  return id ? id.slice(0, 8) : "none";
+  return shortNodeId(id, "none");
 }
 
 /** Lineage, R10 — composed at render time into a NATIVE `title`. No hover
@@ -790,6 +794,15 @@ export function AgentActivity({
   const [armedId, setArmedId] = useState<string | null>(null);
   const armedRef = useRef<ArmedState | null>(null);
 
+  /* What the dismiss toast counts against: the rows this panel was showing when
+   * the ✕ was pressed. Written in an effect below (never during render), and
+   * seeded empty so the count is 0 — "nothing left this panel" — rather than a
+   * crash, for the impossible click that arrives before the first response. */
+  const rowsRef = useRef<{
+    agents: readonly AgentRow[];
+    hiddenBy: ReadonlySet<string>;
+  }>({ agents: [], hiddenBy: new Set<string>() });
+
   useEffect(() => {
     if (armedId === null) return;
     const t = setTimeout(() => {
@@ -797,6 +810,33 @@ export function AgentActivity({
       setArmedId(null);
     }, ARM_WINDOW_MS);
     return () => clearTimeout(t);
+  }, [armedId]);
+
+  /* Changing your mind — round 1874, finding 3, and the team panel's identical
+   * effect (../team/ChatTeamPanel.tsx) with this panel's own ✕ selector. Escape,
+   * or a pointer landing anywhere that is not a ✕; both listeners exist only
+   * while something is armed, so an idle panel adds no document handlers to the
+   * surface whose hover cost is this project's DoD 3. */
+  useEffect(() => {
+    if (armedId === null) return;
+    const disarm = () => {
+      armedRef.current = null;
+      setArmedId(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") disarm();
+    };
+    const onPointer = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest("[data-live-x]")) return;
+      disarm();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
   }, [armedId]);
 
   const handleDismiss = useCallback(
@@ -822,12 +862,20 @@ export function AgentActivity({
         case "dismiss":
           armedRef.current = null;
           setArmedId(null);
+          /* The cascade is fleet-wide; the "N dismissed · show" tray beside
+           * this toast counts only what THIS feed withheld. Round 1874's
+           * finding 2 was those two numbers side by side with nothing to
+           * reconcile them, so the toast now states both — `rowsHiddenBy`
+           * counts rows exactly the way `hiddenRowCount` does.
+           *
+           * Snapshotted at the CLICK, for the reason written out in the team
+           * panel: the dismissal is applied optimistically, so a ref read
+           * inside the callback describes the panel AFTER the row left. */
+          const before = rowsRef.current;
           dismiss(decision.id, (ids) => {
-            const n = ids.length;
+            const here = rowsHiddenBy(before.agents, before.hiddenBy, ids);
             toast(
-              n === 1
-                ? "row hidden"
-                : `${n} rows hidden — this row and everything settled under it`,
+              hideToastText({ hidden: ids.length, here }),
               "info",
               undefined,
               {
@@ -860,6 +908,10 @@ export function AgentActivity({
     () => seededDismissals(dismissalsLoaded, dismissed, payloadDismissed),
     [dismissalsLoaded, dismissed, payloadDismissed],
   );
+
+  useEffect(() => {
+    rowsRef.current = { agents, hiddenBy };
+  }, [agents, hiddenBy]);
 
   const [peek, setPeek] = useState(false);
 

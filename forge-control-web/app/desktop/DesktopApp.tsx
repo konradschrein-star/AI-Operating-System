@@ -706,10 +706,16 @@ function TopNav({
             alignItems: "center",
             justifyContent: "center",
             marginLeft: 8,
-            width: 34,
-            height: 34,
+            /* 44×44 — round 1874, finding 5: "The phone's menu button is smaller
+               than everything it opens. The button is 34×34 while all 18
+               destinations inside the sheet are a correct 44px." The one control
+               that has to be hit before any of them can be was the only one
+               below the thumb target. It fits: the bar is 46px and this button
+               has no vertical margin. */
+            width: 44,
+            height: 44,
             flex: "none",
-            borderRadius: 7,
+            borderRadius: 8,
             cursor: "pointer",
             color: menuOpen ? tokens.accent : tokens.textMuted,
             background: menuOpen ? tokens.primaryActionBg : "transparent",

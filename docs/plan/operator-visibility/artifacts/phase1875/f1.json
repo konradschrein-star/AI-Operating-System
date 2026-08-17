@@ -1,0 +1,120 @@
+{
+ "detail": {
+  "total": 131,
+  "bad": 0,
+  "badAges": {},
+  "goodAges": {
+   "1d": 5,
+   "206323d": 1,
+   "23h": 3,
+   "22h": 3,
+   "21h": 2,
+   "20h": 1,
+   "19h": 8,
+   "18h": 6,
+   "17h": 3,
+   "16h": 5,
+   "15h": 3,
+   "14h": 8,
+   "13h": 3,
+   "12h": 16,
+   "5h": 2,
+   "11h": 16,
+   "10h": 13,
+   "9h": 6,
+   "8h": 8,
+   "7h": 6,
+   "6h": 1,
+   "2h": 3,
+   "1h": 5,
+   "50m": 1,
+   "38m": 1,
+   "36m": 1,
+   "28m": 1
+  },
+  "badSample": [],
+  "quoted": [
+   {
+    "peer": "c8bc5ffa-f63e-4f11-af27-39e3c8fb9e2f",
+    "text": "◂ | Plan phase 800: composer v3 + two-way secrets + canvas perf | planner | Phase 800 planned (rounds 801-805, 6 builder",
+    "role": "planner",
+    "title": "◂ from worker · Plan phase 800: composer v3 + two-way secrets + canvas perf · planner · c8bc5ffa"
+   },
+   {
+    "peer": "4e842cc8-bab9-4e9b-9d34-0523b1931419",
+    "text": "◂ | Composer autogrow + effort color ramp (U28, U29, U32) | builder | round 801 done (U28/U29/U32, commit 206323d). Thre",
+    "role": "builder",
+    "title": "◂ from worker · Composer autogrow + effort color ramp (U28, U29, U32) · builder · 4e842cc8"
+   },
+   {
+    "peer": "e69ea9a8-232c-4b3f-aa9a-f1b2c6fb334f",
+    "text": "◂ | Secret-request data layer + SecretField answer mode (U30 part 1) | builder | Round 801 (U30 part 1) committed f9d5c2",
+    "role": "builder",
+    "title": "◂ from worker · Secret-request data layer + SecretField answer mode (U30 part 1) · builder · e69ea9a8"
+   }
+  ],
+  "withTitle": 131,
+  "withRoleAttr": 131
+ },
+ "peerCalls": [
+  {
+   "url": "http://127.0.0.1:7844/api/proxy/agents/peers?ids=0105dec6-e79d-4da7-aacc-8294edc5227b%2C1fcbf632-7338-462c-b087-205a6595c714%2C362cbd1d-a3c4-4585-96f8-1eb0ae98d7d1%2C4e842cc8-bab9-4e9b-9d34-0523b1931419%2C5163e7fa-a0da-4689-9d39-093916c6832f%2C51d10066-5cb2-4811-b66d-f1ed48f3bd01%2C5c5a7d07-136c-42bb-bd4f-d387f583c178%2C8fb9e868-18a6-48c2-abeb-28a894fc4b47%2C9dddcaae-9019-4a92-a352-dae5c5466da0%2C9ee2083b-533b-42af-bc1c-08a8c49d1f4b%2Cc8bc5ffa-f63e-4f11-af27-39e3c8fb9e2f%2Cd4f4cdf6-29f4-4345-8058-50ee88ee0baf%2Cd58581fd-4d42-488e-99a0-61d662531c5a%2Cdd011036-9cc8-4703-9913-223cff3f53ee%2Ce69ea9a8-232c-4b3f-aa9a-f1b2c6fb334f%2Cf6a2ee75-99ef-48d0-93c9-2ab6c14fe51c%2Cfa2a1775-e394-48bd-af2f-da86e6fcf869",
+   "t": 1786981170920
+  }
+ ],
+ "chips": [
+  {
+   "id": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838",
+   "pressed": "true",
+   "text": "operator-visibility · active"
+  },
+  {
+   "id": "8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4",
+   "pressed": "false",
+   "text": "engine-task-graph · blocked"
+  }
+ ],
+ "switched": {
+  "project": "engine-task-graph · blocked",
+  "rows": 25,
+  "total": 131,
+  "bad": 0
+ },
+ "results": [
+  {
+   "label": "F1 every comms card names its sender",
+   "ok": true,
+   "detail": "0/131 cards read \"unknown role\"; ages {}"
+  },
+  {
+   "label": "F1 the three cards the tester quoted are named",
+   "ok": true,
+   "detail": "[\"◂ | Plan phase 800: composer v3 + two-way secrets + canvas p\",\"◂ | Composer autogrow + effort color ramp (U28, U29, U32) | \",\"◂ | Secret-request data layer + SecretField answer mode (U30\"]"
+  },
+  {
+   "label": "F1 the card itself carries a tooltip (the attribute he read)",
+   "ok": true,
+   "detail": "131/131 cards have a title on the card element"
+  },
+  {
+   "label": "F1 …naming the role, not the word unknown",
+   "ok": true,
+   "detail": "{\"peer\":\"c8bc5ffa-f63e-4f11-af27-39e3c8fb9e2f\",\"text\":\"◂ | Plan phase 800: composer v3 + two-way secrets + canvas perf | planner | Phase 800 planned (rounds 801-805, 6 builder\",\"role\":\"planner\",\"title\":\"◂ from worker · Plan phase 800: composer v3 + two-way sec"
+  },
+  {
+   "label": "F1 data-comms-role is set on every card",
+   "ok": true,
+   "detail": "131/131"
+  },
+  {
+   "label": "F1 the lookup does not become a poll",
+   "ok": true,
+   "detail": "1 request(s) on open, 0 more in the next 14s"
+  },
+  {
+   "label": "F1 the cards stay named when the tree can no longer name them",
+   "ok": true,
+   "detail": "0/131 unknown with the panel on \"engine-task-graph · blocked\" (25 team rows)"
+  }
+ ]
+}

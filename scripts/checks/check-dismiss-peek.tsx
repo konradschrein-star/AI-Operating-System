@@ -371,17 +371,27 @@ console.log("\n── the tooltip names the OTHER panel ────────
     dismissedToggleTitle(DISMISSAL_SURFACES.live) === dismissedToggleTitle(DISMISSAL_SURFACES.team),
     false,
   );
+  /* ROUND 1875 — the sentence grew a third clause. Round 1874's finding 2 was
+   * this label saying "21 dismissed" beside a toast saying "180 rows hidden",
+   * with nothing on screen to reconcile them; the toast now leads with the
+   * local number (`hideToastText`) and this says what the local number MEANS.
+   * The two properties these assertions exist for are unchanged and asserted
+   * above: each panel names the OTHER surface, and the two readings differ. */
   check(
     "the /live reading names the chat team panel",
     dismissedToggleTitle(DISMISSAL_SURFACES.team),
     "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
-      "deletes anything, and the set is shared with the chat team panel.",
+      "deletes anything, and the set is shared with the chat team panel. This count is " +
+      "the rows THIS panel is withholding — one dismissal can hide runs that were " +
+      "never listed here, which is why a cascade's toast can name a larger number.",
   );
   check(
     "the team panel's reading names the Live panel",
     dismissedToggleTitle(DISMISSAL_SURFACES.live),
     "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
-      "deletes anything, and the set is shared with the Live panel.",
+      "deletes anything, and the set is shared with the Live panel. This count is " +
+      "the rows THIS panel is withholding — one dismissal can hide runs that were " +
+      "never listed here, which is why a cascade's toast can name a larger number.",
   );
 }
 

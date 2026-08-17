@@ -24,8 +24,14 @@
  * a `peers` map built from the team panel's ALREADY-POLLED `["chat-team", id]`
  * cache (AssistantThread → ChatSurface). That map is a fallback, never a
  * source of truth that outranks the stamp, and when neither has an answer the
- * row says `unknown role` rather than guessing one. No fetch is added by any
- * of this — see AssistantThread's `peers` prop.
+ * row says `unknown role` rather than guessing one.
+ *
+ * ROUND 1875 adds a THIRD source under those two, for the case both miss: a
+ * sender whose run is older than the team tree's window, or belongs to the
+ * other project this chat started. `ManagerThread` looks those ids up once
+ * through `./peersApi` (`GET /api/agents/peers`) and merges the answer BELOW
+ * the tree. The ordering is unchanged where it matters — stamp, then tree, then
+ * lookup, then `unknown role` — and none of the three adds a poll.
  *
  * Pure, React-free, dependency-free: `scripts/checks/check-chat-rich.ts`
  * imports it directly under tsx.
@@ -33,6 +39,7 @@
 
 import { tokens } from "../../tokens";
 import { roleTokenName, type RoleTokenName } from "../live/agentsApi";
+import { shortNodeId } from "../short-id";
 
 /** Who sent it, in the server's vocabulary (`COMMS_FROM`). */
 export type CommsFrom = "konrad" | "manager" | "worker";
@@ -234,11 +241,13 @@ export function stripCommsPrefix(content: string): StrippedContent {
   return { prefix: m[0].trimEnd(), body: content.slice(m[0].length) };
 }
 
-/** First 8 characters of a run uuid — the id every log line, every `[message
- *  from …]` label and the team panel already print. Null in, em dash out. */
+/** Eight identifying characters of a peer id — what every log line, every
+ *  `[message from …]` label and the team panel already print. Null in, em dash
+ *  out. A relay addressed at a sub-agent carries a `tool_use_id`, whose first
+ *  eight characters are the same on every sub-agent ever spawned, so the rule
+ *  is ../short-id's rather than a bare slice (round 1874, finding 4). */
 export function shortRunId(id: string | null | undefined): string {
-  if (typeof id !== "string" || id === "") return "—";
-  return id.slice(0, 8);
+  return shortNodeId(id, "—");
 }
 
 /* ── The one-line preview (round 1871) ────────────────────────────────────
@@ -353,11 +362,19 @@ export function commsHeader(
       : (peerFacts.description ??
         (identity.role !== null ? identity.label : null) ??
         (peer !== "—" ? peer : facts.from));
-  /* "◂ from worker · builder · c8bc5ffa" — actor, role, id, in that order,
-   * because that is the order the eye needs them: what it is, what it does,
-   * which one it was. Konrad gets no role segment; he is not an agent. */
+  /* "◂ from worker · Fix cycle 3 · builder · c8bc5ffa" — actor, name, role, id,
+   * in that order, because that is the order the eye needs them: what it is,
+   * WHICH ONE, what it does, which row of the table. Konrad gets no role
+   * segment; he is not an agent.
+   *
+   * The name segment appears only when it says something the other two do not:
+   * a card whose only name IS its role, or its own short id, would otherwise
+   * print that word twice in one tooltip. It is the FULL name here — the header
+   * line ellipsises at 190px, and this is where the rest of a long task title
+   * is meant to be readable. */
   const summary = [
     `${arrow} ${preposition} ${facts.from}`,
+    name !== identity.label && name !== peer && name !== facts.from ? name : null,
     facts.from === "konrad" ? null : identity.label,
     peer === "—" ? null : peer,
     facts.subagentId ? `→ sub-agent ${facts.subagentId}` : null,

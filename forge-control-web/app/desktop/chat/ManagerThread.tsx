@@ -24,6 +24,19 @@
  * a comms card with no `peer_role` stamp says "unknown role". That is the
  * honest reading of "nobody has told me", and it is why the server-side stamp
  * exists (comms-identity.ts).
+ *
+ * ── AND THE PEERS THE TREE CANNOT REACH (round 1875, finding 1) ───────────
+ * "28 of 128 comms cards don't say who spoke … every affected card is ≥17h
+ * old." The tree above is one project's team; a run that finished yesterday is
+ * not in it, and neither is a run of the OTHER project this chat started. Those
+ * senders were unnameable from anything the client held.
+ *
+ * So a second query fills the remainder — `GET /api/agents/peers`, asked once,
+ * for exactly the ids the transcript still cannot name, cached for the life of
+ * the tab. It is a LOOKUP, not a poll: its key is the id set itself, its
+ * `staleTime` is Infinity, and a chat whose peers are all named produces an
+ * empty key and issues no request at all. See ./peersApi for the reasoning in
+ * full, including why the tree still outranks it.
  */
 
 import { memo, useMemo } from "react";
@@ -32,6 +45,12 @@ import type { RunDetail } from "../../api";
 import { AssistantThread } from "./AssistantThread";
 import type { PeerFacts } from "./comms-identity";
 import type { RichActions } from "./RichMessage";
+import {
+  fetchPeers,
+  mergePeerFacts,
+  unresolvedPeerIds,
+  type PeersResponse,
+} from "./peersApi";
 import { fetchChatTeam, type TeamNode, type TeamResponse } from "../team/teamApi";
 
 /** run id → what the tree knows about that run: its `metadata.role` and its
@@ -110,7 +129,40 @@ function ManagerThreadImpl({ run, onInsertDraft, onOpenSecret }: ManagerThreadPr
     staleTime: Infinity,
   });
 
-  const peers = useMemo(() => buildPeerRoles(teamQ.data), [teamQ.data]);
+  const treePeers = useMemo(() => buildPeerRoles(teamQ.data), [teamQ.data]);
+
+  /* The ids nobody can name yet, recomputed only when the thread or the tree
+   * changes — never on a keystroke, because this component is memoised above
+   * that. `.join(",")` is the query KEY: two renders that need the same set
+   * must produce the same key, which is why `unresolvedPeerIds` sorts. */
+  const missing = useMemo(
+    () => unresolvedPeerIds(run.thread, treePeers),
+    [run.thread, treePeers],
+  );
+  const missingKey = missing.join(",");
+
+  const peersQ = useQuery<PeersResponse, Error>({
+    queryKey: ["comms-peers", missingKey],
+    queryFn: () => fetchPeers(missing),
+    // Nothing to ask about is the healthy case, and it must not become a
+    // request for the empty set.
+    enabled: missing.length > 0,
+    /* A settled run never changes its role or its title, and a LIVE one is in
+     * the tree, which outranks this. So: fetched once, never refetched, never
+     * garbage-collected out from under a transcript the operator is reading. */
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnWindowFocus: false,
+    /* One failure is one un-named card, not a broken transcript — the header
+     * falls back to exactly what it printed before this query existed. Retrying
+     * a lookup that 400s on a malformed id would only repeat it. */
+    retry: 0,
+  });
+
+  const peers = useMemo(
+    () => mergePeerFacts(treePeers, peersQ.data?.peers),
+    [treePeers, peersQ.data],
+  );
   const actions = useMemo<RichActions>(
     () => ({ insertDraft: onInsertDraft, openSecret: onOpenSecret }),
     [onInsertDraft, onOpenSecret],

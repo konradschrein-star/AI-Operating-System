@@ -101,6 +101,7 @@ import {
   type TeamNode,
 } from "./teamApi";
 import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
+import { shortNodeId } from "../short-id";
 import { useTick } from "./tickStore";
 
 const EM_DASH = "—";
@@ -184,10 +185,12 @@ function modelColor(model: string | null): string {
   return isModelAlias(model) ? tokens.textGhost : tokens.textFaint;
 }
 
-/** First 8 chars of a uuid — enough to grep the database with, short enough to
- *  read inside a native tooltip. */
+/** Eight characters that identify the node — a uuid's first eight, or a
+ *  sub-agent id's first eight AFTER the constant `toolu_01` prefix (round 1874,
+ *  finding 4: all seven sub-agent tooltips read `id toolu_01`, which named the
+ *  API's id format and no sub-agent at all). One rule, in ../short-id. */
 function short(id: string | null): string {
-  return id ? id.slice(0, 8) : "none";
+  return shortNodeId(id, "none");
 }
 
 /**

@@ -66,6 +66,7 @@ import {
   postDismissalsRestore,
 } from "../live/agentsApi";
 import { toastError } from "../_ui/Toasts";
+import { shortNodeId } from "../short-id";
 
 /** The one cache key. Exported so a surface can invalidate it deliberately;
  *  no surface needs to today. */
@@ -247,7 +248,7 @@ export function useDismissals(chatId: string | null): Dismissals {
         .catch((e: unknown) => {
           // Roll back this id only, and only if we are the ones who added it.
           if (!wasHidden) writeCache(qc, (prev) => withoutId(prev, id));
-          toastError(`Dismiss failed — ${id.slice(0, 8)}`, e);
+          toastError(`Dismiss failed — ${shortNodeId(id, "?")}`, e);
         });
     },
     [qc],
@@ -259,7 +260,7 @@ export function useDismissals(chatId: string | null): Dismissals {
       writeCache(qc, (prev) => withoutId(prev, id));
       void deleteDismissal(id).catch((e: unknown) => {
         if (wasHidden) writeCache(qc, (prev) => withIds(prev, [id]));
-        toastError(`Restore failed — ${id.slice(0, 8)}`, e);
+        toastError(`Restore failed — ${shortNodeId(id, "?")}`, e);
       });
     },
     [qc],

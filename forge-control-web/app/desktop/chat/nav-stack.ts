@@ -30,11 +30,14 @@
  * rollup), and an invalid restored frame is a worse lie than a reset.
  *
  * ── Pure on purpose ───────────────────────────────────────────────────────
- * No React, no JSX, no imports. Every function is total and returns a new
- * (or the same) frozen array; `scripts/checks/check-nav-stack.ts` exercises
- * the invariants with plain tsx, which only works because this file has no
- * component in it.
+ * No React, no JSX. Every function is total and returns a new (or the same)
+ * frozen array; `scripts/checks/check-nav-stack.ts` exercises the invariants
+ * with plain tsx, which only works because this file has no component in it.
+ * Its one import (round 1875) is another such module — `../short-id`, which is
+ * this file's own id rule moved somewhere the row tooltips can reach it.
  */
+
+import { discriminatingId } from "../short-id";
 
 /** One level of drill-in.
  *
@@ -163,22 +166,24 @@ export interface NavCrumb {
 }
 
 /** First 8 chars of a uuid — long enough to grep the database with, short
- *  enough to sit in a 260-wide header. Same convention as TeamRow's `short`. */
+ *  enough to sit in a 260-wide header. Same convention as TeamRow's `short`.
+ *
+ *  ROUND 1875: this and `shortSubagentId` below are now two names for
+ *  `discriminatingId` (../short-id), which is the rule this file invented in
+ *  round 1873 and kept to itself while two panels' tooltips went on printing
+ *  `toolu_01`. The names stay because the CALL SITES read better for them. */
 function shortId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
+  return discriminatingId(id);
 }
 
 /** The discriminating part of a Task `tool_use_id`.
  *
- *  `toolu_01AeuQskZPyHpsYrHayvrqrT` → `AeuQskZP`. `shortId` gave `toolu_01`
- *  for every sub-agent that has ever run, because that prefix is a constant of
- *  the Anthropic API — the crumb was literally the same eight characters on
- *  every descent. This drops the prefix and the two-byte version before
- *  taking its eight, so two sub-agents of one run are told apart. */
+ *  `toolu_01AeuQskZPyHpsYrHayvrqrT` → `AeuQskZP`. A plain 8-char truncation
+ *  gave `toolu_01` for every sub-agent that has ever run, because that prefix
+ *  is a constant of the Anthropic API — the crumb was literally the same eight
+ *  characters on every descent. */
 function shortSubagentId(id: string): string {
-  const stripped = /^toolu_\d*/.exec(id) ? id.replace(/^toolu_\d*/, "") : id;
-  const body = stripped !== "" ? stripped : id;
-  return body.length > 8 ? body.slice(0, 8) : body;
+  return discriminatingId(id);
 }
 
 /** A caller-supplied label, cleaned up for a 260px header, or null. */

@@ -110,6 +110,7 @@ import {
   decideRestoreAllClick,
   decideStopClick,
   decideXClick,
+  hideToastText,
   isSpuriousActivation,
   type ArmedState,
 } from "./confirm";
@@ -137,6 +138,7 @@ import {
   createTeamRowCache,
   flattenTeam,
   responseNowMs,
+  rowsHiddenBy,
   type FlatTeam,
 } from "./teamRows";
 import { ResponseNowContext, TeamRowView } from "./TeamRow";
@@ -394,6 +396,17 @@ export function ChatTeamPanel({
   const [armedId, setArmedId] = useState<string | null>(null);
   const armedRef = useRef<ArmedState | null>(null);
 
+  /* The tree the dismiss toast counts against — written in an EFFECT below,
+   * never during render (round 1873, finding 1 was a ref assigned during render
+   * and read by a handler that ran first). Effects commit before any click can
+   * arrive, so the toast callback always sees the tree that was on screen when
+   * the ✕ was pressed. Null until the first response: no tree, nothing to
+   * count, and the toast falls back to the server's own number. */
+  const treeRef = useRef<{
+    data: TeamResponse;
+    hiddenBy: ReadonlySet<string>;
+  } | null>(null);
+
   const capsRef = useRef(caps);
   const openNodeRef = useRef(onOpenNode);
   const dismissRef = useRef(dismiss);
@@ -440,6 +453,46 @@ export function ChatTeamPanel({
     return () => clearTimeout(t);
   }, [armedId]);
 
+  /* ── Changing your mind (round 1874, finding 3) ───────────────────────────
+   *
+   * "Pressed Escape — still `armed`. Clicked in the transcript — still `armed`.
+   * Only a 3.09s timer disarms it. The gesture is safe … but a customer who
+   * wants out has no way to say so."
+   *
+   * Escape, and a pointer landing anywhere that is not a ✕. Both listeners
+   * exist ONLY while something is armed — this is not a permanent document
+   * listener on a surface whose hover cost is the project's DoD 3 — and both
+   * are capture-phase so nothing can stop them on the way down.
+   *
+   * A pointerdown ON a ✕ is left alone deliberately: that click is a decision
+   * the machine already reads correctly. The same ✕ confirms; a different row's
+   * ✕ moves the arming (`decideXClick` rule 2), which is the disarm anyway.
+   * Disarming here first would make the second case take three clicks.
+   *
+   * `CANCEL_HINT` in ./confirm is the sentence the armed strip prints, so the
+   * affordance is stated rather than left to be discovered. */
+  useEffect(() => {
+    if (armedId === null) return;
+    const disarm = () => {
+      armedRef.current = null;
+      setArmedId(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") disarm();
+    };
+    const onPointer = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest("[data-team-x]")) return;
+      disarm();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [armedId]);
+
   /** The restore-all confirm's own auto-disarm, the twin of `armedId`'s above
    *  and for the same reason: `decideRestoreAllClick` treats a stale arming as
    *  expired on its own, so this timer is only the VISUAL disarm. */
@@ -447,6 +500,27 @@ export function ChatTeamPanel({
     if (restoreAllArmedAt === null) return;
     const t = setTimeout(() => setRestoreAllArmedAt(null), ARM_WINDOW_MS);
     return () => clearTimeout(t);
+  }, [restoreAllArmedAt]);
+
+  /** …and the same way out. An armed control the operator cannot call off is
+   *  the same finding whichever control it is (round 1874, finding 3), and
+   *  restore-all is the one that destroys state nothing can rebuild. */
+  useEffect(() => {
+    if (restoreAllArmedAt === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setRestoreAllArmedAt(null);
+    };
+    const onPointer = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest("[data-team-restore-all]")) return;
+      setRestoreAllArmedAt(null);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
   }, [restoreAllArmedAt]);
 
   /* Closing the peek disarms it. An armed "sure?" left behind a collapsed group
@@ -551,12 +625,28 @@ export function ChatTeamPanel({
            * The toast is raised from the callback rather than here, so it names
            * the count the SERVER hid rather than the count we predicted, and so
            * the undo button cannot exist before the ids it would restore do. */
+          /* TWO NUMBERS, BOTH TRUE (round 1874, finding 2). `ids` is the
+           * server's cascade — fleet-wide, and exactly what "undo" restores.
+           * `rowsHiddenBy` is what THIS tree lost, computed by the same walk
+           * the "N dismissed · show" tray counts with, so the toast and the
+           * tray can no longer report one gesture as two numbers with nothing
+           * to reconcile them.
+           *
+           * SNAPSHOTTED HERE, not read in the callback. `useDismissals` hides
+           * the row OPTIMISTICALLY, so by the time the server answers the ref
+           * already holds a tree with this id hidden and the difference is
+           * zero — measured: the toast said "180 rows hidden — all of them
+           * elsewhere in the fleet" beside a tray that had just grown by one.
+           * The click handler runs before that optimistic write; this is the
+           * tree the operator was looking at when they pressed ✕. */
+          const before = treeRef.current;
           dismissRef.current(decision.id, (ids) => {
-            const n = ids.length;
+            const here =
+              before === null
+                ? ids.length
+                : rowsHiddenBy(before.data, before.hiddenBy, ids);
             toast(
-              n === 1
-                ? "row hidden"
-                : `${n} rows hidden — this row and everything settled under it`,
+              hideToastText({ hidden: ids.length, here }),
               "info",
               undefined,
               {
@@ -639,6 +729,10 @@ export function ChatTeamPanel({
     [data, hiddenBy],
   );
   const responseNow = useMemo(() => (data ? responseNowMs(data) : Number.NaN), [data]);
+
+  useEffect(() => {
+    treeRef.current = data ? { data, hiddenBy } : null;
+  }, [data, hiddenBy]);
 
   /* Which enrichment steps failed. Passed to rows as booleans so a degraded
    * response shows "—" (never 0) in the cells it actually touched, instead of

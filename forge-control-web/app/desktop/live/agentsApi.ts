@@ -502,3 +502,39 @@ export async function deleteAllDismissals(): Promise<number> {
   }
   return restored;
 }
+
+/**
+ * How many rows THIS PANEL loses when `added` join the dismissal set — the
+ * Live-panel twin of `../team/teamRows.rowsHiddenBy`, and round 1874's finding
+ * 2 on this surface.
+ *
+ * Counted exactly the way the panel's own `hiddenRowCount` is counted, because
+ * the two numbers appear four inches apart and must never disagree: a dismissed
+ * top-level run takes its sub-agent LINES with it (1 + subagents), a dismissed
+ * sub-agent takes one line, and an id belonging to a run outside this feed
+ * takes nothing here — that last case is the whole reason the toast's fleet-wide
+ * count and this one differ.
+ *
+ * Pure over the rows the caller already holds; no clock, no React.
+ */
+export function rowsHiddenBy(
+  agents: readonly AgentRow[],
+  dismissed: ReadonlySet<string>,
+  added: readonly string[],
+): number {
+  if (added.length === 0) return 0;
+  const ids = new Set(added.filter((id) => !dismissed.has(id)));
+  if (ids.size === 0) return 0;
+  let rows = 0;
+  for (const a of agents) {
+    if (dismissed.has(a.id)) continue; // already gone; loses nothing further
+    if (ids.has(a.id)) {
+      rows += 1 + (a.subagents?.length ?? 0);
+      continue;
+    }
+    for (const sub of a.subagents ?? []) {
+      if (!dismissed.has(sub.tool_use_id) && ids.has(sub.tool_use_id)) rows += 1;
+    }
+  }
+  return rows;
+}

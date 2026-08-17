@@ -313,6 +313,34 @@ export function flattenTeam(
   return { rows, hiddenCount, hiddenRows };
 }
 
+/**
+ * How many rows THIS TREE loses when `added` join the dismissal set — round
+ * 1874, finding 2.
+ *
+ * The toast used to print the length of the server's cascade (180) beside a
+ * tray that had just grown to 21, and nothing on screen reconciled the two.
+ * They measure different things: the cascade is fleet-wide, the tray is this
+ * panel. This is the second number, computed the only way that cannot drift
+ * from the tray — by running THE SAME WALK the tray's `hiddenCount` comes from,
+ * once with the ids and once without, and subtracting.
+ *
+ * No cache is passed on purpose: this runs on a click, not on a poll, and
+ * feeding a second walk into the wrapper cache would replace the identities
+ * `memo(TeamRowView)` bails out on (round 1302, L1) for rows nobody re-rendered.
+ */
+export function rowsHiddenBy(
+  res: TeamResponse,
+  dismissed: ReadonlySet<string>,
+  added: readonly string[],
+): number {
+  if (added.length === 0) return 0;
+  const after = new Set(dismissed);
+  for (const id of added) after.add(id);
+  if (after.size === dismissed.size) return 0;
+  const before = flattenTeam(res, dismissed).rows.length;
+  return Math.max(0, before - flattenTeam(res, after).rows.length);
+}
+
 /** Ceiling on client-side interpolation, in ms.
  *
  *  The panel polls the team endpoint every 5-8s (NFU3) and each response

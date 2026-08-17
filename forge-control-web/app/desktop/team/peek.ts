@@ -57,13 +57,21 @@ export const DISMISSAL_SURFACES = {
 export type DismissalSurfaceName =
   (typeof DISMISSAL_SURFACES)[keyof typeof DISMISSAL_SURFACES];
 
-/** What the toggle promises on hover. Says the two things a reader cannot see:
- *  that dismissing never deletes, and WHERE ELSE the dismissal applies — so
- *  `otherSurface` is the panel the reader is NOT standing in. */
+/** What the toggle promises on hover. Says the three things a reader cannot
+ *  see: that dismissing never deletes, WHERE ELSE the dismissal applies — so
+ *  `otherSurface` is the panel the reader is NOT standing in — and why this
+ *  count can be smaller than the one the toast just printed.
+ *
+ *  That last sentence is round 1874's finding 2 read from the other side: the
+ *  toast said "180 rows hidden" and this label said "21 dismissed", and nothing
+ *  on screen reconciled them. The toast now leads with the local number
+ *  (`hideToastText` in ./confirm); this says what the local number MEANS. */
 export function dismissedToggleTitle(otherSurface: DismissalSurfaceName): string {
   return (
     "Show the rows dismissed from this panel. Dismissing hides a row; it never " +
-    `deletes anything, and the set is shared with ${otherSurface}.`
+    `deletes anything, and the set is shared with ${otherSurface}. This count is ` +
+    "the rows THIS panel is withholding — one dismissal can hide runs that were " +
+    "never listed here, which is why a cascade's toast can name a larger number."
   );
 }
 

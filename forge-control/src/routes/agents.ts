@@ -533,6 +533,143 @@ r.delete("/dismissals/:id", async (c) => {
   }
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Peers — GET /api/agents/peers?ids=… (round 1875, finding 1)
+ *
+ * REGISTERED BEFORE `/:id`, for the reason the dismissals block states.
+ *
+ * WHY THIS EXISTS. A comms card in the operator chat names its sender from two
+ * places: `meta.comms.peer_role`, stamped at write time since round 808, and —
+ * for everything written before that stamp — the team panel's already-polled
+ * tree. Round 1874's tester read the live chat and found 28 of 128 cards headed
+ * `◂ c8bc5ffa unknown role`, every one of them ≥17h old. Neither source could
+ * answer: the entries predate the stamp, and the tree that would have named
+ * them is `GET /api/chat/:id/team`, which lists the team of ONE project and
+ * whose feed is bounded (`LIMIT 60`, 24h). A run that finished yesterday is
+ * simply not in it.
+ *
+ * The facts, though, are one SELECT away — `runs.title`, `metadata.role`, and
+ * the `project_tasks` row that named the task. So this route answers exactly
+ * "who are these run ids", for a list the CLIENT already holds, and nothing
+ * else: no window, no ordering, no status filter, no thread. It is fetched once
+ * per set of unresolved ids and cached forever (a settled run never changes its
+ * role or its title), so it adds no polling — see `fetchPeers` in the web app.
+ *
+ * `description` is derived exactly the way `teamNodeFromRun` derives it in
+ * chat.ts — task title first, run title second — so a card resolved here and
+ * the same card resolved from the tree print the same words.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** The wire shape: everything needed to NAME a peer, and nothing else. */
+interface PeerRow {
+  id: string;
+  role: string | null;
+  title: string | null;
+  task_title: string | null;
+  task_role: string | null;
+  project_name: string | null;
+}
+
+/** A run's identity, as the transcript prints it. */
+interface Peer {
+  id: string;
+  /** `metadata.role`, or the role of the task it was spawned for. Null when the
+   *  run genuinely has neither — an operator chat, a cron run. */
+  role: string | null;
+  /** The name a human uses for this agent: its task title, else its run title
+   *  with the redundant `<project> · ` prefix removed. Null when the run has
+   *  no title at all. */
+  description: string | null;
+  /** The project it belongs to, when it has one. Rendered in the card's
+   *  tooltip; also what the prefix strip above was computed from. */
+  project: string | null;
+}
+
+const PEERS_SQL = `SELECT r.id::text                         AS id,
+       r.metadata->>'role'                AS role,
+       r.title                            AS title,
+       t.title                            AS task_title,
+       t.role                             AS task_role,
+       p.name                             AS project_name
+  FROM runs r
+  LEFT JOIN LATERAL (
+    SELECT pt.title, pt.role
+      FROM project_tasks pt
+     WHERE pt.run_id = r.id
+     ORDER BY pt.round, pt.created_at
+     LIMIT 1
+  ) t ON true
+  LEFT JOIN projects p ON p.id::text = r.metadata->>'project_id'
+ WHERE r.id = ANY($1::uuid[])`;
+
+const PEER_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** One run's title, with the project prefix its own project name accounts for
+ *  removed. An EXACT match only: `"operator-visibility · Plan phase 800"` for
+ *  project `operator-visibility` becomes `"Plan phase 800"`, and anything that
+ *  does not begin with that literal string is returned untouched. No heuristic,
+ *  no split on a separator that might be part of the title. */
+function peerDescription(row: PeerRow): string | null {
+  if (row.task_title !== null && row.task_title.trim() !== "") return row.task_title;
+  const title = row.title;
+  if (title === null || title.trim() === "") return null;
+  const prefix = row.project_name === null ? null : `${row.project_name} · `;
+  if (prefix !== null && title.startsWith(prefix)) {
+    const rest = title.slice(prefix.length).trim();
+    if (rest !== "") return rest;
+  }
+  return title;
+}
+
+/**
+ * GET /api/agents/peers?ids=a,b,c → {peers: Peer[], unknown: string[]}
+ *
+ * `unknown` is the ids with no `runs` row — returned rather than dropped, so a
+ * client can tell "this run is gone" from "the request never asked about it"
+ * and stop asking. Both are 200s: an id the database has never seen is an
+ * answer, not a failure.
+ *
+ * Bounded at 200 ids per call, which is far above the 28 the live chat needs
+ * and keeps an unbounded query string out of the plan. A malformed id is a 400
+ * naming it — the ids come from `meta.comms.peer_run_id`, which is written by
+ * the server, so anything else is a bug worth surfacing rather than filtering.
+ */
+r.get("/peers", async (c) => {
+  const raw = c.req.query("ids") ?? "";
+  const ids = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+  if (ids.length === 0) return c.json({ error: "ids must not be empty" }, 400);
+  if (ids.length > 200) {
+    return c.json({ error: "ids must hold at most 200 entries" }, 400);
+  }
+  for (const id of ids) {
+    if (!PEER_UUID_RE.test(id)) {
+      return c.json({ error: `ids: not a run uuid: ${id.slice(0, 64)}` }, 400);
+    }
+  }
+  let rows: PeerRow[];
+  try {
+    const res = await pool.query<PeerRow>(PEERS_SQL, [ids]);
+    rows = res.rows;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[agents peers] query failed:", message);
+    return c.json({ error: "peers: query failed", message }, 500);
+  }
+  const peers: Peer[] = rows.map((row) => ({
+    id: row.id,
+    role: row.role ?? row.task_role ?? null,
+    description: peerDescription(row),
+    project: row.project_name,
+  }));
+  const found = new Set(peers.map((p) => p.id.toLowerCase()));
+  const unknown = ids.filter((id) => !found.has(id.toLowerCase()));
+  return c.json({ peers, unknown });
+});
+
 /** GET /api/agents/:id — full detail for a single run, same shape as the
  *  entries in the list endpoint. Handy for a drill-down pane. */
 r.get("/:id", async (c) => {

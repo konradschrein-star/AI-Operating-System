@@ -273,20 +273,88 @@ export function armedXLabel(i: DismissScope): string {
   return i.settled ? "hide?" : "sure?";
 }
 
-/** The line an armed row grows, naming what the second click will cost. It is
- *  the whole reason the confirm exists: "sure?" over 165 rows is not informed
- *  consent, and a tooltip you have to hover for is not either. */
+/** How to call it off — round 1874, finding 3: "An armed ✕ can't be called
+ *  off. Pressed Escape — still armed. Clicked in the transcript — still armed.
+ *  Only a 3.09s timer disarms it."
+ *
+ *  The escape hatch existed (the window self-decays, `ARM_WINDOW_MS`) but was
+ *  unsayable: a customer who has changed their mind had no gesture. Both
+ *  panels now disarm on Escape and on a pointer landing anywhere else, and the
+ *  strip SAYS SO — an affordance nobody is told about is not one. Kept as a
+ *  constant because the two panels must print the same words and the check
+ *  script asserts them once. */
+export const CANCEL_HINT = "esc or click away cancels";
+
+/** The line an armed row grows, naming what the second click will cost — and
+ *  how to not pay it. It is the whole reason the confirm exists: "sure?" over
+ *  165 rows is not informed consent, and a tooltip you have to hover for is not
+ *  either. */
 export function confirmStripText(i: DismissScope): string {
-  if (!i.settled) return "terminate this running agent? ✕ again to confirm";
+  if (!i.settled) {
+    return `terminate this running agent? ✕ again to confirm · ${CANCEL_HINT}`;
+  }
   if (i.widerReach === true) {
     return (
       `hide ${i.hidesRows}+ rows — this one, everything settled under it, and any ` +
-      `project this chat started? ✕ again to confirm`
+      `project this chat started? ✕ again to confirm · ${CANCEL_HINT}`
     );
   }
   return (
     `hide ${i.hidesRows} rows — this one and the ${i.hidesRows - 1} settled ` +
-    `under it? ✕ again to confirm`
+    `under it? ✕ again to confirm · ${CANCEL_HINT}`
+  );
+}
+
+/* ── What the toast says a gesture cost (round 1874, finding 2) ───────────
+ *
+ * "The toast and the tray report two different numbers for one gesture. The
+ * toast says '180 rows hidden'; the dismissed tray four inches above it says
+ * '21 dismissed · show'. Each is locally true (180 nodes fleet-wide, 21 rows
+ * gone from this tree) but side by side they read as a bug, and the customer
+ * cannot tell which number the 'show' link will restore."
+ *
+ * Both numbers are real and NEITHER may be dropped:
+ *
+ *   · the tray counts ROWS THIS PANEL WITHHELD — it is the way back to what
+ *     just left the screen, and inflating it to 180 would promise 180 rows
+ *     behind a link that has 21;
+ *   · the toast's undo restores the WHOLE cascade — 180 ids, most of them runs
+ *     that were never in this tree (other projects' finished workers, rows the
+ *     Live panel lists) — and shrinking it to 21 would understate what one
+ *     click did.
+ *
+ * So the toast states both and says which is which, in that order: what you
+ * just watched leave, then what was hidden in total. One sentence, no arithmetic
+ * left to the reader.
+ */
+
+/** What one confirmed ✕ actually cost, counted twice. */
+export interface HideOutcome {
+  /** Ids the SERVER hid — the cascade, fleet-wide. What "undo" restores. */
+  hidden: number;
+  /** How many of those were rows THIS PANEL was showing — the number the
+   *  "N dismissed · show" tray grows by. Never above `hidden`. */
+  here: number;
+}
+
+/** The toast's text. Pure, so `check-r1875-fixes.ts` can assert that the two
+ *  numbers can never contradict the tray again. */
+export function hideToastText(o: HideOutcome): string {
+  const here = Math.max(0, Math.min(o.here, o.hidden));
+  const rows = (n: number) => `${n} row${n === 1 ? "" : "s"}`;
+  if (o.hidden <= 1) return "row hidden";
+  if (here === o.hidden) {
+    return `${rows(o.hidden)} hidden — this row and everything settled under it`;
+  }
+  if (here === 0) {
+    return (
+      `${rows(o.hidden)} hidden — all of them elsewhere in the fleet; ` +
+      `undo restores every one`
+    );
+  }
+  return (
+    `${rows(here)} hidden here · ${o.hidden} in total, the rest this project's ` +
+    `finished runs on other panels — undo restores all ${o.hidden}`
   );
 }
 

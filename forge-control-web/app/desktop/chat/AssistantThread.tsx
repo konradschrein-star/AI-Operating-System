@@ -184,6 +184,13 @@ function CommsMessage({ facts }: { facts: CommsFacts }) {
       data-comms-role={identity.role ?? ""}
       data-comms-peer={facts.peerRunId ?? ""}
       data-comms-open={open ? "true" : "false"}
+      /* The same sentence the header line carries, on the CARD — while it is
+         collapsed, when the card and the line are the same rectangle. Round
+         1874's tester read `title` off this element, found "", and reported the
+         cards as having "no tooltip at all"; they had one, on the child. It is
+         dropped when the card opens, where a native tooltip following the
+         pointer across a paragraph of report prose is noise. */
+      title={open ? undefined : header.summary}
       style={{ display: "flex", flexDirection: "column", gap: 4 }}
     >
       <div
