@@ -452,7 +452,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 
 | Phase | Requirements covered |
 |---|---|
-| 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, NF3 |
+| 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R18 (harness only), NF3 |
 | 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
 | 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, NF1, NF5 |
@@ -461,9 +461,23 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 7 | R59, R60, R61, R62 |
 | 8 | R63, R64, R65, R66, R67, R68, NF2, NF5 |
 
-R1–R68 and NF1–NF7 each appear exactly once as a phase's primary owner. NF1 and
-NF5 are listed twice because they are audits performed at two phases; their
-*enforcement* is the universal gate, which every phase runs.
+R1–R68 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
+each has exactly one **primary owner** phase here. Three entries appear in two
+rows and each is deliberate, so a reader does not have to guess whether it is a
+mistake:
+
+- **R18** — phase 1 builds the replay *harness*, phase 2 makes it *pass*. Primary
+  owner: phase 2. A harness that runs and reports is a phase-1 deliverable; a
+  harness that is green is phase 2's, because there is nothing for it to be
+  green about until the graph scheduler exists.
+- **NF1, NF5** — audits performed at two phases. Their *enforcement* is the
+  universal gate, which every phase runs.
+
+This table and `01-requirements.md` §K must agree exactly.
+`check-corpus-map.py` in this directory checks that mechanically; run it after
+editing either table. It found this very row disagreeing on R18 at round 0,
+which is the only reason the discrepancy is a footnote rather than a surprise in
+phase 1.
 
 ---
 
