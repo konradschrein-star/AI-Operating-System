@@ -1369,3 +1369,40 @@ silently misfiled.
 | standing rule 1 | §3.2 — four rotted pins resolved at a recorded SHA and replaced by symbols |
 | standing rule 2 | §3.5 — `03-quality.md` §3.2's phase-6 gate amended where it is enforced, in this commit |
 | standing rule 3 | §3.3's provenance header, §3.4's three mutations, §3.6's four mechanisms |
+
+### 3.10 Re-run AFTER the commit — the header that names the shipped build
+
+§3.3's transcript reads `M` on all three subject files, because it was taken
+before the commit that lands them. A provenance header stamped with `git HEAD`
+goes stale the moment it lands — the lesson of `evidence/phase2-cycle-2.md` §3
+mutation 5, where a gate was checked green and became unsatisfiable on commit.
+So the check is re-run **at the commit**, and this is the header and census that
+name the bytes actually on the branch:
+
+```
+=== check-plan-store.ts — provenance ========================
+  repo worktree      : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+  git HEAD           : 9b04039
+  git branch         : project/8c591d6c
+  uncommitted (subj) : none
+  sha256             : 729fe2e462c47dd43df03df0312d7defbddc9cd22198233833cf3677f67f8383  forge-control-web/app/desktop/team/planStore.ts
+  sha256             : 31ec8e5f750a3d149586324de2f78e5f9b115faade98949a6c6d4bbf12ccc631  forge-control-web/app/desktop/team/planApi.ts
+  sha256             : 541eaa597faf338a055059ea292f9a9cc30d98370c20976e07bd9a7b449bdde6  scripts/checks/check-plan-store.ts
+  fixture nodes      : 24 (hand count 24)
+  assertions declared: 107
+============================================================
+
+[ELIDED: the 107 PASS lines are byte-identical to §3.3.]
+
+  fixture nodes        : 24
+  assertions declared  : 107
+  assertions executed  : 107
+  assertions failed    : 0
+
+ALL PASS — U27 plan store
+EXIT=0
+```
+
+`git HEAD 9b04039`, `uncommitted (subj) : none`, and the three sha256 values
+identical to §3.3's — which is the point: the green run in §3.3 was made against
+exactly these bytes, and the mutation runs in §3.4 were not.
