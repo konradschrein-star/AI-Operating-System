@@ -11,6 +11,8 @@
 
 import pg from "pg";
 import { createRun, type RunStatus } from "./runs.ts";
+import { queueNotification } from "./notifications.ts";
+import { selectClaimable, type GraphTask } from "../lib/task-graph.ts";
 
 const { Pool } = pg;
 
@@ -82,6 +84,34 @@ export interface ProjectTask {
    *  architect's fan-out curls, chain_key dedupes reconciler replays whose
    *  titles are generated and could legitimately repeat across cycles. */
   chain_key: string | null;
+  /** The tasks this one waits for — THE ORDERING DEPENDENCY, and only that
+   *  (migration 0040, R3). `null` is a SENTINEL, not an empty list: it means
+   *  "this row was never graph-scheduled, so apply the legacy round rule".
+   *  A non-null array, INCLUDING `[]`, means "graph-scheduled: promote when
+   *  exactly these ids are done", so `[]` is an explicit root that promotes
+   *  immediately. `promoteReadyTasks()` is where the sentinel is read.
+   *
+   *  Selected as `depends_on::text[]`, matching the `id::text` /
+   *  `project_id::text` convention above. The cast is for CONSISTENCY, not
+   *  necessity: measured on this host (pg 8.21, node-pg registers a parser for
+   *  `_uuid`/OID 2951), a raw `uuid[]` already arrives as `string[]`. It is
+   *  cast anyway so every id this module hands out is a string produced the
+   *  same way, and so a future pg that drops the `_uuid` parser cannot turn
+   *  this field into a raw `'{a,b}'` string behind phases 3 and 6. */
+  depends_on: string[] | null;
+  /** Which workstream worktree this task runs in (migration 0040, R4).
+   *  `'main'` for every row that predates the column and for every row that
+   *  does not ask for another. Same workstream = same worktree, serialized
+   *  against its siblings; different workstreams are isolated directories that
+   *  may write the same path. NOT NULL with a default in the schema, so it is
+   *  never null here. */
+  workstream: string;
+  /** Repo-relative POSIX paths this task intends to write (migration 0040,
+   *  R5) — the input to computed contention, declared by the planner rather
+   *  than reconstructed by grepping briefs. An EMPTY array intersects nothing
+   *  and is therefore always claimable (R17), which is today's behaviour
+   *  exactly. NOT NULL with a `'{}'` default in the schema. */
+  write_set: string[];
   created_at: string;
   updated_at: string;
 }
@@ -93,7 +123,9 @@ export interface ProjectTaskWithProject extends ProjectTask {
 const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, work_branch,
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
-  run_id::text, fix_cycle, tier, attempt, chain_key, created_at::text, updated_at::text`;
+  run_id::text, fix_cycle, tier, attempt, chain_key,
+  depends_on::text[], workstream, write_set,
+  created_at::text, updated_at::text`;
 /** TASK_COLS qualified for queries that join `project_tasks pt` to another
  *  table — `projects` and `runs` both carry id/status/created_at, so an
  *  unqualified list is ambiguous there. Kept as one list so a new column can
@@ -101,7 +133,8 @@ const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status
  *  joined SELECT (every ProjectTask row this module returns must be whole). */
 const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
   pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier, pt.attempt,
-  pt.chain_key, pt.created_at::text, pt.updated_at::text`;
+  pt.chain_key, pt.depends_on::text[], pt.workstream, pt.write_set,
+  pt.created_at::text, pt.updated_at::text`;
 /** Last assistant message of the joined run `r`, by thread timestamp — the
  *  text every verdict parse reads. Shared by listSettledRunningTasks() and
  *  listVerdictRound() so the two can never drift apart. */
@@ -437,9 +470,131 @@ export async function listGoalProgress(): Promise<GoalProgress[]> {
   return r.rows;
 }
 
-/** Promote every 'pending' task whose project has no earlier-round task
- *  still outstanding to 'ready'. Single set-based query across all
- *  projects — this is the "manager" for stage sequencing, run every tick.
+/** One corrupt row found by sweepDanglingDependencies(), carrying everything
+ *  the notification needs so the caller never has to go back to the database
+ *  for a name. `missing` and `duplicated` are the two ways an array's
+ *  cardinality can exceed the number of rows it names — see the sweep. */
+interface DanglingSweepRow {
+  id: string;
+  title: string;
+  project_id: string;
+  project_name: string;
+  missing: string[] | null;
+  duplicated: string[] | null;
+}
+
+/**
+ * R14's BACK half: a `pending` graph row whose `depends_on` names rows that do
+ * not exist is moved to `blocked`, its project is moved to `blocked`, and one
+ * notification names the task and the missing ids (failure F1,
+ * 02-architecture.md §6).
+ *
+ * The front half — the `cardinality` equality in promoteReadyTasks()'s graph
+ * branch — only refuses to PROMOTE such a row. That is not enough on its own:
+ * a task stuck at `pending` forever with nobody told is precisely the silent
+ * stall this project exists to end, so the two halves ship together and are
+ * exact complements. The sweep's predicate is the literal negation of the
+ * promote term (`<>` where the promote branch writes `=`), so no row can ever
+ * be held by one and ignored by the other.
+ *
+ * DECISIONS TAKEN HERE, because the corpus does not state them:
+ *
+ *  1. SWEEP BEFORE PROMOTE, in one function call, so no caller changes. A
+ *     corrupt graph must STOP a project, not release more work into it.
+ *     Blocking first means the promote statement's `p.status = 'active'` join
+ *     finds the project already `blocked` and promotes nothing else for it on
+ *     this tick — the gate doing exactly the job it already does for a paused
+ *     project, with no new mechanism.
+ *  2. SCOPED TO `pending` ROWS OF `active` PROJECTS, and to nothing else.
+ *     - Not `ready`/`running` rows: those were already released, and flipping
+ *       one to `blocked` under a live run would strand the run and lose its
+ *       output. That is the same reasoning that already makes pausing a
+ *       project stop new claims without killing runs in flight
+ *       (claimReadyTasks below).
+ *     - Not `paused`/`blocked`/`done`/`cancelled` projects: blocking a paused
+ *       project would destroy the pause — an operator who resumed it would
+ *       find `blocked`, which is a different state with a different meaning,
+ *       and the corruption is not going anywhere in the meantime.
+ *  3. IDEMPOTENT BY CONSTRUCTION, which is the whole anti-spam argument: a
+ *     swept task is no longer `pending`, so the next tick's sweep does not
+ *     find it and does not notify again. Nothing remembers anything; the row's
+ *     own status is the memory.
+ *
+ * TWO SHAPES OF CORRUPTION, both loud. `cardinality(depends_on)` can exceed
+ * the number of `project_tasks` rows it names either because an id names no
+ * row (F1, the case R14 describes) or because the SAME id appears twice (the
+ * count is over rows, not over array elements). The second is not reachable
+ * from any writer today — the R6 backfill aggregates over distinct rows — but
+ * the promote term refuses both identically, so the sweep must report both or
+ * a duplicate-bearing row would be held by the front half and swept by
+ * nothing. It gets its own message rather than being forced into F1's wording:
+ * "names 0 dependencies that no longer exist" is an instrument lying about
+ * what it found.
+ *
+ * @returns the rows it blocked, for the caller's log line
+ */
+async function sweepDanglingDependencies(): Promise<DanglingSweepRow[]> {
+  const r = await pool.query<DanglingSweepRow>(
+    `WITH corrupt AS (
+       SELECT pt.id::text          AS id,
+              pt.title             AS title,
+              pt.project_id::text  AS project_id,
+              p.name               AS project_name,
+              (SELECT array_agg(DISTINCT d::text ORDER BY d::text)
+                 FROM unnest(pt.depends_on) AS d
+                WHERE NOT EXISTS (SELECT 1 FROM project_tasks x WHERE x.id = d))
+                                   AS missing,
+              (SELECT array_agg(d::text ORDER BY d::text)
+                 FROM (SELECT d FROM unnest(pt.depends_on) AS d
+                        GROUP BY d HAVING count(*) > 1) AS dup(d))
+                                   AS duplicated
+         FROM project_tasks pt
+         JOIN projects p ON p.id = pt.project_id
+        WHERE p.status = 'active'
+          AND pt.status = 'pending'
+          AND pt.depends_on IS NOT NULL
+          AND cardinality(pt.depends_on)
+              <> (SELECT count(*) FROM project_tasks d
+                   WHERE d.id = ANY(pt.depends_on))
+     ),
+     blocked_tasks AS (
+       UPDATE project_tasks t SET status = 'blocked', updated_at = now()
+        WHERE t.id IN (SELECT id::uuid FROM corrupt)
+       RETURNING t.id
+     ),
+     blocked_projects AS (
+       UPDATE projects p SET status = 'blocked', updated_at = now()
+        WHERE p.id IN (SELECT project_id::uuid FROM corrupt)
+       RETURNING p.id
+     )
+     SELECT id, title, project_id, project_name, missing, duplicated
+       FROM corrupt`,
+  );
+  for (const row of r.rows) {
+    const missing = row.missing ?? [];
+    const duplicated = row.duplicated ?? [];
+    const text =
+      missing.length > 0
+        ? `🚫 Project "${row.project_name}" — task "${row.title}" names ` +
+          `${missing.length} dependencies that no longer exist: ${missing.join(", ")}`
+        : `🚫 Project "${row.project_name}" — task "${row.title}" has a ` +
+          `depends_on array longer than the tasks it names, with every id ` +
+          `resolvable: duplicated ids ${duplicated.join(", ")}`;
+    // queueNotification never throws by construction (db/notifications.ts) —
+    // a lost push must not fail a tick — so this is not a swallowed error, and
+    // the block itself has already happened in the statement above regardless.
+    await queueNotification(text, "project-graph");
+    console.error(
+      `[project-graph] R14: task ${row.id} blocked, project ${row.project_id} blocked — ` +
+        `missing [${missing.join(",")}] duplicated [${duplicated.join(",")}]`,
+    );
+  }
+  return r.rows;
+}
+
+/** Promote every 'pending' task whose dependencies are all satisfied to
+ *  'ready'. Single set-based query across all projects — this is the
+ *  "manager" for stage sequencing, run every tick.
  *
  *  Only 'active' projects advance (E7 on main, R8 in this project's plan —
  *  the same bug, found twice). Neither this query nor claimReadyTasks used to
@@ -452,20 +607,94 @@ export async function listGoalProgress(): Promise<GoalProgress[]> {
  *  'active' the same rows are still 'pending' and the round resumes exactly
  *  where it stopped. The reconciler is therefore free to create fix-chain
  *  tasks for a non-active project — they sit inert under this gate instead of
- *  the verdict being dropped on the floor. */
+ *  the verdict being dropped on the floor. All of that survives R13 verbatim:
+ *  the term is unchanged, in the same join, and it is what makes decision 1 of
+ *  the sweep above work at all.
+ *
+ *  ------------------------------------------------------------------------
+ *  WHAT CHANGED (engine-task-graph phase 2, R11/R12/R69).
+ *
+ *  "No earlier-round task still outstanding" was three unrelated things at
+ *  once — ordering, file contention and narrative phase — and only ordering is
+ *  a real dependency (00-vision.md §2). The predicate now has TWO LABELLED
+ *  BRANCHES, chosen by the row's own `depends_on` sentinel:
+ *
+ *   - GRAPH BRANCH (`depends_on IS NOT NULL`, R11): ready when every id it
+ *     names belongs to a `done` task. `'{}'` names nothing, is trivially
+ *     satisfied, and promotes immediately — an explicit root. `round` is NOT
+ *     consulted, which is the entire point: a reviewer's 32 minutes no longer
+ *     hold seven builders that never depended on it.
+ *   - LEGACY BRANCH (`depends_on IS NULL`, R12): today's rule, unchanged —
+ *     promote when no task of the same project in a strictly lower round is
+ *     anything other than `done`. TODO(R12-retire)
+ *
+ *  ONE STATEMENT, not two. Two statements would leave a window in which a row
+ *  whose `depends_on` flipped between them satisfies neither and is skipped by
+ *  both. The branches are exclusive and exhaustive over `depends_on`, so every
+ *  `pending` row of an active project is judged by exactly one of them.
+ *
+ *  THE CARDINALITY EQUALITY is R14's front half. `NOT EXISTS (... status <>
+ *  'done')` alone reads a VANISHED dependency as satisfied and releases the
+ *  task — the silent-fallback shape this fleet forbids. Its back half is
+ *  sweepDanglingDependencies() above, called first, in the same tick.
+ *
+ *  THE LEGACY-ROW TERM (R69, ruled as E3 in 02-architecture.md §9.2) is the
+ *  graph branch's only reference to `round`, and it reads it only ABOUT legacy
+ *  rows. `depends_on` is a FROZEN closure: the R6 backfill writes the rows that
+ *  existed when 0040 ran, and 0040 is applied BEFORE the executor restarts
+ *  (R64), so the old engine keeps inserting `depends_on IS NULL` rows in the
+ *  gap — createFixChain's builder at `round + 1` and re-reviewer at `round + 2`
+ *  — that no frozen closure can name. Without the term a backfilled row
+ *  promotes straight past a fix chain numbered far below it, where today's
+ *  engine holds it (failure F13). Measured, not argued: closure-only leaves
+ *  R18 cases (a)–(e) green and (f) diverging on tick 2
+ *  (evidence/phase1-migration.md §13.4). On a project planned entirely after
+ *  the restart no row is NULL, the term is vacuously true, and `round` is never
+ *  consulted — it costs only where it must. It is legacy SURFACE, not graph
+ *  logic, and it is deleted in the same commit as the legacy branch and R18
+ *  case (f), when no NULL row remains. TODO(R12-retire)
+ *
+ *  SQL MIRROR — this module owns NO scheduling decision (02-architecture.md
+ *  §1.2), exactly as markVerdictTaskDone mirrors verdictMemberSettled today.
+ *  The statement below is the set-based mirror of `readyRule()` +
+ *  `graphReady()` + `legacyRoundReady()` in lib/task-graph.ts; those three are
+ *  the readable, testable definition and the replay proof (R18) runs against
+ *  them without a database. If the two ever disagree, the pure side is right
+ *  and this statement is the bug.
+ *
+ *  The return value stays `Promise<number>` (rows promoted). projectTick()
+ *  calls it and ignores the value; widening the signature to surface the sweep
+ *  would drag lib/project-tick.ts into this phase, and the sweep already
+ *  reports itself through the notification queue and the executor log. */
 export async function promoteReadyTasks(): Promise<number> {
+  // R14 back half, BEFORE the promote — decision 1 on the sweep above.
+  await sweepDanglingDependencies();
   const r = await pool.query(
     `UPDATE project_tasks pt
         SET status = 'ready', updated_at = now()
        FROM projects p
       WHERE p.id = pt.project_id
-        AND p.status = 'active'
+        AND p.status = 'active'                        -- E7/R8/R13: unchanged, load-bearing
         AND pt.status = 'pending'
-        AND NOT EXISTS (
-          SELECT 1 FROM project_tasks earlier
-           WHERE earlier.project_id = pt.project_id
-             AND earlier.round < pt.round
-             AND earlier.status <> 'done'
+        AND (
+          -- GRAPH BRANCH
+          (pt.depends_on IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM project_tasks d
+                            WHERE d.id = ANY(pt.depends_on) AND d.status <> 'done')
+           AND (SELECT count(*) FROM project_tasks d WHERE d.id = ANY(pt.depends_on))
+               = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
+           AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3: the legacy-row term
+                            WHERE l.project_id = pt.project_id
+                              AND l.depends_on IS NULL
+                              AND l.round < pt.round
+                              AND l.status <> 'done'))  -- TODO(R12-retire)
+          OR
+          -- LEGACY BRANCH  TODO(R12-retire)
+          (pt.depends_on IS NULL
+           AND NOT EXISTS (SELECT 1 FROM project_tasks earlier
+                            WHERE earlier.project_id = pt.project_id
+                              AND earlier.round < pt.round
+                              AND earlier.status <> 'done'))
         )
       RETURNING pt.id`,
   );
@@ -485,7 +714,56 @@ export async function promoteReadyTasks(): Promise<number> {
  *
  *  Pausing a project stops NEW claims only — runs already in flight are NOT
  *  killed. They finish and reconcile normally; bookkeeping is not billable
- *  work, and killing mid-run would lose the agent's output. */
+ *  work, and killing mid-run would lose the agent's output.
+ *
+ *  ------------------------------------------------------------------------
+ *  WHAT CHANGED (engine-task-graph phase 2, R15/R16/R17/R21).
+ *
+ *  Everything about the transaction is untouched: `FOR UPDATE OF pt SKIP
+ *  LOCKED`, the `p.status = 'active'` join, the in-transaction flip to
+ *  'running', the `LIMIT 32`. Two things are different.
+ *
+ *  1. ORDERING — the CLAUSE is byte-identical, its MEANING is not. R15 says
+ *     "only the ordering and the contention filter change" while
+ *     02-architecture.md §3.4 says `ORDER BY pt.round ASC, pt.created_at ASC`
+ *     stays. Both are true and the reconciliation is recorded here so a later
+ *     reviewer does not have to re-derive it: the text of the ORDER BY does
+ *     not change, but `round` is now an engine-computed depth rather than a
+ *     hand-written schedule, so the same clause genuinely means "shallower
+ *     first" instead of "whatever number a planner typed". No new ORDER BY was
+ *     invented; inventing one would have been an unrecorded change of claim
+ *     order across the migration, which R18's replica proof exists to forbid.
+ *
+ *  2. CONTENTION BELT (R16) — inside the same transaction, after the
+ *     `SELECT … FOR UPDATE`, the project's currently 'running' tasks are read
+ *     and candidates plus running rows are passed through `selectClaimable()`
+ *     in lib/task-graph.ts. Only survivors are flipped to 'running' and
+ *     returned. A dropped candidate stays 'ready' — it is NOT flipped, NOT
+ *     failed, and NOT logged as an error, because nothing went wrong: it is
+ *     claimed on a later tick when the sibling writing its files has finished.
+ *
+ *     An EMPTY `write_set` intersects nothing and is therefore always
+ *     claimable (R17). That is today's behaviour exactly — every task shares
+ *     one worktree and runs in parallel — and it is what keeps R18's replica
+ *     exact, because every row of the replay fixture carries `'{}'`.
+ *
+ *     PARTITIONED BY PROJECT before the pure call. `GraphTask` deliberately
+ *     carries no `project_id` and every task-graph function taking a
+ *     COLLECTION is defined over ONE project (see its precondition), so one
+ *     call per project is the contract, not an optimisation. One call over the
+ *     whole batch would make two projects that both list `src/index.ts` in
+ *     workstream 'main' serialise against each other although they run in
+ *     different worktrees entirely.
+ *
+ *  SQL MIRROR — as on promoteReadyTasks above, this module owns NO decision
+ *  (02-architecture.md §1.2). The contention rule is NOT duplicated in SQL:
+ *  rows are mapped to `GraphTask` and `selectClaimable()` decides. The only
+ *  thing this function decides is which rows to offer it.
+ *
+ *  R21 is a NON-change and is named so a later reader does not mistake its
+ *  absence for a removal: spawnTaskRuns()'s TypeScript-side belt in
+ *  lib/project-tick.ts still hands a task back to 'ready' when its project
+ *  stopped accepting work between claim and spawn. Nothing here replaces it. */
 export async function claimReadyTasks(): Promise<
   Array<ProjectTask & { project: Project }>
 > {
@@ -513,15 +791,50 @@ export async function claimReadyTasks(): Promise<
       [projectIds],
     );
     const byId = new Map(pr.rows.map((p) => [p.id, p]));
+
+    // The contention belt's other input: what is already in flight in these
+    // projects. Read inside the same transaction as the candidates, so the
+    // belt cannot be decided against a snapshot older than the claim. No
+    // `FOR UPDATE` — these rows are read, never written, and locking them
+    // would make every claim contend with the reconciler marking one 'done'.
+    const runningRows = await client.query<ProjectTask>(
+      `SELECT ${TASK_COLS_PT}
+         FROM project_tasks pt
+        WHERE pt.project_id = ANY($1::uuid[])
+          AND pt.status = 'running'`,
+      [projectIds],
+    );
+    const claimable = new Set<string>();
+    for (const projectId of projectIds) {
+      const candidates = r.rows
+        .filter((t) => t.project_id === projectId)
+        .map(toGraphTask);
+      const running = runningRows.rows
+        .filter((t) => t.project_id === projectId)
+        .map(toGraphTask);
+      for (const survivor of selectClaimable(candidates, running)) {
+        claimable.add(survivor.id);
+      }
+    }
+    // Original ORDER BY order preserved: selectClaimable returns a subset and
+    // the caller's spawn order is part of the claim's observable behaviour.
+    const claimed = r.rows.filter((t) => claimable.has(t.id));
+    if (claimed.length === 0) {
+      // Every candidate was deferred by contention. Nothing failed; the rows
+      // stay 'ready' and a later tick claims them. COMMIT rather than ROLLBACK
+      // so the SKIP LOCKED locks are released promptly.
+      await client.query("COMMIT");
+      return [];
+    }
     // Mark 'running' inside the same transaction so a concurrent tick can't
     // also pick these up between claim and run-creation.
     await client.query(
       `UPDATE project_tasks SET status = 'running', updated_at = now()
         WHERE id = ANY($1::uuid[])`,
-      [r.rows.map((t) => t.id)],
+      [claimed.map((t) => t.id)],
     );
     await client.query("COMMIT");
-    return r.rows.flatMap((t) => {
+    return claimed.flatMap((t) => {
       const project = byId.get(t.project_id);
       return project ? [{ ...t, project }] : [];
     });
@@ -531,6 +844,21 @@ export async function claimReadyTasks(): Promise<
   } finally {
     client.release();
   }
+}
+
+/** The narrow projection lib/task-graph.ts decides over (R10) — the six
+ *  columns a scheduling decision may read, and nothing else. Written out here
+ *  rather than passing the whole row so that a decision function cannot
+ *  quietly start depending on a brief, a run id or a timestamp. */
+function toGraphTask(t: ProjectTask): GraphTask {
+  return {
+    id: t.id,
+    round: t.round,
+    workstream: t.workstream,
+    status: t.status,
+    depends_on: t.depends_on,
+    write_set: t.write_set,
+  };
 }
 
 export async function attachRun(taskId: string, runId: string): Promise<void> {

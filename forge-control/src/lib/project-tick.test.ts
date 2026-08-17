@@ -65,6 +65,15 @@ function task(over: Partial<ProjectTask> = {}): ProjectTask {
     tier: null,
     attempt: 0,
     chain_key: null,
+    // Migration 0040's three columns, at their schema defaults. `depends_on:
+    // null` is the LEGACY sentinel, which is what every row this factory
+    // stands in for is: these cases predate the task graph and must keep
+    // reading as pre-graph rows. Added with the ProjectTask fields themselves
+    // (engine-task-graph phase 2) — a factory that omits a required column
+    // stops compiling, which is the point of the columns moving together.
+    depends_on: null,
+    workstream: "main",
+    write_set: [],
     created_at: "",
     updated_at: "",
     ...over,

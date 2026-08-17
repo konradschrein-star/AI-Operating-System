@@ -91,6 +91,12 @@ function task(over: Partial<ProjectTask> = {}): ProjectTask {
     tier: null,
     attempt: 0,
     chain_key: null,
+    // Migration 0040's three columns, at their schema defaults — see the twin
+    // factory in project-tick.test.ts. `depends_on: null` is the LEGACY
+    // sentinel: every row this factory stands in for predates the task graph.
+    depends_on: null,
+    workstream: "main",
+    write_set: [],
     created_at: "",
     updated_at: "",
     ...over,
