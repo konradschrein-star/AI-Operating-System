@@ -1,15 +1,19 @@
 # notification-gap.md — what agent→operator traffic reaches `runs.thread`, and what dies
 
 **Deliverable for R19** (`docs/plan/operator-visibility/01-requirements.md`), gated by
-`docs/plan/operator-visibility/03-quality.md` phase 4. Written round 1350; §1 re-pinned
-and §3's client claim corrected in round 1353, from round 1352's review.
+`docs/plan/operator-visibility/03-quality.md` phase 4. Written round 1350; §1 re-pinned and
+§3's client claim corrected in round 1353, from round 1352's review; §2c's pins restored in
+round 1355, from round 1354's review; **closed on live evidence in round 1863**.
 
-**Status: OPEN — but far narrower than the corpus claimed.**
+**Status: the DELIVERABLE is discharged. The GAP is OPEN and confirmed.** (§4 separates the
+two; they had been run together since round 1350.)
+
 Two of the three agent→operator paths are fully covered today. One is not. The blanket
 statement carried by 00-vision/02-architecture — *"agent completion payloads never reach
-`runs.thread`"* — was **false as written** and is corrected in those files in the same
-commit as this doc. What remains open is one specific payload: the harness's
-**async task-completion notification**.
+`runs.thread`"* — was **false as written** and is corrected in those files. What remains
+open is one specific payload: the harness's **async task-completion notification** — and as
+of round 1863 that is no longer an inference from reading `cc-runner.ts`. It was measured
+against the live database, with the payload captured and its absence proved (§2b-live).
 
 ---
 
@@ -33,25 +37,49 @@ verified by nobody — so from round 1353 **the check is a script**:
 node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs
 ```
 
-It checks two things, and round 1355 added the second because the first was being read as
-if it covered both:
+It runs in five passes, and the fifth — added round 1863 — is the one that makes the
+other four's numbers mean something:
 
 1. **Fenced quotes.** Every pinned heading in this file, read out of the working tree and
-   diffed. **11 of 11 PASS** (round 1350's nine, plus §3a's two `thread-mapping.ts`
-   blocks). An unmapped file name is a hard error and finding zero quotes is a failure, so
-   this half cannot pass vacuously.
+   diffed. **11.** An unmapped file name is a hard error and finding zero quotes is a
+   failure, so this half cannot pass vacuously.
 2. **Prose pins** (`PROSE_PINS` in the script). The `file:line` citations that appear in
-   running text with no fence under them — §2c's two, §3's four, and six more. Each is
-   checked twice over: the doc must still bind that number to the *claim* it carries, and
-   the line must still hold the symbol. **12 of 12 PASS.**
+   running text with no fence under them. Each is checked twice over: the doc must still
+   bind that number to the *claim* it carries, and the line must still hold the symbol.
+   **12.**
+3. **Cross-document pins.** The lines this doc pins in `00-vision.md`,
+   `01-requirements.md`, `02-architecture.md` and the phase-1 artifact. They rot exactly
+   like code pins and nothing was watching them until round 1863. **7.**
+4. **Live pins, repeats and historical pins** (`LINE_RULES`). Everything else: §3's recipe
+   pins, the corrections table's was/now columns, §1's own rot narrative, §4's
+   reconciliation list. A *repeat* names the `path:line` another pass verified and fails
+   with it, so restating a pin can no longer outlive the pin. A *historical* pin — a number
+   recorded because it rotted — carries a mandatory written reason. **4 live + 25 repeats
+   + 13 historical.**
+5. **The inventory.** The script tokenises the whole document — every `path.ext:NNN` and
+   every bare `` `:NNN` ``, fenced or not, hyphen or en-dash — and asserts passes 1–4
+   consumed all of them. **An unclassified pin is a hard failure, not a skip.**
 
-Half 2 exists because of a specific failure. Round 1353 swapped §2c's two pins onto each
-other's symbols; both numbers were still real lines in the file, so nothing about the
-*numbers* was wrong, and the script — which then only saw fenced quotes — printed
-`ALL PASS — 11/11` with the wrong pin four lines below a passing one. Read
-`ALL PASS` narrowly: the summary line now names both counts and says outright that it is
-not every pin in the document. What remains uncovered is listed in the script's SCOPE
-comment.
+Current result: **`ALL PASS — 72/72 pins classified`**, and 72 is the denominator, printed
+next to the count. (It was 64 before this round's own edits added eight more pins — the
+denominator is derived from the document, not declared, so it moves with the document.)
+
+Pass 5 exists because of two specific failures, one of each kind. Round 1353 swapped §2c's
+two pins onto each other's symbols; both numbers were still real lines in the file, so the
+script — which then only saw fenced quotes — printed `ALL PASS — 11/11` with a wrong pin
+four lines below a passing one. Round 1355 answered that with a hand-registered prose
+table, and the summary then read `11 fenced + 12 prose`. That was honest but still
+partial, and **partial coverage reported as a full pass is the defect**: `11/11` cannot
+distinguish *checked everything* from *checked everything I could see*. It was in fact
+23 of the 64 pins the document then held. The remaining 41 — including every number in the
+corrections table that had just been so carefully argued over — were watched by nothing at
+all.
+
+Verified by negative control, both directions, at this round's baseline: append
+`` `executor.ts:1` `` and a bare `` `:4242` `` to this file and the script exits 1 with
+`72/74 classified` and both orphans named by line; renumber the one fenced `db/runs.ts`
+pin and it exits 1 with **three** failures — once for the quote itself, once for each of
+the two places the doc restates that pin. A repeat cannot outlive its primary.
 
 The script deliberately does **not** check the SHA — it verifies quotes against the tree
 as it stands. Whether this doc's pins are still *current* is the other half, and that is
@@ -63,11 +91,16 @@ git diff 852b089ce67b212d8a0503ff711ae9a8ce9e4f8e -- \
   forge-control/src/executor.ts \
   forge-control/src/db/runs.ts \
   forge-control/src/lib/run-control-rules.ts \
+  forge-control/src/lib/run-control-rules.test.ts \
   forge-control/src/routes/run-control.ts \
   forge-control-web/app/desktop/chat/AssistantThread.tsx \
   forge-control-web/app/desktop/chat/thread-mapping.ts \
   forge-control-web/app/desktop/chat/tool-summary.ts \
-  forge-control-web/app/desktop/chat/subagent-slice.ts
+  forge-control-web/app/desktop/chat/subagent-slice.ts \
+  docs/plan/operator-visibility/00-vision.md \
+  docs/plan/operator-visibility/01-requirements.md \
+  docs/plan/operator-visibility/02-architecture.md \
+  docs/plan/artifacts/phase1/ended-at-is-a-launch-ack.md
 ```
 
 Non-empty output means the line pins in this doc may be stale — re-derive them with
@@ -80,8 +113,14 @@ was right.** It listed only the four engine files, so the three *client* files t
 cites — `AssistantThread.tsx`, `tool-summary.ts`, `subagent-slice.ts` — could rot
 unwatched, and one of them promptly did: sibling commit `0938385` (browser shots),
 landing in this shared worktree after the doc's own commit `91b0fa7`, inserted two lines
-into `AssistantThread.tsx` above every pin this doc holds on it. The command above now
-covers all nine cited files, not four.
+into `AssistantThread.tsx` above every pin this doc holds on it.
+
+Round 1353 widened it to nine files and **it was still short by five**: the test file §2c
+pins (`run-control-rules.test.ts`), the three sibling planning docs §4 pins, and the
+phase-1 artifact §4 pins. The same defect, one layer out — an instrument that watches most
+of its subject reports a clean bill for the part it cannot see. The command above now
+lists **all fourteen** files this document pins, and pass 3 of the verifier checks the
+four documentary ones by content rather than trusting the diff to be read.
 
 Rather than correct only the three pins the review named, **every pin in this file was
 re-resolved** — which turned up two more the review had not looked at:
@@ -111,6 +150,22 @@ Round 1350's original mapping — route at `:214`, serializer at `:149` — was 
 "correction" made this document wrong in the exact place it was boasting about accuracy.
 Both numbers are back where they started. The rows above stay in the table, marked
 VERIFIED, because an empty row invites the same swap next round.
+
+**Re-verified independently at round 1863**, because a corrections table that blames the
+wrong round is worse than no table and this one had already been rewritten twice:
+
+```sh
+for ref in HEAD main 91b0fa7; do
+  git show $ref:forge-control/src/routes/run-control.ts |
+    grep -n 'function toThreadEntry\|r.post("/:id/message"'
+done
+# 149:function toThreadEntry(...)   214:r.post("/:id/message", ...)   — identical at all three
+git log --oneline main..HEAD -- forge-control/src/routes/run-control.ts   # (no output)
+```
+
+The file has never been touched on this branch. **Round 1350 was correct; the inversion was
+introduced by round 1353 and withdrawn by round 1355.** Attribution stands as written above
+— this round changed nothing in that table except to confirm it against the tree.
 
 Three lessons, all mechanical rather than editorial. **A drift command must list every file
 the document cites** — the one file it omitted is the one that moved. **A rotted pin and a
@@ -148,7 +203,7 @@ gap it found is real; the sentence it wrote about the gap was not.
 |---|---|---|
 | a1 | **Synchronous** in-process sub-agent (Agent tool, `run_in_background: false`) — final text arrives as the `tool_result` on the spawning `tool_use` | **COVERED** |
 | a2 | **Async** in-process sub-agent — its own stream events (assistant text, tool calls) while it works | **COVERED**, inline, tagged `meta.parent_tool_use_id` |
-| b | **Async task-completion notification** — the harness banner that says a background agent finished | **UNCOVERED — dies in `cc-runner.ts:502–514`** |
+| b | **Async task-completion notification** — the harness banner that says a background agent finished | **UNCOVERED — dies in `cc-runner.ts:502–514`. Confirmed on the live database round 1863, not inferred: see §2b-live.** |
 | c | Peer run messaging this run via `POST /api/runs/:id/message` | **COVERED** end to end: engine → thread → client renderer, with tests |
 
 ### 2a1. Synchronous sub-agent final text — COVERED
@@ -270,14 +325,107 @@ And nothing downstream would know what to do with it. `executor.ts`'s `onEvent`
 A grep of all of `forge-control/src` for `task-notification` / `task_notification` /
 `Async agent launched` returns **zero hits**. The engine has no concept of this payload.
 
-**Bounded claim — what is proved and what is not.** Proved from code: *if* the completion
-notification is not a `tool_result` block, it is dropped at `cc-runner.ts:502-514` and
-cannot be represented by `CcEvent` anyway. Not proved from this build sandbox: the exact
-wire shape of the notification. The `ai_os` database reachable from a build task has
-`select count(*) from runs` = **0** (it is not the live store), so no captured payload
-could be inspected, and the worktree-only policy forbids reaching for the live one from a
-build task. **The one live check worth doing:** confirm on a real async-spawning run that
-no thread entry carries the completion banner. Everything else here stands on code.
+### 2b-live. The wire shape, observed (round 1863)
+
+Rounds 1350–1355 could only bound this claim: *if* the notification is not a `tool_result`
+block it is dropped, but the sandbox `ai_os` DB had `select count(*) from runs` = 0 and
+worktree policy barred the live one. Round 1863 was the first task briefed against the live
+store (`content_forge` on `127.0.0.1:5432`, DSN read from `pm2 env` of `forge-control`).
+**The check no longer stands on code.**
+
+**Method — the instrument is the run itself.** A builder run *is* a Claude Code session
+whose thread is persisted by `executor.ts` as it streams. So run
+`07e59e8e-7acf-4077-a10b-53ed900631cf` (this document's own round-1863 run) spawned one
+real async sub-agent, received its completion notification in-context, and then read its
+own `runs.thread` back out of the live database. Nothing was fabricated and nothing was
+written: the only writes are the executor's ordinary appends.
+
+The spawn produced exactly three kinds of entry, and the notification is not among them:
+
+| thread idx | role / kind | `meta` | what it is |
+|---|---|---|---|
+| 45 | `tool` / `tool_call` | `tool_use_id: toolu_019chfnXfiuBjZAJTi5fkoL5` | the `Agent` spawn |
+| 46 | `tool` / `tool_result` | same `tool_use_id` | **the launch ack only** — `"Async agent launched successfully…"` |
+| 47–49 | `tool`,`tool`,`assistant` | `parent_tool_use_id: toolu_019chf…` | the sub-agent's own work, inline (§2a2, live-confirmed) |
+| — | — | — | **the completion notification: no entry at all** |
+
+The raw entry the sub-agent's closing text produced, verbatim from `runs.thread`:
+
+```json
+{
+  "ts": "2026-08-17T07:41:27.545Z",
+  "kind": "text",
+  "meta": {
+    "model": "claude-haiku-4-5-20251001",
+    "usage": { "input_tokens": 8, "output_tokens": 4,
+               "cache_read_input_tokens": 8201, "cache_creation_input_tokens": 258 },
+    "provider": "claude-code",
+    "parent_tool_use_id": "toolu_019chfnXfiuBjZAJTi5fkoL5"
+  },
+  "role": "assistant",
+  "content": "091e05c docs(round1862): deploy — the rebuild that proved which bytes are being served"
+}
+```
+
+**And the payload that never became an entry**, captured from the receiving run's own
+context at `07:41:27Z`, four seconds after the spawn:
+
+```xml
+<task-notification>
+<task-id>a56e564fcc6b6c94d</task-id>
+<tool-use-id>toolu_019chfnXfiuBjZAJTi5fkoL5</tool-use-id>
+<output-file>/tmp/claude-0/…/tasks/a56e564fcc6b6c94d.output</output-file>
+<status>completed</status>
+<summary>Agent "Wire-shape probe subject" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children
+of its own. …the same task-id may notify more than once.</note>
+<result>091e05c docs(round1862): deploy — the rebuild that proved which bytes are being served</result>
+<usage><subagent_tokens>8481</subagent_tokens><tool_uses>1</tool_uses><duration_ms>4378</duration_ms></usage>
+</task-notification>
+```
+
+**Four things are now settled, and one deliberately is not.**
+
+1. **It is not a `tool_result` block.** This is the question rounds 1350–1355 could not
+   answer, and it is answered by *negative space*, rigorously: `cc-runner`'s `user` branch
+   (§2a1) forwards **every** `tool_result` block unconditionally — no filter on tool, id or
+   size — and `appendThreadEntry` (`executor.ts:484-493`) is a bare
+   `thread = thread || $2::jsonb` with no dedup. Had the notification been a `tool_result`,
+   an entry would exist. Nine further entries were appended to this run after index 49, so
+   this is absence, not flush lag.
+2. **`CcEvent` cannot represent it.** Unchanged from the code reading, now with the payload
+   in hand: the union is `init | assistant_text | tool_call | tool_result`, and this is a
+   structured record with eight fields, not a text blob.
+3. **It carries the spawning `tool_use_id`.** `<tool-use-id>` is byte-identical to the
+   `Agent` call's `meta.tool_use_id`. §3's second emission shape — bind the completion to
+   the row that spawned it — is therefore *implementable*; the engine has the join key.
+4. **`role`/`kind` are not applicable.** The notification never reaches the layer where a
+   `ThreadEntry` gets a role. Asking "what role does it arrive with" presumes an entry that
+   does not exist.
+
+Not settled, and left unsettled rather than guessed: the raw **stream-json block type** the
+CLI emits. Fact 1 proves it is not `tool_result`; it does not prove *what* it is. That
+requires reading `cc-runner`'s stdin, which is engine territory this project may not enter.
+The engine lane will see it the moment it adds the `else` branch item 2 asks for, and
+should record it there.
+
+**Census, to show this is not one unlucky run.** At `2026-08-17 07:53:17+00` the live store
+held **596** runs and **57,745** thread entries, and the complete set of `(role, kind)`
+pairs across every one of them is:
+
+```
+tool/tool_call 25025   tool/tool_result 25026   assistant/text 6535   user/text 772
+user/comms 132         agent/comms 115          system/error 101      system/text 24
+system/stuck_notice 15
+```
+
+**Nine pairs. No notification kind exists anywhere in the corpus.** (The entry count drifts
+upward between queries because the measuring run is itself one of the 596 — quoted with a
+timestamp for that reason.) **17** runs carry a genuine launch ack — 63 acks in total, up
+to **11 in a single run** (`a86cf7b3`) and 8 in `6528014e` — and not one of those 63 spawns
+left a completion entry behind. Every apparent hit for `task-notification` or
+`agent_completed` in the corpus is a run that was *editing this document* or probing the
+mapper; there are no false positives left after excluding those.
 
 ### 2c. Peer run → this run via `POST /api/runs/:id/message` — COVERED
 
@@ -433,19 +581,49 @@ can honestly mean, and it is now executable rather than asserted.
 - The entry may carry `role: "tool"` — `toolResultEntry`'s shape, item 4's natural
   reading — and it will render. It will render on `assistant`, `system` and `user` too.
 - It renders as a **plain text part inside the assistant turn**, carrying `content`
-  verbatim. It does *not* get the collapsible tool-block treatment: that is reserved for
-  `kind: "tool_call"` / `"tool_result"` pairs, which need a `meta.tool_use_id` to bind on.
-  If the collapsible block is what you want, emit the notification in that shape instead —
-  a `tool_result` bound to the spawning Agent call's `tool_use_id` would attach to the
-  existing Agent row and read as "this is how that spawn ended", which is arguably the
-  better design. Either shape works; **only the second is collapsible.** Say which you
-  chose in the engine PR.
+  verbatim. It does *not* get the collapsible tool-block treatment.
+- **CORRECTED ROUND 1863 — the sentence that used to follow was false, and it was the
+  other sentence of this document a receiving lane would act on.** It read: *"a
+  `tool_result` bound to the spawning Agent call's `tool_use_id` would attach to the
+  existing Agent row … Either shape works; only the second is collapsible."* **Neither
+  shape is collapsible.** The binding loop at `thread-mapping.ts:334-353` searches
+  backwards for a tool-call part with **`part.result === undefined`**, and by the time the
+  completion arrives that slot is already filled — by the launch ack, which the harness
+  delivers on the *same* `tool_use_id` seconds earlier (§2b-live, entries 45→46). The
+  second `tool_result` therefore matches nothing, falls through to the orphan branch at
+  `:351`, and degrades to **the same loose text part as shape A**.
+
+  Measured, not read, on the live-captured payload of §2b-live, both shapes through
+  `mapThreadView`: `2 part(s): tool-call, text — collapsible=false`, silent count
+  unchanged, payload verbatim in both. So: **pick either shape on its merits; neither buys
+  you the collapsible row today.** If the collapsible row is what the operator wants, that
+  is a **client** change — deciding what the Agent row displays once it has two results
+  (replace the ack, append below it, or show ack-then-outcome) — and it is an interaction
+  decision for Konrad, not something the engine lane can obtain by choosing an emission
+  shape. Flagged to the manager round 1863; **not silently chosen here.**
 - `content` must be non-empty. An entry with blank content is counted `silent` on purpose —
   the client will not draw an empty bubble.
 
-**Ownership: `engine-v2-research-lane`.** All four files are theirs this cycle. This
-project deliberately changed none of them; the one file it did change,
-`thread-mapping.ts`, is its own.
+**Ownership: `engine-task-graph` (`8c591d6c`) — corrected round 1863.**
+
+This recipe was addressed to `engine-v2-research-lane` from round 1350 until now. That
+project is **`done`** (verified against `GET /api/projects`), so §3 has spent five rounds
+addressed to a lane that had closed. *A recipe addressed to nobody is a recipe nobody
+executes* — which is the likeliest reason four one-line edits have sat here undone.
+
+`cc-runner.ts`, `executor.ts`, `db/runs.ts` and the engine prompts belong to
+**`engine-task-graph`** this cycle. Note for whoever routes this: that project is
+currently **`paused`**, not active — so the four edits need it resumed, or a successor lane
+that inherits the engine files. Stated rather than assumed, because "someone owns it" was
+exactly the assumption that failed here.
+
+The same stale addressee survives in three files this round could not write —
+`00-vision.md:48` ("the engine-v2 lane"), `01-requirements.md:107` and
+`02-architecture.md:187` ("engine-v2-research-lane"). Whoever next holds those files
+should correct them; they are listed here so the correction is not lost.
+
+This project deliberately changed none of the four engine files; the one file it did
+change, `thread-mapping.ts`, is its own.
 
 ---
 
@@ -453,10 +631,47 @@ project deliberately changed none of them; the one file it did change,
 
 Per the standing rule — never silently drop, never quietly pass:
 
-- **R19 stays OPEN.** A real gap remains (§2b). The requirement is not retired, and the
-  `03-quality.md` phase-4 gate clause is left exactly as written — it asserts this file
-  exists and that its quotes match `cc-runner.ts` at the pinned lines, which is now true
-  against §1's SHA.
+- **R19: the DELIVERABLE is discharged; the GAP stays OPEN. Two different things, and
+  conflating them is what kept this entry ambiguous for five rounds.**
+
+  R19 (`01-requirements.md:107`) asks for a document that states *exactly what is missing,
+  where it dies, what a fix would take, and why it is out of scope here*, and says in its
+  own words **"No code change for this item."** Every one of those four is now established
+  on **live evidence** rather than inference (§2b-live): the payload is captured, its
+  absence from `runs.thread` is measured against a 596-run census, the recipe is corrected
+  in the two places it was wrong, and the owner is named and reachable. The last
+  unverifiable element — the wire shape — was the only thing round 1355 could not reach,
+  and it is reached. **As a deliverable, R19 is met.**
+
+  **The gap itself is not closed and this round did not close it.** The engine still drops
+  the notification; the four edits in §3 are unwritten; they belong to a paused lane. R19
+  never asked this project to fix that, so the gap is carried as an open engine item, not
+  as an open R19.
+
+  **Assessed end to end, both halves, per round 1352's standing lesson** — "the four edits
+  exist" is not closure:
+  - **Engine emits?** **NO.** Live-confirmed today, not read from source.
+  - **Client renders, if the engine ever emits?** **YES**, and now proved against the
+    *actual* payload rather than a synthetic string — both candidate emission shapes,
+    through `mapThreadView`: payload verbatim, not counted silent, no message lost.
+    Round 1353's client fix holds.
+  - **Recipe correct?** **It was not.** Two false statements found and corrected: the
+    collapsibility claim (§3) and the addressee (§3). Both were sentences a receiving lane
+    would have acted on.
+
+  **The `03-quality.md` phase-4 gate clause is left byte-for-byte as written, and it
+  passes on its own terms** — it asserts this file exists and that its quoted code matches
+  `cc-runner.ts` at the pinned lines. It does, and now 64 pins are checked rather than 11.
+  Nothing was retired, nothing was softened, and the clause was not reinterpreted to make
+  it passable.
+
+- **NOT VERIFIABLE AS WRITTEN — one item, declared rather than quietly passed.** The raw
+  stream-json *block type* of the notification. §2b-live proves it is **not** a
+  `tool_result` (negative-space proof: forwarding is unconditional and appends do not
+  dedup, so an entry would exist). It does not prove what the block positively *is* —
+  that needs `cc-runner`'s stdin, which is engine territory. Measured instead: the
+  delivered payload, its eight fields, its `tool_use_id` join key, and its total absence
+  from the thread. Left open for the engine lane to record when it adds the `else` branch.
 - **The claim was over-broad and is corrected**, not quietly narrowed: `00-vision.md:48`
   and `02-architecture.md:187` said agent completion payloads *never* reach the thread.
   Paths a1, a2 and c disprove that. Those lines now carry the narrowed claim and the
