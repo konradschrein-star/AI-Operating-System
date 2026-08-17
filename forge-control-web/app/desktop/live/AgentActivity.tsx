@@ -39,6 +39,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
+import { RunShotsIndicator } from "../chat/BrowserShots";
 import {
   agentKindOf,
   fetchAgents,
@@ -391,6 +392,13 @@ function AgentRunLine({ a, now }: RowProps) {
           </span>
         )}
       </div>
+
+      {/* What this run LOOKED at (round 1350). Absent — not empty, absent —
+          for a run that photographed nothing. Click, never hover: this panel
+          is the one whose hover cost is measured (R10 / DoD #3), and the
+          indicator subscribes to the one shared `["uploads-index"]` query
+          rather than fetching per row. */}
+      <RunShotsIndicator runId={a.id} paddingLeft={24} />
 
       {a.subagents?.map((s) => (
         <SubagentLine

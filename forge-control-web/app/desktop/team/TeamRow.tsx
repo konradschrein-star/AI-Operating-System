@@ -61,6 +61,7 @@
 
 import { createContext, memo, useContext, type CSSProperties } from "react";
 import { tokens, dot } from "../../tokens";
+import { RunShotsIndicator } from "../chat/BrowserShots";
 import {
   isModelAlias,
   modelDisplay,
@@ -639,6 +640,18 @@ function TeamRowViewImpl({
           <LiveTime row={row} prefix={prefix} title={timeTitle} />
         )}
       </div>
+
+      {/* line 3 — what it LOOKED at, when it looked at anything (round 1350).
+          Renders nothing at all for a run with no screenshots, which is most
+          of them, so the row keeps its two-line shape.
+
+          Opens on CLICK, never on hover: hover cost is a gate on this project
+          (NFU2 / DoD #3) and this file's whole design is that a pointer moving
+          across the list changes no state and mounts nothing. A sub-agent gets
+          `null` — its node id is a `tool_use_id`, and its screenshots land in
+          its parent's run directory because it inherits that process's
+          FORGE_RUN_ID. */}
+      <RunShotsIndicator runId={n.kind === "subagent" ? null : n.id} paddingLeft={13} />
     </div>
   );
 }

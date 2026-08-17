@@ -53,6 +53,8 @@ import {
   type CommsFacts,
 } from "./comms-identity";
 import { summarizeTool, type ToolTone } from "./tool-summary";
+import { extractBrowserShots } from "./browser-shots";
+import { BrowserShots } from "./BrowserShots";
 import {
   mapThreadToMessages,
   type SubagentFold,
@@ -404,6 +406,16 @@ function ToolCallRow({
     [mode, toolName, argsText, resultText, isError],
   );
 
+  /* Round 1350: screenshots this call took (research-browser via Bash) or
+   * opened (Read of /opt/ai-os/uploads/<12hex>/…). Derived from the SAME two
+   * strings the row already renders — no new fetch, no new pipeline, and the
+   * extractor never throws. Memoized on them because this runs for every tool
+   * row of a 300-entry transcript on every poll. */
+  const shots = useMemo(
+    () => extractBrowserShots({ toolName, argsText, result: resultText }),
+    [toolName, argsText, resultText],
+  );
+
   const color = summary
     ? TONE_COLOR[summary.tone]
     : isError
@@ -431,7 +443,7 @@ function ToolCallRow({
    * Expanding restores the panel, because a payload needs a container. */
   const quiet = summary !== null && !open;
 
-  return (
+  const row = (
     <div
       data-tool-row={mode}
       style={{
@@ -542,6 +554,20 @@ function ToolCallRow({
         </div>
       )}
     </div>
+  );
+
+  /* The screenshot block is a SIBLING of the row, not a child: the parts
+   * container is already a 6px-gap column (AssistantMessage), so it lands
+   * directly under the call it belongs to while keeping its own card. Nesting
+   * it inside would put two tone rules on one border-left. Rows with no
+   * screenshots — nearly all of them — return exactly what they returned
+   * before this round, down to the DOM. */
+  if (shots.length === 0) return row;
+  return (
+    <>
+      {row}
+      <BrowserShots refs={shots} />
+    </>
   );
 }
 
