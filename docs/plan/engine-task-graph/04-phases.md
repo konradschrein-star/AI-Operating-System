@@ -37,6 +37,18 @@ scripts/checks/check-migration-0040.sh                               (new)
 docs/plan/engine-task-graph/evidence/phase1-migration.md             (new)
 ```
 
+**Round 106 (fix cycle 1) added four corpus files to this set**, declared here
+rather than left to be reconstructed from the diff (standing rule 5). Round
+105's reviewer blocked on a divergence whose ruling had to be recorded where the
+design lives, and standing rule 2 requires a gate to be amended where it is
+enforced:
+```
+docs/plan/engine-task-graph/02-architecture.md   (§3.1 SQL, §3.2.1 new, F13, §9.2 E3)
+docs/plan/engine-task-graph/01-requirements.md   (R6, R18 case f, R20, R64, R69 new, §K)
+docs/plan/engine-task-graph/03-quality.md        (§3.2 phase-2 gate names case f and R69)
+docs/plan/engine-task-graph/04-phases.md         (this list, phase 2 deliverables 7–8, §9)
+```
+
 ### Deliverables
 1. **`0040_task_graph.sql`** — three `ADD COLUMN IF NOT EXISTS`, the workstream
    CHECK in a `DO $$ … $$` guard, two `CREATE INDEX IF NOT EXISTS`, and the
@@ -95,7 +107,7 @@ consequence (see its acceptance criteria).
 
 ## Phase 2 — The graph scheduler
 **Planner round 200.**
-**Requirements: R10–R21, R18 (proof), NF1, NF6.**
+**Requirements: R10–R21, R69, R18 (proof), NF1, NF6.**
 
 ### Scope
 `promoteReadyTasks()` and `claimReadyTasks()` read the graph. The replica proof
@@ -127,9 +139,18 @@ docs/plan/engine-task-graph/evidence/phase2-replay.md  (new)
    `conflicts`, `selectClaimable`, `graphReady`, `readyRule`,
    `GraphIntegrityError`.
 6. `TODO(R12-retire)` at every legacy-branch site, and nowhere else.
+7. **The legacy-row term (R69)** in the graph branch of the same statement, and
+   in `graphReady()`, which its doc-comment already specifies: a graph row is
+   not ready while any `depends_on IS NULL` row of the project in a strictly
+   lower round is not `done`. R18 case (f) fails without it. Ruled as E3 in
+   `02-architecture.md` §9.2; do not re-open the question, and do not make case
+   (f) pass by widening the harness's migration-time snapshot.
+8. `readyRule()` is where the sentinel is interpreted — the harness's graph side
+   already dispatches through it, so a mixed project's legacy rows take the
+   legacy branch rather than a `graphReady()` taught to understand NULL.
 
 ### Acceptance criteria
-- **The replay test passes, all five cases.** Output pasted.
+- **The replay test passes, all six cases (a–f).** Output pasted.
 - `check-scheduler-sql.sh` green, dangling case landing on `blocked`.
 - `grep -n "round" forge-control/src/db/projects.ts` with a justification per hit.
 - The reviewer names ≥ 2 mechanisms that could have made the replay report a
@@ -485,7 +506,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | Phase | Requirements covered |
 |---|---|
 | 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R18 (harness only), NF3 |
-| 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, NF1, NF6 |
+| 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
 | 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, NF1, NF5 |
 | 5 | R47, R48, R49, R50, R51, R52, R53, NF7 |
@@ -493,7 +514,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 7 | R59, R60, R61, R62 |
 | 8 | R63, R64, R65, R66, R67, R68, NF2, NF5 |
 
-R1–R68 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
+R1–R69 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
 each has exactly one **primary owner** phase here. Three entries appear in two
 rows and each is deliberate, so a reader does not have to guess whether it is a
 mistake:

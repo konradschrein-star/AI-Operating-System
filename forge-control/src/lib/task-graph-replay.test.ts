@@ -15,8 +15,26 @@
  * `legacyRoundReady()` and once under `graphReady()` over the backfilled
  * closure, asserting the same tasks are promoted on the same tick, every tick.
  *
- * PHASE 1 STATE. `graphReady()` throws until phase 2 lands, so all five R18
- * comparison cases (a–e) are declared `todo` with their BODIES WRITTEN IN FULL:
+ * TWO ORDERS, NOT ONE (R18 case (f), F13). A row can join the task list either
+ * side of the migration, and the two are not the same scenario:
+ *
+ *  - MIGRATE-AFTER-INSERT — the row existed when 0040 ran, so the backfill gave
+ *    it a closure and named it in every higher row's closure. Cases (b) and (c).
+ *  - INSERT-AFTER-MIGRATE — the OLD engine inserted it in the gap between
+ *    `psql -f` and the executor restart (R64). It is born `depends_on IS NULL`,
+ *    and no already-frozen closure names it, because it did not exist when they
+ *    were computed. Case (f).
+ *
+ * `graphInput()` therefore takes an explicit MIGRATION-TIME SNAPSHOT: rows in it
+ * get the closure computed over the snapshot ALONE, rows outside it get
+ * `depends_on: null`. Closing over the whole mutated list — which this harness
+ * did until round 106 — can only ever model the first order, so the divergence
+ * the second one produces was invisible to all five original cases. Round 105's
+ * reviewer found that; R69 (the legacy-row term on the graph branch) is the
+ * ruling that closes it, and case (f) is what fails without it.
+ *
+ * PHASE 1 STATE. `graphReady()` throws until phase 2 lands, so all six R18
+ * comparison cases (a–f) are declared `todo` with their BODIES WRITTEN IN FULL:
  * phase 2 deletes the `{ todo: … }` option and nothing else. `04-phases.md`
  * Phase 1 deliverable 4 and `03-quality.md` §3.2 both say this harness must RUN
  * and report at this phase, not that it must pass. A failing `todo` body was
@@ -41,6 +59,18 @@
  *     `null` throughout, and the graph side's `round` is `ROUND_WITHHELD`
  *     (−1) on every row — so a graph side that ever applied the round rule
  *     promotes EVERYTHING on tick 1 and case (a) fails loudly.
+ *
+ *     AMENDED IN ROUND 106, WHERE IT IS ENFORCED (standing rule 2): the
+ *     withholding holds only for a PURE-GRAPH input. A MIXED input — case (f),
+ *     frozen rows beside post-migration legacy rows — must carry real rounds on
+ *     both sides, because R69's legacy-row term IS a round predicate and a
+ *     withheld round would make it unevaluable, so case (f) would fail for a
+ *     reason that is an artefact of the instrument. `graphInput()` decides this
+ *     from its OWN OUTPUT (withhold iff no row came out legacy), not from
+ *     whether an option was passed, and the test below asserts both directions.
+ *     The guard is not weakened, only relocated: cases (a)–(e) are pure-graph
+ *     and still withhold, so a `graphReady()` that quietly applied the round
+ *     rule is still caught loudly there — by five cases instead of six.
  *  4. A harness whose build identity is unknown — the banner prints the fixture
  *     path, its row count, its sha256 cross-checked against the capture
  *     record's own sha, `git rev-parse --short HEAD`, and whether the two files
@@ -299,27 +329,76 @@ function legacyInput(rows: readonly FixtureRow[]): GraphTask[] {
   }));
 }
 
+interface GraphInputOptions {
+  /**
+   * The ids that existed AT MIGRATION TIME — the rows `0040_task_graph.sql`'s
+   * backfill could see, and therefore the only rows any frozen closure can
+   * name. Omitted means "every row was there", i.e. migrate-after-insert, which
+   * is what cases (a)–(e) model.
+   */
+  snapshot?: ReadonlySet<string>;
+}
+
 /**
- * THE GRAPH's input: `depends_on` from the closure, `round` withheld. Built
- * from `rows` directly — not from `legacyInput()`'s output — so the two sides
- * share their ground truth and nothing else.
+ * THE GRAPH's input: `depends_on` from the closure, `round` withheld where it
+ * can be. Built from `rows` directly — not from `legacyInput()`'s output — so
+ * the two sides share their ground truth and nothing else.
+ *
+ * THE SNAPSHOT IS THE POINT. The backfill runs ONCE, at a moment, over the rows
+ * that exist at that moment (R6). A row inserted afterwards by the old engine is
+ * born `depends_on IS NULL` (E2) and is named by NO frozen closure — not because
+ * anything is wrong, but because it did not exist to be named. Computing the
+ * closure over the post-mutation list, as this function did until round 106,
+ * silently repairs that gap and makes the divergence R69 exists to close
+ * invisible to the very test that is supposed to find it.
+ *
+ * ROUND WITHHOLDING is decided from the OUTPUT, not from the options: withheld
+ * on a pure-graph input, real on a mixed one. See the header, guard 3. Deciding
+ * it from `opts.snapshot` instead would let a caller passing a snapshot of every
+ * id get real rounds by accident and quietly lose the guard.
  */
-function graphInput(rows: readonly FixtureRow[]): GraphTask[] {
-  const closure = backfillClosure(rows);
-  return rows.map((r) => {
+function graphInput(rows: readonly FixtureRow[], opts: GraphInputOptions = {}): GraphTask[] {
+  const present = new Set(rows.map((r) => r.id));
+  const snapshotIds = opts.snapshot ?? present;
+  for (const id of snapshotIds) {
+    if (!present.has(id)) {
+      throw new Error(
+        `task-graph-replay: the migration-time snapshot names task ${id}, which is not in the row list — ` +
+          "the snapshot must be a subset of the rows, or the closure is computed over a graph that never existed",
+      );
+    }
+  }
+  const frozen = rows.filter((r) => snapshotIds.has(r.id));
+  if (frozen.length === 0) {
+    throw new Error(
+      "task-graph-replay: the migration-time snapshot is empty — every row would be legacy and the graph side " +
+        "would be testing nothing",
+    );
+  }
+
+  // The closure sees the SNAPSHOT and nothing else — exactly what the UPDATE saw.
+  const closure = backfillClosure(frozen);
+  const built: GraphTask[] = rows.map((r) => {
+    const base = {
+      id: r.id,
+      round: r.round,
+      workstream: "main",
+      status: toStatus(r.status),
+      write_set: [],
+    };
+    if (!snapshotIds.has(r.id)) {
+      // Inserted after 0040 ran, by an INSERT that does not name the column.
+      return { ...base, depends_on: null };
+    }
     const deps = closure.get(r.id);
     if (!deps) {
       throw new Error(`task-graph-replay: closure produced no entry for task ${r.id}`);
     }
-    return {
-      id: r.id,
-      round: ROUND_WITHHELD,
-      workstream: "main",
-      status: toStatus(r.status),
-      depends_on: deps,
-      write_set: [],
-    };
+    return { ...base, depends_on: deps };
   });
+
+  const mixed = built.some((t) => t.depends_on === null);
+  return mixed ? built : built.map((t) => ({ ...t, round: ROUND_WITHHELD }));
 }
 
 /* -------------------------------------------------------------------------- *
@@ -341,13 +420,33 @@ interface RuleContext {
 type PromotionRule = (task: GraphTask, ctx: RuleContext) => boolean;
 
 const LEGACY_RULE: PromotionRule = (t, ctx) => legacyRoundReady(t, ctx.all);
-const GRAPH_RULE: PromotionRule = (t, ctx) => graphReady(t, ctx.byId);
+
+/**
+ * The NEW engine's rule, which is BOTH branches of `promoteReadyTasks()`'s one
+ * statement (`02-architecture.md` §3.1), dispatched through `readyRule()` —
+ * the only place the `depends_on` NULL sentinel is interpreted (R12).
+ *
+ * Dispatching here rather than inside `graphReady()` is deliberate. A mixed
+ * input (case (f)) contains legacy rows, and a legacy row is promoted by the
+ * LEGACY branch, not by a `graphReady()` quietly widened to understand NULL.
+ * Keeping the sentinel in one place is the property that lets the whole legacy
+ * surface be deleted in one commit. TODO(R12-retire) — after which this
+ * collapses back to `graphReady(t, ctx.byId)`.
+ *
+ * In phase 1 `readyRule()` throws first, so the six comparison cases report
+ * `task-graph: readyRule() lands in phase 2 (R12)` rather than `graphReady`'s
+ * message. That is the dispatch being exercised, not a regression.
+ */
+const GRAPH_RULE: PromotionRule = (t, ctx) =>
+  readyRule(t) === "graph" ? graphReady(t, ctx.byId) : legacyRoundReady(t, ctx.all);
 
 interface SimOptions {
   /**
    * Ticks (1-based) on which the project is NOT `active`. Models R18 case (d):
    * `promoteReadyTasks()`'s `AND p.status = 'active'` is the CALLER's gate on a
-   * joined `projects` row, never a per-task predicate (E7/R8/R13), so a pause
+   * joined `projects` row, never a per-task predicate (R13 — `E7`/`R8` is
+   * `db/projects.ts`'s lineage pin on `main`, not a citation in this corpus),
+   * so a pause
    * suppresses promotion only — runs already in flight still settle.
    */
   pausedTicks?: ReadonlySet<number>;
@@ -504,9 +603,11 @@ function formatDivergence(legacy: SimResult, graph: SimResult): string {
  * replica while proving nothing — the first of the four ways this instrument
  * could lie.
  */
-function assertReplica(label: string, rows: readonly FixtureRow[], opts: SimOptions = {}): void {
+interface ReplicaOptions extends SimOptions, GraphInputOptions {}
+
+function assertReplica(label: string, rows: readonly FixtureRow[], opts: ReplicaOptions = {}): void {
   const legacy = simulate(legacyInput(rows), LEGACY_RULE, opts);
-  const graph = simulate(graphInput(rows), GRAPH_RULE, opts);
+  const graph = simulate(graphInput(rows, opts), GRAPH_RULE, opts);
 
   assert.ok(
     legacy.promotedTotal > 0,
@@ -570,7 +671,9 @@ export function caseA(): FixtureRow[] {
 
 /**
  * (b) An early-round task retried to `ready` after a later round has drained,
- * with a task then inserted into a round above it.
+ * with a task then inserted into a round above it. MIGRATE-AFTER-INSERT: the
+ * inserted row is part of the migration-time snapshot, so the backfill sees it
+ * and every higher closure names it. Case (f) is the other order.
  *
  * This is `02-architecture.md` §3.3's own scenario, and the case that kills a
  * previous-round-only backfill: rounds 1290/1291/1292 are all drained; an
@@ -597,6 +700,10 @@ export function caseB(): FixtureRow[] {
  * lower round holds a non-`done` task, the graph rule because the closure
  * computed over the MUTATED row list gives it exactly those rows as
  * dependencies and all of them are `done`.
+ *
+ * MIGRATE-AFTER-INSERT, like (b), and deliberately so: this is the row the
+ * migration ran *over*. The same insertion in the other order is case (f), and
+ * the two do not have the same answer.
  */
 export function caseC(): FixtureRow[] {
   const all = rows();
@@ -626,6 +733,71 @@ export function caseE(): FixtureRow[] {
   );
   doomed.status = "failed";
   return all;
+}
+
+/**
+ * (f) INSERT-AFTER-MIGRATE — the fix chain the OLD engine inserts in the gap
+ * between `psql -f 0040` (R64) and the executor restart, which `safe-restart.sh`
+ * may leave open for up to 43200 seconds.
+ *
+ * `createFixChain` in `db/projects.ts` reconciles a `NEEDS_FIXES` reviewer by
+ * inserting a fix builder at `round + 1` and a re-reviewer at `round + 2`. Its
+ * `INSERT INTO project_tasks` names its columns explicitly and `depends_on` is
+ * not among them, so both rows take the column default — `NULL` (E2). They are
+ * therefore legacy rows, and — this is the whole case — **no frozen closure
+ * names them**, because the backfill ran before they existed.
+ *
+ * The chain is hung off the fixture's HIGHEST `done` reviewer round, derived
+ * rather than pinned, and the builder asserts the resulting pair lands strictly
+ * below every non-`done` row. That is what makes the case bite: today's rule
+ * holds all eight pending rows behind the new chain, while a graph branch
+ * without R69 releases them the moment their FROZEN deps drain — deps that
+ * cannot mention the chain.
+ *
+ * Returns its snapshot alongside its rows: the two are one input, and handing
+ * back rows whose snapshot a caller has to reconstruct is how the first version
+ * of this harness lost the distinction in the first place.
+ */
+const FIX_BUILDER_ID = "00000000-0000-4000-8000-00000000000f";
+const FIX_REVIEWER_ID = "00000000-0000-4000-8000-0000000000f2";
+
+interface CaseF {
+  rows: FixtureRow[];
+  snapshot: Set<string>;
+  /** The round `createFixChain` was reconciling — the pair sits at +1 and +2. */
+  base: number;
+}
+
+export function caseF(): CaseF {
+  const all = rows();
+  // The migration ran over the fixture exactly as captured.
+  const snapshot = new Set(all.map((r) => r.id));
+
+  const reviewerRounds = all.filter((r) => r.role === "reviewer" && r.status === "done").map((r) => r.round);
+  if (reviewerRounds.length === 0) {
+    throw new Error("task-graph-replay: case (f) needs a done reviewer to hang a fix chain off; the fixture has none");
+  }
+  const base = Math.max(...reviewerRounds);
+
+  const lowestOpen = Math.min(...all.filter((r) => r.status !== "done").map((r) => r.round));
+  if (base + 2 >= lowestOpen) {
+    throw new Error(
+      `task-graph-replay: case (f) is vacuous — the fix chain would land at ${base + 1}/${base + 2}, ` +
+        `not strictly below the lowest non-done round ${lowestOpen}, so today's rule would not hold anything behind it`,
+    );
+  }
+
+  all.push(
+    insertedTask(FIX_BUILDER_ID, base + 1, {
+      role: "builder",
+      title: "fix chain inserted by the OLD engine after 0040 was applied",
+    }),
+    insertedTask(FIX_REVIEWER_ID, base + 2, {
+      role: "reviewer",
+      title: "re-review of the fix chain inserted after 0040 was applied",
+    }),
+  );
+  return { rows: all, snapshot, base };
 }
 
 /* -------------------------------------------------------------------------- *
@@ -801,6 +973,7 @@ describe("R18 — the harness itself runs over the real fixture", () => {
       ["b", caseB],
       ["c", caseC],
       ["e", caseE],
+      ["f", () => caseF().rows],
     ] as const) {
       const built = build();
       assert.ok(built.length >= FIXTURE.length, `case ${name} lost rows`);
@@ -809,6 +982,158 @@ describe("R18 — the harness itself runs over the real fixture", () => {
     assert.equal(caseB().filter((r) => r.status === "ready").length, 1, "case b retried no task");
     assert.equal(caseC().length, FIXTURE.length + 1, "case c inserted no task");
     assert.equal(caseE().filter((r) => r.status === "failed").length, 1, "case e failed no task");
+    assert.equal(caseF().rows.length, FIXTURE.length + 2, "case f inserted no fix chain");
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * F13 — THE FROZEN CLOSURE CANNOT SEE A ROW INSERTED AFTER THE MIGRATION
+ *
+ * These tests are NOT `todo`. They run green today, and that is the point:
+ * every claim R69 rests on is established here WITHOUT `graphReady()`, from the
+ * frozen closure and today's own rule. Case (f) below then asserts the
+ * consequence — that the two schedulers agree — and can only pass once phase 2
+ * implements the legacy-row term.
+ *
+ * RETIRED BY R12-retire, with R69 and the legacy branch, in one commit
+ * (standing rule 4).
+ * -------------------------------------------------------------------------- */
+
+/** The 1-based tick on which `id` was promoted, or 0 if it never was. */
+function promotedOnTick(result: SimResult, id: string): number {
+  return result.schedule.findIndex((tickSet) => tickSet.includes(id)) + 1;
+}
+
+describe("F13 — a row inserted after 0040 is named by no frozen closure", () => {
+  test("the post-migration fix chain is legacy, and no frozen row depends on it", () => {
+    const { rows: built, snapshot, base } = caseF();
+    const graph = graphInput(built, { snapshot });
+    const byId = new Map(graph.map((t) => [t.id, t]));
+
+    for (const id of [FIX_BUILDER_ID, FIX_REVIEWER_ID]) {
+      assert.equal(
+        byId.get(id)?.depends_on,
+        null,
+        `the fix chain row ${id} should be born legacy — createFixChain's INSERT does not name depends_on (E2)`,
+      );
+    }
+    for (const t of graph) {
+      if (t.depends_on === null) continue;
+      assert.ok(
+        !t.depends_on.includes(FIX_BUILDER_ID) && !t.depends_on.includes(FIX_REVIEWER_ID),
+        `frozen row ${t.id} names a post-migration row in its closure — the snapshot leaked`,
+      );
+    }
+    assert.equal(
+      graph.filter((t) => t.depends_on === null).length,
+      2,
+      "exactly the two appended rows should be legacy",
+    );
+    assert.ok(base > 0, "case (f) derived a non-positive fix-chain base round");
+  });
+
+  test("a mixed input carries real rounds; a pure-graph input withholds them", () => {
+    const { rows: built, snapshot } = caseF();
+    const mixed = graphInput(built, { snapshot });
+    assert.ok(
+      mixed.every((t) => t.round !== ROUND_WITHHELD),
+      "a mixed input withheld round — R69's legacy-row term would be unevaluable",
+    );
+    assert.ok(
+      graphInput(FIXTURE).every((t) => t.round === ROUND_WITHHELD),
+      "a pure-graph input kept its rounds — guard 3 of this file's header is lost",
+    );
+    // And the decision is made from the output, not from the option: passing a
+    // snapshot that happens to cover every row is still pure-graph.
+    assert.ok(
+      graphInput(FIXTURE, { snapshot: new Set(FIXTURE.map((r) => r.id)) }).every((t) => t.round === ROUND_WITHHELD),
+      "a snapshot covering every row produced real rounds — withholding is being decided from the option",
+    );
+  });
+
+  test("graphInput() refuses a snapshot it cannot honour", () => {
+    assert.throws(
+      () => graphInput(FIXTURE, { snapshot: new Set(["00000000-0000-4000-8000-0000000000aa"]) }),
+      throwsMessageMatching(/migration-time snapshot names task/, "graphInput"),
+    );
+    assert.throws(
+      () => graphInput(FIXTURE, { snapshot: new Set<string>() }),
+      throwsMessageMatching(/migration-time snapshot is empty/, "graphInput"),
+    );
+  });
+
+  test("today's rule holds every captured pending row behind the new fix chain", () => {
+    const { rows: built } = caseF();
+    const legacy = simulate(legacyInput(built), LEGACY_RULE);
+
+    const builderTick = promotedOnTick(legacy, FIX_BUILDER_ID);
+    const reviewerTick = promotedOnTick(legacy, FIX_REVIEWER_ID);
+    assert.ok(builderTick > 0 && reviewerTick > builderTick, "the fix chain did not run in order under today's rule");
+
+    for (const row of FIXTURE.filter((r) => r.status === "pending")) {
+      const tick = promotedOnTick(legacy, row.id);
+      assert.ok(tick > 0, `captured pending row ${row.id} was never promoted`);
+      assert.ok(
+        tick > reviewerTick,
+        `today's rule promoted captured row ${row.id} (round ${row.round}) on tick ${tick}, before the fix chain ` +
+          `re-reviewer at round finished on tick ${reviewerTick} — the premise of F13 no longer holds`,
+      );
+    }
+  });
+
+  test("a frozen closure whose deps all settle on tick 1 releases its row while the fix chain is still pending", () => {
+    // The finding, stated mechanically and proved without `graphReady()`.
+    //
+    // Not every captured pending row qualifies, and the first draft of this test
+    // claimed they all did — the harness rejected it, which is the point of
+    // writing the claim as an assertion. A row at round 1353 has 1352's pending
+    // rows inside its frozen closure and is genuinely held by them. The rows
+    // that matter are the LOWEST pending ones: their frozen closure contains
+    // only `done` and `running` rows, every one of which is `done` at the end of
+    // tick 1, so a graph branch reading the closure ALONE releases them on tick
+    // 2. Today's rule does not — it holds them until the post-migration fix
+    // chain has drained, several ticks later. That gap is the divergence R69
+    // closes, and it is why case (f) must fail until phase 2 implements the term.
+    const { rows: built, snapshot } = caseF();
+    const graph = graphInput(built, { snapshot });
+    const statusById = new Map(built.map((r) => [r.id, r.status]));
+    const settlesOnTick1 = new Set(["done", "running", "ready"]);
+
+    const legacy = simulate(legacyInput(built), LEGACY_RULE);
+    const reviewerTick = promotedOnTick(legacy, FIX_REVIEWER_ID);
+    assert.ok(reviewerTick > 2, `the fix chain's re-reviewer ran on tick ${reviewerTick}; F13 needs it after tick 2`);
+
+    const releasedEarly: FixtureRow[] = [];
+    for (const row of FIXTURE.filter((r) => r.status === "pending")) {
+      const deps = graph.find((t) => t.id === row.id)?.depends_on;
+      assert.ok(deps, `captured pending row ${row.id} has no frozen closure`);
+      assert.ok(deps.length > 0, `captured pending row ${row.id} froze an empty closure`);
+      for (const dep of deps) {
+        assert.ok(statusById.get(dep), `frozen closure of ${row.id} names unknown id ${dep}`);
+      }
+      if (deps.every((dep) => settlesOnTick1.has(statusById.get(dep) ?? ""))) releasedEarly.push(row);
+    }
+
+    assert.ok(
+      releasedEarly.length > 0,
+      "no captured pending row has a frozen closure that drains on tick 1 — F13's divergence is not reachable from " +
+        "this fixture and the argument for R69 must be re-derived before phase 2 relies on it",
+    );
+    // Exactly the lowest pending round, and it is far above the chain.
+    const lowestPendingRound = Math.min(...FIXTURE.filter((r) => r.status === "pending").map((r) => r.round));
+    for (const row of releasedEarly) {
+      assert.equal(
+        row.round,
+        lowestPendingRound,
+        `row ${row.id} at round ${row.round} drains on tick 1 but is not at the lowest pending round`,
+      );
+      const tick = promotedOnTick(legacy, row.id);
+      assert.ok(
+        tick > reviewerTick,
+        `today's rule promoted ${row.id} on tick ${tick}, not after the fix chain's tick ${reviewerTick} — ` +
+          "there would be no divergence to close",
+      );
+    }
   });
 });
 
@@ -863,7 +1188,7 @@ describe("phase 1 stub discipline — every unimplemented export throws", () => 
 });
 
 /* -------------------------------------------------------------------------- *
- * THE FIVE R18 COMPARISON CASES (a–e)
+ * THE SIX R18 COMPARISON CASES (a–f)
  *
  * `todo` in phase 1 because `graphReady()` throws until phase 2 lands. The
  * bodies are complete: phase 2 deletes the `{ todo: … }` option and nothing
@@ -872,9 +1197,10 @@ describe("phase 1 stub discipline — every unimplemented export throws", () => 
  * §3.1's "pnpm test green, zero skipped" gate unsatisfiable for phase 1.
  *
  * EVERY BODY PUTS ITS LEGACY-SIDE EXPECTATIONS FIRST, before the call that
- * reaches `graphReady()`. Those halves therefore RUN today, and each todo's
+ * reaches the graph side. Those halves therefore RUN today, and each todo's
  * reported error is evidence rather than noise: if a case reports anything
- * other than `task-graph: graphReady() lands in phase 2 (R11, R14)`, its
+ * other than `task-graph: readyRule() lands in phase 2 (R12)` — the first stub
+ * `GRAPH_RULE` touches, since round 106 made it dispatch on the sentinel — its
  * legacy-side expectation is wrong and phase 2 would have inherited a body that
  * was never exercised. Phase 2's reviewer should re-read this paragraph before
  * deleting the `todo` options.
@@ -951,5 +1277,28 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
 
     const graph = simulate(graphInput(built), GRAPH_RULE);
     assert.deepEqual(stuck(graph), stuck(legacy), "the two schedulers wedged on different tasks");
+  });
+
+  test("(f) a fix chain inserted by the OLD engine AFTER 0040 was applied", TODO_PHASE_2, () => {
+    const { rows: built, snapshot } = caseF();
+
+    // Legacy-side expectations first, so this half runs today (see the block
+    // comment above). Today's rule holds the whole project behind the new chain.
+    const legacy = simulate(legacyInput(built), LEGACY_RULE);
+    const reviewerTick = promotedOnTick(legacy, FIX_REVIEWER_ID);
+    assert.ok(reviewerTick > 0, "the post-migration re-reviewer was never promoted under today's rule");
+    for (const row of FIXTURE.filter((r) => r.status === "pending")) {
+      assert.ok(
+        promotedOnTick(legacy, row.id) > reviewerTick,
+        `today's rule released ${row.id} before the post-migration fix chain drained`,
+      );
+    }
+
+    // THE ASSERTION. Without R69's legacy-row term the graph side releases every
+    // frozen row on tick 2, because its closure — computed before the chain
+    // existed — cannot name it. With the term, the two schedules are identical.
+    // This case is the reason R69 exists; it must not be made to pass by
+    // widening the snapshot.
+    assertReplica("R18-f fix chain inserted after the migration", built, { snapshot });
   });
 });

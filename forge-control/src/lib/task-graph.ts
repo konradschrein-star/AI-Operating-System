@@ -44,7 +44,8 @@ import type { TaskStatus } from "../db/projects.ts";
 
 /**
  * `project_tasks.depends_on`, whose NULL is the entire migration strategy
- * (`02-architecture.md` §2.2, settled as E1 in §9.1).
+ * (`02-architecture.md` §2.2, settled as E2 in §9.1 — E1 is the separate ruling
+ * that `round` stays a stored, engine-computed integer).
  *
  *  - `null` — never graph-scheduled. Written by the old engine, or by any
  *    INSERT that does not name the column. Keeps today's round semantics
@@ -105,7 +106,10 @@ export interface GraphTask {
  * WHAT IS DELIBERATELY NOT HERE. The statement's other two terms are joins
  * this function cannot see and must not guess at:
  *
- *  - `p.status = 'active'` (E7 / R8 / R13) is the CALLER's gate. It lives on
+ *  - `p.status = 'active'` (R13 in this project's `01-requirements.md`; the
+ *    `E7` / `R8` pair is `db/projects.ts`'s own lineage pin on `main` and does
+ *    NOT resolve in this corpus — carried here as attribution, not as a
+ *    citation to follow) is the CALLER's gate. It lives on
  *    the joined `projects` row, not on a task, and it is load-bearing: paused,
  *    blocked, done and cancelled projects promote nothing, and because it is a
  *    filter rather than a state change, a project flipped back to `active`
@@ -145,6 +149,33 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  * (R14). Never `false`, never `true`: a vanished dependency reading as
  * satisfied is the silent-fallback shape this fleet forbids, and a task stuck
  * at `pending` forever is the failure this project exists to end.
+ *
+ * AND THE LEGACY-ROW TERM (R69). `depends_on` is a FROZEN closure: the backfill
+ * (R6) writes the ids of the rows that existed AT MIGRATION TIME, and 0040 is
+ * applied before the executor restarts (R64), so the old engine keeps inserting
+ * rows — `createFixChain` at `round + 1` and `round + 2` — in the gap. Those
+ * rows are born `depends_on IS NULL` (E2, §2.2) and NO frozen closure names
+ * them. Without a second term a frozen row promotes the moment its frozen deps
+ * drain, straight past a fix chain numbered far below it; today's engine holds
+ * it. So a graph row is ALSO not ready while any LEGACY row of the same project
+ * in a strictly lower round is not `done`:
+ *
+ *     ready = every dep is done
+ *             AND NOT ∃ l ∈ byId : l.depends_on === null
+ *                                  ∧ l.round < task.round
+ *                                  ∧ l.status !== 'done'
+ *
+ * On a project planned entirely after the restart the term is free — no row has
+ * a NULL `depends_on`, so it is vacuously true and `round` is never consulted.
+ * It costs something only where it must: a project that straddles the deploy.
+ * `02-architecture.md` §3.2 and §9.2 (E3) carry the ruling and the two
+ * alternatives it was chosen over; `F13` in §6 is the failure it closes; R18
+ * case (f) in `task-graph-replay.test.ts` is the test that fails without it.
+ *
+ * This is the ONE place a graph-branch predicate reads `round`, and it reads it
+ * only about legacy rows. It is part of the legacy surface, not of the graph:
+ * it is deleted in the same commit as `readyRule()` and R12's legacy branch,
+ * when no `depends_on IS NULL` row remains. TODO(R12-retire)
  */
 export function graphReady(task: GraphTask, byId: ReadonlyMap<string, GraphTask>): boolean {
   throw new Error("task-graph: graphReady() lands in phase 2 (R11, R14)");

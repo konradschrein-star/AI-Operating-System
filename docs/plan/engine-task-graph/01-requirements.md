@@ -52,6 +52,16 @@ per project, as **the full set of ids of every task in a strictly lower round of
 the same project** (the transitive closure of today's rule, written out).
 Not "the previous round" — see `02-architecture.md` §3.3 for why the
 previous-round-only backfill is *not* an exact replica under retry.
+
+**"At migration time" is load-bearing, and it is not free** (round 106). The
+closure is *frozen*: it names the rows that existed at the instant 0040 ran, and
+it can never learn of a row inserted afterwards. Because 0040 is applied before
+the restart (R64), the old engine goes on inserting NULL-deps rows in the gap,
+and none of them appear in any frozen closure. R6 alone is therefore **not** an
+exact replica of today's rule for a project that straddles the deploy; R69 is
+the term that makes it one, `02-architecture.md` §3.2.1 is the reasoning, F13 is
+the failure mode, and R18 case (f) is the test. Widening the backfill is *not*
+an alternative — it would have to name rows that do not yet exist.
 *How proved:* unit (R18's replay test over the committed fixture) + `check`
 (`scripts/checks/check-migration-0040.sh` applies 0040 twice to a throwaway
 Postgres schema seeded from the fixture and diffs the resulting rows).
@@ -98,6 +108,22 @@ Postgres for the SQL.
 project in a strictly lower round is anything other than `done`. Both branches
 live in **one** statement, so a task can never satisfy neither.
 *How proved:* unit + `check`.
+
+**R69. The legacy-row term.** The graph branch additionally refuses a candidate
+while **any legacy row** (`depends_on IS NULL`) of the same project in a
+strictly lower round is not `done`. Without it a backfilled row, whose closure
+was frozen when 0040 ran (R6), promotes straight past a row the old engine
+inserted afterwards — `createFixChain`'s builder at `round + 1` and re-reviewer
+at `round + 2`, both born NULL — because no frozen closure can name them. On
+`operator-visibility` that chain lands at 1307/1308, below every one of its
+eight `pending` rows, so the hazard is reachable on the deploy's own target.
+Ruled as **E3** in `02-architecture.md` §9.2, reasoned in §3.2.1, tabled as
+**F13**. On a project planned after the restart no row is NULL, the term is
+vacuously true, and `round` is never consulted — it costs only where it must.
+It is part of the legacy surface: **deleted in the same commit as R12's branch
+and R18 case (f)**, when no NULL row remains (NF6, standing rule 4).
+*How proved:* unit — R18 case (f) fails without it and passes with it, shown by
+mutation test in `evidence/phase1-migration.md` §13.4; + `check` for the SQL.
 
 **R13.** `promoteReadyTasks()` keeps the `AND p.status = 'active'` gate joined
 from `projects`, unchanged in meaning: paused, blocked, done and cancelled
@@ -151,8 +177,19 @@ Divergence cases the test must include explicitly, each as its own case:
      completed (the case that breaks a previous-round-only backfill);
   c. a task inserted into an already-drained round;
   d. a project paused mid-run and resumed;
-  e. a failed task that never completes — both schedulers must wedge identically.
+  e. a failed task that never completes — both schedulers must wedge identically;
+  f. **insert-after-migrate** (added round 106) — the closure is frozen over a
+     migration-time snapshot, and a fix chain is then appended carrying
+     `depends_on: null` at a round *below* every non-`done` row, exactly as
+     `createFixChain` would in the gap R64 opens. Cases (b) and (c) model the
+     opposite order (the row existed when the backfill ran); until this case
+     existed the harness could only ever see that order, and the divergence F13
+     names was invisible to it. The case fails without R69 and passes with it.
 *How proved:* unit. **A single divergence fails the suite.**
+The harness's graph side dispatches on the `depends_on` sentinel through
+`readyRule()`, so a mixed input's legacy rows are judged by the legacy branch —
+the same two-branch shape as the SQL, rather than a `graphReady()` widened to
+understand NULL.
 
 **R19. Derived depth.** `taskDepth(tasks)` in `task-graph.ts` returns the
 longest-path depth from the roots for every task, in one pass over a topological
@@ -163,9 +200,15 @@ never written to the database.
 fan-out, and a NULL/array mixture.
 
 **R20.** `round` is removed from the scheduler entirely: no promotion or claim
-predicate reads it except inside R12's explicitly-labelled legacy branch.
+predicate reads it except inside the explicitly-labelled **legacy surface** —
+R12's legacy branch and R69's legacy-row term, which are the same surface and
+retire in the same commit. **Amended round 106**: the term reads `round`, and
+saying so here is the point, because a gate that forbade it would have been
+unsatisfiable the moment E3 was ruled, and an unsatisfiable gate is what teaches
+reviewers to disclose and proceed. R69 reads `round` only *about legacy rows*,
+and only while any exist.
 *How proved:* review — `grep -n "round" db/projects.ts` and a stated
-justification for every surviving occurrence.
+justification for every surviving occurrence, each attributed to R12 or R69.
 
 **R21.** `spawnTaskRuns()`'s TypeScript-side belt is preserved unchanged: a task
 whose project stopped accepting work between claim and spawn is handed back to
@@ -489,6 +532,13 @@ if it does.
 **R64.** Migration 0040 is applied to the live database **before** the executor
 restarts, by `psql -f`, and its re-runnability is demonstrated by applying it
 twice. It is additive and the running old engine ignores it (R8).
+
+The gap this opens between the backfill and the restart is **not** closed by
+sequencing — `safe-restart.sh` is detached and self-timed, and its "quiet" is a
+45-second heartbeat window a tick can fire inside. It is closed by R69, in the
+engine, where no timing argument is needed. The deploy task must therefore
+**not** try to be clever about when it runs `psql -f`; running it early is still
+the correct order. See `02-architecture.md` §3.2.1 and §9.2.
 *How proved:* live.
 
 **R65.** After merging, the deploy task runs **exactly**
@@ -567,7 +617,7 @@ budget written into the assertion message.
 | Phase | Requirements |
 |---|---|
 | 1 — Schema, fixture, replica harness | R1–R9, R18 (harness only), NF3 |
-| 2 — Graph scheduler | R10–R21, R18 (proof), NF1, NF6 |
+| 2 — Graph scheduler | R10–R21, R69, R18 (proof), NF1, NF6 |
 | 3 — Task creation, validation, cycles | R22–R31, NF4 |
 | 4 — Workstream worktrees, integration, consolidation | R32–R46, NF1, NF5 |
 | 5 — Prompts | R47–R53, NF7 |

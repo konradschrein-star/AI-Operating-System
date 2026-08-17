@@ -384,7 +384,12 @@ UPDATE project_tasks pt
       AND NOT EXISTS (SELECT 1 FROM project_tasks d
                        WHERE d.id = ANY(pt.depends_on) AND d.status <> 'done')
       AND (SELECT count(*) FROM project_tasks d WHERE d.id = ANY(pt.depends_on))
-          = cardinality(pt.depends_on))           -- R14: no dangling dep may satisfy
+          = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
+      AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3: the legacy-row term
+                       WHERE l.project_id = pt.project_id
+                         AND l.depends_on IS NULL
+                         AND l.round < pt.round
+                         AND l.status <> 'done'))  -- TODO(R12-retire)
      OR
      -- LEGACY BRANCH  TODO(R12-retire)
      (pt.depends_on IS NULL
@@ -406,12 +411,72 @@ Both branches are in **one** statement so a row can never satisfy neither. Two
 statements would leave a window in which a row whose `depends_on` flipped
 between them is skipped by both.
 
+The **legacy-row term** (R69) is the graph branch's only reference to `round`,
+and it reads it only *about legacy rows*. §3.2 is why it is there. On a project
+planned entirely after the restart no row has a NULL `depends_on`, the `NOT
+EXISTS` is vacuously true, and `round` is never consulted — the term costs
+nothing where the project's whole point applies. It is part of the legacy
+surface and is deleted with R12's branch in one commit (NF6, standing rule 4).
+
 ### 3.2 The legacy branch is the migration strategy
 
 There is no flag day and no engine-version switch. The behaviour of a row is
 decided by its own data. A project in flight when the new engine loads finishes
 under its original semantics; a project planned after it runs on the graph; a
-project that straddles the restart has both kinds of row and each is correct.
+project that straddles the restart has both kinds of row.
+
+#### 3.2.1 A straddling project needs one more term — the frozen closure (F13, E3)
+
+**Corrected in round 106.** This section previously ended "…and each is
+correct". That was wrong, and round 105's reviewer proved it. The correction is
+recorded here rather than quietly rewritten, because the claim had already been
+relied on.
+
+`depends_on` is a **frozen** value. The backfill (R6) writes the closure of the
+rows that exist *at the instant 0040 runs*. Today's rule is evaluated
+continuously against the *current* task set. Those are only the same thing if
+the task set stops changing — and R64 applies 0040 **before** the restart, after
+which `safe-restart.sh` waits up to 43200 s for a quiet fleet. Through that
+whole window the old engine keeps inserting rows: `createFixChain` puts a fix
+builder at `round + 1` and a re-reviewer at `round + 2`, and its `INSERT INTO
+project_tasks` names its columns explicitly without `depends_on`, so both are
+born `NULL` (E2, §2.2). **No frozen closure names them**, because they did not
+exist when the closures were computed.
+
+Concretely, on the deploy's own target. `operator-visibility`'s highest `done`
+reviewer sits at round 1306, so a `NEEDS_FIXES` reconciled in the window puts a
+chain at **1307/1308** — strictly below its three `running` rows at 1350 and all
+eight `pending` rows at 1352–1870. After the restart the two `pending` rows at
+1352 take the graph branch, whose frozen closure contains only rows that are
+`done` or `running` at capture. Those settle in one tick, and without a further
+term the pair promotes on tick 2 while the fix builder at 1307 has not run.
+Today's engine holds them until the chain drains. A late-phase builder running
+ahead of an early-round fix chain is the same class of failure the NULL sentinel
+exists to prevent, reached from the other side.
+
+This was measured, not argued: filling `graphReady`/`readyRule` in a scratch
+copy with a closure-only graph branch leaves R18 cases (a)–(e) green and case
+(f) diverging on **tick 2** — *legacy promoted [], graph promoted [511070c9…,
+608dbecb…]*. Adding the term makes all six agree. The transcript is in
+`evidence/phase1-migration.md` §13.4.
+
+So: **a graph row is also not ready while any legacy row of the same project in
+a strictly lower round is not `done`** (R69, §3.1). With it, each kind of row in
+a straddling project *is* correct, and the sentence this section used to end on
+becomes true. Both directions are covered — a legacy row already waits on frozen
+rows below it, because R12's branch scans by round without looking at
+`depends_on`.
+
+*Rejected — move the backfill to a quiet fleet.* §2.2 already closed this: the
+restart is detached and self-timed, so the deploy task has no moment to sequence
+"after quiet, before load". Adding a pre-restart hook to `safe-restart.sh` would
+not close it either — "quiet" is 45 s without a heartbeat, and a project tick
+can fire between the quiet check and the restart. The term needs no timing
+argument at all, which is why it wins.
+
+*Rejected — accept the divergence and document its blast radius.* The project's
+central claim is that the migration is an exact replica (R18, DoD). A divergence
+that is reachable on the very project we deploy against is not a footnote.
 
 ### 3.3 The backfill must be the full closure, not the previous round
 
@@ -687,6 +752,7 @@ Every one of these must be **loud**. NF1 forbids the silent variants.
 | F10 | Migration applied twice | R2's guards | Zero-row no-op | Nothing, correctly |
 | F11 | A group never drains (all deps done, task never promoted) | `measure-schedule.ts`'s S3 metric reports a non-zero numbering stall | Reported as a number | The measurement table |
 | F12 | Consolidation throws repeatedly | existing `noteGroupFailure` / `MAX_GROUP_FAILURES = 3` | Escalated once at the threshold | The existing `🚫 … frozen` push |
+| F13 | **Frozen closure outruns a post-migration row.** A row the old engine inserted between `psql -f 0040` and the restart is named by no frozen closure, so a backfilled row promotes past it (§3.2.1) | R18 case (f) at build time; the legacy-row term (R69) at runtime | The graph branch holds the row until every lower-round legacy row is `done` | Nothing — it does not happen. Without R69 Konrad would have seen a phase-18 builder run before a round-8 fix chain, with no error anywhere |
 
 **Explicitly forbidden degradations** (the reviewer must check for each):
 an unparseable workstream silently becoming `main`; a write-set validation
@@ -802,6 +868,37 @@ A later round that wants to change either must argue with §0 and §2.2, not
 rediscover the question. **Neither is an open question any more, and neither is
 a silent decision** — the difference matters, because an unrecorded default and
 a ruled-on default look identical in the code six phases later.
+
+### 9.2 E3 — the frozen-closure divergence, ruled 2026-08-17, round 106
+
+**The question.** The backfill freezes a closure; the old engine keeps inserting
+NULL-deps rows until the restart; no frozen closure can name them. Round 105's
+reviewer raised it as a blocking finding and correctly refused to decide it from
+a builder's chair. §3.2.1 is the full statement.
+
+**The ruling: option (a) — the graph branch gains a legacy-row term (R69).**
+The alternatives and why they lost are in §3.2.1. In one line each: moving the
+backfill to a quiet fleet was already rejected in §2.2 and cannot be rescued by
+a `safe-restart.sh` hook, because "quiet" is a 45-second heartbeat window and a
+tick can fire inside it; accepting the divergence contradicts R18 and the
+Definition of Done on a hazard reachable on the deploy's own target project.
+
+**Who ruled, and on what.** Taken by round 106's builder under fleet escalation
+policy rule 3 — stated as a default, escalated to the manager chat and by
+reminder in the same turn, and *not* blocked on. It is a correctness decision
+with one answer consistent with the corpus's existing commitments, not a
+preference decision. **Konrad may overrule it**; if he does, the change is
+localised to R69, §3.1's SQL, F13, and R18 case (f), and nothing else in the
+plan moves.
+
+**Evidence, not assertion.** The term was mutation-tested before it was written
+down. Closure-only: cases (a)–(e) green, case (f) diverges on tick 2. With the
+term: all six agree. `evidence/phase1-migration.md` §13.4 carries the transcript
+and the exact command.
+
+A later round that wants to delete R69 must delete it *with* R12's legacy branch
+and R18 case (f), in one commit, when no `depends_on IS NULL` row remains
+(standing rule 4). Deleting it alone re-opens F13.
 
 ---
 

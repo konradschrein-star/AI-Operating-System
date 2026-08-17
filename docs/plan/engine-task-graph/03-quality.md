@@ -106,9 +106,14 @@ HARNESS  simulate(rule): tick until quiescent, recording per tick the SET of
 ASSERT   simulate(legacyRoundReady) deep-equals simulate(graphReady-over-backfill)
 ```
 
-Five cases (R18 a–e): base, retry of an early round after a later one drained,
-insertion into a drained round, pause/resume, and a permanently-failed task
-(both must wedge identically). The harness prints the fixture row count and
+**Six** cases (R18 a–f): base, retry of an early round after a later one
+drained, insertion into a drained round, pause/resume, a permanently-failed task
+(both must wedge identically), and — added round 106 — a fix chain inserted by
+the old engine **after** the migration froze the closure (F13/R69). The first
+five model *migrate-after-insert*; (f) is the other order, and until it existed
+the harness could only ever see one of the two. `graphInput()` therefore takes
+an explicit migration-time snapshot: rows outside it carry `depends_on: null`.
+The harness prints the fixture row count and
 `git rev-parse --short HEAD` **before** asserting — standing rule 3: a harness
 that does not expose its own build identity is not evidence.
 
@@ -212,10 +217,31 @@ git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 - The replay harness runs and prints its SHA and row count. It may legitimately
   **fail** at this phase if phase 2 has not landed; the gate is that it runs and
   reports, not that it passes.
+- **Added round 106.** The six R18 comparison cases stay `todo`, but the `F13`
+  block is **not** `todo` and must be green: the frozen closure names no
+  post-migration row, a mixed input carries real rounds while a pure-graph one
+  withholds them, `graphInput()` refuses a snapshot it cannot honour, and
+  today's rule demonstrably holds the captured pending rows behind an appended
+  fix chain. Those four run without `graphReady()`, so every premise R69 rests
+  on is proved at phase 1 rather than promised for phase 2. Each `todo` must
+  report exactly `task-graph: readyRule() lands in phase 2 (R12)` — any other
+  message means a legacy-side expectation is wrong and the body was never
+  exercised.
 
 **Phase 2 — graph scheduler**
-- **The replay test passes.** This is the phase's whole point. All five cases
-  (R18 a–e). Divergence output, if any, is pasted verbatim.
+- **The replay test passes.** This is the phase's whole point. All **six** cases
+  (R18 a–f). Divergence output, if any, is pasted verbatim.
+- **R69, the legacy-row term, is implemented** in `graphReady()` and in the
+  graph branch of `promoteReadyTasks()`'s statement (E3, `02-architecture.md`
+  §9.2). Case (f) is the test that fails without it. The reviewer checks that it
+  was made to pass **by the term** and not by widening the harness's
+  migration-time snapshot — the one way to make case (f) green while leaving F13
+  wide open. Round 106 measured both: closure-only leaves (a)–(e) green and (f)
+  diverging on tick 2; with the term all six agree
+  (`evidence/phase1-migration.md` §13.4). Reproducing that mutation is the check.
+- `grep -n "TODO(R12-retire)"` covers R69's site as well as R12's — the two
+  retire together (standing rule 4) and a term left behind would silently
+  re-serialize projects that have no legacy rows left.
 - `check-scheduler-sql.sh` green, including the dangling-dependency case landing
   on `blocked` and **not** on `ready`.
 - The reviewer states, in its own words, what would have made the replay test

@@ -505,3 +505,172 @@ claimed. §10's round numbers are the one exception, and that exception is
 disclosed in §10 itself rather than presented as resolved: they are inferred
 from cross-references inside the commits' own text, because this task has no
 permitted way to query a task ledger for ground truth.
+
+---
+
+## 13. Round 106 — fix cycle 1: the frozen-closure divergence (F13, R69, E3)
+
+Round 105's reviewer returned `NEEDS_FIXES` on three points. All three are
+addressed here; the first two are one problem and one ruling.
+
+### 13.1 The finding, restated in one paragraph
+
+`depends_on` is **frozen**. R6's backfill writes the closure of the rows that
+exist at the instant 0040 runs; today's rule is evaluated continuously against
+the current task set. R64 applies 0040 *before* the restart, and
+`safe-restart.sh` may then wait up to 43200 s for a quiet fleet. Through that
+window the old engine keeps inserting rows — `createFixChain` at `round + 1` and
+`round + 2`, whose `INSERT INTO project_tasks` names its columns and omits
+`depends_on`, so both are born `NULL` (E2). **No frozen closure can name them.**
+After the restart a backfilled row promotes as soon as its frozen deps drain and
+runs straight past a fix chain numbered far below it. Today's engine holds it.
+
+The reviewer's second observation was the sharper one: the harness could not see
+this, because `graphInput()` computed the closure over the *whole mutated row
+list*. Cases (b) and (c) therefore modelled migrate-after-insert. Reality in the
+deploy window is insert-after-migrate. All five cases could go green in phase 2
+with the hazard live.
+
+### 13.2 Reachable on the deploy's own target, from the committed fixture
+
+Derived from `replay-operator-visibility.json` (sha `e0cb69a5…`, unchanged by
+this round), not from memory:
+
+| Quantity | Value |
+|---|---|
+| highest `done` reviewer round | 1306 |
+| fix chain `createFixChain` would insert | **1307 / 1308** |
+| rows not `done` at capture | 3 `running` @ 1350, 8 `pending` @ 1352–1870 |
+| rows below 1307 that are not `done` | **0** |
+
+So the chain lands strictly below every open row: today's rule holds all eleven
+behind it, and a closure-only graph branch holds none of them.
+
+### 13.3 The ruling — E3, option (a)
+
+Recorded in `02-architecture.md` §9.2, reasoned in §3.2.1, tabled as **F13**,
+required as **R69**: the graph branch additionally refuses a candidate while any
+*legacy* row of the same project in a strictly lower round is not `done`.
+
+The two alternatives lost on the record. Moving the backfill to a quiet fleet
+was already rejected in §2.2 and cannot be rescued by a `safe-restart.sh` hook —
+"quiet" is a 45-second heartbeat window and a project tick can fire inside it,
+so the race shrinks but does not close. Accepting the divergence contradicts R18
+and the Definition of Done on a hazard reachable on 8ea0cc08 itself.
+
+Taken by this round under fleet escalation policy rule 3: stated as a default,
+escalated to the manager chat and by reminder in the same turn, not blocked on.
+Konrad may overrule it; the change would be localised to R69, §3.1's SQL, F13
+and case (f).
+
+### 13.4 THE MUTATION TEST — the term is load-bearing, and case (f) can fail
+
+The one thing that would have made this round's work worthless is a case (f)
+that passes in phase 2 whether or not R69 exists. So it was measured before it
+was written down. `graphReady()` and `readyRule()` were filled in a **scratch
+copy** of `task-graph.ts` (`/tmp/task-graph.stub.bak` held the committed stub;
+it was restored immediately, and `git diff` over `task-graph.ts` shows only the
+doc-comment changes this round declares).
+
+**Variant A — closure-only graph branch, no legacy-row term:**
+
+```
+    ok 1 - (a) the base fixture, straight through
+    ok 2 - (b) an early round retried to ready after a later round drained
+    ok 3 - (c) a task inserted into an already-drained round
+    ok 4 - (d) a project paused mid-run and resumed
+    ok 5 - (e) a permanently failed task — both schedulers wedge identically
+not ok 6 - (f) a fix chain inserted by the OLD engine AFTER 0040 was applied
+  R18-f fix chain inserted after the migration: promotion order diverged —
+  first divergence on tick 2: legacy promoted [], graph promoted
+  [511070c9-eab0-4a51-9b1b-3583b8e4007d, 608dbecb-f59d-4745-99b3-1d5636febd1f];
+  only-legacy []; only-graph [511070c9-…, 608dbecb-…]
+```
+
+The two ids are the fixture's round-1352 pair. **Five green cases, one red** —
+which is precisely the reviewer's point: the original five could not see this.
+
+**Variant B — the same, plus the legacy-row term:**
+
+```
+    ok 1 - (a) … ok 2 - (b) … ok 3 - (c) … ok 4 - (d) … ok 5 - (e) …
+    ok 6 - (f) a fix chain inserted by the OLD engine AFTER 0040 was applied
+```
+
+Zero divergence, all six. The only failures in that run were
+`graphReady()/readyRule() throws a task-graph: diagnostic` — the phase-1 stub
+discipline correctly objecting to stubs that no longer throw, which is itself
+evidence the probe was really in effect.
+
+Both variants were produced by `/tmp/probe.py`, which rewrites the two stub
+bodies by exact string replacement and nothing else. The committed tree carries
+neither variant: `grep -c "lands in phase" src/lib/task-graph.ts` → **10**, all
+stubs intact.
+
+### 13.5 What the harness now does differently
+
+- `graphInput(rows, opts)` takes an explicit **migration-time snapshot**. Rows in
+  it get the closure computed over the snapshot *alone*; rows outside it get
+  `depends_on: null`. Omitting the option means "everything was there", so cases
+  (a)–(e) are unchanged, and they are now *labelled* migrate-after-insert rather
+  than being that by accident.
+- **Round withholding is decided from the output, not the option**: withheld iff
+  no row came out legacy. A mixed input must carry real rounds, because R69's
+  term *is* a round predicate and a withheld round would make case (f) fail for
+  an artefact of the instrument. Guard 3 in the harness header is amended where
+  it is enforced (standing rule 2) and the trade is stated plainly: the
+  "graph side is secretly applying the round rule" guard now lives in five
+  pure-graph cases instead of six. `graphInput(FIXTURE, {snapshot: <all ids>})`
+  is asserted to still withhold, so the guard cannot be dropped by passing an
+  option.
+- `GRAPH_RULE` dispatches through `readyRule()`, mirroring the SQL's two
+  branches, so a mixed project's legacy rows are judged by the legacy branch
+  rather than by a `graphReady()` widened to understand NULL. Consequence to
+  expect: the six `todo` cases now report `task-graph: readyRule() lands in
+  phase 2 (R12)`, not `graphReady()`'s message.
+- A **non-`todo`** `F13` block proves every premise R69 rests on *without*
+  `graphReady()`: the chain is legacy, no frozen row names it, mixed/pure round
+  handling, `graphInput()`'s two refusals, and today's rule holding all eight
+  captured pending rows behind the chain.
+
+**One claim in that block was written wrong first and the harness rejected it.**
+The draft asserted that *every* captured pending row's frozen closure drains on
+tick 1. It does not — a row at 1353 has 1352's pending rows inside its closure
+and is genuinely held by them. The test failed with *"frozen dep 608dbecb… of
+52703dc0… is 'pending'"*, and the claim was narrowed to the lowest pending
+round, which is where the divergence actually lives. Recorded because an
+instrument that catches its own author is the only kind worth pasting.
+
+### 13.6 The third finding, and two the reviewer disclosed
+
+- **`DepsField` doc-comment cited E1 for the NULL sentinel.** It is **E2**;
+  fixed. E1 is the separate ruling that `round` stays stored.
+- **`E7 / R8 / R13`**, which round 105 reported as inherited and non-blocking:
+  the two sites in this phase's files now cite **R13** and say explicitly that
+  `E7`/`R8` is `db/projects.ts`'s own lineage pin on `main` and does not resolve
+  in this corpus. A pin a reader cannot resolve is now labelled as attribution
+  rather than left to be followed.
+- **R18 naming `task-graph.test.ts`** while §2.1 and `04-phases.md` name
+  `task-graph-replay.test.ts` — left as the reviewer found it, two-to-one, and
+  still recorded here.
+
+### 13.7 Verification, this round
+
+```
+$ pnpm typecheck                     → TYPECHECK_EXIT=0
+$ pnpm test                          → 1..176  # tests 838  # pass 832
+                                        # fail 0  # skipped 0  # todo 6
+$ python3 docs/plan/engine-task-graph/check-corpus-map.py
+    OK — R1..R69 and NF1..NF7 complete, all three statements of the map agree
+```
+
+`# todo` went 5 → 6 (case f). `# tests` went 832 → 838: case (f) plus the four
+non-`todo` F13 tests, less one that was rewritten. `# fail 0`, `# skipped 0`
+throughout. The corpus checker was run *because* it exists and it caught a real
+omission mid-edit — R69 mapped in `01-requirements.md` §K but not yet in
+`04-phases.md` §9 — which is the second instrument this round that failed
+before a human did.
+
+`scripts/checks/check-migration-0040.sh` was **not** re-run: this round changed
+no SQL, and the migration's sha256 is unchanged. `db/migrations/0040_task_graph.sql`
+is not in this round's diff.
