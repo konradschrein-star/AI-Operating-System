@@ -605,10 +605,33 @@ deps-done `NOT EXISTS`, R14's cardinality equality, and R69's legacy-row term.
 That is the requirement discharged.
 
 `grep -n "TODO(R12-retire)"` covers both, as `03-quality.md` §3.2 Phase 2
-demands: `projects.ts` lines carrying it are the legacy-branch prose, the R69
-prose, the R69 SQL term, and the `-- LEGACY BRANCH` label; `task-graph.ts`
-carries five more, on `DepsField`, `legacyRoundReady`, `graphReady`'s R69
-paragraph, the R69 loop and `readyRule`. The two surfaces retire in one commit.
+demands. The marked sites, **cited by the symbol each sits in rather than by a
+count** (standing rule 1 — an earlier draft of this paragraph enumerated
+`projects.ts` as "four" and went stale the moment fix cycle 1 added a fifth):
+
+| File | Enclosing symbol → site |
+|---|---|
+| `projects.ts` | `(module preamble)` — the legacy-branch sentence, **added round 206, the fifth**; `promoteReadyTasks` ×4 — its legacy-branch prose, its R69 case-(f) prose, its R69 SQL term, its `-- LEGACY BRANCH` label |
+| `task-graph.ts` | `DepsField`; `legacyRoundReady`; `graphReady` ×2 — its R69 paragraph and the R69 loop; `readyRule` |
+| `task-graph-replay.test.ts` | `GRAPH_RULE` — the harness's own retirement note; the replay retires with the branch it proves |
+
+Eleven sites, three files, at `cf75f83`; ten at `27d300f`, the difference being
+the module-preamble line. The two engine surfaces retire in one commit and the
+harness with them (NF6).
+
+Two things about this table, both learned the hard way in this phase. The
+**count is deliberately secondary to the symbol list** — a reader can resolve
+every row against any tree, which a bare number cannot survive. And the symbols
+are those the **census's default `tsdoc` rule** assigns, the same rule §7.4 is
+generated under: attribution of a comment block is rule-dependent, which is the
+whole substance of §7.3's retraction, so a table of comment sites that did not
+name its rule would be repeating that trap. Measured, not supposed: under `--rule trailing`
+**7 of the 11 sites book a different symbol** (the two `promoteReadyTasks`
+comment sites go to `dependencyCorruption`, `GRAPH_RULE` goes to `LEGACY_RULE`,
+and four more shift in `task-graph.ts`), while the four code-line and preamble
+sites are fixed under both. The site **count is invariant either way** — which is
+precisely why the symbol list, qualified by its rule, is the citation and the
+count is not.
 
 ### 7.2 The one occurrence in a claim path, and why it is not a predicate
 
@@ -794,7 +817,7 @@ Every requirement phase 2 owns, and the **symbol or test** that proves it.
 | **R21** | Non-change. `spawnTaskRuns()`'s belt in `project-tick.ts` is untouched by phase 2 — that file is not in phase 2's write set, which is the proof rather than a promise. | done |
 | **R69** | `graphReady()`'s fourth term + `promoteReadyTasks()`'s `NOT EXISTS (… l.depends_on IS NULL AND l.round < pt.round …)`; `task-graph.test.ts` → the seven R69 cases; **R18 case (f)**; and §6.1's mutation, which is what makes it load-bearing rather than decorative. | **done — proved this task** |
 | **NF1** | No silent fallback added. This commit adds no `catch`, no `?? default`, no `\|\| fallback`. The harness throws with a diagnostic where it cannot proceed: `gitShort()`, `recordedSha256()`, `graphInput()`'s two refusals, `simulate()`'s tick cap, and the new *"no measurement recorded for …"* guard. | done |
-| **NF6** | The legacy surface is labelled and retires as a unit: ten `TODO(R12-retire)` sites across `task-graph.ts`, `projects.ts` and the harness, covering R12's branch, R69's term and R18 case (f). | done |
+| **NF6** | The legacy surface is labelled and retires as a unit: the `TODO(R12-retire)` sites across `task-graph.ts`, `projects.ts` and the harness — **enumerated by symbol in §7.1**, eleven of them at `cf75f83` — covering R12's branch, R69's term and R18 case (f). | done |
 
 ---
 

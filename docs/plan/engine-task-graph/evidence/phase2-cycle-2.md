@@ -29,7 +29,7 @@ sha256 forge-control/src/db/projects.ts                    e1b14c1f7a4dc8db…
 sha256 forge-control/src/lib/task-graph.ts                 5bf1e91d35a965bc…
 sha256 forge-control/src/lib/task-graph-replay.test.ts     f29b7488cfb1ce7f…
 sha256 forge-control/src/lib/fixtures/replay-…-.json       e0cb69a5c5d05bdf…
-sha256 scripts/checks/check-r20-census.py (new, this cycle) ede10d5fa7c32cfa…
+sha256 scripts/checks/check-r20-census.py (new, this cycle) 779d383f8b5fad34…
 mutation clone  /tmp/r206/shadow, its own git repo, files COPIED by
                 `git clone --no-hardlinks`, verified regular files with sha256
                 equal to the worktree's before each mutation — never symlinks
@@ -39,6 +39,32 @@ mutation clone  /tmp/r206/shadow, its own git repo, files COPIED by
 The first four are the identity the round-205 finding asked to be settled; they
 are now recorded in `phase2-replay.md` §3's freeze notice as well, which is where
 a reader looking at the stale table will land.
+
+**CORRECTED ROUND 208, and the correction matters more than the digit.** The
+census line above read `ede10d5fa7c32cfa…` when this document was committed at
+`cf75f83`. The shipped file's sha256 is `779d383f8b5fad34…`; the value written
+here matched **no committed state** — `git log --oneline` over that path returns
+`cf75f83` and nothing else, so the file has exactly one committed version, whose
+sha256 is the value now above — and `ede10d5f…` appeared nowhere else in the
+corpus, nor in any blob in history. So the
+identity of the instrument that actually shipped was recorded nowhere, which is
+*"a sha naming the worktree rather than the build"* in a new costume, the third
+time this project has caught that defect class. Round 207 blocked on it.
+
+**Which bytes each §3 transcript was produced against.** This cycle's commit
+message states the script was edited after mutation 5 was found, so
+`ede10d5f…` named a working draft that predates the fix. That draft was **never
+committed and its bytes are gone**, so which of §3's transcripts predate the fix
+cannot be established from the record, and this line does not pretend otherwise:
+
+| Transcript | Bytes it was produced against |
+|---|---|
+| §3 mutations 1–4, and the inert blank-line mutation | An uncommitted pre-fix draft, identity unrecoverable. **Re-run against the shipped `779d383f…` in §3.1 — all four still red.** |
+| §3 mutation 5, *first* transcript (`at git 27737a9` → `25ae132`) | The pre-fix draft **by construction**: it is that draft's defect being exhibited, since the shipped `render()` cannot emit a commit stamp at all. |
+| §3 mutation 5, *second* transcript (exit 0 across the commit) | The post-fix bytes, i.e. `779d383f…`. Re-confirmed in §3.1's control run, which is green *after* `cf75f83` landed. |
+
+Rather than reconstruct an attribution from a draft that no longer exists, round
+208 re-ran every mutation against the bytes that shipped. §3.1 is that record.
 
 ---
 
@@ -78,6 +104,13 @@ is about. Run in the copied clone described in §1; each mutation asserts its
 pattern occurs exactly once and aborts otherwise; the control run at the
 shadow's own HEAD is green on both entry points (`check exit=0`,
 `self-check exit=0`).
+
+> **READ §3.1 FIRST.** The transcripts below were produced against an
+> uncommitted draft of the script whose bytes no longer exist — §1 records why.
+> **§3.1 re-runs all four against the bytes that shipped (`779d383f…`), where all
+> four still turn red**, and notes the one incidental number that differs and
+> why. Treat the numbers below as attributed to that lost draft; treat §3.1's as
+> attributed to the build.
 
 **Mutation 1 — the census region goes stale.** Round 205's finding, mechanised:
 edit the generated headline back to the numbers the document used to carry.
@@ -186,6 +219,58 @@ declaration under it changed *nothing* — no count, no row, exit 0. No
 a blank line, so the clause is currently unexercised. It is kept because the
 next edit to the file may exercise it, but it is **not** evidence, and mutation
 4 replaced it.
+
+### 3.1 Round 208 — the same four mutations, against the bytes that shipped
+
+Added by fix cycle 3 to close §1's defect at the level it actually mattered: not
+by correcting a digit, but by making every transcript in §3 answer to bytes that
+exist. Clone `/tmp/r208/shadow`, `git clone --no-hardlinks`, `stat -c %h` = **1**
+on all three probed files, regular files not symlinks, and the instrument's
+sha256 asserted equal to the shipped `779d383f8b5fad34…` **before every
+mutation** — printed each time, not assumed. Each mutation also asserts it
+**LANDED** in the file afterwards (see the disclosure below for why that
+post-condition is not decoration). Control at the shadow's own HEAD is green on
+both entry points, `check exit=0` and `self-check exit=0`, and green **again**
+after the last mutation was reverted.
+
+| Mutation | Result against `779d383f…` | §3's claim |
+|---|---|---|
+| 1 — headline reverted to 85/92 | `exit 1`, `census is STALE`, unified diff naming `-**85` against `+**99` | holds |
+| 2 — `AND pt.round <= 5` in `promoteReadyTasks` | `exit 1`, `FAIL: R20 … in promoteReadyTasks(): unjustified round` — **by name** | holds |
+| 3 — `roundHelperAddedLater`, unattributed | `exit 1`, `symbols carrying round with no attribution — roundHelperAddedLater (3 hits)` | holds, count included |
+| 4 — the attribution rule altered | `self-check exit 1` on **distribution**, 19 symbols differ; banner byte-identical; `--write` moves **36 region rows** | holds, all three numbers |
+
+Mutation 4's two measured claims both reproduce exactly. The full stdout banner
+under mutation 4 and under the clean run are **byte-identical** — not eyeballed:
+both captures hash to `b11718a89c644baf…`. And the `--write` laundering hazard
+that motivates pinning the distribution is **36** changed region lines, all 36 of
+them table rows, which is §3's *"36 rows of the generated table move"* to the row.
+
+**One incidental delta, disclosed rather than smoothed over.** §3's mutation 2
+transcript reads `projects.ts:855`; this re-run printed `:843`. Nothing moved in
+`projects.ts` — the file is byte-identical at `27737a9` and `cf75f83`
+(`e1b14c1f7a4dc8db…` at both). The number names **where the mutation was
+inserted** inside `promoteReadyTasks`'s statement, and round 208 inserted the
+predicate above `= cardinality(pt.depends_on)` where round 206 put it lower. Both
+land inside the symbol, both are caught by name, and the line number is a
+property of the mutation rather than of the tree — which is exactly why §6's
+answer 3 pins it *to the mutated shadow* and not to a commit.
+
+**A disclosure about this round's own instrument, because it nearly certified a
+false finding.** The first attempt at mutation 4 used `sed` with a 12-space
+indent against an anchor indented **8**. The substitution silently matched
+nothing, the run came back green with the region unchanged, and the natural
+reading of that green — *"§3's 36-row claim does not reproduce; the gate misses
+mutation 4"* — was a finding about to be written up. What caught it was the
+`grep -n "MUTATION 4"` post-condition printing **empty**: the mutation had never
+landed, so the green run was measuring unmutated code. The guard that failed was
+real but mis-aimed — it asserted the target substring **occurred once**, which it
+did, while `sed` required an exact indented match, which it did not; assert-the-
+target and assert-the-mutation-landed are different assertions and only the
+second one closes this hole. Every mutation above therefore carries a landed
+post-condition. This is the same shape as the round-207 census retraction: a
+disagreement was checked for a benign explanation before being filed as a defect,
+and standing rule 3 earned its keep against a three-hour-old instrument again.
 
 ---
 
