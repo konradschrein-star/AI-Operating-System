@@ -1,0 +1,163 @@
+--- forge-control-web/app/desktop/team/TeamRow.tsx	2026-08-17 03:08:20.262781373 +0200
++++ INSTRUMENTED:app/desktop/team/TeamRow.tsx	2026-08-17 03:16:39.503735716 +0200
+@@ -650,4 +650,114 @@
+  *  row changed, and the per-poll clock left the props entirely for
+  *  `ResponseNowContext`. Both were required — round 1301 measured 0 bail-outs
+  *  in 432 compares with either one still in place. */
+-export const TeamRowView = memo(TeamRowViewImpl);
++/* ══════════ ROUND 1302 RENDER CENSUS — /tmp BUILD COPY ONLY ══════════
++ * Identical instrumentation to round 1301's (docs/plan/artifacts/phase1300/
++ * baseline/instrumentation.diff), re-applied on top of round 1302's L1 change
++ * so the AFTER numbers are produced by the SAME instrument as the BEFORE ones.
++ * The comparator reproduces React's default shallow compare exactly, so the
++ * instrumented build renders identically to the clean one.
++ * ═════════════════════════════════════════════════════════════════════════ */
++interface RenderCensus {
++  compares: number;
++  memoBailouts: number;
++  bodyRenders: number;
++  propDiffs: Record<string, number>;
++  wrapperIdentityStable: number;
++  nodeIdentityStable: number;
++  bailoutsIfRowWereTheOnlyProp: number;
++  bailoutsIfNodeIdentityDecided: number;
++  seenIds: string[];
++  reset(): void;
++  read(): Record<string, unknown>;
++}
++
++function flattenSnapshot(): Record<string, number> | null {
++  const f = (globalThis as unknown as { __flattenCensus?: Record<string, unknown> })
++    .__flattenCensus;
++  if (!f) return null;
++  const out: Record<string, number> = {};
++  for (const [k, v] of Object.entries(f)) if (typeof v === "number") out[k] = v;
++  return out;
++}
++
++function censusZeroFlatten(): void {
++  const f = (globalThis as unknown as { __flattenCensus?: Record<string, unknown> })
++    .__flattenCensus;
++  if (!f) return;
++  for (const k of Object.keys(f)) if (typeof f[k] === "number") f[k] = 0;
++}
++
++function censusInit(): RenderCensus {
++  const c: RenderCensus = {
++    compares: 0,
++    memoBailouts: 0,
++    bodyRenders: 0,
++    propDiffs: {},
++    wrapperIdentityStable: 0,
++    nodeIdentityStable: 0,
++    bailoutsIfRowWereTheOnlyProp: 0,
++    bailoutsIfNodeIdentityDecided: 0,
++    seenIds: [],
++    reset() {
++      c.compares = 0;
++      c.memoBailouts = 0;
++      c.bodyRenders = 0;
++      c.propDiffs = {};
++      c.wrapperIdentityStable = 0;
++      c.nodeIdentityStable = 0;
++      c.bailoutsIfRowWereTheOnlyProp = 0;
++      c.bailoutsIfNodeIdentityDecided = 0;
++      c.seenIds = [];
++      censusZeroFlatten();
++    },
++    read() {
++      return {
++        compares: c.compares,
++        memoBailouts: c.memoBailouts,
++        bodyRenders: c.bodyRenders,
++        propDiffs: { ...c.propDiffs },
++        wrapperIdentityStable: c.wrapperIdentityStable,
++        nodeIdentityStable: c.nodeIdentityStable,
++        bailoutsIfRowWereTheOnlyProp: c.bailoutsIfRowWereTheOnlyProp,
++        bailoutsIfNodeIdentityDecided: c.bailoutsIfNodeIdentityDecided,
++        distinctRowsRendered: new Set(c.seenIds).size,
++        flatten: flattenSnapshot(),
++      };
++    },
++  };
++  return c;
++}
++const G = globalThis as unknown as { __teamRenderCensus?: RenderCensus };
++const CENSUS: RenderCensus | null =
++  typeof window === "undefined" ? null : (G.__teamRenderCensus ??= censusInit());
++
++function TeamRowViewCounted(props: TeamRowProps) {
++  if (CENSUS) {
++    CENSUS.bodyRenders += 1;
++    CENSUS.seenIds.push(props.row.node.id);
++  }
++  return TeamRowViewImpl(props);
++}
++
++export const TeamRowView = memo(TeamRowViewCounted, (prev, next) => {
++  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
++  const diff: string[] = [];
++  for (const k of keys) {
++    const a = (prev as unknown as Record<string, unknown>)[k];
++    const b = (next as unknown as Record<string, unknown>)[k];
++    if (!Object.is(a, b)) diff.push(k);
++  }
++  if (CENSUS) {
++    CENSUS.compares += 1;
++    for (const k of diff) CENSUS.propDiffs[k] = (CENSUS.propDiffs[k] ?? 0) + 1;
++    if (diff.length === 0) CENSUS.memoBailouts += 1;
++    if (prev.row === next.row) CENSUS.wrapperIdentityStable += 1;
++    if (prev.row.node === next.row.node) CENSUS.nodeIdentityStable += 1;
++    if (diff.length === 1 && diff[0] === "row") CENSUS.bailoutsIfRowWereTheOnlyProp += 1;
++    if (prev.row.node === next.row.node && diff.every((k) => k === "row" || k === "responseNow")) {
++      CENSUS.bailoutsIfNodeIdentityDecided += 1;
++    }
++  }
++  return diff.length === 0;
++});
++
+--- forge-control-web/app/desktop/team/teamRows.ts	2026-08-17 03:07:41.839474938 +0200
++++ INSTRUMENTED:app/desktop/team/teamRows.ts	2026-08-17 03:16:39.505735732 +0200
+@@ -146,6 +146,42 @@
+ ): FlatTeam {
+   const rows: TeamRow[] = [];
+   let hiddenCount = 0;
++
++  /* ROUND 1302 RENDER CENSUS — /tmp BUILD COPY ONLY. Same block as round
++   * 1301's, so `flatten.*` is comparable across the two rounds. */
++  {
++    const g = globalThis as unknown as {
++      __flattenCensus?: {
++        calls: number;
++        nodesInResponse: number;
++        nodesIdenticalToPrevious: number;
++        nodesCompared: number;
++        prev?: Map<string, unknown>;
++      };
++    };
++    g.__flattenCensus ??= {
++      calls: 0,
++      nodesInResponse: 0,
++      nodesIdenticalToPrevious: 0,
++      nodesCompared: 0,
++    };
++    const c = g.__flattenCensus;
++    c.calls += 1;
++    const seen = new Map<string, unknown>();
++    const walk = (n: TeamNode): void => {
++      seen.set(n.id, n);
++      if (c.prev) {
++        c.nodesCompared += 1;
++        if (c.prev.get(n.id) === n) c.nodesIdenticalToPrevious += 1;
++      }
++      for (const s of n.subagents) walk(s);
++    };
++    walk(res.manager);
++    for (const w of res.workers) walk(w);
++    c.nodesInResponse += seen.size;
++    c.prev = seen;
++  }
++
+   const prevById = cache?.byId;
+   const nextById = cache ? new Map<string, TeamRow>() : null;
+ 

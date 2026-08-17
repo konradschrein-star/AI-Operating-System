@@ -269,8 +269,14 @@ const TEAM_TIMING_SQL = `SELECT r.id::text AS id,
 
 /** Task titles for the workers of a project, in ONE grouped query — never one
  *  per row. `project_tasks.run_id` is the FK from a task to the run that
- *  executed it, so this is how a worker row learns which round it is doing. */
-const TEAM_TASKS_SQL = `SELECT run_id::text AS run_id, id::text, round, role, title, status
+ *  executed it, so this is how a worker row learns which round it is doing.
+ *
+ *  `id` is NOT selected (round 1302, L2). It used to be, purely to be shipped
+ *  as `task.id`, and no client reads it — the panel keys rows on the RUN id,
+ *  and a task's own uuid appears in no tooltip, no nav frame and no query. It
+ *  cost ~43 wire bytes on each of 93 nodes for nothing. The row is still
+ *  keyed by `run_id`, which is what the tree joins on. */
+const TEAM_TASKS_SQL = `SELECT run_id::text AS run_id, round, role, title, status
   FROM project_tasks
  WHERE project_id = $1 AND run_id IS NOT NULL`;
 
@@ -289,16 +295,21 @@ interface TimingRow {
 
 interface TaskRow {
   run_id: string;
-  id: string;
   round: number;
   role: string;
   title: string;
   status: string;
 }
 
-/** The task a worker run was spawned for, as the tree carries it. */
+/** The task a worker run was spawned for, as the tree carries it.
+ *
+ *  No `id`: round 1302 removed it from the wire after grepping the whole web
+ *  repo for a reader and finding none. What identifies a row is the RUN id;
+ *  this block exists to say which round and role of the plan the run is
+ *  executing, and every field left here is rendered — `title` by the row's
+ *  description and by OrientationStrip, `round`/`role`/`status` by the row's
+ *  lineage tooltip and the orientation strip's plan line. */
 interface TeamTask {
-  id: string;
   round: number;
   role: string;
   title: string;
@@ -570,7 +581,6 @@ r.get("/:id/team", async (c) => {
         // first row wins and the duplicate is not silently merged into it.
         if (!taskByRun.has(row.run_id)) {
           taskByRun.set(row.run_id, {
-            id: row.id,
             round: row.round,
             role: row.role,
             title: row.title,

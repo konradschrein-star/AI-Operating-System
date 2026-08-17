@@ -36,9 +36,15 @@ export type TeamNodeKind = AgentKind | "subagent";
  *  null `working_ms` means: not measured at all. */
 export type WorkingMsSource = "thread" | "rollup";
 
-/** The project task a worker run was spawned for. */
+/** The project task a worker run was spawned for.
+ *
+ *  No `id` since round 1302: the server stopped shipping one because nothing
+ *  in this repo read it (`grep -rn "task\.id" app/` → no hits). Rows are keyed
+ *  and navigated by RUN id; the task block is here to say which round and role
+ *  of the plan a run is executing. Every field below has a reader —
+ *  `title` in ../chat/OrientationStrip.tsx and (via `description`) in
+ *  ./TeamRow.tsx, `round`/`role`/`status` in both. */
 export interface TeamTask {
-  id: string;
   round: number;
   role: string;
   title: string;

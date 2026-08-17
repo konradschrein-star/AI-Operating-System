@@ -51,6 +51,56 @@ export interface FlatTeam {
   hiddenCount: number;
 }
 
+/**
+ * The wrapper store that lets `memo(TeamRowView)` bail out (round 1302, L1).
+ *
+ * `flattenTeam` allocates a `TeamRow` wrapper per node per response. React
+ * Query's structural sharing keeps the inner `node` object IDENTICAL across
+ * polls for every row whose data did not change — round 1301 measured 428 of
+ * 432 compares with `prev.row.node === next.row.node` — but the fresh wrapper
+ * threw that identity away, so the shallow compare in `memo` failed on
+ * `prev.row !== next.row` for **all** 108 rows, on **every** poll, and the
+ * panel re-rendered 432 rows per 25 s to change 4 of them.
+ *
+ * This cache is the fix, and it is deliberately NOT hidden inside the module:
+ * `flattenTeam` stays a pure function of (response, dismissals, cache) with no
+ * ambient state, which is what keeps `scripts/checks/check-team-rows.ts` able
+ * to assert identity directly — call twice with the same cache, get the same
+ * objects back; call twice with two caches, get two sets. A module-level Map
+ * would have made "the same input twice" mean different things depending on
+ * what ran before it.
+ *
+ * `byId` is REPLACED on every walk rather than mutated in place, so a node
+ * that leaves the tree (a worker whose project is gone, a dismissed subtree)
+ * takes its wrapper with it. The cache therefore cannot outgrow the tree.
+ */
+export interface TeamRowCache {
+  byId: Map<string, TeamRow>;
+}
+
+/** A fresh, empty wrapper cache. One per mounted panel. */
+export function createTeamRowCache(): TeamRowCache {
+  return { byId: new Map() };
+}
+
+/** Would rendering `prev` be indistinguishable from rendering `next`?
+ *
+ *  Every field a `TeamRow` carries, compared by identity — `node` included,
+ *  which is the whole point: an unchanged node arrives as the SAME object from
+ *  react-query, so this is one pointer compare, not a deep walk. A row whose
+ *  node object changed is treated as new even if its contents happen to match,
+ *  because the cheap answer is the honest one here: re-rendering a row that
+ *  did not need it costs a frame, claiming equality that does not hold costs
+ *  the truth on screen. */
+function sameRow(prev: TeamRow, next: TeamRow): boolean {
+  return (
+    prev.node === next.node &&
+    prev.depth === next.depth &&
+    prev.parentDescription === next.parentDescription &&
+    prev.displayWorkingMs === next.displayWorkingMs
+  );
+}
+
 /** Every node in this subtree, the node itself included — what a dismissal at
  *  this node actually removes from the panel. */
 function subtreeSize(node: TeamNode): number {
@@ -82,13 +132,22 @@ function subtreeSize(node: TeamNode): number {
  * it — they cannot outlive the row they hang under, and leaving orphans
  * indented under nothing would misread as a new top-level agent. Dismissal is
  * reversible (see ./dismissals), so this hides rows; it never destroys data.
+ *
+ * `cache` is optional and changes nothing about WHAT this returns — only the
+ * object identities. With a cache, a row whose every field is unchanged comes
+ * back as the PREVIOUS object, so `memo(TeamRowView)` bails out on it (see
+ * TeamRowCache above). Without one, every wrapper is fresh, which is the old
+ * behaviour and is what the ordering/dismissal assertions exercise.
  */
 export function flattenTeam(
   res: TeamResponse,
   dismissed: ReadonlySet<string>,
+  cache?: TeamRowCache,
 ): FlatTeam {
   const rows: TeamRow[] = [];
   let hiddenCount = 0;
+  const prevById = cache?.byId;
+  const nextById = cache ? new Map<string, TeamRow>() : null;
 
   const pushSubtree = (
     node: TeamNode,
@@ -102,12 +161,16 @@ export function flattenTeam(
       hiddenCount += subtreeSize(node);
       return;
     }
-    rows.push({
+    const fresh: TeamRow = {
       node,
       depth,
       parentDescription,
       displayWorkingMs: node.working_ms,
-    });
+    };
+    const prev = prevById?.get(node.id);
+    const row = prev !== undefined && sameRow(prev, fresh) ? prev : fresh;
+    nextById?.set(node.id, row);
+    rows.push(row);
     for (const sub of node.subagents) {
       pushSubtree(sub, depth + 1, node.description);
     }
@@ -117,6 +180,7 @@ export function flattenTeam(
   for (const worker of res.workers) {
     pushSubtree(worker, 1, res.manager.description);
   }
+  if (cache && nextById) cache.byId = nextById;
   return { rows, hiddenCount };
 }
 

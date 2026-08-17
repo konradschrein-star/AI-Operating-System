@@ -74,8 +74,13 @@ import {
   type TeamNode,
   type TeamResponse,
 } from "./teamApi";
-import { flattenTeam, responseNowMs, type FlatTeam } from "./teamRows";
-import { TeamRowView } from "./TeamRow";
+import {
+  createTeamRowCache,
+  flattenTeam,
+  responseNowMs,
+  type FlatTeam,
+} from "./teamRows";
+import { ResponseNowContext, TeamRowView } from "./TeamRow";
 import { PlanKanban } from "./PlanKanban";
 
 /** NFU3: one poll, 6s, paused whenever the panel is not visible.
@@ -293,8 +298,19 @@ export function ChatTeamPanel({
 
   const data = team.data;
 
+  /* The wrapper cache that makes `memo(TeamRowView)` able to bail out (round
+   * 1302, L1). One per mounted panel, in a ref rather than in module scope so
+   * two panels — or a remount — never share or inherit each other's rows.
+   *
+   * `useMemo` may legitimately re-run for reasons other than a new response
+   * (a changed `dismissed` set, a Strict Mode double-invoke). Feeding the same
+   * cache is correct in every one of those cases: an unchanged node yields the
+   * previous wrapper, so re-running the memo is idempotent rather than a
+   * silent 108-row re-render. */
+  const rowCache = useRef(createTeamRowCache());
+
   const { rows, hiddenCount } = useMemo(
-    () => (data ? flattenTeam(data, dismissed) : NO_TEAM),
+    () => (data ? flattenTeam(data, dismissed, rowCache.current) : NO_TEAM),
     [data, dismissed],
   );
   const responseNow = useMemo(() => (data ? responseNowMs(data) : Number.NaN), [data]);
@@ -402,21 +418,29 @@ export function ChatTeamPanel({
             )}
 
             <div data-team-scroll style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-              {rows.map((row) => (
-                <TeamRowView
-                  key={row.node.id}
-                  row={row}
-                  responseNow={responseNow}
-                  armed={armedId === row.node.id}
-                  canStop={caps.stop}
-                  canTerminate={caps.terminate}
-                  degradedTime={degradedTime}
-                  degradedTasks={degradedTasks}
-                  onOpenNode={handleOpenNode}
-                  onStop={handleStop}
-                  onX={handleX}
-                />
-              ))}
+              {/* The response clock reaches the live rows' time cells THROUGH
+                  this provider, never as a row prop (round 1302, L1). It is a
+                  new number every poll; as a prop it re-rendered all 108 rows
+                  to move the two that are running. React delivers a context
+                  change to its consumers even where `memo` bailed the row out,
+                  so the routing is exact: `LiveTime` re-renders, its row does
+                  not. */}
+              <ResponseNowContext.Provider value={responseNow}>
+                {rows.map((row) => (
+                  <TeamRowView
+                    key={row.node.id}
+                    row={row}
+                    armed={armedId === row.node.id}
+                    canStop={caps.stop}
+                    canTerminate={caps.terminate}
+                    degradedTime={degradedTime}
+                    degradedTasks={degradedTasks}
+                    onOpenNode={handleOpenNode}
+                    onStop={handleStop}
+                    onX={handleX}
+                  />
+                ))}
+              </ResponseNowContext.Provider>
 
               {state === "loading" && (
                 <Note>{enabled ? "loading team…" : "no chat open"}</Note>

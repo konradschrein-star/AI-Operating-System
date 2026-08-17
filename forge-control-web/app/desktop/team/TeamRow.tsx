@@ -59,7 +59,7 @@
  * and nothing else (round 505 finding #4).
  */
 
-import { memo, type CSSProperties } from "react";
+import { createContext, memo, useContext, type CSSProperties } from "react";
 import { tokens, dot } from "../../tokens";
 import {
   isModelAlias,
@@ -237,6 +237,30 @@ function FrozenTime({ ms, prefix, title }: TimeCellProps) {
   );
 }
 
+/**
+ * The server clock at response time (`responseNowMs(res)`), as a context
+ * rather than a prop — round 1302, L1.
+ *
+ * It used to be a prop on every row, and it is a NEW NUMBER on every poll, so
+ * it defeated `memo(TeamRowView)` on its own: round 1301 measured `responseNow`
+ * differing on 432 of 432 compares, and `bailoutsIfRowWereTheOnlyProp` = 0 —
+ * fixing wrapper identity alone would have changed nothing, because every row
+ * still had a changed prop.
+ *
+ * A settled row has no business hearing about it at all: `interpolatedWorkingMs`
+ * returns the frozen base and never reads `responseNow` when `node.settled`
+ * (U16). So the value goes to the ONE component that actually interpolates.
+ * React propagates a context change to consumers even through a memo bail-out,
+ * which is exactly the routing wanted: the poll re-renders the live rows' time
+ * spans and nothing else.
+ *
+ * Default `NaN` — the same "cannot interpolate" value the panel passes while
+ * there is no response, which `interpolatedWorkingMs` already handles by
+ * rendering the frozen base rather than a guess. A `LiveTime` mounted outside
+ * a provider therefore shows an honest number, not a NaN.
+ */
+export const ResponseNowContext = createContext<number>(Number.NaN);
+
 interface LiveTimeProps {
   /** The row, for `interpolatedWorkingMs` — the single place client-side time
    *  policy lives (teamRows.ts). The brief named this component's props
@@ -246,19 +270,19 @@ interface LiveTimeProps {
    *  second source of truth round 501 built `interpolatedWorkingMs` to
    *  prevent. */
   row: TeamRow;
-  /** The server clock at response time, from `responseNowMs(res)`. */
-  responseNow: number;
   prefix: string;
   title: string;
 }
 
 /**
- * A running row's time. The ONLY subscriber to the 1s tick in this panel:
- * a tick re-renders this `<span>`, not the row, not the controls, not the
- * native title (13 §6).
+ * A running row's time. The ONLY subscriber to the 1s tick in this panel, and
+ * since round 1302 the only reader of `ResponseNowContext`: a tick or a poll
+ * re-renders this `<span>`, not the row, not the controls, not the native
+ * title (13 §6).
  */
-function LiveTime({ row, responseNow, prefix, title }: LiveTimeProps) {
+function LiveTime({ row, prefix, title }: LiveTimeProps) {
   const nowMs = useTick();
+  const responseNow = useContext(ResponseNowContext);
   return (
     <span
       data-working-cell
@@ -334,8 +358,6 @@ const X_STYLE: CSSProperties = {
 
 export interface TeamRowProps {
   row: TeamRow;
-  /** `responseNowMs(res)` — the anchor every interpolation measures from. */
-  responseNow: number;
   /** Is THIS row's X currently armed? A boolean, so arming re-renders exactly
    *  two rows (the one losing it and the one gaining it) instead of the list. */
   armed: boolean;
@@ -366,7 +388,6 @@ export interface TeamRowProps {
 
 function TeamRowViewImpl({
   row,
-  responseNow,
   armed,
   canStop,
   canTerminate,
@@ -615,12 +636,7 @@ function TeamRowViewImpl({
         {settled || degradedTime ? (
           <FrozenTime ms={timeMs} prefix={prefix} title={timeTitle} />
         ) : (
-          <LiveTime
-            row={row}
-            responseNow={responseNow}
-            prefix={prefix}
-            title={timeTitle}
-          />
+          <LiveTime row={row} prefix={prefix} title={timeTitle} />
         )}
       </div>
     </div>
@@ -629,5 +645,9 @@ function TeamRowViewImpl({
 
 /** Memoized on a shallow prop compare. Hover changes no prop — it is CSS — so
  *  a hover sweep across the list commits nothing (NFU2). A poll replaces
- *  `row`, which is the only thing that should re-render a row. */
+ *  `row` for the rows whose data actually moved, and only for those: since
+ *  round 1302 `flattenTeam` reuses the previous wrapper when nothing about a
+ *  row changed, and the per-poll clock left the props entirely for
+ *  `ResponseNowContext`. Both were required — round 1301 measured 0 bail-outs
+ *  in 432 compares with either one still in place. */
 export const TeamRowView = memo(TeamRowViewImpl);
