@@ -1406,3 +1406,240 @@ EXIT=0
 `git HEAD 9b04039`, `uncommitted (subj) : none`, and the three sha256 values
 identical to §3.3's — which is the point: the green run in §3.3 was made against
 exactly these bytes, and the mutation runs in §3.4 were not.
+
+---
+
+## §4 — R58, round 231: the spawn log names the workstream and the dependency count
+
+Builder 6C. One requirement, `spawnTaskRuns()` in
+`forge-control/src/lib/project-tick.ts`, and the corpus row 04-phases.md §10
+requires alongside it.
+
+### 4.1 The ruling this task ran under, restated
+
+R58 belongs to phase 6 (01-requirements.md §G; 04-phases.md §9). Its only
+implementation site, `spawnTaskRuns()`, lives in `project-tick.ts` — a file
+04-phases.md §10's ownership table assigns to phases **4** (spawn/log) and
+**5** (prompts), never 6. The round-221 planner found the gap: R58's
+requirement and R58's file were owned by different phases. The ruling, taken
+under the same precedent §10 already sets for the round-213 and round-215
+out-of-set writes (**disclose, not abstain**): phase 6 writes the spawn log
+line at a round strictly *after* every phase-4 round including its fix cycles
+(phase 4's fix cycles were live in this worktree through round 223, so round
+231 could not collide with a live phase-4 builder), and the write is recorded
+in 04-phases.md §10 in the same commit that makes it. Phase 5's round-500+
+rewrite of the prompt constants in the same file is a different, later edit to
+a different part of the file; `formatSpawnLog()` is not a prompt constant and
+does not collide with it.
+
+### 4.2 The change — `spawnTaskRuns()` → `formatSpawnLog()`
+
+**Before** (verified at git SHA `7efa36b`, the log call inline in
+`spawnTaskRuns()`):
+
+```ts
+console.log(
+  `[project-tick] spawned ${task.role} run ${run.id} for task ${task.id} ` +
+    `(round ${task.round}, tier ${task.tier ?? "role-default"}) — ` +
+    `${task.project.name} · ${task.title}`,
+);
+```
+
+Rendered example: `[project-tick] spawned builder run <id> for task <id> (round 1, tier role-default) — Test Project · Do it`
+
+**After.** The text moved into a new pure, exported function, `formatSpawnLog()`
+(placed just above `emptyWriteSetWarning()`, matching that function's existing
+`Pick<ProjectTask, …>` + `projectName: string` shape so the two read as one
+family). `spawnTaskRuns()` now calls it:
+
+```ts
+console.log(formatSpawnLog(task, run.id, task.project.name));
+```
+
+```ts
+export function formatSpawnLog(
+  task: Pick<ProjectTask, "id" | "role" | "round" | "tier" | "workstream" | "depends_on" | "title">,
+  runId: string,
+  projectName: string,
+): string {
+  const deps = task.depends_on === null ? "legacy" : String(task.depends_on.length);
+  return (
+    `[project-tick] spawned ${task.role} run ${runId} for task ${task.id} ` +
+    `(round ${task.round}, tier ${task.tier ?? "role-default"}, workstream=${task.workstream}, deps=${deps}) — ` +
+    `${projectName} · ${task.title}`
+  );
+}
+```
+
+Rendered examples (all taken from the test suite's actual assertions, §4.3
+below):
+
+| case | rendered line |
+|---|---|
+| graph row, 3 deps | `[project-tick] spawned builder run run-1 for task t1 (round 1, tier role-default, workstream=main, deps=3) — Test Project · Do it` |
+| graph row, `[]` | `[project-tick] spawned builder run run-1 for task t1 (round 1, tier role-default, workstream=main, deps=0) — Test Project · Do it` |
+| legacy row, `null` | `[project-tick] spawned builder run run-1 for task t1 (round 1, tier role-default, workstream=main, deps=legacy) — Test Project · Do it` |
+| non-main workstream | `[project-tick] spawned builder run run-1 for task t1 (round 1, tier role-default, workstream=ui, deps=0) — Test Project · Do it` |
+
+The existing fields (`role`, `run.id`/`runId`, `task.id`, `round`, `tier`) keep
+their exact order and wording; `workstream=` and `deps=` are appended inside
+the same parenthesised group, as the brief required. `deps` distinguishes the
+`depends_on` sentinel with a single `task.depends_on === null` test — never
+`?? []`, never a truthiness check on `task.depends_on` (an empty array `[]` is
+falsy and a truthiness test would have printed `deps=legacy` for a real graph
+root, the opposite bug from the one NF1 forbids but a lie all the same).
+
+### 4.3 The test — `project-tick.test.ts`, "R58 spawn log — workstream and dependency count"
+
+`formatSpawnLog` is a pure function of plain data, so the new `describe` block
+imports it directly (`import { formatSpawnLog } from "./project-tick.ts"`,
+appended after the R70/close-gate block) and reuses the file's existing `task()`
+factory — no value import of `db/*`, no pg `Pool`, hermetic per NF3.
+
+Five cases, appended, never editing an existing assertion:
+
+```
+# Subtest: R58 spawn log — workstream and dependency count
+    # Subtest: a graph row with three deps renders deps=3
+    ok 1 - a graph row with three deps renders deps=3
+    # Subtest: a graph row with an empty depends_on array renders deps=0
+    ok 2 - a graph row with an empty depends_on array renders deps=0
+    # Subtest: a NULL depends_on (the legacy sentinel) renders deps=legacy, never deps=0
+    ok 3 - a NULL depends_on (the legacy sentinel) renders deps=legacy, never deps=0
+    # Subtest: workstream 'main' is printed, not omitted
+    ok 4 - workstream 'main' is printed, not omitted
+    # Subtest: a non-main workstream is printed by name
+    ok 5 - a non-main workstream is printed by name
+    1..5
+ok 122 - R58 spawn log — workstream and dependency count
+```
+
+**The call site, so the test is not a formatter tested in isolation that the
+spawner never actually calls** — the failure mode this section's closing
+paragraph names explicitly. `spawnTaskRuns()`'s only `console.log` in its spawn
+path is now:
+
+```ts
+console.log(formatSpawnLog(task, run.id, task.project.name));
+```
+
+one call, on the line the pre-existing "R17 warn clause" test already asserts
+comes immediately before `emptyWriteSetWarning(task, task.project.name)` — see
+§4.5.
+
+### 4.4 The full suite, at this commit
+
+```
+$ pnpm typecheck
+> forge-control@0.1.0 typecheck
+> tsc --noEmit
+[clean, zero errors]
+
+$ pnpm test
+...
+# tests 1118
+# suites 202
+# pass 1118
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+```
+
+Baseline at `7efa36b` was 1009 pass (brief's figure); the corpus has grown by
+109 tests across the intervening rounds. All 1118 pass, zero skipped.
+
+### 4.5 One pre-existing assertion had to change, and why (standing rule 4)
+
+`project-tick.test.ts`'s "R17 warn clause — an undeclared builder is named at
+spawn" describe block already contained a structural test, "the spawn path
+emits it once per spawn, beside the spawn line", predating this task. It sliced
+`spawnTaskRuns()`'s source text and searched for the literal string
+`` "[project-tick] spawned ${task.role}" `` to locate the spawn log line, then
+asserted `emptyWriteSetWarning(task, task.project.name)` appears textually
+after it, exactly once.
+
+Extracting `formatSpawnLog()` — which this task's brief explicitly prescribed,
+precisely so the log text could be tested without importing anything that opens
+a pg Pool — moves that literal string out of `spawnTaskRuns()`'s body into the
+new function, which sits earlier in the file. The literal search target no
+longer occurs inside the slice the test takes, so it went red as a direct,
+expected consequence of the prescribed refactor — not a behaviour change: the
+call to `formatSpawnLog(task, run.id, task.project.name)` is still the very
+next statement before `emptyWriteSetWarning(...)`, in the same position the
+original inline `console.log(...)` occupied.
+
+**What changed:** the test's search target, from the literal log string to the
+literal call `` "formatSpawnLog(task, run.id, task.project.name)" ``. The
+assertion's meaning — the warn call sits beside the spawn record, exactly one
+call site — is unmodified; only the token it locates that record by is updated
+to match where the record now lives. No requirement is retired; this is the
+narrow case standing rule 4 anticipates ("if one genuinely must change, the
+commit message names [it]"), named here and in the commit message.
+
+### 4.6 Mutation — proving the new test can fail
+
+Reproduced live, on this worktree, then reverted:
+
+```
+$ sed -i 's/const deps = task.depends_on === null ? "legacy" : String(task.depends_on.length);/const deps = "0"; \/\/ MUTATION: always print 0, even for a NULL row/' src/lib/project-tick.ts
+
+$ node --test --import tsx src/lib/project-tick.test.ts
+    # Subtest: a graph row with three deps renders deps=3
+    not ok 1 - a graph row with three deps renders deps=3
+      error: |-
+        The input did not match the regular expression /deps=3\)/. Input:
+        '[project-tick] spawned builder run run-1 for task t1 (round 1, tier role-default, workstream=main, deps=0) — Test Project · Do it'
+
+    # Subtest: a NULL depends_on (the legacy sentinel) renders deps=legacy, never deps=0
+    not ok 3 - a NULL depends_on (the legacy sentinel) renders deps=legacy, never deps=0
+      error: |-
+        The input did not match the regular expression /deps=legacy\)/. Input:
+        '[project-tick] spawned builder run run-1 for task t1 (round 1, tier role-default, workstream=main, deps=0) — Test Project · Do it'
+```
+
+Two of the five cases go red under the mutation — exactly the two the mutation
+touches (`deps=3` and `deps=legacy`); the workstream cases and the `[]` case
+correctly stay green, since the mutation does not affect them. This is the
+precise failure NF1 forbids (a legacy row silently reporting `deps=0`), and the
+test catches it.
+
+```
+$ cp /tmp/project-tick.ts.bak2 src/lib/project-tick.ts   # revert
+$ pnpm typecheck   # clean
+$ pnpm test        # 1118/1118 pass again
+```
+
+### 4.7 What would have made this test report a pass WRONGLY
+
+The obvious failure mode, named because standing rule 3 requires it: a
+formatter tested in isolation that the spawner does not actually call — a
+`formatSpawnLog()` that typechecks and passes its own unit tests while
+`spawnTaskRuns()` quietly still runs its own inline `console.log(...)` beside
+it, unreached by the extraction. Ruled out two ways: (1) §4.3 above shows the
+call site — `spawnTaskRuns()` contains exactly one `console.log` in its spawn
+path, and it is `console.log(formatSpawnLog(task, run.id, task.project.name))`,
+confirmed by `grep -c "console.log(formatSpawnLog" src/lib/project-tick.ts`
+returning 1 and `grep -c "console.log(\`\[project-tick\] spawned"`
+returning 0; (2) the pre-existing R17 structural test in §4.5, now retargeted
+at the call rather than the literal string, independently asserts there is
+exactly one call site and that it sits where the old inline log sat.
+
+### 4.8 Files written, and the §10 row
+
+- `forge-control/src/lib/project-tick.ts` — `formatSpawnLog()` added; the one
+  `spawnTaskRuns()` call site changed. Nothing else in the file touched:
+  `PARALLELISM_GUIDE`, the prompt branches, `WORKTREE_POLICY`, the group loop,
+  and `buildPrompt` are all byte-identical to this task's start.
+- `forge-control/src/lib/project-tick.test.ts` — one case appended (§4.3); one
+  pre-existing assertion's search target updated (§4.5).
+- `docs/plan/engine-task-graph/04-phases.md` — §10's "writes recorded after the
+  fact, round 215" table gained one row, naming `project-tick.ts`, round 231,
+  and the ruling of §4.1. `check-corpus-map.py` still exits 0 (it parses only
+  §9/§K/phase headers, not §10, so this row cannot desync the requirement→phase
+  map — verified by re-running it after the edit).
+- `docs/plan/engine-task-graph/evidence/phase6-plan-api.md` — this section.
+
+No live database, no live endpoint, no edit to `/opt/forge-ai-os` — every
+verification above ran in this worktree, out of `tsx`/`node --test`, per this
+task's brief.

@@ -1446,7 +1446,10 @@ describe("R17 warn clause — an undeclared builder is named at spawn", () => {
       src.indexOf("async function spawnTaskRuns("),
       src.indexOf("/** Narrow a DB row's role"),
     );
-    const spawnedLog = spawn.indexOf("[project-tick] spawned ${task.role}");
+    // R58 (round 231) extracted the log line's text into `formatSpawnLog()` so
+    // it could be tested hermetically (see the R58 describe block below); the
+    // literal string moved out of this function, so the CALL is what's found.
+    const spawnedLog = spawn.indexOf("formatSpawnLog(task, run.id, task.project.name)");
     const warnCall = spawn.indexOf("emptyWriteSetWarning(task, task.project.name)");
     assert.ok(spawnedLog > 0 && warnCall > spawnedLog, "the warn belongs beside the spawn record");
     assert.equal(
@@ -1694,5 +1697,70 @@ describe("R70 a project may not close on an unmerged workstream branch", () => {
       /have drifted apart/,
       "a held project the pure side cannot explain is a mirror disagreement and must say so",
     );
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// R58 (phase 6, round 231) — the spawn log names the workstream and the
+// dependency count. `formatSpawnLog` is exported purely so this file can
+// assert on its text without importing anything that opens a pg Pool —
+// `spawnTaskRuns()` is the only caller and is not reachable from a hermetic
+// test. See `04-phases.md` §10 for the phase-4/phase-6 file-ownership ruling
+// this task was run under.
+// ══════════════════════════════════════════════════════════════════════════
+
+import { formatSpawnLog } from "./project-tick.ts";
+
+describe("R58 spawn log — workstream and dependency count", () => {
+  test("a graph row with three deps renders deps=3", () => {
+    const line = formatSpawnLog(
+      task({ depends_on: ["a", "b", "c"], workstream: "main" }),
+      "run-1",
+      "Test Project",
+    );
+    assert.match(line, /deps=3\)/);
+  });
+
+  test("a graph row with an empty depends_on array renders deps=0", () => {
+    const line = formatSpawnLog(
+      task({ depends_on: [], workstream: "main" }),
+      "run-1",
+      "Test Project",
+    );
+    assert.match(line, /deps=0\)/);
+  });
+
+  test("a NULL depends_on (the legacy sentinel) renders deps=legacy, never deps=0", () => {
+    // The distinction this whole task exists to preserve: NULL is not zero
+    // dependencies, it is "not graph-scheduled at all" (ProjectTask.depends_on
+    // doc-comment, db/projects.ts). Collapsing it to deps=0 would be exactly
+    // the kind of lie NF1 forbids.
+    const line = formatSpawnLog(
+      task({ depends_on: null, workstream: "main" }),
+      "run-1",
+      "Test Project",
+    );
+    assert.match(line, /deps=legacy\)/);
+    assert.doesNotMatch(line, /deps=0/);
+  });
+
+  test("workstream 'main' is printed, not omitted", () => {
+    // A log line meant to be grepped by `workstream=` must not silently drop
+    // the common case (main) while printing it for everything else.
+    const line = formatSpawnLog(
+      task({ depends_on: [], workstream: "main" }),
+      "run-1",
+      "Test Project",
+    );
+    assert.match(line, /workstream=main/);
+  });
+
+  test("a non-main workstream is printed by name", () => {
+    const line = formatSpawnLog(
+      task({ depends_on: [], workstream: "ui" }),
+      "run-1",
+      "Test Project",
+    );
+    assert.match(line, /workstream=ui/);
   });
 });

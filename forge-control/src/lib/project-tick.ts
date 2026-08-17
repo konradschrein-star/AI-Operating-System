@@ -972,6 +972,27 @@ export function partitionByWorkstream<
  * fires for `builder` and not for `scout`" — is a unit test over the rule and
  * its text rather than a regex over this file's source.
  */
+/** The one spawn log line's TEXT (R58), pulled out so project-tick.test.ts can
+ *  assert on it without importing anything that opens a pg Pool — `spawnTaskRuns()`
+ *  below is the only caller. Workstream is printed ALWAYS, including 'main': a
+ *  line meant to be grepped by `workstream=` must not silently drop the common
+ *  case. `depends_on`'s NULL sentinel (doc-comment on `ProjectTask.depends_on`,
+ *  db/projects.ts) is never collapsed into 0 — that is exactly the kind of lie
+ *  NF1 forbids — so a legacy row reads `deps=legacy` and a graph row reads
+ *  `deps=<n>`, tested with one `=== null`, never `?? []`, never truthiness. */
+export function formatSpawnLog(
+  task: Pick<ProjectTask, "id" | "role" | "round" | "tier" | "workstream" | "depends_on" | "title">,
+  runId: string,
+  projectName: string,
+): string {
+  const deps = task.depends_on === null ? "legacy" : String(task.depends_on.length);
+  return (
+    `[project-tick] spawned ${task.role} run ${runId} for task ${task.id} ` +
+    `(round ${task.round}, tier ${task.tier ?? "role-default"}, workstream=${task.workstream}, deps=${deps}) — ` +
+    `${projectName} · ${task.title}`
+  );
+}
+
 export function emptyWriteSetWarning(
   task: Pick<ProjectTask, "id" | "role" | "title" | "workstream" | "write_set">,
   projectName: string,
@@ -1155,11 +1176,9 @@ async function spawnTaskRuns(): Promise<void> {
       await attachRun(task.id, run.id);
       // E4: spawning used to be silent, so a tick that did real work looked
       // exactly like a tick that did nothing. Every spawn is on the record now.
-      console.log(
-        `[project-tick] spawned ${task.role} run ${run.id} for task ${task.id} ` +
-          `(round ${task.round}, tier ${task.tier ?? "role-default"}) — ` +
-          `${task.project.name} · ${task.title}`,
-      );
+      // R58: the line also names the workstream and the dependency count, so
+      // it says WHY a task started when it did, not just that it did.
+      console.log(formatSpawnLog(task, run.id, task.project.name));
       // R17's warn clause. ONE PER SPAWN, not one per tick — which is why it
       // sits beside the spawn line above rather than in the tick body.
       const undeclared = emptyWriteSetWarning(task, task.project.name);
