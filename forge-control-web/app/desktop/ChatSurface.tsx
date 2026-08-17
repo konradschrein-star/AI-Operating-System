@@ -36,6 +36,7 @@ import {
 } from "../api";
 import { useAttachments, AttachmentChips, HiddenFileInput } from "./chat/useAttachments";
 import { useAutogrow } from "./chat/useAutogrow";
+import { QuotaStrip } from "./chat/QuotaStrip";
 import { effortRamp } from "./chat/effort-ramp";
 import { FileExplorerPanel } from "./chat/FileExplorerPanel";
 import { SlashPopover, type SlashPopoverHandle } from "./chat/SlashPopover";
@@ -1961,6 +1962,7 @@ function ChatThread({
           uploadError={att.uploadError}
           onRemove={att.remove}
         />
+        <QuotaStrip />
         <div style={{ display: "flex", gap: 10, alignItems: "flex-end", marginTop: 8 }}>
           <SlashPopover
             ref={popoverRef}
