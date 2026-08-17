@@ -84,6 +84,7 @@ import chat from "../../forge-control/src/routes/chat.ts";
 import projects from "../../forge-control/src/routes/projects.ts";
 import capabilities from "../../forge-control/src/routes/capabilities.ts";
 import secrets from "../../forge-control/src/routes/secrets.ts";
+import uploads from "../../forge-control/src/routes/uploads.ts";
 
 /**
  * 7798 by default, overridable so a round can run its OWN instance instead of
@@ -130,6 +131,9 @@ const MOUNTS: ReadonlyArray<{ prefix: string; router: FetchRouter }> = [
   { prefix: "/api/projects", router: projects },
   { prefix: "/api/capabilities", router: capabilities },
   { prefix: "/api/secrets", router: secrets },
+  // round 1350: uploads-index needs its GET /api/uploads/index and
+  // /api/uploads/:id/shots reachable through the harness for verification.
+  { prefix: "/api/uploads", router: uploads },
 ];
 
 /**

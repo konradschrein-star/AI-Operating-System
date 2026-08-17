@@ -15,6 +15,7 @@ import { promises as fs, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import crypto from "node:crypto";
+import { listAllRuns, listRunShots } from "../lib/uploads-index.ts";
 
 const r = new Hono();
 
@@ -94,6 +95,24 @@ r.post("/", async (c) => {
     `[uploads] stored ${out.length} file(s): ${out.map((f) => f.name).join(", ")}`,
   );
   return c.json({ ok: true, files: out }, 201);
+});
+
+// Registered ABOVE `/:id/:name` — Hono matches routes in registration order,
+// and a route registered after `/:id/:name` would have "index" and "shots"
+// read as the `:id`/`:name` params instead of matching here.
+r.get("/index", async (c) => {
+  const runs = await listAllRuns();
+  return c.json({ runs });
+});
+
+r.get("/:id/shots", async (c) => {
+  const id = c.req.param("id");
+  if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const dir = path.join(UPLOAD_DIR, id);
+  const st = await fs.stat(dir).catch(() => null);
+  if (!st || !st.isDirectory()) return c.json({ error: "not found" }, 404);
+  const shots = await listRunShots(dir);
+  return c.json({ id, shots });
 });
 
 r.get("/:id/:name", async (c) => {
