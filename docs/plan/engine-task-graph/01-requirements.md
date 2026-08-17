@@ -326,10 +326,49 @@ whose project stopped accepting work between claim and spawn is handed back to
 
 **R22.** `POST /api/projects/:id/tasks` accepts three new optional body fields:
 `depends_on: string[]`, `workstream: string`, `write_set: string[]`. Every
-existing field keeps its exact current validation.
+existing field keeps its exact current validation **except `round`, amended
+twice by operator ruling in round 213 and stated here rather than left to the
+task briefs** — see R22a.
 *How proved:* unit over the extracted pure validator + `check` against a
 locally-mounted router (the single-router probe pattern; **not** the live
 service).
+
+**R22a. `round`, when supplied, must be a non-negative integer ≤ 2147483647.**
+Phase 3's contract table said "not a non-negative **finite** integer → 400", and
+that wording refused nothing at either end: `Number.isFinite(1.5)` is true and
+`Number.isInteger(2147483648)` is true, while `project_tasks.round` is declared
+`round int` in `db/migrations/0030_coding_projects.sql`. Both values therefore
+reached the `INSERT` and came back as **500**s — measured, `check-task-api.ts`
+cases 2c and 2d: SQLSTATE `22P02` *invalid input syntax for type integer: "1.5"*
+and SQLSTATE `22003` *integer out of range*, both out of `pg_strtoint32_safe`.
+
+A 500 says *"the server is broken"* for a request that was merely malformed, and
+that contradicts this phase's own error split one file away —
+`GraphValidationError` = refused CALLER input = `400`, `GraphIntegrityError` =
+corrupt STORED graph = `500`. A supplied `round` is caller input at both ends.
+So the guard in `routes/projects.ts` reads `Number.isInteger(round)`,
+`round >= 0` and `round <= MAX_ROUND`, and **the table's row 2 is amended here,
+where it is enforced** (standing rule 2), because the table as written is what
+made both cases ambiguous. Two spellings of one refusal, deliberately: the first
+two clauses keep the pre-existing message, and the bound gets its own message
+naming the limit and the offending value — `2147483648` *is* a non-negative
+integer, so answering "round must be a non-negative integer" would tell the
+caller something false about their own input.
+
+**Widening the column was considered and rejected**, and the reason is R19's:
+`round` is becoming a DERIVED value — `taskDepth()`'s longest-path depth from
+the roots — and a dependency graph's depth cannot approach 2³¹. A `bigint` column
+would be a migration, a deploy-window risk and a permanently wider column bought
+to store a value this engine will never legitimately produce.
+
+Both changes move behaviour from `500` to `400` only. Nothing that previously
+succeeded starts failing, and no legitimate caller depends on receiving a `500`
+for a malformed round.
+*How proved:* `check` — `scripts/checks/check-task-api.ts` case 2, five probes:
+`"abc"`, `-1`, `1.5`, `2147483648` refused, and **`2147483647` accepted**, so the
+bound is a gate that can be passed rather than an off-by-one nobody notices.
+Each refusal was observed as a `500` before its clause existed
+(`evidence/phase3-api.md` §5, §7).
 
 **R23. Round is computed, not supplied.** When `round` is omitted, the engine
 sets `round = 1 + max(round of the tasks named in depends_on)`, or `0` when

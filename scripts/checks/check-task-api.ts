@@ -547,8 +547,13 @@ const CASES: Case[] = [
   },
   {
     id: "2",
-    title: "round supplied but not a non-negative finite INTEGER → 400 (operator ruling, round 213)",
-    assertions: 6,
+    title: "round supplied but not a non-negative int4 → 400 (two operator rulings, round 213)",
+    /* 11 = 2a:2 + 2b:2 + 2c:2 + 2d:3 + 2e:2. First written as 9, which is the
+     * count before 2d's third assertion and 2e existed; the runner refused to
+     * certify a case that executed MORE than it declared, which is the half of
+     * failure mode (b) that catches a stale declaration rather than a skipped
+     * probe. Both directions are failures on purpose. */
+    assertions: 11,
     run: async () => {
       const notNumber = await post("2a round: \"abc\"", P_MAIN, goodBody("c2a", { round: "abc" }));
       assertEq("2a status", 400, notNumber.status);
@@ -568,9 +573,40 @@ const CASES: Case[] = [
        * truth is "your request was malformed", and sends whoever debugs it to
        * entirely the wrong place — the exact failure the two-error-class split
        * exists to prevent. */
-      const fractional = await post("2c round: 1.5 (the ruling)", P_MAIN, goodBody("c2c", { round: 1.5 }));
+      const fractional = await post("2c round: 1.5 (ruling 1)", P_MAIN, goodBody("c2c", { round: 1.5 }));
       assertEq("2c status is 400 and NOT 500", 400, fractional.status);
       assertEq("2c message", ROUND_MSG, errorOf(fractional));
+
+      /* THE SECOND OPERATOR RULING, round 213, on F2 — the other end of the
+       * same expression. `Number.isInteger(2147483648)` is `true`, so ruling 1
+       * waved it through to a column declared `round int` in
+       * `db/migrations/0030_coding_projects.sql`, and Postgres answered
+       * SQLSTATE 22003 `integer out of range` — a 500, by ruling 1's exact
+       * mechanism. Widening the column was rejected: `round` is becoming a
+       * DERIVED value, the longest-path depth from the graph's roots, and a
+       * dependency graph's depth cannot approach 2^31, so a bigint column would
+       * be permanent dead weight bought to accommodate a value the engine will
+       * never legitimately produce.
+       *
+       * THE MESSAGE IS ITS OWN, not ROUND_MSG. `2147483648` IS a non-negative
+       * integer, so answering "round must be a non-negative integer" would tell
+       * a caller something that is false about their input — the same species of
+       * misleading response both rulings exist to remove. Same precedent as the
+       * non-string workstream in case 9b, which does not borrow
+       * validateWorkstream()'s message for a value it never judged. */
+      const overflow = await post("2d round: 2147483648 (ruling 2, F2)", P_MAIN, goodBody("c2d", { round: 2147483648 }));
+      assertEq("2d status is 400 and NOT 500", 400, overflow.status);
+      assertHas("2d message names the bound", errorOf(overflow), "at most 2147483647");
+      assertHas("2d message names the offending value", errorOf(overflow), "got 2147483648");
+
+      /* THE BOUNDARY IS SATISFIABLE, and asserted as such (standing rule 2):
+       * 2147483647 itself is accepted. A gate that refused the largest legal
+       * value would be an off-by-one nobody notices until a real round sits on
+       * the edge. It is a happy path inside a refusal case on purpose — the
+       * refusal is only meaningful if the value one below it is not refused. */
+      const maxLegal = await post("2e round: 2147483647 (the boundary, accepted)", P_MAIN, goodBody("c2e boundary", { round: 2147483647 }));
+      assertEq("2e status", 201, maxLegal.status);
+      assertEq("2e stored round is int4's maximum", 2147483647, taskField(maxLegal, "round"));
     },
   },
   {
@@ -1169,9 +1205,10 @@ async function main(): Promise<void> {
 
     if (exitCode === 0) {
       console.log(
-        "PASS — 20 cases, every declared assertion executed and green: the fifteen 400 " +
-          "families (R22, R24, R25, R27, R28, R31, R39), the 409 (R30), and the five happy " +
-          "paths including the NULL-vs-'{}' sentinel (E2).",
+        `PASS — ${CASES.length} cases, every declared assertion executed and green: the ` +
+          "fifteen 400 families (R22, R22a, R24, R25, R27, R28, R31, R39), the 409 (R30), " +
+          "and the happy paths — the NULL-vs-'{}' sentinel (E2), the computed and the " +
+          "supplied round, the normalised write-set, and int4's maximum accepted at the bound.",
       );
     } else {
       console.error(`FAILED — ${failedCases.length} case(s): ${failedCases.join(", ")}`);

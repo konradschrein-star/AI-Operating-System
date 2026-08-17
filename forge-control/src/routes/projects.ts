@@ -277,6 +277,18 @@ export class TaskRequestError extends Error {
 }
 
 /**
+ * The largest `round` the schema can store: `project_tasks.round` is declared
+ * `round int NOT NULL DEFAULT 0` in `db/migrations/0030_coding_projects.sql`,
+ * so int4's maximum is the real bound and 2147483648 is a `400` rather than the
+ * 500 it produced before round 213's second operator ruling (F2).
+ *
+ * WRITTEN OUT, not computed as `2 ** 31 - 1`: this number is a property of a
+ * column declaration in a migration, not of arithmetic, and the literal is what
+ * a reader compares against the `int` in that file.
+ */
+const MAX_ROUND = 2147483647;
+
+/**
  * Narrow `depends_on` off the wire and de-duplicate it (R22; the input R25 and
  * R27 then judge). Pure apart from its `console.warn`, so it is unit-testable
  * without a database.
@@ -426,6 +438,28 @@ r.post("/:id/tasks", async (c) => {
    * `Number.isInteger` also implies finite, so the old clause is subsumed
    * rather than dropped.
    *
+   * THE UPPER BOUND — OPERATOR RULING 2, round 213, on finding F2, and the other
+   * end of the same expression. `Number.isInteger(2147483648)` is `true`, so
+   * ruling 1 waved that value through to the INSERT and Postgres answered
+   * SQLSTATE 22003 `integer out of range` out of `pg_strtoint32_safe` — a 500,
+   * by ruling 1's exact mechanism. MEASURED with check-task-api.ts case 2d
+   * before this clause existed; the transcript is in
+   * evidence/phase3-api.md §7 (F2).
+   *
+   * WIDENING THE COLUMN WAS REJECTED, and the reason belongs beside the bound
+   * rather than only in a review: `round` is becoming a DERIVED value — the
+   * longest-path depth from the graph's roots — and a dependency graph's depth
+   * cannot approach 2^31. A bigint column would be a migration, a deploy-window
+   * risk and a permanently wider column bought to accommodate a value this
+   * engine will never legitimately produce.
+   *
+   * ITS OWN MESSAGE, not the one above. `2147483648` IS a non-negative integer,
+   * so answering "round must be a non-negative integer" would tell the caller
+   * something false about their own input — the same misleading response both
+   * rulings exist to remove. Same precedent as the non-string `workstream`
+   * below, which does not borrow validateWorkstream()'s message for a value
+   * that function never judged.
+   *
    * `null` counts as OMITTED rather than as `Number(null) === 0`: a caller who
    * sends the key with no value is asking the engine to decide, and with
    * depends_on absent computeRound([]) returns that same 0 anyway. */
@@ -435,6 +469,12 @@ r.post("/:id/tasks", async (c) => {
     round = Number(body.round);
     if (!Number.isInteger(round) || round < 0) {
       return c.json({ error: "round must be a non-negative integer" }, 400);
+    }
+    if (round > MAX_ROUND) {
+      return c.json(
+        { error: `round must be at most ${MAX_ROUND} (project_tasks.round is a 32-bit integer); got ${round}` },
+        400,
+      );
     }
   }
 
