@@ -21,6 +21,13 @@
  *   §4 TOKENS ONLY. Every colour that reaches the DOM — inline styles AND the
  *      scoped hover stylesheet — is a `var(--fg-…)` reference, so both themes
  *      work. A hex literal anywhere in the output fails the check.
+ *   §3b THE USAGE AND INTEGRATIONS PANELS ARE THE REAL THING. Rounds 1350 and
+ *      1352 replaced the round-1351 stubs ("loading usage" / "loading
+ *      integrations") with the actual Credit Tracker and Integrations panels.
+ *      This asserts their real, load-bearing pre-fetch markup instead —
+ *      `UsagePanel` needs a `QueryClientProvider` above it to render at all
+ *      (round-1350 fix: this check was throwing before any assertion ran,
+ *      which is a check that is absent, not one that is failing).
  *
  * There is no DOM in this repo's check harness (no jsdom, and none is being
  * installed for this). So §2's click-driven half is asserted on `frameKey`,
@@ -41,6 +48,14 @@ import {
 import { AccountsPanel } from "../../forge-control-web/app/desktop/settings/AccountsPanel.tsx";
 import { UsagePanel } from "../../forge-control-web/app/desktop/settings/UsagePanel.tsx";
 import { IntegrationsPanel } from "../../forge-control-web/app/desktop/settings/IntegrationsPanel.tsx";
+// `UsagePanel` (round 1352) calls `useQueryClient`, so it needs a real
+// provider above it or the render throws before any assertion runs — that
+// was defect #1 (round 1350's check, red since 1352 landed). Reusing the
+// app's own `Providers` rather than hand-rolling a `new QueryClient()` gets
+// the fix for free: its `useState` initialiser mints a fresh client on every
+// render, so each `renderToStaticMarkup` call below is its own cache, and the
+// panel is proven against the exact provider tree it runs under in prod.
+import { Providers } from "../../forge-control-web/app/Providers.tsx";
 
 let failures = 0;
 
@@ -102,18 +117,51 @@ ok("AccountsPanel renders", accounts.includes("data-accounts-panel"));
 ok("body only — no page padding wrapper", !/100dvh/.test(accounts));
 ok("body only — no back link", !/<a /.test(accounts));
 
-console.log("§3b round-1352 stub contracts hold");
-const usage = renderToStaticMarkup(<UsagePanel />);
+console.log("§3b the real panels render — not the round-1351 stubs");
+// Both panels fetch on mount (`useQuery` / a `useEffect` that calls the
+// proxy). Neither fetch fires here: `@tanstack/query-core` gates its
+// eager-fetch-in-render behind `!isServer`, and `isServer` is
+// `typeof window === "undefined"` — true under `renderToStaticMarkup` in
+// Node, false under a browser or jsdom. So this render is deterministically
+// the panels' pre-fetch state, with no stubbed `fetch` needed to hold it
+// still. That state is a real, load-bearing contract in its own right: it is
+// what Konrad sees for the first paint of every settings visit.
+const usage = renderToStaticMarkup(
+  <Providers>
+    <UsagePanel />
+  </Providers>,
+);
 const integrations = renderToStaticMarkup(<IntegrationsPanel />);
-ok("UsagePanel renders its placeholder", usage.includes("loading usage"));
-ok("UsagePanel marks itself", usage.includes("data-usage-panel"));
+
 ok(
-  "IntegrationsPanel renders its placeholder",
-  integrations.includes("loading integrations"),
+  // Not `usage.includes("data-usage-panel")`: the panel's own scoped
+  // stylesheet contains `[data-usage-panel]` as a CSS selector, so a plain
+  // substring check stays green even with the marker attribute stripped off
+  // the root element — caught by deliberately breaking this in verification.
+  "UsagePanel marks itself",
+  /<div data-usage-panel="true"/.test(usage),
 );
 ok(
-  "IntegrationsPanel marks itself",
-  integrations.includes("data-integrations-panel"),
+  "…renders the shadow-cost/quota framing, not a loading stub",
+  usage.includes("SHADOW COST — NOT AN INVOICE") &&
+    usage.includes("SUBSCRIPTION QUOTA") &&
+    usage.includes("EUR PER USD"),
+);
+ok(
+  "…is honest about having no reading yet (no invented number)",
+  usage.includes("waiting for the first quota reading…") &&
+    usage.includes("loading usage history…"),
+);
+
+ok("IntegrationsPanel marks itself", integrations.includes("data-integrations-panel"));
+ok(
+  "…renders both subject cards, not a loading stub",
+  integrations.includes("Gemini API") && integrations.includes("Google account"),
+);
+ok(
+  "…the Gemini key field is the real write-only contract",
+  integrations.includes('placeholder="paste your AI Studio API key"') &&
+    integrations.includes("GEMINI USAGE"),
 );
 
 console.log("§4 design tokens only — both themes");
