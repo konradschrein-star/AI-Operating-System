@@ -179,7 +179,7 @@ teamPool.on("error", (e) => console.error("[chat team pool]", e.message));
  * The column set `AgentRowRaw` documents, verbatim — see agents-shared.ts's
  * comment on that interface, which is the contract for callers with their own
  * SQL. The `::text` casts are load-bearing: without them pg hands back a JS
- * number for `spent_usd` and Date objects for the five timestamps, and the
+ * number for `spent_usd` and Date objects for the six timestamps, and the
  * wire shape stops matching what /api/agents has always carried.
  *
  * `thread` is pulled ONLY for rows that have no `subagents_v2` rollup, because
@@ -190,12 +190,21 @@ teamPool.on("error", (e) => console.error("[chat team pool]", e.message));
  * finished worker's sub-agents must still appear months later, so the only
  * question is whether the fallback is needed at all.)
  */
-const TEAM_RUN_COLUMNS = `id::text, title, status, worker, spent_usd::text,
-       metadata,
-       CASE WHEN metadata ? 'subagents_v2' THEN NULL::jsonb ELSE thread END AS thread,
-       parent_run_id::text AS parent_run_id,
-       started_at::text, updated_at::text, completed_at::text,
-       last_heartbeat_at::text`;
+const TEAM_RUN_COLUMNS = `runs.id::text, runs.title, runs.status, runs.worker,
+       runs.spent_usd::text,
+       runs.metadata,
+       CASE WHEN runs.metadata ? 'subagents_v2' THEN NULL::jsonb ELSE runs.thread END AS thread,
+       runs.parent_run_id::text AS parent_run_id,
+       runs.started_at::text, runs.updated_at::text, runs.completed_at::text,
+       runs.last_heartbeat_at::text,
+       d.dismissed_at::text AS dismissed_at`;
+
+/** The join that supplies the last of those columns (round 1350). `node_id` is
+ *  `ui_dismissals`' primary key, so it can never multiply a row, and it is a
+ *  LEFT join with no WHERE clause attached: a dismissed node is still in the
+ *  tree, carrying the timestamp that lets the panel hide it and offer it back
+ *  under "N hidden · show". The team endpoint never filters on dismissal. */
+const TEAM_DISMISSAL_JOIN = `LEFT JOIN ui_dismissals d ON d.node_id = runs.id::text`;
 
 /**
  * The worker query. Deliberately NOT `fetchActiveRows()` from agents.ts: that
@@ -216,12 +225,24 @@ const TEAM_RUN_COLUMNS = `id::text, title, status, worker, spent_usd::text,
  */
 const TEAM_WORKERS_SQL = `SELECT ${TEAM_RUN_COLUMNS}
   FROM runs
- WHERE metadata->>'project_id' = $1
-   AND metadata->>'role' IS DISTINCT FROM 'manager'
-   AND id <> $2
- ORDER BY created_at`;
+  ${TEAM_DISMISSAL_JOIN}
+ WHERE runs.metadata->>'project_id' = $1
+   AND runs.metadata->>'role' IS DISTINCT FROM 'manager'
+   AND runs.id <> $2
+ ORDER BY runs.created_at`;
 
-const TEAM_MANAGER_SQL = `SELECT ${TEAM_RUN_COLUMNS} FROM runs WHERE id = $1 LIMIT 1`;
+const TEAM_MANAGER_SQL = `SELECT ${TEAM_RUN_COLUMNS}
+  FROM runs
+  ${TEAM_DISMISSAL_JOIN}
+ WHERE runs.id = $1 LIMIT 1`;
+
+/** Sub-agent dismissals, which no join can supply: a sub-agent node is keyed
+ *  on a `tool_use_id` that lives inside `runs.thread` JSONB and has no row of
+ *  its own. `kind` is the discriminator migration 0041 writes at insert time,
+ *  so this reads only the handful of rows the run join cannot cover. */
+const TEAM_SUBAGENT_DISMISSALS_SQL = `SELECT node_id, dismissed_at::text AS dismissed_at
+  FROM ui_dismissals
+ WHERE kind = 'subagent'`;
 
 /**
  * Working time for every node of the tree, in one query, computed inside
@@ -362,6 +383,12 @@ interface TeamNode {
   description: string | null;
   /** Lineage: the run this node hangs under. Null for the manager. */
   parent_id: string | null;
+  /** When Konrad hid this node from the panel, else null (`ui_dismissals`,
+   *  round 1350). It ships INSIDE the tree so the panel's first paint is
+   *  already correct — without it the panel would draw every node and then
+   *  un-draw the hidden ones after a second round-trip. The tree itself is
+   *  never filtered by this field: "N hidden · show" needs the hidden nodes. */
+  dismissed_at: string | null;
   /** Present on run nodes; empty on sub-agents (they do not nest further). */
   subagents: TeamNode[];
   /** The project task this run executed, when resolvable. Null for the
@@ -372,7 +399,7 @@ interface TeamNode {
 /** A named failure of an enrichment step. The tree still renders; the panel
  *  shows this text instead of pretending the missing numbers are zero. */
 interface TeamError {
-  /** Which step failed: "working_time" | "tasks". */
+  /** Which step failed: "working_time" | "tasks" | "dismissals". */
   scope: string;
   message: string;
 }
@@ -453,12 +480,17 @@ function subagentWorkingTime(
 
 /** Shape one already-shaped `AgentRun` (plus its sub-agents) into a tree node.
  *  `timing` is undefined when the working-time query failed — then every
- *  working number in this subtree is null, and errors[] carries the reason. */
+ *  working number in this subtree is null, and errors[] carries the reason.
+ *  `subDismissedAt` maps a sub-agent's `tool_use_id` to its dismissal stamp;
+ *  the run node reads its own from `run.dismissed_at`, which came in on the
+ *  join. An empty map is the honest answer when that query failed — errors[]
+ *  says so, and an un-hidden node is the safe direction to be wrong in. */
 function teamNodeFromRun(
   run: AgentRun,
   timing: TimingRow | undefined,
   task: TeamTask | null,
   nowMs: number,
+  subDismissedAt: ReadonlyMap<string, string>,
 ): TeamNode {
   // Frozen truth: a settled run never sees `now`. Its thread cannot grow
   // again, so the entry-gap sum IS its final working time.
@@ -487,6 +519,7 @@ function teamNodeFromRun(
       settled: !live,
       description: sub.description,
       parent_id: run.id,
+      dismissed_at: subDismissedAt.get(sub.tool_use_id) ?? null,
       subagents: [],
       task: null,
     };
@@ -506,6 +539,7 @@ function teamNodeFromRun(
     settled: run.settled,
     description: task ? task.title : (run.title ?? null),
     parent_id: run.parent_run_id,
+    dismissed_at: run.dismissed_at,
     subagents,
     task,
   };
@@ -613,12 +647,30 @@ r.get("/:id/team", async (c) => {
     errors.push({ scope: "working_time", message });
   }
 
+  // ── 6. Enrichment C: dismissals for SUB-AGENT nodes (round 1350). Run nodes
+  //       already carry theirs on the join; a sub-agent is a `tool_use_id`
+  //       inside `runs.thread` with no row to join to, so its dismissal is
+  //       looked up by id. A failure here costs hidden-ness, not the tree —
+  //       the node renders visible and errors[] names the reason.
+  const subDismissedAt = new Map<string, string>();
+  try {
+    const res = await teamPool.query<{ node_id: string; dismissed_at: string }>(
+      TEAM_SUBAGENT_DISMISSALS_SQL,
+    );
+    for (const row of res.rows) subDismissedAt.set(row.node_id, row.dismissed_at);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[chat team] sub-agent dismissal query failed:", message);
+    errors.push({ scope: "dismissals", message });
+  }
+
   const shape = (row: AgentRowRaw): TeamNode =>
     teamNodeFromRun(
       agentFromRow(row, nowMs),
       timingOk ? timingById.get(row.id) : undefined,
       taskByRun.get(row.id) ?? null,
       nowMs,
+      subDismissedAt,
     );
 
   const body: TeamResponse = {

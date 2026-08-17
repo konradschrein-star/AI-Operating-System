@@ -134,6 +134,11 @@ export interface AgentRun {
   /** `metadata.cron_name` — the schedule's human name ("weekly-review").
    *  Present independently of `agent_kind`; `cron_id` is what classifies. */
   cron_name: string | null;
+  /** When Konrad hid this row from the Live panel, else null (round 1350,
+   *  `ui_dismissals`). The payload is NOT filtered by it: the server's job is
+   *  to say what is true, and the panel's job is to decide what to draw — it
+   *  also has to render "N hidden · show", which needs the hidden rows. */
+  dismissed_at: string | null;
   /** System A sub-agents currently active within this run's process. */
   subagents: Subagent[];
 }
@@ -383,13 +388,24 @@ export function foldSubagents(thread: ThreadEntry[]): Subagent[] {
  *   id::text, title, status, worker, spent_usd::text,
  *   metadata, thread, parent_run_id::text AS parent_run_id,
  *   started_at::text, updated_at::text, completed_at::text,
- *   last_heartbeat_at::text
+ *   last_heartbeat_at::text,
+ *   d.dismissed_at::text AS dismissed_at   -- LEFT JOIN ui_dismissals d
+ *                                          --   ON d.node_id = runs.id::text
  *
- * The `::text` casts are not cosmetic: `spent_usd` is numeric and the five
+ * The `::text` casts are not cosmetic: `spent_usd` is numeric and the six
  * timestamps are timestamptz, and pg would hand back a JS number and Date
  * objects whose serialization differs from what the wire has always carried.
  * `thread` may be selected as `NULL::jsonb` (see `fetchActiveRows` for when
  * that is the right call) but the column must be present.
+ *
+ * `dismissed_at` (round 1350) is the ONE field on this row that does not come
+ * from `runs`. It is a LEFT JOIN against `ui_dismissals` (migration 0041) and
+ * is null for the overwhelming majority of rows. A caller that forgets the
+ * join gets `undefined` from pg and the compiler will not catch it — pg types
+ * a result to whatever you tell it to — so the join is written out above
+ * verbatim, and every query in this repo that produces an `AgentRowRaw` has
+ * it. Dismissal NEVER filters rows out of a payload; it is a flag the client
+ * decides what to do with.
  *
  * Do not widen this shape. Every field on it is read by `agentFromRow`, and
  * every caller's SELECT is checked against this list by eye, not by the
@@ -414,6 +430,9 @@ export interface AgentRowRaw {
    *  `updated_at` — see `agentFromRow`. */
   completed_at: string | null;
   last_heartbeat_at: string | null;
+  /** From `ui_dismissals`, not from `runs` — see the join in the header
+   *  above. Null means "not hidden", which is nearly every row. */
+  dismissed_at: string | null;
 }
 
 /** Parse the persisted `metadata.subagents_v2` rollup into wire-shape
@@ -572,6 +591,11 @@ export function agentFromRow(row: AgentRowRaw, nowMs: number): AgentRun {
     role: metaStr(meta, "role"),
     project_id: metaStr(meta, "project_id"),
     cron_name: metaStr(meta, "cron_name"),
+    // Straight through from the join. `?? null` is not a fallback hiding a
+    // bug: pg omits the key entirely when a caller's SELECT lacks the column,
+    // and `undefined` on the wire would silently drop the field from the JSON
+    // rather than sending the honest `null` the client's type expects.
+    dismissed_at: row.dismissed_at ?? null,
     subagents: rolledSubagents,
   };
 }

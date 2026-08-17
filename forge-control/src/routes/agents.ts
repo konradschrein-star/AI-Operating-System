@@ -33,6 +33,12 @@
 import { Hono } from "hono";
 import pg from "pg";
 import {
+  dismissalKind,
+  isRunId,
+  resolveCascade,
+  type DismissalCandidate,
+} from "../lib/dismissals.ts";
+import {
   agentFromRow,
   numOr0,
   type AgentRowRaw,
@@ -111,43 +117,52 @@ const RECENT_COMPLETION_WINDOW_MS = 24 * 60 * 60 * 1000;
  * the caller can nest them via parent_run_id as usual. Manager-role runs
  * (metadata.role = 'manager') are excluded from the worker feed — there are
  * none today but the guard is defensive.
+ *
+ * The `ui_dismissals` LEFT JOIN (round 1350) adds `dismissed_at` and NOTHING
+ * else: no WHERE clause reads it, so a hidden row is still returned and still
+ * counted. Hiding is the panel's decision, and the panel needs the hidden rows
+ * to offer "N hidden · show". `node_id` is that table's primary key, so the
+ * join can never multiply a row.
  */
 async function fetchActiveRows(projectId?: string): Promise<AgentRowRaw[]> {
   const params: string[] = [String(RECENT_COMPLETION_WINDOW_MS)];
   let projectFilter = "";
   if (projectId) {
     params.push(projectId);
-    projectFilter = `AND metadata->>'project_id' = $${params.length}
-      AND metadata->>'role' IS DISTINCT FROM 'manager'`;
+    projectFilter = `AND runs.metadata->>'project_id' = $${params.length}
+      AND runs.metadata->>'role' IS DISTINCT FROM 'manager'`;
   }
   const r = await pool.query<AgentRowRaw>(
-    `SELECT id::text, title, status, worker, spent_usd::text,
-            metadata,
+    `SELECT runs.id::text, runs.title, runs.status, runs.worker,
+            runs.spent_usd::text,
+            runs.metadata,
             CASE
-              WHEN metadata ? 'rollup_v1' THEN NULL::jsonb
-              WHEN status IN ('running','queued','paused','stuck') THEN thread
+              WHEN runs.metadata ? 'rollup_v1' THEN NULL::jsonb
+              WHEN runs.status IN ('running','queued','paused','stuck') THEN runs.thread
               ELSE NULL::jsonb
             END AS thread,
-            parent_run_id::text AS parent_run_id,
-            started_at::text, updated_at::text, completed_at::text,
-            last_heartbeat_at::text
+            runs.parent_run_id::text AS parent_run_id,
+            runs.started_at::text, runs.updated_at::text, runs.completed_at::text,
+            runs.last_heartbeat_at::text,
+            d.dismissed_at::text AS dismissed_at
        FROM runs
+       LEFT JOIN ui_dismissals d ON d.node_id = runs.id::text
       WHERE (
-              status IN ('running','queued','paused','stuck')
-              OR (status IN ('completed','failed','cancelled')
-                  AND updated_at > now() - ($1 || ' milliseconds')::interval)
+              runs.status IN ('running','queued','paused','stuck')
+              OR (runs.status IN ('completed','failed','cancelled')
+                  AND runs.updated_at > now() - ($1 || ' milliseconds')::interval)
             )
             ${projectFilter}
       ORDER BY
-        CASE status
+        CASE runs.status
           WHEN 'running' THEN 0
           WHEN 'paused'  THEN 1
           WHEN 'stuck'   THEN 2
           WHEN 'queued'  THEN 3
           ELSE 4
         END,
-        started_at DESC NULLS LAST,
-        updated_at DESC
+        runs.started_at DESC NULLS LAST,
+        runs.updated_at DESC
       LIMIT 60`,
     params,
   );
@@ -262,6 +277,205 @@ r.get("/", async (c) => {
   return c.json(body);
 });
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Dismissals — /api/agents/dismissals (round 1350, phase 6)
+ *
+ * REGISTERED BEFORE `/:id` ON PURPOSE. Hono matches in registration order, so
+ * a `GET /:id` declared first would swallow `GET /dismissals` and answer it
+ * with "invalid run id". Anything added below this block is fine; anything
+ * added above `/:id` must keep this ordering.
+ *
+ * The rule these endpoints apply lives in `lib/dismissals.ts` as a pure
+ * function; the SQL lives HERE, route-local, because this cycle's constraints
+ * put the shared engine files (project-tick, cc-runner, executor, db/projects)
+ * off limits and a UI preference is no reason to widen them.
+ *
+ * Dismissal is a HIDE. Nothing in this block writes to `runs`, and every
+ * insert is reversible by the two DELETE routes.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** A load-bearing step failed: 500 naming the step and the database's own
+ *  message, in the shape `chat.ts`'s `teamFailure` established. Never a 200
+ *  with an empty set — "nothing is hidden" and "we could not find out what is
+ *  hidden" must not look the same to the panel. */
+function dismissalFailure(
+  step: string,
+  e: unknown,
+): { error: string; step: string; message: string } {
+  const message = e instanceof Error ? e.message : String(e);
+  console.error(`[agents dismissals] ${step} failed:`, message);
+  return { error: `dismissals: ${step} failed`, step, message };
+}
+
+/** Node ids are run uuids OR sub-agent `tool_use_id`s, so the only validation
+ *  possible is "a non-empty, plausibly-sized string". 200 chars is far beyond
+ *  any id either system mints and keeps a hostile body out of the table. */
+function badNodeId(id: unknown): string | null {
+  if (typeof id !== "string") return "id must be a string";
+  if (id.trim() === "") return "id must not be empty";
+  if (id.length > 200) return "id must be at most 200 characters";
+  return null;
+}
+
+/**
+ * Candidate rows for a cascade, in one query.
+ *
+ * Three sources unioned, because a cascade reaches in two directions and the
+ * pure resolver needs every row it might select:
+ *   • the target itself,
+ *   • its transitive `parent_run_id` descendants (recursive CTE — running
+ *     nodes are traversed here and rejected there, so the SQL stays a plain
+ *     reachability walk and the RULE stays in one place),
+ *   • every run of a project whose `metadata.origin_chat_id` is the target,
+ *     plus those runs' descendants.
+ *
+ * `origin_chat_id` comes from `projects.metadata`, joined per row, which is
+ * how `resolveCascade` recognises a manager without a second lookup. The join
+ * is `LEFT` so a run whose project row was deleted still appears (as a plain
+ * descendant) instead of vanishing from its own cascade.
+ */
+/* `$1` is TEXT in both branches, cast to uuid only where a uuid column is
+ * compared. Postgres infers ONE type per parameter across the whole statement:
+ * writing `id = $1::uuid` in the first branch made $1 a uuid, and the second
+ * branch's `metadata->>'origin_chat_id' = $1` then failed at plan time with
+ * "operator does not exist: text = uuid". The explicit `$1::text` pins it. */
+const CASCADE_SQL = `
+WITH RECURSIVE seed AS (
+  SELECT id FROM runs WHERE id = ($1::text)::uuid
+  UNION
+  SELECT r.id
+    FROM runs r
+    JOIN projects p ON p.id::text = r.metadata->>'project_id'
+   WHERE p.metadata->>'origin_chat_id' = $1::text
+),
+tree AS (
+  SELECT s.id FROM seed s
+  UNION
+  SELECT c.id FROM runs c JOIN tree t ON c.parent_run_id = t.id
+)
+SELECT r.id::text                        AS id,
+       r.parent_run_id::text             AS parent_run_id,
+       r.status,
+       r.metadata->>'project_id'         AS project_id,
+       p.metadata->>'origin_chat_id'     AS origin_chat_id
+  FROM tree t
+  JOIN runs r ON r.id = t.id
+  LEFT JOIN projects p ON p.id::text = r.metadata->>'project_id'`;
+
+/** GET /api/agents/dismissals — everything currently hidden, newest first.
+ *  The panel calls this once on mount; `/api/agents` then only has to carry
+ *  the per-row flag. Sub-agent node ids appear here too — they are hidden the
+ *  same way, and they have no `runs` row to carry a flag on. */
+r.get("/dismissals", async (c) => {
+  try {
+    const res = await pool.query<{ node_id: string }>(
+      `SELECT node_id FROM ui_dismissals ORDER BY dismissed_at DESC, node_id`,
+    );
+    const nodeIds = res.rows.map((row) => row.node_id);
+    return c.json({ node_ids: nodeIds, count: nodeIds.length });
+  } catch (e) {
+    return c.json(dismissalFailure("list", e), 500);
+  }
+});
+
+/**
+ * POST /api/agents/dismissals  {id, cascade?} → {dismissed: string[]}
+ *
+ * Idempotent by SQL (`ON CONFLICT DO NOTHING`), not by convention: the second
+ * call returns the same set with the same 200. `dismissed` is what is hidden
+ * as a RESULT of the call, including ids that were already hidden — the panel
+ * uses it to update its set, and "already hidden" is not an error.
+ *
+ * One honest wrinkle, stated rather than hidden: the cascade is computed from
+ * live status, so if a child settles between two calls the second call hides
+ * more than the first did. That is the correct answer to "hide this and its
+ * finished work", not drift.
+ */
+r.post("/dismissals", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch (e) {
+    return c.json(
+      { error: "invalid JSON body", message: e instanceof Error ? e.message : String(e) },
+      400,
+    );
+  }
+  const raw = (body ?? {}) as Record<string, unknown>;
+  const reason = badNodeId(raw.id);
+  if (reason) return c.json({ error: reason }, 400);
+  const id = (raw.id as string).trim();
+  if (raw.cascade !== undefined && typeof raw.cascade !== "boolean") {
+    return c.json({ error: "cascade must be a boolean" }, 400);
+  }
+  const cascade = raw.cascade !== false;
+
+  let ids: string[] = [id];
+  if (cascade) {
+    // A non-uuid node id is a sub-agent: `runs.id` is uuid, so asking the
+    // cascade query about it is a cast error, not an empty result. It has no
+    // descendants by construction — it lives inside one run's thread.
+    if (isRunId(id)) {
+      try {
+        const res = await pool.query<DismissalCandidate>(CASCADE_SQL, [id]);
+        ids = resolveCascade(id, res.rows);
+      } catch (e) {
+        return c.json(dismissalFailure("cascade query", e), 500);
+      }
+    }
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO ui_dismissals (node_id, kind)
+       SELECT n, k FROM unnest($1::text[], $2::text[]) AS t(n, k)
+       ON CONFLICT (node_id) DO NOTHING`,
+      [ids, ids.map(dismissalKind)],
+    );
+  } catch (e) {
+    return c.json(dismissalFailure("insert", e), 500);
+  }
+  return c.json({ dismissed: ids });
+});
+
+/** DELETE /api/agents/dismissals — restore everything. The escape hatch behind
+ *  the panel's "show all", and the only un-cascade there is. */
+r.delete("/dismissals", async (c) => {
+  try {
+    const res = await pool.query(`DELETE FROM ui_dismissals`);
+    return c.json({ restored: res.rowCount ?? 0 });
+  } catch (e) {
+    return c.json(dismissalFailure("restore all", e), 500);
+  }
+});
+
+/**
+ * DELETE /api/agents/dismissals/:id → {restored: string[]}
+ *
+ * Restores exactly the id given — never the set that a POST cascaded, because
+ * the cascade is not recorded and re-deriving it would restore whatever is
+ * settled NOW, which is a different set. Restoring one row at a time plus
+ * "restore all" covers both real gestures; guessing at a third is how a hide
+ * turns into a surprise.
+ *
+ * `restored` is `[]` when the id was not hidden — a 200, not a 404: the caller
+ * asked for a state ("this is not hidden") and that state now holds.
+ */
+r.delete("/dismissals/:id", async (c) => {
+  const id = c.req.param("id");
+  const reason = badNodeId(id);
+  if (reason) return c.json({ error: reason }, 400);
+  try {
+    const res = await pool.query<{ node_id: string }>(
+      `DELETE FROM ui_dismissals WHERE node_id = $1 RETURNING node_id`,
+      [id],
+    );
+    return c.json({ restored: res.rows.map((row) => row.node_id) });
+  } catch (e) {
+    return c.json(dismissalFailure("restore", e), 500);
+  }
+});
+
 /** GET /api/agents/:id — full detail for a single run, same shape as the
  *  entries in the list endpoint. Handy for a drill-down pane. */
 r.get("/:id", async (c) => {
@@ -274,12 +488,16 @@ r.get("/:id", async (c) => {
   // become expensive. Rollup is still preferred by agentFromRow when
   // present; thread is the fallback.
   const r0 = await pool.query<AgentRowRaw>(
-    `SELECT id::text, title, status, worker, spent_usd::text,
-            metadata, thread, parent_run_id::text AS parent_run_id,
-            started_at::text, updated_at::text, completed_at::text,
-            last_heartbeat_at::text
+    `SELECT runs.id::text, runs.title, runs.status, runs.worker,
+            runs.spent_usd::text,
+            runs.metadata, runs.thread,
+            runs.parent_run_id::text AS parent_run_id,
+            runs.started_at::text, runs.updated_at::text, runs.completed_at::text,
+            runs.last_heartbeat_at::text,
+            d.dismissed_at::text AS dismissed_at
        FROM runs
-      WHERE id = $1
+       LEFT JOIN ui_dismissals d ON d.node_id = runs.id::text
+      WHERE runs.id = $1
       LIMIT 1`,
     [id],
   );
