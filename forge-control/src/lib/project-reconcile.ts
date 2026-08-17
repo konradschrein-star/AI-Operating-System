@@ -27,6 +27,18 @@
  * Two groups would have re-created bug 1 with extra steps (two fix builders in
  * the same round, in the same worktree, from two half-briefs).
  *
+ * R40 (phase 4) widened the unit a second time, and this time SIDEWAYS rather
+ * than by role: the group is `(project_id, round, workstream)`. Verdict tasks
+ * depending on the same predecessor set receive the same computed round by
+ * construction (`1 + max(dep.round)`, task-graph.ts's `computeRound`), so the
+ * round IS the dependency join — and the workstream term separates two teams
+ * that happen to sit at the same depth. Without it, two reviewers of different
+ * workstreams would consolidate as ONE group and produce ONE merged fix
+ * builder, which can only live in one worktree; the other workstream's
+ * findings would be delivered nowhere. That is a dropped verdict, the exact
+ * silent outcome this module exists to prevent. See
+ * docs/plan/engine-task-graph/02-architecture.md §5.
+ *
  * Everything here is pure and synchronous so it can be tested without a
  * database, a filesystem, or a network. The I/O lives in db/projects.ts and
  * lib/project-tick.ts. The `import type` below is deliberate: a value import
@@ -35,6 +47,7 @@
 
 import type { ProjectStatus, TaskRole, TaskStatus } from "../db/projects.ts";
 import type { RunStatus } from "../db/runs.ts";
+import type { GraphTask } from "./task-graph.ts";
 
 /* ------------------------------------------------------------------------- *
  * Verdict roles
@@ -63,6 +76,122 @@ export type VerdictRole = (typeof VERDICT_ROLES)[number];
  *  whether a settled task is reconciled per-task or deferred to its round. */
 export function isVerdictRole(role: TaskRole): role is VerdictRole {
   return (VERDICT_ROLES as readonly string[]).includes(role);
+}
+
+/* ------------------------------------------------------------------------- *
+ * The group (R40)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The workstream every task carries until a planner says otherwise — the
+ * schema default (`workstream text NOT NULL DEFAULT 'main'`, migration 0040)
+ * and the value every row written before that migration has.
+ *
+ * It is a NAMED CONSTANT rather than a bare literal because three unrelated
+ * rules key on "is this the default workstream?": `chainKeys`'s byte-identical
+ * historical form (R41), the notification's byte-identical historical text
+ * (R45), and the log label. A future rename would have to move all three
+ * together, and a literal in three places is how two of them get missed.
+ */
+export const MAIN_WORKSTREAM = "main";
+
+/**
+ * The consolidation group key (R40) — the ONE place `(round, workstream)` is
+ * formatted as a string, so a map key and a log line can never drift apart.
+ *
+ * WHY IT LIVES HERE AND NOT IN `task-graph.ts`. `02-architecture.md` §1.1
+ * exported it from the graph module; that export is RETIRED in the same commit
+ * as this function is written (standing rule 4), because it had no graph-side
+ * caller and never could have: the group key is a consolidation concern, and
+ * every one of its three terms is already in `project-reconcile.ts`'s hand.
+ * Exporting it from `task-graph.ts` bought a cross-module dependency and a stub
+ * nobody was assigned to fill — round 102's finding, ruled on by the round-221
+ * planner after re-checking for a graph-side consumer and finding none.
+ *
+ * THE FORMAT IS INJECTIVE, and that is a property rather than a hope. `:` can
+ * appear in NEITHER term: `round` is an `int4` (digits and, in principle, a
+ * leading `-`), and `workstream` is constrained to `^[a-z0-9][a-z0-9-]{0,39}$`
+ * by `project_tasks_workstream_chk` (migration 0040) and by
+ * `validateWorkstream()` on this side of the wire. The first `:` therefore
+ * always splits the tuple back apart, so a workstream named after a number
+ * (`groupKey({round: 1, workstream: "2"})` → `"1:2"`) cannot collide with any
+ * other pair, and `main` is not privileged in the encoding at all.
+ *
+ * The PROJECT id is deliberately NOT part of it. Callers hold groups from one
+ * project at a time and prefix the id themselves where a map spans projects
+ * (project-tick.ts's `verdictRounds`), exactly as they did when the key was
+ * `${project_id}:${round}`.
+ */
+export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string {
+  return `${t.round}:${t.workstream}`;
+}
+
+/**
+ * How a group is named to a human — in a log line, and (via
+ * `groupCompleteNotification`) on Konrad's phone.
+ *
+ * `main` reads exactly as a round always did, so every log line and every push
+ * about a single-workstream project is byte-identical to the one it replaced;
+ * only a project that actually has a second workstream pays the extra words.
+ * That is the same argument the `main` special case in `chainKeys` rests on,
+ * applied to prose instead of to a key.
+ */
+export function groupLabel(round: number, workstream: string): string {
+  return workstream === MAIN_WORKSTREAM
+    ? `round ${round}`
+    : `round ${round} · workstream ${workstream}`;
+}
+
+/**
+ * The `🏁` push a group's LAST task fires (R45).
+ *
+ * Byte-identical to the historical text for `main` — "🏁 <name> · round N
+ * complete." — because a notification is a string Konrad reads at 3am and
+ * there is no reason for a single-workstream project's messages to change at
+ * all. A named workstream says so, or two teams draining at the same depth
+ * would send two identical-looking messages.
+ */
+export function groupCompleteNotification(
+  projectName: string,
+  round: number,
+  workstream: string,
+): string {
+  return `🏁 ${projectName} · ${groupLabel(round, workstream)} complete.`;
+}
+
+/**
+ * R46 — which failed GROUP an operator's `/unwedge` retries.
+ *
+ * Ordered by round, then by workstream name, and the earliest one wins. The
+ * round term is the old rule verbatim (retry the blocker, not the work queued
+ * behind it); the workstream term is the new half: unwedging must restart ONE
+ * team, because two workstreams retried at once put two builders back into two
+ * worktrees on the strength of a single operator keystroke, and the second one
+ * is invisible in the response.
+ *
+ * Pure and total over its input so it is testable without a database (R46's
+ * "unit over the pure selection helper"): the caller does the `SELECT DISTINCT`
+ * and hands the pairs over. `null` for an empty list — nothing failed, nothing
+ * to unwedge — which the caller already reports as `round: null`.
+ *
+ * `localeCompare` is deliberately NOT used: it is locale-dependent, and the
+ * selection an operator gets must not vary with the process's environment.
+ * The charset is `[a-z0-9-]`, so a plain `<` is a total order on it.
+ */
+export function earliestFailedGroup(
+  groups: ReadonlyArray<{ round: number; workstream: string }>,
+): { round: number; workstream: string } | null {
+  let best: { round: number; workstream: string } | null = null;
+  for (const g of groups) {
+    if (
+      best === null ||
+      g.round < best.round ||
+      (g.round === best.round && g.workstream < best.workstream)
+    ) {
+      best = { round: g.round, workstream: g.workstream };
+    }
+  }
+  return best;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -277,16 +406,172 @@ export type RoundDecision =
  * regenerated from the role name: rows written by every engine since 0039 carry
  * it, and changing the string would make a replayed consolidation miss its own
  * chain and insert a second one.
+ *
+ * ── The workstream namespace (R41, phase 4) ────────────────────────────────
+ *
+ * `main` KEEPS THE UNPREFIXED FORM, BYTE FOR BYTE, and that is the same
+ * argument as the `rereview:` prefix above rather than a new one: every chain
+ * row written since migration 0039 carries `fix:<round>:<cycle>`, and a
+ * replayed consolidation of one of those rounds must match the row it already
+ * wrote — on `chain_key` AND on identity. Namespacing `main` would make the
+ * replay miss its own chain and insert a second one, which is the failure this
+ * whole module exists to prevent, committed by the fix for it.
+ *
+ * A NAMED workstream gets `fix:<ws>:<round>:<cycle>`. No historical row can
+ * carry one (the column did not exist before 0040 and defaults to `main`), so
+ * there is nothing to stay byte-identical to, and the prefix is what keeps two
+ * teams at the same computed depth from sharing one chain.
+ *
+ * THE PARAMETER IS OPTIONAL, defaulting to `MAIN_WORKSTREAM`, for one reason
+ * that is not convenience: R43 requires every existing case in
+ * `project-reconcile.test.ts` to pass UNMODIFIED, and T9 calls `chainKeys(7, 2)`.
+ * A required third parameter would fail typecheck in the very tests that prove
+ * this change did not move the historical keys. It is a default-for-omitted and
+ * NOT an NF1 fallback-for-invalid — the same distinction `createTask`'s
+ * `workstream ?? 'main'` documents in db/projects.ts: nothing is rescued, no
+ * error is swallowed, and an INVALID workstream is passed through untouched so
+ * it reaches the CHECK constraint loudly. The one production caller
+ * (`consolidateVerdictRound`, itself fed by `consolidateVerdictGroup`) always
+ * passes the group's workstream explicitly.
  */
 export function chainKeys(
   round: number,
   cycle: number,
+  workstream: string = MAIN_WORKSTREAM,
 ): Record<VerdictRole, string> & { builder: string } {
+  const ns = workstream === MAIN_WORKSTREAM ? "" : `${workstream}:`;
   return {
-    builder: `fix:${round}:${cycle}`,
-    reviewer: `rereview:${round}:${cycle}`,
-    tester: `retest:${round}:${cycle}`,
+    builder: `fix:${ns}${round}:${cycle}`,
+    reviewer: `rereview:${ns}${round}:${cycle}`,
+    tester: `retest:${ns}${round}:${cycle}`,
   };
+}
+
+/* ------------------------------------------------------------------------- *
+ * The fix chain's graph fields (R42) and its identity guard (R41)
+ * ------------------------------------------------------------------------- */
+
+/** The graph columns one chain row is born with. `depends_on` is absent from
+ *  the re-checker's descriptor on purpose: it is `[builder id]`, and the
+ *  builder's id only exists after its INSERT, inside `createFixChain`'s
+ *  transaction. A descriptor carrying a placeholder id would be a lie this
+ *  layer cannot check. */
+export interface ChainRowGraph {
+  round: number;
+  workstream: string;
+  write_set: string[];
+}
+
+export interface FixChainGraph {
+  builder: ChainRowGraph & { depends_on: string[] };
+  /** Shared by every re-checker: they differ only in role, title and brief. */
+  checker: ChainRowGraph;
+}
+
+/**
+ * The graph fields `createFixChain` writes on the rows of one fix chain (R42,
+ * `02-architecture.md` §5.2).
+ *
+ * WITHOUT THIS the chain rows are born as graph ROOTS (`depends_on = '{}'`) and
+ * `promoteReadyTasks` releases them on the very next tick — the fix builder
+ * running in parallel with the work it is meant to follow, and the re-checkers
+ * in parallel with the fix. The whole chain would be scheduled backwards.
+ *
+ *   fix builder    round + 1   depends_on = the gating task ids   write_set = the union
+ *   each checker   round + 2   depends_on = [builder id]          write_set = {}
+ *
+ * `round + 1` / `round + 2` STAY LITERAL, as §5.2 says, because the group's
+ * round is a real stored value — and `1 + max(dep.round)` yields the same two
+ * numbers. That agreement is a PROPERTY of the two rules, not a coincidence,
+ * so `project-reconcile.test.ts` asserts it against `computeRound()` itself
+ * rather than restating the arithmetic.
+ *
+ * The builder's `depends_on` is DEDUPED AND SORTED, which does three jobs at
+ * once: it makes the row byte-identical across replays of one decision, it
+ * makes `duplicatesFixChain()`'s set comparison well-defined, and it is the
+ * immutable identity R41's guard leans on (a task id cannot be renumbered; a
+ * round can). The write-set union is sorted for the first of those reasons.
+ *
+ * An empty member list is REFUSED rather than defaulted: a chain whose builder
+ * depends on nothing is a root, which is precisely the bug this function
+ * exists to prevent, and it would also make R41's guard match every other
+ * root-born chain at the same cycle. The decision layer cannot produce one
+ * (`consolidateVerdictRound` returns `wait` for an empty group), so reaching
+ * this means a caller built the input by hand.
+ */
+export function fixChainGraphFields(group: {
+  round: number;
+  workstream: string;
+  members: ReadonlyArray<{ taskId: string; writeSet: readonly string[] }>;
+}): FixChainGraph {
+  if (group.members.length === 0) {
+    throw new Error(
+      `fixChainGraphFields: no gating tasks for ${groupLabel(group.round, group.workstream)} — ` +
+        "a fix builder with no dependencies is a graph root and would run immediately, " +
+        "in parallel with the work it is meant to follow (R42)",
+    );
+  }
+  const depends_on = [...new Set(group.members.map((m) => m.taskId))].sort();
+  const write_set = [...new Set(group.members.flatMap((m) => [...m.writeSet]))].sort();
+  return {
+    builder: { round: group.round + 1, depends_on, workstream: group.workstream, write_set },
+    checker: { round: group.round + 2, workstream: group.workstream, write_set: [] },
+  };
+}
+
+/** Two id lists compared as SETS. Order-free and duplicate-free on both sides,
+ *  which is what makes it the exact mirror of the `cardinality(...) = ... AND
+ *  @> AND <@` triple in db/projects.ts's guard SQL. */
+function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
+  const sa = new Set(a);
+  const sb = new Set(b);
+  if (sa.size !== sb.size) return false;
+  for (const id of sa) if (!sb.has(id)) return false;
+  return true;
+}
+
+/**
+ * R41's HAND-RENUMBER GUARD, as a pure rule — and the mirror db/projects.ts's
+ * SQL states it is a mirror OF, term for term, exactly as `markVerdictTaskDone`
+ * mirrors `verdictMemberSettled`.
+ *
+ * THE HAZARD (recorded round 204 from phase 2's red team, decided round 221).
+ * `chainKeys` embeds `round`. An operator who renumbers a group AFTER its fix
+ * chain exists — and one did exactly that to this project's own scout task at
+ * ~03:31 on 2026-08-17 — makes the next consolidation compute
+ * `fix:<new>:<cycle>`, which collides with NEITHER `project_tasks_chain_key_uniq`
+ * (the chain_key differs) NOR `project_tasks_identity_idx` (the round differs).
+ * `insertChainRow`'s `INSERT … ON CONFLICT DO NOTHING` therefore SUCCEEDS, a
+ * SECOND FIX CHAIN LANDS, and the `occupied` branch never fires because it is
+ * only reached on a conflict.
+ *
+ * THE FIX IS A GUARD, NOT A RE-KEYING, and the choice is forced: R41's replay
+ * property forbids changing the chain_key STRING for `main`, so the identity
+ * cannot simply be rebased onto the gating ids. What R42 hands over free is the
+ * immutable identity itself — the fix builder's `depends_on` IS the gating task
+ * ids, and a task id cannot be renumbered (R29). A renumbered group therefore
+ * computes a DIFFERENT chain_key over an IDENTICAL `(fix_cycle, depends_on)`
+ * pair, and that is what this refuses.
+ *
+ * WHY A DIFFERENT chain_key IS THE TRIGGER RATHER THAN AN EXEMPTION. A crash
+ * between COMMIT and mark-done replays the same decision, which computes the
+ * SAME chain_key; that row is our own chain and must be absorbed as a `replay`,
+ * not refused. So an existing row carrying our key is explicitly NOT a
+ * duplicate — the guard fires only on a stranger with our group's identity.
+ *
+ * ITS BOUNDARY, stated rather than left to be discovered: a PARTIAL renumber —
+ * an operator moving some members of a group and not others — changes the
+ * gating set, so this returns false and a second chain lands. That is correct
+ * rather than a hole: two disjoint member sets are two different joins, and the
+ * engine has no way to tell that apart from a genuine second group.
+ */
+export function duplicatesFixChain(
+  candidate: { cycle: number; chainKey: string; dependsOn: readonly string[] },
+  existing: { cycle: number; chainKey: string; dependsOn: readonly string[] },
+): boolean {
+  if (existing.chainKey === candidate.chainKey) return false;
+  if (existing.cycle !== candidate.cycle) return false;
+  return sameIdSet(candidate.dependsOn, existing.dependsOn);
 }
 
 /**
@@ -309,11 +594,21 @@ export function chainKeys(
  *     per dissenting ROLE, because only a tester can confirm a customer-facing
  *     complaint is gone and only a reviewer can confirm the diff is sound.
  *  e. otherwise (all settled, all PASS) → `pass`.
+ *
+ * R40 RESTATED THE GROUP'S DEFINITION AND NOTHING ELSE. `checks` is now the
+ * members of one `(project, round, workstream)` group rather than of one
+ * `(project, round)` round, and `workstream` reaches exactly one line of this
+ * function — the `chainKeys` call. Rules (a)–(e), their order, and every string
+ * they produce are untouched (R44). The parameter is optional and defaults to
+ * `MAIN_WORKSTREAM` for R43's reason, spelled out on `chainKeys` above: every
+ * existing case in project-reconcile.test.ts calls this with three arguments
+ * and must keep passing unmodified.
  */
 export function consolidateVerdictRound(
   round: number,
   checks: VerdictInput[],
   maxFixCycles: number,
+  workstream: string = MAIN_WORKSTREAM,
 ): RoundDecision {
   // (a)
   if (checks.length === 0) return { action: "wait" };
@@ -352,7 +647,7 @@ export function consolidateVerdictRound(
     }
 
     const cycle = maxCycle + 1;
-    const keys = chainKeys(round, cycle);
+    const keys = chainKeys(round, cycle, workstream);
     // Ordered by VERDICT_ROLES and deduped by construction: N dissenting
     // reviewers produce ONE re-review, and a reviewer+tester round produces
     // exactly one of each, always in the same order — which is what keeps a
@@ -406,7 +701,33 @@ function mergeFeedback(
  * Task titles + briefs — data, kept here so they are testable.
  * ------------------------------------------------------------------------- */
 
-export const FIX_TASK_TITLE = (cycle: number) => `Fix cycle ${cycle}`;
+/**
+ * THE WORKSTREAM SUFFIX ON A CHAIN ROW'S TITLE — round 221, and it is R40's
+ * missing half rather than decoration.
+ *
+ * `project_tasks_identity_idx` (migration 0035) is
+ * `(project_id, round, role, title)` and has NO workstream term; migration 0040
+ * did not add one. So two groups at the same round in two workstreams, each
+ * producing a fix builder at `round + 1` titled "Fix cycle 1", present the DB
+ * with the SAME identity tuple. `insertChainRow` sees the conflict, correctly
+ * classifies the second one `occupied` — a stranger holds our identity — and
+ * `consolidateVerdictGroup` BLOCKS THE PROJECT with the second workstream's
+ * merged feedback undelivered. That is precisely the dropped verdict R40 exists
+ * to prevent, arriving by a different door: namespacing the chain_key alone
+ * (R41) makes the two chains distinguishable to the replay guard and still
+ * indistinguishable to the identity index.
+ *
+ * `main` KEEPS ITS TITLES BYTE FOR BYTE, for the same reason `chainKeys` does:
+ * every chain row written since 0039 carries the bare form, a replay must match
+ * the row it already wrote ON IDENTITY as well as on chain_key, and the
+ * reviewer wording in particular is frozen back to pre-R850 chains.
+ */
+function titleSuffix(workstream: string): string {
+  return workstream === MAIN_WORKSTREAM ? "" : ` · ${workstream}`;
+}
+
+export const FIX_TASK_TITLE = (cycle: number, workstream: string = MAIN_WORKSTREAM) =>
+  `Fix cycle ${cycle}${titleSuffix(workstream)}`;
 
 /**
  * The re-check task's title. Distinct per role — the pair lands in the SAME
@@ -418,11 +739,19 @@ export const FIX_TASK_TITLE = (cycle: number) => `Fix cycle ${cycle}`;
  * The reviewer wording is frozen: pre-R850 chains carry "Re-review after fix
  * cycle N" and a replay must match the row it already wrote on identity, not
  * just on chain_key.
+ *
+ * Distinct per WORKSTREAM too, since round 221 — see `titleSuffix` above: two
+ * workstreams' re-checkers land in the same `round + 2` with the same role and
+ * would otherwise collide on the identity index, blocking the project.
  */
-export const RECHECK_TASK_TITLE = (role: VerdictRole, cycle: number): string =>
+export const RECHECK_TASK_TITLE = (
+  role: VerdictRole,
+  cycle: number,
+  workstream: string = MAIN_WORKSTREAM,
+): string =>
   role === "reviewer"
-    ? `Re-review after fix cycle ${cycle}`
-    : `Re-test after fix cycle ${cycle}`;
+    ? `Re-review after fix cycle ${cycle}${titleSuffix(workstream)}`
+    : `Re-test after fix cycle ${cycle}${titleSuffix(workstream)}`;
 
 /**
  * The re-checker's brief. It carries the merged feedback verbatim because the

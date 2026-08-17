@@ -40,6 +40,11 @@ import pg from "pg";
 import { createRun, type RunStatus } from "./runs.ts";
 import { queueNotification } from "./notifications.ts";
 import { selectClaimable, type GraphTask } from "../lib/task-graph.ts";
+// Pure, DB-free decisions this module MIRRORS rather than restates: the unwedge
+// group ordering (R46) and the duplicate-fix-chain rule (R41). Both are value
+// imports of a module that imports nothing but types, so no cycle is closed
+// around the pool — the same shape as the task-graph import above.
+import { earliestFailedGroup, duplicatesFixChain } from "../lib/project-reconcile.ts";
 
 const { Pool } = pg;
 
@@ -1307,9 +1312,22 @@ export async function retryTask(
   return { ok: true, task: r.rows[0], project_resumed: (p.rowCount ?? 0) > 0 };
 }
 
-/** Retry every failed task in the EARLIEST round that has one. Later rounds
- *  are left alone deliberately: they are gated behind this round anyway, and
- *  re-running them before the blocker is fixed just burns tokens.
+/** Retry every failed task in the EARLIEST failed GROUP — earliest by
+ *  `(round, workstream)`, ordered by round then workstream name (R46). Later
+ *  groups are left alone deliberately: they are gated behind this one anyway,
+ *  and re-running them before the blocker is fixed just burns tokens.
+ *
+ *  THE WORKSTREAM TERM IS NOT COSMETIC. Keyed on the round alone, one operator
+ *  keystroke would restart every workstream sitting at that depth — two teams
+ *  put back to work in two worktrees on the strength of a single `/unwedge`,
+ *  with only one of them named in the response. `workstream` is returned
+ *  alongside `round` so the caller can say which group actually moved.
+ *
+ *  THE SELECTION ITSELF IS PURE and lives in lib/project-reconcile.ts
+ *  (`earliestFailedGroup`), which is why this reads DISTINCT pairs rather than
+ *  asking SQL for a MIN: the ordering rule is then unit-testable without a
+ *  database, and this function holds no decision — the same split as
+ *  `markVerdictTaskDone` mirroring `verdictMemberSettled`.
  *
  *  `skipped_reasons` is additive and exists because this function became able to
  *  skip for TWO unrelated reasons in round 204 — the attempt cap, and R14's
@@ -1321,23 +1339,29 @@ export async function unwedgeProject(
   opts: { force?: boolean } = {},
 ): Promise<{
   round: number | null;
+  /** The workstream of the group that was retried; `null` when nothing was. */
+  workstream: string | null;
   retried: ProjectTask[];
   skipped: ProjectTask[];
   skipped_reasons: Array<{ id: string; reason: string; detail: string | null }>;
 }> {
-  const blocking = await pool.query<{ round: number }>(
-    `SELECT MIN(round)::int AS round FROM project_tasks
+  const blocking = await pool.query<{ round: number; workstream: string }>(
+    `SELECT DISTINCT round, workstream FROM project_tasks
       WHERE project_id = $1 AND status IN ('failed','blocked')`,
     [projectId],
   );
-  const round = blocking.rows[0]?.round ?? null;
-  if (round === null) return { round: null, retried: [], skipped: [], skipped_reasons: [] };
+  const group = earliestFailedGroup(blocking.rows);
+  if (group === null) {
+    return { round: null, workstream: null, retried: [], skipped: [], skipped_reasons: [] };
+  }
+  const { round, workstream } = group;
 
   const candidates = await pool.query<ProjectTask>(
     `SELECT ${TASK_COLS} FROM project_tasks
-      WHERE project_id = $1 AND round = $2 AND status IN ('failed','blocked')
+      WHERE project_id = $1 AND round = $2 AND workstream = $3
+        AND status IN ('failed','blocked')
       ORDER BY created_at ASC`,
-    [projectId, round],
+    [projectId, round, workstream],
   );
 
   const retried: ProjectTask[] = [];
@@ -1357,7 +1381,7 @@ export async function unwedgeProject(
         out.reason === "dependencies_corrupt" ? describeDepsCorruption(out.corruption) : null,
     });
   }
-  return { round, retried, skipped, skipped_reasons };
+  return { round, workstream, retried, skipped, skipped_reasons };
 }
 
 export async function bumpFixCycle(id: string): Promise<number> {
@@ -1369,19 +1393,31 @@ export async function bumpFixCycle(id: string): Promise<number> {
   return r.rows[0]?.fix_cycle ?? 0;
 }
 
-/** Is every task of this project+round done? Called when a task settles, so
- *  the LAST task of a round is the one that reports the round complete —
- *  no extra bookkeeping table, and it fires exactly once per round. */
+/** Is every task of this GROUP — project + round + workstream — done? Called
+ *  when a task settles, so the LAST task of a group is the one that reports the
+ *  group complete — no extra bookkeeping table, and it fires exactly once per
+ *  group.
+ *
+ *  R45 added the workstream term and the fire-exactly-once property is what it
+ *  is FOR. Keyed on `(project, round)` alone, workstream A's last task draining
+ *  would announce a round that workstream B is still working inside — and B's
+ *  own completion would then never fire at all, because by the time B drained,
+ *  A's tasks had made the round "complete" once already. One `🏁` per group,
+ *  fired by that group's last task, is the same property restated over the new
+ *  unit; the notification text itself is
+ *  lib/project-reconcile.ts's `groupCompleteNotification`, byte-identical to
+ *  the historical string for `main`. */
 export async function roundIsComplete(
   projectId: string,
   round: number,
+  workstream: string,
 ): Promise<boolean> {
   const r = await pool.query<{ complete: boolean }>(
     `SELECT NOT EXISTS (
        SELECT 1 FROM project_tasks
-        WHERE project_id = $1 AND round = $2 AND status <> 'done'
+        WHERE project_id = $1 AND round = $2 AND workstream = $3 AND status <> 'done'
      ) AS complete`,
-    [projectId, round],
+    [projectId, round, workstream],
   );
   return r.rows[0]?.complete ?? false;
 }
@@ -1425,11 +1461,33 @@ export async function listSettledRunningTasks(): Promise<SettledRunningTask[]> {
  *  ROUND as a whole rather than per settled task (two reviewers each firing
  *  their own fix chain was bug 1 of the first goal-mode night).
  *
+ *  R40 (phase 4) added the WORKSTREAM term, so the group this returns is
+ *  `(project_id, round, workstream)` — the graph-native reading of "the set of
+ *  reviewers sharing a dependency join". Two reviewers of different workstreams
+ *  that land on the same computed round are two groups: consolidating them as
+ *  one would merge their feedback into a SINGLE fix builder, which can only be
+ *  spawned into one worktree, and the other workstream's findings would be
+ *  delivered nowhere — a dropped verdict. The rule is stated in
+ *  lib/project-reconcile.ts (`groupKey`); this query is its SQL half.
+ *
  *  `roles` is passed in rather than hardcoded so lib/project-reconcile.ts's
  *  VERDICT_ROLES stays the single definition of "which roles end in a VERDICT
- *  line" (R850 added 'tester' to it). A value import of that constant here
- *  would close an import cycle around the pg pool, which the module's
- *  type-only import of ProjectStatus deliberately avoids.
+ *  line" (R850 added 'tester' to it), and so this query stays generic over the
+ *  role list its caller decides on.
+ *
+ *  AMENDED ROUND 221 — the sentence that stood here said a value import of that
+ *  constant "would close an import cycle around the pg pool". Phase 4 makes
+ *  that false: this module now value-imports `earliestFailedGroup` and
+ *  `duplicatesFixChain` from lib/project-reconcile.ts, and no cycle exists,
+ *  because the dependency runs exactly ONE WAY. project-reconcile.ts imports
+ *  from db/* with `import type` only — erased before a module is ever
+ *  evaluated — which is what keeps the pool out of the test process (NF3) and
+ *  out of this edge. Leaving the old claim in place would have made it a
+ *  rotted citation the moment the import above was written; the DIRECTION is
+ *  the rule, and it is: db/projects.ts may import project-reconcile.ts for
+ *  value, project-reconcile.ts may import db/* for types alone. cp3-linkage's
+ *  value import of `isVerdictRole` is what would open a pg Pool in a test
+ *  process if that ever reversed.
  *
  *  LEFT JOIN, not JOIN: a task whose run has not been created yet has
  *  `run_id IS NULL` and surfaces here as `run_status: null`, which the caller
@@ -1462,6 +1520,7 @@ export interface VerdictRoundRow extends ProjectTask {
 export async function listVerdictRound(
   projectId: string,
   round: number,
+  workstream: string,
   roles: readonly TaskRole[],
 ): Promise<VerdictRoundRow[]> {
   const r = await pool.query<VerdictRoundRow>(
@@ -1473,9 +1532,10 @@ export async function listVerdictRound(
        LEFT JOIN runs r ON r.id = pt.run_id
       WHERE pt.project_id = $1
         AND pt.round = $2
-        AND pt.role = ANY($3::text[])
+        AND pt.workstream = $3
+        AND pt.role = ANY($4::text[])
       ORDER BY pt.created_at ASC, pt.id ASC`,
-    [projectId, round, [...roles]],
+    [projectId, round, workstream, [...roles]],
   );
   return r.rows;
 }
@@ -1519,11 +1579,20 @@ async function insertChainRow(
     fix_cycle: number;
     tier: TaskTier | null;
     chain_key: string;
+    /** R42's three graph columns. Never optional here, unlike createTask's:
+     *  a chain row born with `depends_on` NULL is a LEGACY row, and a legacy
+     *  row is promoted by the round rule — which is exactly the behaviour the
+     *  fix chain must NOT inherit once the graph is scheduling. Making the
+     *  caller state all three is what stops one being forgotten. */
+    depends_on: string[];
+    workstream: string;
+    write_set: string[];
   },
 ): Promise<ChainRowOutcome> {
   const ins = await client.query<{ id: string }>(
-    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO project_tasks (project_id, round, role, title, brief, fix_cycle, tier, chain_key,
+                                depends_on, workstream, write_set)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::uuid[], $10, $11::text[])
      ON CONFLICT DO NOTHING
      RETURNING id::text`,
     [
@@ -1535,6 +1604,9 @@ async function insertChainRow(
       row.fix_cycle,
       row.tier,
       row.chain_key,
+      row.depends_on,
+      row.workstream,
+      row.write_set,
     ],
   );
   if (ins.rows[0]) return { kind: "created", id: ins.rows[0].id };
@@ -1609,7 +1681,40 @@ async function insertChainRow(
  *  predicate. `ON CONFLICT ON CONSTRAINT project_tasks_chain_key_uniq` is NOT
  *  a usable fallback, because a partial unique index is an index and not a
  *  constraint — Postgres rejects it ("constraint ... does not exist").
- *  Proven in docs/plan/evidence/0035-dryrun.md (T4/T6). */
+ *  Proven in docs/plan/evidence/0035-dryrun.md (T4/T6).
+ *
+ *  ── THE GRAPH FIELDS (R42, phase 4) ───────────────────────────────────────
+ *
+ *  `graph` carries what lib/project-reconcile.ts's `fixChainGraphFields()`
+ *  computed for this group, and every chain row is inserted WITH it. Before
+ *  phase 4 these rows named none of the three columns and took the defaults —
+ *  `depends_on` NULL, i.e. a LEGACY row promoted by the round rule. Under the
+ *  graph that default is a root: the fix builder would be promoted on the very
+ *  next tick, running in parallel with the work it exists to follow, and the
+ *  re-checkers in parallel with the fix.
+ *
+ *  ── THE HAND-RENUMBER GUARD (R41, phase 4) ────────────────────────────────
+ *
+ *  `chainKeys()` embeds `round`, so an operator who renumbers a group AFTER
+ *  its chain exists makes the next consolidation compute a chain_key that
+ *  collides with NEITHER unique index — the `ON CONFLICT DO NOTHING` succeeds
+ *  and a SECOND chain lands, with `occupied` never firing because it is only
+ *  reached on a conflict. The rule that refuses it is
+ *  `duplicatesFixChain()` in lib/project-reconcile.ts — a fix builder whose
+ *  `(fix_cycle, depends_on-as-a-set)` already exists under a DIFFERENT
+ *  chain_key. The gating task ids are immutable (R29) where the round is not,
+ *  which is what makes them the identity to guard on; R42 is what puts them on
+ *  the row in the first place. This module NARROWS in SQL and DECIDES in that
+ *  function — no second copy of the rule to drift (02-architecture.md §1.2).
+ *
+ *  It runs INSIDE the transaction and BEFORE the builder's INSERT, so a
+ *  refusal writes nothing at all. It throws rather than returning an outcome:
+ *  a second chain for one group is not a state the caller can reconcile, and
+ *  the three-way `created`/`replay`/`occupied` classification is deliberately
+ *  left untouched (R44) — it is the net that catches a chain-key MISTAKE, and
+ *  overloading it with a chain-key HAZARD would blunt both. project-tick's
+ *  per-group catch escalates the throw to Konrad after MAX_GROUP_FAILURES
+ *  consecutive ticks, with this message quoted in the push. */
 export async function createFixChain(input: {
   project_id: string;
   round: number;
@@ -1624,6 +1729,12 @@ export async function createFixChain(input: {
     chainKey: string;
   }>;
   tier?: TaskTier;
+  /** From `fixChainGraphFields()` — never assembled here, so the rounds and
+   *  the dependency edges have exactly one definition (R42). */
+  graph: {
+    builder: { round: number; depends_on: string[]; workstream: string; write_set: string[] };
+    checker: { round: number; workstream: string; write_set: string[] };
+  };
 }): Promise<{
   builder: ChainRowOutcome;
   /** Parallel to `input.checkers`, role carried through so the caller can name
@@ -1643,29 +1754,92 @@ export async function createFixChain(input: {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    // R41's guard, before the first INSERT so a refusal writes nothing. The
+    // SELECT only NARROWS — every fix-chain builder of this project at this
+    // cycle that has a dependency set at all — and the DECISION is
+    // `duplicatesFixChain()` in lib/project-reconcile.ts, called here rather
+    // than restated in SQL so the rule has exactly one definition and the unit
+    // test asserts on the function the engine actually runs.
+    const twins = await client.query<{
+      id: string;
+      round: number;
+      chain_key: string;
+      fix_cycle: number;
+      depends_on: string[];
+    }>(
+      `SELECT id::text, round, chain_key, fix_cycle, depends_on::text[] AS depends_on
+         FROM project_tasks
+        WHERE project_id = $1
+          AND role = 'builder'
+          AND chain_key IS NOT NULL
+          AND fix_cycle = $2
+          AND depends_on IS NOT NULL`,
+      [input.project_id, input.cycle],
+    );
+    const candidate = {
+      cycle: input.cycle,
+      chainKey: input.builderChainKey,
+      dependsOn: input.graph.builder.depends_on,
+    };
+    const existing = twins.rows.find((row) =>
+      duplicatesFixChain(candidate, {
+        cycle: row.fix_cycle,
+        chainKey: row.chain_key,
+        dependsOn: row.depends_on,
+      }),
+    );
+    if (existing) {
+      // Not a conflict Postgres can see — the chain_key differs and so does the
+      // round, so both unique indexes would have let this INSERT through.
+      throw new Error(
+        `createFixChain: project ${input.project_id} already has a fix chain for this group at ` +
+          `fix cycle ${input.cycle} — task ${existing.id} (round ${existing.round}, chain_key ` +
+          `${existing.chain_key}) depends on exactly the same gating tasks as the builder this ` +
+          `call would insert as ${input.builderChainKey} at round ${input.graph.builder.round}. ` +
+          `The group's round was renumbered after its chain existed (R41): the new chain_key ` +
+          `collides with neither project_tasks_chain_key_uniq nor project_tasks_identity_idx, so ` +
+          `a SECOND fix chain would land. Renumber task ${existing.id} back to its group, or ` +
+          `delete that chain, then POST /api/projects/${input.project_id}/unwedge`,
+      );
+    }
+
     const builder = await insertChainRow(client, {
       project_id: input.project_id,
-      round: input.round + 1,
+      round: input.graph.builder.round,
       role: "builder",
       title: input.builderTitle.slice(0, 200),
       brief: input.builderBrief,
       fix_cycle: input.cycle,
       tier: input.tier ?? null,
       chain_key: input.builderChainKey,
+      depends_on: input.graph.builder.depends_on,
+      workstream: input.graph.builder.workstream,
+      write_set: input.graph.builder.write_set,
     });
     const checkers: Array<ChainRowOutcome & { role: TaskRole }> = [];
     // Sequential, not Promise.all: they share one client, and one transaction
-    // cannot have two statements in flight.
+    // cannot have two statements in flight. R42 gives every checker
+    // `depends_on = [builder id]`, which is why the id has to come from the
+    // INSERT above rather than from the descriptor: it does not exist until
+    // that statement has run, and it must be the id of the row THIS
+    // transaction inserted — or, on a `replay` or an `occupied` identity, of
+    // the row that is actually there, which is the row a re-checker would have
+    // to follow anyway. The caller blocks the project on `occupied`, so
+    // nothing is promoted out of that state regardless.
     for (const c of input.checkers) {
       const outcome = await insertChainRow(client, {
         project_id: input.project_id,
-        round: input.round + 2,
+        round: input.graph.checker.round,
         role: c.role,
         title: c.title.slice(0, 200),
         brief: c.brief,
         fix_cycle: input.cycle,
         tier: null,
         chain_key: c.chainKey,
+        depends_on: [builder.id],
+        workstream: input.graph.checker.workstream,
+        write_set: input.graph.checker.write_set,
       });
       checkers.push({ ...outcome, role: c.role });
     }

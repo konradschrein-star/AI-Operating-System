@@ -629,3 +629,236 @@ describe("finding F1 — E1/E2 is a two-statement handshake with a 60s sweep flo
     // interleaving in docs/plan/evidence/cp2-c9-reconciler.md §B, steps 1-6.
   });
 });
+
+/* ========================================================================== *
+ * R40 (round 221, phase 4B) — THE GROUP IS (project, round, workstream)
+ *
+ * APPENDED, never edited: everything above this line is byte-identical to the
+ * commit this phase started from, which is R43's acceptance gate. Claims A–H
+ * above are about the group's DECISION and are untouched by this change; what
+ * is asserted here is that the group's DEFINITION carries the workstream all
+ * the way down the delivery path — the query, the map key, the failure
+ * counter, the chain keys and the row identities.
+ *
+ * WHY IT IS A DEFINITION AND NOT A DECISION. Without the workstream term, two
+ * reviewers at the same computed depth in different workstreams consolidate as
+ * ONE group and produce ONE merged fix builder. A fix builder can only be
+ * spawned into one worktree, so the other workstream's findings are delivered
+ * NOWHERE — a dropped verdict, which is the exact silent outcome this module
+ * exists to prevent (02-architecture.md §5).
+ *
+ * SOURCE-ASSERTION for the same reason as every block above: db/projects.ts and
+ * project-tick.ts both reach a pg Pool at import, and there is no test
+ * database. The pure half — `groupKey`, `chainKeys`, `fixChainGraphFields`,
+ * `duplicatesFixChain`, the titles — is imported and CALLED in
+ * project-reconcile.test.ts's T21–T29.
+ * ========================================================================== */
+
+import {
+  consolidateVerdictRound,
+  chainKeys,
+  FIX_TASK_TITLE,
+  RECHECK_TASK_TITLE,
+  MAIN_WORKSTREAM,
+  type VerdictInput,
+} from "./project-reconcile.ts";
+
+describe("R40 — two same-round reviewers in different workstreams are TWO chains", () => {
+  /** A settled reviewer that wants fixes. Deliberately built here rather than
+   *  shared with the file above: nothing in claims A–H may move. */
+  function dissenter(taskId: string, title: string): VerdictInput {
+    return {
+      taskId,
+      role: "reviewer",
+      title,
+      fixCycle: 0,
+      settled: true,
+      lastText: "VERDICT: NEEDS_FIXES",
+    };
+  }
+
+  test("the two groups produce two independent chains, sharing no key", () => {
+    const main = consolidateVerdictRound(7, [dissenter("m1", "Review main")], 3, MAIN_WORKSTREAM);
+    const ui = consolidateVerdictRound(7, [dissenter("u1", "Review ui")], 3, "ui");
+    assert.equal(main.action, "fix");
+    assert.equal(ui.action, "fix");
+    if (main.action !== "fix" || ui.action !== "fix") return;
+
+    const keys = [
+      main.builderChainKey,
+      ...main.checkers.map((c) => c.chainKey),
+      ui.builderChainKey,
+      ...ui.checkers.map((c) => c.chainKey),
+    ];
+    assert.equal(new Set(keys).size, keys.length, `chain keys collided: ${keys.join(" ")}`);
+    // ...and `main`'s three are the historical strings, byte for byte, so a
+    // pre-0040 round replays against the row it already wrote (R41).
+    assert.equal(main.builderChainKey, chainKeys(7, 1).builder);
+    assert.equal(main.builderChainKey, "fix:7:1");
+  });
+
+  test("neither group's merged feedback reaches the other's builder", () => {
+    const main = consolidateVerdictRound(7, [dissenter("m1", "Review main")], 3, MAIN_WORKSTREAM);
+    const ui = consolidateVerdictRound(7, [dissenter("u1", "Review ui")], 3, "ui");
+    if (main.action !== "fix" || ui.action !== "fix") throw new Error("expected two fix decisions");
+    assert.doesNotMatch(main.mergedBrief, /Review ui/);
+    assert.doesNotMatch(ui.mergedBrief, /Review main/);
+  });
+
+  test("their rows cannot collide on project_tasks_identity_idx either", () => {
+    // (project_id, round, role, title), migration 0035 — no workstream term,
+    // and 0040 added none. Both builders land at round 8 with role 'builder',
+    // so the TITLE is the only thing that can separate them. If it could not,
+    // insertChainRow would classify the second `occupied` and the project would
+    // block with that workstream's feedback undelivered — R40's own failure,
+    // through the other index.
+    assert.notEqual(FIX_TASK_TITLE(1, MAIN_WORKSTREAM), FIX_TASK_TITLE(1, "ui"));
+    assert.notEqual(
+      RECHECK_TASK_TITLE("reviewer", 1, MAIN_WORKSTREAM),
+      RECHECK_TASK_TITLE("reviewer", 1, "ui"),
+    );
+    // The historical form is unmoved for `main`.
+    assert.equal(FIX_TASK_TITLE(1), "Fix cycle 1");
+    assert.equal(RECHECK_TASK_TITLE("reviewer", 1), "Re-review after fix cycle 1");
+  });
+});
+
+describe("R40 — the workstream term reaches every site that keys on (project, round)", () => {
+  test("listVerdictRound filters the workstream, and still does not filter pt.status", () => {
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function listVerdictRound",
+      "/** What became of one chain row",
+      "listVerdictRound",
+    );
+    assert.match(body, /AND pt\.workstream = \$3/);
+    assert.match(body, /AND pt\.role = ANY\(\$4::text\[\]\)/);
+    // Claim B's property, re-asserted because this edit touched the WHERE it
+    // lives in: the caller decides what 'done' means, not the query.
+    assert.doesNotMatch(
+      body,
+      /pt\.status/,
+      "listVerdictRound must not filter on task status - the caller decides what 'done' means",
+    );
+  });
+
+  test("the reconcile pass keys its group map — and the failure counter — on the workstream", () => {
+    const body = sliceBetween(
+      TICK,
+      "async function reconcileSettledTasks(",
+      "const DEFAULT_CHECKIN_HOURS",
+      "reconcileSettledTasks",
+    );
+    assert.match(body, /verdictRounds\.set\(`\$\{task\.project_id\}:\$\{groupKey\(task\)\}`/);
+    assert.match(body, /workstream: task\.workstream,/);
+    // The SAME `key` feeds noteGroupFailure, so a workstream wedged on a schema
+    // drift escalates on its own behalf and not on a healthy neighbour's.
+    assert.match(body, /noteGroupFailure\(groupFailures, key, MAX_GROUP_FAILURES\)/);
+    assert.match(body, /await consolidateVerdictGroup\(projectId, round, workstream\)/);
+    assert.doesNotMatch(
+      body,
+      /verdictRounds\.set\(`\$\{task\.project_id\}:\$\{task\.round\}`/,
+      "the round-only group key is R40's bug - it must not come back",
+    );
+  });
+
+  test("consolidation still has exactly one entry point, now taking three arguments", () => {
+    // Claim A rests on this. A second door would mean a group could be decided
+    // without the workstream that names its worktree.
+    const calls = TICK.match(/await consolidateVerdictGroup\(/g) ?? [];
+    assert.equal(calls.length, 1, "consolidateVerdictGroup must have exactly one call site");
+    assert.match(TICK, /async function consolidateVerdictGroup\(\s*\n\s*projectId: string,\s*\n\s*round: number,\s*\n\s*workstream: string,/);
+  });
+
+  test("roundIsComplete is group completion, at BOTH of its call sites (R45)", () => {
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function roundIsComplete",
+      "export interface SettledRunningTask",
+      "roundIsComplete",
+    );
+    assert.match(body, /WHERE project_id = \$1 AND round = \$2 AND workstream = \$3 AND status <> 'done'/);
+    // Both callers pass one: the group path in consolidation, and the per-task
+    // path for non-verdict roles. A caller that forgot would announce a round
+    // another workstream is still working inside.
+    assert.match(TICK, /roundIsComplete\(projectId, round, workstream\)/);
+    assert.match(TICK, /roundIsComplete\(task\.project_id, task\.round, task\.workstream\)/);
+    const calls = TICK.match(/roundIsComplete\(/g) ?? [];
+    assert.equal(calls.length, 2, "roundIsComplete's call sites changed - re-check R45");
+  });
+
+  test("unwedgeProject retries ONE group, chosen by the pure helper (R46)", () => {
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function unwedgeProject",
+      "export async function bumpFixCycle",
+      "unwedgeProject",
+    );
+    assert.match(body, /SELECT DISTINCT round, workstream FROM project_tasks/);
+    assert.match(body, /const group = earliestFailedGroup\(blocking\.rows\)/);
+    assert.match(body, /WHERE project_id = \$1 AND round = \$2 AND workstream = \$3/);
+    assert.doesNotMatch(
+      body,
+      /SELECT MIN\(round\)/,
+      "the round-only selection restarts two workstreams at once - R46 replaced it",
+    );
+  });
+
+  test("createFixChain writes the graph fields and guards the renumber hazard", () => {
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function createFixChain",
+      "const ORIGIN_CHAT_KEY",
+      "createFixChain",
+    );
+    // R42: without these the chain rows are graph roots and run immediately,
+    // in parallel with the work they follow.
+    assert.match(body, /round: input\.graph\.builder\.round,/);
+    assert.match(body, /depends_on: input\.graph\.builder\.depends_on,/);
+    assert.match(body, /workstream: input\.graph\.builder\.workstream,/);
+    assert.match(body, /write_set: input\.graph\.builder\.write_set,/);
+    assert.match(body, /depends_on: \[builder\.id\],/);
+    // R41: the guard runs inside the transaction, before anything is written.
+    assert.ok(
+      body.indexOf('await client.query("BEGIN")') < body.indexOf("duplicatesFixChain(candidate,"),
+      "the guard must be inside the transaction",
+    );
+    assert.ok(
+      body.indexOf("duplicatesFixChain(candidate,") <
+        body.indexOf("const builder = await insertChainRow("),
+      "the guard must run before the first INSERT, or a refusal writes half a chain",
+    );
+    // R44: the three-way classification is what catches a chain-key MISTAKE and
+    // is deliberately not the thing carrying the hazard, so it stays exactly as
+    // it was — in insertChainRow, which createFixChain calls.
+    const insert = sliceBetween(
+      PROJECTS_DB,
+      "async function insertChainRow(",
+      "/** Insert a fix builder",
+      "insertChainRow",
+    );
+    assert.match(insert, /ON CONFLICT DO NOTHING/);
+    assert.match(insert, /return \{ kind: "created", id: ins\.rows\[0\]\.id \};/);
+    assert.match(insert, /return \{ kind: "replay", id: mine\.rows\[0\]\.id \};/);
+    assert.match(insert, /kind: "occupied",/);
+  });
+
+  test("the empty-checkers refusal and the transaction shape are unchanged (R44)", () => {
+    const body = sliceBetween(
+      PROJECTS_DB,
+      "export async function createFixChain",
+      "const ORIGIN_CHAT_KEY",
+      "createFixChain",
+    );
+    assert.match(body, /a fix cycle must be re-checked by at least one verdict role/);
+    assert.match(body, /await client\.query\("BEGIN"\)/);
+    assert.match(body, /await client\.query\("COMMIT"\)/);
+    assert.match(body, /await client\.query\("ROLLBACK"\)/);
+    // Sequential inserts: one client, one transaction, one statement in flight.
+    // Asserted as the LOOP rather than as the absence of Promise.all, because
+    // the comment beside it names Promise.all and a doesNotMatch would be
+    // reading the explanation instead of the code.
+    assert.match(body, /for \(const c of input\.checkers\) \{/);
+    assert.doesNotMatch(body, /await Promise\.all\(/);
+  });
+});

@@ -1024,3 +1024,666 @@ describe("T20 verdictMemberSettled", () => {
     assert.match(decision.detail, /reviewer "Diff review"/);
   });
 });
+
+/* ========================================================================== *
+ * PHASE 4B ADDENDUM (round 221) — APPENDED, never edited.
+ *
+ * Everything above this line is byte-identical to the commit phase 4B started
+ * from, which is R43's acceptance gate:
+ *
+ *   git diff main -- forge-control/src/lib/project-reconcile.test.ts
+ *
+ * must show appended cases only. The blocks below cover the group's new
+ * DEFINITION (R40, R41, R42, R45, R46). The group's DECISION is R44's, is
+ * untouched, and is still proved by T1–T20 above — which is exactly why those
+ * cases must keep passing unmodified: they are the evidence that restating the
+ * group's definition did not move its decision.
+ *
+ * WHAT WOULD MAKE THIS ADDENDUM REPORT A PASS WRONGLY (standing rule 3):
+ *
+ *  1. "The new cases assert on a helper nothing in the engine actually calls."
+ *     Every function exercised below has a production caller, and T27 pins each
+ *     one BY SOURCE so the pin fails if a call site is deleted: `groupKey` and
+ *     `groupLabel` and `groupCompleteNotification` and `fixChainGraphFields` in
+ *     project-tick.ts, `earliestFailedGroup` and `duplicatesFixChain` in
+ *     db/projects.ts. A green suite over a dead helper is the failure mode this
+ *     project keeps finding, so the call sites are asserted, not assumed.
+ *  2. "A chainKeys case passed because both sides of the assertion were
+ *     computed by the same changed function." T22's `main` cases compare
+ *     against THREE STRING LITERALS typed out by hand from migration 0039's
+ *     historical form — never against `chainKeys(...)` with different
+ *     arguments, and never against a template that shares a variable with the
+ *     implementation. If the implementation and the expectation ever agree
+ *     wrongly, they have to agree with a literal that was written before the
+ *     change.
+ *  3. An R42 case that "proves" round+1/round+2 by restating the arithmetic.
+ *     T23 asserts the agreement against `computeRound()` — the graph's own
+ *     rule, imported from task-graph.ts and not reimplemented here — so the
+ *     literal and the rule are two independent computations of one number.
+ * ========================================================================== */
+
+import {
+  groupKey,
+  groupLabel,
+  groupCompleteNotification,
+  earliestFailedGroup,
+  fixChainGraphFields,
+  duplicatesFixChain,
+  FIX_TASK_TITLE,
+  MAIN_WORKSTREAM,
+} from "./project-reconcile.ts";
+import { computeRound, type GraphTask } from "./task-graph.ts";
+
+/** A graph row at `round`, for feeding `computeRound()`. Only `round` is read
+ *  by it; the rest is filled so the object is a real GraphTask rather than a
+ *  cast. */
+function gt(round: number, over: Partial<GraphTask> = {}): GraphTask {
+  return {
+    id: `00000000-0000-4000-8000-${String(round).padStart(12, "0")}`,
+    round,
+    workstream: MAIN_WORKSTREAM,
+    status: "done",
+    depends_on: [],
+    write_set: [],
+    ...over,
+  };
+}
+
+/* ========================================================================== *
+ * T21 — groupKey (R40)
+ * ========================================================================== */
+
+describe("T21 groupKey", () => {
+  test("formats the tuple as round:workstream", () => {
+    assert.equal(groupKey({ round: 7, workstream: "main" }), "7:main");
+    assert.equal(groupKey({ round: 412, workstream: "ui" }), "412:ui");
+  });
+
+  test("two groups differing only in workstream get different keys", () => {
+    // The whole of R40 in one assertion: without this, two reviewers at the
+    // same depth in two workstreams collapse into one consolidation, one
+    // merged fix builder, one worktree — and one workstream's findings are
+    // delivered nowhere.
+    assert.notEqual(
+      groupKey({ round: 7, workstream: "main" }),
+      groupKey({ round: 7, workstream: "ui" }),
+    );
+  });
+
+  test("a workstream named like a round cannot collide with any other pair", () => {
+    // The named hazard: the separator must be a character neither term can
+    // contain. `round` is an integer; `workstream` is `^[a-z0-9][a-z0-9-]{0,39}$`
+    // (project_tasks_workstream_chk), so no ':' on either side and the first
+    // ':' always splits the tuple back apart.
+    const keys = [
+      groupKey({ round: 1, workstream: "2" }), // "1:2"
+      groupKey({ round: 12, workstream: "main" }), // "12:main"
+      groupKey({ round: 1, workstream: "23" }), // "1:23"
+      groupKey({ round: 123, workstream: "main" }), // "123:main"
+      groupKey({ round: 12, workstream: "3" }), // "12:3"
+    ];
+    assert.equal(new Set(keys).size, keys.length, `keys collided: ${keys.join(" ")}`);
+  });
+
+  test("'main' is not privileged in the encoding", () => {
+    // chainKeys DOES privilege it (T22, for a replay reason). The KEY must not,
+    // or a project with a workstream literally named "main-2" would have to
+    // reason about two encodings.
+    assert.equal(groupKey({ round: 3, workstream: MAIN_WORKSTREAM }), "3:main");
+    assert.equal(groupKey({ round: 3, workstream: "main-2" }), "3:main-2");
+    assert.notEqual(
+      groupKey({ round: 3, workstream: MAIN_WORKSTREAM }),
+      groupKey({ round: 3, workstream: "main-2" }),
+    );
+  });
+});
+
+/* ========================================================================== *
+ * T22 — chainKeys and the workstream namespace (R41)
+ * ========================================================================== */
+
+describe("T22 chainKeys workstream namespace", () => {
+  test("'main' is BYTE-IDENTICAL to the historical three strings", () => {
+    // Written as literals ON PURPOSE (standing rule 3, defect 2 of this
+    // addendum's header): comparing chainKeys(7,2,"main") to chainKeys(7,2)
+    // would compare the function to itself and pass however the format moved.
+    // These three strings are the form every chain row written since migration
+    // 0039 carries.
+    const keys = chainKeys(7, 2, MAIN_WORKSTREAM);
+    assert.equal(keys.builder, "fix:7:2");
+    assert.equal(keys.reviewer, "rereview:7:2");
+    assert.equal(keys.tester, "retest:7:2");
+  });
+
+  test("the omitted argument is the same as 'main' — the historical call site", () => {
+    // T9 above calls chainKeys(7, 2) and must keep passing unmodified (R43).
+    // This states WHY that is safe rather than leaving it to the type default.
+    assert.deepEqual(chainKeys(7, 2), chainKeys(7, 2, MAIN_WORKSTREAM));
+  });
+
+  test("a named workstream gets the prefixed form", () => {
+    const keys = chainKeys(7, 2, "ui");
+    assert.equal(keys.builder, "fix:ui:7:2");
+    assert.equal(keys.reviewer, "rereview:ui:7:2");
+    assert.equal(keys.tester, "retest:ui:7:2");
+  });
+
+  test("two workstreams at one round produce three disjoint keys each", () => {
+    const main = chainKeys(7, 1, MAIN_WORKSTREAM);
+    const ui = chainKeys(7, 1, "ui");
+    const all = [...Object.values(main), ...Object.values(ui)];
+    assert.equal(new Set(all).size, all.length, `chain keys collided: ${all.join(" ")}`);
+  });
+
+  test("determinism and cycle/round sensitivity survive the new argument", () => {
+    assert.deepEqual(chainKeys(7, 2, "ui"), chainKeys(7, 2, "ui"));
+    assert.notEqual(chainKeys(7, 2, "ui").builder, chainKeys(8, 2, "ui").builder);
+    assert.notEqual(chainKeys(7, 2, "ui").builder, chainKeys(7, 3, "ui").builder);
+  });
+});
+
+/* ========================================================================== *
+ * T23 — the fix chain's graph fields (R42)
+ * ========================================================================== */
+
+describe("T23 fixChainGraphFields", () => {
+  const members = [
+    { taskId: "b0000000-0000-4000-8000-000000000002", writeSet: ["src/b.ts", "src/a.ts"] },
+    { taskId: "a0000000-0000-4000-8000-000000000001", writeSet: ["src/a.ts"] },
+  ];
+
+  test("the builder waits on the gating tasks and inherits the group's workstream", () => {
+    const g = fixChainGraphFields({ round: 7, workstream: "ui", members });
+    assert.equal(g.builder.round, 8);
+    assert.equal(g.builder.workstream, "ui");
+    assert.deepEqual(g.builder.depends_on, [
+      "a0000000-0000-4000-8000-000000000001",
+      "b0000000-0000-4000-8000-000000000002",
+    ]);
+    assert.deepEqual(g.builder.write_set, ["src/a.ts", "src/b.ts"]);
+  });
+
+  test("depends_on is NEVER empty — an empty group is refused, not defaulted", () => {
+    // An empty depends_on is a graph ROOT: the fix builder would promote on the
+    // next tick and run in parallel with the work it exists to follow. It would
+    // also make R41's guard match every other root-born chain at the same cycle.
+    assert.throws(
+      () => fixChainGraphFields({ round: 7, workstream: "main", members: [] }),
+      /no gating tasks/,
+    );
+  });
+
+  test("the checker sits one round further out with an empty write-set", () => {
+    const g = fixChainGraphFields({ round: 7, workstream: "ui", members });
+    assert.equal(g.checker.round, 9);
+    assert.equal(g.checker.workstream, "ui");
+    assert.deepEqual(g.checker.write_set, []);
+  });
+
+  test("round+1 and round+2 AGREE with computeRound's 1 + max(dep.round)", () => {
+    // 02-architecture.md §5.2 keeps the literals because the group's round is a
+    // real stored value; that the arithmetic and the graph rule yield the same
+    // two numbers is a PROPERTY, asserted here against task-graph.ts's own
+    // function rather than against a restatement of `+1` in this file.
+    const round = 7;
+    const g = fixChainGraphFields({ round, workstream: "ui", members });
+    const gatingRows = members.map(() => gt(round, { workstream: "ui" }));
+    assert.equal(g.builder.round, computeRound(gatingRows));
+    const builderRow = gt(g.builder.round, { workstream: "ui" });
+    assert.equal(g.checker.round, computeRound([builderRow]));
+  });
+
+  test("the agreement is not an artefact of round 7", () => {
+    // Every round tried here is at least two below its phase block's ceiling,
+    // which is the domain the next case explains.
+    for (const round of [0, 1, 50, 200, 412]) {
+      const g = fixChainGraphFields({ round, workstream: "main", members });
+      assert.equal(g.builder.round, computeRound([gt(round)]));
+      assert.equal(g.checker.round, computeRound([gt(g.builder.round)]));
+    }
+  });
+
+  test("THE BOUNDARY the agreement does NOT hold at, found by asserting it (R24)", () => {
+    // R42 says round+1/round+2 agree with `1 + max(dep.round)`. They do —
+    // everywhere except the last two rounds of a phase block, where
+    // computeRound() REFUSES rather than answers: R24 caps a phase at 99 depth
+    // levels, so a group at round 99 would put its fix builder at 100, in phase
+    // block 1. This case exists because writing the agreement test is what
+    // turned the assumption up as false; recorded in 01-requirements.md R42.
+    //
+    // The chain is still created, deliberately. Promotion is by `depends_on`,
+    // never by round (that is this project's whole point), so the schedule is
+    // unaffected and only the phase LABEL moves. Refusing here would block a
+    // real fix cycle to protect a numbering convention, and the group would
+    // wedge with its feedback undelivered — trading a cosmetic defect for the
+    // exact failure the reconcile module exists to prevent.
+    const g = fixChainGraphFields({ round: 99, workstream: "main", members });
+    assert.equal(g.builder.round, 100);
+    assert.equal(g.checker.round, 101);
+    assert.throws(() => computeRound([gt(99)]), /leaves phase block 0/);
+  });
+
+  test("REACHABILITY of that boundary, stated rather than hand-waved", () => {
+    // It takes 99 dependency levels inside ONE phase for a group to sit at 99.
+    // The architect seeds one planner per phase at k*100 (R51) and every other
+    // round is computed as 1 + max(dep.round), so the depth of a phase is the
+    // longest chain its planner creates — a dozen at most in every project this
+    // engine has run. The boundary is therefore documented, not defended.
+    assert.equal(fixChainGraphFields({ round: 98, workstream: "main", members }).checker.round, 100);
+    assert.equal(computeRound([gt(97)]), 98);
+  });
+
+  test("duplicate gating ids and duplicate paths are folded, not repeated", () => {
+    const g = fixChainGraphFields({
+      round: 1,
+      workstream: "main",
+      members: [
+        { taskId: "a0000000-0000-4000-8000-000000000001", writeSet: ["src/a.ts"] },
+        { taskId: "a0000000-0000-4000-8000-000000000001", writeSet: ["src/a.ts"] },
+      ],
+    });
+    assert.deepEqual(g.builder.depends_on, ["a0000000-0000-4000-8000-000000000001"]);
+    assert.deepEqual(g.builder.write_set, ["src/a.ts"]);
+  });
+
+  test("the same group yields byte-identical fields however its members are ordered", () => {
+    // Replay safety: a re-consolidation after a crash must produce the same row,
+    // and listVerdictRound's ORDER BY is not the only thing that can reorder a
+    // group (a member added by hand carries a later created_at).
+    const a = fixChainGraphFields({ round: 3, workstream: "main", members });
+    const b = fixChainGraphFields({ round: 3, workstream: "main", members: [...members].reverse() });
+    assert.deepEqual(a, b);
+  });
+});
+
+/* ========================================================================== *
+ * T24 — the hand-renumber hazard (R41)
+ * ========================================================================== */
+
+describe("T24 duplicatesFixChain — a renumbered group cannot produce a second chain", () => {
+  const deps = ["a0000000-0000-4000-8000-000000000001", "b0000000-0000-4000-8000-000000000002"];
+
+  test("a group renumbered after its chain exists is REFUSED", () => {
+    // The hazard, exactly: the operator moved the group from round 7 to round
+    // 9, so consolidation computes fix:9:1 where fix:7:1 already exists. Both
+    // unique indexes let that through — the chain_key differs AND the round
+    // differs — so `ON CONFLICT DO NOTHING` would insert a SECOND chain and
+    // `occupied` would never fire, because it is only reached on a conflict.
+    // The immutable half is the gating ids (R29), which R42 puts on the row.
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:9:1", dependsOn: deps },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: deps },
+      ),
+      true,
+    );
+  });
+
+  test("the order of the two dependency lists is irrelevant", () => {
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:9:1", dependsOn: deps },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: [...deps].reverse() },
+      ),
+      true,
+    );
+  });
+
+  test("OUR OWN chain replayed is NOT a duplicate", () => {
+    // The crash-replay path: a tick that dies between COMMIT and mark-done
+    // recomputes the same decision, the same (round, cycle) and therefore the
+    // same chain_key. That row is ours and insertChainRow must absorb it as
+    // `replay`. Refusing it here would turn the guard into the wedge.
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: deps },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: deps },
+      ),
+      false,
+    );
+  });
+
+  test("a later fix cycle over the same group is NOT a duplicate", () => {
+    // Cycle 2 of the same group is the legitimate next chain: the same gating
+    // tasks are re-checked, and MAX_FIX_CYCLES is what bounds it, not this.
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 2, chainKey: "fix:7:2", dependsOn: deps },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: deps },
+      ),
+      false,
+    );
+  });
+
+  test("a different group at the same cycle is NOT a duplicate", () => {
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:ui:7:1", dependsOn: ["c0000000-0000-4000-8000-000000000003"] },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: deps },
+      ),
+      false,
+    );
+  });
+
+  test("THE BOUNDARY, asserted rather than left to be discovered: a PARTIAL renumber is not caught", () => {
+    // An operator who moves SOME members of a group changes the gating set, so
+    // the two chains have different identities and this returns false. That is
+    // correct rather than a hole — two disjoint member sets are two different
+    // dependency joins, and nothing distinguishes that from a genuine second
+    // group. R41 records it as the guard's stated limit.
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:9:1", dependsOn: [deps[0]!] },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: deps },
+      ),
+      false,
+    );
+  });
+
+  test("a subset is not a set-equal — cardinality is part of the comparison", () => {
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:9:1", dependsOn: deps },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: [deps[0]!] },
+      ),
+      false,
+    );
+  });
+});
+
+/* ========================================================================== *
+ * T25 — the unwedge group selection (R46)
+ * ========================================================================== */
+
+describe("T25 earliestFailedGroup", () => {
+  test("nothing failed → null", () => {
+    assert.equal(earliestFailedGroup([]), null);
+  });
+
+  test("the earliest ROUND wins", () => {
+    assert.deepEqual(
+      earliestFailedGroup([
+        { round: 9, workstream: "main" },
+        { round: 7, workstream: "ui" },
+        { round: 8, workstream: "main" },
+      ]),
+      { round: 7, workstream: "ui" },
+    );
+  });
+
+  test("at one round, the earliest WORKSTREAM NAME wins — one group, never two", () => {
+    // The point of R46: an operator's single /unwedge must not restart two
+    // teams in two worktrees, with only one of them named in the response.
+    assert.deepEqual(
+      earliestFailedGroup([
+        { round: 7, workstream: "ui" },
+        { round: 7, workstream: "api" },
+        { round: 7, workstream: "main" },
+      ]),
+      { round: 7, workstream: "api" },
+    );
+  });
+
+  test("the answer does not depend on input order", () => {
+    const groups = [
+      { round: 7, workstream: "ui" },
+      { round: 7, workstream: "api" },
+      { round: 6, workstream: "zeta" },
+    ];
+    assert.deepEqual(earliestFailedGroup(groups), { round: 6, workstream: "zeta" });
+    assert.deepEqual(earliestFailedGroup([...groups].reverse()), { round: 6, workstream: "zeta" });
+  });
+
+  test("a single group is returned as itself, and by value", () => {
+    const only = { round: 3, workstream: "main" };
+    const got = earliestFailedGroup([only]);
+    assert.deepEqual(got, only);
+    assert.notEqual(got, only, "the selection must not hand back the caller's row by reference");
+  });
+});
+
+/* ========================================================================== *
+ * T26 — group completion, named for a human (R45)
+ * ========================================================================== */
+
+describe("T26 groupLabel and groupCompleteNotification", () => {
+  test("'main' reads exactly as a round always did", () => {
+    assert.equal(groupLabel(7, MAIN_WORKSTREAM), "round 7");
+  });
+
+  test("the 'main' notification is BYTE-IDENTICAL to the historical string", () => {
+    // Literal, for the same reason T22's are: a template sharing a variable
+    // with the implementation would agree with itself however it moved.
+    assert.equal(
+      groupCompleteNotification("operator-visibility", 12, MAIN_WORKSTREAM),
+      "🏁 operator-visibility · round 12 complete.",
+    );
+  });
+
+  test("a named workstream says so, in both", () => {
+    assert.equal(groupLabel(7, "ui"), "round 7 · workstream ui");
+    assert.equal(
+      groupCompleteNotification("engine-task-graph", 7, "ui"),
+      "🏁 engine-task-graph · round 7 · workstream ui complete.",
+    );
+  });
+
+  test("workstream A draining cannot be mistaken for workstream B's completion", () => {
+    // The message is the only thing Konrad sees at 3am. Two groups at one depth
+    // must not push the same sentence twice.
+    assert.notEqual(
+      groupCompleteNotification("p", 7, "ui"),
+      groupCompleteNotification("p", 7, "api"),
+    );
+    assert.notEqual(
+      groupCompleteNotification("p", 7, MAIN_WORKSTREAM),
+      groupCompleteNotification("p", 7, "ui"),
+    );
+  });
+});
+
+/* ========================================================================== *
+ * T27 — every helper above has a production caller
+ *
+ * Standing rule 3, defect 1 of this addendum's header: a green case over a
+ * function nothing calls proves the function, not the engine. These assertions
+ * are SOURCE assertions (readFileSync, like cp2-reconciler-interaction.test.ts)
+ * because the call sites are in modules that open a pg Pool at import.
+ * ========================================================================== */
+
+describe("T27 the phase-4B helpers are on the engine's path", () => {
+  const repoRoot = new URL("../../../", import.meta.url).pathname;
+  const TICK = readFileSync(`${repoRoot}forge-control/src/lib/project-tick.ts`, "utf8");
+  const PROJECTS_DB = readFileSync(`${repoRoot}forge-control/src/db/projects.ts`, "utf8");
+
+  test("project-tick keys its group map and its failure counter with groupKey", () => {
+    assert.match(TICK, /verdictRounds\.set\(`\$\{task\.project_id\}:\$\{groupKey\(task\)\}`/);
+    // Same `key`, so a failure is counted against the group it is about.
+    assert.match(TICK, /noteGroupFailure\(groupFailures, key, MAX_GROUP_FAILURES\)/);
+  });
+
+  test("project-tick consolidates per workstream and passes it down", () => {
+    assert.match(TICK, /await consolidateVerdictGroup\(projectId, round, workstream\)/);
+    assert.match(TICK, /listVerdictRound\(projectId, round, workstream, VERDICT_ROLES\)/);
+    assert.match(TICK, /consolidateVerdictRound\(round, inputs, MAX_FIX_CYCLES, workstream\)/);
+  });
+
+  test("project-tick builds the chain's graph fields with fixChainGraphFields", () => {
+    assert.match(TICK, /const graph = fixChainGraphFields\(\{/);
+    assert.match(TICK, /members: rows\.map\(\(r\) => \(\{ taskId: r\.id, writeSet: r\.write_set \}\)\)/);
+    assert.match(TICK, /^\s+graph,$/m);
+  });
+
+  test("project-tick reports completion per group, through groupCompleteNotification", () => {
+    assert.match(TICK, /roundIsComplete\(projectId, round, workstream\)/);
+    assert.match(TICK, /roundIsComplete\(task\.project_id, task\.round, task\.workstream\)/);
+    const pushes = TICK.match(/groupCompleteNotification\(/g) ?? [];
+    assert.equal(pushes.length, 2, "both 🏁 pushes must go through the one formatter");
+    assert.doesNotMatch(
+      TICK,
+      /🏁 \$\{name\} · round/,
+      "a hand-written 🏁 string is how the two paths drift apart",
+    );
+  });
+
+  test("db/projects.ts selects the unwedge group with earliestFailedGroup", () => {
+    assert.match(PROJECTS_DB, /const group = earliestFailedGroup\(blocking\.rows\)/);
+    assert.match(PROJECTS_DB, /AND status IN \('failed','blocked'\)/);
+    assert.match(PROJECTS_DB, /WHERE project_id = \$1 AND round = \$2 AND workstream = \$3/);
+  });
+
+  test("createFixChain refuses a second chain through duplicatesFixChain, BEFORE inserting", () => {
+    const body = PROJECTS_DB.slice(PROJECTS_DB.indexOf("export async function createFixChain"));
+    const guard = body.indexOf("duplicatesFixChain(candidate,");
+    const insert = body.indexOf("const builder = await insertChainRow(");
+    assert.ok(guard > 0, "createFixChain does not call duplicatesFixChain");
+    assert.ok(insert > 0, "createFixChain no longer inserts a builder");
+    assert.ok(guard < insert, "the R41 guard must run before the first INSERT, or it writes half a chain");
+  });
+
+  test("insertChainRow names all three graph columns — a chain row is never born legacy", () => {
+    const body = PROJECTS_DB.slice(
+      PROJECTS_DB.indexOf("async function insertChainRow"),
+      PROJECTS_DB.indexOf("/** Insert a fix builder"),
+    );
+    assert.match(body, /INSERT INTO project_tasks \(project_id, round, role, title, brief, fix_cycle, tier, chain_key,\s*\n\s*depends_on, workstream, write_set\)/);
+    assert.match(body, /\$9::uuid\[\], \$10, \$11::text\[\]/);
+  });
+
+  test("the checkers depend on the builder row this transaction wrote", () => {
+    const body = PROJECTS_DB.slice(PROJECTS_DB.indexOf("export async function createFixChain"));
+    assert.match(body, /depends_on: \[builder\.id\]/);
+    assert.match(body, /round: input\.graph\.checker\.round/);
+  });
+});
+
+/* ========================================================================== *
+ * T28 — the identity index has no workstream term (round 221's finding)
+ *
+ * R40 and R41 as written namespace the CHAIN KEY. `project_tasks_identity_idx`
+ * (migration 0035) is `(project_id, round, role, title)` and migration 0040 did
+ * not add a workstream term, so two groups at one round produce two chain rows
+ * with distinct chain_keys and IDENTICAL identity tuples: the second INSERT
+ * conflicts, `insertChainRow` classifies it `occupied`, and the project is
+ * blocked with that workstream's merged feedback undelivered — R40's own
+ * motivating failure, arriving through the other index. The titles carry the
+ * workstream for exactly that reason.
+ * ========================================================================== */
+
+describe("T28 chain-row titles are distinct per workstream", () => {
+  test("'main' titles are BYTE-IDENTICAL to the historical strings", () => {
+    // Literals, not a call with different arguments — the two must agree with
+    // something written before this change, not with each other.
+    assert.equal(FIX_TASK_TITLE(1, MAIN_WORKSTREAM), "Fix cycle 1");
+    assert.equal(RECHECK_TASK_TITLE("reviewer", 1, MAIN_WORKSTREAM), "Re-review after fix cycle 1");
+    assert.equal(RECHECK_TASK_TITLE("tester", 1, MAIN_WORKSTREAM), "Re-test after fix cycle 1");
+  });
+
+  test("the omitted argument is 'main' — every historical call site is unmoved", () => {
+    assert.equal(FIX_TASK_TITLE(2), FIX_TASK_TITLE(2, MAIN_WORKSTREAM));
+    assert.equal(
+      RECHECK_TASK_TITLE("reviewer", 2),
+      RECHECK_TASK_TITLE("reviewer", 2, MAIN_WORKSTREAM),
+    );
+  });
+
+  test("two workstreams at one round cannot share an identity tuple", () => {
+    // The identity tuple is (project, round, role, title). Two groups at round
+    // 7 both put a builder at round 8 with role 'builder'; only the title can
+    // separate them.
+    const identities = [
+      FIX_TASK_TITLE(1, MAIN_WORKSTREAM),
+      FIX_TASK_TITLE(1, "ui"),
+      FIX_TASK_TITLE(1, "api"),
+    ];
+    assert.equal(new Set(identities).size, 3, `titles collided: ${identities.join(" | ")}`);
+
+    for (const role of VERDICT_ROLES) {
+      const checkers = [
+        RECHECK_TASK_TITLE(role, 1, MAIN_WORKSTREAM),
+        RECHECK_TASK_TITLE(role, 1, "ui"),
+        RECHECK_TASK_TITLE(role, 1, "api"),
+      ];
+      assert.equal(new Set(checkers).size, 3, `${role} titles collided: ${checkers.join(" | ")}`);
+    }
+  });
+
+  test("a title stays inside the 200 characters db/projects.ts slices to", () => {
+    // A workstream is at most 40 characters (project_tasks_workstream_chk), so
+    // the suffix cannot push a generated title into the slice — which would
+    // silently truncate two long workstreams back into one identity.
+    const longest = "a".repeat(40);
+    assert.ok(FIX_TASK_TITLE(3, longest).length <= 200);
+    assert.ok(RECHECK_TASK_TITLE("reviewer", 3, longest).length <= 200);
+    assert.notEqual(FIX_TASK_TITLE(3, longest), FIX_TASK_TITLE(3, `${longest.slice(0, 39)}b`));
+  });
+});
+
+/* ========================================================================== *
+ * T29 — R40 end to end, in the pure layer: two same-round reviewers in two
+ * workstreams are TWO decisions, TWO chains, and nothing is shared.
+ * ========================================================================== */
+
+describe("T29 two workstreams at one round consolidate independently", () => {
+  const mainReviewer = rv({ taskId: "m1", title: "Review main", lastText: "VERDICT: NEEDS_FIXES" });
+  const uiReviewer = rv({ taskId: "u1", title: "Review ui", lastText: "VERDICT: NEEDS_FIXES" });
+
+  test("each group yields its own fix decision, with its own chain keys", () => {
+    const a = consolidateVerdictRound(7, [mainReviewer], 3, MAIN_WORKSTREAM);
+    const b = consolidateVerdictRound(7, [uiReviewer], 3, "ui");
+    assert.equal(a.action, "fix");
+    assert.equal(b.action, "fix");
+    if (a.action !== "fix" || b.action !== "fix") return;
+
+    assert.equal(a.builderChainKey, "fix:7:1");
+    assert.equal(b.builderChainKey, "fix:ui:7:1");
+    assert.notEqual(a.builderChainKey, b.builderChainKey);
+    assert.notEqual(a.checkers[0]!.chainKey, b.checkers[0]!.chainKey);
+  });
+
+  test("neither brief carries the other's feedback — no delivery into the wrong worktree", () => {
+    const a = consolidateVerdictRound(7, [mainReviewer], 3, MAIN_WORKSTREAM);
+    const b = consolidateVerdictRound(7, [uiReviewer], 3, "ui");
+    if (a.action !== "fix" || b.action !== "fix") throw new Error("expected two fix decisions");
+    assert.match(a.mergedBrief, /Review main/);
+    assert.doesNotMatch(a.mergedBrief, /Review ui/);
+    assert.match(b.mergedBrief, /Review ui/);
+    assert.doesNotMatch(b.mergedBrief, /Review main/);
+  });
+
+  test("their chain rows are two disjoint graphs, in two workstreams", () => {
+    const ga = fixChainGraphFields({
+      round: 7,
+      workstream: MAIN_WORKSTREAM,
+      members: [{ taskId: "m1", writeSet: ["src/a.ts"] }],
+    });
+    const gb = fixChainGraphFields({
+      round: 7,
+      workstream: "ui",
+      // The SAME file, deliberately: different workstreams are isolated
+      // worktrees and may write it concurrently — that is the whole point of
+      // the design, and it is why the merge is an explicit integration task.
+      members: [{ taskId: "u1", writeSet: ["src/a.ts"] }],
+    });
+    assert.equal(ga.builder.workstream, "main");
+    assert.equal(gb.builder.workstream, "ui");
+    assert.deepEqual(ga.builder.depends_on, ["m1"]);
+    assert.deepEqual(gb.builder.depends_on, ["u1"]);
+    assert.equal(
+      duplicatesFixChain(
+        { cycle: 1, chainKey: "fix:ui:7:1", dependsOn: gb.builder.depends_on },
+        { cycle: 1, chainKey: "fix:7:1", dependsOn: ga.builder.depends_on },
+      ),
+      false,
+      "two workstreams' chains must not read as one renumbered group",
+    );
+  });
+
+  test("their titles differ, so the identity index admits both", () => {
+    assert.notEqual(FIX_TASK_TITLE(1, MAIN_WORKSTREAM), FIX_TASK_TITLE(1, "ui"));
+    assert.notEqual(
+      RECHECK_TASK_TITLE("reviewer", 1, MAIN_WORKSTREAM),
+      RECHECK_TASK_TITLE("reviewer", 1, "ui"),
+    );
+  });
+});

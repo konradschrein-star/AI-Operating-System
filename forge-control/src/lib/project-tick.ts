@@ -60,6 +60,11 @@ import {
   FIX_TASK_TITLE,
   RECHECK_TASK_TITLE,
   recheckBrief,
+  groupKey,
+  groupLabel,
+  groupCompleteNotification,
+  fixChainGraphFields,
+  MAIN_WORKSTREAM,
   type VerdictInput,
   type VerdictRole,
 } from "./project-reconcile.ts";
@@ -90,12 +95,17 @@ export const REPO_AGENTS_DIR = fileURLToPath(new URL("../../../agents", import.m
 const MAX_FIX_CYCLES = 3;
 let lastPauseLogAt = 0;
 
-/** Consecutive consolidation failures per `${project_id}:${round}`, and the
- *  count at which a stuck group is pushed to Konrad instead of spinning in the
- *  log. Process-local on purpose: it is a retry heuristic, not state the DB
+/** Consecutive consolidation failures per `${project_id}:${groupKey(task)}` —
+ *  project, round AND workstream since R40 — and the count at which a stuck
+ *  group is pushed to Konrad instead of spinning in the log. The workstream
+ *  term is load-bearing here too: keyed without it, one wedged workstream's
+ *  failures would accumulate on another workstream's behalf and escalate a
+ *  group that is working fine.
+ *
+ *  Process-local on purpose: it is a retry heuristic, not state the DB
  *  should own, and a restart legitimately re-starts the count. Entries are
  *  deleted on the first success, so the map holds at most one key per
- *  currently-failing round. */
+ *  currently-failing group. */
 const groupFailures = new Map<string, number>();
 const MAX_GROUP_FAILURES = 3;
 
@@ -851,12 +861,12 @@ function assertVerdictRole(
   role: TaskRole,
   taskId: string,
   projectId: string,
-  round: number,
+  label: string,
 ): VerdictRole {
   if (!isVerdictRole(role)) {
     throw new Error(
       `[project-tick] listVerdictRound returned task ${taskId} with non-verdict role ` +
-        `'${role}' for project ${projectId} round ${round} — the query filter and ` +
+        `'${role}' for project ${projectId} ${label} — the query filter and ` +
         `VERDICT_ROLES have drifted apart`,
     );
   }
@@ -877,18 +887,30 @@ function assertVerdictRole(
  * they are consolidated as ONE group. Splitting them per role would put two
  * fix builders into the same round and the same worktree — bug 1 again, wearing
  * a different hat.
+ *
+ * R40 (phase 4) restates the GROUP and nothing else: `(project, round,
+ * workstream)`. Two reviewers at the same computed depth in DIFFERENT
+ * workstreams are two groups and get two chains, because one merged fix builder
+ * can only be spawned into one worktree and the other workstream's findings
+ * would be delivered nowhere. Every decision below — NEEDS_FIXES beats PASS,
+ * one chain per group, one re-check per dissenting role, the (a)–(e) order, the
+ * mark-done preconditions — is untouched (R44).
  */
 async function consolidateVerdictGroup(
   projectId: string,
   round: number,
+  workstream: string,
 ): Promise<void> {
-  const rows = await listVerdictRound(projectId, round, VERDICT_ROLES);
+  // The group's human name: "round 7" for `main`, "round 7 · workstream ui"
+  // otherwise, so a single-workstream project's log reads exactly as it did.
+  const label = groupLabel(round, workstream);
+  const rows = await listVerdictRound(projectId, round, workstream, VERDICT_ROLES);
   const inputs: VerdictInput[] = rows.map((r) => ({
     taskId: r.id,
     // Narrowed rather than cast: the query filters on VERDICT_ROLES, so a row
     // with any other role means the filter and this mapping have drifted apart,
     // and guessing a role would pick the wrong re-check and the wrong chain key.
-    role: assertVerdictRole(r.role, r.id, projectId, round),
+    role: assertVerdictRole(r.role, r.id, projectId, label),
     title: r.title,
     fixCycle: r.fix_cycle,
     // The rule itself lives in project-reconcile.ts (verdictMemberSettled) so
@@ -906,7 +928,7 @@ async function consolidateVerdictGroup(
     lastText: r.last_text,
   }));
 
-  const decision = consolidateVerdictRound(round, inputs, MAX_FIX_CYCLES);
+  const decision = consolidateVerdictRound(round, inputs, MAX_FIX_CYCLES, workstream);
   // "1 reviewer + 1 tester" — the log line has to say WHICH roles gated the
   // round, or a tester's NEEDS_FIXES reads exactly like a reviewer's in the
   // one place Konrad follows a project from. Absent roles are omitted rather
@@ -924,7 +946,7 @@ async function consolidateVerdictGroup(
       // the group is re-evaluated on the next tick.
       const settledCount = inputs.filter((r) => r.settled).length;
       console.log(
-        `[project-tick] round ${round} verdicts → wait (${settledCount}/${inputs.length} settled, ${roster})`,
+        `[project-tick] ${label} verdicts → wait (${settledCount}/${inputs.length} settled, ${roster})`,
       );
       return;
     }
@@ -938,16 +960,22 @@ async function consolidateVerdictGroup(
       // has run yet, so aborting is free and the next tick re-decides.
       const refused = await markGroupDone(inputs);
       if (refused.length > 0) {
-        logGroupNotReleased(projectId, round, "pass", refused);
+        logGroupNotReleased(projectId, label, "pass", refused);
         return;
       }
-      console.log(`[project-tick] round ${round} verdicts → pass (${roster})`);
+      console.log(`[project-tick] ${label} verdicts → pass (${roster})`);
       // E4's two pushes, moved from the per-task path to here. Both halves:
       // the per-task ✅ (non-goal projects only — a goal project can carry
-      // hundreds of tasks and has goalHeartbeats() instead) and the 🏁 round
-      // boundary. The round-complete check has to run AFTER markGroupDone or
+      // hundreds of tasks and has goalHeartbeats() instead) and the 🏁 group
+      // boundary. The completion check has to run AFTER markGroupDone or
       // it always answers false, and it is checked rather than assumed because
       // a gating round can share its number with other roles.
+      //
+      // R45: the check and the push are per GROUP, so workstream A draining
+      // does not announce a round workstream B is still working inside — and
+      // B's own completion still fires, which it could not if A had already
+      // spent the round's one announcement. `groupCompleteNotification` keeps
+      // the text byte-identical for `main`.
       const project = await getProject(projectId).catch(() => null);
       const name = project?.name ?? projectId;
       if (project && !isGoalMode(project)) {
@@ -958,10 +986,11 @@ async function consolidateVerdictGroup(
           ).catch(() => {});
         }
       }
-      if (await roundIsComplete(projectId, round).catch(() => false)) {
-        await queueNotification(`🏁 ${name} · round ${round} complete.`, "project").catch(
-          () => {},
-        );
+      if (await roundIsComplete(projectId, round, workstream).catch(() => false)) {
+        await queueNotification(
+          groupCompleteNotification(name, round, workstream),
+          "project",
+        ).catch(() => {});
       }
       // Nothing is created here: closeFinishedProjects() owns completion.
       return;
@@ -997,7 +1026,7 @@ async function consolidateVerdictGroup(
       if (moved.length > 0) {
         logGroupNotReleased(
           projectId,
-          round,
+          label,
           "block",
           inputs.filter((r) => moved.includes(r.taskId)),
         );
@@ -1005,11 +1034,11 @@ async function consolidateVerdictGroup(
       }
       await setProjectStatus(projectId, "blocked");
       console.warn(
-        `[project-tick] round ${round} verdicts → block (${decision.reason}, ${roster}): ${decision.detail}`,
+        `[project-tick] ${label} verdicts → block (${decision.reason}, ${roster}): ${decision.detail}`,
       );
       const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
       await queueNotification(
-        `🚫 Project "${name}" blocked — round ${round} verdicts (${decision.reason}): ` +
+        `🚫 Project "${name}" blocked — ${label} verdicts (${decision.reason}): ` +
           `${decision.detail}. Check the run threads.`,
         "project",
       ).catch(() => {});
@@ -1018,7 +1047,7 @@ async function consolidateVerdictGroup(
       // the next tick re-consolidates it against the already-blocked project,
       // which promotes and claims nothing meanwhile.
       const refused = await markGroupDone(inputs);
-      if (refused.length > 0) logGroupNotReleased(projectId, round, "block", refused);
+      if (refused.length > 0) logGroupNotReleased(projectId, label, "block", refused);
       return;
     }
 
@@ -1043,18 +1072,29 @@ async function consolidateVerdictGroup(
       if (moved.length > 0) {
         logGroupNotReleased(
           projectId,
-          round,
+          label,
           `fix cycle ${decision.cycle}`,
           inputs.filter((r) => moved.includes(r.taskId)),
         );
         return;
       }
 
+      // R42 — the chain joins the graph instead of being born a root. The
+      // write-sets come from the REVIEWED tasks' rows (the gating reviewers and
+      // testers declare what their group touched), and the gating ids are what
+      // the fix builder must wait for. Computed once, by the pure helper, so
+      // the rounds, the edges and the union have one definition — and so the
+      // notification below names the same round the row was written at.
+      const graph = fixChainGraphFields({
+        round,
+        workstream,
+        members: rows.map((r) => ({ taskId: r.id, writeSet: r.write_set })),
+      });
       const chain = await createFixChain({
         project_id: projectId,
         round,
         cycle: decision.cycle,
-        builderTitle: FIX_TASK_TITLE(decision.cycle),
+        builderTitle: FIX_TASK_TITLE(decision.cycle, workstream),
         builderBrief: decision.mergedBrief,
         builderChainKey: decision.builderChainKey,
         // One re-check per DISSENTING role, in the decision's order — a
@@ -1062,10 +1102,11 @@ async function consolidateVerdictGroup(
         // by walking the journey again, and neither can stand in for the other.
         checkers: decision.checkers.map((c) => ({
           role: c.role,
-          title: RECHECK_TASK_TITLE(c.role, decision.cycle),
+          title: RECHECK_TASK_TITLE(c.role, decision.cycle, workstream),
           brief: recheckBrief(c.role, decision.mergedBrief),
           chainKey: c.chainKey,
         })),
+        graph,
       });
       const chainRows = [chain.builder, ...chain.checkers];
 
@@ -1093,7 +1134,7 @@ async function consolidateVerdictGroup(
           .join(" and ");
         await setProjectStatus(projectId, "blocked");
         console.error(
-          `[project-tick] round ${round} verdicts → fix cycle ${decision.cycle} COLLIDED: ` +
+          `[project-tick] ${label} verdicts → fix cycle ${decision.cycle} COLLIDED: ` +
             `${detail} already holds this chain's identity — merged feedback NOT delivered`,
         );
         const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
@@ -1106,7 +1147,7 @@ async function consolidateVerdictGroup(
         ).catch(() => {});
         const refusedOnCollision = await markGroupDone(inputs);
         if (refusedOnCollision.length > 0) {
-          logGroupNotReleased(projectId, round, "fix/collision", refusedOnCollision);
+          logGroupNotReleased(projectId, label, "fix/collision", refusedOnCollision);
         }
         return;
       }
@@ -1119,12 +1160,12 @@ async function consolidateVerdictGroup(
       // guard absorbs as a replay.
       const refused = await markGroupDone(inputs);
       if (refused.length > 0) {
-        logGroupNotReleased(projectId, round, `fix cycle ${decision.cycle}`, refused);
+        logGroupNotReleased(projectId, label, `fix cycle ${decision.cycle}`, refused);
         return;
       }
       const dissenters = decision.checkers.map((c) => c.role).join(" + ");
       const line =
-        `[project-tick] round ${round} verdicts → fix cycle ${decision.cycle} ` +
+        `[project-tick] ${label} verdicts → fix cycle ${decision.cycle} ` +
         `(builder ${chain.builder.kind} ${chain.builder.id}, ` +
         `${chain.checkers.map((c) => `re-${c.role} ${c.kind} ${c.id}`).join(", ")})`;
       if (chainRows.every((o) => o.kind === "created")) {
@@ -1136,11 +1177,18 @@ async function consolidateVerdictGroup(
       // E4's fix-cycle push. Sent only for a chain this tick actually created:
       // announcing a replay would tell Konrad the same fix cycle opened twice,
       // which is the exact confusion bug 1 produced in the first place.
+      //
+      // The workstream is named only when it is not `main`, for R45's reason
+      // applied to this push: two workstreams opening a fix cycle at the same
+      // depth would otherwise send two identical messages, and a
+      // single-workstream project's text does not move at all.
       if (chain.builder.kind === "created") {
         const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
+        const where =
+          workstream === MAIN_WORKSTREAM ? "" : ` · workstream ${workstream}`;
         await queueNotification(
           `🔁 ${name} · ${dissenters} want fixes — fix cycle ${decision.cycle} opened at round ` +
-            `${round + 1}.`,
+            `${graph.builder.round}${where}.`,
           "project",
         ).catch(() => {});
       }
@@ -1181,24 +1229,31 @@ async function markGroupDone(inputs: VerdictInput[]): Promise<VerdictInput[]> {
  *  the only trace of a message that changed a verdict. */
 function logGroupNotReleased(
   projectId: string,
-  round: number,
+  label: string,
   branch: string,
   refused: VerdictInput[],
 ): void {
   console.warn(
-    `[project-tick] round ${round} verdicts → ${branch} NOT released for project ${projectId}: ` +
+    `[project-tick] ${label} verdicts → ${branch} NOT released for project ${projectId}: ` +
       `${refused.map((r) => `${r.role} "${r.title}"`).join(", ")} is no longer settled ` +
       `(a message requeued the run, or it is 'completed' still owing an undelivered turn) — ` +
       `re-consolidating next tick`,
   );
 }
 
-/** Per-task and per-round progress pushes (E4).
+/** Per-task and per-round progress pushes (E4) — where "round" now means the
+ *  GROUP `(project, round, workstream)` (R45).
  *
  *  Goal-mode projects deliberately do NOT get a ping per task — they can carry
  *  hundreds, and they already have the time-gated heartbeat in goalHeartbeats().
- *  Round boundaries are notified for every project: in goal mode a round IS a
- *  waterfall phase, which is exactly the granularity worth a push. */
+ *  Group boundaries are notified for every project: in goal mode a round IS a
+ *  waterfall phase, which is exactly the granularity worth a push.
+ *
+ *  R45: the boundary is the GROUP `(project, round, workstream)`, so the last
+ *  task of workstream A does not announce a round workstream B is still inside
+ *  — and B's own last task still fires, which it could not once A had spent the
+ *  round's single announcement. `groupCompleteNotification` keeps the text
+ *  byte-identical for `main`. */
 async function notifyTaskProgress(
   task: ProjectTask,
   project: Project | null,
@@ -1210,9 +1265,9 @@ async function notifyTaskProgress(
       "project",
     ).catch(() => {});
   }
-  if (await roundIsComplete(task.project_id, task.round).catch(() => false)) {
+  if (await roundIsComplete(task.project_id, task.round, task.workstream).catch(() => false)) {
     await queueNotification(
-      `🏁 ${name} · round ${task.round} complete.`,
+      groupCompleteNotification(name, task.round, task.workstream),
       "project",
     ).catch(() => {});
   }
@@ -1355,14 +1410,25 @@ export async function deferForUsageWall(
 
 async function reconcileSettledTasks(): Promise<void> {
   const settled = await listSettledRunningTasks();
-  /** Gating rounds touched this tick, keyed `${project_id}:${round}` so a
-   *  round is consolidated AT MOST ONCE per tick even when several of its
-   *  verdict tasks settle together. Looping over tasks instead would reintroduce
+  /** Gating GROUPS touched this tick, keyed `${project_id}:${groupKey(task)}`
+   *  — project, round and workstream (R40) — so a group is consolidated AT MOST
+   *  ONCE per tick even when several of its verdict tasks settle together.
+   *  Looping over tasks instead would reintroduce
    *  bug 1 in miniature: two settled siblings, two consolidations, two fix
    *  chains (the second one saved only by the chain_key guard — defense in depth
-   *  is not a licence to fire twice). A reviewer and a tester of the same round
-   *  collapse onto the SAME key, which is what makes them one decision. */
-  const verdictRounds = new Map<string, { projectId: string; round: number }>();
+   *  is not a licence to fire twice). A reviewer and a tester of the same group
+   *  collapse onto the SAME key, which is what makes them one decision — and two
+   *  reviewers of the same depth in DIFFERENT workstreams no longer do, which is
+   *  what stops one merged fix builder swallowing both their findings.
+   *
+   *  `groupKey` formats the tuple; the project id is prefixed here because this
+   *  map spans projects and that function deliberately does not know about
+   *  them. The same string is the `groupFailures` key, so an escalation counts
+   *  the group it is actually about. */
+  const verdictRounds = new Map<
+    string,
+    { projectId: string; round: number; workstream: string }
+  >();
 
   for (const task of settled) {
     try {
@@ -1399,12 +1465,13 @@ async function reconcileSettledTasks(): Promise<void> {
         // an approval, which is exactly the failure mode `no_verdict` exists to
         // prevent for reviewers.
         console.log(
-          `[project-tick] ${task.role} task ${task.id} (round ${task.round}) settled — ` +
-            `deferring to round consolidation — ${name} · ${task.title}`,
+          `[project-tick] ${task.role} task ${task.id} (${groupLabel(task.round, task.workstream)}) ` +
+            `settled — deferring to group consolidation — ${name} · ${task.title}`,
         );
-        verdictRounds.set(`${task.project_id}:${task.round}`, {
+        verdictRounds.set(`${task.project_id}:${groupKey(task)}`, {
           projectId: task.project_id,
           round: task.round,
+          workstream: task.workstream,
         });
       } else {
         console.log(
@@ -1422,7 +1489,7 @@ async function reconcileSettledTasks(): Promise<void> {
     }
   }
 
-  for (const [key, { projectId, round }] of verdictRounds) {
+  for (const [key, { projectId, round, workstream }] of verdictRounds) {
     // Per-group isolation: one unreadable round must not abort the reconcile
     // pass for every other project's rounds. But isolation without escalation
     // is a silent stall — a permanently failing group (e.g. `column
@@ -1431,21 +1498,23 @@ async function reconcileSettledTasks(): Promise<void> {
     // project sits frozen and nobody is told. So: count consecutive failures
     // and surface the group once it is clearly stuck.
     try {
-      await consolidateVerdictGroup(projectId, round);
+      await consolidateVerdictGroup(projectId, round, workstream);
       clearGroupFailures(groupFailures, key);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      // Counted per GROUP: `key` carries the workstream, so a workstream wedged
+      // on a schema drift cannot escalate on a healthy neighbour's behalf.
       const { count, notify } = noteGroupFailure(groupFailures, key, MAX_GROUP_FAILURES);
       console.error(
-        `[project-tick] failed to consolidate verdict round ${round} of project ${projectId} ` +
-          `(consecutive failure ${count}):`,
+        `[project-tick] failed to consolidate verdict ${groupLabel(round, workstream)} of ` +
+          `project ${projectId} (consecutive failure ${count}):`,
         message,
       );
       if (notify) {
         const name = (await getProject(projectId).catch(() => null))?.name ?? projectId;
         await queueNotification(
-          `🚫 Project "${name}" — verdict round ${round} has failed to consolidate ` +
-            `${count} times in a row and is frozen: ${message}`,
+          `🚫 Project "${name}" — verdict ${groupLabel(round, workstream)} has failed to ` +
+            `consolidate ${count} times in a row and is frozen: ${message}`,
           "project",
         ).catch(() => {});
       }

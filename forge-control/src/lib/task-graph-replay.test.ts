@@ -112,7 +112,9 @@ import {
   legacyRoundReady,
   graphReady,
   readyRule,
-  groupKey,
+  // `groupKey` was imported here for the stub census alone. Retired with the
+  // stub in phase 4B (round 221) — R40's function is in lib/project-reconcile.ts
+  // and task-graph.ts no longer exports one. See the census block below.
   type GraphTask,
 } from "./task-graph.ts";
 import type { TaskStatus } from "../db/projects.ts";
@@ -1218,13 +1220,31 @@ describe("F13 — a row inserted after 0040 is named by no frozen closure", () =
  * `04-phases.md` §10 lists no phase-3 writer for this file, so there is no
  * concurrent builder to collide with.
  *
- * THE ONE THAT REMAINS IS NOT A DEFECT, and it is listed by requirement id
- * rather than by phase prose because requirement ids are authoritative
- * (`04-phases.md` §10 is the map): `groupKey` (R40) lands in phase 4. It
- * retires with that phase.
+ * FULLY RETIRED IN PHASE 4 (round 221, phase 4B, named in the commit message).
+ * The last clause — `groupKey` (R40) — is gone with the stub it guarded, and
+ * the stub is gone rather than filled: R40's function lives in
+ * `lib/project-reconcile.ts`, and `02-architecture.md` §1.1's export of it from
+ * `task-graph.ts` is retired in the same commit (the ruling, and the check for
+ * a graph-side consumer that found none, are recorded at its former site in
+ * `task-graph.ts`).
+ *
+ * AND THE CENSUS ITSELF CHANGES SHAPE RATHER THAN EMPTYING OUT. A `for` loop
+ * over an empty `stubs` array is a sweep with no probes: it reports a clean run
+ * by generating no tests at all, which is `00-vision.md` §7 rule 3's
+ * self-certifying instrument exactly. So the property is restated over the
+ * SOURCE — no `lands in phase` marker survives in `task-graph.ts` — which fails
+ * loudly if a stub is ever reintroduced and cannot pass by finding nothing to
+ * look at. The positive control is that the marker string is the one every stub
+ * in this module's history carried, and this file asserts it was present in the
+ * commit this test replaced (see the `git show` control below).
+ *
+ * THIS FILE IS OUTSIDE PHASE 4B's §10 ROW as it was outside round 211's, and
+ * for the identical reason: standing rule 4 cannot be obeyed from inside
+ * `task-graph.ts` alone, because the gate is here. It is DECLARED in the
+ * round-221 brief's write set rather than taken silently.
  * -------------------------------------------------------------------------- */
 
-describe("stub discipline — every export not yet implemented throws", () => {
+describe("stub discipline — no export of task-graph.ts is a stub any more", () => {
   const t: GraphTask = {
     id: "00000000-0000-4000-8000-0000000000ff",
     round: 1,
@@ -1234,15 +1254,62 @@ describe("stub discipline — every export not yet implemented throws", () => {
     write_set: [],
   };
 
-  const stubs: ReadonlyArray<readonly [string, () => unknown]> = [
-    ["groupKey", () => groupKey({ round: 1, workstream: "main" })],
-  ];
+  const TASK_GRAPH_REL = "forge-control/src/lib/task-graph.ts";
+  const TASK_GRAPH_SRC = readFileSync(`${REPO_ROOT}${TASK_GRAPH_REL}`, "utf8");
+  /** The marker every stub this module ever carried was written with:
+   *  `throw new Error("task-graph: <fn>() lands in phase N (Rxx)")`. */
+  const STUB_MARKER = "lands in phase";
 
-  for (const [name, call] of stubs) {
-    test(`${name}() throws a task-graph: diagnostic`, () => {
-      assert.throws(call, throwsMessageMatching(/^task-graph:/, name));
-    });
-  }
+  test("no `lands in phase` stub marker survives in task-graph.ts", () => {
+    const hits = TASK_GRAPH_SRC.split("\n")
+      .map((line, i) => [i + 1, line] as const)
+      .filter(([, line]) => line.includes(STUB_MARKER));
+    assert.deepEqual(
+      hits.map(([n, line]) => `${n}: ${line.trim()}`),
+      [],
+      "task-graph.ts still carries a stub marker — phase 4B retired the last one (groupKey, R40)",
+    );
+  });
+
+  test("POSITIVE CONTROL — the marker WAS present before this retirement", () => {
+    // Without this, the assertion above passes just as happily against a typo
+    // in STUB_MARKER, a moved file, or a module that never used the convention:
+    // "found nothing" and "there is nothing to find" are the same result and
+    // completely different facts.
+    //
+    // The control resolves its own witness instead of pinning a SHA: `git log
+    // -S` lists the commits where this file's occurrence COUNT of the marker
+    // changed, most recent first, and the first of those whose copy actually
+    // contains it is a commit that demonstrably used the convention. A pinned
+    // SHA would rot on the first rebase; `main` cannot be used at all, because
+    // this file does not exist there (the whole module is this project's).
+    const shas = execFileSync(
+      "git",
+      ["log", "--format=%H", "-S", STUB_MARKER, "--", TASK_GRAPH_REL],
+      { cwd: REPO_ROOT, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+    )
+      .split("\n")
+      .filter(Boolean);
+    assert.ok(
+      shas.length > 0,
+      `git log -S ${JSON.stringify(STUB_MARKER)} -- ${TASK_GRAPH_REL} found no commit at all — ` +
+        "the census above is looking for a string this module never used, so its emptiness " +
+        "proves nothing",
+    );
+    const witness = shas.find((sha) =>
+      execFileSync("git", ["show", `${sha}:${TASK_GRAPH_REL}`], {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        maxBuffer: 8 * 1024 * 1024,
+      }).includes(STUB_MARKER),
+    );
+    assert.ok(
+      witness,
+      `none of the ${shas.length} commits that changed the marker count actually contains ` +
+        `${JSON.stringify(STUB_MARKER)} in ${TASK_GRAPH_REL} — the control cannot vouch for the ` +
+        "census, so neither can this suite",
+    );
+  });
 
   test("legacyRoundReady() is NOT a stub — it is the rule under test", () => {
     const done: GraphTask = { ...t, id: "x", round: 0, status: "done" };

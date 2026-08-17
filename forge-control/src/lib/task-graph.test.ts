@@ -7,9 +7,13 @@
  * `taskDepth`, `conflicts`, `selectClaimable` — plus `legacyRoundReady`, which
  * phase 1 wrote and which the graph is measured against. The case list is
  * `03-quality.md` §2.1, and each block below is named after the section that
- * demands it. `computeRound`, `findCycle`, `groupKey`, `normaliseWritePath` and
- * `validateWorkstream` still throw (phases 3 and 4 by requirement id); their
- * cases belong to those phases and are not stubbed out here.
+ * demands it. `computeRound`, `findCycle`, `normaliseWritePath` and
+ * `validateWorkstream` still threw when this header was written; phase 3 filled
+ * them and appended their blocks at the foot of this file (see the PHASE 3
+ * ADDENDUM below). `groupKey` (R40) is NOT in this module at all any more —
+ * phase 4B retired the stub rather than filling it, and the function lives in
+ * `lib/project-reconcile.ts` with its own cases in
+ * `project-reconcile.test.ts`.
  *
  * THE REPLICA PROOF IS NOT HERE. R18 lives in `task-graph-replay.test.ts`, its
  * own file because it is the most important test in the project and must be
@@ -41,8 +45,9 @@
  * file: *Round computation* (R23, R24), *Cycles* (R25) and *Validators* (R28),
  * each named after the `03-quality.md` §2.1 group that demands it. The header
  * above says `computeRound`, `findCycle`, `normaliseWritePath` and
- * `validateWorkstream` "still throw" — as of this commit they do not; only
- * `groupKey` (R40, phase 4) does. The five assertions those blocks most depend
+ * `validateWorkstream` "still throw" — as of that commit they did not; only
+ * `groupKey` (R40, phase 4) did, and phase 4B retired it out of this module
+ * entirely (round 221). The five assertions those blocks most depend
  * on were each observed FAILING against a deliberately broken implementation
  * before being trusted (defect 2 above); the transcripts are in the round's
  * report and in `evidence/phase3-api.md`.

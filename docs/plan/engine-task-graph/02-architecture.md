@@ -138,8 +138,22 @@ export function selectClaimable(
   running: readonly GraphTask[],
 ): GraphTask[];
 
-/** Consolidation group key (R40). */
-export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string;
+/* RETIRED, round 221 (phase 4B), in the commit that wrote the real function and
+   deleted the stub and both census entries that named it (standing rule 4).
+
+   `groupKey()` (R40) is NOT exported from task-graph.ts. It lives in
+   `lib/project-reconcile.ts`. Round 102 found the contradiction — §10 of
+   04-phases assigns R40 to project-reconcile.ts, so nobody was ever going to
+   fill this stub and every caller would have met a throw — and the round-221
+   planner re-checked the tree for a graph-side consumer of a group key and
+   found none. The ruling: the EXPORT was the mistake, not the phase map. The
+   group key is a consolidation concern and all three of its terms are already
+   in project-reconcile.ts's hand; exporting it from the graph module bought a
+   cross-module dependency and no caller.
+
+   Its signature there is unchanged — `groupKey(t: Pick<GraphTask, "round" |
+   "workstream">): string` — and it imports `GraphTask` as a type, so the
+   dependency runs one way and no cycle is closed. */
 
 /** Path normalisation + validation for write_set entries (R28). */
 export function normaliseWritePath(raw: string): string;   // throws on violation
@@ -717,6 +731,36 @@ The historical `rereview:` prefix is preserved for the same reason it already is
 Existing `chainKeys` test cases must pass **unmodified** (R41, R43). New cases
 cover a named workstream.
 
+**AND THE TITLES TOO — round 221, and the chain key alone would have blocked the
+project.** `project_tasks_identity_idx` (migration 0035) is
+`(project_id, round, role, title)`; migration 0040 added no workstream term.
+Two groups at one round therefore write two builders at `round + 1` with role
+`builder` and title `Fix cycle 1` — the SAME identity tuple. The second INSERT
+conflicts, `insertChainRow` classifies it `occupied`, and consolidation blocks
+the project with that workstream's merged feedback undelivered: §5's own
+motivating failure, through the other index. So the chain rows' TITLES carry the
+workstream on exactly the same terms as the keys:
+
+```
+workstream === "main"   →  Fix cycle <n>                        (byte-identical to today)
+                           Re-review after fix cycle <n>
+                           Re-test after fix cycle <n>
+otherwise               →  Fix cycle <n> · <ws>
+                           Re-review after fix cycle <n> · <ws>
+                           Re-test after fix cycle <n> · <ws>
+```
+
+Adding `workstream` to the identity index was rejected: it is a phase-1
+migration this phase does not own, and it would change what idempotency means
+for every `createTask` caller. The title is already the component that separates
+two rows the round and the role cannot.
+
+`FIX_TASK_TITLE` and `RECHECK_TASK_TITLE` take the workstream as an optional
+trailing parameter defaulting to `main`, for R43's reason: the existing cases
+call them with the old arity and must pass unmodified. Same for `chainKeys` and
+`consolidateVerdictRound`. It is a default-for-omitted, not an NF1
+fallback-for-invalid.
+
 ### 5.2 Fix-chain rows join the graph
 
 `createFixChain` must write the graph fields, or the chain rows are born as
@@ -731,6 +775,22 @@ roots and run immediately — in parallel with the very work they follow:
 stored value, and `1 + max(dep.round)` yields the same numbers anyway — the
 arithmetic and the rule agree, which is worth asserting in a test rather than
 assuming.
+
+**Asserted, round 221, and the assertion found the exception.** They agree
+everywhere `computeRound()` has an answer, and disagree only where it has none:
+at the last two rounds of a phase block, R24's 99-level cap makes `computeRound`
+REFUSE where the literal answers 100. The chain is still created — promotion is
+by `depends_on`, so only the Kanban's phase label moves, and refusing would
+wedge a real fix cycle to protect a numbering convention. Recorded with its
+reachability argument in R42; the cases are `T23`'s two boundary tests.
+
+The row descriptors are computed by `fixChainGraphFields()` in
+`lib/project-reconcile.ts` and handed to `createFixChain` as `input.graph`,
+rather than assembled inside the DB module — one definition for the rounds, the
+edges and the write-set union, and a shape test that needs no database. The
+builder's `depends_on` is deduped and sorted, which does three jobs: it makes
+the row byte-identical across replays, it makes R41's set comparison
+well-defined, and it is the immutable identity R41's guard leans on.
 
 ### 5.3 Everything else is untouched
 

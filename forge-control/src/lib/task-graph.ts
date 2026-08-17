@@ -27,8 +27,8 @@
  * process, and the replay proof (R18) has to run under `tsx --test` on a host
  * with Postgres stopped.
  *
- * PHASE 3 STATE — this module is still deliberately incomplete, and the list
- * below is maintained rather than left to rot.
+ * PHASE 4 STATE — this module is COMPLETE, and the list below is maintained
+ * rather than left to rot.
  *
  *  REAL: `legacyRoundReady()` and `GraphIntegrityError` (phase 1); `readyRule()`
  *  (R12), `graphReady()` (R11, R14, R69), `taskDepth()` (R19), `conflicts()`
@@ -36,9 +36,12 @@
  *  (R23, R24), `findCycle()` (R25, R26), `normaliseWritePath()` and
  *  `validateWorkstream()` (R28), with `GraphValidationError` — phase 3.
  *
- *  STILL A STUB THAT THROWS: `groupKey()` (R40) lands in phase 4. Requirement
- *  ids are authoritative over any prose enumeration of phases (round 102), and
- *  `04-phases.md` §10 is the map. Its throwing is not a defect.
+ *  NO STUB REMAINS. `groupKey()` (R40) was the last one and it is RETIRED from
+ *  this module rather than filled — round 221 (phase 4B), with the §1.1 export
+ *  and both census entries that named it, in one commit. It lives in
+ *  `lib/project-reconcile.ts`; the reasoning is at its former site below.
+ *  Requirement ids are authoritative over any prose enumeration of phases
+ *  (round 102), and `04-phases.md` §10 is the map.
  *
  * TWO ERROR CLASSES, AND THE SPLIT IS THE ROUTE'S (phase 3). A
  * `GraphIntegrityError` means the graph ALREADY IN THE DATABASE is corrupt
@@ -48,9 +51,10 @@
  * for a corrupt stored graph — telling the caller their perfectly good request
  * was the problem.
  *
- * A stub returning a plausible default (`graphReady` → `false`) would let the
- * replay test pass for the wrong reason, so there are none. Every message is
- * prefixed `task-graph: ` and names its function and its requirement id.
+ * A stub returning a plausible default (`graphReady` → `false`) would have let
+ * the replay test pass for the wrong reason, so there never were any — every
+ * stub this module carried threw, with a message prefixed `task-graph: ` naming
+ * its function and its requirement id. None are left.
  */
 
 import type { TaskStatus } from "../db/projects.ts";
@@ -704,18 +708,33 @@ export function selectClaimable(
 }
 
 /* ------------------------------------------------------------------------- *
- * Grouping and validation
+ * Validation
  * ------------------------------------------------------------------------- */
 
-/**
- * The consolidation group key (R40). Two reviewers of different workstreams
- * that happen to land on the same computed round are two groups, not one: a
- * single merged fix builder could only live in one worktree and would silently
- * drop the other workstream's findings.
+/*
+ * `groupKey()` (R40) STOOD HERE AND IS RETIRED — round 221, phase 4B, in the
+ * same commit that writes the real one and removes both census entries that
+ * named this stub (standing rule 4: a requirement and its gate clause retire
+ * together).
+ *
+ * It lives in `lib/project-reconcile.ts` now. `02-architecture.md` §1.1
+ * declared it here; round 102 found that `04-phases.md` §10 assigns R40 to
+ * `project-reconcile.ts` instead, so nobody was ever going to fill this stub
+ * and every caller would have met a throw. The ruling — re-checked at round 221
+ * against the tree, which has no graph-side caller of a group key and never
+ * had one — is that the export was the mistake, not the phase map: the group
+ * key is a CONSOLIDATION concern, and all three of its terms are already in
+ * project-reconcile.ts's hand. Exporting it from here bought a cross-module
+ * dependency and no caller.
+ *
+ * Nothing in this module is a stub any more. `task-graph-replay.test.ts`'s
+ * stub census, which existed to prove the remaining stubs threw, now asserts
+ * over the SOURCE that no stub marker survives here — a census looping over an
+ * empty list would have certified itself (00-vision.md §7 rule 3). The marker
+ * it looks for is the phrase every stub in this module's history threw with;
+ * this comment deliberately does not quote it, because a mention would be
+ * indistinguishable from a stub to a substring scan.
  */
-export function groupKey(t: Pick<GraphTask, "round" | "workstream">): string {
-  throw new Error("task-graph: groupKey() lands in phase 4 (R40)");
-}
 
 /**
  * Normalise and validate one `write_set` entry (R28): repo-relative POSIX,

@@ -626,12 +626,58 @@ round are two groups, not one — a single merged fix builder could only live in
 one worktree and would silently drop the other workstream's findings.
 *How proved:* unit — a new case in `cp2-reconciler-interaction.test.ts` with two
 same-round reviewers in different workstreams yielding two independent chains.
+**Landed round 221** — `describe("R40 — two same-round reviewers in different
+workstreams are TWO chains")` in that file, plus T21/T29 in
+`project-reconcile.test.ts`, plus `scripts/checks/check-fix-chain-graph.ts` §5
+against real rows.
+
+**AMENDED ROUND 221 — THE CHAIN KEY WAS NOT ENOUGH, AND R40 AS WRITTEN WOULD
+HAVE BLOCKED THE PROJECT IT EXISTS TO UNBLOCK.** R40 and R41 namespace the
+`chain_key`. `project_tasks_identity_idx` (migration 0035) is
+`(project_id, round, role, title)` and migration 0040 **added no workstream
+term** — verified against the live DDL by `check-fix-chain-graph.ts`'s
+pre-flight, which reads the index's columns out of `pg_index` rather than
+believing this sentence. So two groups at one round in two workstreams each
+insert a fix builder at `round + 1`, role `builder`, title `Fix cycle 1`: the
+SAME identity tuple. The second INSERT conflicts, `insertChainRow` correctly
+classifies it `occupied`, and `consolidateVerdictGroup` **blocks the project
+with that workstream's merged feedback undelivered** — R40's own motivating
+failure, arriving through the other index.
+
+**The fix, in the same commit:** `FIX_TASK_TITLE` and `RECHECK_TASK_TITLE` take
+the workstream and append `" · <workstream>"` for non-`main`. `main` keeps its
+titles **byte for byte** — the same replay argument as R41's, applied to the
+identity tuple instead of to the key, and the reviewer wording in particular is
+frozen back to pre-R850 chains. The alternative — adding `workstream` to
+`project_tasks_identity_idx` — was rejected: it is a phase-1 migration this
+phase does not own, it would change the meaning of idempotency for every
+`createTask` caller, and it is not needed, because the title is already the
+component that separates two rows the round and the role cannot.
+*How proved:* unit — `T28` in `project-reconcile.test.ts` (the `main` titles
+against string literals; three workstreams' titles pairwise distinct; the
+40-character workstream still inside the 200-character slice) and the identity
+assertion in cp2's R40 block; `check` — `check-fix-chain-graph.ts` §5, where
+both builders are `created` rather than one `occupied`.
 
 **R41.** `chainKeys()` gains a workstream namespace **only for non-`main`
 workstreams**: `main` keeps `fix:<round>:<cycle>` / `rereview:<round>:<cycle>` /
 `retest:<round>:<cycle>` byte-identically, so every historical chain replays
 against the row it already wrote. Other workstreams get
 `fix:<workstream>:<round>:<cycle>` and so on.
+
+**LANDED ROUND 221, with one implementation decision recorded here because it is
+load-bearing for R43.** The workstream parameter is **optional**, defaulting to
+`MAIN_WORKSTREAM`. Not for convenience: R43 requires every existing case in
+`project-reconcile.test.ts` to pass **unmodified**, and T9 calls
+`chainKeys(7, 2)`. A required third parameter would fail typecheck in the very
+tests that prove the historical keys did not move. The same reasoning applies to
+`consolidateVerdictRound`'s fourth parameter and to the two title functions. It
+is a default-for-omitted and **not** an NF1 fallback-for-invalid — the
+distinction `createTask`'s `workstream ?? 'main'` already documents: nothing is
+rescued, no error is swallowed, and an invalid workstream is passed through
+untouched so the CHECK constraint refuses it loudly. The one production caller
+passes the group's workstream explicitly, and `cp2-reconciler-interaction.test.ts`
+asserts that it does.
 
 **THE HAND-RENUMBER HAZARD, recorded round 204 (red-team finding 4) so that phase
 4 owns it explicitly rather than inheriting it.** `chainKeys(round, cycle)`
@@ -656,6 +702,56 @@ hazard survives phase 4 by default unless phase 4 decides otherwise on purpose.
 cases for a named workstream, plus (phase 4) a case that a renumbered group
 cannot produce a second chain.
 
+**THE DECISION, ROUND 221 (phase 4B): A GUARD, NOT A RE-KEYING.** The obligation
+above offered two routes. Re-keying the chain onto the gating task ids is
+**unavailable**, and not merely more expensive: R41's own replay property
+forbids changing the `chain_key` STRING for `main`, so the identity cannot be
+rebased into the key without breaking the thing the key exists for. What R42
+hands over free is the immutable identity itself — the fix builder's
+`depends_on` **is** the gating task ids, immutable by R29, where the round is
+not. So:
+
+> `createFixChain()` refuses to insert a fix builder whose
+> `(project_id, fix_cycle, depends_on-as-a-set)` already belongs to a chain row
+> carrying a **different** `chain_key`.
+
+The rule is `duplicatesFixChain()` in `lib/project-reconcile.ts` — pure,
+unit-tested, and **called** by `db/projects.ts` rather than restated in SQL, so
+there is no second copy to drift. The SELECT beside it only narrows (this
+project, role `builder`, `chain_key IS NOT NULL`, this cycle). It runs inside
+the transaction and **before** the first INSERT, so a refusal writes nothing.
+
+Four properties, each with a case:
+
+1. **A renumbered group is refused.** The new `chain_key` differs and the round
+   differs, so neither unique index would stop it — which is the whole hazard.
+2. **Our own chain, replayed, is not refused.** An existing row carrying OUR
+   chain_key returns `false` explicitly: the crash-between-COMMIT-and-mark-done
+   path recomputes the same key, and `insertChainRow` must still absorb it as
+   `replay`. Refusing it would turn the guard into the wedge.
+3. **A later cycle of the same group is not refused** — cycle 2 over the same
+   gating tasks is the legitimate next chain, and `MAX_FIX_CYCLES` bounds it.
+4. **It throws rather than returning an outcome.** A second chain for one group
+   is not a state the caller can reconcile, and `insertChainRow`'s three-way
+   `created`/`replay`/`occupied` classification is left untouched (R44) — it is
+   the net that catches a chain-key MISTAKE, and overloading it with a chain-key
+   HAZARD would blunt both. `project-tick.ts`'s per-group `catch` escalates the
+   throw to Konrad after `MAX_GROUP_FAILURES` consecutive ticks with the message
+   quoted in the push, and the message names the offending task id, both chain
+   keys and the remedy.
+
+**THE GUARD'S STATED BOUNDARY.** A **partial** renumber — an operator moving
+some members of a group and not others — changes the gating set, so the two
+chains have different identities and a second chain lands. That is correct
+rather than a hole: two disjoint member sets are two different dependency joins,
+and nothing distinguishes that from a genuine second group. Asserted as a case
+so the limit is documented rather than discovered.
+*How proved:* unit — `T24` in `project-reconcile.test.ts`, seven cases including
+the boundary and the subset case; `check` —
+`scripts/checks/check-fix-chain-graph.ts` §6, which renumbers a real group and
+asserts the refusal **plus two positive controls** that both unique indexes
+would have admitted the row, so the refusal cannot be credited to an index.
+
 **R42.** Fix-chain rows created by `createFixChain()` carry the graph fields:
 the fix builder `depends_on` = the gating task ids, `workstream` = the group's
 workstream, `write_set` = the union of the write-sets of the tasks under review;
@@ -663,7 +759,38 @@ each re-checker `depends_on` = `[fix builder id]`, same workstream, empty
 write-set. Without this the chain rows would be graph roots and would run
 immediately, in parallel with the work they are meant to follow.
 *How proved:* unit — a `createFixChain` shape test; `check` against a throwaway
-Postgres.
+Postgres. **Landed round 221:** the descriptors are computed by
+`fixChainGraphFields()` in `lib/project-reconcile.ts` (pure, so the shape test
+needs no database) and `createFixChain` takes them as `input.graph` rather than
+assembling them, so the rounds, the edges and the write-set union have one
+definition. `T23` in `project-reconcile.test.ts` is the shape test;
+`scripts/checks/check-fix-chain-graph.ts` §3–§4 reads the resulting rows back
+out of a real `project_tasks` and asserts the replay is still absorbed.
+
+**AMENDED ROUND 221 — WHERE `round + 1` AND `1 + max(dep.round)` DISAGREE, found
+by writing the agreement test this requirement asked for.** The agreement holds
+everywhere except the **last two rounds of a phase block**: R24 caps a phase at
+99 depth levels, so for a group at round 99 `computeRound()` **refuses** where
+the literal answers 100. The two rules therefore agree on a value over the whole
+domain where `computeRound` has one, and disagree only where it has none.
+
+**The decision: keep the literal and create the chain.** Promotion is by
+`depends_on` and never by round — that is this project's whole point — so the
+schedule is unaffected and only the phase LABEL moves: the fix chain of phase
+0's round 99 appears under phase 1 in the Kanban's `floor(round / 100) * 100`
+grouping (R55). Refusing would wedge a real fix cycle to protect a numbering
+convention, leaving the group's feedback undelivered — trading a cosmetic defect
+for the exact failure the reconcile module exists to prevent.
+
+**Reachability, stated rather than hand-waved:** it takes 99 dependency levels
+inside ONE phase for a group to sit at round 99. The architect seeds one planner
+per phase at `k*100` (R51) and every other round is `1 + max(dep.round)`, so a
+phase's depth is the longest chain its planner creates — a dozen at most in
+every project this engine has run. Phase 6 owns the Kanban and should know the
+label can cross; nothing else reads the number.
+*How proved:* unit — `T23`'s *"THE BOUNDARY the agreement does NOT hold at"* and
+*"REACHABILITY of that boundary"*, which assert `computeRound()` throwing at 99
+and agreeing at every round below the block ceiling.
 
 **R43. Every existing test in `project-reconcile.test.ts`,
 `cp2-reconciler-interaction.test.ts` and `cp3-linkage.test.ts` passes
@@ -682,11 +809,40 @@ restated as **group** completion — every task sharing `(project, round,
 workstream)` is `done` — so a workstream's completion is not announced by
 another workstream draining. *How proved:* unit.
 
+**Landed round 221.** The SQL gains `AND workstream = $3`; the text is
+`groupCompleteNotification()` in `lib/project-reconcile.ts`, **byte-identical
+for `main`** and naming the workstream otherwise. The fire-exactly-once property
+is what the workstream term is FOR, and it is worth spelling out: keyed on
+`(project, round)` alone, workstream A's last task announces a round B is still
+inside, and B's own completion then never fires at all — A spent the round's one
+announcement. Both call sites pass a workstream (the group path in
+consolidation, and the per-task path for non-verdict roles), and cp2 asserts
+there are exactly two of them, so a third added later cannot quietly pass the
+round alone. The `🔁 fix cycle opened` push gained the same treatment for the
+same reason.
+*How proved, precisely:* unit — `T26` in `project-reconcile.test.ts` (the `main`
+string against a literal; two workstreams' texts distinct); source — cp2's
+*"roundIsComplete is group completion, at BOTH of its call sites"*, which also
+pins the call-site count.
+
 **R46.** `unwedgeProject()` retries the earliest **failed group** rather than the
 earliest failed round: earliest by `(round, workstream)` ordered by round then
 workstream name, so an operator unwedging a project does not restart two
 workstreams at once.
 *How proved:* unit over the pure selection helper.
+
+**Landed round 221.** The helper is `earliestFailedGroup()` in
+`lib/project-reconcile.ts`; `unwedgeProject` reads `SELECT DISTINCT round,
+workstream` and calls it, rather than asking SQL for a `MIN(round)`, so the
+ordering rule is unit-testable without a database and this module still holds no
+decision (`02-architecture.md` §1.2). The return value gains `workstream` so the
+API can say which group moved. `localeCompare` is deliberately not used: the
+selection an operator gets must not vary with the process's locale, and the
+charset is `[a-z0-9-]`, on which `<` is a total order.
+*How proved, precisely:* unit — `T25`, five cases including order-independence
+and that the selection is returned by value; source — cp2's *"unwedgeProject
+retries ONE group, chosen by the pure helper"*, which also asserts
+`SELECT MIN(round)` is gone.
 
 ---
 
