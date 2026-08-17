@@ -70,10 +70,13 @@ import { useDismissals } from "./dismissals";
 import {
   fetchCapabilities,
   fetchChatTeam,
+  postRunStop,
+  postRunTerminate,
   type CapabilitiesResponse,
   type TeamNode,
   type TeamResponse,
 } from "./teamApi";
+import { toast, toastError } from "../_ui/Toasts";
 import {
   createTeamRowCache,
   flattenTeam,
@@ -218,6 +221,16 @@ export function ChatTeamPanel({
     dismissRef.current = dismiss;
   }, [dismiss]);
 
+  /* The team query's own refetch, reachable from the two dependency-free
+   * handlers below. Same ref discipline as `capsRef`/`openNodeRef` above and
+   * for the same reason: a `team` (or a queryClient) in those dep arrays gives
+   * `handleStop`/`handleX` a new identity on every poll, every memo(TeamRowView)
+   * bails out no longer, and NFU2's zero-re-render hover claim dies with it. */
+  const refetchTeamRef = useRef(team.refetch);
+  useEffect(() => {
+    refetchTeamRef.current = team.refetch;
+  }, [team.refetch]);
+
   /** U17's auto-disarm. `decideXClick` treats a stale arming as expired on its
    *  own, so this timer is the VISUAL disarm — the machine stays correct in a
    *  backgrounded tab where the timer never fires. */
@@ -248,9 +261,23 @@ export function ChatTeamPanel({
     // GUARD (redundant with the decision above, and deliberately so — the
     // reviewer strips `disabled` in devtools and clicks).
     if (!capsRef.current.stop) return;
-    // CONTRACT: engine-v2-research-lane ships POST /api/runs/:id/stop and
-    // flips capabilities.control_plane.stop. Until then there is nothing to
-    // call, and this file contains no fetch that could be made to fire.
+    /* The 202 is reflected as AN IMMEDIATE REFETCH of the team query, not as a
+     * per-row pending ghost. That is a DECISION, not an omission: a pending
+     * flag would have to reach the row as a new prop, and a changing prop is
+     * exactly what stops `memo(TeamRowView)` from bailing out — the bail-out
+     * round 1302 measured is what makes hovering 108 rows cost zero renders.
+     * The engine moves the row to `paused` within one 6s poll anyway; this
+     * refetch just fetches that poll now. Do not "improve" it into row state.
+     *
+     * The catch is the only place the operator learns the verb was refused:
+     * `postRunStop` throws the engine's own reason string (409 "run is already
+     * cancelled", 404 "unknown run") and the toast prints it verbatim. */
+    void postRunStop(nodeId)
+      .then(() => {
+        toast(`stop sent — ${nodeId.slice(0, 8)}`, "ok");
+        void refetchTeamRef.current();
+      })
+      .catch((e: unknown) => toastError("Stop failed", e));
   }, []);
 
   const handleX = useCallback((nodeId: string, settled: boolean) => {
@@ -288,10 +315,17 @@ export function ChatTeamPanel({
         if (!capsRef.current.terminate) return;
         armedRef.current = null;
         setArmedId(null);
-        // CONTRACT: engine-v2-research-lane ships POST /api/runs/:id/terminate
-        // and flips capabilities.control_plane.terminate. Unreachable today:
-        // with an all-false capabilities response `decideXClick` never returns
-        // this action, and no request exists to issue if it did.
+        /* Refetch, not a per-row pending flag — the same decision as
+         * `handleStop` above, taken for the same memo-bail-out reason; the
+         * long form is written out there. Still unreachable today: with an
+         * all-false capabilities response `decideXClick` never returns this
+         * action, and the flag flips on the engine lane's side first. */
+        void postRunTerminate(decision.id)
+          .then(() => {
+            toast(`terminate sent — ${decision.id.slice(0, 8)}`, "ok");
+            void refetchTeamRef.current();
+          })
+          .catch((e: unknown) => toastError("Terminate failed", e));
         return;
     }
   }, []);
