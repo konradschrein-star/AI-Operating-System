@@ -199,19 +199,19 @@ const PROSE_PINS = [
   },
   {
     section: "§2c",
-    cite: "`AssistantThread.tsx:235-237`",
-    bind: /`AssistantThread\.tsx:235-237` \(`UserMessage`\)/,
+    cite: "`AssistantThread.tsx:331-333`",
+    bind: /`AssistantThread\.tsx:331-333` \(`UserMessage`\)/,
     path: "forge-control-web/app/desktop/chat/AssistantThread.tsx",
-    line: 235,
+    line: 331,
     what: "UserMessage, where an inbound comms entry is dispatched",
     expect: /^function UserMessage\(\)/,
   },
   {
     section: "§2c",
-    cite: "`:279-281`",
-    bind: /and `:279-281`\s+\(`AssistantMessage`/,
+    cite: "`:375-376`",
+    bind: /and `:375-376`\s+\(`AssistantMessage`/,
     path: "forge-control-web/app/desktop/chat/AssistantThread.tsx",
-    line: 279,
+    line: 375,
     what: "AssistantMessage's comms lookup, for the outbound echo",
     expect: /^\s*const comms = useCommsFacts\(\);/,
   },
@@ -264,24 +264,45 @@ const LINE_RULES = [
     ],
   },
   {
-    context: /^\| `AssistantThread\.tsx` `CommsMessage\(\)`/,
+    context: /^\| `AssistantThread\.tsx` `CommsMessage\(\)` \| `:147-151`/,
     tokens: [
       { historical: "where CommsMessage sat before sibling commit 0938385 inserted two lines above it" },
-      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:149" },
+      { historical: "where CommsMessage sat between 0938385 and rounds 1871/1873/1875 — live until round 1875 found it rotted again, see the row below" },
     ],
   },
   {
-    context: /^\| `AssistantThread\.tsx` `UserMessage` dispatch/,
+    context: /^\| `AssistantThread\.tsx` `UserMessage` dispatch \| `:233-235`/,
     tokens: [
       { historical: "the pre-0938385 position of the UserMessage dispatch" },
-      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:235" },
+      { historical: "the pre-1871 position of the UserMessage dispatch — live until round 1875 found it rotted again, see the row below" },
     ],
   },
   {
-    context: /^\| `AssistantThread\.tsx` `AssistantMessage` dispatch/,
+    context: /^\| `AssistantThread\.tsx` `AssistantMessage` dispatch \| `:277-278`/,
     tokens: [
       { historical: "the pre-0938385 position of the AssistantMessage dispatch" },
-      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:279" },
+      { historical: "the pre-1871 position of the AssistantMessage dispatch — live until round 1875 found it rotted again, see the row below" },
+    ],
+  },
+  {
+    context: /^\| `AssistantThread\.tsx` `CommsMessage\(\)` \| `:149-153`/,
+    tokens: [
+      { historical: "the pre-1871 position of CommsMessage — superseded by rounds 1871/1873/1875" },
+      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:158" },
+    ],
+  },
+  {
+    context: /^\| `AssistantThread\.tsx` `UserMessage` dispatch \| `:235-237`/,
+    tokens: [
+      { historical: "the pre-1871 position of the UserMessage dispatch — superseded by rounds 1871/1873/1875" },
+      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:331" },
+    ],
+  },
+  {
+    context: /^\| `AssistantThread\.tsx` `AssistantMessage` dispatch \| `:279-281`/,
+    tokens: [
+      { historical: "the pre-1871 position of the AssistantMessage dispatch — superseded by rounds 1871/1873/1875" },
+      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:375" },
     ],
   },
   {

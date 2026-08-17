@@ -45,6 +45,15 @@ forge-control-web/app/desktop/settings/SettingsSurface.tsx	spend	The section blu
 forge-control-web/app/desktop/chat/QuotaStrip.tsx	spend	QuotaStrip.tsx:8 — a header COMMENT ("the credit tracker in Settings is the one place spend numbers are allowed"), naming the rule the strip obeys. The strip renders percentages and a refresh age; it renders no currency at all, which is exactly what the comment promises.
 forge-control-web/app/desktop/chat/context-window.ts	m < 10 \? m\.toFixed\(2\) : m\.toFixed\(1\)	toFixed(2) inside the "M" branch of a TOKEN-magnitude formatter (e.g. "1.23M"), identical in shape and reason to the already-listed AgentActivity.tsx humanTokens() and teamApi.ts fmtTokens() entries. A false positive of the naive toFixed(2) anchor.
 
+# ── Round 1875: two rounds' worth of unlisted hits, found red at HEAD ──
+#
+# 1871 and 1873 each landed a genuine `\bspen[dt]` hit that nobody allowlisted
+# before merging. Both are prose, not a rendered currency figure; both patterns
+# are scoped to the exact sentence, not the file or the bare word `spend`.
+
+forge-control-web/app/desktop/team/TeamRow.tsx	token spend was never recorded	Tooltip prose for the tokens cell when a sub-agent's thread carries no attributable entries ("token spend was never recorded for this sub-agent"). "Spend" here means TOKEN COUNT, not currency — the cell renders `n/a`, never a dollar figure. Landed round 1871, unlisted until round 1875.
+forge-control-web/app/desktop/nav-items.ts	spent a minute navigating	Header-comment prose describing the pre-fix bug ("a cold start of a console you had spent a minute navigating into") — TIME, not currency. Landed round 1871, unlisted until round 1875.
+
 # forge-control-web/app/desktop/ChatSurface.tsx — REMOVED in round 402.
 # 401b listed the chat header's "spent $X / cap $Y" line here as a documented
 # OPEN ITEM ("round 402 must remove it"). Round 402 removed it (U12 slim

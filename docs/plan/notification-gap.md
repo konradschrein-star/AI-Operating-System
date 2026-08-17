@@ -130,6 +130,16 @@ re-resolved** — which turned up two more the review had not looked at:
 | `AssistantThread.tsx` `CommsMessage()` | `:147-151` | `:149-153` | `0938385`, +2 lines above |
 | `AssistantThread.tsx` `UserMessage` dispatch | `:233-235` | `:235-237` | same |
 | `AssistantThread.tsx` `AssistantMessage` dispatch | `:277-278` | `:279-281` | same |
+
+**Round 1875 found the same three pins rotted again — the second drift event on this exact
+file, not `0938385` this time but rounds 1871/1873/1875 landing directly in this project's
+own worktree.** Re-resolved the same way, against `ed601ff`:
+
+| Pin | Was (`852b089`) | Now (`ed601ff`) | Cause |
+|---|---|---|---|
+| `AssistantThread.tsx` `CommsMessage()` | `:149-153` | `:158-162` | rounds 1871/1873/1875, +9 lines above; `fallbackRole` also renamed to `peer` (same binding, `commsHeader(facts, peer)`) |
+| `AssistantThread.tsx` `UserMessage` dispatch | `:235-237` | `:331-333` | same three rounds, +96 lines above |
+| `AssistantThread.tsx` `AssistantMessage` dispatch | `:279-281` | `:375-376` | same three rounds, +96 lines above; the cited span narrows to the two functional lines (`useCommsFacts()` call + dispatch) because a two-line comment now sits between the function signature and them |
 | `tool-summary.ts` "Async agent launched" banner note | `:384-386` | `:406-409` | `852b089`, this round's own `EMPTY_GIST` edit above it |
 | §2c `POST /:id/message` | `:214` | `:214` | **VERIFIED, unchanged.** Round 1353 "corrected" this to `:149`; that was the error, and it is reverted. |
 | §2c `toThreadEntry` | `:149` | `:149` | **VERIFIED, unchanged.** Same withdrawn correction, the other half. |
@@ -464,17 +474,17 @@ asserts the receiver/echo role+kind contract and the `[message from …]` prefix
 
 Rendered client-side as a direction-marked card, not an anonymous user bubble:
 
-`AssistantThread.tsx` — `CommsMessage()` (`:149-153` @ `852b089`)
+`AssistantThread.tsx` — `CommsMessage()` (`:158-162` @ `ed601ff`)
 ```tsx
 function CommsMessage({ facts }: { facts: CommsFacts }) {
   const peers = useContext(PeerRolesContext);
-  const fallbackRole = facts.peerRunId ? (peers.get(facts.peerRunId) ?? null) : null;
-  const header = commsHeader(facts, fallbackRole);
+  const peer = facts.peerRunId ? (peers.get(facts.peerRunId) ?? null) : null;
+  const header = commsHeader(facts, peer);
   const { identity } = header;
 ```
 
-dispatched from `AssistantThread.tsx:235-237` (`UserMessage`) and `:279-281`
-(`AssistantMessage`, for the outbound echo) @ `852b089`, with identity/colour resolved in
+dispatched from `AssistantThread.tsx:331-333` (`UserMessage`) and `:375-376`
+(`AssistantMessage`, for the outbound echo) @ `ed601ff`, with identity/colour resolved in
 `comms-identity.ts`.
 
 **Consequence:** every worker report, manager instruction and Konrad message that crosses
