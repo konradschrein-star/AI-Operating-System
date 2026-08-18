@@ -39,12 +39,16 @@ import {
   vaultAppend,
   vaultCreateNote,
   createReminder,
-  fetchReminders,
   dismissReminder,
   type Webhook,
   type CronSchedule,
   type VaultSection,
 } from "./api";
+import {
+  fetchRemindersWindow,
+  REMINDER_WINDOW_ALL_DAYS,
+  REMINDER_WINDOW_DEFAULT_DAYS,
+} from "./api-reminders";
 
 /* ----------------------------------------------------------------------------
  * Tab definitions
@@ -1889,9 +1893,24 @@ function CaptureScreen() {
   const [saved, setSaved] = useState<Array<{ label: string; ts: number }>>([]);
   const [error, setError] = useState<string | null>(null);
 
+  /* The reminders list below is THE reminders surface — there is no desktop one.
+   * It renders the ruled retention window (phase 6): every pending row, plus the
+   * last 7 days of delivered ones, with everything older COUNTED into a fold
+   * rather than hidden. Ruling: docs/plan/artifacts/os-usable-for-work/phase6/
+   * reminders-policy-escalation.md §3.
+   *
+   * "show" widens the window to the whole table instead of calling a second
+   * endpoint, so the open list and the expanded list cannot disagree about what
+   * a row is. The query key carries the window, so the two are cached apart and
+   * a dismissal invalidates both (the `["reminders"]` prefix matches either). */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const windowDays = historyOpen
+    ? REMINDER_WINDOW_ALL_DAYS
+    : REMINDER_WINDOW_DEFAULT_DAYS;
+
   const remindersQ = useQuery({
-    queryKey: ["reminders"],
-    queryFn: fetchReminders,
+    queryKey: ["reminders", "window", windowDays],
+    queryFn: () => fetchRemindersWindow(windowDays),
     refetchInterval: 60_000,
   });
 
@@ -2091,14 +2110,59 @@ function CaptureScreen() {
           marginTop: 10,
         }}
       >
-        REMINDERS
+        {/* A number with no unit is how this fleet has been bitten repeatedly:
+         *  the old header read a bare "REMINDERS" over a truncated page. Every
+         *  number here says what it counts and over what span. */}
+        REMINDERS ·{" "}
+        {remindersQ.data
+          ? `${remindersQ.data.reminders.length} SHOWN · ${
+              historyOpen
+                ? "ALL HISTORY"
+                : `LAST ${remindersQ.data.window_days} ${
+                    remindersQ.data.window_days === 1 ? "DAY" : "DAYS"
+                  }`
+            } · ${remindersQ.data.counts.pending} PENDING`
+          : remindersQ.isError
+            ? "UNAVAILABLE"
+            : "LOADING…"}
       </div>
-      {(remindersQ.data ?? []).length === 0 && (
-        <div className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
-          none pending.
+
+      {/* An error must not render as an empty list. A reminders pane that shows
+       *  nothing because a fetch failed is indistinguishable from one that is
+       *  genuinely empty, and this surface is Konrad's only reminders view. */}
+      {remindersQ.isError && (
+        <div
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.bleed,
+            padding: "8px 12px",
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            background: tokens.dangerActionBg,
+            borderRadius: 8,
+          }}
+        >
+          reminders unavailable —{" "}
+          {remindersQ.error instanceof Error
+            ? remindersQ.error.message
+            : String(remindersQ.error)}
         </div>
       )}
-      {(remindersQ.data ?? []).map((r) => {
+
+      {remindersQ.data && remindersQ.data.reminders.length === 0 && (
+        <div className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+          {/* Never a bare "none pending" — that sentence meant three different
+           *  things over a list of 100 DELIVERED rows. Say what it is empty OF,
+           *  and where the rest of them went. */}
+          {historyOpen
+            ? "no reminders at all — nothing pending, nothing delivered, nothing in history."
+            : `no reminders in the last ${remindersQ.data.window_days} ${
+                remindersQ.data.window_days === 1 ? "day" : "days"
+              } — ${remindersQ.data.history_count} in history.`}
+        </div>
+      )}
+
+      {(remindersQ.data?.reminders ?? []).map((r) => {
         const due = new Date(r.due_at);
         const overdue = due.getTime() < Date.now() && r.status === "pending";
         return (
@@ -2141,8 +2205,30 @@ function CaptureScreen() {
                 })}
                 {r.recur ? ` · ${r.recur}` : ""}
                 {r.status === "delivered" ? " · delivered" : ""}
+                {r.status === "pending" ? " · pending" : ""}
               </div>
             </div>
+            {/* The count badge on a collapsed repeat. Inert under today's ruling
+             *  — Konrad did not pick "group repeats" — so repeat_count is 1 and
+             *  this renders nothing. It is here because the badge and the
+             *  collapse must ship together; a collapsed row with no count is a
+             *  row that ate its siblings silently. */}
+            {r.repeat_count > 1 && (
+              <span
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color: tokens.textMuted,
+                  background: tokens.bgGutter,
+                  border: `1px solid ${tokens.borderDivider}`,
+                  borderRadius: 999,
+                  padding: "2px 7px",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                ×{r.repeat_count}
+              </span>
+            )}
             <span
               className="ms"
               onClick={() => dismissM.mutate(r.id)}
@@ -2157,6 +2243,31 @@ function CaptureScreen() {
           </div>
         );
       })}
+
+      {/* THE HISTORY FOLD. Nothing is deleted and nothing is auto-dismissed —
+       *  the older rows are counted here and are one tap away. When the fold is
+       *  open the window is the whole table, so history_count is 0 by
+       *  definition and the label says how many rows are on screen instead. */}
+      {remindersQ.data && (historyOpen || remindersQ.data.history_count > 0) && (
+        <div
+          onClick={() => setHistoryOpen((v) => !v)}
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.accent,
+            textAlign: "center",
+            padding: "9px 0",
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 10,
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+        >
+          {historyOpen
+            ? `showing all ${remindersQ.data.reminders.length} — hide older`
+            : `${remindersQ.data.history_count} older — show`}
+        </div>
+      )}
     </div>
   );
 }

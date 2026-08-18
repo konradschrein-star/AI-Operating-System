@@ -9,6 +9,12 @@
 import pg from "pg";
 import { nextRecurrence } from "../lib/when-parser.ts";
 import { assertReminderTextFits } from "../lib/reminder-text.ts";
+import {
+  foldReminders,
+  type FoldedReminder,
+  type ReminderRepeatGroup,
+  type ReminderRetentionCounts,
+} from "../lib/reminder-retention.ts";
 
 const { Pool } = pg;
 
@@ -70,6 +76,88 @@ export async function listReminders(limit = 100): Promise<Reminder[]> {
     [limit],
   );
   return r.rows;
+}
+
+/**
+ * The windowed view — phase 6's ruled retention (R79/R80/R82), served ALONGSIDE
+ * listReminders() rather than replacing it.
+ *
+ * WHY A SECOND FUNCTION AND NOT A CHANGE TO THE FIRST. listReminders()'s exact
+ * SQL text is asserted by lib/reminder-dedup.test.ts (R705): its pending-first,
+ * due_at ASC ordering is what a dedup caller was proven to depend on. So the
+ * retention fix ADDS a path. Callers of the old one see byte-identical behaviour.
+ *
+ * WHY NO LIMIT. The old page silently truncates at 100 — measured on 2026-08-18
+ * at 156 non-dismissed rows, of which 100 returned and 56 vanished with no flag,
+ * and all 56 dropped rows were from that day (phase6/reminders-triage.md P3).
+ * A silent truncation plus a windowed view would mean the history count itself
+ * was wrong, which is the one number this phase promises. So every row is read —
+ * dismissed ones included, see below — and the split is computed in
+ * lib/reminder-retention.ts, where it is unit-testable; the surface receives
+ * counts, never a truncated page.
+ *
+ * The ceiling below is a runaway guard, not a page size. At 180 rows and the
+ * worst observed arrival day of 67, it is years away — and it THROWS with both
+ * numbers rather than returning a short list, because a wrong history count looks
+ * exactly like a right one.
+ *
+ * Reads nothing outside `reminders` and writes nothing at all: retention is
+ * hide / group / collapse / count. No row is removed by this path, ever.
+ */
+export const REMINDER_VIEW_ROW_CEILING = 20_000;
+
+export interface ReminderViewPage {
+  reminders: FoldedReminder<Reminder>[];
+  groups: ReminderRepeatGroup[];
+  history_count: number;
+  window_days: number;
+  counts: ReminderRetentionCounts;
+}
+
+export async function listRemindersForView(opts: {
+  windowDays: number;
+  /** Injectable clock. Defaults to the real one here — this is the layer that is
+   *  allowed to know the time; lib/reminder-retention.ts is not. */
+  now?: Date;
+  /** Escalation option 4 (collapse repeated texts). Konrad did not pick it, so
+   *  the shipped route leaves it off. See reminders-policy-escalation.md §3.2. */
+  groupRepeats?: boolean;
+}): Promise<ReminderViewPage> {
+  // NO `WHERE status != 'dismissed'` HERE, deliberately. The exclusion happens in
+  // foldReminders, which then reports `counts.dismissed` as a real number and
+  // `counts.input` as the whole table — so the view's own arithmetic is a
+  // running proof that no row was removed: `counts.input` must equal
+  // `SELECT count(*) FROM reminders`, which is the query phase 6's reviewer runs
+  // itself. Filtering here would have made `counts.dismissed` a permanent 0 that
+  // looks like "nothing has ever been dismissed".
+  const r = await pool.query<Reminder>(
+    `SELECT ${COLS} FROM reminders
+      ORDER BY (status = 'pending') DESC, due_at DESC`,
+  );
+  if (r.rows.length > REMINDER_VIEW_ROW_CEILING) {
+    throw new Error(
+      `listRemindersForView: ${r.rows.length} reminders exceeds the ` +
+        `${REMINDER_VIEW_ROW_CEILING}-row ceiling. Nothing has been deleted and nothing will be; ` +
+        `the fix is to move the window split into SQL (a count(*) for the history total plus a ` +
+        `windowed SELECT) rather than to cap this list, because a capped list makes history_count ` +
+        `wrong while looking right.`,
+    );
+  }
+  const view = foldReminders(r.rows, {
+    windowDays: opts.windowDays,
+    now: opts.now ?? new Date(),
+    groupRepeats: opts.groupRepeats ?? false,
+  });
+  // `visible` → `reminders`, because every other reminders payload calls the
+  // array `reminders` and a second name for the same thing on one endpoint is
+  // how a client ends up reading the wrong key and rendering an empty list.
+  return {
+    reminders: view.visible,
+    groups: view.groups,
+    history_count: view.history_count,
+    window_days: view.window_days,
+    counts: view.counts,
+  };
 }
 
 /** Ceiling for a marker-scoped lookup. See findRemindersByText for why it is safe. */
