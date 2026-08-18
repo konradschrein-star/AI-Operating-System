@@ -1682,3 +1682,151 @@ Nothing under `forge-control-web/app/` or `forge-control/src/`; the six
 mutations above exist only in this transcript.
 
 Produced at `5823302a8d9d78a59a99be0f6241d779e691e56f`.
+
+---
+
+## Addendum (round 6, fix cycle 3) — the `hidesRows` coverage claim in `6bdd24a`, corrected
+
+**This section amends a commit message it cannot rewrite.** `6bdd24a`
+(*"fix(scripts-checks-typecheck-gate/phase 3, family A): the fixture drift
+against TeamRow, XClickInput and WorkingMsSource"*) contains this paragraph:
+
+> `check-dismiss-peek.tsx:115` and `check-stop-affordance.tsx:111` — the local
+> `row()` helpers omitted `hidesRows`. Value chosen: 1 in both, **and here it IS
+> behavioural.** … In check-dismiss-peek the settled, non-operator row at 1 wears
+> the one-click undoable ✕ (`data-x-confirms=false`) that "the ✕ names the
+> affordance that brings the row back" is asserted against. In
+> check-stop-affordance the CASES table walks settled and running; at 1 the
+> settled ✕ is the one-click dismissal and the running ✕ is the
+> capability-gated terminate.
+
+**The value 1 is correct. "Here it IS behavioural" is not.** Phase 3's gate
+(`evidence/phase3-gate.md`, finding 1, upheld as a blocker) and phase 3's red
+team (`evidence/phase3-redteam.md`) each found it independently; round 6
+re-measured it from scratch rather than reading either, and the transcript below
+is round 6's own.
+
+**What is true instead.** `hidesRows` is **inert in both `.tsx` files**. Neither
+one's assertions can observe the one-click/two-click boundary at all, so no value
+of this field can move them:
+
+- `check-dismiss-peek.tsx` — the only assertion that could see the boundary
+  matches `.includes("dismissed · show")`. `dismissTitle`
+  (`team/confirm.ts:244-263`) builds that phrase once, as the local `undo`, and
+  appends it to **all three** of its return branches. A substring shared by every
+  branch is true at every value. (Round 6's own note on the shape: an assertion
+  over a clause common to every branch passes at every fixture value, which is
+  why the flip must be measured in both directions rather than reasoned about.)
+- `check-stop-affordance.tsx` — the file never reads `data-team-x`,
+  `data-x-confirms` or `data-x-hides` in any assertion. Before this round the
+  single occurrence of `data-x-confirms` in the file was **inside the comment
+  making the claim**; it is still the only occurrence, and it is still a comment.
+
+**What this does and does not change.** No coverage was lost and none is being
+restored: `hidesRows` was *absent* from both fixtures on `main` — that absence is
+the type error phase 3 repaired — so there was never a prior assertion to delete.
+The inertness and the shared-substring weakness are pre-existing limits this
+project exposed, not defects it introduced. What phase 3 *did* introduce is the
+false coverage claim, in the commit message above and in the two comment blocks;
+the comments are corrected in round 6's fix-cycle commit and this section
+corrects the message. The behaviour itself is guarded elsewhere and always was —
+`check-team-confirm.ts:378-396` (3 failures) and `check-r1873-fixes.ts:168/189`
+(2) both go red on the real mutation, as part C shows. **A defect in the record,
+not a hole in the coverage.**
+
+**The wording to model, twenty lines away in a sibling file**, is
+`check-team-confirm.ts:213-220`, which measured the same inertness on the same
+field, stated it, and gave the mechanism. Both corrected comments now follow it.
+
+### Transcript
+
+Four parts. (A) flips the fixture across the boundary in both files. (B) is the
+positive control that the flip method detects a real dependency where one exists.
+(C) mutates the **subject** and shows which instruments notice. (D) reads the
+mechanism out of the source. Every mutation is reverted in the same block and the
+tree is shown clean afterwards.
+
+```
+$ git rev-parse --short HEAD ; node -v ; forge-control/node_modules/.bin/tsc -v
+e86f4b9
+v22.22.2
+Version 5.9.3
+
+=== A. FLIP hidesRows ACROSS THE needsConfirm BOUNDARY (team/confirm.ts:173, `> 1`) ===
+hidesRows=0    check-dismiss-peek.tsx         ALL PASS — dismissal peek affordance     exit=0
+hidesRows=1    check-dismiss-peek.tsx         ALL PASS — dismissal peek affordance     exit=0
+hidesRows=2    check-dismiss-peek.tsx         ALL PASS — dismissal peek affordance     exit=0
+hidesRows=5    check-dismiss-peek.tsx         ALL PASS — dismissal peek affordance     exit=0
+hidesRows=165  check-dismiss-peek.tsx         ALL PASS — dismissal peek affordance     exit=0
+hidesRows=0    check-stop-affordance.tsx      ALL PASS — stop affordance               exit=0
+hidesRows=1    check-stop-affordance.tsx      ALL PASS — stop affordance               exit=0
+hidesRows=2    check-stop-affordance.tsx      ALL PASS — stop affordance               exit=0
+hidesRows=5    check-stop-affordance.tsx      ALL PASS — stop affordance               exit=0
+hidesRows=165  check-stop-affordance.tsx      ALL PASS — stop affordance               exit=0
+
+=== B. POSITIVE CONTROL — the same fixture flip where the value IS load-bearing ===
+$ sed -n '87p' scripts/checks/check-team-confirm.ts
+const TODAY = { canTerminate: false, hidesRows: 2 } as const;
+TODAY hidesRows=2  check-team-confirm.ts          2 FAILURE(S) — team confirm machine      exit=1
+
+=== C. MUTATE THE SUBJECT — every settled leaf ✕ now demands a two-click confirm ===
+$ git diff --unified=0 -- forge-control-web/app/desktop/team/confirm.ts | tail -3
+@@ -173 +173 @@ export function needsConfirm(i: DismissScope): boolean {
+-  return i.hidesRows > 1; // a cascade of hides
++  return i.hidesRows >= 1; // a cascade of hides
+
+check-dismiss-peek.tsx         ALL PASS — dismissal peek affordance     exit=0
+check-stop-affordance.tsx      ALL PASS — stop affordance               exit=0
+check-team-confirm.ts          3 FAILURE(S) — team confirm machine      exit=1
+check-team-rows.ts             ALL PASS — team row model                exit=0
+check-r1873-fixes.ts           2 FAILURE(S) — round 1873 fixes          exit=1
+check-orientation.ts           ALL PASS — orientation strip derivation  exit=0
+
+$ the failing assertions, by name
+FAIL  X on a settled row dismisses immediately
+FAIL  …even while another row is armed
+FAIL  …and capabilities are irrelevant to it (nothing leaves the browser)
+FAIL  a settled leaf: one click
+FAIL  first click on a settled LEAF dismisses
+
+$ git status --porcelain -- forge-control-web scripts/checks
+ M scripts/checks/check-dismiss-peek.tsx
+ M scripts/checks/check-stop-affordance.tsx
+
+=== D. THE ROOT CAUSE, READ NOT GUESSED ===
+$ grep -n 'dismissed · show' scripts/checks/check-dismiss-peek.tsx
+134:   * `.includes("dismissed · show")` — and `dismissTitle`
+205:    (attr(tag(html, "data-team-x") ?? "", "title") ?? "").includes("dismissed · show"),
+356:  check("the toggle label reads the same on both", dismissedToggleLabel(4, false), "4 dismissed · show");
+$ sed -n '244,263p' forge-control-web/app/desktop/team/confirm.ts
+export function dismissTitle(i: DismissScope): string {
+  const undo =
+    "Reversible: the toast offers an undo of exactly this gesture, and every " +
+    "hidden row stays listed under “N dismissed · show”.";
+  if (i.widerReach === true) {
+    return (
+      `Hide this row, everything settled under it, and — if this chat started a ` +
+      `project — that project's finished workers, which this panel cannot count ` +
+      `in advance. Click twice to confirm. ${undo}`
+    );
+  }
+  if (i.hidesRows > 1) {
+    return (
+      `Hide this row and the ${i.hidesRows - 1} settled row${i.hidesRows === 2 ? "" : "s"} ` +
+      `under it — ${i.hidesRows} in total. Click twice to confirm. ${undo} The server ` +
+      `may also hide finished runs of the same project that this tree is not listing.`
+    );
+  }
+  return `Hide this row. Nothing else goes with it. ${undo}`;
+}
+
+$ grep -n 'data-team-x\|data-x-confirms\|data-x-hides' scripts/checks/check-stop-affordance.tsx
+126:   * file for `data-team-x`, `data-x-confirms` or `data-x-hides` and the only
+```
+
+The `M` lines under part C are round 6's own corrected comments, which were
+already in the tree when the transcript was taken; `forge-control-web/` is clean,
+so the `confirm.ts` mutation exists only in this transcript. Same confinement
+property as the six controls above.
+
+Produced at `e86f4b9` — `node v22.22.2`, `tsc 5.9.3`.

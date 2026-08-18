@@ -121,13 +121,25 @@ function node(): TeamNode {
 function row(): TeamRow {
   const n = node();
   /* `hidesRows: 1` is the only value `cascadeRowCount` can produce for this
-   * node — a childless worker (`subagents: []`) — and it is also the value the
-   * assertions below describe: at 1 the ✕ is the one-click, undoable dismissal
-   * (`needsConfirm` is false, since the row is settled and `kind` is not
-   * "operator", so `widerReach` is false), which is what "the ✕ names the
-   * affordance that brings the row back" is asserting about. Anything above 1
-   * would render the two-click cascade ✕ — a different control, on a row this
-   * fixture says has nothing under it. */
+   * node — a childless worker (`subagents: []`) — so the number is right, and
+   * that is the whole of what can be claimed for it. It is NOT load-bearing
+   * here: this file is INERT in `hidesRows`. Measured at 0, 1, 2, 5 and 165 —
+   * ALL PASS at every one of them, in both directions across the
+   * `needsConfirm` boundary at team/confirm.ts:173. The method is not blind:
+   * the identical flip on a fixture that IS load-bearing,
+   * check-team-confirm.ts:87 from 1 to 2, prints 2 FAILURE(S).
+   *
+   * The mechanism, because an unexplained inertness is one the next reader
+   * "fixes": the only assertion below that could see the boundary is line 205,
+   * `.includes("dismissed · show")` — and `dismissTitle`
+   * (team/confirm.ts:244-263) builds that phrase once, as `undo`, then appends
+   * it to ALL THREE of its return branches. A substring shared by every branch
+   * is true at every value. Break the boundary for real — `> 1` → `>= 1` at
+   * team/confirm.ts:173, which puts a confirm in front of every one-row
+   * reversible dismissal — and this file still prints ALL PASS. What catches
+   * it, measured: check-team-confirm.ts:378-396 (3 failures) and
+   * check-r1873-fixes.ts:168/189 (2). The one-click/two-click rule is asserted
+   * there, not here. */
   return {
     node: n,
     depth: 1,

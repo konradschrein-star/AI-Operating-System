@@ -114,15 +114,24 @@ function node(settled: boolean): TeamNode {
 
 function row(settled: boolean): TeamRow {
   const n = node(settled);
-  /* 1 — the leaf. Two reasons, and they agree: `cascadeRowCount` cannot return
-   * anything else for a node with `subagents: []`, and 1 is the value that
-   * keeps the row rendering the affordance these assertions describe. The ⏸
-   * under test does not read `hidesRows`, but the ✕ beside it does
-   * (`data-x-confirms={needsConfirm(scope)}` in TeamRow.tsx): at 1 a settled
-   * row's ✕ is the one-click dismissal and a running row's ✕ is the
-   * capability-gated terminate — the two states the CASES table walks. A value
-   * above 1 would put the settled row's ✕ into the two-click cascade machine,
-   * i.e. a control this fixture's node has nothing to cascade over. */
+  /* 1 — the leaf, and one reason rather than two: `cascadeRowCount` cannot
+   * return anything else for a node with `subagents: []`. The second reason
+   * this comment used to give — that 1 keeps the row rendering the affordance
+   * these assertions describe — does not survive measurement, so it is gone.
+   * `hidesRows` is INERT in this file: 0, 2, 5 and 165 all print ALL PASS, as
+   * does 1. The same flip at check-team-confirm.ts:87 prints 2 FAILURE(S), so
+   * the method detects a real dependency where one exists.
+   *
+   * Why it is inert here: nothing below reads the ✕'s confirm state. Grep the
+   * file for `data-team-x`, `data-x-confirms` or `data-x-hides` and the only
+   * hit is this comment. The ⏸ under test does not read `hidesRows` either,
+   * and the CASES table walks settled vs running — a distinction
+   * `needsConfirm` settles on `!settled` before it ever reaches this number.
+   * Mutate the boundary itself (`> 1` → `>= 1` at team/confirm.ts:173) and
+   * this file still prints ALL PASS; check-team-confirm.ts:378-396 and
+   * check-r1873-fixes.ts:168/189 are what go red. Set the value from the model
+   * — the fixture is childless, so it is 1 — and do not read a coverage claim
+   * into it. */
   return {
     node: n,
     depth: 1,
