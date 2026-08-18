@@ -556,3 +556,62 @@ one snapshot destroy another, because `atomicWrite` reaches its destination by `
 measured). The invariant enforced instead is strictly stronger than the sites it leaves standing:
 **every direct write is an exclusive create; the only non-exclusive path is `atomicWrite`, which
 never opens the destination.** Full evidence in the artefact §6.1.
+
+### 10.4 Requirement exception — R11 vs R20, `appendToDailyNote` under concurrency
+
+**Round 6, fix cycle 2. Extends §10.1 with the third change to that verb; the same reasoning governs.**
+
+R1-fix's re-review measured what §10.1 had not: `appendToDailyNote` reads the note, splices a line into
+its own copy and writes it back, and that sequence ran **outside** `serialiseOnPath`. Two captures of
+the same daily note therefore both read the pre-state, and the second `rename` replaced the first.
+Reproduced in this round before the fix, on one note:
+
+| Concurrent calls | Acknowledged `{ok:true}` | Lines on disk | Captures lost | Snapshots |
+|---|---|---|---|---|
+| 2 | 2 | 1 | 1 | 0 |
+| 5 | 5 | 1 | 4 | 0 |
+| 10 | 10 | 1 | 9 | 0 |
+
+The zero in the last column is the reason this is a §10.1-class defect rather than a nuisance: the verb
+takes no snapshot — correctly, since it replaces nothing when it works — so a capture lost this way has
+nowhere to be recovered from. Reachable from two concurrent `POST /api/vault/append` (mobile Capture,
+`forge-control-web/app/api.ts:877`) or one racing a Telegram capture (`telegram-bridge.ts`'s capture
+handler calls the verb directly, and its `getUpdates` long-poll loop is itself sequential), so exposure
+is real but not routine.
+
+**Ruling: R20 wins again, on the same grounds as §10.1.** R11 freezes append-or-create *semantics*.
+Acknowledging ten captures and keeping one is not "append behaving identically"; it is the failure
+append exists to prevent, wearing a 200.
+
+| Verb | Frozen behaviour that changed | Now |
+|---|---|---|
+| `appendToDailyNote` | read → splice → `atomicWrite` ran unqueued; concurrent callers interleaved and the last rename won | the sequence runs inside `serialiseOnPath(abs, …)`, the queue `writeVaultFile` already used. Same queue, same key, so an append and an edit of one note also cannot interleave |
+
+**What did NOT change:** the bytes an append writes, the section-insertion rule, the `{path, created}`
+result shape, the timestamp (computed *before* the queue, so it records when the capture was made, not
+when the queue reached it), the daily filename and timezone, and `POST /note` in every respect. The
+serial case — one caller at a time, which is every call the characterisation tests in §2.2 make — is
+byte-for-byte what it was.
+
+**Residual, not claimed closed:** `serialiseOnPath` keys on the **lexical** absolute path, so one note
+reachable under two in-vault names would take two queues and race with itself. `find /opt/obsidian-vault
+-type l` → 0, so this is theoretical today. Recorded in `lib/vault.ts`'s "what is NOT claimed" header
+list beside the cross-process window.
+
+### 10.5 Undeclared writes — round 6, fix cycle 2 (task `R1-fix-2`), disclosed here
+
+This round's declared `write_set` was **empty** — the fix-cycle row was seeded with none. Every path
+below is inside B1a's or B1b's declared write set, or is named in the reviewer's own prescription.
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control/src/lib/vault.ts` | B1a | blocker 1 — `appendToDailyNote` wrapped in `serialiseOnPath`; the header claims at `:14-18` and `:23-24` narrowed and corrected; the lexical-key residual added to "what is NOT claimed" (fold 3) |
+| `forge-control/src/lib/vault.test.ts` | B1a | the four regression tests blocker 1 prescribes; three of the four flip red against the unwrapped verb (mutation-controlled) |
+| `forge-control/src/routes/vault.ts` | B1b | fold — the stale `lib/vault.ts:353, :359, :372` pins replaced by the guards' names |
+| `docs/plan/os-usable-for-work/03-quality.md` | — | fold — §2.1's "byte-identical to `main`" criterion was falsified by §10.1's own ruling; amended to except the two verbs and point at §10.1 and §10.4 |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | §10.4 and this subsection, in the same commit as the writes they disclose |
+| `docs/plan/artifacts/os-usable-for-work/phase1/fix-cycle-2-vault-append-race.md` | — | the before/after evidence this round is proven by |
+
+**Blocker 2 of the re-review is not actionable by this lane** and nothing was done to it: `/opt/forge-ai-os`
+carries a Goals/daily-surface build applied outside a worktree. The vault workstream has no authority
+over that tree and the worktree-only policy forbids touching it. Reported to the manager chat.

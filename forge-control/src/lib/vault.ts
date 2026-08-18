@@ -20,8 +20,16 @@
  * What is NOT claimed, measured rather than assumed (R1-red, 2026-08-19):
  *  - A writer in ANOTHER process that lands between this module's compare and
  *    its rename is overwritten and appears in no snapshot. Accepted; see
- *    02-architecture.md §1.2. In-process concurrency is NOT in that window —
- *    it is serialised per path (see serialiseOnPath below).
+ *    02-architecture.md §1.2. In-process concurrency is NOT in that window:
+ *    BOTH verbs that modify an existing note — writeVaultFile() and
+ *    appendToDailyNote() — run their read-through-rename sequence inside
+ *    serialiseOnPath() (below). createNote() needs no queue; "wx" makes the
+ *    kernel the arbiter.
+ *  - serialiseOnPath() keys on the LEXICAL absolute path. One note reachable
+ *    under two in-vault names — a symlink, a bind mount — would take two
+ *    queues and race with itself. `find /opt/obsidian-vault -type l` is 0
+ *    today, so this is theoretical rather than live; keying on the realpath
+ *    would cost a resolve on every write to close it.
  *  - The realpath containment check guards the two NEW verbs (readVaultFile,
  *    writeVaultFile). The three older verbs address fixed, configured
  *    directories and keep the lexical guard only.
@@ -282,30 +290,45 @@ export async function appendToDailyNote(input: {
   const abs = resolveInVault(rel);
   await fs.mkdir(path.dirname(abs), { recursive: true });
 
-  let content: string;
-  let created = false;
-  try {
-    content = await fs.readFile(abs, "utf8");
-  } catch (e) {
-    // ENOENT ONLY. A bare catch here read every failure as "no note today" and
-    // then wrote the empty template over the note that was sitting right there,
-    // returning {ok:true, created:true} — measured at 4 245 bytes → 76, with no
-    // snapshot and nothing to restore from. EIO, EACCES, ENOMEM and
-    // ERR_FS_FILE_TOO_LARGE all reach this line on a note that exists (R20).
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    content = DAILY_TEMPLATE(date);
-    created = true;
-  }
-  const prefix = input.prefix ?? "- ";
-  const line = `${prefix}${time} — ${text.replace(/\n+/g, " ")}`;
-  const next = appendUnderSection(content, input.section, line);
-  await atomicWrite({
-    abs,
-    content: next,
-    label: rel,
-    recovery: `The note itself is unchanged — this verb never opens it for writing.`,
+  // Read, splice and write are ONE critical section per note — the same queue
+  // writeVaultFile's steps 4–7 run in (serialiseOnPath, below). Without it two
+  // concurrent captures both read the same bytes, each spliced its own line
+  // into its own copy, and the second rename replaced the first: measured on
+  // one daily note at 10 concurrent calls → 10 × {ok:true}, ONE line on disk,
+  // 9 captures gone. And this verb takes no snapshot — correctly, because it
+  // replaces nothing — so a lost append has nowhere to be recovered from.
+  // Reachable from two concurrent POST /api/vault/append (mobile Capture) or
+  // one racing a Telegram capture.
+  //
+  // Everything above this line refuses or computes without touching the
+  // filesystem, so it stays outside the queue. `time` is deliberately among
+  // them: the stamp is when the capture was made, not when the queue reached it.
+  return serialiseOnPath(abs, async () => {
+    let content: string;
+    let created = false;
+    try {
+      content = await fs.readFile(abs, "utf8");
+    } catch (e) {
+      // ENOENT ONLY. A bare catch here read every failure as "no note today" and
+      // then wrote the empty template over the note that was sitting right there,
+      // returning {ok:true, created:true} — measured at 4 245 bytes → 76, with no
+      // snapshot and nothing to restore from. EIO, EACCES, ENOMEM and
+      // ERR_FS_FILE_TOO_LARGE all reach this line on a note that exists (R20).
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+      content = DAILY_TEMPLATE(date);
+      created = true;
+    }
+    const prefix = input.prefix ?? "- ";
+    const line = `${prefix}${time} — ${text.replace(/\n+/g, " ")}`;
+    const next = appendUnderSection(content, input.section, line);
+    await atomicWrite({
+      abs,
+      content: next,
+      label: rel,
+      recovery: `The note itself is unchanged — this verb never opens it for writing.`,
+    });
+    return { path: rel, created };
   });
-  return { path: rel, created };
 }
 
 /** Create a new note (never overwrites — collision appends " 2", " 3"…). */
@@ -359,8 +382,10 @@ export async function readDailyNote(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// The edit path (02-architecture.md §1.2). Everything below is additive; the
-// three verbs above are untouched.
+// The edit path (02-architecture.md §1.2). Everything below is additive. The
+// three verbs above keep their semantics; appendToDailyNote() additionally
+// borrows serialiseOnPath() from down here, under the exception ruled in
+// 04-phases.md §10.4 (§10.1 rules the other two changes to that verb).
 // ---------------------------------------------------------------------------
 
 const SNAPSHOT_DIR_DEFAULT = "/opt/ai-os/vault-snapshots";
@@ -549,7 +574,13 @@ async function snapshotBeforeWrite(rel: string, current: string): Promise<string
  *
  *  This is NOT the lock file §1.2 rejected: no on-disk state, therefore no
  *  stale-lock policy. It closes the in-process case completely and leaves the
- *  cross-process window exactly where §1.2 accepts it. */
+ *  cross-process window exactly where §1.2 accepts it.
+ *
+ *  BOTH verbs that modify an existing note queue here. appendToDailyNote() was
+ *  left out of the first pass and lost 9 of 10 concurrent captures with 10
+ *  acknowledgements and no snapshot to recover from (R1-fix re-review). A verb
+ *  that read-modify-writes a file belongs in this queue whether or not it
+ *  compares first; the key is defined by the destination, not by the caller. */
 const writeChains = new Map<string, Promise<unknown>>();
 
 /** Run `work` after every write already queued for `abs`, and before every

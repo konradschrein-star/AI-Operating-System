@@ -181,8 +181,11 @@ r.put("/file", async (c) => {
   try {
     // The three fields cross the type boundary unchecked ON PURPOSE:
     // writeVaultFile() re-reads each one as `unknown` and refuses a non-string
-    // with a diagnostic of its own (lib/vault.ts:353, :359, :372). A second
-    // check here would be a second guard, and two guards drift (R9).
+    // with a diagnostic of its own — its steps 1, 2 and 3, the path/`.md`
+    // refusal, the empty-body refusal and the base_sha256 refusal. Named
+    // rather than pinned by line: the pins were `lib/vault.ts:353, :359, :372`
+    // and were three editing rounds stale by the time anyone read them. A
+    // second check here would be a second guard, and two guards drift (R9).
     const result = await writeVaultFile({
       path: body.path as string,
       content: body.content as string,

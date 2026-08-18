@@ -1190,3 +1190,153 @@ describe("R11 characterisation — appendToDailyNote, createNote, readDailyNote"
     assert.ok(after4.includes(before4.replace(/\n## Journal\n$/, "")));
   });
 });
+
+// ---------------------------------------------------------------------------
+// appendToDailyNote is read-modify-write, so it needs the same per-path queue
+// writeVaultFile got. It was left out of the first pass: measured on one daily
+// note, 10 concurrent calls returned 10 × {ok:true} and left ONE line on disk,
+// with no snapshot — this verb takes none, correctly, because it replaces
+// nothing, which is exactly why a lost append is unrecoverable.
+// ---------------------------------------------------------------------------
+
+describe("concurrent appendToDailyNote: every acknowledged capture survives", () => {
+  const today = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const dailyRel = `Daily/${today}.md`;
+  const dailyAbs = abs(dailyRel);
+  const stash = `${dailyAbs}.append-race-stash`;
+  let stashed = false;
+
+  before(async () => {
+    try {
+      await fsp.rename(dailyAbs, stash);
+      stashed = true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+  });
+
+  after(async () => {
+    await fsp.rm(dailyAbs, { force: true });
+    if (stashed) await fsp.rename(stash, dailyAbs);
+  });
+
+  test("10 concurrent captures → 10 acknowledgements AND 10 lines on disk", async () => {
+    // Seed the note so this test drives the read-existing branch; the create
+    // branch has its own test below.
+    await vault.appendToDailyNote({ section: "Notes", text: "seed" });
+    const before5 = await fsp.readFile(dailyAbs, "utf8");
+    const texts = Array.from({ length: 10 }, (_, i) => `concurrent capture ${i}`);
+
+    const settled = await Promise.allSettled(
+      texts.map((text) => vault.appendToDailyNote({ section: "Notes", text })),
+    );
+    const acknowledged = settled.filter((s) => s.status === "fulfilled");
+    assert.equal(
+      acknowledged.length,
+      texts.length,
+      `every capture must be acknowledged; rejections: ${settled
+        .filter((s) => s.status === "rejected")
+        .map((s) => String((s as PromiseRejectedResult).reason))
+        .join(" | ")}`,
+    );
+
+    // The assertion that fails without the queue. Pre-fix this read 1.
+    const after5 = await fsp.readFile(dailyAbs, "utf8");
+    for (const text of texts) {
+      const hits = after5.split("\n").filter((l) => l.endsWith(`— ${text}`)).length;
+      assert.equal(hits, 1, `"${text}" was acknowledged but is on disk ${hits} times`);
+    }
+    assert.equal(
+      after5.split("\n").length,
+      before5.split("\n").length + texts.length,
+      "the note must grow by exactly one line per acknowledged capture",
+    );
+    // The note the captures were spliced into is still underneath them.
+    assert.ok(after5.includes("— seed"), "the pre-existing content was replaced");
+    // Not one of them reported creating the note: they all read what was there.
+    assert.deepEqual(
+      acknowledged.map((s) => s.value.created),
+      texts.map(() => false),
+    );
+  });
+
+  test("the create branch is entered ONCE, not once per concurrent caller", async () => {
+    // Flip of the test above, on the other side of the ENOENT boundary. Without
+    // the queue all five callers found no note, all five built the template from
+    // scratch, and all five returned created:true — five "first capture of the
+    // day" acknowledgements for one surviving line.
+    await fsp.rm(dailyAbs, { force: true });
+    const texts = Array.from({ length: 5 }, (_, i) => `first of the day ${i}`);
+    const results = await Promise.all(
+      texts.map((text) => vault.appendToDailyNote({ section: "Tasks", text })),
+    );
+    assert.equal(
+      results.filter((r) => r.created).length,
+      1,
+      "exactly one concurrent caller may create today's note",
+    );
+    const content = await fsp.readFile(dailyAbs, "utf8");
+    for (const text of texts) {
+      assert.equal(
+        content.split("\n").filter((l) => l.endsWith(`— ${text}`)).length,
+        1,
+        `"${text}" is missing from a note five callers were told they had written`,
+      );
+    }
+  });
+
+  test("an append racing an EDIT of the same note shares one queue", async () => {
+    // Both verbs key on the same resolved path, so writeVaultFile cannot land
+    // between this verb's read and its rename either. Whichever runs first, the
+    // append's line is on disk afterwards and nothing unacknowledged is.
+    await fsp.rm(dailyAbs, { force: true });
+    await vault.appendToDailyNote({ section: "Notes", text: "before the race" });
+    const original = await fsp.readFile(dailyAbs, "utf8");
+    const edited = `# ${today}\n\n## Notes\nKonrad rewrote the whole note\n`;
+
+    const [editOutcome, appendOutcome] = await Promise.allSettled([
+      vault.writeVaultFile({ path: dailyRel, content: edited, baseSha256: hex(original) }),
+      vault.appendToDailyNote({ section: "Notes", text: "captured mid-edit" }),
+    ]);
+
+    const disk = await fsp.readFile(dailyAbs, "utf8");
+    assert.equal(appendOutcome.status, "fulfilled");
+    assert.ok(
+      disk.split("\n").some((l) => l.endsWith("— captured mid-edit")),
+      `the acknowledged capture is not on disk:\n${disk}`,
+    );
+
+    if (editOutcome.status === "fulfilled") {
+      // The edit ran first; the append then read the edited bytes.
+      assert.ok(
+        disk.includes("Konrad rewrote the whole note"),
+        "the edit was acknowledged but its bytes are gone",
+      );
+      assert.ok(!disk.includes("— before the race"), "the edit replaced that line");
+    } else {
+      // The append ran first, so the edit's compare-and-swap found the appended
+      // bytes and refused rather than overwriting them.
+      assert.ok(
+        editOutcome.reason instanceof vault.VaultConflictError,
+        `the loser must be a conflict, got ${editOutcome.reason}`,
+      );
+      assert.ok(!disk.includes("Konrad rewrote the whole note"));
+      assert.ok(disk.includes("— before the race"));
+    }
+  });
+
+  test("the queue drains after a burst of appends", async () => {
+    // A per-path Map that is never cleaned is one entry per note for the life
+    // of the process; the edit verb has this test, and the append verb now
+    // writes into the same Map.
+    await Promise.all(
+      [1, 2, 3].map((i) => vault.appendToDailyNote({ section: "Journal", text: `drain ${i}` })),
+    );
+    assert.equal(vault.pendingVaultWrites(), 0);
+  });
+});
