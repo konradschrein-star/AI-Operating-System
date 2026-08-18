@@ -356,8 +356,15 @@ export const IDEMPOTENCY_NOTE =
  *  join sentence — but the research fan-out, the cheapest parallelism the guide
  *  sells hardest, was the one that required inventing a role string and
  *  recovering from the 400 that enumerates `ROLES`. It costs 26 characters —
- *  MEASURED through the maximal planner path, 12061 -> 12087, not counted off
+ *  MEASURED through the maximal planner path, 12095 -> 12121, not counted off
  *  the literal — and it is carried as its own row in NF7's round ledger.
+ *
+ *  Those two numbers were written 12061 -> 12087 when round 242 added this
+ *  paragraph, which is the same 26 measured in the frame NF7 has since left: the
+ *  fixture's project id was "p1" then and is a uuid now, and `taskCurl()`
+ *  renders it once, so every NF7 pin moved +34 while every delta stayed put.
+ *  Restated at round 244 in the frame the ledger and the cap are actually
+ *  written in, so the two cannot be compared across a change of units.
  *
  *  Interpolated by the goal-mode architect branch, the NON-goal architect branch
  *  (round 242 finding 1) and the planner branch — the three roles that create

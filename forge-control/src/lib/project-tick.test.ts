@@ -2351,11 +2351,47 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * asserted away. The `id:"p1"` column REPRODUCES round 240's three numbers
    * exactly, which is the corrected baseline confirmed a second time by a
    * different builder; the delta is a flat +34 at all three shas, so nothing in
-   * the growth arithmetic above moves and the cap tightens by 34.
+   * the growth arithmetic above moves and the cap RISES by 34.
    *
    *   BASELINE   9187 -> 9221      cap  12237 -> 12271
    *   5A tip    11585 -> 11619     headroom at 5A unchanged at 652
    *   5B tip    12061 -> 12095     headroom after 5B unchanged at 176
+   *
+   * WHICH WAY THE GATE MOVED, stated once and correctly, because round 242 wrote
+   * this backwards and round 244 is the round that fixes the sentence rather
+   * than the arithmetic. A rising cap read ALONE is a WIDENING — the one
+   * direction 00-vision.md §7 rule 2 does not license — so it does not get to
+   * pass as a tightening by assertion:
+   *
+   *   ROUND 240's correction genuinely TIGHTENED. The measurement stood still
+   *   and the cap fell 12329 -> 12237, so the headroom SHRANK by 92. Fewer
+   *   characters are permitted after it than before it.
+   *
+   *   ROUND 242's re-derivation is NEITHER. Both sides moved by the same +34:
+   *   the cap rises 12237 -> 12271 AND every measurement taken on this fixture
+   *   rises by 34, because `taskCurl()` renders the project id ONCE and a uuid
+   *   is 34 characters longer than "p1". Headroom is IDENTICAL at every pin —
+   *   652 at 5A, 176 after 5B, and 150 live. BUDGET is untouched at 3050, which
+   *   is the whole of what this gate permits; not one character of allowance was
+   *   bought. What changed is the FRAME the budget is measured in, from a
+   *   fixture no real project has to one shaped like every real project.
+   *
+   * MEASURED at round 244 by a harness that prints its own build identity —
+   * sha256(project-tick.ts) — and refuses to report a number unless the module
+   * exports GRAPH_GUIDE:
+   *
+   *   id "p1" (2 chars)   12087     occurrences of the id in the prompt: 1
+   *   id uuid (36 chars)  12121     delta +34 = 36 - 2, once
+   *   headroom  150 in BOTH frames  <- the gate is exactly as tight either way
+   *
+   * Run TWICE, at sha256 01d79c140baf3500 and again at 7622e1fc0c07e342 after
+   * round 244 rewrote a doc-comment in project-tick.ts. Both digests, all four
+   * numbers identical. That pair is not decoration: it is the POSITIVE CONTROL
+   * for this block's standing claim that reasoning lives in doc-comments because
+   * they cost the prompt nothing — a claim otherwise asserted and never once
+   * measured. It also states the honest limit of a sha pin here: this digest
+   * names the module a number came off, and it moves whenever a comment moves,
+   * so re-derive rather than trust it if it does not match your tree.
    *
    * ONE COINCIDENCE, FLAGGED SO IT IS NEVER READ AS A CONFIRMATION: this round's
    * measurement comes to 12121, and 12121 is also the number round 241's
@@ -2940,7 +2976,14 @@ describe("phase 5B — the delivery path is the funnel, not a branch", () => {
  * no test is deleted and no assertion is weakened:
  *   1. BASELINE 9187 -> 9221, re-derived by the method its own comment
  *      prescribes, over three `git archive` trees with distinct digests and an
- *      export positive control. TIGHTENS the cap by 34.
+ *      export positive control. RAISES the cap by 34 and changes the gate's
+ *      tightness by NOTHING: the same +34 lands on every measurement taken at
+ *      this fixture, so headroom is identical at every pin and BUDGET is
+ *      untouched at 3050. The FRAME moved, not the allowance. (Round 242 wrote
+ *      this as "TIGHTENS the cap by 34", which is backwards twice over — the cap
+ *      rises, and a rising cap is the direction that needs the argument above
+ *      rather than the word. Corrected at round 244; the argument is in the NF7
+ *      block, beside the measurement that settles it.)
  *   2. maximalPlannerPrompt() gains `id: MAXIMAL_PROJECT_ID` and a fifth
  *      maximality control asserting the id is uuid-shaped.
  *   3. "the headroom builder 5B needs is actually there" -> the round ledger.

@@ -1392,7 +1392,11 @@ clause and R38's integration paragraph are stated in the terms their
 requirements demand — the only text that fits is text that satisfies
 `.includes()` and misleads a planner, which 03-quality.md §3.2 calls a passing
 gate on a broken deliverable. Round 240 spent 476 of the remaining 652 on the
-withPolicy() addenda, leaving 176.
+withPolicy() addenda, leaving 176; round 242 spent 26 of that on naming the two
+research role literals in GRAPH_GUIDE's fan-out sentence, leaving **150**. Every
+character since the 5A tip is attributed to the round that declared it, by the
+ledger the NF7 block enforces — an unledgered edit fails with its own size in
+the message rather than borrowing an earlier round's reservation.
 
 *Pins, re-derived at round 240 and corrected — the round-239 commit message
 quotes a baseline of 9279 and a total of 11677; the second is `9279 + 2398`, a
@@ -1400,6 +1404,24 @@ sum rather than a measurement, and the first is 92 too high. Measured through
 the maximal path (repo-backed, goal mode, manager-chat linkage): **9187** before
 phase 5 (`d9858b9`), **11585** after it (`05f2842`), **12061** after phase 5B.
 The itemised +2398 was exact; only the baseline pin had rotted.*
+
+*Re-derived again at round 242, and **these are the live pins** — the three
+above are superseded and kept only so this paragraph reads as the history it is.
+Round 240 measured at a fixture whose project id was `"p1"`; every real project
+carries a 36-character uuid, which `taskCurl()` renders **once**, so the maximal
+path was understated by a flat **34** at every sha. Measured through the same
+maximal path at a uuid-shaped id: **9221** before phase 5 (`d9858b9`), **11619**
+after it (`05f2842`), **12095** after phase 5B (`fe14a7e`), **12121** after
+round 242's GRAPH_GUIDE fix. The enforced `BASELINE` is **9221** → cap
+**12271**, and the live headroom is **150**.*
+
+*Which way that moved the gate, since a rising cap read alone is a widening and
+this one is not: **budget and tightness are both unchanged**. The +34 lands on
+the baseline **and** on every measurement taken at that fixture, so the headroom
+is identical at every pin — 652 at 5A, 176 after 5B — and **3050 is untouched**.
+The frame moved, not the allowance. (Round 242 recorded this as "tightens by
+34", which is backwards; corrected at round 244 with the measurement, in
+`project-tick.test.ts`'s NF7 block and in `evidence/phase5-fix-cycle-1.md`.)*
 
 *How proved:* unit — a length assertion on the built planner prompt, with the
 budget written into the assertion message.

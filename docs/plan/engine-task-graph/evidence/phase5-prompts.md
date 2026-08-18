@@ -448,7 +448,18 @@ records 5A finding only by reading its own built prompt aloud, because no
 
 ### 4.3 NF7 — the numbers after this change
 
-| | characters |
+> **SUPERSEDED FRAME — read `phase5-fix-cycle-1.md` §3 before quoting any number
+> in this table.** Every figure below is measured at a fixture whose project id
+> is `"p1"`. Round 242 found that no real project has one: a uuid is 36
+> characters, `taskCurl()` renders the id **once**, and the maximal path was
+> therefore understated by a flat **34** at every sha. The table is left exactly
+> as round 240 measured it — it is that round's record, not a live gauge — and
+> the live pins are `9221 / 11619 / 12095`, cap **12271**, headroom **150**.
+> **Budget and tightness are unchanged**: the +34 lands on the baseline and on
+> every measurement alike, so `3050` is untouched and the headroom in this
+> table's own column (**176** after 5B) is the same number in both frames.
+
+| | characters (at id `"p1"` — superseded frame) |
 |---|---|
 | pre-phase-5 baseline, **re-derived** at `d9858b9` (§4.4) | **9187** |
 | measured at `05f2842` (5A's tip) | **11585** |
@@ -501,6 +512,13 @@ The correction **tightens** the gate (cap 12329 → 12237) and makes 5A's promis
 headroom exact: 12237 − 11585 = **652**, the number its brief reserved.
 
 `BUDGET` is untouched at 3050.
+
+> **Frame note (round 244).** *"Tightens"* is correct **here** and is left
+> standing: round 240's measurement held still while the cap fell 92, so fewer
+> characters are permitted after that correction than before it. Do not carry the
+> word across to round 242's `9187 → 9221`, which moved the cap the **other**
+> way and moved every measurement with it — see `phase5-fix-cycle-1.md` §3. The
+> pins in this section are the `"p1"` frame; the live ones are 34 higher.
 
 ### 4.5 The gates written, three observed RED, and what would have made them lie
 
@@ -589,7 +607,9 @@ findings:
    and the assertion that enforces it disagreed; **the measured number wins**.
    Closes 5A's **F-D**. The pins written into §J are the **re-derived** ones
    (9187 / 11585 / 12061), with a note that the round-239 message's 9279 and
-   11677 were a rotted pin and a sum — §4.4.
+   11677 were a rotted pin and a sum — §4.4. *(Round 244: §J now carries the
+   round-242 uuid-frame pins — 9221 / 11619 / 12095 — above these three, which
+   it keeps as history. `phase5-fix-cycle-1.md` §3.)*
 2. **The R22a commentary's falsified `taskCurl()` sentence.** R53 falsified
    *"`taskCurl()`'s shipped example sends `round: 1`"*; 5A fixed the twin in
    `routes/projects.ts` but this copy was outside its write-set. Amended in the
