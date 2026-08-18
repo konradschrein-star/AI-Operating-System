@@ -70,122 +70,136 @@ import {
  * phone sheet below is a third consumer of the same list, and a list with three
  * readers does not live inside one of them. */
 
-const PLACEHOLDER_SURFACES: Record<
-  string,
-  {
-    tag: string;
-    title: string;
-    desc: string;
-    items: { icon: string; label: string }[];
-  }
-> = {
-  chat: {
-    tag: "CHAT",
-    title: "Conversations with the fleet",
-    desc: "Run-aware threads. Each conversation can dispatch runs, call tools, invoke skills, and watch state — with inter-agent messages rendered inline.",
-    items: [
-      { icon: "forum", label: "thread list, per-run pinning" },
-      { icon: "token", label: "live token panel" },
-      { icon: "extension", label: "tools + skills registry sidebar" },
-      { icon: "arrow_outward", label: "inter-agent message blocks" },
-    ],
-  },
-  pipeline: {
-    tag: "PIPELINE",
-    title: "Kanban over the ~40 states",
-    desc: "The state machine collapsed into Backlog → Scripting → Production → QMS → Approval → Published with WIP caps.",
-    items: [
-      { icon: "view_kanban", label: "6 columns with WIP guards" },
-      { icon: "movie", label: "cards show progress + ETA" },
-      { icon: "open_in_new", label: "click → run detail in Tasks" },
-    ],
-  },
-  library: {
-    tag: "LIBRARY",
-    title: "Assets & drafts",
-    desc: "Scripts, voices, images, clips, templates — a dense filterable grid.",
-    items: [
-      { icon: "description", label: "scripts" },
-      { icon: "graphic_eq", label: "voices" },
-      { icon: "image", label: "images" },
-      { icon: "dashboard", label: "templates" },
-    ],
-  },
-  skills: {
-    tag: "SKILLS",
-    title: "Every skill the fleet can call",
-    desc: "Skill.md files become first-class. Pin, edit, sandbox, promote from memory, attach permissions.",
-    items: [
-      { icon: "extension", label: "enable / disable per skill" },
-      { icon: "science", label: "sandbox test runs" },
-      { icon: "shield", label: "risk + permission badges" },
-      { icon: "history", label: "recent invocations + score" },
-    ],
-  },
-  memory: {
-    tag: "MEMORY",
-    title: "The fleet brain",
-    desc: "Rules, preferences, facts, people, projects. Confidence, provenance, backlinks. Editable, forgettable, promotable to skills.",
-    items: [
-      { icon: "hub", label: "Obsidian vault, live-synced" },
-      { icon: "link", label: "backlinks + linked mentions" },
-      { icon: "fact_check", label: "confidence + stale flagging" },
-      { icon: "fork_right", label: "promote belief → skill" },
-    ],
-  },
-  autonomy: {
-    tag: "AUTONOMY",
-    title: "Trust dials + dispatch policy",
-    desc: "Per channel and per skill autonomy levels: observe → suggest → auto-capped → full. Plus the no-go rulebook enforced at dispatch.",
-    items: [
-      { icon: "tune", label: "trust dial per channel / skill" },
-      { icon: "rule", label: "policy rules, toggleable" },
-      { icon: "history", label: "autonomous actions feed" },
-    ],
-  },
+/* ════════════════════════════════════════════════════════════════════════════
+ * The screens that do not exist — round 300 (R38, R39)
+ *
+ * WHAT THIS RECORD USED TO BE, AND WHY IT WAS A LIE TOLD IN CSS.
+ * Until this round each entry carried a `title`, a `desc` and three or four
+ * `items` — feature bullets — which `PlaceholderSurface` rendered as a tidy
+ * bordered card. Konrad's report was that GOALS, JOURNAL, MAP and LIBRARY
+ * "don't work quite yet", and that reading is exactly what a convincing
+ * wireframe produces: a screen that looks like a feature which FAILED TO LOAD
+ * rather than a feature NOBODY WROTE. Those two states must not look the same.
+ *
+ * So each entry now carries the three statements a person actually needs, and
+ * `items` is gone rather than demoted — a feature list is the one thing on this
+ * screen that can be misread as a live feature:
+ *
+ *   purpose     — what the screen would be FOR
+ *   needs       — what it NEEDS in order to exist, named concretely: the route,
+ *                 the table, the data source, and which of them already exist
+ *   scheduling  — whether anyone is coming. "Coming soon" is a promise with no
+ *                 owner and no date and is banned; for all five the truth is
+ *                 that os-usable-for-work does not build them (00-vision.md §5)
+ *
+ * THE COPY IS NOT INVENTED HERE. Every claim below is quoted from B3a's
+ * measured determination, docs/plan/artifacts/os-usable-for-work/phase3/
+ * surface-determinations.md, so the screen and the document cannot drift.
+ *
+ * FIVE KEYS, NOT TEN. This record used to hold ten, five of which (chat,
+ * pipeline, skills, memory, autonomy) were dead copy: those surfaces have been
+ * BUILT for months and the render switch excluded them by name, so their
+ * entries described a wireframe nothing could reach. They are deleted. The five
+ * that remain are the five this branch actually renders.
+ *
+ * SEARCH IS NOT LIKE THE OTHER FOUR and must not say "not built": its backend
+ * is built, mounted at index.ts:166 and answering live today (determinations
+ * §5). Only its screen is missing, and there is no nav entry that reaches it.
+ * Printing the same banner on it would replace one wrong label with another.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** The keys this branch renders. `search` is in `SURFACES` but not in `NAV`;
+ *  the other four are `NAV` entries carrying `unbuilt: true`. */
+type PlaceholderKey = "goals" | "journal" | "map" | "library" | "search";
+
+interface PlaceholderCopy {
+  tag: string;
+  /** `unbuilt` — nothing exists behind it. `unreachable` — the backend is live
+   *  and only the screen is missing, which is a different defect and gets
+   *  different words. Both share the warning treatment: the distinction this
+   *  round is drawing is between "broken" and "never written", and both of
+   *  these are the latter. The words carry the rest, which is the point. */
+  state: "unbuilt" | "unreachable";
+  /** The sentence a tired operator reads first. For every `unbuilt` entry it
+   *  contains the literal words "not built yet" (R38). */
+  headline: string;
+  /** Why the screen is empty, said plainly enough that nobody reloads. */
+  subhead: string;
+  purpose: string;
+  needs: string;
+  scheduling: string;
+}
+
+const PLACEHOLDER_SURFACES: Record<PlaceholderKey, PlaceholderCopy> = {
   goals: {
     tag: "GOALS",
-    title: "What I'm trying to do",
-    desc: "Quarter cards, week list, today mirror.",
-    items: [
-      { icon: "flag", label: "quarter objectives" },
-      { icon: "list", label: "this week" },
-      { icon: "today", label: "today mirror" },
-    ],
+    state: "unbuilt",
+    headline: "GOALS is not built yet.",
+    subhead:
+      "Nothing failed to load here. This screen was never written, and there is no data behind it to load.",
+    purpose:
+      "A three-horizon objective tracker: quarter objectives with their success metrics, the week beneath them, and the subset due today mirrored into TODAY.",
+    needs:
+      "All of it. A goals table, a forge-control/src/routes/goals.ts, a db/goals.ts and a GoalsSurface — none of the four exists. Of the five unfinished screens this is the only one with no producer at all: nothing in this system knows what your quarter objectives are.",
+    scheduling:
+      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs it at 2 rounds, 3 builders and a database migration — and argues it may belong in the vault as note frontmatter instead of a new table, which would be materially cheaper and is your call.",
   },
   journal: {
     tag: "JOURNAL",
-    title: "What happened",
-    desc: "Auto-logged day-by-day. Every inbox resolution recorded as a decision.",
-    items: [
-      { icon: "calendar_month", label: "day calendar strip" },
-      { icon: "gavel", label: "decisions log" },
-      { icon: "notes", label: "auto-written entries" },
-    ],
+    state: "unbuilt",
+    headline: "JOURNAL is not built yet.",
+    subhead:
+      "Nothing failed to load here. This screen was never written — though, unlike GOALS, most of what it would show is already being recorded.",
+    purpose:
+      "A retrospective day view: a date strip to pick a day, the decisions taken that day, and narrative entries written by the machine rather than by hand.",
+    needs:
+      "A JournalSurface, and a date range on the /api/decisions route that already exists. The decisions log is not a wish: content_forge.decisions holds 120 rows written by the inbox resolve path, mounted and readable today, and no screen in this app reads them. Only the auto-written entries would need anything new — and a recurring LLM cost per day.",
+    scheduling:
+      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs the first two thirds at 1 round, 2 builders and no migration, and recommends dropping the auto-written entries rather than carrying a promise nobody intends to fund.",
   },
   map: {
     tag: "MAP",
-    title: "Where everything lives",
-    desc: "Services, domains, storage, providers, channels — and what runs them.",
-    items: [
-      { icon: "lan", label: "services + systemd" },
-      { icon: "language", label: "domains" },
-      { icon: "database", label: "storage" },
-      { icon: "cloud", label: "providers" },
-    ],
+    state: "unbuilt",
+    headline: "MAP is not built yet.",
+    subhead:
+      "Nothing failed to load here. This screen was never written, although three quarters of what it would show is already being measured elsewhere.",
+    purpose:
+      "An infrastructure inventory: what is running, on which host, behind which domain, writing to which volume, through which external provider.",
+    needs:
+      "A routes/map.ts aggregator and a MapSurface. Three of its four columns have live producers today — /api/pm2/list (24 processes, 19 online), /api/systemd/units (97 units) and /api/system/stats. Only domains has none: 19 nginx vhosts sit on disk and nothing parses them.",
+    scheduling:
+      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs it at 1 round, 3 builders and no migration — but says it should be built only after this project's connection probes land, so the provider column reuses that status contract instead of forking a second one.",
+  },
+  library: {
+    tag: "LIBRARY",
+    state: "unbuilt",
+    headline: "LIBRARY is not built yet.",
+    subhead:
+      "Nothing failed to load here, and this is not an empty grid. The screen was never written — the store behind it is not empty at all.",
+    purpose:
+      "The artefact store: what this OS itself produced — run screenshots, reports and generated outputs. The earlier copy promised scripts, voices, clips and templates; that is Content Forge's material and PIPELINE already owns it.",
+    needs:
+      "Only the screen. GET /api/uploads/index is mounted and answering right now over 423 files in /opt/ai-os/uploads. No new route, no table and no producer would have to be built — which is why this backing store was chosen over the four that were rejected.",
+    scheduling:
+      "Nobody is working on it, and os-usable-for-work does not build it. The artefact-store reading is a default taken on 2026-08-18 because the question went unanswered; your ruling overrides it, and overriding it is cheap while nothing is built. Costed at 1 round, 2 builders, no migration.",
   },
   search: {
     tag: "SEARCH",
-    title: "Search the vault, runs, workers, skills, decisions",
-    desc: "Routing hypervisor picks vector / grep / BM25 / SQL per query.",
-    items: [
-      { icon: "search", label: "multi-engine routing" },
-      { icon: "description", label: "vault hits" },
-      { icon: "conveyor_belt", label: "live runs" },
-      { icon: "bolt", label: "skills + workers + inbox items" },
-    ],
+    state: "unreachable",
+    headline: "SEARCH has no screen — but its engine is live.",
+    subhead:
+      "This one is not like the others: the backend is built, mounted and answering queries today. Only the screen for it was never written. There is also no way to reach this page from the UI — no nav entry, no palette row, no shortcut — so you are seeing it because a stored value put you here.",
+    purpose:
+      "One query across the vault, runs, jobs, inbox items and decisions, returned as grouped hits with the engine that answered each group named on it.",
+    needs:
+      "Only a SearchSurface and one line in the nav list. GET /api/search is live: it returns grouped, source-tagged results, each row already carrying the surface and id to navigate to. Nothing consumes that payload.",
+    scheduling:
+      "Nobody is working on it, and os-usable-for-work does not build it. It is the cheapest screen left in this product — 1 round, 1 builder, no route work — and the only one whose deferral leaves working, paid-for code behind a door with no handle.",
   },
 };
+
+const isPlaceholderKey = (s: Surface): s is PlaceholderKey =>
+  s in PLACEHOLDER_SURFACES;
 
 /* ----------------------------------------------------------------------------
  * Inbox action button style (reused from mobile)
@@ -474,16 +488,18 @@ export function DesktopApp() {
           {surface === "money" && <MoneySurface />}
           {surface === "settings" && <SettingsSurface />}
           {surface === "businesses" && <BusinessesSurface />}
-          {surface in PLACEHOLDER_SURFACES &&
-            surface !== "memory" &&
-            surface !== "chat" &&
-            surface !== "skills" &&
-            surface !== "pipeline" &&
-            surface !== "autonomy" &&
-            surface !== "automation" &&
-            surface !== "businesses" && (
-              <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
-            )}
+          {/* Round 300. This branch used to read `surface in PLACEHOLDER_SURFACES`
+              followed by seven `surface !== …` clauses, five of which named
+              surfaces that have been built for months (memory, chat, skills,
+              pipeline, autonomy) and two of which (automation, businesses) were
+              never keys in that record at all. The exclusions existed to stop
+              dead copy rendering over a working surface; that dead copy is now
+              deleted, so the record IS the guard. The set this renders for is
+              unchanged — goals, journal, map, library, search — and no built
+              surface reaches it, then or now. */}
+          {isPlaceholderKey(surface) && (
+            <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
+          )}
           </SurfaceErrorBoundary>
         </div>
       </div>
@@ -510,6 +526,81 @@ export function DesktopApp() {
       )}
       <ToastHost />
     </div>
+  );
+}
+
+/* ============================================================================
+ * The nav marker for an unbuilt destination — round 300, R40
+ *
+ * So Konrad does not have to click a destination to find out nobody wrote it.
+ *
+ * ONE COMPONENT, THREE CALL SITES. The nav renders in three places — the top
+ * strip, the phone sheet and the left rail — and round 1872 found 11 of 14
+ * destinations unreachable at 390px precisely because the nav model lived in
+ * two places. The MODEL is now single (`NAV.unbuilt` in ./nav-items); this is
+ * the matching single rendering of it, so the three sites cannot drift into
+ * three different markers.
+ *
+ * EVERY CALL IS GUARDED ON `n.unbuilt`, which is optional and set on exactly
+ * four entries. A built entry renders no extra node at all and is byte-identical
+ * to what it was before this round (R43) — a marker on everything is a marker on
+ * nothing.
+ *
+ * TWO VARIANTS, BECAUSE THE TOP STRIP HAS NO ROOM AND THAT IS MEASURED.
+ * The rail and the phone sheet are vertical lists with a `flex: 1` spacer, so a
+ * word costs nothing there. The top strip is horizontal and ALREADY OVERFLOWS
+ * before this round: at a 1280px window its content is 1,384px wide, and the
+ * `forge` wordmark's right edge (77px) is past TODAY's left edge (36px) — the
+ * brand block has collapsed and the search box on the right is cut. Measured on
+ * this build by hiding the marker in the DOM and re-measuring: 1,384px without
+ * it, 1,432px with the word. Only LIBRARY is affected — `goals`, `journal` and
+ * `map` are in the `recall` group, which the strip does not render at all.
+ *
+ * Adding 48px to a strip that is already 104px over would push one more BUILT
+ * destination off the right edge in the 1,384–1,432px band, and R43 forbids
+ * changing behaviour for built surfaces. So the strip gets the same token, the
+ * same data attribute and the same tooltip in 16px instead of 48px. The strip's
+ * pre-existing overflow at 1280 is NOT this round's to fix and is reported as a
+ * finding — see phase3/after-verification.md.
+ * ========================================================================== */
+function UnbuiltMark({
+  surfaceKey,
+  size,
+  variant,
+}: {
+  surfaceKey: Surface;
+  size: number;
+  variant: "word" | "glyph";
+}) {
+  const title = "Not built yet — open it to read what it would take.";
+  if (variant === "glyph") {
+    return (
+      <span
+        data-nav-unbuilt={surfaceKey}
+        className="ms"
+        title={title}
+        aria-label="not built yet"
+        style={{ marginLeft: 5, fontSize: size, color: tokens.warn, flex: "none" }}
+      >
+        warning
+      </span>
+    );
+  }
+  return (
+    <span
+      data-nav-unbuilt={surfaceKey}
+      className="mono"
+      title={title}
+      style={{
+        marginLeft: 6,
+        fontSize: size,
+        letterSpacing: "0.06em",
+        color: tokens.warn,
+        flex: "none",
+      }}
+    >
+      UNBUILT
+    </span>
   );
 }
 
@@ -632,6 +723,9 @@ function TopNav({
                 style={navStyle(n.key)}
               >
                 {n.label}
+                {n.unbuilt && (
+                  <UnbuiltMark surfaceKey={n.key} size={13} variant="glyph" />
+                )}
                 {badges[n.key] && (
                   <span
                     style={{
@@ -848,6 +942,9 @@ function MobileNav({
                 }}
               >
                 {n.label}
+                {n.unbuilt && (
+                  <UnbuiltMark surfaceKey={n.key} size={10} variant="word" />
+                )}
                 <span style={{ flex: 1 }} />
                 {badges[n.key] && (
                   <span style={{ fontSize: 11, color: tokens.textFaint }}>
@@ -1024,6 +1121,9 @@ function LeftRail({
                 <span className="mono" style={{ fontSize: 11.5 }}>
                   {n.label}
                 </span>
+                {n.unbuilt && (
+                  <UnbuiltMark surfaceKey={n.key} size={9} variant="word" />
+                )}
                 <span style={{ flex: 1 }} />
                 {badges[n.key] && (
                   <span
@@ -2772,95 +2872,134 @@ function ControlSurface({
 }
 
 /* ----------------------------------------------------------------------------
- * Placeholder — for unbuilt surfaces (chat, memory, skills, kanban, etc.)
+ * Placeholder — the honest NOT BUILT state (round 300, R38/R39)
+ *
+ * Written for one reader: a tired operator at 23:00 who has just clicked GOALS.
+ * He must walk away knowing NOBODY WROTE THIS, not wondering whether the API is
+ * down. Everything here serves that and nothing else:
+ *
+ *   · WARNING TREATMENT, not a neutral card. `tokens.warn` on
+ *     `tokens.freezeBgWarn` inside `tokens.freezeBorderWarn` — the same visual
+ *     language the console already uses for a state that needs attention. Every
+ *     colour is a token; scripts/checks/no-raw-colours.cjs fails the build on a
+ *     literal, and it is right to.
+ *   · THE WORDS, in prose, first. "not built yet" is a sentence a person reads,
+ *     not a badge and not an icon — a badge is what the last version's tidy card
+ *     needed and did not have.
+ *   · ABOVE THE FOLD. The old version opened with 64px of top padding and put
+ *     its first real sentence below a 25px title; at a 1280×600 window the
+ *     honest part of the message was a scroll away, which is the same as absent.
+ *     The banner is now the first thing in the box, and the after-verification
+ *     asserts its BOUNDING BOX lies inside the initial viewport at 1280×800 and
+ *     at 1280×600 — presence in the DOM is not the test.
+ *   · NO FEATURE BULLETS. The list of three or four crisp capabilities is the
+ *     exact thing Konrad read as a feature that failed to load. It is deleted,
+ *     not demoted.
+ *   · The `live in this build: …` caption that used to close this component is
+ *     also gone. It was hardcoded on 2026-06-21, named five of the fourteen
+ *     surfaces that render real components today, and told the operator in
+ *     ghost grey that MEMORY and PIPELINE were not live — on the one screen
+ *     whose job is to say what is not live. A hand-maintained list of built
+ *     surfaces is a second source of truth that rots; the per-surface treatment
+ *     below replaces its whole purpose.
  * -------------------------------------------------------------------------- */
-function PlaceholderSurface({
-  info,
-}: {
-  info: {
-    tag: string;
-    title: string;
-    desc: string;
-    items: { icon: string; label: string }[];
-  };
-}) {
+function PlaceholderSurface({ info }: { info: PlaceholderCopy }) {
+  const sections: { label: string; body: string }[] = [
+    { label: "WHAT IT WOULD BE FOR", body: info.purpose },
+    { label: "WHAT IT NEEDS IN ORDER TO EXIST", body: info.needs },
+    { label: "WHETHER ANYONE IS COMING", body: info.scheduling },
+  ];
   return (
     <div
       className="slidein"
-      style={{ maxWidth: 720, margin: "0 auto", padding: "64px 40px" }}
+      style={{ maxWidth: 720, margin: "0 auto", padding: "26px 40px 56px" }}
     >
+      {/* The surface's own identity, so a test can tell WHICH placeholder it is
+          looking at. The app has exactly one route (`/desktop`) and the surface
+          is React state persisted to localStorage, so a screenshot cannot be
+          identified by its URL and `body.innerText` begins with the nav chrome,
+          not with this. */}
       <div
+        data-placeholder-tag={info.tag}
         className="mono"
         style={{
           fontSize: 11,
-          color: tokens.accent,
+          color: tokens.warn,
           letterSpacing: "0.12em",
-          marginBottom: 12,
+          marginBottom: 10,
         }}
       >
         {info.tag}
       </div>
       <div
+        data-placeholder-banner={info.state}
         style={{
-          fontSize: 25,
-          fontWeight: 500,
-          letterSpacing: "-0.02em",
-          marginBottom: 11,
-          color: tokens.textHi,
-        }}
-      >
-        {info.title}
-      </div>
-      <div
-        style={{
-          fontSize: 14,
-          color: tokens.textMuted,
-          lineHeight: 1.65,
-          marginBottom: 28,
-        }}
-      >
-        {info.desc}
-      </div>
-      <div
-        style={{
-          background: tokens.bgCard,
-          border: `1px solid ${tokens.border}`,
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 13,
+          background: tokens.freezeBgWarn,
+          border: `1px solid ${tokens.freezeBorderWarn}`,
           borderRadius: 8,
-          overflow: "hidden",
+          padding: "16px 18px",
+          marginBottom: 26,
         }}
       >
-        {info.items.map((it, i) => (
+        <span
+          className="ms"
+          style={{ fontSize: 21, color: tokens.warn, flex: "none" }}
+        >
+          {info.state === "unbuilt" ? "warning" : "link_off"}
+        </span>
+        <div style={{ minWidth: 0 }}>
           <div
-            key={i}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "11px 16px",
-              borderBottom:
-                i === info.items.length - 1
-                  ? "none"
-                  : `1px solid ${tokens.borderDivider}`,
+              fontSize: 19,
+              fontWeight: 500,
+              letterSpacing: "-0.01em",
+              lineHeight: 1.35,
+              color: tokens.warn,
             }}
           >
-            <span
-              className="ms"
-              style={{ fontSize: 15, color: tokens.textFaint }}
-            >
-              {it.icon}
-            </span>
-            <span style={{ fontSize: 13, color: tokens.textBody }}>
-              {it.label}
-            </span>
+            {info.headline}
           </div>
-        ))}
+          <div
+            style={{
+              fontSize: 13,
+              color: tokens.textBody,
+              lineHeight: 1.6,
+              marginTop: 7,
+            }}
+          >
+            {info.subhead}
+          </div>
+        </div>
       </div>
+      {sections.map((s) => (
+        <div key={s.label} style={{ marginBottom: 20 }}>
+          <div
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              letterSpacing: "0.1em",
+              color: tokens.textGhost,
+              marginBottom: 6,
+            }}
+          >
+            {s.label}
+          </div>
+          <div
+            style={{ fontSize: 13.5, color: tokens.textBody, lineHeight: 1.6 }}
+          >
+            {s.body}
+          </div>
+        </div>
+      ))}
       <div
         className="mono"
-        style={{ fontSize: 11, color: tokens.textGhost, marginTop: 18 }}
+        style={{ fontSize: 11, color: tokens.textGhost, lineHeight: 1.6 }}
       >
-        live in this build: chrome · command palette · today · inbox · live ·
-        control · tasks
+        the evidence, the rejected alternatives and the cost estimate:
+        docs/plan/artifacts/os-usable-for-work/phase3/surface-determinations.md
       </div>
     </div>
   );

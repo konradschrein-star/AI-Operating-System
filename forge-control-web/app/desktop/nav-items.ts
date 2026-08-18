@@ -73,6 +73,26 @@ export interface NavItem {
   label: string;
   badge?: string;
   group: "operator" | "work" | "ai" | "recall";
+  /* ── Round 300, R40: the nav says which destinations are not built ─────────
+   *
+   * Konrad read GOALS, JOURNAL, MAP and LIBRARY as "don't work quite yet",
+   * because clicking any of them rendered a tidy card with three or four
+   * feature bullets — a feature that failed to load, not a feature nobody
+   * wrote. The surface now says so in words (`PlaceholderSurface`), and this
+   * flag is what stops him having to click to find out.
+   *
+   * OPTIONAL, and `true` is its only value: a built entry carries no field at
+   * all, so every render site guards on it and a built row is byte-identical
+   * to what it was before this flag existed (R43). A marker on everything is a
+   * marker on nothing — `scripts/checks/check-phase3-placeholders.ts` asserts
+   * the set is exactly the four, and asserts that a BUILT key wrongly flagged
+   * would be caught.
+   *
+   * Evidence for each of the four — no route, no table, no data module:
+   * docs/plan/artifacts/os-usable-for-work/phase3/surface-determinations.md.
+   * `search` is deliberately absent: it is not a NAV entry, and its backend is
+   * built and live (§5 of that document), so it is a different defect. */
+  unbuilt?: true;
 }
 
 export const NAV: NavItem[] = [
@@ -81,7 +101,7 @@ export const NAV: NavItem[] = [
   { key: "chat", label: "CHAT", group: "operator" },
   { key: "tasks", label: "PROJECTS", group: "work" },
   { key: "pipeline", label: "PIPELINE", group: "work" },
-  { key: "library", label: "LIBRARY", group: "work" },
+  { key: "library", label: "LIBRARY", group: "work", unbuilt: true },
   { key: "money", label: "MONEY", group: "work" },
   { key: "businesses", label: "BUSINESSES", group: "work" },
   { key: "skills", label: "SKILLS", group: "ai" },
@@ -90,10 +110,21 @@ export const NAV: NavItem[] = [
   { key: "control", label: "CONTROL", group: "ai" },
   { key: "autonomy", label: "AUTONOMY", group: "ai" },
   { key: "automation", label: "AUTOMATION", group: "ai" },
-  { key: "goals", label: "GOALS", group: "recall" },
-  { key: "journal", label: "JOURNAL", group: "recall" },
-  { key: "map", label: "MAP", group: "recall" },
+  { key: "goals", label: "GOALS", group: "recall", unbuilt: true },
+  { key: "journal", label: "JOURNAL", group: "recall", unbuilt: true },
+  { key: "map", label: "MAP", group: "recall", unbuilt: true },
 ];
+
+/** The unbuilt destinations, read off the model rather than listed a second
+ *  time. Takes the list as an argument so a check can run the SAME derivation
+ *  over a doctored copy and prove the derivation actually discriminates — an
+ *  assertion that passes at every fixture value proves nothing. */
+export function unbuiltNavKeys(items: readonly NavItem[] = NAV): Surface[] {
+  return items.filter((n) => n.unbuilt === true).map((n) => n.key);
+}
+
+/** The four, as a set, for render sites and check scripts. */
+export const UNBUILT_NAV_KEYS: readonly Surface[] = unbuiltNavKeys();
 
 
 /** The four groups, in the order every surface renders them. The rail has always
