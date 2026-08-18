@@ -363,3 +363,27 @@ Every probe planted its files, ran, and removed them inside one shell with an
 EXIT trap, and `git status --porcelain` was read after each. No probe file
 survives; no `.js` was emitted anywhere by any run, including the deliberately
 degraded ones.
+
+## One defect this fix cycle introduced, and closed
+
+Running the amended P-A against the amended gate reported **five suppressions
+— all of them the gate's own prose.** `check-instrument-typecheck.sh` has to
+NAME `@ts-nocheck`, `@ts-ignore` and `@ts-expect-error` in its comments and in
+its own output in order to refuse them, and P-A's pathspec was the whole
+directory.
+
+Fixed by narrowing P-A's pathspec from `scripts/checks/` to
+`scripts/checks/*.ts` `scripts/checks/*.tsx` — git matches those across
+subdirectories too (verified in a scratch repo, `sub/a.ts` matched). A
+suppression directive inside a shell script suppresses nothing, and a check
+that fires on the text of the check is a check every later phase learns to
+wave through.
+
+```
+=== P-A (amended alternation, narrowed pathspec) ===
+ok: no suppressions
+=== P-B dependency footprint ===
+(empty)
+=== R30 — nothing under forge-control-web/app or forge-control/src ===
+ok: no app files
+```

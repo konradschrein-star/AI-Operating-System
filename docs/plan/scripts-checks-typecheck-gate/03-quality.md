@@ -117,7 +117,16 @@ failure modes are project-wide:
 # suppression already on `main` — the gate itself now scans the DIRECTORY for
 # the three comment directives and reports `suppressions N` in its census.
 # Run both; neither subsumes the other.
-git diff main...HEAD -- scripts/checks/ \
+#
+# THE PATHSPEC IS NARROWED to the TypeScript subjects, from `scripts/checks/`
+# to `scripts/checks/*.ts` + `*.tsx` (git matches those across subdirectories
+# too — verified). Reason, found by running the amended grep against the
+# amended gate: the gate is a .sh file that must NAME the directives it
+# refuses, in its comments and in its own output, and the unscoped grep
+# reported the gate's prose as five suppressions. A check that fires on the
+# text of the check is a check every later phase learns to wave through — and
+# a suppression directive inside a shell script suppresses nothing.
+git diff main...HEAD -- 'scripts/checks/*.ts' 'scripts/checks/*.tsx' \
   | grep -E '^\+.*(@ts-nocheck|@ts-ignore|@ts-expect-error|:\s*any\b|as any\b|as unknown as)' \
   && echo "FAIL: suppression introduced" || echo "ok: no suppressions"
 

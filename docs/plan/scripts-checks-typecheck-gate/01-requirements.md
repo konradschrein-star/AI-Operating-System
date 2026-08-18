@@ -355,7 +355,10 @@ move for a phase-3 builder facing six reds.
 
 ```bash
 # P-A, diff-scoped: did THIS branch introduce one?
-git diff main...HEAD -- scripts/checks/ \
+# Pathspec narrowed to the TypeScript subjects (git matches subdirectories too):
+# the gate is a .sh that must NAME these directives to refuse them, and the
+# unscoped form reports the gate's own prose as suppressions. See 03-quality.md §3.
+git diff main...HEAD -- 'scripts/checks/*.ts' 'scripts/checks/*.tsx' \
   | grep -E '^\+.*(@ts-nocheck|@ts-ignore|@ts-expect-error|:\s*any\b|as any\b|as unknown as)'
 # directory-scoped: is one PRESENT, whoever wrote it and whenever?
 bash scripts/checks/check-instrument-typecheck.sh   # census reports `suppressions 0`
