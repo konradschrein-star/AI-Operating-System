@@ -655,8 +655,14 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     #   forge-control/src/db/projects.ts          — §10, phases 2/3/4
     #   forge-control/src/lib/project-tick.ts     — §10, phases 4/5
     #   forge-control/src/lib/project-tick.test.ts — §10, rounds 822 and 960 tables
-    # workspace.ts and executor.ts are in the mandate but match no ban pattern;
-    # listing them would be an INERT entry and the gate says so by name.
+    # workspace.ts is in the mandate and matches NO ban pattern: listing it is an
+    # INERT entry, and the gate says so by name.
+    # executor.ts is DIFFERENT and the difference is load-bearing. The ban pattern
+    # is  project-tick|cc-runner|executor\.ts|db/projects|VaultFileList|routes/files
+    # so executor.ts IS banned. Listing it grants a REAL exemption for a file whose
+    # declared write-set in 04-phases.md §10 is "none" and for which gate 6 is the
+    # only automated guard. Do not add it. It is absent from the list below because
+    # this branch does not change it — not because listing it would do nothing.
     export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
     bash scripts/checks/gates-808.sh --strict            # MUST exit 0
     git diff --name-only main...HEAD | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
@@ -687,6 +693,39 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     path silently unread and the gate would have reported clean on a forbidden
     file. `git diff --name-only` terminates its last line, which is precisely why
     this would never have been noticed. Fixed, and pinned by case 14.
+
+    **INERT and UNUSED are two different labels for two different facts — round
+    825's blocker, closed at round 962.** The comment above this item used to say
+    "workspace.ts and executor.ts are in the mandate but match no ban pattern;
+    listing them would be an INERT entry". That is true of `workspace.ts` and
+    **false of `executor.ts`**, which appears in the ban pattern verbatim. A
+    document that mislabels a live waiver as inert is worse than no document: the
+    next reader adds `executor.ts` to `GATES_ENGINE_ALLOW` believing it a harmless
+    no-op and silently drops the only automated guard on a file whose declared
+    write-set in `04-phases.md` §10 is *none*.
+
+    Corrected against **the script's own output**, not against the regex by eye —
+    the failure mode this project keeps finding is a reviewer reading a pattern
+    and reporting what they expected it to say:
+
+    ```
+    $ echo forge-control/src/lib/workspace.ts | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
+    PATHS MATCHING THE BAN (0) … clean — no engine/Files file differs      # exit 0
+
+    $ echo forge-control/src/lib/executor.ts | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
+    PATHS MATCHING THE BAN (1)
+      FORBIDDEN  forge-control/src/lib/executor.ts                        # exit 1
+
+    # and listed, with neither path in the diff, the gate names the two cases apart:
+    INERT   forge-control/src/lib/workspace.ts  (the ban never matches this path; this entry permits nothing)
+    UNUSED  forge-control/src/lib/executor.ts  (declared, but does not differ from main on this branch)
+    ```
+
+    `INERT` = the ban never matches this path, so the entry permits nothing.
+    `UNUSED` = the ban *does* match, the entry *would* permit it, and it happens
+    not to differ from `main` on this branch. Only the first is safe to add
+    casually. This is why the engine's ban list is worth reading as data rather
+    than as prose, and it is the whole of round 825's one-sentence blocker.
 
 ### 3.2 Phase gates
 

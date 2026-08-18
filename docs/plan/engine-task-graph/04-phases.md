@@ -955,6 +955,31 @@ is computing contention from **declared** write-sets.
 | `docs/plan/engine-task-graph/04-phases.md` (the §"Verification task" bullet list of phase 8 only), by phase 8G's verification task (round 815) | 815 | Declared write_set was `evidence/phase8-verify.md` alone. **Standing rule 2 — amend the gate where it is enforced, in the same commit**: three of that bullet list's clauses could not be passed, and this file is where they are stated about *live* data. (1) The R71 pair demanded `graph_frozen <> (depends_on IS NOT NULL)` = 0, which the new engine falsifies with every task it creates — measured at 2 within four minutes of the restart, both rows correct-by-design explicit graph roots. (2) "A cycle POST returns 400" contradicts R26's own unreachability argument. (3) `/tmp/safe-restart.log` is never written by `safe-restart.sh`. Each amendment carries its reasoning inline and cites the transcript in `evidence/phase8-verify.md`. No other section of the file was touched; `git show --stat` on the round-815 commit shows two files. |
 | `forge-control/src/routes/projects.ts` (one doc-comment only — the `round` guard of `POST /:id/tasks`, the "Safe:" clause) | 239 | The ownership table above assigns this file to phase **3** alone. Phase 5A wrote one comment in it and nothing else, because R53 **falsified** that comment: it justified treating an absent `round` differently from a supplied one on the premise that "`taskCurl()`'s shipped example in `project-tick.ts` sends `\"round\": 1\"`", and R53 makes `taskCurl()` omit `round`. Handed to the builder as the round-239 planner's finding F-B and confirmed at `d9858b9`. **Standing rule 2 — amend the gate where it is enforced, in the same commit**: the enforcement is phase 3's route, the premise is phase 5's prompt, and the comment is the reasoning a future reader of that guard inherits. Recorded here in the commit that makes it, per the round-213 and round-215 precedent: disclose, not abstain. No expression, message, status code or test in `routes/projects.ts` was touched — `git diff` on that file is one comment hunk. |
 
+**Round 962's write-set — EVERY path of it undeclared, and that is the finding
+rather than the excuse.** Round 961's finding 6 measured the seeding site, not
+the builder: task `eb282064` was seeded with `write_set = []`, and so was round
+962's. The brief's claim that this gate is "satisfiable by construction because
+write-sets are declared on the task row" is false for any task whose row carries
+an empty one — there is nothing to compare a commit against, so §10 is the only
+place the manifest can exist. Declared here, in the commit that makes it, and
+repeated in `evidence/round962-fix-cycle-1.md` §7 and in the commit message.
+
+| file | why round 962 writes it |
+|---|---|
+| `forge-control/src/lib/project-tick.ts` | **the deliverable.** Round 961's findings 3, 4 and 5 as three rules in `GRAPH_GUIDE` — the cap counts the `main` every project is born in (so `cap-1` remain) plus the allocation rule a project-wide budget always needed; a task does not inherit its creator's workstream, stated in FAN-OUT where the fan-out decision is made; a lane opened for a task that creates tasks belongs to that task. Plus the doc comment recording the measurement, per this constant's own rule. |
+| `forge-control/src/lib/project-tick.test.ts` | **standing rule 2 — the gate is enforced here.** NF7's LEDGER gains `{ round: 962, spent: 637, reserved: 650 }` and a delivery control per finding. `BUDGET` is **not** touched: the candidate was trimmed from +667 to +637 to fit round 822's reservation rather than answered by widening, per the operator's "last routine widening" condition. |
+| `scripts/checks/check-workstream-claim.ts` | §6B's seven new checks (19 → 34), including `6.8`'s executed pair — the same four researchers spawn **1** with the workstream field omitted and **4** with a lane each. §5.6's `OPEN, task 962` label is retired in the same commit as the finding it names (standing rule 4). §3's fixture is `Math.max(6, c.lanes)`: it demanded width 9 from six rows under a lawful `PROJECT_MAX_WORKSTREAMS=9` and could not be passed — **standing rule 2, amended where it is enforced**. The census moves with it. |
+| `docs/plan/engine-task-graph/03-quality.md` | **round 825's blocker.** Item 12 called `executor.ts` a would-be INERT entry; it is in gate 6's ban pattern verbatim, and listing it grants a real exemption for a file whose declared write-set in this §10 is *none*. Corrected against the script's own output. |
+| `docs/plan/engine-task-graph/04-phases.md` | this disclosure, and round 962's row in the table below. |
+| `docs/plan/engine-task-graph/01-requirements.md` | §J closes the 650-character reservation it opened at round 822. |
+| `docs/plan/engine-task-graph/evidence/round962-fix-cycle-1.md` | **new.** This round's transcript: the sizing, the trims, the four mutation controls, the natural experiment re-counted, and why finding 1's prescribed command was not run. |
+| `docs/plan/engine-task-graph/evidence/round962-candidate-graph-guide.txt` | **new.** The artefact the +637 was measured off, kept so the shipped constant can be checked against the measured text at any later date — they are byte-identical, sha256 `57762f7296f71ca5`. |
+
+Nothing outside `docs/plan/engine-task-graph/`, `scripts/checks/` and the two
+`forge-control` engine files was written. **`/opt/forge-ai-os` was not written at
+all** — see `evidence/round962-fix-cycle-1.md` §6 for why round 961's prescribed
+`git checkout --` was *not* executed against a tree that had since moved.
+
 **Round 217's write-set, declared in the commit that makes it (fix cycle 2).**
 Not "recorded after the fact" — this fix cycle has one task and no concurrent
 builder, so the set is stated rather than reconstructed, which is the standing
@@ -1261,6 +1286,42 @@ vary. An assertion nobody can drive in both directions degenerates into an
 opinion about whether it *should* be red, and an opinion is what gets disclosed
 and walked past. The fix that matters is not the allow list; it is that gate 6
 now has a control.
+
+---
+
+### Round 962 — fix cycle 1 against round 961, and the close of the `max_cycles` block
+
+**This round exists because the engine had stopped seeding cycles.** The project
+sat BLOCKED on `max_cycles` (cycles 1/2/3 at rounds 820, 822, 824; round 825's
+re-review would have been a fourth). The operator unblocked it with an explicit
+instruction: fix round 825's one-sentence blocker *here* rather than seed a
+fourth cycle. `03-quality.md` §3.1 item 12's `INERT`/`UNUSED` correction is that
+fix, and it is why the record shows no fourth cycle.
+
+| file | why round 962 writes it |
+|---|---|
+| `forge-control/src/lib/project-tick.ts` | findings 3, 4, 5 as three rules in `GRAPH_GUIDE`; the doc comment records the measurement. |
+| `forge-control/src/lib/project-tick.test.ts` | NF7's LEDGER row `{962, 637, 650}` + a delivery control per finding. **`BUDGET` unchanged at 3700.** |
+| `scripts/checks/check-workstream-claim.ts` | §6B (7 checks, 19 → 34); §5.6's retired `OPEN` label; §3's unsatisfiable-at-override fixture; the census. |
+| `docs/plan/engine-task-graph/03-quality.md` | round 825's blocker. |
+| `docs/plan/engine-task-graph/{01-requirements,04-phases}.md` | §J's closure; §10's disclosure and this row. |
+| `docs/plan/engine-task-graph/evidence/round962-fix-cycle-1.md` | **new.** The transcript. |
+| `docs/plan/engine-task-graph/evidence/round962-candidate-graph-guide.txt` | **new.** The measured artefact. |
+
+**The budget held, which is the part worth recording.** The operator confirmed
+NF7's `BUDGET` at 3700 while making it *"the LAST widening that gets to be
+routine"*. Round 962's first candidate measured **+667** — inside the cap, but 17
+characters past the 650 round 822 reserved. It was **trimmed to +637**, four
+edits, none of them to a rule. The first round in a while whose answer to a
+binding budget was to spend less.
+
+**What round 962 did NOT do, stated so the re-check does not go looking.** No
+migration, no route, no scheduler behaviour, no `BUDGET` change, no deploy, no
+GitHub push, and **no write to `/opt/forge-ai-os`** — round 961's prescribed
+`git checkout --` was deliberately not executed, because the file it named had
+since been committed (`1e0330b`, on `main`) and the tree now holds a different
+project's uncommitted work. That is `evidence/round962-fix-cycle-1.md` §6, and it
+is escalated to Konrad rather than resolved by a build task.
 
 ---
 

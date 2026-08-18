@@ -437,6 +437,46 @@ export const IDEMPOTENCY_NOTE =
  *  +564 characters of new RULES here and 25 were left. Of the 675 that now
  *  remain, 650 are RESERVED FOR ROUND 962 and are not free for anyone else.
  *
+ *  ROUND 962 ADDS THREE ENGINE FACTS, one per finding of round 961, and they
+ *  are FACTS ABOUT THE CODE rather than advice — each was reachable only by
+ *  reading a different file, and a planner that has not read it plans a 400 or
+ *  a 1-wide project:
+ *
+ *  (3) THE CAP COUNTS `main`. `createProject()` inserts the architect row with
+ *      no `workstream` column, so the schema default applies and every project
+ *      is BORN occupying one; `workstreamCapRefusal()` counts all distinct
+ *      workstreams of the project regardless of status. The openable count is
+ *      therefore `cap - 1` = 5, and "up to that cap" over-promised by exactly
+ *      one — it taught the 400 it was meant to prevent. The fact was already
+ *      recorded at the guard in routes/projects.ts; this is the half that
+ *      reaches the planner. The ALLOCATION RULE beside it exists because this
+ *      constant is interpolated into the goal-mode architect AND into every
+ *      planner that architect seeds, and an unqualified ceiling read from both
+ *      seats is read twice as a whole budget.
+ *  (4) A TASK DOES NOT INHERIT ITS CREATOR'S WORKSTREAM. `workstream` arrives
+ *      only from the POST body and `createTask()` writes `input.workstream ??
+ *      "main"`; there is no creator inheritance anywhere in the engine. This
+ *      belongs in FAN-OUT, where the fan-out decision is actually made — the
+ *      bullet above defines the field, but a planner reading "RESEARCH wide and
+ *      early ... the cheapest parallelism there is" and omitting the field gets
+ *      N researchers in `main` running ONE AT A TIME. That is round 815's
+ *      project exactly, and bullet 1's "that is the ONLY ordering" is true of
+ *      `ready` and not of `running`, which is the sentence that produced it.
+ *  (5) A LANE OPENED FOR A TASK-CREATING TASK BELONGS TO THAT TASK. R38 wants
+ *      an integration task "depending on every task of that workstream", R29
+ *      fixes `depends_on` at insert, and the route refuses ids that do not yet
+ *      exist. So an architect that opens a lane for a PLANNER cannot ever
+ *      integrate it: the planner's children do not exist when the only edge the
+ *      integration node will ever have must be named. Unreachable until round
+ *      960's criterion started instructing lanes; reachable and instructed now.
+ *
+ *  MEASURED THE WAY ROUND 822 BUILT THE INSTRUMENT TO BE USED — before the edit
+ *  was written, not after: +637 net (1951 -> 2588) against the 650 reserved,
+ *  projected 12883 against cap 12921. The first candidate measured +667 and was
+ *  TRIMMED to fit the reservation rather than answered by widening BUDGET; the
+ *  operator's round-961 ruling made 3700 the last routine widening. Carried as
+ *  NF7's LEDGER row "round 962", with a delivery control per finding.
+ *
  *  BEFORE YOU EDIT THIS CONSTANT, size the edit first — it is one command and
  *  it prints the LEDGER row you will have to declare:
  *
@@ -452,21 +492,28 @@ export const GRAPH_GUIDE =
   `- "workstream": a name like "ui", matching /^[a-z0-9][a-z0-9-]{0,39}$/, default "main". One workstream is ` +
   `one git worktree whose tasks run one at a time; two are isolated directories that may write the SAME file ` +
   `at once. A project may hold at most PROJECT_MAX_WORKSTREAMS distinct ones (6 unless the host overrides ` +
-  `it) and a task opening a new one past that is refused with a 400 naming the count — so open ONE PER LANE ` +
-  `you want running at once, up to that cap, not one per file conflict.\n` +
+  `it) COUNTING the "main" every project is born in, so cap-1 remain, and a task opening a new one past ` +
+  `that is refused with a 400 naming the count — so open ONE PER LANE you want running at once, up to that ` +
+  `cap, not one per file conflict. That budget is the PROJECT's, not yours: if you seed planners, say in ` +
+  `each brief how many lanes it may open, and leave those unopened.\n` +
   `- "write_set": every repo-relative path the task writes (max 200) — the contention input. No two builders ` +
   `in ONE workstream may declare the same file; where a split is impossible, one builder writes that file ` +
   `twice rather than two builders serialising on it. If a round moves a constant the corpus quotes, the ` +
   `documents quoting it belong in that round's write_set.\n` +
-  `FAN-OUT: RESEARCH wide and early — independent questions share no files and have no ordering, the ` +
-  `cheapest parallelism there is — one "researcher" (or "scout") task each, depends_on []. ` +
+  `FAN-OUT: a task does NOT inherit your workstream — omit the field and it lands in "main" and waits its ` +
+  `turn, so name one on every task you mean to run beside another. RESEARCH wide and early — independent ` +
+  `questions share no files and have no ordering, the ` +
+  `cheapest parallelism there is — one "researcher" (or "scout") task each, depends_on [], a lane each. ` +
   `BUILDERS by FILE OWNERSHIP, one write_set ` +
-  `each. REVIEWERS are a genuine join: one reviewer depending on EVERY builder of its group.\n` +
+  `each, in as many lanes as you want building at once. ` +
+  `REVIEWERS are a genuine join: one reviewer depending on EVERY builder of its group.\n` +
   `INTEGRATION, NEVER AUTO-MERGE: every workstream but "main" ends in an integration task (role builder, ` +
   `workstream "main") depending on every task of that workstream, carrying the union of their write_sets, ` +
   `that merges its branch back and on conflict STOPS and reports the conflicting files verbatim, unresolved ` +
   `— plus a reviewer depending on it. Auto-merge resolves in favour of whoever finishes last: silent ` +
-  `clobbering in a new costume.`;
+  `clobbering in a new costume. A lane you open for a task that itself creates tasks belongs to THAT ` +
+  `task: depends_on is fixed at insert, so you cannot name children that do not exist — it puts its ` +
+  `children in the lane and creates its integration task.`;
 
 /** R12 — the worktree-only rule, appended to EVERY role prompt on a
  *  repo-backed project. Bug 3 of the first night: fleet agents edited the live

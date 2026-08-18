@@ -319,12 +319,41 @@ const LANE_CASES: readonly LaneCase[] = LANE_COUNTS.map((lanes) => ({
 const DECLARED_LANE_CASES =
   [1, 2, 3].filter((n) => n <= CAP).length + (CAP > 3 ? 1 : 0);
 
+/* THE FIXTURE MUST BE AT LEAST AS WIDE AS THE LANE COUNT IT IS ASKED TO FILL —
+ * round 962, an unsatisfiable gate amended where it is enforced (standing rule
+ * 2), found by running this sweep under a lawful host override.
+ *
+ * Round 820 derived `lanes` from the imported CAP (correctly — that was its own
+ * finding) but left the task count as the literal 6 it had always been. The two
+ * then disagree the moment a host raises the cap above 6: at
+ * `PROJECT_MAX_WORKSTREAMS=9` the table demands `width 9` while `i % 9` over six
+ * rows can only ever produce SIX distinct workstreams, so case 3.9 asserted a
+ * width the fixture could not express and this sweep exited 1 on a host that had
+ * done nothing wrong. Measured, both at HEAD and here: `PROJECT_MAX_WORKSTREAMS=9
+ * tsx check-workstream-claim.ts` -> `FAIL 3.9 ... → width 9`, 1 failure of 27.
+ *
+ * That is the "gate demanding >=8 rows on a 7-row rail" the standing rules name,
+ * and the reason it is fixed rather than disclosed is that a red a host override
+ * can produce, on a check nobody runs overridden, is exactly how a sweep teaches
+ * its readers that its own reds are normal.
+ *
+ * `Math.max(6, c.lanes)` keeps the six-task fixture EXACTLY as it was for every
+ * cap up to 6 — the default path, and every case this file has run since round
+ * 960, is byte-for-byte the same measurement — and widens the rail only where it
+ * would otherwise be too short to hold the lanes. One task per lane is the
+ * minimum that can express a width of `c.lanes`; the count is printed in the
+ * case label so a reader never has to infer which rail was measured. */
 for (const c of LANE_CASES) {
-  const six = Array.from({ length: 6 }, (_, i) =>
+  const taskCount = Math.max(6, c.lanes);
+  const tasks = Array.from({ length: taskCount }, (_, i) =>
     row(`t${i}`, c.lanes === 1 ? "main" : `ws${i % c.lanes}`, [`src/f${i}.ts`]),
   );
-  check(`3.${c.lanes} ${c.lanes} workstream(s) over 6 independent tasks → width ${c.expected}  [${c.why}]`,
-    spawnedThisTick(six).length, c.expected);
+  check(
+    `3.${c.lanes} ${c.lanes} workstream(s) over ${taskCount} independent tasks → width ` +
+      `${c.expected}  [${c.why}]`,
+    spawnedThisTick(tasks).length,
+    c.expected,
+  );
 }
 console.log();
 
@@ -403,16 +432,25 @@ check(
   pastCap?.includes('new workstream "one-past-cap"'),
   true,
 );
-/* THE OPENABLE COUNT, measured and left as a FINDING rather than papered over.
- * Round 961's finding 3 — task 962's, still open at round 820 — is that
- * GRAPH_GUIDE's "up to that cap" over-promises by one: every project is born
- * with its architect row in `main`, and the guard counts all rows regardless of
- * status, so the NEW lanes a planner can open is CAP - 1. This asserts the
+/* THE OPENABLE COUNT — round 961's finding 3, CLOSED at round 962, and the
+ * label retired in the same commit as the fix (standing rule 4).
+ *
+ * The arithmetic is unchanged and still measured here: every project is born
+ * with its architect row in `main` (`createProject()` inserts no `workstream`
+ * column, so the schema default applies), and `workstreamCapRefusal()` counts
+ * all distinct workstreams regardless of status — so the NEW lanes a project
+ * can open is CAP - 1, not CAP.
+ *
+ * WHAT CHANGED IS ONLY THE VERDICT ON THE GUIDE. Round 820 wrote this as "the
  * arithmetic the guide gets wrong, so the day the guide is fixed there is a
- * measurement to fix it against. */
+ * measurement to fix it against". That day is this round: GRAPH_GUIDE now says
+ * it, and 6.7 below asserts it says it — so leaving the word OPEN here would be
+ * a document mislabelling a closed finding as live, which is the same defect
+ * class as round 825's blocker being fixed in this very commit. The measurement
+ * stays; only the claim about the guide moves. */
 check(
-  `5.6 a project born in "main" can open ${CAP - 1} NEW lane(s), not ${CAP} — R39 counts main, and ` +
-    "GRAPH_GUIDE's \"up to that cap\" does not say so (round 961 finding 3, OPEN, task 962)",
+  `5.6 a project born in "main" can open ${CAP - 1} NEW lane(s), not ${CAP} — R39 counts main ` +
+    "(round 961 finding 3; CLOSED at round 962, and 6.7 asserts GRAPH_GUIDE now says so)",
   workstreamCapRefusal(lanes(CAP - 1), "the-cap-th") === null &&
     workstreamCapRefusal(lanes(CAP), "one-more") !== null,
   true,
@@ -484,6 +522,111 @@ if (HOST_OVERRIDE === undefined) {
 }
 console.log();
 
+/* ── 6B. ROUND 962's THREE RULES, EXECUTED WHERE THEY CAN BE ──────────────── */
+
+console.log("── 6B. round 962's rules (961 findings 3, 4, 5) ──────────────");
+
+/* 6.7 — FINDING 3, the openable count, DERIVED rather than asserted.
+ *
+ * §5.6 proves CAP - 1 against `workstreamCapRefusal`. This proves the GUIDE now
+ * says it, and — the part that matters — it does not look for a hard-coded "5".
+ * It walks the refusal from the state every project is BORN in (one row, in
+ * `main`) and counts how many NEW lanes actually open before the 400. So the
+ * expected value is computed from the engine on both sides; a host that
+ * overrides the cap moves the count and this check follows it. A literal here
+ * would be the inert-constant failure round 961 found in §3's top row. */
+function openableFromBirth(): number {
+  const present = ["main"];
+  let opened = 0;
+  for (let i = 0; i < CAP + 2; i++) {
+    const lane = `lane-${i}`;
+    if (workstreamCapRefusal(present, lane) !== null) break;
+    present.push(lane);
+    opened++;
+  }
+  return opened;
+}
+check(
+  `6.7a from the state a project is BORN in (one row, "main"), ${CAP - 1} NEW lane(s) open before ` +
+    "the 400 — walked against the guard, not read off a literal",
+  openableFromBirth(),
+  CAP - 1,
+);
+check(
+  '6.7b GRAPH_GUIDE states that the cap COUNTS the "main" a project is born in — round 961 ' +
+    "finding 3, the clause whose absence taught the 400 §5.6 measures",
+  GRAPH_GUIDE.includes('COUNTING the "main" every project is born in, so cap-1 remain'),
+  true,
+);
+check(
+  "6.7c GRAPH_GUIDE gives the project-wide budget an ALLOCATION RULE — this constant reaches the " +
+    "architect AND every planner it seeds, and an unqualified ceiling is read from both seats " +
+    "as a whole budget",
+  GRAPH_GUIDE.includes("That budget is the PROJECT's, not yours"),
+  true,
+);
+
+/* 6.8 — FINDING 4, EXECUTED: what "no workstream" actually costs.
+ *
+ * The guide calls research fan-out "the cheapest parallelism there is". Round
+ * 961's finding 4 is that N researchers with `depends_on []` and NO workstream
+ * all land in `main` (`createTask()` writes `input.workstream ?? "main"`) and
+ * then run ONE AT A TIME behind the round-222 belt — so the sentence promised a
+ * width the engine does not deliver, which is round 815's project exactly.
+ *
+ * This drives the SAME `spawnedThisTick()` the rest of the sweep uses, over the
+ * two shapes side by side: the omitted field, and a lane each. It is a
+ * controlled pair — same count, same empty write-sets, same tick — so the only
+ * variable is the field the guide now tells a planner not to omit. Both halves
+ * are asserted: without the clause a planner writes the left-hand shape and
+ * believes it bought the right-hand one. */
+const RESEARCHERS = 4;
+const omittedField = Array.from({ length: RESEARCHERS }, (_, i) =>
+  row(`res-main-${i}`, "main", []),
+);
+const laneEach = Array.from({ length: RESEARCHERS }, (_, i) =>
+  row(`res-lane-${i}`, `research-${i}`, []),
+);
+check(
+  `6.8a ${RESEARCHERS} researchers with depends_on [] and the workstream field OMITTED (so "main") ` +
+    "spawn 1 this tick — the fan-out the guide calls cheapest, costing its full width in wall clock",
+  spawnedThisTick(omittedField).length,
+  1,
+);
+check(
+  `6.8b the same ${RESEARCHERS} with a lane each spawn all ${RESEARCHERS} — the difference between ` +
+    "the two rows is the field, and nothing else",
+  spawnedThisTick(laneEach).length,
+  RESEARCHERS,
+);
+check(
+  "6.8c GRAPH_GUIDE states the non-inheritance in FAN-OUT, where the fan-out decision is made — " +
+    "defining the field three paragraphs earlier is what round 961 finding 4 measured as not enough",
+  GRAPH_GUIDE.includes("a task does NOT inherit your workstream"),
+  true,
+);
+
+/* 6.9 — FINDING 5, stated; and SAID PLAINLY, it is the one rule of the three
+ * this script cannot execute.
+ *
+ * The rule is that a lane opened FOR a task that creates tasks belongs to that
+ * task. Its two premises live where this script cannot reach them without a
+ * database and a server: R29's immutability of `depends_on` after insert, and
+ * the route's refusal of dependency ids that do not exist (`depends_on names N
+ * dependency id(s) that do not exist` -> 400). `check-task-api.ts` reaches both
+ * over HTTP and needs `$SCRATCH_DATABASE_URL`.
+ *
+ * So this is a CLAUSE check and is labelled one. Recording that honestly is the
+ * point: round 961's finding 2 was exactly an instrument asserting a claim it
+ * never executed while reading as though it had. */
+check(
+  "6.9 GRAPH_GUIDE states that a lane opened for a task-creating task belongs to that task " +
+    "(clause only — R29 immutability and the unknown-id 400 need check-task-api.ts and a database)",
+  GRAPH_GUIDE.includes("A lane you open for a task that itself creates tasks belongs to THAT task"),
+  true,
+);
+console.log();
+
 /* ── 7. VERDICT, with the sweep's own census first ────────────────────────── */
 
 if (LANE_CASES.length !== DECLARED_LANE_CASES) {
@@ -496,9 +639,10 @@ if (LANE_CASES.length !== DECLARED_LANE_CASES) {
 /* §1 four, §2 three, §3 one per lane case, §4 three, §5 six, §6 seven (four
  * clause needles + the retired-criterion absence + 6.6a + whichever branch of
  * 6.6b the host selects — exactly one of the two runs, never both, never
- * neither). At the default cap of 6 that is 4+3+4+3+6+7 = 27; the pre-820
- * baseline was 19 and the +8 is §5's six and §6.6's two. */
-const EXPECTED_CHECKS = 4 + 3 + DECLARED_LANE_CASES + 3 + 6 + 7;
+ * neither), §6B seven (6.7a/b/c, 6.8a/b/c, 6.9). At the default cap of 6 that
+ * is 4+3+4+3+6+7+7 = 34; the pre-820 baseline was 19, +8 was §5's six and
+ * §6.6's two at round 820, and +7 is round 962's §6B. */
+const EXPECTED_CHECKS = 4 + 3 + DECLARED_LANE_CASES + 3 + 6 + 7 + 7;
 if (ran !== EXPECTED_CHECKS) {
   console.log(
     `FAIL  ${ran} checks ran, ${EXPECTED_CHECKS} expected — a section stopped executing and the ` +

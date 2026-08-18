@@ -1687,6 +1687,37 @@ that "shrinking cannot pay" is a measurement rather than an assertion; round 822
 made that claim and backed it, and the condition is that every successor does
 the same.*
 
+***THE RESERVATION IS SPENT, AND IT WAS SPENT UNDER BUDGET — round 962, the
+commit that closes this paragraph.*** *The 650 reserved above bought findings 3,
+4 and 5 as three rules in `GRAPH_GUIDE`, and NF7's LEDGER now carries
+`{ round: 962, spent: 637, reserved: 650 }`. **`BUDGET` is untouched at 3700**,
+so the condition attached to the ruling — state what was retired first and why it
+did not pay — did not have to be met, because there was no increase to justify.*
+
+*The number worth keeping is the one that came from using round 822's instrument
+the way it was designed to be used, **before** the edit rather than after. The
+first candidate measured **+667**: inside the cap of 12921, and still 17
+characters past this reservation. Answering a 17-character overrun by moving the
+ceiling is exactly the reflex the ruling forbids, so the candidate was **trimmed
+to +637** — four edits, none of them to a rule, each recorded with its
+before/after in `evidence/round962-fix-cycle-1.md` §2. Live measurement after the
+edit: **12883 against 12921, 38 of headroom**, and the shipped constant is
+byte-identical to the measured candidate (sha256 `57762f7296f71ca5`), so the
+figure is not re-derived from the thing it describes.*
+
+*One divergence from round 822's reference wording, recorded because §J predicted
+it and it did not happen: that wording retired* `"the cheapest parallelism there
+is"` *(33 characters) on finding 4's reasoning that the phrase is false while
+every researcher lands in* `"main"`. *Round 962 **kept** it. The phrase was never
+false about research; it was false about research planned **without a
+workstream**. Once the guide states that a task does not inherit its creator's
+workstream and tells the planner to give each researcher a lane, the sentence
+describes something the engine really delivers —* `check-workstream-claim.ts`
+*`6.8a`/`6.8b` measure exactly that, 1 wide without the field and 4 wide with it.
+Round 822 said its wording was a sizing input and not the deliverable, and that
+round 962 owned the text; this is that ownership exercised rather than left for a
+reviewer to discover.*
+
 *How proved:* unit — a length assertion on the built planner prompt, with the
 budget written into the assertion message.
 

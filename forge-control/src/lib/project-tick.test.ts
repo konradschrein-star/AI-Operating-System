@@ -2658,7 +2658,27 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * 12227 before, 12246 after; 12246 - 12227 = 19 = 92 - 73, the same positive
    * control round 900 used — a swap inside a string already in the prompt cannot
    * cost anything else, so the two matching proves nothing but the clause moved.
-   * Headroom after: 12271 - 12246 = 25. */
+   * Headroom after: 12271 - 12246 = 25.
+   *
+   * ROUND 962 SPENDS THE 650 ROUND 822 RESERVED, and spends it under budget.
+   * Round 961's findings 3, 4 and 5 are three ENGINE FACTS — not rewordings —
+   * and the row below names each with the 400 or the 1-wide project it prevents.
+   * MEASURED BEFORE IT WAS WRITTEN, which is the point of round 822's
+   * instrument: `measure-graph-guide-budget.ts --candidate <file>` reported
+   * +637 net (2588 - 1951) and a projected 12883 against the cap of 12921. The
+   * live measurement after the edit is that same 12883, and the shipped
+   * constant is byte-identical to the measured candidate (sha256
+   * 57762f7296f71ca5) — so this row is not a claim re-derived from the thing it
+   * describes. Headroom after: 12921 - 12883 = 38; reservation unspent: 13.
+   *
+   * NO WIDENING, AND THAT IS DELIBERATE. The operator's round-961 ruling
+   * confirmed BUDGET 3700 while making it "the LAST widening that gets to be
+   * routine" — any future increase must state what was retired first and why it
+   * did not pay, with the measurement. Round 962's first candidate measured
+   * +667, which fits the cap but OVERRUNS the 650 reservation by 17; it was
+   * TRIMMED to +637 rather than answered by raising BUDGET. The three trims are
+   * recorded in evidence/round962-fix-cycle-1.md §2 with their before/after
+   * measurements, so the next round can see that the ceiling bound and held. */
   const FIVE_A_TIP = 11619;
   const LEDGER = [
     {
@@ -2689,6 +2709,42 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
         "the new clause",
       spent: 19,
       reserved: 44,
+    },
+    // ROUND 962 — round 961's findings 3, 4 and 5, which are three ENGINE FACTS
+    // a planner cannot plan without and which the guide either contradicted or
+    // left unsaid. Each is a rule, not a rewording:
+    //   (3) the cap COUNTS the "main" every project is born in, so cap-1 lanes
+    //       remain — "up to that cap" over-promised by one and taught a 400 —
+    //       plus the allocation rule the project-wide budget always needed,
+    //       since the identical clause reaches the architect AND every planner
+    //       it seeds and each read it as if it owned the whole budget;
+    //   (4) a task does NOT inherit its creator's workstream (createTask() writes
+    //       `input.workstream ?? "main"`; there is no creator inheritance
+    //       anywhere), stated in FAN-OUT where the fan-out decision is made —
+    //       without it N researchers with depends_on [] all land in "main" and
+    //       run one at a time, which is round 815's 1-wide project exactly;
+    //   (5) a lane opened FOR a task that creates tasks belongs to that task:
+    //       R29 fixes depends_on at insert, so whoever opens the lane cannot
+    //       name children that do not exist and R38's integration task would
+    //       merge a branch carrying no code.
+    //
+    // SIZED BEFORE IT WAS WRITTEN, with round 822's instrument and its own
+    // documented command (`measure-graph-guide-budget.ts --candidate <file>`):
+    // the candidate measured +637 net against the 650 round 822 reserved, and
+    // the text that shipped is byte-identical to the text that was measured
+    // (sha256 57762f7296f71ca5, 2588 chars, asserted in
+    // evidence/round962-fix-cycle-1.md §2). NO BUDGET WIDENING: the operator's
+    // round-961 ruling made 3700 the last routine one, and this row fits under
+    // it with 13 of the reservation and 38 of the cap unspent.
+    {
+      round: 962,
+      what: "GRAPH_GUIDE gains round 961's findings 3, 4 and 5 as three engine rules — the cap " +
+        'counts "main" (so cap-1 remain) plus the allocation rule for a project-wide budget; ' +
+        "a task does not inherit its creator's workstream, stated in FAN-OUT; and a lane opened " +
+        "for a task that creates tasks belongs to that task, which is the only owner that can " +
+        "name its children in an integration task's immutable depends_on",
+      spent: 637,
+      reserved: 650,
     },
   ] as const;
 
@@ -2800,6 +2856,46 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       "NF7 (round 960's row): the retired same-file criterion is still in GRAPH_GUIDE, so the " +
         "row's +19 net is wrong — a replacement that adds without removing costs 92, not 19",
     );
+    // Round 962's row is an ADDITION of three separately-motivated rules, so its
+    // delivery control has three halves — one per finding. The exactness
+    // assertion above proves the TOTAL was not over-charged; these prove the
+    // characters went to the clauses the row names, which is the half a bare
+    // sum cannot see. Each needle is the rule's load-bearing phrase, not a
+    // decorative fragment: drop any one of them and a planner loses an engine
+    // fact and plans a 400 or a 1-wide project.
+    for (const [finding, needle, whatItCosts] of [
+      [
+        "3 (the cap counts main, so cap-1 remain)",
+        'COUNTING the "main" every project is born in, so cap-1 remain',
+        'a planner reads "up to that cap" as 6 openable lanes, opens the 6th, and is refused ' +
+          "with a 400 — the guard counts the architect's own main row",
+      ],
+      [
+        "3 (the allocation rule for a project-wide budget)",
+        "That budget is the PROJECT's, not yours",
+        "the architect and every planner it seeds read the same unqualified ceiling as if each " +
+          "owned the whole budget, and the second planner to fan out is refused",
+      ],
+      [
+        "4 (no workstream inheritance, stated in FAN-OUT)",
+        "a task does NOT inherit your workstream",
+        "N researchers with depends_on [] and no workstream all land in \"main\" and run one at " +
+          "a time — round 815's 1-wide project, with the guide calling it the cheapest parallelism",
+      ],
+      [
+        "5 (a lane opened for a task-creating task belongs to that task)",
+        "A lane you open for a task that itself creates tasks belongs to THAT task",
+        "R29 fixes depends_on at insert, so the opener cannot name the planner's future children " +
+          "and R38's integration task merges a branch carrying no code",
+      ],
+    ] as const) {
+      assert.ok(
+        GRAPH_GUIDE.includes(needle),
+        `NF7 (round 962's row): the ledger charges 637 characters to round 961's findings 3, 4 ` +
+          `and 5, but GRAPH_GUIDE no longer states finding ${finding} (looked for "${needle}"). ` +
+          `Without it, ${whatItCosts}`,
+      );
+    }
   });
 });
 
