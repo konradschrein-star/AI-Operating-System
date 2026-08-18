@@ -386,3 +386,215 @@ consolidation code and no consolidation test.
    it throws with a legible SQLSTATE and is not a silent fallback, and the
    instrument's sha is expensive to move twice. A future round wanting a named
    refusal has the assertion already in place to change.
+
+---
+
+## 9. Round 813 — fix cycle 1 on round 812's three findings
+
+**Task:** round 812 passed the cast and its test and blocked on the gate around
+them. Three findings, all addressed here. Same standing conditions as round 811:
+nothing shipped, no restart, no migration, no write under `/opt/forge-ai-os`, no
+read of the live database. Every Postgres statement below ran against a
+throwaway cluster in `TMPDIR`, created and stopped by the run that used it.
+
+**The instrument identity did NOT move this round.** No byte of
+`scripts/measure-schedule.ts` or `forge-control/src/lib/schedule-source.ts`
+changed, so §0's frozen `fb5a6434…` still names the bytes on disk, and the
+eleven pasted headers stay valid without a single re-derivation. That was a
+deliberate choice on finding 2, stated in §9.2.
+
+### 9.0 Write-set, declared
+
+| file | why round 813 writes it |
+|---|---|
+| `docs/plan/engine-task-graph/03-quality.md` | Finding **1**. §3.1 gains **universal gate item 11** and §4's copy-pasteable block gains its command line — the gate stated in both places it is stated, per round 805's rule that a gate written twice rots if only one copy is fixed. |
+| `forge-control/src/lib/schedule-source.test.ts` | Finding **2**. §4.1 gains the ORDER assertion and its two supporting controls; §4.2 gains an executed negative control against the transposed statement. |
+| `docs/plan/engine-task-graph/check-instrument-identity.py` | Finding **3**. `manifest_lines += 1` moves inside `if not exempt:`. |
+| `docs/plan/engine-task-graph/04-phases.md` | §10's write-set table. No other section touched. |
+| `docs/plan/engine-task-graph/evidence/phase8-uuid-cast.md` | this section. |
+
+**Not written:** `forge-control/src/lib/schedule-source.ts` — see §9.2 — and no
+other file under `forge-control/src/**`, no migration, no payload, no check
+script, no `main` merge.
+
+### 9.1 Finding 1 — the instrument that was in no gate list
+
+`scripts/check-schedule-sql.sh` is now **§3.1 item 11**, a universal gate, with
+the reasoning inline at both sites. The clause records the measurement that
+motivates it (round 812's transposition mutant: `pnpm test` green, `tsc` 0,
+Postgres `42883`), states why `check-instrument-identity.py` does not cover it,
+and states its own prerequisites and skip-refusals so a reviewer who cannot run
+it files a finding rather than a footnote.
+
+**The gate is measured passable before it is written** — standing rule 2. On
+this tree, at the bytes this round commits:
+
+```
+$ bash scripts/check-schedule-sql.sh
+== check-schedule-sql — provenance ==
+repo:            /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+git-head:        c442de8aec3e1c79d90939033bdba027185d00aa -dirty
+statements from: forge-control/src/lib/schedule-source.ts
+                 c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5
+postgres:        postgres (PostgreSQL) 16.14 (Ubuntu 16.14-0ubuntu0.24.04.1)
+cluster:         /tmp/schedule-sql-check.1788630 (throwaway, unix socket only, no network listener)
+…
+# tests 40
+# suites 5
+# pass 40
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+scratch cluster left at /tmp/schedule-sql-check.1788630 (server stopped; remove it when you like)
+$ echo $?
+0
+```
+
+`-dirty` is the script disclosing the truth about its own run: this transcript
+was captured from the working tree that became this commit, before the commit
+existed. The `statements from:` digest is the one that matters and it is §0's
+frozen `c00fd096…`, unchanged. 40 tests where round 811 reported 36 — the four
+this round adds. §9.5 re-runs it on the committed tree.
+
+### 9.2 Finding 2 — the ordering premise, asserted twice and mutation-tested
+
+Round 811's fix rests on a premise it never stated: Postgres resolves `$1` at
+the first site that can decide it, so `metadata->>'project_id' = $1` must be
+parse-analyzed **before** `project_id = $1::uuid`. Reversed, the cast types the
+parameter `uuid` and the json arm becomes `text = uuid`.
+
+Two assertions now hold that premise, at two different layers:
+
+1. **`RUNS_SQL` reaches the UNCAST arm before the cast one** (§4.1, static) —
+   `parameterUses()` returns sites in source order, so the index of the `->>`
+   use must be lower than the index of the cast use.
+2. **Transposing the OR arms breaks the statement even WITH the cast** (§4.2,
+   executed) — `swapOrArms()` derives the transposed statement from the shipped
+   constant (never pastes it), and Postgres must reject it with `42883`
+   `operator does not exist: text = uuid`.
+
+Two supporting controls come with them, because a fixture that silently stopped
+differing would make both vacuous: the transposed form must still contain
+`$1::uuid` and must be a **permutation** of `RUNS_SQL` (same multiset of
+characters — order changed, nothing else), and `swapOrArms()` throws with the
+whole statement in the message if the `WHERE <arm>\n OR <arm>` shape it
+transposes is gone, rather than returning something unchanged.
+
+A fourth test states the analyser's blind spot **as a limit**: `typeConflicts()`
+excludes cast sites by design, so it reports the transposed statement clean.
+That is asserted, so nobody cites it as the guard against this mutant.
+
+**Red-mutated, in a shadow tree, with its identity proved before the mutation.**
+Copied file-for-file to `/tmp/r813-shadow` (only `node_modules` symlinked — a
+symlinked source resolves to its real path and silently tests HEAD):
+
+```
+--- identity BEFORE mutation (must be equal) ---
+c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  /tmp/r813-shadow/…/schedule-source.ts
+5d682c60621d2bc9dbde113c8681541f6736c9bc1ddd42df4f6d67d3d8d4edc1  forge-control/src/lib/schedule-source.test.ts
+5d682c60621d2bc9dbde113c8681541f6736c9bc1ddd42df4f6d67d3d8d4edc1  /tmp/r813-shadow/…/schedule-source.test.ts
+```
+
+The two `OR` arms were then transposed in the shadow's `schedule-source.ts`,
+cast left verbatim, moving that half to `6f3412a6a4e3b5c3a31fd1eff166e15602e98438f0713203a0995c1c29e082e7`
+— and the run's own provenance header printed `6f3412a6…`, so the bytes measured
+are the mutated ones and not the worktree's.
+
+| layer, on the mutant | result |
+|---|---|
+| `tsx --test schedule-source.test.ts`, no DSN — what `pnpm test` sees | **32 pass / 2 fail**, exit 1. `not ok 9 - RUNS_SQL reaches the UNCAST arm before the cast one` with *"the '->>' use is at index 1 and the cast use at index 0"*, and the permutation control at `not ok 10`. |
+| `bash scripts/check-schedule-sql.sh` on the shadow | **32 pass / 8 fail**, exit 1. `THE REGRESSION: readProjectRows() completes end to end` fails with `error: 'operator does not exist: text = uuid'`, `code: '42883'` — round 810's death, operands transposed, reproduced. |
+
+Round 812's finding is confirmed by measurement, not accepted on report: with
+`::uuid` present and only the arm order changed, a real Postgres refuses the
+statement. The negative control fails on the mutant too, and legibly — *Missing
+expected rejection*, because a transposition of a transposition is the working
+statement.
+
+**The order assertion catches this mutant in `pnpm test` alone, and that does
+NOT retire item 11.** Stated explicitly in item 11 and repeated here: a static
+assertion added per-mutant closes the last bug; the class — a statement `tsc`
+cannot read, that no unit test may parse-analyze because NF3 forbids the suite
+opening a connection, and that fails only inside the server — is closed only by
+executing it.
+
+**Why `schedule-source.ts` itself was not edited to state the premise in its
+doc-comment.** One comment byte moves that half's digest, which moves the
+composite, which retires `fb5a6434…` — an identity currently quoted by **eleven
+live pasted headers, and every per-half manifest line beneath them, across three
+documents** — none of which this round could honestly amend, because those
+headers are transcripts
+of runs and amending a transcript to name a digest its run did not print is the
+fabrication round 806 was called on. Re-running all eleven to state one comment
+is a large, error-prone documentation churn for no gain in what is enforced. The
+premise is instead stated where it is **enforced** — in the two assertions and
+their comments — which is where standing rule 2 puts it. Recorded here so the
+choice is visible rather than inferred.
+
+### 9.3 Finding 3 — the exempt manifest line that counted
+
+`manifest_lines += 1` sat outside the `if not exempt:` guard, contradicting both
+the comment above the loop and check 1's treatment of `headers += 1`. Moved
+inside, with the reason in the code.
+
+**Latent, not active, and measured both ways.** Measured on the corpus as round
+812 left it, the live count is **26** against **1** exempt line — the pre-fix
+script reported 27 and the post-fix script 26 — so `MIN_MANIFEST_LINES = 8`
+clears comfortably either way and the gate stays passable. §9.2's transcript
+above then pastes one further **live** manifest line into this document, so on
+the tree this round commits the check reports `OK — 27 pasted manifest line(s)`.
+Both numbers are stated because the second is the one a re-check will see.
+
+The failure the guard now prevents was reproduced on a synthetic corpus built at
+`/tmp/r813-idshadow`: the real instrument halves (so the composite is genuinely
+`fb5a6434…`), eight live headers in `evidence/baseline-8ea0cc08.md`, five filler
+documents, and **every manifest line inside a fence marked historical**, naming
+digests that are all zeroes and all ones.
+
+The two blocks below are transcripts of that SYNTHETIC corpus, not of this
+repository. Its manifest lines name all-zero and all-one placeholders, which is
+why the pre-fix run's second line is a false statement rather than a stale one.
+No placeholder digest is reproduced here, so neither block needs the
+`[historical instrument]` escape — checked, not assumed.
+
+```
+### PRE-FIX (the script at c442de8) ###
+OK — 8 pasted header(s) across 1 file(s) name fb5a6434…
+OK — 10 pasted manifest line(s) name the current digest of their half
+OK — no retired identity quoted without '[historical instrument]'
+pre-fix exit=0
+```
+
+That second line is not merely a miscount — it is **false**. All ten of those
+lines name a dead digest; not one was compared against anything. The run
+certifies check 1b while check 1b verified nothing.
+
+```
+### POST-FIX (round 813) ###
+FAILED — 1 disagreement(s):
+  POSITIVE CONTROL: found 0 pasted manifest line(s), expected at least 8 — check 1b
+  matched nothing, so the per-half coverage round 811 added is not actually being
+  exercised. …
+post-fix exit=1
+```
+
+A sweep whose probes miss now exits non-zero instead of certifying itself, which
+is `00-vision.md` §7 rule 2 applied to the checker that enforces it.
+
+### 9.4 Universal gate on the working tree
+
+| gate | result |
+|---|---|
+| `pnpm typecheck` | exit 0 |
+| `pnpm test` | **1281 pass / 0 fail / 0 skipped** (1278 at round 812; the three new static tests. The fourth new test is inside §4.2, which `pnpm test` skips as a whole suite by NF3 and which §9.1's run executes) |
+| `bash scripts/check-schedule-sql.sh` — **item 11, on its first round as a gate** | 40/40, exit 0 |
+| `python3 …/check-instrument-identity.py` | exit 0 — 11 headers / 3 files / **27** manifest lines (26 before §9.2's transcript added a live one; see §9.3) |
+| `python3 …/check-corpus-map.py` | exit 0 |
+| `python3 scripts/checks/check-r20-census.py` | exit 0 |
+| `bash scripts/checks/check-instrument-typecheck.sh` | exit 0 |
+| item 10 shell lint over the derived list | exit 0 |
+| `git -C /opt/forge-ai-os status --porcelain` | empty — this round wrote nothing outside the worktree |
+
+`project-reconcile.test.ts` is untouched by this round.

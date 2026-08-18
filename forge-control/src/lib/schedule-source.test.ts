@@ -368,6 +368,37 @@ describe("runRow — the runs narrowing", () => {
  */
 const RUNS_SQL_UNCAST = RUNS_SQL.replace("$1::uuid", "$1");
 
+/**
+ * THE SECOND MUTANT, and the one round 811 could not see. `RUNS_SQL` with its
+ * two `OR` arms TRANSPOSED and the cast left exactly where it is.
+ *
+ * Round 811's fix rests on an unstated premise: Postgres resolves `$1` at the
+ * first site that can decide it. Reached uncast-first, `$1` is `text` and the
+ * cast coerces that text; reached cast-first, `$1::uuid` types the parameter
+ * `uuid` and the json arm becomes `text = uuid` — round 810's death with the
+ * operands transposed. Every other assertion in this file survives that swap
+ * (round 812's reviewer measured it: 31/31 green, `tsc` 0), because the static
+ * conflict analyser skips cast sites and so sees one uncast site, not a
+ * conflict. So the premise is asserted below in two places rather than
+ * believed: statically as an ORDER, and executed against Postgres as a
+ * negative control.
+ *
+ * DERIVED, never pasted, for the same reason as the fixture above.
+ */
+function swapOrArms(sql: string): string {
+  const shape = /^([ \t]*WHERE )(.+)\n([ \t]*)OR (.+)$/m.exec(sql);
+  if (shape === null) {
+    throw new Error(
+      "swapOrArms(): the statement no longer has the `WHERE <arm>\\n OR <arm>` shape this " +
+        "fixture transposes, so the transposition fixture cannot be derived and must not be " +
+        `silently skipped. Statement was:\n${sql}`,
+    );
+  }
+  return sql.replace(shape[0], `${shape[1]}${shape[4]}\n${shape[3]}OR ${shape[2]}`);
+}
+
+const RUNS_SQL_ARMS_SWAPPED = swapOrArms(RUNS_SQL);
+
 /** One `<lhs> = $n` comparison found in a statement. */
 interface ParamUse {
   /** `1` for `$1`. */
@@ -503,6 +534,48 @@ describe("the shipped SQL, read statically", () => {
     assert.equal(uuid.cast, "::uuid");
     assert.equal(uuid.lhs, "project_id");
   });
+
+  test("RUNS_SQL reaches the UNCAST arm before the cast one — the fix rests on this order", () => {
+    // Postgres types $1 at the first site that can decide it, so uncast-first
+    // leaves $1 `text` and the cast coerces it, while cast-first types $1 `uuid`
+    // and the json arm becomes `text = uuid`, 42883. The test above asserts
+    // WHICH arm carries the cast; this asserts WHICH ARM COMES FIRST, which is
+    // the half a transposition mutant slips through (round 812's finding 2).
+    const uses = parameterUses(RUNS_SQL);
+    const json = uses.findIndex((u) => u.lhs.includes("->>"));
+    const cast = uses.findIndex((u) => u.cast !== null);
+    assert.notEqual(json, -1, "no `->>` comparison found — the json arm is gone");
+    assert.notEqual(cast, -1, "no cast comparison found — round 811's fix is gone");
+    assert.ok(
+      json < cast,
+      `the '->>' use is at index ${json} and the cast use at index ${cast}: the cast arm now ` +
+        "parse-analyzes first, which types $1 as uuid and leaves the json arm as `text = uuid`",
+    );
+  });
+
+  test("POSITIVE CONTROL: the transposed fixture differs only in ORDER, and keeps the cast", () => {
+    // If the transposition were to lose the cast it would merely re-run the
+    // uncast fixture above under another name, and its 42883 would prove nothing
+    // about ordering.
+    assert.notEqual(RUNS_SQL_ARMS_SWAPPED, RUNS_SQL, "swapOrArms() returned the statement unchanged");
+    assert.ok(RUNS_SQL_ARMS_SWAPPED.includes("$1::uuid"), "the transposed fixture lost the cast");
+    assert.deepEqual(
+      [...RUNS_SQL_ARMS_SWAPPED].sort().join(""),
+      [...RUNS_SQL].sort().join(""),
+      "the transposed fixture is not a permutation of RUNS_SQL — swapOrArms() rewrote more than the order",
+    );
+    const swapped = parameterUses(RUNS_SQL_ARMS_SWAPPED);
+    assert.equal(swapped.findIndex((u) => u.cast !== null), 0, "the cast arm should now come first");
+  });
+
+  test("the static conflict analyser is BLIND to the transposition, by construction", () => {
+    // Stated as a limit, not hidden. A cast site is excluded from the conflict
+    // rule because the cast — not the site — decides the type there, so the
+    // transposed statement shows one uncast site and no conflict. That blindness
+    // is why the order assertion above and §4.2's executed control both exist:
+    // this analyser must never be cited as the guard against this mutant.
+    assert.deepEqual(typeConflicts(RUNS_SQL_ARMS_SWAPPED), []);
+  });
 });
 
 /* -------------------------------------------------------------------------- *
@@ -628,6 +701,22 @@ describe("the shipped SQL, executed against a throwaway Postgres", { skip: EXEC_
       (err: unknown) => {
         assert.equal(sqlstateOf(err), "42883", `SQLSTATE was ${String(sqlstateOf(err))}`);
         assert.match(String(err), /operator does not exist: uuid = text/);
+        return true;
+      },
+    );
+  });
+
+  test("NEGATIVE CONTROL: transposing the OR arms breaks the statement even WITH the cast", async () => {
+    // The premise round 811 shipped without stating, executed rather than
+    // argued: the cast fixes the statement only because the uncast `->>` arm is
+    // parse-analyzed first. Same six characters, same two arms, order reversed —
+    // and Postgres refuses it with the same SQLSTATE round 810 died on, operands
+    // transposed. Static analysis cannot reach this; only the server can.
+    await assert.rejects(
+      () => pool.query(RUNS_SQL_ARMS_SWAPPED, [PROJECT]),
+      (err: unknown) => {
+        assert.equal(sqlstateOf(err), "42883", `SQLSTATE was ${String(sqlstateOf(err))}`);
+        assert.match(String(err), /operator does not exist: text = uuid/);
         return true;
       },
     );

@@ -1018,6 +1018,26 @@ unchanged at **1270 pass / 0 fail / 0 skipped**, which is the expected reading
 for a markdown-only diff and is therefore evidence of nothing — every claim here
 rests on an executed run pasted whole.
 
+**Round 813's write-set, declared in the commit that makes it (fix cycle 1 on
+round 812's three findings).** One task, no concurrent builder. Transcripts:
+`evidence/phase8-uuid-cast.md` §9.
+
+| file | why round 813 writes it |
+|---|---|
+| `docs/plan/engine-task-graph/03-quality.md` | Finding **1**. §3.1 gains **universal gate item 11** — `bash scripts/check-schedule-sql.sh` exits 0 — and §4's block gains its command, the gate fixed in both places it is stated (round 805's rule). Round 811 built the only instrument that executes `schedule-source.ts`'s SQL — and the only one that provisions its own cluster — and wired it into no list, so a transposition of `RUNS_SQL`'s two `OR` arms passed every gate the corpus named — `pnpm test` 31/31, `tsc` 0 — while Postgres answered `text = uuid`, `42883`. Universal, not phase-8's: any phase can ship a statement no test parse-analyzes. |
+| `forge-control/src/lib/schedule-source.test.ts` | Finding **2**. The fix's unstated premise — the `->>` arm resolves `$1` before the cast arm does — asserted at two layers: §4.1's ORDER assertion with a permutation control and a stated blind spot, §4.2's executed negative control against the transposed statement. Red-mutated in a shadow tree: 2 of 34 static tests fail, and the executed regression fails with the transposed `42883`. |
+| `docs/plan/engine-task-graph/check-instrument-identity.py` | Finding **3**. `manifest_lines += 1` moves inside `if not exempt:`, so a historical manifest line no longer counts toward `MIN_MANIFEST_LINES`. Latent (26 live to 1 exempt as round 812 left the corpus, 27 live once §9's own transcript lands — the control clears 8 either way); the failure it prevents is reproduced on a synthetic corpus, where the pre-fix script exits **0** while check 1b compared nothing. |
+| `docs/plan/engine-task-graph/evidence/phase8-uuid-cast.md` | §9, new — every transcript above. |
+| `docs/plan/engine-task-graph/04-phases.md` | **Standing rule 2 — declare the write-set where the audit looks.** This table. No other section of this file is touched. |
+
+**What round 813 did NOT do, stated so the re-check does not go looking.**
+`forge-control/src/lib/schedule-source.ts` is **unchanged** — deliberately, so
+the instrument identity `fb5a6434…` does not move and the eleven live pasted
+headers stay valid; the reasoning is in `evidence/phase8-uuid-cast.md` §9.2. No
+other file under `forge-control/src/**`, no migration, no payload, no check
+script, no `main` merge, no deploy. `pnpm test` moves 1278 → **1281**, which is
+the three new static tests and nothing else.
+
 **And note what this row is.** The three builders of round 802 were split by
 declared write-set, and the split held for every *file* — no two builders touched
 one. What crossed the boundary was not a file but a **fact**: one builder's edit

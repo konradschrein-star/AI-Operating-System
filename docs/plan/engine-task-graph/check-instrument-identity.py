@@ -226,8 +226,9 @@ def main() -> int:
     # check 2's by accident, so a transcript of an OLD checker run could not be
     # preserved at all without editing its bytes.
     #
-    # An exempt header does NOT count toward the positive controls below: a
-    # historical header proves nothing about the instrument on disk now.
+    # An exempt header or manifest line does NOT count toward the positive
+    # controls below: a historical one proves nothing about the instrument on
+    # disk now. Both counters therefore live inside the exemption (round 813).
     headers = 0
     manifest_lines = 0
     reached: set[str] = set()
@@ -265,15 +266,27 @@ def main() -> int:
             # check 1b: a pasted manifest line names the right HALF. Check 1
             # says "something moved"; this says which file, which is the reason
             # the digest was split in two in the first place.
+            #
+            # The counter sits INSIDE the exemption, exactly as check 1's does
+            # (round 813, round 812's finding 3). Outside it, a historical
+            # manifest line — which by definition names bytes that are gone —
+            # counted toward MIN_MANIFEST_LINES, so a corpus whose manifest lines
+            # were all inside marked-historical fences would report ≥8 and
+            # certify a run in which check 1b compared nothing. Latent when
+            # found, not active: measured at 26 live lines to 1 exempt on the
+            # corpus round 812 reviewed, so the control clears 8 with or without
+            # this guard and the gate stays passable. Reproduced on a synthetic
+            # corpus — evidence/phase8-uuid-cast.md §9.3.
             manifest = MANIFEST_RE.search(line)
             if manifest is not None:
-                manifest_lines += 1
-                if not exempt and manifest.group(1) != current_files[manifest.group(2)]:
-                    failures.append(
-                        f"{rel}:{lineno}: pasted manifest names {manifest.group(1)[:8]}… for "
-                        f"{manifest.group(2)}, but that file on disk is "
-                        f"{current_files[manifest.group(2)][:8]}… — THIS half of the instrument moved"
-                    )
+                if not exempt:
+                    manifest_lines += 1
+                    if manifest.group(1) != current_files[manifest.group(2)]:
+                        failures.append(
+                            f"{rel}:{lineno}: pasted manifest names {manifest.group(1)[:8]}… for "
+                            f"{manifest.group(2)}, but that file on disk is "
+                            f"{current_files[manifest.group(2)][:8]}… — THIS half of the instrument moved"
+                        )
                 continue  # check 1b owns this line, and owns its message
 
             # check 2: no dead identity quoted without saying so.

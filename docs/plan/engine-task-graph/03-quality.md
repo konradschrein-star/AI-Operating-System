@@ -427,6 +427,74 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     identical to a clean tree, which is the failure mode `00-vision.md` §7 rule 3
     is about.*
 
+11. **The SQL is executed (round 812 finding 1, added round 813 — the
+    instrument nobody was required to run).** `bash scripts/check-schedule-sql.sh`
+    exits 0. It provisions a throwaway PostgreSQL cluster, points
+    `schedule-source.test.ts` §4.2 at it, and reports non-zero if any shipped
+    statement fails to resolve.
+
+    **Why it is a gate and not a nicety, measured rather than argued.** Round
+    811 wrote this script — the only instrument that puts
+    `schedule-source.ts`'s statements in front of a server, and the only SQL
+    instrument in the repo that **provisions its own** cluster rather than
+    consuming a scratch database somebody prepared first (`check-scheduler-sql.sh`
+    executes the *scheduler's* SQL from `db/projects.ts`, is a phase-2/3 gate in
+    §3.2, and refuses without `$SCRATCH_DATABASE_URL`) — and wired it into no
+    gate list at all:
+    §3.1, §3.2, §4 and `04-phases.md` were silent, so the one command that runs
+    the SQL depended on a reviewer remembering it. Round 812's reviewer measured
+    what that costs. Swap the two `OR` arms of `RUNS_SQL`, keeping `$1::uuid`
+    verbatim, and at round 811's bytes `pnpm test` reported **31/31 green** and
+    `tsc --noEmit` **exit 0** — every gate this document listed passed — while a
+    real Postgres answers `operator does not exist: text = uuid`, SQLSTATE
+    `42883`. That is round 810's death with the operands transposed, reaching
+    the deploy through a fully green board.
+
+    **`check-instrument-identity.py` does not cover this, and it is worth being
+    exact about why.** It goes red only because the digest moved, and its own
+    message says *"re-run the transcript or amend the document"* — re-derivation
+    is the prescribed workflow, and it clears. It certifies that the pasted
+    numbers describe the bytes on disk; it says nothing about whether those
+    bytes resolve.
+
+    **Round 813 also closed the specific mutant one layer earlier, and that does
+    not retire this item.** `schedule-source.test.ts` §4.1 now asserts the
+    ORDER of the two `$1` sites, so the transposition is caught by `pnpm test`
+    alone (measured on a shadow tree: 2 of 34 static tests fail, exit 1). But
+    the *class* is what this item guards — a statement that typechecks, that no
+    unit test can parse-analyze because NF3 forbids the suite opening a
+    connection, and that fails only inside the server. Only the server closes
+    that class. A static assertion added per-mutant is a patch on the last bug;
+    executing the statement is the gate.
+
+    **It is written to be passable and it is measured passable.** At round 813
+    it reports `# tests 40 # pass 40 # fail 0 # skipped 0`, exit 0, in under a
+    second of test time on a cluster that takes a few seconds to provision (at
+    round 811: 36/36). It creates that cluster in a fresh directory, on a unix
+    socket, with `listen_addresses=''` — no network listener, no configured
+    database touched, no live data read — so it is runnable from a **build**
+    task under the worktree-only policy (§2.3), which is the property that makes
+    it gateable at every phase rather than only at the deploy.
+
+    **It cannot certify a skip**, which is the failure mode its own subject
+    matter is made of: §4.2 is skipped unless `SCHEDULE_SOURCE_TEST_DSN` is set,
+    and `node:test` counts a fully skipped suite as one passing suite reporting
+    `# skipped 0`. So the script greps its own output for the skip marker, for
+    the regression test **by name**, and for at least one pass, and exits 1 on
+    any of the three before it reports the runner's status.
+
+    *Prerequisite, checked by the command itself: PostgreSQL server binaries
+    (`initdb`, `pg_ctl`, `createdb`; Debian/Ubuntu `postgresql-<v>`, found at
+    `/usr/lib/postgresql/*/bin` or on `PATH`), and — when run as root, which
+    cannot own a cluster — a `postgres` system user. Absent, the script exits
+    **1** naming what is missing. It never skips, for item 10's reason: a
+    missing tool reporting nothing looks identical to a clean tree. Measured
+    here on PostgreSQL 16.14.*
+
+    *It leaves its scratch cluster on disk and prints the path. That is
+    deliberate — this repo reserves `rm -rf` for an explicit instruction — and
+    is a disclosed cost, not an oversight.*
+
 ### 3.2 Phase gates
 
 **Phase 1 — schema, fixture, replica harness**
@@ -799,6 +867,19 @@ bash scripts/checks/check-instrument-typecheck.sh
 SH_ALL=$(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
 for f in $SH_ALL; do [ -f "$f" ] || echo "deleted on this branch, not linted: $f"; done
 shellcheck -S error $(for f in $SH_ALL; do [ -f "$f" ] && printf '%s\n' "$f"; done)
+# §3.1 item 11 — the SQL is EXECUTED. Exits 0, or names the shipped statement a
+# real Postgres refuses. `tsc` cannot see inside a query string and `pnpm test`
+# opens no connection (NF3), so this is the only command in this block that puts
+# any shipped SQL in front of a server, and the only one that needs no scratch
+# database prepared in advance. (`check-scheduler-sql.sh` covers db/projects.ts,
+# but it is a §3.2 phase gate and arrives via the last line below.) It is here
+# because without it a
+# transposition of RUNS_SQL's two OR arms passed every OTHER line above — 31/31
+# green, tsc 0 — while Postgres answered `text = uuid`, 42883 (round 812 finding
+# 1). It provisions its own throwaway cluster on a unix socket with no listener,
+# so it is safe from a build task; it exits 1, never skips, if the server
+# binaries are missing or if its suite was skipped rather than run.
+bash scripts/check-schedule-sql.sh
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 
