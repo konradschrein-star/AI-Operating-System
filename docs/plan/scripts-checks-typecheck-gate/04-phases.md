@@ -490,6 +490,30 @@ in their `write_set`. The phase write_sets in §10 are disjoint by construction.
 
 Disjoint. No file appears twice.
 
+### Round 6, fix cycle 3 — undeclared writes, disclosed here per §3.1 item 4
+
+The round-6 fix-cycle row was seeded carrying the **reviewer's** `write_set`,
+`.../evidence/phase4-gate.md` — a file a builder must not touch, and the only
+file the row declared. Every one of its three blockers is therefore an
+undeclared write by construction, and the row is unsatisfiable as written. The
+gate is amended here rather than disclosed and stepped around:
+
+| File | Why it had to change | Standing? |
+|---|---|---|
+| `scripts/checks/check-dismiss-peek.tsx` | blocker 3 — the false `hidesRows` coverage claim | phase 3's own write-set |
+| `scripts/checks/check-stop-affordance.tsx` | blocker 3 — same | phase 3's own write-set |
+| `.../evidence/instruments-still-detect.md` | blocker 3 — the addendum correcting `6bdd24a`'s message | phase 3's own write-set |
+| `.../evidence/phase3-gate.md`, `.../evidence/phase3-redteam.md` | blocker 2 — untracked at `e86f4b9`; committed so the branch records that phase 3 was **failed** | new, but they are this project's own evidence |
+| `docs/plan/notification-gap.md` | blocker 1 — eight rotted `cc-runner.ts` pins, gate 17 of `gates-808.sh --strict` | **outside this project entirely** |
+| `docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs` | blocker 1 — the checker's `PROSE_PINS`/`LINE_RULES` moved in lockstep with the doc | **outside this project entirely** |
+| `docs/plan/scripts-checks-typecheck-gate/04-phases.md` | this table | new |
+
+The last two belong to `operator-visibility` phase 4 and were red on `main`
+before this branch existed. They are repaired rather than waived because the rot
+is a pure +31 line shift with byte-identical bodies — see the round-6 correction
+table in `docs/plan/notification-gap.md` §1. A future round that inherits a
+reviewer's `write_set` on a builder row should amend the row, not the work.
+
 Note for phase 5's planner: if the round-499 scout finds corpus claims in files
 not listed above, those files join phase 5's write_set — the rule is that a
 document quoting a constant this project changes belongs in the write_set of the
