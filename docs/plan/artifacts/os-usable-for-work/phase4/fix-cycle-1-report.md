@@ -189,11 +189,28 @@ redaction, a shell variable and a real-looking credential *in the same file*:
 
 ```
 FAIL  docs/canary-secret-scan.md
-        DSN password: postgresql://ai_os_app:S3cr3tLiveP4ss@      ← still caught
-        DSN password: postgresql://u:abc***def@                   ← still caught (anchor works)
-        PGPASSWORD=hunter2correct                                 ← still caught
+        DSN password: postgresql://ai_os_app:<a live-looking 14-char password>@   ← still caught
+        DSN password: postgresql://u:<abc, three asterisks, def>@                 ← still caught (anchor works)
+        PGPASSWORD=<a bare unmarked word>                                         ← still caught
 EXIT=1
 ```
+
+The password literals are shown bracketed **on purpose, and this is the point of blocker 2**: pasting
+them verbatim is how this document put itself back into the checker's mouth. So the canary is
+recorded as a recipe you can re-run rather than as a paste you must trust — the literals are
+assembled in the shell and never enter a tracked file:
+
+```sh
+W=$(mktemp -d); git clone -q --shared . "$W/repo"; cd "$W/repo"
+S=postgresql            # the scheme is a variable too, so this recipe carries no DSN shape either
+U=ai_os_app; P1=S3cr3t; P1="${P1}LiveP4ss"; P2='abc***def'; P3=hunter2correct
+printf 'one: %s://%s:%s@db/x\ntwo: %s://u:%s@db/x\nshell: %s=%s\n' \
+  "$S" "$U" "$P1" "$S" "$P2" PGPASSWORD "$P3" > docs/canary-secret-scan.md
+git add docs/canary-secret-scan.md && tsx scripts/checks/check-secret-scan.ts   # → all three suspects, EXIT=1
+```
+
+Re-run at `6a1fa33` on 2026-08-19 by the round-5 pass: all three shapes still caught, in one file,
+with the anchored `^\*+$` marker in place. The loosening did not blunt the checker.
 
 Measured on both sides, in a throwaway clone rather than by assertion:
 
@@ -202,6 +219,10 @@ merge-base 3f98e67    6 FILE(S) FAILED
 tip        07f1c4b    8 FILE(S) FAILED     (the gate reported 6→8; both figures verified here)
 after this fix        ALL PASS — 914 tracked files
 ```
+
+**That last line was true when it was written and false one commit later** — the run predated this
+report becoming a tracked file, and the paste it then carried was itself a ninth red. Corrected by
+the round-5 pass; see `fix-cycle-1-recheck.md` §2 for the measurement at the real tip.
 
 ---
 

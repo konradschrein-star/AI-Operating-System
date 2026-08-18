@@ -273,6 +273,30 @@ source file it had to touch to close blockers 1 and 2 is therefore an undeclared
 construction; they are enumerated in `phase4/fix-cycle-1-report.md` §1 and in the fix commit's own
 message.
 
+**Round 5 (re-check of that fix cycle) write-set.** Same inheritance, one turn worse: round 5 was
+seeded with the **R4-gate reviewer's** declaration, `phase4/gate-report.md` and
+`phase4/gates-phase4.txt`. Satisfying it literally would mean writing over the gate report carrying
+the blockers being fixed and over the transcript that evidences them. Neither was touched; its
+writes are enumerated in `phase4/fix-cycle-1-recheck.md` §1.
+
+**Why the rows above are NOT amended, in answer to R4-gate blocker 3.** The blocker asked for two
+things: disclose the overlap in the phase record (the table above) and *amend the task rows to match
+what was written*. The disclosure stands; the amendment is refused, and the reason is a measurement
+rather than a preference:
+
+- **There is no API for it.** `routes/projects.ts` exposes `POST /:id/tasks`, `POST /:id/unwedge`,
+  `POST /:id/status` and two GETs — no PATCH or PUT for a task row. The only path is a raw `UPDATE`
+  against `project_tasks`, i.e. hand-editing a ledger.
+- **`write_set` is the scheduler's file-contention lock, not an audit column.**
+  `forge-control/src/lib/task-graph.ts:749` refuses to promote a candidate whose `write_set`
+  intersects that of a **running** task. All three rows are `done`, so amending them is
+  scheduling-inert: it changes the record and nothing else.
+- **Amending would put the two artefacts in disagreement**, with the machine-readable one wrong —
+  this document saying a collision occurred, the ledger saying every write was declared.
+
+Escalated to Konrad rather than decided unilaterally, since it sets how audit ledgers get corrected
+fleet-wide. Default taken: keep the rows, keep the disclosure. Reversible in one `UPDATE`.
+
 ---
 
 ## Phase 5 — Businesses, Pipeline, Money
