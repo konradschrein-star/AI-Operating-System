@@ -2039,6 +2039,63 @@ describe("R47/R48/R38 the graph vocabulary the planner is taught", () => {
     );
   });
 
+  /* R48 (round 960) — THE WORKSTREAM CRITERION, and why it is a gate clause of
+   * its own rather than a line in the case above.
+   *
+   * Round 815 measured the first project this prompt planned: a well-formed DAG
+   * that ran ONE TASK AT A TIME, because the guide's closing criterion asked
+   * whether two teams needed the same FILE, while `spawnTaskRuns()`'s deferred
+   * branch serialises a workstream whatever its tasks write. Every other clause
+   * of that bullet was true and stayed; the criterion was the defect.
+   *
+   * BOTH DIRECTIONS ARE ASSERTED. A positive `.includes()` alone would pass on a
+   * guide that carried the new advice AND the retired sentence — which is the
+   * worse state, not a better one: a planner reading a criterion and its
+   * contradiction picks one. The negative case is the one that would have caught
+   * a supplement-instead-of-replace, exactly as R49's gate does for the retired
+   * round guide. The KEPT clauses are asserted here too, because "fix the
+   * criterion" is one clause of a bullet that also carries the regex, the
+   * default, the cap and the same-file property, and a rewrite that took the
+   * criterion out along with them would pass a criterion-only case.
+   *
+   * The clause's TRUTH — that the engine really does serialise a workstream and
+   * really does let two workstreams write one file at once — is not assertable
+   * from a string, and a substring gate that stood alone would be the
+   * self-certifying instrument the standing rules put first. It is executed
+   * against `busyWorkstreams()`/`partitionByWorkstream()`/`selectClaimable()` in
+   * `scripts/checks/check-workstream-claim.ts`. */
+  test("R48 (round 960) — a workstream per concurrent lane, not per file conflict", () => {
+    assert.ok(
+      GRAPH_GUIDE.includes(
+        "so open ONE PER LANE you want running at once, up to that cap, not one per file conflict.",
+      ),
+      "R48 (round 960): GRAPH_GUIDE lost the per-lane workstream criterion. The unit of " +
+        "parallelism is the workstream — a project that keeps everything in \"main\" runs " +
+        "strictly serially whatever its graph says (evidence/phase8-verify.md §7c)",
+    );
+    assert.ok(
+      !GRAPH_GUIDE.includes("truly need one file concurrently"),
+      "R48 (round 960): the retired same-file criterion survived in GRAPH_GUIDE. It contradicts " +
+        "the sentence in front of it: two teams do not need to want the same FILE to need a " +
+        "second workstream, only to want to run AT THE SAME TIME",
+    );
+    for (const [what, needle] of [
+      ["the serialisation fact the criterion follows from", "one git worktree whose tasks run one at a time"],
+      ["the property two workstreams buy", "isolated directories that may write the SAME file"],
+      ["the name regex", "/^[a-z0-9][a-z0-9-]{0,39}$/"],
+      ["the default", 'default "main"'],
+      ["the cap and its refusal", "at most PROJECT_MAX_WORKSTREAMS distinct ones"],
+      ["that the cap refusal is a 400 naming the count", "refused with a 400 naming the count"],
+    ] as const) {
+      assert.ok(
+        GRAPH_GUIDE.includes(needle),
+        `R48 (round 960): the workstream bullet lost ${what} (looked for "${needle}"). Round 960 ` +
+          "replaces the closing criterion ALONE — everything else in this bullet was measured " +
+          "true and must survive the edit",
+      );
+    }
+  });
+
   test("R38 — the integration task is explicit, joined by a reviewer, and never auto-merged", () => {
     for (const [what, needle] of [
       ["the prohibition, in the heading a planner cannot skim past", "NEVER AUTO-MERGE"],
@@ -2500,7 +2557,19 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * SCREENSHOT_CONVENTION or BROWSER_CONTROL_SAFETY's cost: both ride
    * `drivesBrowser`, which the planner branch never satisfies (neither
    * BROWSER_FIRST nor RESEARCH_INSTRUMENTS appears in it), exactly as B4 cost
-   * this measurement nothing at round 240. Headroom after: 12271 - 12227 = 44. */
+   * this measurement nothing at round 240. Headroom after: 12271 - 12227 = 44.
+   *
+   * ROUND 960 REPLACES the workstream bullet's closing criterion (round 815's
+   * §7c finding: the guide told planners to open a second workstream "only when
+   * two teams truly need one file concurrently", which is a same-file test on a
+   * belt that serialises a workstream REGARDLESS of write-sets — so the first
+   * project this prompt planned came out 1-wide). This is a REPLACEMENT and the
+   * ledger row is the NET: the retired clause is 73 characters, its replacement
+   * 92, so the row is +19 and not +92. MEASURED through the maximal path:
+   * 12227 before, 12246 after; 12246 - 12227 = 19 = 92 - 73, the same positive
+   * control round 900 used — a swap inside a string already in the prompt cannot
+   * cost anything else, so the two matching proves nothing but the clause moved.
+   * Headroom after: 12271 - 12246 = 25. */
   const FIVE_A_TIP = 11619;
   const LEDGER = [
     {
@@ -2522,6 +2591,15 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
         "the definition rather than the COMPANION FILES prose)",
       spent: 106,
       reserved: 106,
+    },
+    {
+      round: 960,
+      what: 'GRAPH_GUIDE\'s workstream criterion: "open a second only when two teams truly need one ' +
+        'file concurrently" (73) replaced by "open ONE PER LANE you want running at once, up to ' +
+        'that cap, not one per file conflict" (92) — the NET of a replacement, not the size of ' +
+        "the new clause",
+      spent: 19,
+      reserved: 44,
     },
   ] as const;
 
@@ -2593,6 +2671,22 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       ),
       "NF7 (round 900's row): the ledger charges 106 characters to the write_set-definition " +
         "sentence, and GRAPH_GUIDE no longer contains it verbatim",
+    );
+    // Round 960's row is a REPLACEMENT, so its delivery control has two halves:
+    // the new clause present AND the retired one gone. Charging +19 net while
+    // both clauses survived would be an over-count that the exactness assertion
+    // alone would report as an unledgered edit somewhere else in the prompt.
+    assert.ok(
+      GRAPH_GUIDE.includes(
+        "so open ONE PER LANE you want running at once, up to that cap, not one per file conflict.",
+      ),
+      "NF7 (round 960's row): the ledger charges 19 net characters to the workstream criterion, " +
+        "and GRAPH_GUIDE no longer contains the clause it bought",
+    );
+    assert.ok(
+      !GRAPH_GUIDE.includes("truly need one file concurrently"),
+      "NF7 (round 960's row): the retired same-file criterion is still in GRAPH_GUIDE, so the " +
+        "row's +19 net is wrong — a replacement that adds without removing costs 92, not 19",
     );
   });
 });

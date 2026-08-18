@@ -633,7 +633,21 @@ Workstream `main` maps to the **existing** bare `project/<id8>` branch, so no
 live project changes branch. Every other workstream gets
 `project/<id8>-<workstream>` branched off `project/<id8>`.
 *How proved:* `check` — the e2e script asserts both branches exist and that the
-slash form errors.
+slash form errors; and, from round 960, `check-workstream-claim.ts` §4 asserts
+`workstreamBranch()` in-process, so the form is also pinned by a check that
+needs no throwaway repo and that every round can afford to run.
+
+**THE SLASH FORM OUTLIVED ITS REFUTATION IN THE CORPUS — round 815's finding,
+closed round 960.** R33 has been correct since round 212, and three documents
+went on predicting `project/<id>/<workstream>` anyway: `02-architecture.md`
+§4.1 (which cites the spec's form in order to refute it — correct, left alone),
+`evidence/phase8-verify.md` (the finding itself — a record, left alone), and
+**`scripts/deploy/payload-verify.json` item 7b, a LIVE deploy brief whose
+expected observation was a branch git cannot create**. The round-815 task read
+that item, could not observe it, and reported it as a finding rather than
+quietly re-reading it. Round 960 corrects the payload and the verbatim copy of
+its brief in `evidence/phase8-tooling.md` §7, in one commit — the same rule
+`GRAPH_GUIDE` states about a constant the corpus quotes.
 
 **R34. Sibling directories, never nested.** Workstream `main` keeps
 `${PROJECT_WORKTREE_ROOT}/<project-id>` exactly as today; every other workstream
@@ -1104,6 +1118,43 @@ no ordering); builders fan out by file ownership; reviewers remain a genuine
 join.
 *How proved:* unit — prompt-content assertions.
 
+**A WORKSTREAM IS OPENED PER CONCURRENT LANE, NOT PER FILE CONFLICT** — amended
+round 960, from the first live measurement of this prompt and stated here
+because this is the requirement the prompt's workstream criterion serves.
+
+Round 815 measured the first project the new prompt planned: a well-formed DAG —
+7 of 10 tasks carrying a non-empty `depends_on`, including a true join — that
+executed **one task at a time**. Max concurrency 1, distinct workstreams 1, two
+`ready` planners with disjoint write-sets and a 32-minute wait for the second
+(`evidence/phase8-verify.md` §7c).
+
+The cause is neither the scheduler nor the graph. `spawnTaskRuns()`'s deferred
+branch — `busyWorkstreams()` + `partitionByWorkstream()`, the operator's ruling
+of round 222 — defers **every** eligible task of a busy workstream and never
+consults a write-set, so **the unit of parallelism is the workstream** and a
+project that keeps everything in `main` runs strictly serially whatever its
+graph says. The belt is correct: it is what makes one worktree per workstream
+safe, and two builders in one directory is the silent clobbering this project
+exists to remove. What was wrong was the guide's closing criterion, *"open a
+second only when two teams truly need one file concurrently"* — a same-file test
+for a belt that asks no question about files. Two teams do not need to want the
+same FILE to need a second workstream; they need only to want to run AT THE SAME
+TIME. The round-815 architect followed the old criterion faithfully (six phases,
+disjoint files) and opened nothing.
+
+So the prompt states: open one workstream **per lane the planner wants running
+concurrently**, up to `PROJECT_MAX_WORKSTREAMS`. Everything else in that bullet
+was measured true and is unchanged — the name regex, the `main` default, the cap
+and its `400`, the same-file-across-workstreams property — and R38's
+integration/no-auto-merge paragraph is untouched, which is what keeps the extra
+lanes honest: a lane costs an integration task and its reviewer.
+*How proved:* unit — `project-tick.test.ts` asserts the criterion is present,
+that the retired one is **absent**, and that the bullet's other five clauses
+survived; `check` — `scripts/checks/check-workstream-claim.ts` executes the
+claim against `busyWorkstreams()`/`partitionByWorkstream()`/`selectClaimable()`,
+because a substring gate cannot tell a true clause from a false one and the
+retired criterion passed every substring gate in the repo for eight rounds.
+
 **R49.** `PARALLELISM_GUIDE` is **replaced**, not supplemented. Its current text
 ("Tasks in the SAME round run in PARALLEL … Anything that could collide goes in
 consecutive rounds instead") becomes actively wrong under the graph and must not
@@ -1552,6 +1603,16 @@ maximal path at a uuid-shaped id: **9221** before phase 5 (`d9858b9`), **11619**
 after it (`05f2842`), **12095** after phase 5B (`fe14a7e`), **12121** after
 round 242's GRAPH_GUIDE fix. The enforced `BASELINE` is **9221** → cap
 **12271**, and the live headroom is **150**.*
+
+*Two spends since, each measured through the same maximal path and each carried
+as its own row in the NF7 ledger that `project-tick.test.ts` enforces. **Round
+900**: +106 for the `write_set`-definition sentence, 12121 → **12227**, headroom
+44. **Round 960**: **+19 net** for the workstream criterion — the retired clause
+is 73 characters and its replacement 92 — 12227 → **12246**, headroom **25**. A
+replacement is ledgered at its NET and the delivery control has two halves (new
+clause present, retired clause absent), or a round that added without removing
+would charge 19 for 92 and the arithmetic would go looking for the difference in
+someone else's text.*
 
 *Which way that moved the gate, since a rising cap read alone is a widening and
 this one is not: **budget and tightness are both unchanged**. The +34 lands on

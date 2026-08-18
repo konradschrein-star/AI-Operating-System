@@ -149,7 +149,8 @@ suite stays hermetic (NF3).
 | `scripts/checks/check-workstream-e2e.sh` | R32–R35, R38 | In a throwaway git repo under `/tmp`: provision `main` + two workstreams, assert branch names and sibling directories, assert `git status --porcelain` in `main` is **empty**, have two workstreams write the same file, run the integration merge, assert it exits non-zero and names the conflicting file, assert nothing was auto-resolved. |
 | `scripts/checks/check-task-api.ts` | R22–R31 | Mounts **only** `routes/projects.ts` on a spare port against the scratch database (the single-router probe pattern — `src/index.ts` starts cron/telegram/vault ticks and must not be booted), then drives the 400s and the 409. |
 | `scripts/checks/check-plan-store.ts` | R54–R56 | Extended: real edges in, `planEdges()` out, phase grouping intact. |
-| `scripts/checks/check-screenshot-render-shapes.ts` | round 902, review finding 1 | The only check that executes a PROMPT'S CLAIM against the code it describes. Seven payload shapes — a `Read` of the saved path, a JSON `"url"` member, a bare URL echoed as text, an MCP screenshot call, a silent `cp`, an unstamped name, prose mentioning the directory — through the shipped `extractBrowserShots`, then the two prompts asserted to state exactly what the table proved. Needs no database and no git repo, so it is safe from a build task; prints the resolved path and sha256 of every module it imported, and fails rather than certifies if its case census comes up short. |
+| `scripts/checks/check-workstream-claim.ts` | round 960 (R48's criterion, R33's branch form) | The second check of that class, and the reason it exists is measured: `GRAPH_GUIDE`'s workstream bullet closed with a SAME-FILE criterion while the round-222 spawn belt serialises a workstream whatever its tasks write, so round 815's project produced a correct DAG that ran 1-wide (`evidence/phase8-verify.md` §7c). Drives `busyWorkstreams()` + `partitionByWorkstream()` + `selectClaimable()` with that exact shape: two disjoint tasks in one workstream spawn ONE while the contention gate would have run both; the same file in two workstreams spawns BOTH; six independent tasks over k workstreams reach width k for k ∈ {1,2,3,6}; `workstreamBranch()` is the hyphen form R33 verified against git and never the slash form three documents predicted. Then the guide is asserted to state exactly what the table proved, and to no longer carry the retired criterion. Needs no database and no git repo, so a build task may run it; prints the resolved path and sha256 of every module it imported, and fails rather than certifies if its case census comes up short. Mutation-tested at round 960 — five injected faults, each red, each restored by sha (`evidence/round960-workstream-criterion.md` §4). |
+| `scripts/checks/check-screenshot-render-shapes.ts` | round 902, review finding 1 | The FIRST check that executes a PROMPT'S CLAIM against the code it describes — "the only" until round 960 added the row above, corrected here in the commit that made it false. Seven payload shapes — a `Read` of the saved path, a JSON `"url"` member, a bare URL echoed as text, an MCP screenshot call, a silent `cp`, an unstamped name, prose mentioning the directory — through the shipped `extractBrowserShots`, then the two prompts asserted to state exactly what the table proved. Needs no database and no git repo, so it is safe from a build task; prints the resolved path and sha256 of every module it imported, and fails rather than certifies if its case census comes up short. |
 
 **Scratch database, not the live one.** Every script takes its connection string
 from `SCRATCH_DATABASE_URL` and **refuses to run** if that variable is unset or
@@ -887,6 +888,15 @@ bash scripts/check-schedule-sql.sh
 # claim spans two packages and forge-control's suite cannot import the web app;
 # it needs no database and no git repo, so a build task may run it.
 (cd forge-control-web && npx tsx ../scripts/checks/check-screenshot-render-shapes.ts)
+# Round 960 — GRAPH_GUIDE's workstream bullet, EXECUTED against the scheduler.
+# Exits 0, or names the claim the engine no longer honours. Run from
+# forge-control/ (that is where @types/node resolves — item 9's trap (a)); it
+# imports forge-control/src only, opens no connection and needs no git repo, so
+# a build task may run it. It is here rather than in `pnpm test` for the reason
+# the line above is: a substring gate cannot tell a true clause from a false
+# one, and the criterion this check replaced passed every substring gate in the
+# repo for eight rounds.
+(cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-workstream-claim.ts)
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

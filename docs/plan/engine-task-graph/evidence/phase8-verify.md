@@ -732,6 +732,13 @@ absence is not mistaken for a defect elsewhere:
    that is simultaneously a ref file and a ref directory, so `project/b7ab4c57`
    and `project/b7ab4c57/ui` cannot coexist. Round 817 must assert the hyphen
    form. (Standing rule 1: reported as a finding, not silently re-read.)
+   **Done at round 960, in three places rather than one:** the prediction is
+   corrected in `scripts/deploy/payload-verify.json` item 7b — the LIVE brief
+   that carried it, so a re-deploy cannot re-issue it — and in that payload's
+   verbatim copy in `evidence/phase8-tooling.md` §7; and the form itself is now
+   asserted in-process by `check-workstream-claim.ts` §4 against
+   `workstreamBranch()`, beside the real-git assertion `check-workstream-e2e.sh`
+   §5.1 has always made. R33 records the correction.
 
 ### 7c — WHY 7b did not happen, and why that is the finding rather than the footnote
 
@@ -781,6 +788,17 @@ not need to want the *same file* to need a second workstream — they need only 
 want to run *at the same time*. The architect of the DoD-6 project followed the
 advice faithfully (its six phases touch disjoint files, so it opened nothing) and
 produced a correct DAG that executes one task at a time.
+
+**CLOSED AT ROUND 960, and the quote above is kept verbatim as the record of what
+was measured.** `GRAPH_GUIDE`'s closing criterion now reads *"so open ONE PER
+LANE you want running at once, up to that cap, not one per file conflict"* — a
++19-character net replacement inside NF7's 44 of headroom, ledgered in
+`project-tick.test.ts`'s NF7 block. The clause is no longer only asserted as a
+substring: `scripts/checks/check-workstream-claim.ts` executes it against
+`busyWorkstreams()`/`partitionByWorkstream()`/`selectClaimable()`, reproducing
+this section's stall as case 1.1 and showing the width a planner buys per lane as
+cases 3.1–3.6. Round 960's transcript, including the five mutations that make
+each of those cases go red, is `evidence/round960-workstream-criterion.md`.
 
 **What this does and does not say about DoD-6.** It does not yet say the engine is
 slower: the baseline (`evidence/baseline-8ea0cc08.md` PART 2 §10.1) measured the
@@ -932,6 +950,8 @@ identified in §7c and it is not the scheduler: the round-222 spawn belt allows 
 running task per workstream, and `GRAPH_GUIDE`'s advice to open a second workstream
 "only when two teams truly need one file concurrently" makes a single-workstream
 plan the default for exactly the disjoint-file work that most needs parallelism.
+(That criterion was replaced at round 960 — see the closure note in §7c. The
+verdict above stands as measured: it is what the round-815 prompt produced.)
 
 I did not "report the prompt worked". The prompt produced a well-formed graph and a
 serial execution, and both halves of that sentence are measured above.

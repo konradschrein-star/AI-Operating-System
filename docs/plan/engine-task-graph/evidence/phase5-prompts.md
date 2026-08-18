@@ -115,6 +115,21 @@ The name says what it is; its doc-comment cites R47/R48/R38 and states in one
 line why its predecessor was retired, **paraphrasing rather than quoting the
 retired wording** — see §3, F-A, for why that matters.
 
+> **THIS BLOCK IS PHASE 5A's TEXT, NOT THE LIVE CONSTANT — three rounds have
+> edited it since, and one of its lines has been RETIRED.** Read
+> `project-tick.ts` for what ships. Round 242 added the two research role
+> literals to FAN-OUT; round 900 added the corpus sentence to the `write_set`
+> bullet; and **round 960 replaced the workstream bullet's closing criterion**,
+> quoted above as *"so open a second only when two teams truly need one file
+> concurrently"*. That criterion asked a SAME-FILE question of a belt that never
+> asks one — `spawnTaskRuns()` defers every eligible task of a busy workstream
+> whatever its write-set — so the first project this prompt planned came out one
+> task wide with a correct DAG (`evidence/phase8-verify.md` §7c). It now reads
+> *"so open ONE PER LANE you want running at once, up to that cap, not one per
+> file conflict."* The block is left as the record of what 5A shipped; it is
+> annotated rather than rewritten so the round-960 diff cannot be mistaken for a
+> claim that 5A wrote something it did not.
+
 ### 2.3 The API facts the prompt teaches, each verified at `d9858b9`
 
 Read out of the `POST /:id/tasks` handler in `routes/projects.ts` and

@@ -57,3 +57,13 @@ scripts/checks/check-task-api.ts
 # MEASURED AT ROUND 902: exit 0, zero errors, same one-file-per-invocation
 # options.
 scripts/checks/check-screenshot-render-shapes.ts
+
+# ROUND 960. The second entry of the class the line above opened — a check that
+# executes a PROMPT'S CLAIM against the code it describes, here GRAPH_GUIDE's
+# workstream bullet against `busyWorkstreams()`/`partitionByWorkstream()`
+# (project-tick.ts), `selectClaimable()` (task-graph.ts) and `workstreamBranch()`
+# (workspace.ts). It imports `forge-control/src` ONLY — no `forge-control-web`,
+# no database, no git repo — so it compiles under the same one-file-per-
+# invocation options as the six above and a build task may run it.
+# MEASURED AT ROUND 960: exit 0, zero errors.
+scripts/checks/check-workstream-claim.ts

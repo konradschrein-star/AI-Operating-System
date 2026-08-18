@@ -245,8 +245,18 @@ function workstreamDir(mainDir: string, workstream: string): string {
  *  a directory at the same name ("fatal: cannot lock ref"). Reproduced on this
  *  host on 2026-08-17; the transcript is in evidence/phase4-workstreams.md §1
  *  and check-workstream-e2e.sh asserts it on every run so the constraint cannot
- *  quietly stop being true. */
-function workstreamBranch(projectBranch: string, workstream: string): string {
+ *  quietly stop being true.
+ *
+ *  EXPORTED AT ROUND 960, and only so the form can be asserted cheaply. Round
+ *  815 found three documents still predicting the slash form — including a live
+ *  deploy payload's expected-observation item — and reported it as a finding
+ *  rather than re-reading it. `check-workstream-e2e.sh` §5.1 already proves the
+ *  hyphen against real git, but it needs a throwaway repo and several seconds;
+ *  `scripts/checks/check-workstream-claim.ts` now calls this function directly,
+ *  so the assertion also sits in a check every round can afford to run. The
+ *  export adds no caller inside `src/`: `provisionWorkstream()` below remains
+ *  the only one. */
+export function workstreamBranch(projectBranch: string, workstream: string): string {
   return workstream === WORKSTREAM_MAIN
     ? projectBranch
     : `${projectBranch}-${workstream}`;

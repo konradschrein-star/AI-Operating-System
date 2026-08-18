@@ -1141,6 +1141,29 @@ grepping the diff.
 | `scripts/deploy/payload-verify.json` | **Undeclared.** One sentence in item 8, marking its three fan-out figures as a SPOT OBSERVATION rather than the DoD-6 after-measurement, and pointing at `payload-report.json` item 1b. The verify task seeds the report task, so the chain — not merely one file — has to carry the obligation. |
 | `docs/plan/engine-task-graph/04-phases.md` | **Standing rule 5 — disclose the undeclared write where the audit looks.** This table. No other section of this file is touched. |
 
+**Round 960's write-set: DECLARED EMPTY, so every file below is undeclared and
+is named here rather than left to the diff.** The task ("GRAPH_GUIDE: open a
+workstream per concurrent lane, not per file conflict") was seeded with no
+`write_set` at all — the R31/R52 half that catches this is a `400` at task
+creation under `metadata.strict_write_sets`, which this project does not carry —
+so there is no set to have written outside of, and the honest form is a full
+manifest. Standing rule 5 is disclose, not abstain.
+
+| file | why round 960 writes it |
+|---|---|
+| `forge-control/src/lib/project-tick.ts` | The deliverable: `GRAPH_GUIDE`'s workstream criterion, replaced, plus the doc-comment paragraph that records the round-815 measurement behind it. Phase 5 owns this file's prompt constants (§10 above); no code path, log line or belt was touched — `git diff` on it is two hunks, both inside a string constant and its comment. |
+| `forge-control/src/lib/project-tick.test.ts` | R48's clause gate (both directions) and NF7's ledger row + its two-halved delivery control. A criterion retired without its gate clause is standing rule 4's failure. |
+| `forge-control/src/lib/workspace.ts` | **One export keyword and its comment.** `workstreamBranch()` became `export function workstreamBranch()` so R33's hyphen form can be asserted in-process by the new check; no expression in this file changed. Phase 4 owns it — recorded here for the same reason round 239's one-comment write to a phase-3 file was. |
+| `scripts/checks/check-workstream-claim.ts` | **New.** The prompt's claim, executed against the scheduler (03-quality.md §2.2, §4). |
+| `scripts/checks/instrument-manifest.txt` | Item 9's manifest guard: a `scripts/checks/*.ts` this branch adds must be listed, or the gate fails by name. |
+| `docs/plan/engine-task-graph/03-quality.md` | The registry row and the §4 command line for that check — and the correction of the neighbouring row's "the only check that executes a prompt's claim", which this commit makes false. Standing rule 4, in the same commit. |
+| `docs/plan/engine-task-graph/01-requirements.md` | R48's criterion amendment (the requirement the prompt clause serves), R33's record that the slash form outlived its refutation in a live payload, and NF7's live numbers: 12227 → 12246, headroom 44 → 25. |
+| `scripts/deploy/payload-verify.json` | Item 7b predicted a branch git cannot create. Amended **where it is enforced** — the brief a re-deploy would re-issue — per the round-820 precedent two rows above. |
+| `docs/plan/engine-task-graph/evidence/phase8-tooling.md` | §7 claims to quote the payload briefs *verbatim*. Two of the three were stale before this round touched them (round 820's amendments never reached them, the report quote short by the whole of item 1b); all three are now byte-identical to their payloads, proved by sha256 rather than by reading. |
+| `docs/plan/engine-task-graph/evidence/phase8-verify.md`, `evidence/phase5-prompts.md` | The two documents that QUOTE the retired criterion. Annotated, never rewritten: both are records of what was measured or shipped, and a record edited to match today's code is the rot this project keeps finding, one level worse. |
+| `docs/plan/engine-task-graph/evidence/round960-workstream-criterion.md` | **New.** This round's transcript: the measurements, the five mutations, and the corpus sweep. |
+| `docs/plan/engine-task-graph/04-phases.md` | This table. No other section of this file is touched. |
+
 **Why an amendment to a payload was in scope for a deploy task at all.** Round
 816 measured, rather than asserted, that the S1 sampling convention is
 load-bearing: the same baseline rows give S1 0.29 / peak 6 under the committed

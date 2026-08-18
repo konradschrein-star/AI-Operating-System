@@ -386,7 +386,48 @@ export const IDEMPOTENCY_NOTE =
  *  a record a planner may never open (the same failure round 244 diagnosed in
  *  its own evidence file). MEASURED at 106 characters through the maximal
  *  planner path against the round-244 baseline (12121, headroom 150) — see
- *  NF7's LEDGER below, row "round 900". */
+ *  NF7's LEDGER below, row "round 900".
+ *
+ *  ROUND 960 REPLACES THE WORKSTREAM BULLET'S CLOSING CRITERION, and this is
+ *  the paragraph to read before touching that bullet again.
+ *
+ *  THE MEASUREMENT. Round 815 watched the first project this prompt planned
+ *  (`evidence/phase8-verify.md` §7c): a well-formed DAG — 7 of 10 tasks with a
+ *  non-empty `depends_on`, including a true join — that executed ONE TASK AT A
+ *  TIME. Max concurrency 1, distinct workstreams 1. Two planners with DISJOINT
+ *  write-sets were both `ready` from 07:16:56Z and the second waited 32 minutes.
+ *
+ *  THE CAUSE IS THIS STRING, NOT THE SCHEDULER. `spawnTaskRuns()`'s deferred
+ *  branch — `busyWorkstreams()` + `partitionByWorkstream()`, "the operator's
+ *  ruling of round 222, enforced" — defers EVERY eligible task of a busy
+ *  workstream and never consults a write-set. `selectClaimable()` would run two
+ *  disjoint tasks of one workstream together; the spawn belt holds the second
+ *  anyway. So THE UNIT OF PARALLELISM IS THE WORKSTREAM, and a project that
+ *  keeps everything in `main` runs strictly serially whatever its graph says.
+ *  The belt is right — it is what makes one worktree per workstream safe — and
+ *  the retired clause ("open a second only when two teams truly need one file
+ *  concurrently") contradicted the very sentence in front of it: same-file
+ *  contention is not the test, SIMULTANEITY is. Two teams need only to want to
+ *  run at the same time. The round-815 architect followed the old advice
+ *  faithfully — six phases, disjoint files, so it opened nothing — and got a
+ *  correct graph that runs 1-wide.
+ *
+ *  WHAT WAS KEPT, deliberately: the regex, the `main` default, the cap and its
+ *  400, the same-file-across-workstreams property, and the whole integration
+ *  paragraph. Only the closing criterion moved.
+ *
+ *  THE CLAIM IS NOW EXECUTED, not merely asserted as a substring:
+ *  `scripts/checks/check-workstream-claim.ts` drives `busyWorkstreams()`,
+ *  `partitionByWorkstream()` and `selectClaimable()` with the exact shape of
+ *  the round-815 stall and fails if the engine stops matching this bullet —
+ *  the precedent is `check-screenshot-render-shapes.ts` (round 902), a check
+ *  that executes a prompt's claim against the code it describes.
+ *
+ *  MEASURED, per this constant's own rule: 12227 -> 12246 through the maximal
+ *  planner path (`scripts/checks/measure-prompt-baseline.sh`), +19 net — the
+ *  retired clause is 73 characters and its replacement 92, so the removal pays
+ *  for most of it. Headroom after: 12271 - 12246 = 25. Carried as its own row
+ *  in NF7's LEDGER below, row "round 960". */
 export const GRAPH_GUIDE =
   `SCHEDULING IS A GRAPH, NOT A ROUND NUMBER. Every task you create declares three fields and never a round:\n` +
   `- "depends_on": ids of the tasks it waits for, as your earlier curls returned them ([] = starts at once). ` +
@@ -395,8 +436,8 @@ export const GRAPH_GUIDE =
   `- "workstream": a name like "ui", matching /^[a-z0-9][a-z0-9-]{0,39}$/, default "main". One workstream is ` +
   `one git worktree whose tasks run one at a time; two are isolated directories that may write the SAME file ` +
   `at once. A project may hold at most PROJECT_MAX_WORKSTREAMS distinct ones (6 unless the host overrides ` +
-  `it) and a task opening a new one past that is refused with a 400 naming the count — so open a second only ` +
-  `when two teams truly need one file concurrently.\n` +
+  `it) and a task opening a new one past that is refused with a 400 naming the count — so open ONE PER LANE ` +
+  `you want running at once, up to that cap, not one per file conflict.\n` +
   `- "write_set": every repo-relative path the task writes (max 200) — the contention input. No two builders ` +
   `in ONE workstream may declare the same file; where a split is impossible, one builder writes that file ` +
   `twice rather than two builders serialising on it. If a round moves a constant the corpus quotes, the ` +

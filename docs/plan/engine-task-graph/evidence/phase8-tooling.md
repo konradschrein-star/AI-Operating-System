@@ -1062,6 +1062,26 @@ and exits 1.
 The payloads are the deliverable; these are their `brief` fields verbatim, so the
 reviewer can judge the prose without reconstructing it from JSON escapes.
 
+**Kept verbatim by later rounds, not frozen at round 802.** A copy that claims to
+be verbatim owes the file it copies an update whenever that file moves, or it
+becomes the stale pin this project keeps finding — the same rule `GRAPH_GUIDE`
+states about a constant the corpus quotes. Two rounds have amended a payload
+since: **round 820** (`payload-verify.json` item 8's SPOT OBSERVATION sentence
+and `payload-report.json`'s item 1b) and **round 960** (item 7b's branch name,
+below: round 815 predicted `project/<NEW_ID>/<workstream>` and git cannot create
+it — R33).
+
+**Round 960 re-derived all three quotes against their payloads with sha256
+rather than eyeballing them, and TWO of the three were already stale** — round
+820 amended both payloads and neither amendment reached this section. The verify
+quote was short by the 473-character SPOT OBSERVATION passage; the report quote
+was short by **2383 characters — the whole of item 1b**, the one instruction
+that stops round 817's after-measurement being taken with the wrong sampling
+convention. A reader of this section would have read a brief that no longer
+existed and would have had no way to notice. All three are byte-identical to
+their payloads as of round 960; the command that proves it, and the diffs that
+found the rot, are in `evidence/round960-workstream-criterion.md` §5.
+
 ### `payload-verify.json` — role `builder`, round 815, tier `standard`
 
 `write_set`: `["docs/plan/engine-task-graph/evidence/phase8-verify.md"]`  ·  `depends_on`: `[]`  ·  title: *Phase 8G: live verification after the restart*
@@ -1183,8 +1203,12 @@ then watch it.
      that row could not exist.
   b) TWO WORKSTREAM WORKTREES ON DISK: `ls -la /opt/ai-os/workspace/projects/<NEW_ID>*`
      showing sibling directories, `git -C <each> rev-parse --abbrev-ref HEAD`
-     showing branches `project/<NEW_ID>/<workstream>`, and
-     `git -C <main worktree> status --porcelain` EMPTY (R34).
+     showing branches `project/<id8>-<workstream>` — a HYPHEN, and the FIRST 8
+     CHARACTERS of the id, which is what `workstreamBranch()` ships (R33): git
+     refuses `project/<id8>/<ws>` while `project/<id8>` exists, so the slash
+     form this item predicted until round 960 could never have been observed.
+     Assert the hyphen form; if you see a slash, that is the finding.
+     Then `git -C <main worktree> status --porcelain` EMPTY (R34).
 
 IF EITHER HAS NOT OCCURRED WITHIN 45 MINUTES OF THE FAN-OUT, SAY SO PLAINLY AND
 HAND IT TO THE REPORT TASK. Do not wait in a loop, do not extend your own run,
@@ -1218,7 +1242,12 @@ falsifiable: as soon as the architect and planner have fanned out, report
 (i) the maximum concurrency actually reached, (ii) the count of tasks with a
 NON-EMPTY `depends_on`, and (iii) how many DISTINCT `workstream` values
 appeared. A project that comes out one task wide is a FAILED DoD-6 and must be
-reported as one. DO NOT REPORT "THE PROMPT WORKED" FROM THE ABSENCE OF AN ERROR.
+reported as one. DO NOT REPORT "THE PROMPT WORKED" FROM THE ABSENCE OF AN ERROR. These three figures are a SPOT OBSERVATION of the fan-out and are NOT the
+DoD-6 after-measurement: that one is taken by the round-817 report task under
+`payload-report.json` item 1b, with the same instrument (`fb5a6434`, re-derived
+from disk rather than pasted) and the same half-open instant sampling convention
+as PART 2 section 10.1 of `evidence/baseline-8ea0cc08.md`, because a before/after
+comparison taken across two conventions is an artefact rather than a finding.
 
 Then launch the second watcher — DETACHED, and DO NOT WAIT FOR IT:
 
@@ -1291,6 +1320,45 @@ and report what it says — whatever it says.
 Paste the output in full, and paste the instrument's OWN HEADER FIRST — identity
 before any number (R60). If the header is missing or the run degrades to a
 smaller table, that is R61's failure mode and a finding, not a smaller result.
+
+--- 1b. ONE INSTRUMENT AND ONE CONVENTION - BOTH RE-DERIVED, NEITHER PASTED ---
+DoD-6 is a BEFORE/AFTER comparison, and a comparison is a measurement only while
+both halves share an instrument AND a sampling convention. Round 816 measured the
+consequence rather than asserting it: the same baseline rows yield S1 0.29 with a
+peak of 6 under the committed instrument's half-open INSTANT convention, and S1
+0.30 with a peak of 7 under the other obvious one (a run is live in minute m if it
+OVERLAPS [m, m+1) rather than CONTAINING the instant m). That gap is the same size
+as the improvement this project exists to demonstrate, in either direction, and a
+reader could not tell which they were looking at. A BEFORE/AFTER COMPARISON TAKEN
+ACROSS TWO CONVENTIONS IS NOT A FINDING, IT IS AN ARTEFACT. Say exactly that in
+your document if the two ever diverge.
+
+So, before you write a single number:
+
+  a) SAME INSTRUMENT, RE-DERIVED FROM DISK RATHER THAN PASTED. The composite must
+     be `fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b`
+     (`39dee069` + `c00fd096`). Do NOT copy that value out of this brief to
+     satisfy yourself - recompute it from the bytes that just ran, and paste the
+     command with its output:
+
+       cd /opt/forge-ai-os && sha256sum scripts/measure-schedule.ts \
+         forge-control/src/lib/schedule-source.ts | sha256sum
+
+     It must equal the `instrument-sha256` your own run printed in item 1. If it
+     does not, STOP and report it: your numbers were produced by bytes this corpus
+     does not name, which is round 810's own finding (`evidence/baseline-8ea0cc08.md`
+     section 11(c)) recurring, and a blocker rather than a footnote. Item 5's
+     checker is the machine half of this same claim - run both, they are not
+     substitutes for one another.
+
+  b) SAME SAMPLING CONVENTION, CITED BY NAME. State in the document that the
+     after-run inherits D3's half-open INSTANT sampling by construction, and cite
+     PART 2 section 10.1 of `evidence/baseline-8ea0cc08.md` where you state it.
+     It is inherited ONLY because (a) held: the convention lives in the
+     instrument's SQL, so identical bytes are what makes "same convention" true
+     rather than merely hopeful. If you have any reason to believe the after-run
+     sampled differently, the comparison does not go in the document - the
+     discrepancy does.
 
 --- 2. COMMIT `docs/plan/engine-task-graph/evidence/after-__DOD6_PROJECT_ID__.md` ---
 It carries, in this order:
