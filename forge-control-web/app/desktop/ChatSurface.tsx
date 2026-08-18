@@ -27,6 +27,7 @@ import {
   vaultCreateNote,
   createReminder,
   setChatModel,
+  compactChat,
   setChatEffort,
   ENGINE_MODEL_CHOICES,
   ENGINE_EFFORT_CHOICES,
@@ -1927,6 +1928,7 @@ function ChatThread({
     vaultCreateNote: (input) => vaultCreateNote(input),
     createReminder: (input) => createReminder(input),
     setModel: (id, model) => setChatModel(id, model),
+    compactRun: (id, keep) => compactChat(id, keep),
     fetchRules: async () => (await fetchAutonomy()).rules,
     updateRuleConfig: (id, config) => updateRule(id, { config }),
   };

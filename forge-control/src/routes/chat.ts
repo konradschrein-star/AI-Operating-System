@@ -4,7 +4,7 @@ import { Hono } from "hono";
  * into lib/plan-corpus.ts so the listing and the reader cannot disagree about
  * which directory the corpus is. `realpath` is still load-bearing over there:
  * `resolve` alone cannot see a symlink escape. */
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import pg from "pg";
 import { resolvePlanDoc, selectPlanCorpus } from "../lib/plan-corpus.ts";
 /* phase 6 (R55) — the DERIVED depth the plan panel groups and orders by.
@@ -1652,6 +1652,88 @@ r.post("/:id/resume", async (c) => {
   );
   if (!updated) return c.json({ error: "run not found" }, 404);
   return c.json({ run: updated });
+});
+
+/**
+ * POST /api/chat/:id/compact — shrink a long chat's context.
+ *
+ * Konrad, 2026-08-18 at 82% of the window: *"I need a functionality that
+ * compresses you."* There is no harness-level hook a chat can call, so this
+ * does the only thing that actually reduces the next turn's context: it
+ * REWRITES `runs.thread`, keeping the newest `keep` entries and replacing
+ * everything older with one system entry that says what was dropped.
+ *
+ * IT ARCHIVES BEFORE IT REWRITES, and that is not optional. The full prior
+ * thread is written to /opt/ai-os/backups/threads/<id>-<ts>.json and the
+ * archive path is named in the marker. A compaction that destroyed the
+ * transcript would be exactly the silent data loss this codebase spent a day
+ * removing from the vault write path. If the archive write fails, nothing is
+ * rewritten and the route 500s — never compact what you could not save first.
+ *
+ * `keep` is clamped to [10, 400]. Below 10 the agent loses the thread of the
+ * conversation it is in; above 400 there is no point compacting.
+ */
+r.post("/:id/compact", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const current = await getRun(id);
+  if (!current) return c.json({ error: "run not found" }, 404);
+
+  const body = (await c.req.json().catch(() => ({}))) as { keep?: number };
+  const keep = Math.min(400, Math.max(10, Number(body.keep ?? 60)));
+
+  const thread = Array.isArray(current.thread) ? current.thread : [];
+  /* `keep + 1`, not `keep`: this route's OUTPUT is always the marker plus
+   * `keep` entries, so a thread of exactly keep+1 is already compacted. Using
+   * `keep` here made the route non-idempotent — a second /compact dropped one
+   * more real entry and stacked a second marker, eroding the transcript one
+   * message per invocation. Found by running it twice, which is the only way
+   * that class of bug shows itself. */
+  if (thread.length <= keep + 1) {
+    return c.json({ compacted: false, reason: "already short", entries: thread.length });
+  }
+
+  const dropped = thread.length - keep;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dir = "/opt/ai-os/backups/threads";
+  const archive = `${dir}/${id}-${stamp}.json`;
+  // Archive FIRST. A failure here must abort the compaction, not proceed.
+  await mkdir(dir, { recursive: true });
+  await writeFile(archive, JSON.stringify(thread), "utf8");
+
+  const marker = {
+    role: "system",
+    content:
+      `[compacted ${stamp}] ${dropped} earlier entries of this chat were removed from the ` +
+      `working context to free room. NOTHING WAS LOST: the full transcript is archived at ` +
+      `${archive}. Durable state for this session lives in the Obsidian vault — read ` +
+      `"AI OS/Session State" and "AI OS/Operator Decisions" before assuming anything about ` +
+      `what was decided. The ${keep} most recent entries follow verbatim.`,
+    ts: new Date().toISOString(),
+    kind: "text",
+    meta: { compaction: { dropped, kept: keep, archive } },
+  };
+
+  const next = [marker, ...thread.slice(-keep)];
+  const { rows } = await teamPool.query(
+    `UPDATE runs
+        SET thread = $2::jsonb,
+            metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{last_compaction}',
+                        to_jsonb($3::text), true),
+            updated_at = now()
+      WHERE id = $1
+      RETURNING id`,
+    [id, JSON.stringify(next), archive],
+  );
+  if (!rows.length) return c.json({ error: "run not found" }, 404);
+
+  return c.json({
+    compacted: true,
+    dropped,
+    kept: next.length,
+    was: thread.length,
+    archive,
+  });
 });
 
 /* v2.1: set the engine model for subsequent turns of this run. Aliases

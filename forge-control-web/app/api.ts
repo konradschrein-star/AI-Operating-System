@@ -697,6 +697,22 @@ export const createChat = async (input: {
   return r.run;
 };
 
+export interface CompactResult {
+  compacted: boolean;
+  dropped?: number;
+  kept?: number;
+  was?: number;
+  archive?: string;
+  reason?: string;
+  entries?: number;
+}
+
+/** Archive this chat's thread, then keep only the newest `keep` entries.
+ *  The server archives BEFORE it rewrites and refuses to compact if the
+ *  archive write fails, so this cannot silently lose a transcript. */
+export const compactChat = async (id: string, keep?: number) =>
+  postJson<CompactResult>(`/chat/${id}/compact`, keep ? { keep } : {});
+
 export const setChatModel = async (id: string, model: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/model`, { model });
   return r.run;
