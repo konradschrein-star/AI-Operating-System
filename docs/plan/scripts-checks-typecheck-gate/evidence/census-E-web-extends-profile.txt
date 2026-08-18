@@ -1,0 +1,42 @@
+check-browser-shots.ts                         rc=0   errors=0    
+check-classify.ts                              rc=0   errors=0    
+check-close-gate.ts                            rc=0   errors=0    
+check-composer-v3.ts                           rc=0   errors=0    
+check-duration.ts                              rc=0   errors=0    
+check-fix-chain-graph.ts                       rc=0   errors=0    
+check-gemini-tally.ts                          rc=0   errors=0    
+check-nav-stack.ts                             rc=0   errors=0    
+check-orientation.ts                           rc=2   errors=3     3 error TS2322 
+check-plan-api.ts                              rc=0   errors=0    
+check-plan-store.ts                            rc=0   errors=0    
+check-project-metadata.ts                      rc=0   errors=0    
+check-quota-row.ts                             rc=0   errors=0    
+check-r1871-chat.ts                            rc=0   errors=0    
+check-r1873-fixes.ts                           rc=0   errors=0    
+check-r1875-fixes.ts                           rc=0   errors=0    
+check-run-control-client.ts                    rc=0   errors=0    
+check-screenshot-render-shapes.ts              rc=0   errors=0    
+check-secret-events.ts                         rc=0   errors=0    
+check-secret-requests.ts                       rc=0   errors=0    
+check-secret-scan.ts                           rc=0   errors=0    
+check-story-digest.ts                          rc=0   errors=0    
+check-subagent-slice.ts                        rc=0   errors=0    
+check-task-api.ts                              rc=0   errors=0    
+check-team-confirm.ts                          rc=2   errors=1     1 error TS2345 
+check-team-rows.ts                             rc=2   errors=1     1 error TS2322 
+check-thread-mapping.ts                        rc=0   errors=0    
+check-tool-summary.ts                          rc=0   errors=0    
+check-typing-memo.ts                           rc=0   errors=0    
+check-ui-prompt.ts                             rc=0   errors=0    
+check-usage-fold.ts                            rc=0   errors=0    
+check-working-sql-agreement.ts                 rc=0   errors=0    
+check-working-time.ts                          rc=0   errors=0    
+serve-agents-7798.ts                           rc=0   errors=0    
+serve-quota-7799.ts                            rc=0   errors=0    
+serve-sse-808.ts                               rc=2   errors=2     1 error TS7006 1 error TS7016 
+serve-v3-7798.ts                               rc=0   errors=0    
+check-chat-rich.tsx                            rc=0   errors=0    
+check-dismiss-peek.tsx                         rc=2   errors=2     1 error TS2322 1 error TS2741 
+check-integrations.tsx                         rc=0   errors=0    
+check-settings-surface.tsx                     rc=0   errors=0    
+check-stop-affordance.tsx                      rc=2   errors=2     1 error TS2322 1 error TS2741 

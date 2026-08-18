@@ -1,0 +1,409 @@
+# 02 — Architecture
+
+**Project:** `scripts-checks-typecheck-gate`
+
+Four questions must be answered by any design in this fleet. They are answered
+first, in four sentences, and the rest of the document is the evidence.
+
+- **What owns state?** Nothing. The gate is a pure function of the working tree:
+  the files on disk, one checked-in tsconfig, and the installed compiler. There
+  is no database row, no cache, no incremental build info, no manifest of record.
+- **What dispatches work?** A gating reviewer, by hand, running one command —
+  the same way universal gate items 1–11 are dispatched today.
+- **What happens on failure?** The gate exits non-zero, having printed the full
+  compiler output for every failing file and a census that reconciles what it
+  found against what it compiled. There is no partial success and no
+  disclose-and-continue.
+- **How does Konrad see it broke?** The phase does not pass. A gating reviewer
+  cannot issue `VERDICT: PASS` with item 9 red, and the transcript naming the
+  file and the diagnostic is pasted into the task record verbatim.
+
+---
+
+## 1. Components
+
+Five artifacts. Three are new or rewritten; two are edits to existing text.
+
+| # | Artifact | Status | Owns |
+|---|---|---|---|
+| A1 | `tsconfig.checks-instruments.json` | **new** | The one compile profile |
+| A2 | `scripts/checks/check-instrument-typecheck.sh` | **rewritten** | Enumeration, invocation, census, verdict |
+| A3 | `scripts/checks/instrument-manifest.txt` | **repurposed** | The waiver ledger (target: empty) |
+| A4 | the six red instruments | **fixed** | Their own assertions |
+| A5 | `03-quality.md` §3.1 item 9 + §4 line 859; `phase8-tooling.md` §5 | **amended** | The corpus's account of the gate |
+
+Nothing else changes. No `package.json`, no lockfile, no app source, no
+`next.config`, no CI.
+
+---
+
+## 2. Data model
+
+There is one, and it is deliberately trivial.
+
+```
+SUBJECT  := a path matched by scripts/checks/*.ts or scripts/checks/*.tsx
+WAIVER   := { path, diagnostic, reason, owning-project }   -- from A3
+VERDICT  := { subjects_found:int, subjects_compiled:int,
+              failures:int, waivers:int, stale_waivers:int, exit:int }
+```
+
+`SUBJECT` is derived at run time from the filesystem. It is never stored,
+never cached, never diffed against a previous run. That is the entire point:
+**a list that is derived cannot go stale, and a list that cannot go stale cannot
+silently omit a file.**
+
+`WAIVER` is the one hand-maintained structure, and it exists to make omission
+loud. A waiver is a confession, printed on every run.
+
+`VERDICT` is printed, not persisted. The gate is stateless; the task record is
+where results live.
+
+---
+
+## 3. The compile profile (A1)
+
+### 3.1 The decision
+
+**Extend `forge-control-web/tsconfig.json`. Override exactly three things.**
+
+```jsonc
+{
+  "//": [
+    "The ONE compile profile for scripts/checks/*.{ts,tsx}. It extends the web",
+    "app's own tsconfig because 27 of the 42 instruments import app modules, and",
+    "an instrument gate that disagrees with the app's own compiler about the",
+    "app's own files is wrong by construction. Measured 2026-08-18: this profile",
+    "takes the directory from 20/42 green to 36/42, and every one of the 6",
+    "remaining reds is a genuine defect in the instrument's own source.",
+    "",
+    "NOT referenced by next.config, by either package's tsconfig, or by any",
+    "package.json script. It is a gate input, not a build input."
+  ],
+  "extends": "./forge-control-web/tsconfig.json",
+  "compilerOptions": {
+    "//jsx": [
+      "The app says jsx:preserve because NEXT compiles its JSX. A check script",
+      "is executed by tsx, which does not. So the check needs a real transform.",
+      "Same reasoning as the pre-existing root tsconfig.checks.json, which this",
+      "profile does not replace — that one is tsx's runtime config, this one is",
+      "the compiler's."
+    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+
+    "//paths": [
+      "A check script lives in scripts/checks/, which has no node_modules and no",
+      "node_modules ancestor up to the repo root, so a bare `react-dom/server`",
+      "import resolves NOWHERE regardless of the compiler's cwd.",
+      "",
+      "These point at @types/ and NOT at the runtime packages, and that is the",
+      "whole trick. forge-control-web/node_modules/react is a pnpm symlink into",
+      ".pnpm/react@19.0.0/ which ships index.js and no declarations. Mapping to",
+      "it resolves the specifier AND defeats the @types/react lookup that would",
+      "have supplied the types — producing TS7016 on every app file and then a",
+      "TS7026 flood on every JSX tag. Measured: check-settings-surface.tsx =",
+      "936 diagnostics under the runtime mapping, 0 under this one.",
+      "See evidence/census-B-root-paths-profile.txt vs census-E-*.txt."
+    ],
+    "baseUrl": "./forge-control-web",
+    "paths": {
+      "@/*": ["./*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/server": ["./node_modules/@types/react-dom/server"]
+    },
+
+    "//typeRoots": [
+      "MUST be pinned. TypeScript's automatic @types discovery walks up from the",
+      "directory of the CONFIG FILE, and the gate generates its per-file config",
+      "in `mktemp -d`, which has no node_modules ancestry. Without this line the",
+      "whole directory collapses with `Cannot find name 'process'`: measured at",
+      "12/42 green, 30 red. See evidence/negative-controls.md control (d)."
+    ],
+    "typeRoots": ["./forge-control-web/node_modules/@types"],
+
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "incremental": false
+  },
+  "files": [],
+  "include": []
+}
+```
+
+`incremental: false` overrides the app's `incremental: true`: an incremental
+build writes a `.tsbuildinfo`, and NF3 forbids the gate from writing into the
+tree.
+
+`files: []` and `include: []` make the base config compile nothing on its own.
+Subjects arrive only through the generated per-file config (§4).
+
+### 3.2 Why not the four alternatives
+
+- **Keep the current flag list and widen it** — rejected in one line: the flags
+  are a hand-rolled approximation of the app's tsconfig that drifts from it
+  silently. It already has: it is why 13 files were red for `--lib`/`--jsx`
+  alone.
+- **Two profiles, node-side and web-side** — rejected: measured unnecessary. All
+  42 subjects, including the four that import only `forge-control/src` and the
+  six that import `pg`/`hono`, are green under the single web-extending profile
+  (`evidence/census-E-web-extends-profile.txt`). One profile is one thing to
+  keep true.
+- **Give `scripts/checks/` its own `package.json` and `node_modules`** —
+  rejected: a third install to keep in sync, a lockfile to maintain, and it
+  violates NF8 for no gain the `paths` mapping does not already deliver.
+- **`tsc --noEmit` over the whole directory in one program** — rejected, and
+  this is the round-800 finding restated: one program merges 42 unrelated
+  entry points and produces cross-file noise nobody can attribute. R11.
+
+### 3.3 What the profile is NOT allowed to do
+
+If the gate reports a diagnostic located in `forge-control-web/app/**` or
+`forge-control/src/**`, **the profile is wrong.** Those trees are green under
+`cd forge-control-web && pnpm typecheck`. Success criterion S5 is "exactly zero
+such diagnostics," and it is checked by grepping the gate's own output for
+paths outside `scripts/checks/`. This is the guard that stops a future
+maintainer from "fixing" a profile bug by editing the app.
+
+### 3.4 Naming
+
+`tsconfig.checks-instruments.json`, at the repo root, beside the existing
+`tsconfig.checks.json`.
+
+Root, because `extends` and `baseUrl` must reach into `forge-control-web/` and
+the subject files live in `scripts/checks/` — root is the only directory above
+both, which is the identical argument the existing `tsconfig.checks.json` header
+makes for its own placement.
+
+A distinct name, because the two files are genuinely different instruments and
+merging them would be a bug: `tsconfig.checks.json` is **tsx's runtime config**
+(it makes JSX execute), and its `paths` deliberately point at the **runtime**
+react so that `import ReactDOMServer from 'react-dom/server'` actually loads at
+run time. `tsconfig.checks-instruments.json` is **tsc's config** and its `paths`
+must point at `@types` for exactly the reason §3.1 records. Same four
+specifiers, opposite targets, both correct for their own consumer. Phase 1 adds
+a cross-reference comment to each file pointing at the other, because the next
+person to read one of them will otherwise try to unify them.
+
+---
+
+## 4. The gate (A2)
+
+### 4.1 Control flow
+
+```
+0.  set -euo pipefail; ERR trap that prints "ABORTED … NOT a pass"
+1.  resolve REPO_ROOT, SELF, PROFILE, LEDGER, WEB
+2.  REFUSE unless PROFILE exists                                  → exit 1
+3.  REFUSE unless $WEB/node_modules/.bin/tsc exists and is exec   → exit 1
+       message carries the exact --prod=false install line        (R17,R18,C3)
+4.  TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT                   (NF3,NF4)
+5.  enumerate SUBJECTS := glob scripts/checks/*.ts *.tsx          (R8,R9,R10)
+6.  REFUSE if |SUBJECTS| == 0                                     → exit 1 (R13)
+7.  scan for uncovered TS-family extensions (.mts,.cts) → report  (R10)
+8.  read LEDGER → WAIVERS                                         (R14)
+9.  PROVENANCE block: paths, HEAD, branch, sha256 of self and
+       profile, tsc/node versions, subject count, invocation shape (R20)
+10. for each SUBJECT:
+       write $TMP/<n>.json = { extends: <abs PROFILE>, files: [<abs SUBJECT>] }
+       run  $WEB/node_modules/.bin/tsc -p $TMP/<n>.json
+       record PASS | FAIL + full unfiltered output                (R11,R21)
+       compiled++
+11. WAIVER RECONCILIATION: a waived subject that compiled clean   → failure (R14)
+12. PROFILE FIDELITY: any diagnostic path outside scripts/checks/ → failure (S5)
+13. CENSUS: found vs compiled, both directions                    → failure (R12)
+14. verdict line + wall-clock; exit 0 only if every counter is 0  (R22,NF6)
+```
+
+Steps 11 and 12 are the two checks the round-800 gate did not have, and both
+exist because of something the measurement found rather than something the
+design imagined.
+
+### 4.2 The generated per-file config
+
+`tsc` has no command-line equivalent of `files`, and — measured — `paths` cannot
+be passed on the command line at all: `error TS6064: Option 'paths' can only be
+specified in 'tsconfig.json' file`. That single compiler restriction is what
+forces the generated-config mechanism, and it is worth stating plainly because
+it is the least obvious part of the design.
+
+Each subject therefore gets a two-line config in the run's temp directory:
+
+```json
+{ "extends": "/abs/path/tsconfig.checks-instruments.json",
+  "files":   ["/abs/path/scripts/checks/check-foo.ts"] }
+```
+
+Absolute paths throughout, because the config is not in the repo and relative
+resolution from `mktemp -d` would be meaningless. `extends` with an absolute
+path is supported and was measured end to end: profile G reproduced profile E's
+verdict for all 42 subjects with zero differences
+(`evidence/census-G-generated-perfile-config.txt`).
+
+**The trap this mechanism carries** — and the reason `typeRoots` is pinned — is
+recorded in §3.1 and re-proven as a negative control. A config outside the repo
+loses automatic `@types` discovery, and the failure it produces
+(`Cannot find name 'process'`, 30 files red) looks exactly like a broken
+codebase rather than a broken config. Anyone who touches `typeRoots` must
+re-run the census.
+
+### 4.3 Why the temp directory and not a file in the repo
+
+Writing `forge-control-web/.checks-one.json` would be simpler and is rejected:
+it dirties the tree (violating NF3 and universal gate item 3, `git status
+--porcelain` empty), it collides between concurrent runs (NF4), and a crashed
+run leaves a file that the next `git add -A` publishes. `mktemp -d` plus an
+`EXIT` trap costs two lines and has none of those properties.
+
+### 4.4 What was kept from the round-800 gate
+
+The skeleton, deliberately, because it was right: `set -euo pipefail` with an
+`ERR` trap that denies the run was a pass; a provenance block before any
+verdict; refusal rather than degradation on a missing toolchain; a census
+compared in both directions; full unfiltered compiler output per failure. The
+round-800 header's enumeration of "what would make this instrument report a pass
+wrongly" (a)–(e) is preserved and extended — (b) becomes structural rather than
+a per-entry existence test, (c) is replaced by glob coverage, and two new
+entries are added for stale waivers and profile fidelity.
+
+### 4.5 What was removed, and the same-commit amendment
+
+Removed: the manifest as an inclusion list, and the manifest guard that compared
+`git diff --diff-filter=ACMR main..HEAD -- 'scripts/checks/*.ts'` against it.
+
+The guard was a good answer to the wrong question. It asked "did the author of
+this branch remember to add their new file to the list," which is a question
+that only exists because there is a list. With glob enumeration there is no
+list, so there is nothing to forget: a new instrument is covered the moment it
+is written, including one written by someone who never read this document.
+
+Standing rule 2 governs the removal: the guard is described in
+`03-quality.md` §3.1 item 9, in `instrument-manifest.txt`'s header, and in
+`phase8-tooling.md` §5.1 control (b). All three are amended **in the same commit
+that removes it**, with the reasoning inline. Phase 5 owns that, and its
+write_set carries all three files for exactly this reason.
+
+### 4.6 The waiver ledger (A3)
+
+`instrument-manifest.txt` keeps its path and inverts its meaning: it listed what
+*is* compiled, it now lists what *is not*, and the target is that it lists
+nothing.
+
+Format — four required fields per entry:
+
+```
+# path        : scripts/checks/check-example.ts
+# diagnostic  : TS2345 at line 88 — <verbatim first line of the error>
+# reason      : <why it cannot be fixed by the project holding it>
+# owner       : <the project or round that will fix it>
+scripts/checks/check-example.ts
+```
+
+Two properties make it safe:
+
+1. **Every waiver is printed on every run**, in the transcript, above the
+   verdict. A waiver cannot be quiet.
+2. **A waived file that compiles clean is a FAILURE** ("waived but clean"). Stale
+   waivers are the mechanism by which an exclusion list outlives its reason, and
+   this closes it.
+
+At completion the ledger holds zero entries and its header says so. It is kept
+rather than deleted because deleting it would make the *next* exclusion
+invisible — someone would reach for a `--exclude` flag or an `if` in the loop
+instead, and that is precisely the shape this project exists to eliminate.
+
+---
+
+## 5. Failure modes
+
+Enumerated as "what would make this gate report a pass wrongly," which is the
+only question worth asking of an instrument.
+
+| # | Failure mode | Guard | Proven by |
+|---|---|---|---|
+| F1 | Glob matches nothing (moved dir, wrong cwd) | refuse if 0 subjects | R13 |
+| F2 | A file exists but is skipped | census, found vs compiled, both ways | R12, control (a) |
+| F3 | A new instrument escapes coverage | glob is derived, not stored | control (b) |
+| F4 | A new *extension* escapes coverage (`.mts`) | explicit uncovered-extension scan | R10 |
+| F5 | `tsc: not found`, disclosed and ignored | refuse, print the working install line | R17/R18, control (c) |
+| F6 | Wrong install line printed (prod pruning) | line carries `--prod=false`; verified under `NODE_ENV=production` | R18, C3 |
+| F7 | `@types` invisible → mass false failures | `typeRoots` pinned; census re-run required if touched | §3.1, control (d) |
+| F8 | Profile drifts from the app's tsconfig | `extends`, not a copied flag list | R1, S6 |
+| F9 | Gate blames the app for a profile bug | profile-fidelity check: any path outside `scripts/checks/` fails the run | S5 |
+| F10 | A waiver outlives its reason | "waived but clean" is a failure | R14 |
+| F11 | An instrument is made to compile by making it check nothing | R29 breakage transcripts; R28 suppression grep; R33 red-team on family B | phase 3 |
+| F12 | Gate leaves a temp file in the tree | `mktemp -d` + `EXIT` trap; `git status --porcelain` after | NF3 |
+| F13 | Two runs interfere | per-run temp dir | NF4 |
+| F14 | Gate passes because it never ran (`set -e` abort mid-loop) | `ERR` trap prints "ABORTED … NOT a pass"; final verdict line is the only pass signal | R22 |
+| F15 | Corpus keeps describing the old gate | phase 5 write_set carries all three documents; standing rule 2 | R31, R32 |
+
+F11 deserves its own sentence, because it is the only failure mode no script can
+detect. The cheapest way to satisfy a typecheck gate is to delete the assertion
+that does not compile. Three independent guards exist — a mechanical grep for
+suppressions, a human transcript proving each instrument still fails on a broken
+subject, and an adversarial reviewer on the one family where the assertion's
+meaning is genuinely in question. None of the three is sufficient alone.
+
+---
+
+## 6. Observability: how progress and breakage are seen
+
+**During the project.** Each phase is a task in the project engine with a round
+label; the Kanban shows phase, round and state. Each gating reviewer pastes the
+gate's transcript verbatim into the task record. Konrad sees phases advancing;
+if one stalls, it stalls red with the compiler output attached.
+
+**After the project.** The gate is universal gate item 9 and is run by every
+gating reviewer of every phase of every project on this repo, via
+`03-quality.md` §4 line 859. Its transcript answers, without interpretation:
+how many instruments exist, how many compiled, which failed and with what, what
+is waived and why, and what the gate refused to look at.
+
+**The negative signal that matters most** is not a red gate — it is a gate that
+passes while covering less than the directory. The census line
+`subjects found N / compiled N` printed against the directory's real file count
+is the one number a reader should check, and NF7 requires that it be legible
+without reading the source.
+
+---
+
+## 7. The successor project (NG3)
+
+Three directories carry the identical hole and are out of scope:
+
+- `scripts/measure-schedule.ts`, `scripts/import-scraper-places.ts` — outside
+  every `include`; repo root has no `package.json`.
+- `forge-control/scripts/` — nine `smoke-*.ts` plus `probe-usage-router.ts`;
+  `forge-control/tsconfig.json` reads `"include": ["src/**/*.ts"]`.
+- `forge-control-mcp/scripts/smoke-list-tools.ts` — same shape.
+
+**What the successor must change, precisely:** the glob in step 5 of §4.1, and
+nothing else — provided the subjects compile under a profile. Those three
+directories are node-side and will most likely want a second profile extending
+`forge-control/tsconfig.json` rather than the web one, which turns the gate's
+single `PROFILE` variable into a two-entry mapping from path prefix to profile.
+That is a fifteen-line change to A2 and one new file beside A1. It is
+deliberately not done here: this project's scope is `scripts/checks/`, and the
+measurement that would justify the second profile has not been taken.
+
+The design constraint this imposes on phase 2 is therefore explicit: **the
+subject glob and the profile path must each be a single named variable at the
+top of the script, not inlined at their point of use.** A successor must be able
+to extend coverage by editing two lines.
+
+---
+
+## 8. Technology choices, one line each
+
+| Choice | Rationale |
+|---|---|
+| Bash, not Node | Every other universal gate item is bash; a gate that needs the toolchain it is testing to start is a gate that cannot report a missing toolchain. |
+| `tsc` from `forge-control-web/node_modules` | The instruments' heaviest dependency is the web app; using its exact compiler version removes a whole class of "works for me". |
+| `extends` the app tsconfig | The only way to stay true to the app's compiler without copying its flags, which is how the current gate drifted. |
+| Glob enumeration | A derived list cannot go stale; item 10 (shell lint) already derives rather than lists. |
+| One `tsc` per file | Attributable failures; avoids the merged-program noise measured at round 800. |
+| Generated config in `mktemp -d` | `paths` cannot be passed on the CLI (TS6064) and the tree must stay clean (NF3). |
+| Ledger instead of deletion | Makes the next exclusion loud instead of inventing a quiet one. |
+| No CI wiring | Consistent with items 1–11; automating a gate is a separate decision with a separate owner (NG6). |
