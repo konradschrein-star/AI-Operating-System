@@ -121,6 +121,25 @@ full disk truncated the subject list 31 → 24 with the guard silent and the
 census reconciling happily (finding F1). Enumeration now writes nothing, so
 there is no partial write to detect; the second opinion is what proves that.
 
+**Amended round 3 — the reconciliation compares SETS, not counts, and both
+sides are deduplicated.** Three defects, all measured:
+
+- **A count cannot be diagnosed.** "bash found 46, find found 45" named no
+  file, and the refusal said so outright. The comparison is now a set
+  difference, printed file by file, with the side that saw each one.
+- **`find` must follow symlinks (`-L`).** bash's `**` matches a symlinked
+  directory as one path component and resolves through it, so
+  `scripts/checks/<symlink>/x.ts` IS a subject; `find` without `-L` never
+  entered it, and that benign tree shape took the whole gate offline — a
+  regression against round 200, which compiled it. With `-L` the file is
+  enumerated and compiled (measured: 43 subjects, the planted file red).
+  DEEPER the two still part company, because bash's `**` will not recurse
+  THROUGH a symlink while `-L` will: such a file is unreachable by the glob
+  and the run refuses, NAMING the file and the symlinked ancestor.
+- **Overlapping globs are a set, not a bag.** `scripts/**/*.ts` contains
+  `scripts/checks/**/*.ts`; unfiltered, the coverage scan reported "86 file(s)"
+  for 44 files on disk. First occurrence wins, so per-glob order survives.
+
 > **Precedent.** Universal gate item 10 (shell lint) already derives its subject
 > list — `git log --no-merges --name-only main..HEAD -- '*.sh'` — rather than
 > hand-listing. R8 applies the same principle to item 9. The derivation differs
@@ -372,6 +391,46 @@ verbatim to suppressions (finding F2). The gate refuses the three comment
 directives, which it can detect exactly; `: any` and the casts remain P-A's,
 because a directory-wide grep for them would also match an instrument that
 legitimately searches app source for that string.
+
+**Amended round 3 — "which it can detect exactly" was not true, and the word
+"exactly" is the requirement.** The gate's directory-scoped scan was a grep
+approximating tsc's two directive regexes (`(//|/\*)[[:space:]]*@ts-…`), and it
+leaked in both directions. Measured on this tree, tsc 5.7.2 — ELEVEN comment
+shapes suppress a diagnostic:
+
+| Shape | Suppresses | Round-2 grep |
+|---|---|---|
+| `// @ts-ignore`, `//@ts-ignore`, `/// @ts-ignore` | yes | caught |
+| `/* @ts-ignore */` | yes | caught |
+| `/** @ts-ignore */`, `/**@ts-ignore*/` | yes | **MISSED** |
+| `// @ts-expect-error`, `/* @ts-expect-error */` | yes | caught |
+| `/** @ts-expect-error */` | yes | **MISSED** |
+| `// @ts-nocheck`, `/// @ts-nocheck` | yes | caught |
+| `/** @ts-nocheck */`, `/* @ts-nocheck */` | **no** | — |
+| `@ts-ignore` on the 2nd line of a JSDoc block | **no** | — |
+| the directive text inside a STRING LITERAL | **no** | **false positive** |
+
+A planted `zz-jsdoc.ts` carrying `/** @ts-ignore */` therefore compiled clean,
+the census said `suppressions 0`, and the run printed `PASSED`, exit 0 — the
+breach sentence, produced by the control written to close B4 (round-3
+re-review, blocker 1). The false-positive direction is the same defect wearing
+the other face: an instrument that legitimately greps app source for
+`@ts-ignore` was failed by its own search term.
+
+**The requirement is therefore stated as a property, not as a pattern: a
+subject shall fail this gate when THE COMPILER HONOURS a suppression directive
+in it, and only then.** The gate satisfies it by asking tsc's own parser —
+`commentDirectives` and `checkJsDirective` from `ts.createSourceFile`, the same
+installation that compiles the subjects — rather than by matching a regex
+against the text. Both fields are internal to TypeScript, so the gate proves
+the scanner still sees all five suppressing comment shapes, and still ignores a
+string-literal decoy, before it scans a single subject (`02-architecture.md`
+§4.1 step 9c). A scan that silently stops matching is precisely the failure
+this replaced.
+
+**Verify:** plant one file per row of the table above and run the gate. Every
+`yes` row is named in the SUPPRESSIONS block and counted in the census; every
+`no` row is not. Transcripts: `evidence/phase2-fixcycle1-round3.md` §1.
 
 ### R29 — Every fixed instrument still detects its own subject's breakage
 For each of the six fixed files, the reviewer shall break the thing it checks,

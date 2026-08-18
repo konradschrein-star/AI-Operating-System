@@ -99,6 +99,57 @@
 #      parsing and says so when a name is the cause.
 #
 # ---------------------------------------------------------------------------
+# WHAT CHANGED AT ROUND 3 — the re-review of fix cycle 1 got in once more and
+# named three further defects, and the round-2 gate review's finding 8 was
+# still open (`evidence/phase2-fixcycle1-round3.md`).
+#
+#   1. THE SUPPRESSION SCAN WAS AN APPROXIMATION OF tsc's OWN REGEXES, AND THE
+#      APPROXIMATION LEAKED. `SUPPRESSION_RE` required `//` or `/*` followed by
+#      whitespace, so `/** @ts-ignore */` — the JSDoc form — matched nothing.
+#      Measured on this tree, tsc 5.7.2: ELEVEN comment shapes suppress a
+#      diagnostic and the grep saw seven of them. A planted subject carrying
+#      `/** @ts-ignore */` compiled clean, the census said `suppressions 0`, the
+#      SUPPRESSIONS block printed its all-clear, and the run said `PASSED`,
+#      exit 0 — the breach sentence, produced by the control written to close
+#      B4. The grep also fired on the LITERAL TEXT anywhere in a file, so an
+#      instrument that legitimately greps app source for `@ts-ignore` was
+#      failed by its own search term. BOTH directions are now closed the only
+#      way an approximation cannot be: THE COMPILER'S OWN PARSER decides.
+#      `ts.createSourceFile` is asked for `commentDirectives` (what tsc honours
+#      as `@ts-ignore`/`@ts-expect-error`, in comment position only) and
+#      `checkJsDirective` (`@ts-nocheck`). Step 9b's fourth canary makes that
+#      parser prove itself on all five shapes plus a string-literal decoy
+#      before any subject is scanned, because a scanner that silently returns
+#      nothing is exactly the failure this replaced.
+#   2. THE SECOND OPINION DOUBLE-COUNTED OVERLAPPING ROOTS, which wedged the
+#      documented extension path into a permanent refusal: adding
+#      `scripts/*.ts` to SUBJECT_GLOBS — the fifteen-line change §7 promises —
+#      made `find` walk `scripts/checks` twice (44 vs 86) and no subject
+#      compiled. Roots and name patterns were deduplicated INDEPENDENTLY and
+#      then multiplied together. The second opinion is now a SET of resolved
+#      paths, one `find` per glob with the glob's own root, name and depth, and
+#      it is the resolved PATHS that are deduplicated.
+#   3. A SYMLINKED SUBDIRECTORY TOOK THE WHOLE GATE OFFLINE, and the refusal —
+#      "one of them is wrong and this gate does not know which" — told the
+#      operator nothing. bash's `**` matches a symlinked directory as one path
+#      component and resolves through it; `find` without `-L` never enters it,
+#      so a benign tree shape produced 46 vs 45 and zero subjects compiled,
+#      a regression against round 200. `find -L` now matches bash at that
+#      depth, and — because the two still part company DEEPER inside a symlink
+#      (bash's `**` will not recurse through one, `-L` will) — a disagreement
+#      is now reported as a NAMED SET DIFFERENCE with the symlinked ancestor
+#      identified, not as two integers.
+#   4. FIDELITY INLINED `scripts/checks/`, so §7's "a successor edits the two
+#      named variables and nothing else" was false: a successor extending
+#      SUBJECT_GLOBS to `scripts/*.ts` would have had every diagnostic in the
+#      new root reported as a profile violation. The accepted prefixes are now
+#      DERIVED from SUBJECT_GLOBS, and so is COVERAGE_GLOBS — which had the
+#      same defect one level down, its roots being hardcoded while its job is
+#      to be the safety net UNDER the subject globs. `TS_EXTENSIONS` replaces
+#      it as the thing a successor may need to widen, and only when a new
+#      TypeScript extension is invented.
+#
+# ---------------------------------------------------------------------------
 # EXTENDING COVERAGE — READ THIS BEFORE EDITING ANYTHING ELSE.
 # `02-architecture.md` §7 names three directories carrying the identical hole
 # and out of scope here: `scripts/*.ts`, `forge-control/scripts/*.ts`,
@@ -109,10 +160,25 @@
 # extending `forge-control/tsconfig.json`, which turns `PROFILE` into a mapping
 # from path prefix to profile; that is the fifteen-line change §7 describes.
 #
-# `COVERAGE_GLOBS` is not a third knob, it is the SAFETY NET under the first:
-# it must list every TypeScript-family extension that exists, whether or not
-# this gate compiles it, so that anything the subject globs miss is named AND
-# fails. Widening SUBJECT_GLOBS shrinks the uncovered set automatically.
+# THAT CONTRACT IS NOW TRUE, WHICH IT WAS NOT AT ROUND 2. Three things were
+# derived from `scripts/checks/` by hand and would each have had to be edited
+# as well — silently, since none of them fails loudly when forgotten:
+#
+#   * the coverage globs (the safety net that names what the subject globs
+#     miss) carried their own hardcoded ROOTS, so a new subject root would have
+#     had no safety net under it at all;
+#   * the fidelity check compared every diagnostic's path against the literal
+#     prefix `scripts/checks/`, so every diagnostic in a new root would have
+#     been reported as "the profile is wrong";
+#   * the second opinion's `find` derived one root list and one name list and
+#     multiplied them, so two roots where one contains the other double-counted
+#     and refused (round-3 re-review, blocker 2).
+#
+# All three are now computed from `SUBJECT_GLOBS` by `decompose_glob` below.
+# `TS_EXTENSIONS` is the one remaining list, and it is not a knob for reaching
+# new directories: it is the set of extensions TypeScript HAS. It exists so
+# that a file the subject globs do not match — a `.mts` arriving next year — is
+# named AND fails rather than passing unread (R10).
 #
 # ---------------------------------------------------------------------------
 # WHAT WOULD MAKE THIS INSTRUMENT REPORT A PASS WRONGLY — and why it cannot.
@@ -199,31 +265,108 @@ SUBJECT_GLOBS=( "scripts/checks/**/*.ts" "scripts/checks/**/*.tsx" )   # repo-re
 PROFILE="$REPO_ROOT/tsconfig.checks-instruments.json"
 # ═══════════════════════════════════════════════════════════════════════════
 
-# EVERY TypeScript-family file that can exist under the subject directories,
-# compiled or not. R10: a future instrument arriving as .mts or .cts must be
-# NAMED, and — amended at round 2 after red-team finding F7 — must FAIL the
-# run, because "named but exit 0" is the exact sentence brief A2 defines as a
-# breach. The uncovered set is computed as a set difference against the
-# enumerated subjects, so widening SUBJECT_GLOBS shrinks it automatically
-# rather than double-reporting.
-COVERAGE_GLOBS=(
-  "scripts/checks/**/*.ts"
-  "scripts/checks/**/*.tsx"
-  "scripts/checks/**/*.mts"
-  "scripts/checks/**/*.cts"
-)
-
-# A compiler directive that makes a subject green by asking not to be checked.
-# `@ts-nocheck` disables a whole file in one line and is strictly more powerful
-# than everything R28 already forbade; `@ts-ignore` and `@ts-expect-error`
-# disable a line. Matched only in COMMENT position, so an instrument that
-# legitimately searches app source for these strings is not caught by its own
-# search term. Measured 2026-08-18: zero matches under scripts/checks/ today,
-# so this scan starts from a clean directory and can only fire on something new.
-SUPPRESSION_RE='(//|/\*)[[:space:]]*@ts-(nocheck|ignore|expect-error)'
+# EVERY TypeScript extension that can exist under the subject roots, compiled
+# or not. R10: a future instrument arriving as .mts or .cts must be NAMED, and
+# — amended at round 2 after red-team finding F7 — must FAIL the run, because
+# "named but exit 0" is the exact sentence brief A2 defines as a breach. The
+# coverage globs are built from these extensions crossed with the SUBJECT_GLOBS
+# ROOTS (step 7), and the uncovered set is a set difference against the
+# enumerated subjects — so widening SUBJECT_GLOBS, in extension or in root,
+# shrinks the uncovered set automatically rather than double-reporting.
+TS_EXTENSIONS=( ts tsx mts cts )
 
 WEB="$REPO_ROOT/forge-control-web"
 TSC="$WEB/node_modules/.bin/tsc"
+# The compiler's own parser, used by the suppression scan of step 10b. It is
+# the same installation `$TSC` runs out of, so the scan and the compile cannot
+# disagree about what a directive is.
+TS_LIB="$WEB/node_modules/typescript"
+
+# ---------------------------------------------------------------------------
+# GLOB DECOMPOSITION — the one place that reads the shape of a subject glob.
+# Everything derived from SUBJECT_GLOBS goes through here: the coverage globs,
+# the fidelity prefixes and the `find` second opinion. A successor editing
+# SUBJECT_GLOBS therefore moves all three at once, which is what §7 promises
+# and what round 3 found to be false (three hand-derived copies of
+# `scripts/checks/`, none of which fails loudly when forgotten).
+#
+# TWO SHAPES ARE SUPPORTED, and anything else is REFUSED rather than guessed:
+#
+#     <root>/**/<name>   recursive   e.g. scripts/checks/**/*.ts
+#     <root>/<name>      depth 1     e.g. scripts/*.ts
+#
+# `<root>` must be literal — a glob metacharacter in the root would make the
+# root itself a pattern, and `find`'s starting point cannot be a pattern, so
+# the second opinion would silently stop corroborating the thing it is there to
+# corroborate. `<name>` must not contain `/`: a middle segment like
+# `scripts/*/checks/*.ts` expands in bash but has no faithful `find` equivalent
+# in one expression, and a second opinion that is not faithful is worse than
+# none. Refusing is not a limitation to work around — it is the guard that
+# keeps the derivation honest, and the message says which shape to use.
+# ---------------------------------------------------------------------------
+GLOB_ROOT=""
+GLOB_NAME=""
+GLOB_RECURSIVE=0
+decompose_glob() {  # $1 = repo-relative glob -> GLOB_ROOT, GLOB_NAME, GLOB_RECURSIVE
+  local g="$1" middle
+  GLOB_ROOT=""; GLOB_NAME=""; GLOB_RECURSIVE=0
+
+  GLOB_NAME="${g##*/}"
+  if [ "$GLOB_NAME" = "$g" ]; then
+    echo "REFUSING TO RUN: the glob '$g' has no directory part." >&2
+    echo "  Supported: <root>/**/<name> (any depth) or <root>/<name> (depth 1)." >&2
+    exit 1
+  fi
+  middle="${g%/*}"                       # everything before the basename
+  if [ "${middle##*/}" = "**" ]; then
+    GLOB_RECURSIVE=1
+    GLOB_ROOT="${middle%/*}"
+    if [ "$GLOB_ROOT" = "$middle" ]; then GLOB_ROOT="."; fi
+  else
+    GLOB_ROOT="$middle"
+  fi
+
+  case "$GLOB_ROOT" in
+    *[*?[]*|"")
+      echo "REFUSING TO RUN: the glob '$g' has a pattern in its ROOT ('$GLOB_ROOT')." >&2
+      echo "  \`find\` cannot start from a pattern, so the independent second opinion" >&2
+      echo "  of step 5b could not corroborate this enumeration — and an enumeration" >&2
+      echo "  nothing corroborates is what red-team finding F1 was about." >&2
+      echo "  Supported: <root>/**/<name> (any depth) or <root>/<name> (depth 1)." >&2
+      exit 1
+      ;;
+  esac
+  return 0
+}
+
+# The roots of the subject globs, deduplicated, each with its trailing slash.
+# A diagnostic located under one of these is the EXPECTED shape (step 12); a
+# diagnostic anywhere else means the profile is reaching into the app.
+ACCEPTED_PREFIXES=()
+SUBJECT_ROOTS=()
+for _g in "${SUBJECT_GLOBS[@]}"; do
+  decompose_glob "$_g"
+  _seen=0
+  for _r in ${SUBJECT_ROOTS[@]+"${SUBJECT_ROOTS[@]}"}; do
+    if [ "$_r" = "$GLOB_ROOT" ]; then _seen=1; fi
+  done
+  if [ "$_seen" -eq 0 ]; then
+    SUBJECT_ROOTS+=( "$GLOB_ROOT" )
+    ACCEPTED_PREFIXES+=( "$GLOB_ROOT/" )
+  fi
+done
+unset _g _r _seen
+
+# The safety net (R10), built from the subject roots crossed with every
+# TypeScript extension there is. Recursive regardless of the subject globs'
+# depth: a file two directories down is exactly the file R10 exists to name.
+COVERAGE_GLOBS=()
+for _root in "${SUBJECT_ROOTS[@]}"; do
+  for _ext in "${TS_EXTENSIONS[@]}"; do
+    COVERAGE_GLOBS+=( "$_root/**/*.$_ext" )
+  done
+done
+unset _root _ext
 
 # A located diagnostic, in `--pretty false` shape:
 #   scripts/checks/check-orientation.ts(129,38): error TS2322: …
@@ -417,8 +560,18 @@ START_SECONDS=$SECONDS
 #    `globstar` set would silently change every later glob in this script.
 # ---------------------------------------------------------------------------
 ENUM=()
-enumerate_globs() {  # $@ = repo-relative globs; result in ENUM, repo-relative
+enumerate_globs() {  # $@ = repo-relative globs; result in ENUM, repo-relative, unique
   local saved_opts g f matches shopt_rc=0
+  # Two globs may match the same file — `scripts/**/*.ts` contains
+  # `scripts/checks/**/*.ts`, which is the shape §7's extension path produces.
+  # ENUM is therefore a SET: first occurrence wins, so the per-glob order below
+  # survives, and a file is neither compiled twice nor counted twice.
+  # Round 3 measured the unfiltered version: with `scripts/*.ts` added, the
+  # coverage scan reported "86 file(s)" for 44 files on disk. It reached the
+  # right verdict — the reconciliation and the uncovered scan are both
+  # membership tests, not counts — but a census nobody can add up is a census
+  # nobody checks.
+  local -A seen_paths=()
   # `shopt -p` EXITS 1 when any of the options it is asked to print is unset,
   # which is the normal case here — that is a report, not a failure, and it is
   # the reason for the explicit status capture rather than a bare assignment
@@ -444,7 +597,10 @@ enumerate_globs() {  # $@ = repo-relative globs; result in ENUM, repo-relative
     # NUL separation that makes a newline in a filename survive.
     if [ ${#matches[@]} -gt 0 ]; then
       while IFS= read -r -d '' f; do
-        ENUM+=( "$f" )
+        if [ -z "${seen_paths[$f]+set}" ]; then
+          seen_paths[$f]=1
+          ENUM+=( "$f" )
+        fi
       done < <(printf '%s\0' "${matches[@]}" | sort -z)
     fi
   done
@@ -452,72 +608,173 @@ enumerate_globs() {  # $@ = repo-relative globs; result in ENUM, repo-relative
   return 0
 }
 
-# 5b. THE SECOND OPINION (round 2, red-team finding F1). A count of the same
-#     set taken by a DIFFERENT TOOL walking the same tree. If bash's globbing
-#     and `find` disagree about how many TypeScript-family files exist, this
-#     gate does not know what it is looking at and says so instead of
-#     certifying. `-printf 'x\n'` prints one line per match regardless of the
-#     filename, so a newline in a name cannot inflate the count. The search
-#     roots and the name patterns are DERIVED from the globs above, so the two
-#     enumerations cannot drift apart when a successor edits SUBJECT_GLOBS.
-independent_count() {  # $@ = repo-relative globs -> a single integer on stdout
-  local g root name r seen first=1
-  local roots=() names=() expr=() find_roots=()
-  # Both lists are deduplicated, because two globs sharing a root ("**/*.ts"
-  # and "**/*.tsx") would otherwise make `find` walk that root twice and
-  # double every count — a disagreement manufactured by the checker itself.
+# 5b. THE SECOND OPINION (round 2, red-team finding F1; rewritten round 3).
+#
+#     The same set, taken by a DIFFERENT TOOL walking the same tree. If bash's
+#     globbing and `find` disagree about which TypeScript-family files exist,
+#     this gate does not know what it is looking at and says so instead of
+#     certifying.
+#
+#     ROUND 2 TOOK A COUNT, AND FROM ONE `find` OVER DEDUPLICATED ROOTS CROSSED
+#     WITH DEDUPLICATED NAMES. Two defects, both found by the round-3
+#     re-review:
+#
+#       * ROOTS AND NAMES WERE DEDUPLICATED INDEPENDENTLY AND THEN MULTIPLIED.
+#         With `scripts/checks/**/*.ts` and `scripts/*.ts` — the documented
+#         extension path of §7 — the roots became {scripts/checks, scripts} and
+#         the names {*.ts, *.tsx}, and `find` walked `scripts/checks` twice:
+#         44 subjects globbed, 86 "found", permanent refusal. The fix is one
+#         `find` PER GLOB, with that glob's own root, name and depth, and
+#         deduplication of the RESOLVED PATHS afterwards.
+#       * A COUNT CANNOT BE DIAGNOSED. "bash found 46, find found 45" told the
+#         operator nothing about which file, and the honest sentence that
+#         followed — "one of them is wrong and this gate does not know which" —
+#         was the whole message. It is now a SET: any disagreement is printed
+#         file by file, with the side that saw it.
+#
+#     `-L` IS LOAD-BEARING. bash's `**` matches a symlinked directory as a
+#     single path component and resolves through it, so a `.ts` one level
+#     inside `scripts/checks/link-to-elsewhere/` IS a subject; `find` without
+#     `-L` never enters it, and that benign tree shape took the entire gate
+#     offline at round 2 (a regression against round 200, which compiled it).
+#     `-L` matches bash at that depth. DEEPER, the two still part company —
+#     bash's `**` will not recurse THROUGH a symlink, `-L` will — so the
+#     difference is reported with the symlinked ancestor named, which is a
+#     defect an operator can act on rather than two integers.
+#
+#     NO `-type` FILTER, deliberately. A glob matches by NAME, whatever the
+#     entry turns out to be — a symlink, a dangling symlink, even a DIRECTORY
+#     called `x.ts`. The second opinion must match by name too, or the two
+#     would disagree over shapes that are not the disagreement this guard is
+#     looking for, and the run would refuse with the wrong diagnosis instead of
+#     reaching the MISSING path, which names the offending entry (R19).
+SECOND_OPINION=()
+independent_set() {  # $@ = repo-relative globs -> SECOND_OPINION, repo-relative, sorted, unique
+  local g p sentinel
+  local -a args=() chunk=() raw=()
+  SECOND_OPINION=()
   for g in "$@"; do
-    root="${g%%/[*]*}"
-    name="${g##*/}"
-    seen=0
-    for r in "${roots[@]}"; do
-      if [ "$r" = "$root" ]; then seen=1; fi
+    decompose_glob "$g"
+    args=( -L "$REPO_ROOT/$GLOB_ROOT" -mindepth 1 )
+    if [ "$GLOB_RECURSIVE" -eq 0 ]; then args+=( -maxdepth 1 ); fi
+    args+=( -name "$GLOB_NAME" -print0 )
+    # THE SENTINEL IS THE EXIT-STATUS CHANNEL. A process substitution's status
+    # is not available to the reader, and this enumeration is the one that
+    # round 200 got wrong by trusting an unavailable status (F1). `find`
+    # therefore APPENDS its own exit code as a final NUL-terminated record; a
+    # truncated stream, a symlink loop, an unreadable directory — anything that
+    # stops `find` early — loses or changes that record and is refused below.
+    chunk=()
+    mapfile -d '' -t chunk < <(find "${args[@]}"; printf 'FIND-EXIT-%s\0' "$?")
+    if [ ${#chunk[@]} -eq 0 ]; then
+      echo "REFUSING TO RUN: \`find\` produced no sentinel for glob '$g'." >&2
+      echo "  The second opinion's own exit-status channel is missing, so its" >&2
+      echo "  result cannot be trusted and this gate certifies nothing." >&2
+      exit 1
+    fi
+    sentinel="${chunk[$(( ${#chunk[@]} - 1 ))]}"
+    if [ "$sentinel" != "FIND-EXIT-0" ]; then
+      echo "REFUSING TO RUN: the independent \`find\` enumeration failed for glob '$g'." >&2
+      echo "  sentinel: $sentinel  (expected FIND-EXIT-0)" >&2
+      echo "  find $(printf '%q ' "${args[@]}")" >&2
+      echo "  An enumeration that cannot be corroborated is not an empty directory," >&2
+      echo "  and this gate will not report one as the other. A symlink loop under" >&2
+      echo "  a subject root is the common cause; \`-L\` follows symlinks on purpose" >&2
+      echo "  (see the note above) and a loop makes that unbounded." >&2
+      exit 1
+    fi
+    unset "chunk[$(( ${#chunk[@]} - 1 ))]"
+    for p in ${chunk[@]+"${chunk[@]}"}; do
+      raw+=( "${p#"$REPO_ROOT/"}" )
     done
-    if [ "$seen" -eq 0 ]; then roots+=( "$root" ); fi
-    seen=0
-    for r in "${names[@]}"; do
-      if [ "$r" = "$name" ]; then seen=1; fi
-    done
-    if [ "$seen" -eq 0 ]; then names+=( "$name" ); fi
   done
-  for root in "${roots[@]}"; do
-    find_roots+=( "$REPO_ROOT/$root" )
-  done
-  for name in "${names[@]}"; do
-    if [ "$first" -eq 1 ]; then first=0; else expr+=( -o ); fi
-    expr+=( -name "$name" )
-  done
-  # NO `-type` FILTER, deliberately. A glob matches by NAME, whatever the entry
-  # turns out to be — a symlink, a dangling symlink, even a DIRECTORY called
-  # `x.ts`. The second opinion must therefore also match by name, or the two
-  # would disagree over shapes that are not the disagreement this guard is
-  # looking for, and the run would refuse with the wrong diagnosis instead of
-  # reaching the MISSING path, which names the offending entry exactly (R19).
-  find "${find_roots[@]}" \( "${expr[@]}" \) -printf 'x\n' \
-    | wc -l | tr -d '[:space:]'
+  # Deduplicate the RESOLVED PATHS — not the roots, not the name patterns.
+  # Overlapping globs (two extensions in one root, or a root nested inside
+  # another root) are now free: the same file found twice is one entry.
+  if [ ${#raw[@]} -gt 0 ]; then
+    while IFS= read -r -d '' p; do
+      SECOND_OPINION+=( "$p" )
+    done < <(printf '%s\0' "${raw[@]}" | sort -zu)
+  fi
+  return 0
 }
 
-enumerate_globs "${SUBJECT_GLOBS[@]}"
+# The first ancestor directory of a path that is a symlink, or nothing. Used
+# only to DIAGNOSE a disagreement — never to decide one. Written with parameter
+# expansion rather than `dirname` so that a filename ending in a newline
+# survives (command substitution eats trailing newlines).
+symlink_ancestor() {  # $1 = repo-relative path -> prints the ancestor, or returns 1
+  local dir="$1"
+  while [ "$dir" != "${dir%/*}" ]; do
+    dir="${dir%/*}"
+    if [ -L "$REPO_ROOT/$dir" ]; then printf '%s' "$dir"; return 0; fi
+  done
+  return 1
+}
+
+# Enumerate with bash, corroborate with find, and refuse — naming every file
+# the two disagree about — if they differ. ENUM holds the reconciled set.
+enumerate_and_reconcile() {  # $1 = label, $2.. = repo-relative globs
+  local label="$1"; shift
+  local entry other seen anc disagreements=0
+  local -a globbed=()
+
+  enumerate_globs "$@"
+  globbed=( ${ENUM[@]+"${ENUM[@]}"} )
+  independent_set "$@"
+
+  for entry in ${globbed[@]+"${globbed[@]}"}; do
+    seen=0
+    for other in ${SECOND_OPINION[@]+"${SECOND_OPINION[@]}"}; do
+      if [ "$other" = "$entry" ]; then seen=1; break; fi
+    done
+    if [ "$seen" -eq 0 ]; then
+      if [ "$disagreements" -eq 0 ]; then
+        echo "REFUSING TO RUN: the two enumerations of the $label set disagree." >&2
+        echo "  globs: $*" >&2
+      fi
+      disagreements=$((disagreements + 1))
+      echo "  ONLY bash globs saw: $entry" >&2
+    fi
+  done
+  for entry in ${SECOND_OPINION[@]+"${SECOND_OPINION[@]}"}; do
+    seen=0
+    for other in ${globbed[@]+"${globbed[@]}"}; do
+      if [ "$other" = "$entry" ]; then seen=1; break; fi
+    done
+    if [ "$seen" -eq 0 ]; then
+      if [ "$disagreements" -eq 0 ]; then
+        echo "REFUSING TO RUN: the two enumerations of the $label set disagree." >&2
+        echo "  globs: $*" >&2
+      fi
+      disagreements=$((disagreements + 1))
+      if anc="$(symlink_ancestor "$entry")"; then
+        echo "  ONLY find saw:      $entry" >&2
+        echo "     reachable through the SYMLINKED directory $anc — bash's \`**\` does" >&2
+        echo "     not recurse through a symlink, so this file can never be a subject" >&2
+        echo "     while it lives there. Replace $anc with a real directory, or move" >&2
+        echo "     the file: it is a TypeScript instrument this gate cannot reach." >&2
+      else
+        echo "  ONLY find saw:      $entry" >&2
+      fi
+    fi
+  done
+
+  if [ "$disagreements" -ne 0 ]; then
+    echo "  $disagreements file(s) above. bash globbed ${#globbed[@]}; find resolved ${#SECOND_OPINION[@]}." >&2
+    echo "  This gate certifies nothing while it cannot agree with a second tool" >&2
+    echo "  about what is on disk. This is the guard round 200's dead enumeration" >&2
+    echo "  check was supposed to be (evidence/phase2-redteam.md, finding F1)." >&2
+    exit 1
+  fi
+
+  ENUM=( ${globbed[@]+"${globbed[@]}"} )
+  return 0
+}
+
+enumerate_and_reconcile "subject" "${SUBJECT_GLOBS[@]}"
 SUBJECTS=( ${ENUM[@]+"${ENUM[@]}"} )
 FOUND=${#SUBJECTS[@]}
-
-if ! SUBJECTS_SECOND_OPINION="$(independent_count "${SUBJECT_GLOBS[@]}")"; then
-  echo "REFUSING TO RUN: the independent \`find\` count of subjects failed." >&2
-  echo "  globs: ${SUBJECT_GLOBS[*]}" >&2
-  echo "  An enumeration that cannot be corroborated is not an empty directory," >&2
-  echo "  and this gate will not report one as the other." >&2
-  exit 1
-fi
-
-if [ "$FOUND" -ne "$SUBJECTS_SECOND_OPINION" ]; then
-  echo "REFUSING TO RUN: the two enumerations disagree." >&2
-  echo "  bash globs found $FOUND; find found $SUBJECTS_SECOND_OPINION." >&2
-  echo "  globs: ${SUBJECT_GLOBS[*]}" >&2
-  echo "  One of them is wrong and this gate does not know which, so it certifies" >&2
-  echo "  nothing. This is the guard that round 200's dead enumeration check was" >&2
-  echo "  supposed to be (evidence/phase2-redteam.md, finding F1)." >&2
-  exit 1
-fi
 
 # ---------------------------------------------------------------------------
 # 6. ZERO SUBJECTS IS A REFUSAL, NOT A PASS (R13).
@@ -546,20 +803,8 @@ echo
 #    type-broken `.cts` on disk, which is precisely what brief A2 calls a
 #    breach. Naming is the right message; exit 0 was the wrong verdict.
 # ---------------------------------------------------------------------------
-enumerate_globs "${COVERAGE_GLOBS[@]}"
+enumerate_and_reconcile "coverage" "${COVERAGE_GLOBS[@]}"
 COVERAGE=( ${ENUM[@]+"${ENUM[@]}"} )
-
-if ! COVERAGE_SECOND_OPINION="$(independent_count "${COVERAGE_GLOBS[@]}")"; then
-  echo "REFUSING TO RUN: the independent \`find\` count of the coverage set failed." >&2
-  echo "  globs: ${COVERAGE_GLOBS[*]}" >&2
-  exit 1
-fi
-if [ "${#COVERAGE[@]}" -ne "$COVERAGE_SECOND_OPINION" ]; then
-  echo "REFUSING TO RUN: the two coverage enumerations disagree." >&2
-  echo "  bash globs found ${#COVERAGE[@]}; find found $COVERAGE_SECOND_OPINION." >&2
-  echo "  globs: ${COVERAGE_GLOBS[*]}" >&2
-  exit 1
-fi
 
 UNCOVERED=()
 for candidate in ${COVERAGE[@]+"${COVERAGE[@]}"}; do
@@ -583,9 +828,10 @@ else
   done
   echo "  These are NOT compiled and NOT counted below, and this run FAILS because"
   echo "  of them (R10 as amended at round 2). A file this gate declines to read"
-  echo "  cannot also be certified by it. Either add its extension to"
-  echo "  SUBJECT_GLOBS at the top of this script — the only edit required — or"
-  echo "  remove the file."
+  echo "  cannot also be certified by it. Widen SUBJECT_GLOBS at the top of this"
+  echo "  script — in extension, or in depth if the file sits below a glob that"
+  echo "  does not recurse — or remove the file. SUBJECT_GLOBS is the only edit"
+  echo "  required: the coverage globs above are derived from its roots."
 fi
 echo
 
@@ -746,6 +992,123 @@ if [ ${#EMITTED[@]} -ne 0 ]; then
   exit 1
 fi
 echo "  ok: noEmit is in effect                   — 0 files emitted beside the canaries"
+
+# ---------------------------------------------------------------------------
+# 9c. THE FOURTH CANARY — THE SUPPRESSION SCANNER MUST PROVE ITSELF.
+#
+#     Round 2 scanned for suppression directives with a grep that APPROXIMATED
+#     tsc's two directive regexes, and the approximation leaked in both
+#     directions: `/** @ts-ignore */` (the JSDoc form) suppressed a diagnostic
+#     and was not matched, while the literal text `@ts-ignore` inside a STRING
+#     was matched though it suppresses nothing. The first direction produced a
+#     `PASSED`, exit 0 over a broken subject — the breach sentence.
+#
+#     The scanner below does not approximate: it asks the compiler's own parser
+#     (the same installation `$TSC` runs from) for `commentDirectives` — what
+#     tsc honours as `@ts-ignore`/`@ts-expect-error`, in comment position only
+#     — and for `checkJsDirective`, which carries `@ts-nocheck` and whose
+#     `enabled: false` IS the suppression (`enabled: true` is `@ts-check`).
+#
+#     Both are internal fields of the SourceFile, absent from the public
+#     typings, and a future TypeScript may rename them. A scanner that quietly
+#     returns nothing is EXACTLY the failure it replaced, so it is not trusted
+#     until it has found, in one canary, all five comment shapes measured to
+#     suppress on this tree — and not found the string-literal decoy sitting
+#     beside them.
+#
+#     Measured 2026-08-18, tsc 5.7.2, on this profile: `// @ts-ignore`,
+#     `//@ts-ignore`, `/// @ts-ignore`, `/* @ts-ignore */`, `/** @ts-ignore */`,
+#     `/**@ts-ignore*/`, the four `@ts-expect-error` equivalents, and
+#     `// @ts-nocheck` all suppress. `/** @ts-nocheck */` and a `@ts-ignore` on
+#     the second line of a JSDoc block do NOT — tsc ignores them, so this gate
+#     does too: a scan that fails a subject over an inert comment teaches the
+#     next maintainer to distrust it.
+# ---------------------------------------------------------------------------
+cat > "$TMP/suppression-scan.js" <<'EOF'
+// Written and run by check-instrument-typecheck.sh. argv: <typescript-dir>
+// then one or more subject paths. One record per subject on stdout:
+//     <index>\t<hit>[,<hit>…]      hits are line:directive
+//     <index>\t-                   no directive
+//     <index>\tABSENT              vanished between enumeration and scan
+//     <index>\tERROR:<message>     anything else — the caller refuses
+// The index, never the path, is the key: a filename may contain a tab or a
+// newline, and this record is line-oriented.
+'use strict';
+const ts = require(process.argv[2]);
+const fs = require('fs');
+const files = process.argv.slice(3);
+for (let i = 0; i < files.length; i++) {
+  const record = (payload) => process.stdout.write(`${i + 1}\t${payload}\n`);
+  let text;
+  try {
+    text = fs.readFileSync(files[i], 'utf8');
+  } catch (err) {
+    record(err && err.code === 'ENOENT' ? 'ABSENT' : `ERROR:${err && err.message}`);
+    continue;
+  }
+  try {
+    const sf = ts.createSourceFile(files[i], text, ts.ScriptTarget.Latest, false);
+    const at = (pos) => sf.getLineAndCharacterOfPosition(pos).line + 1;
+    const hits = [];
+    for (const d of sf.commentDirectives || []) {
+      // CommentDirectiveType: 0 = ExpectError, 1 = Ignore.
+      hits.push(`${at(d.range.pos)}:@ts-${d.type === 0 ? 'expect-error' : 'ignore'}`);
+    }
+    // `enabled` is the state of CHECKING, not of the directive: false is
+    // @ts-nocheck, true is @ts-check, undefined is neither.
+    if (sf.checkJsDirective && sf.checkJsDirective.enabled === false) {
+      hits.push(`${at(sf.checkJsDirective.pos)}:@ts-nocheck`);
+    }
+    record(hits.length ? hits.join(',') : '-');
+  } catch (err) {
+    record(`ERROR:${err && err.message}`);
+  }
+}
+EOF
+
+if [ ! -d "$TS_LIB" ]; then
+  echo "REFUSING TO RUN: no TypeScript library at $TS_LIB." >&2
+  echo "  The suppression scan of step 10b parses every subject with the compiler's" >&2
+  echo "  own parser rather than approximating its directive regexes with a grep." >&2
+  echo "  Install as step 3 says: cd forge-control-web && pnpm install --frozen-lockfile --prod=false" >&2
+  exit 1
+fi
+
+cat > "$CANARY_DIR/canary-suppression.ts" <<'EOF'
+// @ts-ignore
+//@ts-ignore
+/// @ts-ignore
+/** @ts-ignore */
+/** @ts-expect-error */
+export const decoy = 'this line writes // @ts-nocheck and /** @ts-ignore */ as TEXT';
+EOF
+cat > "$CANARY_DIR/canary-nocheck.ts" <<'EOF'
+// @ts-nocheck
+export const whatever: string = 'the directive above is the point';
+EOF
+
+SUPPRESSION_CANARY_EXPECTED="1	1:@ts-ignore,2:@ts-ignore,3:@ts-ignore,4:@ts-ignore,5:@ts-expect-error
+2	1:@ts-nocheck"
+scan_rc=0
+SUPPRESSION_CANARY_OUT="$("$NODE_BIN" "$TMP/suppression-scan.js" "$TS_LIB" \
+  "$CANARY_DIR/canary-suppression.ts" "$CANARY_DIR/canary-nocheck.ts" 2>&1)" || scan_rc=$?
+if [ "$scan_rc" -ne 0 ] || [ "$SUPPRESSION_CANARY_OUT" != "$SUPPRESSION_CANARY_EXPECTED" ]; then
+  echo "REFUSING TO RUN: the suppression scanner failed its own canary (exit $scan_rc)." >&2
+  echo "  expected:" >&2
+  printf '%s\n' "$SUPPRESSION_CANARY_EXPECTED" | sed 's/^/    /' >&2
+  echo "  got:" >&2
+  printf '%s\n' "$SUPPRESSION_CANARY_OUT" | sed 's/^/    /' >&2
+  echo "  The scanner reads two INTERNAL fields of TypeScript's SourceFile —" >&2
+  echo "  \`commentDirectives\` and \`checkJsDirective\` — which are absent from the" >&2
+  echo "  public typings and may be renamed by a compiler upgrade. Line 6 of the" >&2
+  echo "  canary carries the directive text inside a STRING and must NOT be" >&2
+  echo "  reported; lines 1-5 are the five comment shapes measured to suppress." >&2
+  echo "  A scanner that has stopped seeing them would report \`suppressions 0\` over" >&2
+  echo "  a subject that asked not to be checked, which is red-team breach B4" >&2
+  echo "  reopened. Read $TS_LIB/lib/typescript.js for the new field names." >&2
+  exit 1
+fi
+echo "  ok: the suppression scanner works         — 5 comment shapes seen, 1 string decoy ignored"
 echo
 
 # ---------------------------------------------------------------------------
@@ -758,8 +1121,14 @@ echo
 #     to satisfy the gate, which would be a real regression bought with a green
 #     tick.
 #
-#     Paths are compared against the `scripts/checks/` PREFIX, which is only
-#     meaningful because tsc prints diagnostic paths relative to ITS OWN cwd
+#     Paths are compared against the SUBJECT ROOTS — `ACCEPTED_PREFIXES`,
+#     derived from SUBJECT_GLOBS at the top of this file, `scripts/checks/`
+#     today. Round 2 inlined that prefix here, which made §7's "a successor
+#     edits two named variables and nothing else" false: a successor adding
+#     `scripts/*.ts` would have had EVERY diagnostic in the new root reported
+#     as a profile violation, with the "THE PROFILE IS WRONG" essay attached
+#     (round-2 gate review, finding 8). The comparison is only meaningful at
+#     all because tsc prints diagnostic paths relative to ITS OWN cwd
 #     and the compile below pins that cwd to REPO_ROOT. Measured at round 200,
 #     tsc 5.7.2, same generated config, same subject:
 #       from the repo root : scripts/checks/check-orientation.ts(129,38): error TS2322: …
@@ -789,6 +1158,18 @@ FIDELITY=0
 FIDELITY_LOG=""
 HOSTILE_NAMES=0
 
+# True when a diagnostic's path lies under one of the subject roots — the
+# expected shape. Derived, never inlined: see ACCEPTED_PREFIXES at the top.
+diag_is_expected() {  # $1 = the path tsc printed
+  local prefix
+  for prefix in "${ACCEPTED_PREFIXES[@]}"; do
+    case "$1" in
+      "$prefix"*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 scan_fidelity() {
   local subject="$1" out="$2" line diag_path scan hostile=0
   if [ -z "$out" ]; then return 0; fi
@@ -800,32 +1181,35 @@ scan_fidelity() {
   scan="$out"
   if [ "$hostile" -eq 1 ]; then
     # Fold this subject's own path — newlines and all — into a single-line
-    # token before parsing. Only the COPY used for parsing is folded; the FAIL
-    # block printed above is the compiler's full unfiltered output (R21).
-    scan="${scan//"$subject"/scripts/checks/<subject whose filename is hostile>}"
+    # token before parsing. The replacement is placed under the subject's own
+    # root so that the fold cannot manufacture the very violation it exists to
+    # prevent. Only the COPY used for parsing is folded; the FAIL block printed
+    # above is the compiler's full unfiltered output (R21).
+    scan="${scan//"$subject"/${ACCEPTED_PREFIXES[0]}<subject whose filename is hostile>}"
   fi
 
   while IFS= read -r line; do
     if [ -z "$line" ]; then continue; fi
     if [[ "$line" =~ $DIAG_RE ]]; then
       diag_path="${BASH_REMATCH[1]}"
-      case "$diag_path" in
-        scripts/checks/*)
-          : # located inside the subject directory — the expected shape
-          ;;
-        *node_modules/*)
-          FIDELITY=$((FIDELITY + 1))
-          FIDELITY_LOG+="  while compiling $subject: diagnostic inside node_modules/ — a DEPENDENCY's declarations"$'\n'
-          FIDELITY_LOG+="    $line"$'\n'
-          if [ "$hostile" -eq 1 ]; then HOSTILE_NAMES=$((HOSTILE_NAMES + 1)); fi
-          ;;
-        *)
-          FIDELITY=$((FIDELITY + 1))
-          FIDELITY_LOG+="  while compiling $subject: diagnostic located OUTSIDE scripts/checks/"$'\n'
-          FIDELITY_LOG+="    $line"$'\n'
-          if [ "$hostile" -eq 1 ]; then HOSTILE_NAMES=$((HOSTILE_NAMES + 1)); fi
-          ;;
-      esac
+      if diag_is_expected "$diag_path"; then
+        : # located inside a subject root — the expected shape
+      else
+        case "$diag_path" in
+          *node_modules/*)
+            FIDELITY=$((FIDELITY + 1))
+            FIDELITY_LOG+="  while compiling $subject: diagnostic inside node_modules/ — a DEPENDENCY's declarations"$'\n'
+            FIDELITY_LOG+="    $line"$'\n'
+            if [ "$hostile" -eq 1 ]; then HOSTILE_NAMES=$((HOSTILE_NAMES + 1)); fi
+            ;;
+          *)
+            FIDELITY=$((FIDELITY + 1))
+            FIDELITY_LOG+="  while compiling $subject: diagnostic located OUTSIDE ${ACCEPTED_PREFIXES[*]}"$'\n'
+            FIDELITY_LOG+="    $line"$'\n'
+            if [ "$hostile" -eq 1 ]; then HOSTILE_NAMES=$((HOSTILE_NAMES + 1)); fi
+            ;;
+        esac
+      fi
     elif [[ "$line" == *"error TS"* ]]; then
       FIDELITY=$((FIDELITY + 1))
       FIDELITY_LOG+="  while compiling $subject: diagnostic with NO parseable path — a config-level error"$'\n'
@@ -872,7 +1256,50 @@ SUPPRESSED=0
 #
 #     A suppressed subject is still COMPILED and still counted, so the census
 #     reconciles; what changes is that the run fails and the line is named.
+#
+#     THE SCAN IS ONE PASS OF THE COMPILER'S OWN PARSER over every subject,
+#     replacing round 2's per-subject grep, which approximated tsc's directive
+#     regexes and missed the JSDoc form (round-3 re-review, blocker 1). It runs
+#     BEFORE the compile loop, in a single node process rather than 42, and is
+#     keyed by INDEX because a filename may contain a tab or a newline and the
+#     scanner's records are lines. A subject that vanishes between enumeration
+#     and scan reports ABSENT and is left to the loop's MISSING path, which is
+#     the one place that decides what a vanished subject means (R19).
 # ---------------------------------------------------------------------------
+SUPPRESSION_HITS=()
+scan_rc=0
+SUPPRESSION_RAW="$( "$NODE_BIN" "$TMP/suppression-scan.js" "$TS_LIB" \
+  "${SUBJECTS[@]/#/$REPO_ROOT/}" 2>&1 )" || scan_rc=$?
+if [ "$scan_rc" -ne 0 ]; then
+  echo "REFUSING TO RUN: the suppression scan failed (node exit $scan_rc)." >&2
+  printf '%s\n' "$SUPPRESSION_RAW" | sed 's/^/    /' >&2
+  echo "  It passed its canary moments ago, so this is about the SUBJECTS, not" >&2
+  echo "  the scanner. Every subject must be parseable for R28 to mean anything." >&2
+  exit 1
+fi
+while IFS= read -r scan_line; do
+  if [ -z "$scan_line" ]; then continue; fi
+  scan_index="${scan_line%%$'\t'*}"
+  scan_payload="${scan_line#*$'\t'}"
+  case "$scan_payload" in
+    ERROR:*)
+      echo "REFUSING TO RUN: the suppression scanner could not read a subject." >&2
+      echo "  subject: ${SUBJECTS[$(( scan_index - 1 ))]}" >&2
+      echo "  $scan_payload" >&2
+      echo "  A subject this gate cannot parse is a subject whose suppressions it" >&2
+      echo "  cannot see, and R28 is not satisfiable by assumption." >&2
+      exit 1
+      ;;
+  esac
+  SUPPRESSION_HITS[scan_index]="$scan_payload"
+done <<< "$SUPPRESSION_RAW"
+if [ "${#SUPPRESSION_HITS[@]}" -ne "$FOUND" ]; then
+  echo "REFUSING TO RUN: the suppression scanner answered for ${#SUPPRESSION_HITS[@]} of $FOUND subjects." >&2
+  echo "  One record per subject is the contract; a short answer means some subject" >&2
+  echo "  was never examined, and this gate does not certify what it did not read." >&2
+  exit 1
+fi
+
 echo "TYPECHECK — one tsc invocation per subject, through the profile"
 index=0
 for subject in "${SUBJECTS[@]}"; do
@@ -888,20 +1315,22 @@ for subject in "${SUBJECTS[@]}"; do
     continue
   fi
 
-  # grep exits 1 for "no match", which is the normal case and NOT an error;
-  # anything above 1 is a real failure and is refused rather than assumed empty.
-  grep_rc=0
-  hits="$(grep -nE -e "$SUPPRESSION_RE" -- "$abs")" || grep_rc=$?
-  if [ "$grep_rc" -gt 1 ]; then
-    echo "REFUSING TO RUN: could not scan $subject for suppression directives (grep exit $grep_rc)." >&2
-    exit 1
-  fi
-  if [ "$grep_rc" -eq 0 ]; then
+  # The directives this subject carries, decided by the compiler's own parser
+  # above. `-` is the clean case; ABSENT cannot reach here (the MISSING branch
+  # took it); ERROR was refused before the loop began.
+  hits="${SUPPRESSION_HITS[$index]}"
+  if [ "$hits" != "-" ] && [ "$hits" != "ABSENT" ]; then
+    # `printf '%s\n'` — the TRAILING NEWLINE IS LOAD-BEARING. `read` returns
+    # non-zero at an unterminated final line, so a `%s` here made the while
+    # loop drop the last (usually the only) directive on the floor: measured,
+    # a planted `// @ts-nocheck` was correctly detected by the scanner, read
+    # into `hits`, and then never printed or counted — `suppressions 0` over a
+    # subject the gate had already identified as suppressed.
     while IFS= read -r hit; do
       if [ -z "$hit" ]; then continue; fi
       printf '  SUPPRESSED %-42s %s\n' "$subject" "$hit"
       SUPPRESSED=$((SUPPRESSED + 1))
-    done <<< "$hits"
+    done < <(printf '%s\n' "$hits" | tr ',' '\n')
   fi
 
   cfg="$(printf '%s/%04d.json' "$TMP" "$index")"
@@ -957,9 +1386,9 @@ echo
 # ---------------------------------------------------------------------------
 # 12 (report). PROFILE FIDELITY — the violations gathered during the loop.
 # ---------------------------------------------------------------------------
-echo "PROFILE FIDELITY — every diagnostic must be located under scripts/checks/"
+echo "PROFILE FIDELITY — every diagnostic must be located under ${ACCEPTED_PREFIXES[*]}"
 if [ "$FIDELITY" -eq 0 ]; then
-  echo "  ok: 0 diagnostics outside scripts/checks/, 0 unlocated diagnostics"
+  echo "  ok: 0 diagnostics outside ${ACCEPTED_PREFIXES[*]}, 0 unlocated diagnostics"
 else
   printf '%s' "$FIDELITY_LOG"
   if [ "$HOSTILE_NAMES" -gt 0 ]; then

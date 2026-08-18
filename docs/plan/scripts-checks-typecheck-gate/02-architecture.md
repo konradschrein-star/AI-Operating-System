@@ -253,8 +253,11 @@ person to read one of them will otherwise try to unify them.
        `node --version` are both well-formed                      → exit 1 (B5)
 4.  TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT                   (NF3,NF4)
 5.  enumerate SUBJECTS := glob scripts/checks/**/*.ts *.tsx,
-       globstar + dotglob + nullglob, IN-PROCESS into an array    (R8,R9,R10)
-5b. REFUSE unless an independent `find` count agrees with it      → exit 1 (F1)
+       globstar + dotglob + nullglob, IN-PROCESS into an array,
+       deduplicated: overlapping globs yield a SET, not a bag     (R8,R9,R10)
+5b. REFUSE unless an independent `find -L` SET agrees with it,
+       naming every file the two differ over, and the symlinked
+       ancestor when there is one                                 → exit 1 (F1)
 6.  REFUSE if |SUBJECTS| == 0                                     → exit 1 (R13)
 7.  COVERAGE scan: every TS-family file under the roots at any
        depth, minus SUBJECTS → name each, and FAIL the run        (R10 amended)
@@ -265,14 +268,22 @@ person to read one of them will otherwise try to unify them.
        path — strict-null MUST yield TS2322, a .d.ts MUST yield
        TS2717, a clean .tsx MUST compile clean — then assert
        nothing was emitted beside them; REFUSE otherwise    → exit 1 (B1,B5,B6)
+9c. SELF-TEST: the suppression scanner MUST report all five
+       comment shapes in one canary and MUST NOT report the
+       string-literal decoy beside them; REFUSE otherwise   → exit 1 (round 3)
+10a. one pass of tsc's OWN PARSER over every subject: the
+       directives it honours — commentDirectives (@ts-ignore,
+       @ts-expect-error) and checkJsDirective (@ts-nocheck) →
+       failure, named by line                                     (R28,B4)
 10. for each SUBJECT:
-       scan for @ts-nocheck / @ts-ignore / @ts-expect-error → failure (R28,B4)
+       report the directives step 10a found for it               (R28,B4)
        write $TMP/<n>.json = { extends: <abs PROFILE>, files: [<abs SUBJECT>] }
        run  $WEB/node_modules/.bin/tsc -p $TMP/<n>.json
        record PASS | FAIL + full unfiltered output                (R11,R21)
        compiled++
 11. WAIVER RECONCILIATION: a waived subject that compiled clean   → failure (R14)
-12. PROFILE FIDELITY: any diagnostic path outside scripts/checks/ → failure (S5)
+12. PROFILE FIDELITY: any diagnostic path outside the SUBJECT
+       ROOTS (derived from SUBJECT_GLOBS, not inlined)           → failure (S5)
        node_modules/ and hostile-filename cases reported apart    (F3,F4)
 13. CENSUS: found vs compiled, both directions                    → failure (R12)
 14. verdict line + wall-clock; exit 0 only if every counter is 0  (R22,NF6)
@@ -461,6 +472,28 @@ The design constraint this imposes on phase 2 is therefore explicit: **the
 subject glob and the profile path must each be a single named variable at the
 top of the script, not inlined at their point of use.** A successor must be able
 to extend coverage by editing two lines.
+
+**Amended round 3 — the constraint was stated and not met.** Round 2 had the
+two named variables, and three further copies of `scripts/checks/` derived by
+hand, each of which a successor would have had to find and edit as well:
+
+| Copy | What it would have done to a successor | Now |
+|---|---|---|
+| the fidelity prefix in `scan_fidelity` | every diagnostic in the new root reported as a profile violation, under the "THE PROFILE IS WRONG, NOT THE APP" essay | `ACCEPTED_PREFIXES`, derived from the SUBJECT_GLOBS roots |
+| `COVERAGE_GLOBS`' hardcoded roots | R10's safety net silently absent under the new root — the one place that names a file the gate declines to read | derived from the same roots × `TS_EXTENSIONS` |
+| the second opinion's root/name cross-product | `scripts/*.ts` added → `find` walks `scripts/checks` twice (44 globbed vs 86 found) → **permanent refusal, no subject compiled** | one `find` per glob, deduplicated by resolved path |
+
+Measured after the fix, by making exactly the edit this section promises —
+`SUBJECT_GLOBS=( scripts/checks/**/*.ts scripts/checks/**/*.tsx scripts/*.ts )`
+and nothing else: 44 subjects found, 44 compiled, `scripts/measure-schedule.ts`
+and `scripts/import-scraper-places.ts` both green, coverage scan and fidelity
+prefixes both widened to `scripts/` on their own, exit 1 on the same six reds.
+The transcript is in `evidence/phase2-fixcycle1-round3.md` §3.
+
+One list remains hand-maintained, and it is deliberately not a knob for
+reaching new directories: `TS_EXTENSIONS` (`ts tsx mts cts`) is the set of
+extensions TypeScript HAS. It is edited when the language gains one, not when
+this gate gains a directory.
 
 ---
 

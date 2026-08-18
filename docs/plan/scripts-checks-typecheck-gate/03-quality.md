@@ -126,6 +126,16 @@ failure modes are project-wide:
 # reported the gate's prose as five suppressions. A check that fires on the
 # text of the check is a check every later phase learns to wave through — and
 # a suppression directive inside a shell script suppresses nothing.
+#
+# THE ALTERNATION IS DELIBERATELY UNANCHORED — it matches `@ts-ignore`
+# ANYWHERE on an added line, so `/** @ts-ignore */` (the JSDoc form) is caught.
+# Measured round 3: that form suppresses a diagnostic and the GATE's own
+# comment-shape grep missed it, which is how a broken subject reached `PASSED`
+# (01-requirements.md R28, the eleven-shape table). Do not "tighten" this
+# pattern to `^\+\s*//` — P-A is a diff-scoped tripwire whose false positives
+# cost a reviewer one look, while its false negatives cost a green gate over a
+# broken instrument. The gate's own scan is the precise one: it asks tsc's
+# parser what tsc honours.
 git diff main...HEAD -- 'scripts/checks/*.ts' 'scripts/checks/*.tsx' \
   | grep -E '^\+.*(@ts-nocheck|@ts-ignore|@ts-expect-error|:\s*any\b|as any\b|as unknown as)' \
   && echo "FAIL: suppression introduced" || echo "ok: no suppressions"
@@ -166,10 +176,19 @@ not the one that was measured, and every downstream number is void.**
 bash scripts/checks/check-instrument-typecheck.sh ; echo "exit=$?"
 # expect: exit 1, 42 subjects found, 42 compiled, 6 failures — phase 3 has not run yet
 #         and, since round 2 fix cycle 1: uncovered 0, suppressions 0, and a
-#         SELF-TEST block whose three canaries all say ok before any subject runs
+#         SELF-TEST block whose canaries all say ok before any subject runs
+#         (FOUR canaries since round 3 — the fourth is the suppression scanner)
 # the six red-team breaches, each re-planted and each now caught (round 2):
 #   .d.ts / subdirectory / dotfile / .cts / @ts-nocheck — see
 #   evidence/phase2-fixcycle1.md for the transcripts and the exact commands
+# round 3 adds four re-plants, all on the real directory —
+#   evidence/phase2-fixcycle1-round3.md:
+#   /** @ts-ignore */ and its three siblings (must be named SUPPRESSED, and the
+#   string-literal decoy beside them must NOT be); a symlinked subdirectory
+#   (must be COMPILED, not refused); the same symlink one level deeper (must
+#   refuse, naming the file AND the symlink); and the §7 extension edit
+#   `SUBJECT_GLOBS += scripts/*.ts` (must enumerate 44 and compile them, not
+#   wedge on a doubled `find` count)
 git status --porcelain                      # empty (NF3)
 ls /tmp | wc -l                             # before/after: no leaked temp dirs
 bash scripts/checks/check-instrument-typecheck.sh > /tmp/a 2>&1; bash scripts/checks/check-instrument-typecheck.sh > /tmp/b 2>&1
@@ -187,8 +206,11 @@ U12, U13 transcripts present; provenance block carries all ten fields (R20);
 **Reviewer must reject if:** any `|| true`, `2>/dev/null` or `continue` can
 convert a failure into a pass — the reviewer reads every one of them and says
 so explicitly in the verdict; the subject glob or profile path is inlined rather
-than a named variable at the top (02-architecture.md §7); the temp directory is
-not removed on the failure path.
+than a named variable at the top (02-architecture.md §7); **anything else is
+derived from `scripts/checks/` by hand** — the coverage roots, the fidelity
+prefixes and the `find` second opinion must all move when SUBJECT_GLOBS moves,
+and the reviewer makes that edit and runs the gate rather than reading for it
+(§7's table); the temp directory is not removed on the failure path.
 
 ### Phase 3 gate — the six fixes
 
