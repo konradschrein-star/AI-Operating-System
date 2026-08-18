@@ -178,6 +178,7 @@ git -C /opt/forge-ai-os status --porcelain          # MUST be empty
 git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 python3 docs/plan/engine-task-graph/check-instrument-identity.py   # MUST exit 0
 python3 scripts/checks/check-r20-census.py                          # MUST exit 0
+bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 0
 ```
 
 1. `tsc --noEmit` clean.
@@ -236,6 +237,81 @@ python3 scripts/checks/check-r20-census.py                          # MUST exit 
    annotations) over `db/projects.ts` sha256 `79a62da97552c1c2…`. The count is
    not a gate — the R20 assertion and the region comparison are; it is recorded
    so a reader can tell a re-measurement from a rot.*
+
+9. **Instrument typecheck (round 802, phase 8C — operator ruling, third
+   instance of the same hole).** `bash scripts/checks/check-instrument-typecheck.sh`
+   exits 0. It typechecks every check script named in
+   `scripts/checks/instrument-manifest.txt`, **one file per `tsc` invocation**,
+   and additionally **fails if any `scripts/checks/*.ts` this branch adds or
+   modifies is absent from the manifest.** Both halves are the gate; the second
+   is the one that keeps the first honest.
+
+   **The hole.** `scripts/checks/*.ts` is compiled by **nothing**. `tsx` strips
+   types without checking them, and that directory sits outside **both**
+   projects' tsconfig `include` — `forge-control/tsconfig.json` includes
+   `src/**/*.ts`, and `tsconfig.checks.json` exists only to give `tsx` a JSX
+   transform. So a check script can carry a type error, an implicit `any` or a
+   dead import indefinitely, and still *run*, and still *print PASS*. These are
+   the scripts whose entire job is to certify other code — **the least-verified
+   code in the repo is the code that issues the verdicts.**
+
+   **Why UNIVERSAL and not a phase-8 clause.** It has now been hit three times,
+   by three different phases, and each time it was repaired only inside that
+   phase: **phase 7** (`measure-schedule.ts`, at the repo root, outside every
+   `include`), **phase 6** (four of six deliverables under
+   `forge-control-web/`), **phase 6B** (which measured the whole directory and
+   left it as a finding). A per-phase clause repairs the instance and leaves
+   every other phase's instruments unchecked — which is precisely the mechanism
+   by which it stayed invisible three times. Any phase can add an instrument, so
+   every phase checks its own.
+
+   **Why MANIFEST-SCOPED and not directory-wide — measured at round 800, and it
+   changes the shape of the gate.** 6B's invocation over **all** the directory's
+   `*.ts` at once **does not pass and cannot be made to pass by this project**.
+   Compiled together they pull `forge-control-web/app` into the program (DOM-lib
+   errors in `useAutogrow.ts` and `tokens.ts`), and three other projects'
+   scripts are independently red: `check-orientation.ts` (3 type errors plus a
+   `--jsx` failure), `serve-sse-808.ts` (implicit `any`s), `check-chat-rich.tsx`.
+   Fixing another project's instruments is not phase 8's remit. A gate that can
+   only ever be **disclosed** teaches that disclose-and-proceed is normal, and
+   that habit is what let a self-certifying hover probe survive round 213
+   (`00-vision.md` §7 rule 2). **Compiled one file per invocation, all six of
+   this branch's own check scripts pass — exit 0, zero errors:**
+   `check-close-gate.ts`, `check-fix-chain-graph.ts`, `check-plan-api.ts`,
+   `check-plan-store.ts`, `check-project-metadata.ts`, `check-task-api.ts`.
+   Re-measured at `3dd39b4` by round 802; the transcript is
+   `evidence/phase8-corpus.md` §5.
+   **The other projects' red scripts are REPORTED, not fixed here** — named
+   above and in that transcript, so the next project that owns them inherits a
+   finding rather than a surprise.
+
+   **What the manifest guard buys: a new instrument cannot escape the gate by
+   being new.** A manifest alone would be a gate that shrinks to fit — the
+   easiest way to pass it is to leave your script out of it. The guard inverts
+   that: adding or modifying a `scripts/checks/*.ts` **without** listing it is
+   itself a failure, so the manifest can only grow with the branch. The
+   directory-wide alternative fails the opposite way, and measurably: the
+   directory held **21** `.ts` files at this branch's merge-base and **36**
+   after round 801's merge — a directory-wide gate written today would be red
+   tomorrow from another project's merge alone, having caught nothing about this
+   branch.
+
+   *Two instrument traps found while measuring this gate, recorded because they
+   would each have made it report wrongly (`evidence/phase8-corpus.md` §5.2):*
+   **(a)** the invocation's working directory is load-bearing — run from the
+   repo root, all six fail with `TS2307 Cannot find module 'node:fs'` and
+   `TS2580 Cannot find name 'process'`, because `@types/node` resolves from
+   `forge-control/node_modules` and nowhere else. A false red on green code.
+   **(b)** the branch-ownership set must **not** be computed from
+   `merge-base...HEAD`: after round 801's merge that expression returns 25
+   files, `main`'s included, because the merge commit carries them. The
+   expression that returns exactly the six is
+   `git log --no-merges --name-only --pretty=format: main..HEAD -- 'scripts/checks/*.ts'`.
+
+   The script and the manifest are builder 8D's
+   (`scripts/checks/check-instrument-typecheck.sh`,
+   `scripts/checks/instrument-manifest.txt`, §10 of `04-phases.md`); this clause
+   and the §4 command line are what run them.
 
 ### 3.2 Phase gates
 
@@ -465,7 +541,51 @@ python3 scripts/checks/check-r20-census.py                          # MUST exit 
 
 **Phase 8 — deploy and verify**
 - See `04-phases.md` §Phase 8. The gate is the deploy checklist itself, plus the
-  two clauses below, both added round 215.
+  clauses below — the first two added round 215, the last three round 802.
+- **TWO MERGES, TWO DIFFERENT ANSWERS ON A CONFLICT — amended round 802 (phase
+  8C), in the same commit as `04-phases.md` §Phase 8 step 2 which it enforces.**
+  The step used to say **"on conflicts STOP"** of both merges at once. Measured
+  at round 800 and re-derived at round 801: `main` had moved **55 commits** and
+  `git merge-tree --write-tree main HEAD` reported **three** content conflicts
+  (`forge-control/src/routes/chat.ts`, `.../team/planApi.ts`,
+  `.../team/PlanKanban.tsx`). Read across both merges, STOP made phase 8
+  permanently undeployable — it forbade the very work that makes the deploy
+  merge clean. **The amendment is a distinction, not a relaxation**, and the
+  reviewer checks both halves:
+  - **Merge 1, `main` → work branch, in the WORKTREE:** conflicts **RESOLVED**
+    by a briefed task that read **both sides**, reviewed before anything ships.
+    The reviewer confirms **no `-X ours` and no `-X theirs`** appears in the
+    merge record — a strategy option resolves in favour of whoever finishes
+    last, which is silent clobbering in a new costume — and that no conflict
+    marker survives in the tree. Round 801's three conflicts, six hunks and
+    resolutions are in `evidence/phase8-merge.md` §3; §6.6 drives the merged
+    `chat.ts` through `check-plan-api.ts` and §5 re-derives the phase-6 claim on
+    the merged file, because a resolution is not proved by compiling.
+  - **Merge 2, work branch → `main`, in the LIVE checkout:** **STOP**, verbatim
+    and unrelaxed. A conflict there means the branch was not prepared, and
+    resolving it inside an irreversible deploy step is how a silent clobber gets
+    shipped. If merge 2 conflicts, the answer is to go back to merge 1.
+- **R14 MUST BE CONFIRMED PRESENT IN THE TREE THAT IS ABOUT TO SHIP, BEFORE THE
+  RESTART, and the confirmation stated explicitly in the deploy report — added
+  round 802 (phase 8C).** This is not a belt-and-braces re-test. Round 203
+  **measured**, not theorised, that `retryTask()` moved a swept task
+  `blocked → ready` where neither the sweep nor `promoteReadyTasks()` could see
+  it, and `claimReadyTasks()` claimed it anyway.
+  `/opt/ai-os/scripts/fleet-watchdog.sh` runs on cron **every 10 minutes**,
+  calls `POST /api/projects/:id/unwedge` on every blocked project, and
+  force-retries once when both quota windows are clear. So the first blocked
+  project after the graph engine ships has that exact path exercised
+  **unattended, by a robot, within ten minutes** — this project ships an
+  automated caller of its own one known correctness hole.
+  **Verified the way round 203 verified it:** by driving the **shipped**
+  functions against a scratch database through `retryTask()` → `claimReadyTasks()`
+  and showing the task does **NOT** reach `running` —
+  `scripts/checks/check-scheduler-sql.sh` **cases 8, 8b, 9 and 10**, output
+  pasted. **A unit test that never calls `retryTask()` proves nothing here**: the
+  defect was in the SQL's visibility, not in a predicate a mirror could model.
+  **If for any reason the fix is not present in the shipping tree, the gate says
+  plainly: the watchdog must be DISABLED until it is.** Do not ship the
+  scheduler with an automated caller of a hole it still has.
 - **E-3's baseline read happened at step 2b, BEFORE step 3 applied migration
   0040.** Check the order in `evidence/phase8-deploy.md`, not the intent. Round
   214's phase-7 finding 1: 0040's R6 backfill overwrites the
@@ -530,10 +650,12 @@ cd "$WORKTREE"
 git -C /opt/forge-ai-os status --porcelain ; echo "exit=$? (empty output is the only pass)"
 git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 # R66, amended round 215 — EXECUTABLE FILE TYPES ONLY, and no -v filter.
-# Expect exactly 4 hits, all string literals inside NEVER-worded prohibitions
-# (project-tick.ts ×2, project-tick.test.ts ×2). READ EACH ONE: R66 permits the
-# string only inside a sentence forbidding it. A 5th hit, or any hit in an
-# executable position, is a finding. Prose files are swept separately below.
+# THE ASSERTION IS R66'S RULE: every hit is a string literal inside a sentence
+# forbidding the command. READ EACH ONE. Any hit in an EXECUTABLE position is a
+# finding regardless of the count. Prose files are swept separately below.
+# The count is a TRIPWIRE, not the assertion, and it is restated whenever the
+# tree gains a prohibition — see the reconciliation note below (round 802).
+# Expect exactly 4 hits: project-tick.ts ×2, project-tick.test.ts ×2.
 grep -rn "pm2 restart forge-executor" . --include='*.ts' --include='*.sh'
 grep -rn "consecutive rounds" forge-control/         # must be empty from phase 5 on
 # Round 217, §3.1 item 7 — instrument identity. Exits 0, or names every document
@@ -544,6 +666,11 @@ python3 docs/plan/engine-task-graph/check-instrument-identity.py
 # `round` without a justification / the generated region that no longer matches
 # the file. Re-measures; never trusts the document.
 python3 scripts/checks/check-r20-census.py
+# §3.1 item 9 — the instruments are the least-verified code in the repo. Exits 0,
+# or names the manifest script that no longer typechecks / the scripts/checks/*.ts
+# this branch touched and did not list. One tsc invocation per file, from
+# forge-control/ (that is where @types/node resolves) — see §3.1 item 9's traps.
+bash scripts/checks/check-instrument-typecheck.sh
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 
@@ -572,6 +699,52 @@ all four are string literals *inside* NEVER-worded prohibitions — two in
 asserting that guidance still carries the prohibition. **Instruction:** the
 comment now states R66's rule and names the expected count, so a fifth hit is a
 signal rather than noise, and no `grep -v` decides on the reviewer's behalf.
+
+**The count re-measured after round 801's merge, and the rule that keeps it from
+going stale — round 802 (phase 8C).** Re-run at `3dd39b4`, after `main`'s 55
+commits landed on this branch, the sweep returns **4 hits, unmoved**:
+`project-tick.test.ts:216` and `:217` (a regex and its assertion message, both
+asserting that the shipped `DEPLOY_GUIDE` still carries a NEVER-worded
+prohibition), `project-tick.ts:410` and `:571` (the two shipped prohibitions
+themselves). Every one read; all four are string literals inside sentences
+forbidding the command. **`main` brought fifteen new `scripts/checks/*.ts` and
+none of them mentions the command.**
+
+**How the count is reconciled rather than disclosed.** A stated count is a gate
+whose value the *next commit* can falsify — and a gate whose stated count is
+stale is a gate that gets disclosed and ignored, which is the failure mode §4
+was rewritten in round 215 to remove. So the rule, stated where the count is:
+**when the tree gains a legitimate prohibition, the reviewer re-measures, reads
+every hit, and restates the expected count in this block in the same commit,
+naming each new hit and the sentence that forbids it.** The assertion never
+moves — *every hit inside a prohibition, no hit in an executable position* — only
+the tripwire's current value does. Round 802 is the first round to run this rule:
+builder 8D adds `scripts/checks/check-instrument-typecheck.sh`,
+`scripts/checks/check-await-seed.sh` and `scripts/deploy/await-and-seed.sh` in
+this same round, all `*.sh` and therefore all inside the sweep's scope. If any of
+them carries the string in a prohibition, round 803's reviewer restates the
+expectation as **4 + N** with each new hit named here; if the count moves without
+such a hit, that is a **finding**, and the deploy does not proceed on it.
+Re-measured **after** those three landed: **still 4** — none of them mentions the
+command.
+
+**A new carrier the sweep does not cover, found by that re-measurement, and
+ruled here.** Round 802 is the first round to add `*.json` **task payloads**
+(`scripts/deploy/payload-*.json`, POSTed to `/api/projects/:id/tasks`), and
+`payload-review.json` contains the string **once** — inside the reviewer brief's
+copy of §4's own command block, i.e. as the `grep` that *enforces* R66. That is
+the same shape as this document's own gate line, which round 215 examined and
+kept. **Not a violation**: executed, the line greps; it does not restart
+anything. **But the scope note matters more than the hit.** A payload is a
+`brief`, and R66's own words are *"in any script, brief or doc"* — so a brief
+that has become a **file** is inside R66's rule while sitting outside the sweep's
+`--include` list. The sweep is not widened here, for round 215's reason: a `.json`
+payload cannot execute, and widening the file types is how the gate became
+unsatisfiable the first time. Instead the obligation is stated: **when a round
+adds a new file type that carries briefs, the reviewer greps it separately and
+records the result**, as done here. Measured at round 802:
+`grep -rn "pm2 restart forge-executor" scripts/deploy/` → **1 hit**,
+`payload-review.json`, the enforcing grep, read and cleared.
 
 A CONSIDERED-AND-REJECTED ALTERNATIVE, recorded so the next round does not
 re-derive it: narrowing to this branch's diff

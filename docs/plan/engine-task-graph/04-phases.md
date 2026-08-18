@@ -541,6 +541,14 @@ docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md  (APPEND — see E-3; 
 docs/plan/engine-task-graph/00-vision.md                   (only if the baseline corrected §2)
 ```
 
+**The full phase-8 write-set — all four tasks, both rounds, including the
+cross-phase writes — is the table in §10**, added round 802 in the commit that
+makes it. The four lines above are the deploy task's own share of it and are
+kept here because E-3 and R62 refer to them by name. §10 is where the round-803
+write-set audit (`03-quality.md` §3.1 item 4) should look, because phase 8 is
+the first phase to run three builders concurrently in one worktree and the
+per-task split is the thing that has to be checked.
+
 `baseline-8ea0cc08.md` was added to this list in round 213, in the same commit
 that created the file, because E-3 makes phase 8 write it. An undeclared write is
 a finding under `03-quality.md` §3.1 item 4, and a phase that discovers its own
@@ -554,9 +562,50 @@ own numbers move it further.
 1. **Confirm the fleet is clear.** `operator-visibility` (8ea0cc08) has **no
    running and no pending tasks**. If it does: report and stop. Do not wait in a
    loop; end the task and let the next tick's planner re-seed it.
-2. **Merge.** Merge `main` into the work branch first if main moved. Re-run
-   `pnpm typecheck` and `pnpm test` **in the worktree** after the merge. On
-   conflicts: **STOP and report the files.** Then merge to `main`.
+2. **Merge — and there are TWO merges, which the old wording conflated.**
+   **Amended round 802 (phase 8C), where the gate is enforced; acted on by round
+   801, reviewed at round 803.** This step used to read, of both merges at once,
+   *"On conflicts: **STOP and report the files.**"* Measured at round 800 and
+   re-derived in the worktree at round 801 (`evidence/phase8-merge.md` §1):
+   `main` had moved **55 commits**, and `git merge-tree --write-tree main HEAD`
+   reported **three** content conflicts —
+   `forge-control/src/routes/chat.ts`,
+   `forge-control-web/app/desktop/team/planApi.ts`,
+   `forge-control-web/app/desktop/team/PlanKanban.tsx` (six hunks; a fourth
+   shared file, `forge-control-web/app/api.ts`, auto-merged). Read as covering
+   both merges, STOP therefore made phase 8 **permanently undeployable**: the
+   only path to a clean merge 2 is the resolution merge 1 performs, and the
+   clause forbade it. Standing rule 2 — an unsatisfiable gate is amended where
+   it is enforced, which is here and in `03-quality.md` §3.2's phase-8 block, in
+   one commit.
+
+   **This is a distinction, not a relaxation.** The two merges differ in
+   direction, in location and in reversibility, and only one of them is
+   irreversible:
+
+   | | direction | where | on a conflict |
+   |---|---|---|---|
+   | **merge 1** | `main` → work branch | **the worktree** | **RESOLVE** — ordinary integration work |
+   | **merge 2** | work branch → `main` | **the live checkout** | **STOP**, verbatim, unchanged |
+
+   - **Merge 1 — `main` into the work branch, in the worktree.** Conflicts are
+     **RESOLVED** by a briefed task that reads **both sides**, and the resolution
+     is **reviewed before anything ships**. Never `-X ours`, never `-X theirs`:
+     a strategy option resolves in favour of whoever finishes last, which is
+     silent clobbering wearing a flag. Re-run `pnpm typecheck` and `pnpm test`
+     **in the worktree** after the merge. Round 801's three conflicts, their six
+     hunks and the reasoning for each resolution are recorded in
+     `evidence/phase8-merge.md` §3, with the merged `chat.ts` driven by
+     `check-plan-api.ts` in §6.6 and the phase-6 claim re-derived on the merged
+     file in §5 — a resolution is not proved by compiling.
+   - **Merge 2 — the work branch into `main`, in the live checkout.** **STOP and
+     report the files**, unchanged and with its full force. A conflict *there*
+     means the branch was not prepared — merge 1 either did not run or did not
+     finish — and resolving it inside an irreversible deploy step, against the
+     live checkout, with the executor about to restart, is exactly how a silent
+     clobber gets shipped. Merge 1 is the preparation that makes merge 2
+     conflict-free; if merge 2 conflicts, the answer is to go back to merge 1,
+     not to resolve in place.
 2b. **Read E-3's baseline — BEFORE step 3, and this ordering is load-bearing.**
    Run E-3's `measure-schedule.ts full --project 8ea0cc08…` and append its
    output to `evidence/baseline-8ea0cc08.md` **now**, while `project_tasks`
@@ -608,13 +657,63 @@ own numbers move it further.
    `describe("D7 — the pre-0040 read at step 2b refuses on the legacy sentinel")`,
    which builds its rows through the real `taskRow()` with
    `hasDependsOnColumn = false` and was watched failing under two mutations.
-3. **Apply the migration.** `psql -f db/migrations/0040_task_graph.sql`, twice,
-   pasting both outputs. It is additive and the running old engine ignores it
-   (R8), which is why it goes before the restart. **After this statement runs,
-   8ea0cc08's legacy sentinel is gone and with it the honest reason S3 refuses
-   for** — see 2b, amended round 217. S3 itself was never computable for this
-   project; what the migration destroys is `legacy-rows`, the header field that
-   says so.
+3. **Apply the migrations — THREE files, BY EXPLICIT FILENAME, each twice.**
+   **Amended round 802 (phase 8C) on the operator's ruling; the requirement side
+   is R64 in `01-requirements.md` §I, amended in the same commit.** This step
+   used to name `0040_task_graph.sql` alone. Two things changed under it: round
+   801's merge brought `main`'s own migrations onto this branch, and the operator
+   verified that none of their tables exist yet in `content_forge`.
+
+   ```
+   psql -U postgres -d content_forge -f db/migrations/0040_task_graph.sql     # ×2
+   psql -U postgres -d content_forge -f db/migrations/0040_usage_hourly.sql   # ×2
+   psql -U postgres -d content_forge -f db/migrations/0041_ui_dismissals.sql  # ×2
+   ```
+
+   In that order, each applied twice with **both** outputs pasted (R2's
+   re-runnability is demonstrated, not asserted). All three are additive and the
+   running old engine ignores them (R8), which is why they go before the restart.
+
+   - **NEVER `for f in db/migrations/*.sql`.** `db/migrations` contains **two
+     files numbered 0040** — `0040_task_graph.sql` (ours) and
+     `0040_usage_hourly.sql` (main's). A glob sorts `task_graph` first and
+     thereby silently decides an order nobody chose. Name every file.
+   - **Two 0040s is EXPECTED, not a merge error, and is NOT fixed mid-deploy.**
+     Git merged them silently because the filenames differ and there was nothing
+     to conflict on. They are inert together — disjoint objects, no version
+     ledger to collide in, no boot-time runner, no `schema_migrations` and no
+     `migrations` table (the operator verified both absent), and
+     `migrations.test.ts` sorts filenames without asserting unique numbering.
+     A future number-keyed runner would be ambiguous, so **renumbering is tracked
+     as a post-deploy task**, seeded by the operator. It is deliberately not done
+     here: round 802 runs three builders concurrently in one worktree and the
+     renumber touches six files two of them already own — the exact contention
+     that cost this project three evidence corrections on 2026-08-17. 8A's
+     judgement that renaming the migration this project exists to ship is a
+     briefed decision rather than a merge side-effect is preserved.
+   - **Why main's two files are this step's business at all.** The operator
+     verified `usage_hourly`, `app_settings` and `ui_dismissals` are **ALL
+     absent** from `content_forge`, and `0040_usage_hourly.sql` creates
+     **`usage_hourly` AND `app_settings`** — two tables, one filename. Step 4
+     restarts `forge-control`. Without them, `/api/chat/:id/team` returns `500`
+     and **the team panel does not render at all**, and `/api/usage/series`
+     returns `500` hourly. All three files are `IF NOT EXISTS` and re-runnable,
+     so applying them early is safe and **skipping them is not**. Step 4 happens
+     only after all three have been applied.
+   - **Confirm each table exists AFTER applying, BY NAME** — do not assume the
+     file ran because the command returned:
+     ```
+     SELECT tablename FROM pg_tables
+      WHERE tablename IN ('usage_hourly','app_settings','ui_dismissals');
+     ```
+     plus the four `project_tasks` columns of R64/R71. Three rows, or the step
+     is not done.
+
+   **After `0040_task_graph.sql` runs, 8ea0cc08's legacy sentinel is gone and
+   with it the honest reason S3 refuses for** — see 2b, amended round 217. S3
+   itself was never computable for this project; what the migration destroys is
+   `legacy-rows`, the header field that says so. This is why step 2b's read is
+   pinned *before* this step and not merely before the after-measurement.
 4. **Restart the API side.** `pm2 restart forge-control` — allowed, and the right
    way to pick up the route changes; nothing long-running lives there.
 5. **Restart the executor, detached, and END THE TASK:**
@@ -624,6 +723,38 @@ own numbers move it further.
    Launch it and return **immediately**. Never wait for it, never poll it, never
    tail the log until it finishes. The script waits for the fleet to go idle and
    restarts then; the task must return before that happens.
+
+### The verification and report tasks CANNOT be ordinary pending rows
+
+**Recorded round 802 (phase 8C) as a sequencing FACT, not a preference. A later
+reader must not "fix" it by numbering the verification task above the deploy —
+that is the intuitive arrangement and it is the broken one.**
+
+Two mechanisms combine, and neither is negotiable from inside this project:
+
+1. `safe-restart.sh` waits for the **WHOLE FLEET** to be quiet —
+   `SELECT count(*) FROM runs WHERE last_heartbeat_at > now() - interval '45 seconds'`,
+   requiring **two consecutive quiet polls**. Not this project's runs: every
+   run, everywhere.
+2. Any **pending** task of this project is promoted within one ~10 s tick of the
+   deploy task ending.
+
+So a verification task seeded as a pending row would (a) **run BEFORE the restart
+it exists to verify**, reporting on the old engine while claiming to report on
+the new one, and (b) **delay that restart by its own duration**, because its own
+run is a heartbeat the quiet poll counts. The failure is silent in the worst
+way: the verification passes, against code that has not shipped.
+
+They are therefore **POSTed by a detached watcher AFTER the restart lands** —
+8D's `scripts/deploy/await-and-seed.sh`, with its payloads
+`payload-verify.json` and `payload-report.json`, gated by
+`scripts/checks/check-await-seed.sh`. The project must also be **reactivated**
+before the watcher POSTs, since a project with no live tasks settles.
+
+*Why the wait is short in practice, measured at round 800:* `8c591d6c` is the
+**only active project in the fleet**, and `8ea0cc08` is `done` at **159/159**
+tasks. The restart therefore lands within roughly a minute of this project's
+last run ending, rather than waiting on unrelated traffic.
 
 ### Deploy guidance — verbatim, and it is in every gating reviewer's brief too
 
@@ -798,6 +929,60 @@ alone, because §10 is where the next audit looks.
 |---|---|
 | `scripts/checks/check-close-gate.ts` | **new.** R70's behavioural half. The requirement is a property of a SQL statement, and NF3 forbids the unit suite from touching a database, so the only place it can be proved is a `scripts/checks/` script — which R70's brief explicitly offers. Without it the extra `NOT EXISTS` term would ship asserted by a unit test of its MIRROR and never once executed. |
 | `docs/plan/engine-task-graph/04-phases.md` | **standing rule 2 — amend the gate where it is enforced.** Adding R70 to `01-requirements.md` §K without adding it to §9 above and to Phase 4's header makes `check-corpus-map.py` exit non-zero: the three statements of the map must agree, and two of the three live in this file. Deliverables 12 and 13 and this row are the rest of that same edit. |
+
+**Phase 8's write-set, declared in the commit that makes it (round 802).**
+Same style as the rounds 213 / 215 / 222 / 231 / 239 rows above: declared, not
+reconstructed. Phase 8 is the first phase in this project to run **three
+builders concurrently in one worktree**, so the table below is a live
+constraint rather than documentation — 8B, 8C and 8D hold **disjoint** file
+sets and each declines the others' files by name.
+
+| task | round | files it writes |
+|---|---|---|
+| **8A** — merge `main` into the work branch | 801 | `forge-control/src/routes/chat.ts`, `forge-control-web/app/desktop/team/planApi.ts`, `forge-control-web/app/desktop/team/PlanKanban.tsx`, `forge-control-web/app/api.ts`, `evidence/phase8-merge.md` — **plus the merge commit itself, which necessarily carries `main`'s files.** A merge commit cannot honour a write-set; that is a property of merges, not a violation, and it is declared here so the round-803 write-set audit (`03-quality.md` §3.1 item 4) resolves without archaeology. |
+| **8B** — the instrument and the baseline | 802 | `scripts/measure-schedule.ts`, `forge-control/src/lib/schedule-metrics.ts`, `forge-control/src/lib/schedule-metrics.test.ts`, `evidence/baseline-8ea0cc08.md`, `00-vision.md`, `evidence/phase8-instrument.md` |
+| **8C** — corpus repairs and the gates phase 8 must amend | 802 | `01-requirements.md`, `03-quality.md`, `04-phases.md`, `evidence/phase4-workstreams.md`, `evidence/phase8-corpus.md` |
+| **8D** — deploy tooling and the instrument gate | 802 | `scripts/deploy/await-and-seed.sh`, `scripts/deploy/payload-verify.json`, `scripts/deploy/payload-report.json`, **`scripts/deploy/payload-review.json`** (a fourth payload, observed on disk at round 802 and recorded here rather than left to archaeology — 8D states its own reason), `scripts/checks/check-await-seed.sh`, `scripts/checks/check-instrument-typecheck.sh`, `scripts/checks/instrument-manifest.txt`, `evidence/phase8-tooling.md` |
+| **the deploy task** | 810 | `evidence/baseline-8ea0cc08.md` (part 2 **append**), `evidence/phase8-deploy.md` |
+| **the merge-to-`main` task** | 811 | `evidence/phase8-deploy.md` (**append**) |
+| **the watcher-seeded tasks** | after the restart | `evidence/phase8-verify.md`, `evidence/after-<project-id>.md` |
+
+**Phase 7's files, written by phase 8 — the one cross-phase row, and it is
+deliberate.** 8B writes `scripts/measure-schedule.ts`, `schedule-metrics.ts`,
+`schedule-metrics.test.ts` and `00-vision.md`, all of which §10 above assigns to
+phase **7**. Two reasons, both forced:
+
+- **E-3's step-2b read is impossible without an `--exclude-task` flag** — D6,
+  `unresolvable-run`. The instrument refuses a project whose run set it cannot
+  resolve (R61, correctly), and the deploy task's own run is inside the project
+  it is measuring. The flag is a change to phase 7's instrument that only phase
+  8 discovers, because only phase 8 runs it against a live project.
+- **Editing the instrument obliges the part-1 re-run in the same commit.**
+  R62's surviving formulation requires every pasted header in
+  `baseline-8ea0cc08.md` to name the instrument on disk; moving the instrument
+  moves that value under eight headers, a `00-vision.md` §2.2 heading and a
+  ledger row. `03-quality.md` §3.2's phase-8 block enforces exactly this, and
+  `check-instrument-identity.py` fails the gate otherwise. The re-run is not an
+  optional tidy-up; it is what keeps "one instrument" true.
+
+Recorded here rather than at the site alone, per the round-213 and round-215
+precedent: **disclose, not abstain.**
+
+**8C's three writes outside its declared set, declared in the commit that makes
+them (round 802).** 8C's brief names five files. Three more were required, and
+the reason is a live instance of exactly what §10 exists to compute.
+
+| file | why 8C writes it |
+|---|---|
+| `evidence/fix-cycle-2.md` (5 lines), `evidence/phase6-plan-api.md` (1), `evidence/phase8-merge.md` (1) | **One `[historical instrument]` marker appended per line; no recorded value altered.** Mid-round, 8B's uncommitted `--exclude-task` edit moved `scripts/measure-schedule.ts` from `f6828a68…` to `6ec72b35…`, which retired an identity quoted in **20** places and turned the **universal** gate `check-instrument-identity.py` red for the whole round. Thirteen of those are 8B's own declared files and are 8B's to close (the eight pasted headers oblige the part-1 re-run in the same commit — R62, `03-quality.md` §3.2). **Seven sat in no round-802 write-set at all**, in settled files from rounds 217, 231 and 801 with no concurrent writer. Left alone they would have handed round 803 a universal gate that no declared owner could turn green — a gate that can only be disclosed, which is the precise pathology `03-quality.md` §4 was rewritten to remove. Taken here because the risk is nil (no concurrent writer; the marker annotates the record and does not alter it) and the alternative is a red gate with no owner. |
+
+**And note what this row is.** The three builders of round 802 were split by
+declared write-set, and the split held for every *file* — no two builders touched
+one. What crossed the boundary was not a file but a **fact**: one builder's edit
+to a constant retired a value quoted across seven files belonging to nobody. A
+write-set models contention over bytes; it does not model contention over
+**truth**. That is a limit of this project's own mechanism, found by running it,
+and it is recorded here rather than smoothed over.
 
 Within a phase, the planner splits builders so that **no two builders in the
 same workstream declare the same file**. Where a split is impossible — two

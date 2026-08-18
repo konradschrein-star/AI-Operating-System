@@ -1154,7 +1154,10 @@ check-close-gate.ts           → 27 (expected 27), failed 0, PASS      [scratch
 check-fix-chain-graph.ts      → 33 (expected 33), failed 0, PASS      [scratch DB]
 check-r69-straddle.sh         → registered 11  ran 11  passed 11  failed 0  never-ran 0
 check-corpus-map.py           → OK — R1..R70 and NF1..NF7 complete, all three statements agree
-check-instrument-identity.py  → OK — 8 pasted headers name f6828a68…, no unmarked retired identity
+check-instrument-identity.py  → OK — 8 pasted headers name f6828a68…, no unmarked retired identity   [historical instrument]
+                                 ^ that identity was the instrument WHEN THIS RAN and the verdict was true
+                                   then; retired round 802 by 8B's --exclude-task flag. The marker annotates
+                                   the record, it does not alter it — §12's supersession note, same rule.
 check-r20-census.py --self-check → OK at 27d300f (85 / 92 / 41 / 44 reproduced)
 check-r20-census.py           → SYMBOLS 25 attributed; R20 PASS; REGION matches  (after --write)
 ```
@@ -1503,3 +1506,73 @@ the headroom is **153**. The 23-character difference is not this task's: it is
 (the research-role literals in the fan-out sentence), which shares this worktree,
 lands in the same measurement, and carries its own NF7 ledger. This task's
 contribution to it is the 0 measured above.
+
+---
+
+## 12. SUPERSESSION NOTE — the 23 / 12084 figures above (appended round 802, phase 8C)
+
+**Appended, not rewritten. Everything above this line stands exactly as phase 4
+recorded it, and should be read as what was true in that worktree at that
+moment.** Supersede-never-rewrite is the point: a measurement record that gets
+edited to agree with a later measurement stops being evidence and becomes
+opinion. What follows is the settled figure and the reason the original was
+wrong — both, so a reader can see the gap rather than inherit a correction.
+
+### The settled figures
+
+| | recorded above (§11, phase 4) | **settled** |
+|---|---|---|
+| `GRAPH_GUIDE`'s cost to the maximal planner prompt | **23** characters | **26** characters |
+| the measurement it was taken against | **12084** | **12087** |
+| frame | live worktree, mid-edit | `"p1"`, the frame the NF7 ledger and the 12237 cap are written in |
+
+Established by round 244 (`evidence/phase5-fix-cycle-1.md` §7, finding **F-G**,
+with the ledger arithmetic in §5 of that file: `12061 → 12087`, restated in the
+`"p1"` frame as `12095 → 12121`; **the 26 is unchanged, only the units are**).
+
+### Why the original was wrong, and why that is not a defect in phase 4's work
+
+`GRAPH_GUIDE`'s source is **byte-identical at `f135de4` and `7af2968`** — round
+244 verified it by `git show`, and round 802 re-verified it independently: the
+`const GRAPH_GUIDE = …` literal region hashes to the same sha256 at both
+commits. So the constant never changed size, and 23 and 26 cannot both be
+measurements of it.
+
+The 23 was taken **mid-edit, in the shared worktree**. `f135de4` — round 242's
+phase-5 fix cycle, which grew `GRAPH_GUIDE` by the research-role literals in the
+fan-out sentence — was landing in the *same* worktree while §11 above ran its
+probe. The section is honest about its own moment and correctly attributes the
+difference to `f135de4`; what it could not know is that it had caught the
+constant part-way in. It is **3 characters short**, in a frame (`12084`) that is
+itself superseded by the `"p1"` frame the ledger is written in (`12087`).
+
+The authoritative number is **not this document and not that one**: it is NF7's
+ledger, enforced by an *equality* assertion — "every character spent since the 5A
+tip is attributed to a round that declared it" — which admits no unledgered
+character and fails with its own size in the message. Prose records the story;
+the assertion records the number.
+
+### Why round 244 did not fix it here, and why round 802 does
+
+Round 244 deliberately left this file alone on two grounds, both correct: it is
+**another round's measurement record**, and it was **outside that task's
+write-set**. Its finding F-G says explicitly that *the next task touching phase
+4's record should append a supersession note*. Round 802 (phase 8C) owns this
+file and carries that out — by **appending**, which is the only form of the fix
+that preserves what was actually measured.
+
+### The third artifact damaged by one round of two-builders-one-worktree
+
+This is the **third** correction traceable to the same cause — two builders
+sharing one worktree while a constant was being edited under both of them:
+
+1. the doc-comment contradiction,
+2. the stale pins,
+3. this measurement.
+
+**The contention cost nothing in code and three corrections in evidence.** No
+line of shipped behaviour was wrong in any of the three; what went wrong each
+time was the *record* — a number, a pin, a comment, each taken while the tree
+moved beneath it. That is the argument for this project's own deliverable stated
+against itself: contention that a scheduler does not model does not disappear,
+it relocates into the evidence, where nothing typechecks it.

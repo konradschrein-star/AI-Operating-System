@@ -1210,9 +1210,25 @@ appends to one file:
 
 - **Part 1 — phase 7, from the committed fixture.** The round/task table of
   `00-vision.md` §2, whole-project and windowed, plus the correction of §2 and
-  the discrepancy analysis. **Landed** — the file exists and its header names the
-  script's self-computed `instrument-sha256`, which is what "How proved" above
-  asks for and is satisfiable without a database.
+  the discrepancy analysis. **Landed** — every header pasted in that file names
+  the same `instrument-sha256`, and that value equals
+  `sha256sum scripts/measure-schedule.ts` on the commit it ships in, which is
+  what *How proved* above asks for and is satisfiable without a database.
+  *Bullet corrected round 802 (phase 8C), where the retired wording was still
+  enforced.* This bullet ended **"the file exists and its header names the
+  script's self-computed `instrument-sha256`"** — the exact formulation round
+  217 replaced two paragraphs above, because "names a SHA" is satisfied by a
+  header naming a SHA the script no longer has, and for two rounds that is what
+  it was satisfied by. R62's body was amended in round 217; **this restatement
+  of it was missed**, so one requirement stood in the corpus in two versions,
+  one checkable and one not, and a reader arriving at the bullet first would
+  have inherited the retired one. `check-corpus-map.py` compares the three
+  statements of the requirement MAP — ids, phases, counts — and cannot see a
+  prose sentence disagreeing with a requirement body, so nothing mechanical was
+  ever going to catch this; it was found by an operator reading, and it is
+  repaired here rather than annotated elsewhere (standing rule 2: amend the gate
+  where it is enforced). The surviving formulation is checked by
+  `check-instrument-identity.py`, `03-quality.md` §3.1 item 7.
 - **Part 2 — phase 8, from the one authorised live read.** S1, S2, S3, run
   count, mean run duration and wall clock. They are **not derivable in phase 7**:
   the phase-1 fixture carries exactly six keys per row (assertion A3 of
@@ -1258,7 +1274,10 @@ changing what R62 requires.**
 1. **The instrument moved, and part 1 was re-run rather than left mislabelled
    (finding 1).** Round 215's phase-7 repairs edited `scripts/measure-schedule.ts`,
    moving its self-computed identity from `80ef1123…` `[historical instrument]`
-   to `f6828a68…` while eight pasted headers, a `00-vision.md` §2.2 heading, a
+   to `f6828a68…` `[historical instrument]` — retired in turn at round 802, when
+   phase 8B added E-3's `--exclude-task` flag; the marker is added here, in 8C's
+   own file, because 8B's write-set cannot reach this line — while eight pasted
+   headers, a `00-vision.md` §2.2 heading, a
    ledger row and a `sha256sum` block still named the old value. Round 217 re-ran
    all seven of part 1's commands under the current bytes; **every round/task
    table and the run-C refusal reproduced byte for byte**, so no measurement
@@ -1306,6 +1325,46 @@ engine, where no timing argument is needed. The deploy task must therefore
 the correct order. See `02-architecture.md` §3.2.1 and §9.2.
 *How proved:* live.
 
+**Amended round 802 (phase 8C) — the migration-number collision, and the rule it
+obliges. Operator ruling, on the record.** Two active projects independently
+claimed number **0040** and neither could see the other: `operator-visibility`
+wrote `0040_usage_hourly.sql` (which creates **`usage_hourly` AND
+`app_settings`**) and `0041_ui_dismissals.sql`; this project wrote
+`0040_task_graph.sql`. Round 801's merge brought both sides in and git raised no
+conflict — different filenames — so `main` now carries **two files numbered
+0040**. Verified by the operator: there is **no migration runner and no tracking
+table** (`schema_migrations` and `migrations` are both absent), migrations are
+applied by hand with `psql -f`, and `migrations.test.ts` sorts filenames without
+asserting unique numbering. The collision is therefore survivable, and **no
+rename is being forced**: renaming would invalidate a phase that already passed
+review with `0040_task_graph.sql` pinned inside `check-migration-0040.sh` and its
+evidence document. The renumber is tracked as a **post-deploy task**, seeded by
+the operator. Four clauses, binding on the deploy task:
+
+1. **Apply migrations by EXPLICIT FILENAME, one at a time. Never
+   `for f in db/migrations/*.sql`.** A glob sorts `0040_task_graph.sql` before
+   `0040_usage_hourly.sql` and thereby *silently decides an order nobody chose* —
+   the same failure this project exists to remove from the scheduler, one layer
+   down. Two files numbered 0040 are inert together (disjoint objects, no version
+   ledger to collide in, no boot-time runner) but ambiguous to any number-keyed
+   runner a future round adds.
+2. **Confirm each table exists AFTER applying, BY NAME.** Do not infer that the
+   file ran from the fact that the command returned. R2's re-runnability is a
+   property of the statements; a table's existence is a property of the database
+   and is read from `information_schema`.
+3. **Two 0040s on `main` is EXPECTED.** It is not fixed mid-deploy and it is not
+   a merge error. 8A's judgement — that renaming the migration this project
+   exists to ship is a briefed decision and not a merge side-effect — is
+   preserved here deliberately.
+4. **Three files, not one.** The operator verified that `usage_hourly`,
+   `app_settings` and `ui_dismissals` are **ALL absent** from `content_forge`.
+   `/api/chat/:id/team` will `500` (the team panel will not render at all) and
+   `/api/usage/series` will `500` hourly, if `forge-control` restarts before
+   they exist — and step 4 of the deploy sequence restarts it. All three files
+   are `IF NOT EXISTS` and re-runnable, so applying them early is safe and
+   **skipping them is not**. The order and the enforcement are in
+   `04-phases.md` §Phase 8 step 3.
+
 **R65.** After merging, the deploy task runs **exactly**
 
 ```
@@ -1337,7 +1396,27 @@ disk with the expected branches.
 
 **R68.** The DoD-6 measurement is produced for a project scheduled by the new
 engine and committed beside the baseline, with the comparison table.
-*How proved:* the file exists; S1–S3 are stated as numbers with the script's SHA.
+*How proved, amended round 802 (phase 8C), in the round that discharges it:*
+the file exists; **its pasted identity MATCHES `sha256sum` of the instrument on
+disk**, checked by `check-instrument-identity.py` (`03-quality.md` §3.1 item 7);
+and the before-file and the after-file **share one instrument** — the same
+`instrument-sha256` in every header of both, per R62's surviving formulation.
+S1 and S2 are stated as numbers; S3 is stated as a number **for the after-project
+only**, because S3 for the 8ea0cc08 baseline is a refusal by construction and
+always was (R62's round-217 amendment, `04-phases.md` §Phase 8 step 2b) — a
+comparison table demanding an S3 on both sides is a gate no correct deploy can
+pass.
+
+*What was retired, and why it had to be:* the old wording read **"the file
+exists; S1–S3 are stated as numbers with the script's SHA."** Both halves were
+unsatisfiable-or-worthless in opposite directions. "Exists and names a SHA" is
+satisfied by a file naming the **wrong** SHA — the defect round 216 found in
+thirteen places on this corpus, one of them a `sha256sum` block the document
+offered as an independent re-derivation and which had been **pasted rather than
+executed**. And "S1–S3 as numbers" demanded of the baseline a number D7 is
+designed never to produce for a legacy project. Retired here in the same commit
+as the clause that replaces it and as the phase-8 gate that runs it
+(`03-quality.md` §3.2), per standing rule 4.
 
 ---
 

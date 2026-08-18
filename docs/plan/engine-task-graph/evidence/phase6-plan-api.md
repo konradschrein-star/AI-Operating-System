@@ -797,7 +797,7 @@ $ python3 docs/plan/engine-task-graph/check-corpus-map.py
 OK — R1..R69 and NF1..NF7 complete, all three statements of the map agree.   (exit 0)
 
 $ python3 docs/plan/engine-task-graph/check-instrument-identity.py
-OK — 8 pasted header(s) across 1 file(s) name f6828a68…
+OK — 8 pasted header(s) across 1 file(s) name f6828a68…   [historical instrument]
 OK — no retired identity quoted without '[historical instrument]'            (exit 0)
 ```
 

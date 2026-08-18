@@ -996,7 +996,7 @@ bytes, so the transcript stays byte-verbatim. That is exactly what §6.9 now
 does, and the check passes:
 
 ```
-OK — 8 pasted header(s) across 1 file(s) name f6828a68…
+OK — 8 pasted header(s) across 1 file(s) name f6828a68…   [historical instrument]
 OK — no retired identity quoted without '[historical instrument]'
 ```
 exit `0`.

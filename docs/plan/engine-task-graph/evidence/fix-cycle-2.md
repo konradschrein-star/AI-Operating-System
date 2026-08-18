@@ -130,15 +130,15 @@ gate caught the future occurrence of exactly this finding**:
 ```
 $ printf '\n// round 217 mutation probe\n' >> scripts/measure-schedule.ts
 mutated sha: b24a0e31e0ea0127…
-  evidence/baseline-8ea0cc08.md:91:  pasted header names f6828a68… but … on disk is b24a0e31…
+  evidence/baseline-8ea0cc08.md:91:  pasted header names f6828a68… but … on disk is b24a0e31…   [historical instrument]
   … all 8 headers …
-  00-vision.md:76:       names the retired identity f6828a68… without the marker
+  00-vision.md:76:       names the retired identity f6828a68… without the marker   [historical instrument]
   01-requirements.md:876: …
   evidence/baseline-8ea0cc08.md:849, :853, :937: …
 MUTATED_EXIT=1
 ```
 
-Restored immediately; `sha256sum` back to `f6828a68…` and `git status` clean.
+Restored immediately; `sha256sum` back to `f6828a68…` and `git status` clean.   [historical instrument]
 
 Had this gate existed in round 215, the finding would have surfaced in the commit
 that caused it instead of two rounds later.
@@ -167,7 +167,7 @@ this checker exists to prevent.
 | file | what |
 |---|---|
 | `evidence/baseline-8ea0cc08.md` | 8 headers re-run; new §1 "Re-run record"; §1 closing note; §5(3) rewritten around the current value and the fourth identity failure named as this document; §7 ledger rows for `f6828a68…`, `34268e9…` and the marked `80ef1123…` `[historical instrument]` |
-| `00-vision.md` §2.2 | heading and body now name `f6828a68…`, with a parenthetical recording the move and that every number below reproduced |
+| `00-vision.md` §2.2 | heading and body now name `f6828a68…`, with a parenthetical recording the move and that every number below reproduced |   [historical instrument]
 | `04-phases.md` §12 (E-3) | the *"the two headers name the same `instrument-sha256`"* sentence retired and replaced with a statement a living instrument can keep, plus phase 8's concrete pre-append obligation |
 | `01-requirements.md` R62 | *How proved* replaced — the old wording was satisfiable by a file naming a SHA the script no longer had, and for two rounds it was |
 | `03-quality.md` §3.1 item 7, §3.2 phase-8 gate, §4 block | where the checker is enforced |
@@ -281,7 +281,7 @@ $ python3 docs/plan/engine-task-graph/check-corpus-map.py
                                                             → exit 0
 $ python3 docs/plan/engine-task-graph/check-instrument-identity.py
     instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
-    OK — 8 pasted header(s) name f6828a68…
+    OK — 8 pasted header(s) name f6828a68…   [historical instrument]
     OK — no retired identity quoted without '[historical instrument]'
                                                             → exit 0
 $ git -C /opt/forge-ai-os status --porcelain                → EMPTY, exit 0
