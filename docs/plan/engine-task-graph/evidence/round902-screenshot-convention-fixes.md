@@ -21,6 +21,13 @@ docs/plan/engine-task-graph/03-quality.md                 §2.2 table row, §4 g
 docs/plan/engine-task-graph/evidence/round902-screenshot-convention-fixes.md   this file
 ```
 
+> **Superseded by `docs/plan/scripts-checks-typecheck-gate/`, round 500 — the
+> `instrument-manifest.txt` line only.** That write is a true record of round
+> 902: the file was an inclusion list then and a new instrument had to be
+> entered in it. It is a waiver ledger now, holding zero entries, and
+> `check-screenshot-render-shapes.ts` is covered by glob without being named
+> anywhere. A round-902-shaped write-set today would not contain that line.
+
 The two `03-quality.md` files are in the write set because of the rule round 900
 itself added to `GRAPH_GUIDE` and then did not apply to its own work: *a round
 that moves a constant the corpus quotes owes the documents quoting it a place in
@@ -205,8 +212,20 @@ absolute path through `tsx`; the new check prints the resolved path and sha256
 of all three modules it imports. `SCREENSHOT_CONVENTION` at 555 characters does
 not exist on this branch any more, so a stale import cannot produce 1056.
 
-**(e) A new instrument that escapes the gate it belongs to.**
+**(e) A new instrument that escapes the gate it belongs to — superseded by
+`docs/plan/scripts-checks-typecheck-gate/`, round 500.**
 `check-screenshot-render-shapes.ts` is in `instrument-manifest.txt`, so
 `check-instrument-typecheck.sh` compiles it (7/7, exit 0) and its manifest guard
 would fail by name if it were not listed. It is also added to §4's reviewer
 block and §2.2's table — an instrument nobody runs proves nothing.
+
+> **SUPERSEDED.** The paragraph above records how coverage was obtained at
+> round 902 and is no longer how it works. `check-instrument-typecheck.sh`
+> enumerates every `.ts`/`.tsx` under `scripts/checks/` by glob at run time, so
+> **this instrument is covered by glob and lists nothing**; the manifest guard
+> is retired and `instrument-manifest.txt` is a waiver ledger holding zero
+> entries. Listing a file there today would EXCUSE its failure, not obtain its
+> coverage. The control's *point* survives intact and is stronger — a new
+> instrument cannot escape the gate by being new, and it no longer depends on
+> anyone remembering to write it down. Measured at round 500: 42 subjects
+> found, 42 compiled, exit 0.

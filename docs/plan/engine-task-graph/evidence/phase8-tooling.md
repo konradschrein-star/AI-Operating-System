@@ -16,8 +16,8 @@ port; every `pm2` read went to a shell shim printing a canned string.
 | `scripts/deploy/payload-report.json` | The round-817 DoD-6 measurement task, POSTed in `project-done` mode. |
 | `scripts/deploy/payload-review.json` | The round-819 gating reviewer, POSTed by the report task itself. |
 | `scripts/checks/check-await-seed.sh` | Drives the watcher against fakes. 7 cases, 56 assertions, censused. |
-| `scripts/checks/check-instrument-typecheck.sh` | Universal gate item 9. Compiles every manifested instrument, one per invocation. |
-| `scripts/checks/instrument-manifest.txt` | What that gate is responsible for, and why it is scoped rather than directory-wide. |
+| `scripts/checks/check-instrument-typecheck.sh` | Universal gate item 9. Compiles **every** instrument under `scripts/checks/`, enumerated by glob at run time, one per `tsc` invocation. *(Rewritten at round 500 by `docs/plan/scripts-checks-typecheck-gate/`; at round 802 it compiled only the manifested seven.)* |
+| `scripts/checks/instrument-manifest.txt` | The gate's **waiver ledger** — instruments whose failure is excused, with a diagnostic, a reason and an owner; target state empty, and empty today. It does not scope the gate. *(Round 802 used it as an inclusion list; superseded at round 500.)* |
 
 **The problem the watcher solves, restated so nobody re-derives it.**
 `/opt/ai-os/scripts/safe-restart.sh` waits for the WHOLE FLEET to go quiet —
@@ -590,7 +590,21 @@ failure caught by construction.
 
 ---
 
-## 5. `check-instrument-typecheck.sh` + `instrument-manifest.txt` — universal gate item 9
+## 5. `check-instrument-typecheck.sh` + `instrument-manifest.txt` — universal gate item 9 — **superseded by `docs/plan/scripts-checks-typecheck-gate/`, round 500**
+
+> **SUPERSEDED — READ THIS FIRST.** Everything in §5 and §5.1 is the evidence
+> record of the **round-802 gate**, and the transcripts below are left exactly
+> as they were produced, because editing a record falsifies it. **What the gate
+> does now:** it enumerates every `.ts`/`.tsx` under `scripts/checks/` by glob
+> at run time (recursively, dotfiles included), compiles each one in its own
+> `tsc` invocation through the checked-in profile
+> `tsconfig.checks-instruments.json`, and reads `instrument-manifest.txt` only
+> as a **waiver ledger** — printed above the verdict on every run, failing on a
+> waived file that compiles clean. The manifest guard described below is
+> retired: glob enumeration makes "did the author remember to list their file"
+> unaskable. Measured at round 500: 42 subjects found, 42 compiled, exit 0.
+> The current record is
+> `docs/plan/scripts-checks-typecheck-gate/evidence/phase5-ledger.md`.
 
 `scripts/checks/*.ts` is compiled by nothing. `tsx` strips types without checking
 them, and the directory sits outside both projects' tsconfig `include` lists
@@ -671,7 +685,17 @@ it be manifested would be an unsatisfiable gate of exactly the kind standing rul
 2 forbids. Renames are reported at their new path, which is the path that must be
 manifested.
 
-### 5.1 PROVING IT CAN FAIL — three ways
+### 5.1 PROVING IT CAN FAIL — three ways — **superseded by `docs/plan/scripts-checks-typecheck-gate/`, round 500**
+
+> **SUPERSEDED.** These three breakages were applied to the **round-802** gate
+> and their transcripts are its record, kept intact. Control (c) below breaks
+> the *manifest guard*, which no longer exists. **The gate is proven able to
+> fail today by four negative controls** — a broken type in a covered
+> instrument, a **new** file in the directory listed nowhere (the control the
+> round-802 design could only pass via its guard), no
+> `forge-control-web/node_modules`, and an uncovered `.mts` — transcribed in
+> `docs/plan/scripts-checks-typecheck-gate/evidence/negative-controls.md`, plus
+> three ledger controls in `.../evidence/phase5-ledger.md`.
 
 A typecheck that has only ever been observed passing is the exact defect it
 exists to catch. All three breakages were applied, run, and reverted; the working
@@ -1462,7 +1486,18 @@ MANAGER COMMS. Report findings, blockers and decisions to the manager chat:
 Findings, not narration. One report that matters beats five status pings.
 ```
 
-### `payload-review.json` — role `reviewer`, round 819, tier `standard`
+### `payload-review.json` — role `reviewer`, round 819, tier `standard` — **the on-disk payload was amended in round 500; the paste below is unchanged**
+
+> **AMENDED ON DISK, NOT HERE.** The paste that follows records what was
+> RENDERED into the round-819 reviewer's instructions, and it is left verbatim.
+> The item-9 paragraph of `scripts/deploy/payload-review.json` was rewritten in
+> round 500 by `docs/plan/scripts-checks-typecheck-gate/` (a live brief that
+> still told a future reviewer to expect manifest-scoped coverage is an A5.1
+> breach, not a record). The replacement reads: *"it compiles EVERY
+> `.ts`/`.tsx` under `scripts/checks/`, enumerated BY GLOB at run time, each in
+> ITS OWN tsc invocation, through the checked-in profile
+> `tsconfig.checks-instruments.json`; `instrument-manifest.txt` is a WAIVER
+> LEDGER, not an inclusion list, and the manifest guard is retired."*
 
 `write_set`: `[]`  ·  `depends_on`: `["__REPORT_TASK_ID__"]`  ·  title: *Phase 8 gating review: the deploy, the verification and the number*
 

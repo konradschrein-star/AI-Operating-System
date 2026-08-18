@@ -1,0 +1,111 @@
+{
+  "//": [
+    "The ONE compile profile for scripts/checks/*.{ts,tsx}. It extends the web",
+    "app's own tsconfig because 27 of the 42 instruments import app modules, and",
+    "an instrument gate that disagrees with the app's own compiler about the",
+    "app's own files is wrong by construction. Measured 2026-08-18: this profile",
+    "takes the directory from 20/42 green to 36/42, and every one of the 6",
+    "remaining reds is a genuine defect in the instrument's own source.",
+    "",
+    "NOT referenced by next.config, by either package's tsconfig, or by any",
+    "package.json script. It is a gate input, not a build input."
+  ],
+  "//jsx": [
+    "The app says jsx:preserve because NEXT compiles its JSX. A check script",
+    "is executed by tsx, which does not. So the check needs a real transform.",
+    "Same reasoning as the pre-existing root tsconfig.checks.json, which this",
+    "profile does not replace — that one is tsx's runtime config, this one is",
+    "the compiler's."
+  ],
+  "//paths": [
+    "A check script lives in scripts/checks/, which has no node_modules and no",
+    "node_modules ancestor up to the repo root, so a bare `react-dom/server`",
+    "import resolves NOWHERE regardless of the compiler's cwd.",
+    "",
+    "These point at @types/ and NOT at the runtime packages, and that is the",
+    "whole trick. forge-control-web/node_modules/react is a pnpm symlink into",
+    ".pnpm/react@19.0.0/ which ships index.js and no declarations. Mapping to",
+    "it resolves the specifier AND defeats the @types/react lookup that would",
+    "have supplied the types — producing TS7016 on every app file and then a",
+    "TS7026 flood on every JSX tag. Measured: check-settings-surface.tsx =",
+    "936 diagnostics under the runtime mapping, 0 under this one.",
+    "See evidence/census-B-root-paths-profile.txt vs census-E-*.txt."
+  ],
+  "//typeRoots": [
+    "MUST be pinned. TypeScript's automatic @types discovery walks up from the",
+    "directory of the CONFIG FILE, and the gate generates its per-file config",
+    "in `mktemp -d`, which has no node_modules ancestry. Without this line the",
+    "whole directory collapses with `Cannot find name 'process'`: measured at",
+    "12/42 green, 30 red. See evidence/negative-controls.md control (d)."
+  ],
+  "//cross-reference": [
+    "SIBLING FILE, DO NOT MERGE: ./tsconfig.checks.json at this same repo root.",
+    "That file is TSX'S RUNTIME CONFIG — its four react paths deliberately point",
+    "at the RUNTIME packages (forge-control-web/node_modules/react, react-dom,",
+    "…) so that `import ReactDOMServer from 'react-dom/server'` actually LOADS",
+    "when tsx executes the instrument. THIS file is TSC'S CONFIG — its four",
+    "paths must point at forge-control-web/node_modules/@types/… so that the",
+    "DECLARATIONS resolve. Same four specifiers, opposite targets, each correct",
+    "for its own consumer. Merging them breaks whichever consumer loses: the",
+    "runtime targets cost check-settings-surface.tsx 936 diagnostics under tsc,",
+    "and the @types targets have no runtime to load under tsx.",
+    "THEY MUST NEVER BE MERGED. See 02-architecture.md §3.4.",
+    "",
+    "COMMENT-KEY PLACEMENT: the three //jsx, //paths and //typeRoots arrays sit",
+    "at the TOP LEVEL, not inside compilerOptions. tsc rejects unknown keys in",
+    "compilerOptions with `error TS5025: Unknown compiler option '//jsx'`, which",
+    "would add three spurious diagnostics and rc=2 to EVERY invocation. Measured",
+    "2026-08-18; recorded in 02-architecture.md §3.1. JSONC `//` line comments",
+    "also compile clean but break `jq -r .extends`, which is R1's verify clause."
+  ],
+  "//skipLibCheck": [
+    "MUST be false, and this is an OVERRIDE: the base config",
+    "forge-control-web/tsconfig.json says `\"skipLibCheck\": true`, which is",
+    "correct for the app and catastrophic here. `skipLibCheck` means `do not",
+    "typecheck declaration files`, and the gate's subject glob matches",
+    "`*.d.ts` — so with the inherited value a declaration file under",
+    "scripts/checks/ is enumerated, handed to tsc, counted as COMPILED, and",
+    "never checked. The census reconciles, the verdict says PASSED, and the",
+    "file was never looked at. Measured 2026-08-18 (round 2 red team, breach",
+    "B1): a two-line .d.ts carrying TS2717 reported `PASS … exit 0, 0",
+    "diagnostics` on the real 37-subject directory.",
+    "",
+    "It also closes the same hole one step out: a .d.ts that an instrument",
+    "IMPORTS is unchecked under the inherited value.",
+    "",
+    "Cost, measured on check-settings-surface.tsx (the heaviest subject):",
+    "3.2s -> 5.6s per invocation. The whole-directory run goes from ~54s to",
+    "~90s. That is the price of the gate actually reading its subjects.",
+    "",
+    "CONSEQUENCE THE NEXT MAINTAINER MUST KNOW: with this off, tsc also",
+    "checks every .d.ts in the dependency tree. If a future @types upgrade",
+    "ships a conflict, this gate reports a diagnostic located in",
+    "node_modules/ — step 12's fidelity scan names that case separately from",
+    "an app-source diagnostic, because the remedy is different (upgrade or",
+    "pin the dependency; do NOT re-enable skipLibCheck to hide it)."
+  ],
+  "extends": "./forge-control-web/tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": false,
+
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+
+    "baseUrl": "./forge-control-web",
+    "paths": {
+      "@/*": ["./*"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/server": ["./node_modules/@types/react-dom/server"]
+    },
+
+    "typeRoots": ["./forge-control-web/node_modules/@types"],
+
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "incremental": false
+  },
+  "files": [],
+  "include": []
+}

@@ -172,10 +172,10 @@ const PROSE_PINS = [
   },
   {
     section: "§3",
-    cite: "already in scope at `:462`",
-    bind: /`parentToolUseId`, already in scope at `:462`/,
+    cite: "already in scope at `:493`",
+    bind: /`parentToolUseId`, already in scope at `:493`/,
     path: "forge-control/src/lib/cc-runner.ts",
-    line: 462,
+    line: 493,
     what: "the parentToolUseId binding",
     expect: /^\s*const parentToolUseId =/,
   },
@@ -305,6 +305,45 @@ const LINE_RULES = [
       { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:375" },
     ],
   },
+  /* The round-6 (`project/b7ab4c57`) correction table — every `cc-runner.ts` pin, moved
+   * +31 by rounds 900/902 growing `buildSystemPrompt`. Same shape as the round-1875 rows
+   * above: the was-column is historical, the now-column repeats a pin another half
+   * verifies, so renumbering the doc without renumbering the primary fails here. */
+  {
+    context: /^\| `cc-runner\.ts` §2a1 the `evt\.type === "user"` branch/,
+    tokens: [
+      { historical: "where the user branch sat at 852b089 — superseded by rounds 900/902" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:533" },
+    ],
+  },
+  {
+    context: /^\| `cc-runner\.ts` §2a2 the `parentToolUseId` lift/,
+    tokens: [
+      { historical: "where the parentToolUseId lift sat at 852b089 — superseded by rounds 900/902" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:490" },
+    ],
+  },
+  {
+    context: /^\| `cc-runner\.ts` §3 the `CcEvent` union/,
+    tokens: [
+      { historical: "where the CcEvent union sat at 852b089 — superseded by rounds 900/902" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:265" },
+    ],
+  },
+  {
+    context: /^\| §3 recipe item 2 — the `parentToolUseId` binding in scope/,
+    tokens: [
+      { historical: "the 852b089 position of the parentToolUseId binding §3 item 2 leans on" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:493" },
+    ],
+  },
+  {
+    context: /^\| §3 recipe item 1 — the `CcEvent` `type` field to widen/,
+    tokens: [
+      { historical: "the 852b089 position of the type field §3 item 1 says to widen" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:266" },
+    ],
+  },
   {
     context: /^\| `tool-summary\.ts` "Async agent launched" banner note/,
     tokens: [
@@ -359,17 +398,31 @@ const LINE_RULES = [
   },
   {
     context: /^\*\*character-for-character identical\*\* to the block now at/,
-    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:502" }],
+    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:533" }],
   },
   {
     context: /^\| b \| \*\*Async task-completion notification\*\*/,
-    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:502" }],
+    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:533" }],
   },
   {
     context: /^`` `executor\.ts:1` `` and a bare `` `:4242` `` to this file/,
     tokens: [
       { historical: "a deliberately fake pin, quoted while describing pass 5's negative control" },
       { historical: "the other half of that fake pair — illustrative, not a claim about any tree" },
+    ],
+  },
+  {
+    context: /^The primary control — renumber the one fenced `db\/runs\.ts` pin from/,
+    tokens: [
+      { repeat: "forge-control/src/db/runs.ts:52" },
+      { historical: "the off-by-one this control renumbers that pin TO — deliberately wrong, and the reason the control fails" },
+    ],
+  },
+  {
+    context: /Renumber the freshly re-pinned §2a1 quote from `:533-545` to/,
+    tokens: [
+      { repeat: "forge-control/src/lib/cc-runner.ts:533" },
+      { historical: "round 6's own control value — the deliberately wrong start line that makes the quote and its four repeats fail together" },
     ],
   },
   {
@@ -432,7 +485,7 @@ const LINE_RULES = [
       {
         live: {
           path: "forge-control/src/lib/cc-runner.ts",
-          line: 235,
+          line: 266,
           what: "the CcEvent `type` field §3 item 1 says to widen",
           expect: /type: "init" \| "assistant_text" \| "tool_call" \| "tool_result";/,
         },
@@ -441,7 +494,7 @@ const LINE_RULES = [
   },
   {
     context: /^2\. \*\*`cc-runner\.ts`\*\* — add one `else if` to the `user` branch at/,
-    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:502" }],
+    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:533" }],
   },
   {
     context: /^3\. \*\*`db\/runs\.ts:52`\*\* — add `\| "task_notification"`/,

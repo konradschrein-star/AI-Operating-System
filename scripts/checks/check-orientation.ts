@@ -126,20 +126,53 @@ const tree: TeamResponse = {
   project: { id: "proj-1", status: "running" },
   link_source: "metadata",
   link_ambiguous: false,
-  manager: node({ id: "manager-run", kind: "operator_chat" }),
+  /* `kind` is a `TeamNodeKind`: "operator" | "worker" | "cron" | "unknown" |
+   * "subagent" (teamApi.ts:30, over AgentKind in live/agentsApi.ts:60). The
+   * manager IS the chat run, which the server ships as `agent_kind: "operator"`
+   * (chat.ts:548), and a project worker run as "worker". "operator_chat" and
+   * "project_worker" were never members of this union — see the note under
+   * section 2 for what that did and did not cost this instrument. */
+  manager: node({ id: "manager-run", kind: "operator" }),
   workers: [
     node({
       id: RUN_A,
-      kind: "project_worker",
+      kind: "worker",
       role: "architect",
       task: TASK,
       subagents: [node({ id: SUB, kind: "subagent", parent_id: RUN_A, role: "Explore" })],
     }),
-    node({ id: RUN_B, kind: "project_worker", role: "builder" }),
+    node({ id: RUN_B, kind: "worker", role: "builder" }),
   ],
   complete: true,
   errors: [],
 };
+
+/* ── WHAT `kind` IS ACTUALLY WORTH TO THIS SECTION ────────────────────────
+ *
+ * Until this line was written the fixture above carried "operator_chat" and
+ * "project_worker", two strings `TeamNodeKind` has never contained, and every
+ * assertion in this file passed — before the correction and after it, byte for
+ * byte. So it is worth saying exactly which assertions read `kind` at all.
+ *
+ * Three do, and all three through ONE predicate: `findTeamNode`
+ * (OrientationStrip.tsx:237-249) discriminates on `kind === "subagent"` and
+ * nothing else.
+ *
+ *   · "a sub-agent is found by tool_use_id under its parent" — needs
+ *     `sub.kind === "subagent"` to be true, or the sub-agent branch never matches.
+ *   · "a run id is never satisfied by a sub-agent whose id happens to equal it"
+ *     — needs it to be true again, this time to make the run branch REFUSE.
+ *   · "a worker is found by run id" / "the manager is found by run id" — need
+ *     `kind !== "subagent"`, which every non-subagent literal satisfies.
+ *
+ * That is one bit of coverage: subagent, or not. NO assertion in this file
+ * distinguishes "operator" from "worker" from "cron" from "unknown", and no
+ * assertion would have failed had the manager been declared a cron. The
+ * instrument's coverage of `kind` is smaller than the union it types against,
+ * which is precisely why nothing here objected to two literals the server
+ * cannot produce. Recorded, not fixed: inventing an assertion about a
+ * distinction OrientationStrip does not make would test a strip that does not
+ * exist. */
 
 check("a worker is found by run id", findTeamNode(tree, RUN_A)?.id, RUN_A);
 check("the manager is found by run id", findTeamNode(tree, "manager-run")?.id, "manager-run");

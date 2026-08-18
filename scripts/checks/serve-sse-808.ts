@@ -46,9 +46,19 @@
  * from here — serve-v3-7798.ts sidesteps that by importing nothing but node
  * builtins. This harness needs the real adapter, so it reaches into
  * forge-control's tree by path. Same packages, same versions, same resolution
- * pnpm gives index.ts; only the specifier is spelled differently. */
-import { serve } from "../../forge-control/node_modules/@hono/node-server/dist/index.js";
-import { Hono } from "../../forge-control/node_modules/hono/dist/index.js";
+ * pnpm gives index.ts; only the specifier is spelled differently.
+ *
+ * Both specifiers name the PACKAGE DIRECTORY, and that is load-bearing rather
+ * than tidy. They used to end in `/dist/index.js`, which reaches the same
+ * runtime file and steps straight past the package's own `types` field
+ * (`dist/types/index.d.ts` for hono) — so `Hono` came out as `any` (TS7016) and
+ * the `c` of the proxy handler below followed it (TS7006), in a file nothing
+ * ever compiled. Naming the directory lets Node resolve `main`/`exports` and
+ * tsc resolve `types`, which is the only spelling that satisfies both. Pointing
+ * at the .d.ts instead does not: TS2846, a declaration file cannot be imported
+ * without `import type`, and `import type` cannot construct a server. */
+import { serve } from "../../forge-control/node_modules/@hono/node-server";
+import { Hono } from "../../forge-control/node_modules/hono";
 import agents from "../../forge-control/src/routes/agents.ts";
 import chat from "../../forge-control/src/routes/chat.ts";
 import projects from "../../forge-control/src/routes/projects.ts";

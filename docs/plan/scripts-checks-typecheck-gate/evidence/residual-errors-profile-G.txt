@@ -1,0 +1,21 @@
+════════ check-orientation.ts
+scripts/checks/check-orientation.ts(129,38): error TS2322: Type '"operator_chat"' is not assignable to type '"subagent" | "operator" | "worker" | "cron" | "unknown"'.
+scripts/checks/check-orientation.ts(133,7): error TS2322: Type '"project_worker"' is not assignable to type '"subagent" | "operator" | "worker" | "cron" | "unknown"'.
+scripts/checks/check-orientation.ts(138,23): error TS2322: Type '"project_worker"' is not assignable to type '"subagent" | "operator" | "worker" | "cron" | "unknown"'.
+════════ check-team-confirm.ts
+scripts/checks/check-team-confirm.ts(207,30): error TS2345: Argument of type '{ nodeId: string; settled: false; armed: ArmedState | null; nowMs: number; canTerminate: boolean; }' is not assignable to parameter of type 'XClickInput'.
+  Property 'hidesRows' is missing in type '{ nodeId: string; settled: false; armed: ArmedState | null; nowMs: number; canTerminate: boolean; }' but required in type 'XClickInput'.
+════════ check-team-rows.ts
+scripts/checks/check-team-rows.ts(84,3): error TS2322: Type '{ node: TeamNode; depth: number; parentDescription: string | null; hidesRows?: number | undefined; displayWorkingMs: number | null; }' is not assignable to type 'TeamRow'.
+  Types of property 'hidesRows' are incompatible.
+    Type 'number | undefined' is not assignable to type 'number'.
+      Type 'undefined' is not assignable to type 'number'.
+════════ serve-sse-808.ts
+scripts/checks/serve-sse-808.ts(51,22): error TS7016: Could not find a declaration file for module '../../forge-control/node_modules/hono/dist/index.js'. '/opt/ai-os/workspace/projects/b7ab4c57-7ebd-4ef5-a7e3-9345941467c5/forge-control/node_modules/hono/dist/index.js' implicitly has an 'any' type.
+scripts/checks/serve-sse-808.ts(90,21): error TS7006: Parameter 'c' implicitly has an 'any' type.
+════════ check-dismiss-peek.tsx
+scripts/checks/check-dismiss-peek.tsx(102,5): error TS2322: Type '"run"' is not assignable to type 'WorkingMsSource | null'.
+scripts/checks/check-dismiss-peek.tsx(115,3): error TS2741: Property 'hidesRows' is missing in type '{ node: TeamNode; depth: number; parentDescription: string; displayWorkingMs: number | null; }' but required in type 'TeamRow'.
+════════ check-stop-affordance.tsx
+scripts/checks/check-stop-affordance.tsx(98,5): error TS2322: Type '"run"' is not assignable to type 'WorkingMsSource | null'.
+scripts/checks/check-stop-affordance.tsx(111,3): error TS2741: Property 'hidesRows' is missing in type '{ node: TeamNode; depth: number; parentDescription: string; displayWorkingMs: number | null; }' but required in type 'TeamRow'.

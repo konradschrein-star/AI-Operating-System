@@ -99,7 +99,15 @@ function node(): TeamNode {
     status: "completed",
     tokens: { input: 100, output: 20, cache_read: 0, cache_creation: 0, total: 120 },
     working_ms: 252_000,
-    working_ms_source: "run",
+    /* "thread", because this fixture is a RUN node and a run node cannot carry
+     * anything else. `teamNodeFromRun` in forge-control/src/routes/chat.ts:555
+     * ships `working_ms_source: timing ? "thread" : null` for every run;
+     * "rollup" is reachable only from `subagentWorkingTime` (same file, :481),
+     * the fallback for a SUB-AGENT with no thread slice of its own. A worker
+     * with `subagents: []` and a non-null `working_ms` therefore has exactly
+     * one permitted source, and "run" was never a member of the union at all
+     * (`WorkingMsSource` = "thread" | "rollup", teamApi.ts:37). */
+    working_ms_source: "thread",
     started_at: "2026-08-17T09:00:00.000Z",
     settled: true,
     description: "a row somebody dismissed",
@@ -112,7 +120,33 @@ function node(): TeamNode {
 
 function row(): TeamRow {
   const n = node();
-  return { node: n, depth: 1, parentDescription: "operator chat", displayWorkingMs: n.working_ms };
+  /* `hidesRows: 1` is the only value `cascadeRowCount` can produce for this
+   * node — a childless worker (`subagents: []`) — so the number is right, and
+   * that is the whole of what can be claimed for it. It is NOT load-bearing
+   * here: this file is INERT in `hidesRows`. Measured at 0, 1, 2, 5 and 165 —
+   * ALL PASS at every one of them, in both directions across the
+   * `needsConfirm` boundary at team/confirm.ts:173. The method is not blind:
+   * the identical flip on a fixture that IS load-bearing,
+   * check-team-confirm.ts:87 from 1 to 2, prints 2 FAILURE(S).
+   *
+   * The mechanism, because an unexplained inertness is one the next reader
+   * "fixes": the only assertion below that could see the boundary is line 205,
+   * `.includes("dismissed · show")` — and `dismissTitle`
+   * (team/confirm.ts:244-263) builds that phrase once, as `undo`, then appends
+   * it to ALL THREE of its return branches. A substring shared by every branch
+   * is true at every value. Break the boundary for real — `> 1` → `>= 1` at
+   * team/confirm.ts:173, which puts a confirm in front of every one-row
+   * reversible dismissal — and this file still prints ALL PASS. What catches
+   * it, measured: check-team-confirm.ts:378-396 (3 failures) and
+   * check-r1873-fixes.ts:168/189 (2). The one-click/two-click rule is asserted
+   * there, not here. */
+  return {
+    node: n,
+    depth: 1,
+    parentDescription: "operator chat",
+    hidesRows: 1,
+    displayWorkingMs: n.working_ms,
+  };
 }
 
 const noop = (): void => {};

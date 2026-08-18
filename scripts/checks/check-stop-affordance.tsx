@@ -95,7 +95,13 @@ function node(settled: boolean): TeamNode {
     status: settled ? "completed" : "running",
     tokens: { input: 100, output: 20, cache_read: 0, cache_creation: 0, total: 120 },
     working_ms: 252_000,
-    working_ms_source: "run",
+    /* "thread" — the only source a RUN node can carry. `teamNodeFromRun`
+     * (forge-control/src/routes/chat.ts:555) ships `timing ? "thread" : null`
+     * for runs; "rollup" belongs to `subagentWorkingTime` (:481), the sub-agent
+     * fallback when there is no thread slice. This fixture is a worker run with
+     * `subagents: []` and a measured 252s, so "thread" is what the wire would
+     * actually say. "run" was never a member of `WorkingMsSource`. */
+    working_ms_source: "thread",
     started_at: "2026-08-17T09:00:00.000Z",
     settled,
     description: "fix the stop button's affordance",
@@ -108,7 +114,31 @@ function node(settled: boolean): TeamNode {
 
 function row(settled: boolean): TeamRow {
   const n = node(settled);
-  return { node: n, depth: 1, parentDescription: "operator chat", displayWorkingMs: n.working_ms };
+  /* 1 — the leaf, and one reason rather than two: `cascadeRowCount` cannot
+   * return anything else for a node with `subagents: []`. The second reason
+   * this comment used to give — that 1 keeps the row rendering the affordance
+   * these assertions describe — does not survive measurement, so it is gone.
+   * `hidesRows` is INERT in this file: 0, 2, 5 and 165 all print ALL PASS, as
+   * does 1. The same flip at check-team-confirm.ts:87 prints 2 FAILURE(S), so
+   * the method detects a real dependency where one exists.
+   *
+   * Why it is inert here: nothing below reads the ✕'s confirm state. Grep the
+   * file for `data-team-x`, `data-x-confirms` or `data-x-hides` and the only
+   * hit is this comment. The ⏸ under test does not read `hidesRows` either,
+   * and the CASES table walks settled vs running — a distinction
+   * `needsConfirm` settles on `!settled` before it ever reaches this number.
+   * Mutate the boundary itself (`> 1` → `>= 1` at team/confirm.ts:173) and
+   * this file still prints ALL PASS; check-team-confirm.ts:378-396 and
+   * check-r1873-fixes.ts:168/189 are what go red. Set the value from the model
+   * — the fixture is childless, so it is 1 — and do not read a coverage claim
+   * into it. */
+  return {
+    node: n,
+    depth: 1,
+    parentDescription: "operator chat",
+    hidesRows: 1,
+    displayWorkingMs: n.working_ms,
+  };
 }
 
 const noop = (): void => {};

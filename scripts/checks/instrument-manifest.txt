@@ -1,69 +1,173 @@
-# instrument-manifest.txt — the TypeScript instruments this branch is
-# responsible for compiling. Read by scripts/checks/check-instrument-typecheck.sh
-# (universal gate item 9, 03-quality.md §3.1).
-#
-# One repo-relative path per line. Blank lines and `#` comments are ignored.
-# Each entry is typechecked in ITS OWN tsc invocation.
+# instrument-manifest.txt — THE WAIVER LEDGER of universal gate item 9
+# (`scripts/checks/check-instrument-typecheck.sh`, `03-quality.md` §3.1).
 #
 # ---------------------------------------------------------------------------
-# WHY THIS FILE EXISTS AT ALL. `scripts/checks/*.ts` is compiled by NOTHING.
-# `tsx` strips types without checking them, and the directory sits outside both
-# tsconfig `include` lists — `forge-control/tsconfig.json` reads
-# `"include": ["src/**/*.ts"]` and `forge-control-web`'s covers its own app. So
-# the fleet's verification instruments are the least-verified code in the repo:
-# a check script can carry a type error for months and still run green, because
-# nothing ever asked the compiler. This is the THIRD instance of the same hole —
-# phase 7's `measure-schedule.ts` ("Added round 212" in 03-quality.md §3.2),
-# phase 6's `forge-control-web/` half ("Added round 223"), and phase 6B's
-# whole-directory measurement — and this gate is the repair.
+# WHAT THIS FILE IS. It listed what IS compiled. It now lists what is NOT — and
+# the target is that it lists NOTHING.
+#
+# The gate enumerates its subjects by GLOB over the whole of `scripts/checks/`,
+# at any depth, dotfiles included, `.ts` and `.tsx` (`.mts`/`.cts` are named and
+# failed by its coverage scan). Coverage is automatic and cannot be forgotten.
+# What this file holds is the other thing: an instrument that genuinely cannot
+# be made to compile by the project standing in front of it, EXCUSED IN THE
+# OPEN, with a diagnostic, a reason and an owner attached to it.
+#
+# ADDING A PATH HERE DOES NOT OBTAIN COVERAGE — IT EXCUSES A FAILURE. There is
+# no way to "get a file compiled" by writing it down. Every file under
+# `scripts/checks/` is compiled the moment it exists, including one written by
+# someone who never read this file or the plan behind it. A line here changes
+# one thing only: an observed FAIL is reclassified as an excused WAIVED, and it
+# is printed, loudly, in every transcript until someone removes it.
+#
+# THE LEDGER IS EMPTY AT THE TIME OF WRITING, AND THAT IS THE TARGET STATE, NOT
+# AN OVERSIGHT. All 42 subjects compile clean (round 500, `evidence/
+# phase5-ledger.md`; the six that were red were fixed at the source in phase 3,
+# not excused here). An empty ledger is what this project set out to leave
+# behind. The file is kept rather than deleted because DELETING IT WOULD MAKE
+# THE NEXT EXCLUSION INVISIBLE: with no ledger, the next person facing one
+# stubborn instrument reaches for an `--exclude` flag or an `if` in the compile
+# loop — a quiet, unowned, unprinted exclusion, which is exactly the shape this
+# project exists to eliminate.
 #
 # ---------------------------------------------------------------------------
-# WHY A MANIFEST AND NOT THE WHOLE DIRECTORY. MEASURED AT ROUND 800.
-# 6B's invocation over all 25 `scripts/checks/*.ts` in ONE invocation does not
-# pass and CANNOT be made to pass by this project:
-#   * compiled together they pull `forge-control-web/app` into the program, and
-#     `useAutogrow.ts` and `tokens.ts` then fail on DOM lib resolution;
-#   * three other projects' scripts are independently red — `check-orientation.ts`
-#     (3 type errors plus a `--jsx` failure), `serve-sse-808.ts` (implicit
-#     `any`s), `check-chat-rich.tsx`.
-# A gate that can only ever be disclosed is the failure standing rule 2 exists to
-# kill (03-quality.md §4). So the gate is scoped to what this branch OWNS and can
-# fix, and it GROWS BY CONSTRUCTION: check-instrument-typecheck.sh fails, by
-# name, if any `scripts/checks/*.ts` this branch added or modified is missing
-# from this file. Closing the rest of the directory is the DoD-6 measurement
-# project's job, and that project's goal says so.
+# THE FORMAT — FOUR REQUIRED FIELDS PER ENTRY (`02-architecture.md` §4.6).
 #
-# MEASURED AT ROUND 800: one file per invocation, all six below exit 0 with zero
-# errors.
+# The example below is INDENTED BY FOUR EXTRA SPACES so that the gate does not
+# read it as a live record. A field line is recognised as `# ` followed
+# IMMEDIATELY by the field name — which is exactly what a real entry looks like,
+# and exactly what an example in a header must not be.
+#
+#     path        : scripts/checks/check-example.ts
+#     diagnostic  : TS2345 at line 88 — <verbatim first line of the error>
+#     reason      : <why it cannot be fixed by the project holding it>
+#     owner       : <the project or round that will fix it>
+#     scripts/checks/check-example.ts
+#
+# A real entry is those same five lines with the four field lines beginning at
+# column 1 as `# path        : …` and the fifth being the bare path, neither
+# indented nor commented. All four fields are REQUIRED and none may be empty:
+# the gate fails, naming the path and the missing field(s). A field block with
+# no bare path after it fails the same way — a justification that excuses
+# nothing is a note, and notes belong in prose, not in a ledger.
+#
 # ---------------------------------------------------------------------------
-
-scripts/checks/check-close-gate.ts
-scripts/checks/check-fix-chain-graph.ts
-scripts/checks/check-plan-api.ts
-scripts/checks/check-plan-store.ts
-scripts/checks/check-project-metadata.ts
-scripts/checks/check-task-api.ts
-
-# ROUND 902 (fix cycle 1, review finding 1). The first entry here that imports
-# `forge-control-web/app` — deliberately, and it is why this one compiles when
-# `check-browser-shots.ts` next to it does not: it imports
-# `app/desktop/chat/browser-shots.ts` ALONE, which is React-free, DOM-free and
-# dependency-free by construction (read its header), so no DOM lib is pulled in.
-# The neighbouring script imports `thread-mapping.ts` and `api.ts` too, and
-# those drag `tokens.ts`/`useAutogrow.ts` and @assistant-ui's `.d.ts` into the
-# program — measured again at round 902: 10+ TS2304 errors, unchanged from the
-# round-800 finding above. That is the whole difference, and it is the reason
-# this entry does not reopen the case the header closes.
-# MEASURED AT ROUND 902: exit 0, zero errors, same one-file-per-invocation
-# options.
-scripts/checks/check-screenshot-render-shapes.ts
-
-# ROUND 960. The second entry of the class the line above opened — a check that
-# executes a PROMPT'S CLAIM against the code it describes, here GRAPH_GUIDE's
-# workstream bullet against `busyWorkstreams()`/`partitionByWorkstream()`
-# (project-tick.ts), `selectClaimable()` (task-graph.ts) and `workstreamBranch()`
-# (workspace.ts). It imports `forge-control/src` ONLY — no `forge-control-web`,
-# no database, no git repo — so it compiles under the same one-file-per-
-# invocation options as the six above and a build task may run it.
-# MEASURED AT ROUND 960: exit 0, zero errors.
-scripts/checks/check-workstream-claim.ts
+# THE THREE PROPERTIES THAT MAKE A LEDGER SAFER THAN AN EXCLUSION FLAG. All are
+# implemented in the gate — step 8 reads this file, step 11 reconciles it —
+# and each landed in the same commit as the header text claiming it (standing
+# rule 2): the first two at round 500, the third at round 501.
+#
+#   1. EVERY WAIVER IS PRINTED ON EVERY RUN, in the WAIVERS block above the
+#      verdict, with its four fields and with the diagnostic the compiler
+#      ACTUALLY produced beside the one recorded here. A waiver cannot be
+#      quiet. With zero entries the block still prints — "ok: 0 waivers — the
+#      ledger is empty" — because a block that vanishes when it is empty is a
+#      block nobody notices has stopped running.
+#   2. A WAIVED FILE THAT COMPILES CLEAN IS A FAILURE — the gate says "waived
+#      but clean" and names it. Stale waivers are the mechanism by which an
+#      exclusion list outlives its reason: the error gets fixed, the excuse
+#      does not get deleted, and the next reader believes the file is still
+#      broken. Two further failures close the same hole from the other side: a
+#      waived path that is not on disk, and a waived path the gate does not
+#      compile at all, are both refused — a waiver must name something this
+#      gate actually reads, or it is excusing nothing and hiding that fact.
+#   3. ONE SUBJECT, ONE WAIVER — A PATH WRITTEN HERE TWICE IS A LEDGER ERROR,
+#      and the gate names BOTH line numbers. This one was missing until round
+#      501 and its absence was the hole properties 1 and 2 were supposed to
+#      make impossible: step 11 discounts ONE observed failure per valid entry,
+#      so a second entry for the same path discounts a failure IT DOES NOT OWN.
+#      Measured — two broken subjects, one of them waived twice with two
+#      perfectly valid four-field entries: the gate printed both failures, then
+#      `type failures 0`, then `PASSED`, and exited 0 over an unexcused TS2322
+#      in a file nobody had waived (`evidence/phase6-ledger-c4.md`, control C4).
+#      A duplicated path is an ordinary hand-edit slip — two projects excusing
+#      the same stubborn instrument, or one copy-paste — which is exactly why
+#      it is refused rather than quietly ignored: a skip would repair the
+#      arithmetic while leaving you believing this file says what you wrote. If
+#      two rounds need to waive one path, they share ONE entry and its
+#      `diagnostic` field names both errors.
+#
+# THE LEDGER NEVER EXCLUDES A FILE FROM COMPILATION. Every subject is compiled,
+# every run, waived or not; the waiver acts on the VERDICT, never on the
+# subject list. There is no `--exclude` path in the gate and this file must not
+# grow one.
+#
+# ---------------------------------------------------------------------------
+# THE LAUNCH GOAL'S PHRASING WAS SUPERSEDED, AND `scripts/deploy/payload-
+# verify.json` STILL QUOTES IT VERBATIM — correctly, because it is the record
+# of what was launched. The goal reads: "extend scripts/checks/instrument-
+# manifest.txt to cover the whole directory". That sentence was written when
+# this file was an inclusion list, and it describes a way of obtaining coverage
+# that no longer exists. THE DIRECTORY IS COVERED WITHOUT THIS FILE NAMING
+# ANYTHING: glob enumeration in the gate (R8, R9) covers it, and the goal's
+# intent — every script under `scripts/checks/` under a typecheck gate — is met
+# with this ledger empty. `payload-verify.json` is not edited: editing a record
+# of what was launched falsifies it.
+#
+# ---------------------------------------------------------------------------
+# ▼▼▼ HISTORY — EVERYTHING BELOW THIS LINE DESCRIBES A FILE THAT NO LONGER
+# ▼▼▼ WORKS THIS WAY. It is retained because the measurements in it are real
+# ▼▼▼ and were the reason for a design this project has now replaced; it is NOT
+# ▼▼▼ an instruction, and nothing in it is true of the gate that exists today.
+# ▼▼▼ Retired by project `scripts-checks-typecheck-gate`, round 500.
+#
+# HISTORY (round 800) — WHAT THIS FILE USED TO BE. It was an INCLUSION LIST:
+# the gate compiled the paths named here and nothing else, and a "manifest
+# guard" (`git diff --diff-filter=ACMR main..HEAD -- 'scripts/checks/*.ts'`)
+# failed the run when a check script the branch had touched was absent from the
+# list. BOTH ARE RETIRED, by this project, because GLOB ENUMERATION SUPERSEDES
+# THEM (R15). The guard was a good answer to the wrong question — "did the
+# author remember to list their file" is a question that exists only because
+# there is a list — and with a glob there is nothing to forget.
+#
+# HISTORY (round 800) — THE RATIONALE THAT WAS RETIRED, verbatim in substance:
+#
+#   WHY A MANIFEST AND NOT THE WHOLE DIRECTORY. MEASURED AT ROUND 800.
+#   6B's invocation over all 25 `scripts/checks/*.ts` in ONE invocation does not
+#   pass and CANNOT be made to pass by this project:
+#     * compiled together they pull `forge-control-web/app` into the program,
+#       and `useAutogrow.ts` and `tokens.ts` then fail on DOM lib resolution;
+#     * three other projects' scripts are independently red —
+#       `check-orientation.ts` (3 type errors plus a `--jsx` failure),
+#       `serve-sse-808.ts` (implicit `any`s), `check-chat-rich.tsx`.
+#   A gate that can only ever be disclosed is the failure standing rule 2 exists
+#   to kill. So the gate is scoped to what this branch OWNS and can fix, and it
+#   GROWS BY CONSTRUCTION: check-instrument-typecheck.sh fails, by name, if any
+#   `scripts/checks/*.ts` this branch added or modified is missing from this
+#   file.
+#   MEASURED AT ROUND 800: one file per invocation, all six below exit 0 with
+#   zero errors — check-close-gate.ts, check-fix-chain-graph.ts,
+#   check-plan-api.ts, check-plan-store.ts, check-project-metadata.ts,
+#   check-task-api.ts.
+#
+# WHAT SUPERSEDED IT: the profile `tsconfig.checks-instruments.json` (phase 1)
+# made the merged-program argument moot — every subject is compiled ALONE
+# (R11), through one `extends` of the app's own tsconfig — and phase 3 fixed
+# the three red scripts at the source rather than excusing them. Measured at
+# round 500: 42 subjects found, 42 compiled, 0 failures, one tsc invocation per
+# file, glob-enumerated. The seven paths this file used to name were deleted in
+# the same commit as this header.
+#
+# HISTORY (round 902) — THE LAST ENTRY EVER ADDED AS AN INCLUSION, and why the
+# distinction it drew no longer has to be drawn by hand:
+#
+#   `check-screenshot-render-shapes.ts` was the first entry that imported
+#   `forge-control-web/app` — deliberately, and it was why that one compiled
+#   when `check-browser-shots.ts` next to it did not: it imports
+#   `app/desktop/chat/browser-shots.ts` ALONE, which is React-free, DOM-free and
+#   dependency-free by construction, so no DOM lib was pulled in. The
+#   neighbouring script imports `thread-mapping.ts` and `api.ts` too, and those
+#   dragged `tokens.ts`/`useAutogrow.ts` and @assistant-ui's `.d.ts` into the
+#   program — 10+ TS2304 errors, measured at round 902.
+#   MEASURED AT ROUND 902: exit 0, zero errors, same one-file-per-invocation
+#   options.
+#
+# WHAT SUPERSEDED IT: both files are subjects today and both compile clean under
+# the profile, which resolves the DOM lib and the `@types` the hand-rolled flag
+# list of round 902 could not. Nobody has to reason about which imports are safe
+# in order to decide what gets listed, because nothing gets listed.
+#
+# ▲▲▲ END OF HISTORY.
+# ---------------------------------------------------------------------------
+#
+# ENTRIES BELOW THIS LINE. There are none, and the gate prints that fact on
+# every run.

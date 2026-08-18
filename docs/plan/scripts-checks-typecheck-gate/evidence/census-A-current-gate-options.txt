@@ -1,0 +1,42 @@
+check-browser-shots.ts                         rc=2   errors=24    20 error TS2304 3 error TS2584 1 error TS2749 
+check-classify.ts                              rc=0   errors=0    
+check-close-gate.ts                            rc=0   errors=0    
+check-composer-v3.ts                           rc=2   errors=10    3 error TS2304 3 error TS2584 4 error TS2812 
+check-duration.ts                              rc=0   errors=0    
+check-fix-chain-graph.ts                       rc=0   errors=0    
+check-gemini-tally.ts                          rc=2   errors=2     2 error TS2552 
+check-nav-stack.ts                             rc=0   errors=0    
+check-orientation.ts                           rc=2   errors=4     3 error TS2322 1 error TS6142 
+check-plan-api.ts                              rc=0   errors=0    
+check-plan-store.ts                            rc=0   errors=0    
+check-project-metadata.ts                      rc=0   errors=0    
+check-quota-row.ts                             rc=2   errors=2     2 error TS6142 
+check-r1871-chat.ts                            rc=2   errors=6     2 error TS2304 1 error TS2503 3 error TS2584 
+check-r1873-fixes.ts                           rc=2   errors=6     2 error TS2304 1 error TS2503 3 error TS2584 
+check-r1875-fixes.ts                           rc=2   errors=6     2 error TS2304 1 error TS2503 3 error TS2584 
+check-run-control-client.ts                    rc=2   errors=1     1 error TS2552 
+check-screenshot-render-shapes.ts              rc=0   errors=0    
+check-secret-events.ts                         rc=0   errors=0    
+check-secret-requests.ts                       rc=2   errors=6     2 error TS2304 1 error TS2503 3 error TS2584 
+check-secret-scan.ts                           rc=0   errors=0    
+check-story-digest.ts                          rc=2   errors=6     2 error TS2304 1 error TS2503 3 error TS2584 
+check-subagent-slice.ts                        rc=2   errors=6     2 error TS2304 1 error TS2503 3 error TS2584 
+check-task-api.ts                              rc=0   errors=0    
+check-team-confirm.ts                          rc=2   errors=1     1 error TS2345 
+check-team-rows.ts                             rc=2   errors=1     1 error TS2322 
+check-thread-mapping.ts                        rc=2   errors=24    20 error TS2304 3 error TS2584 1 error TS2749 
+check-tool-summary.ts                          rc=0   errors=0    
+check-typing-memo.ts                           rc=0   errors=0    
+check-ui-prompt.ts                             rc=0   errors=0    
+check-usage-fold.ts                            rc=0   errors=0    
+check-working-sql-agreement.ts                 rc=0   errors=0    
+check-working-time.ts                          rc=0   errors=0    
+serve-agents-7798.ts                           rc=0   errors=0    
+serve-quota-7799.ts                            rc=0   errors=0    
+serve-sse-808.ts                               rc=2   errors=3     1 error TS2552 1 error TS7006 1 error TS7016 
+serve-v3-7798.ts                               rc=0   errors=0    
+check-chat-rich.tsx                            rc=2   errors=27    1 error TS17004 20 error TS2304 1 error TS2307 3 error TS2584 1 error TS2749 1 error TS6142 
+check-dismiss-peek.tsx                         rc=2   errors=8     3 error TS17004 1 error TS2307 1 error TS2322 1 error TS2741 2 error TS6142 
+check-integrations.tsx                         rc=2   errors=5     2 error TS17004 1 error TS2307 1 error TS2552 1 error TS6142 
+check-settings-surface.tsx                     rc=2   errors=11    6 error TS17004 1 error TS2307 4 error TS6142 
+check-stop-affordance.tsx                      rc=2   errors=9     4 error TS17004 1 error TS2307 1 error TS2322 1 error TS2741 2 error TS6142 

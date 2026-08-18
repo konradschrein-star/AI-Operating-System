@@ -258,12 +258,59 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    so a reader can tell a re-measurement from a rot.*
 
 9. **Instrument typecheck (round 802, phase 8C — operator ruling, third
-   instance of the same hole).** `bash scripts/checks/check-instrument-typecheck.sh`
-   exits 0. It typechecks every check script named in
-   `scripts/checks/instrument-manifest.txt`, **one file per `tsc` invocation**,
-   and additionally **fails if any `scripts/checks/*.ts` this branch adds or
-   modifies is absent from the manifest.** Both halves are the gate; the second
-   is the one that keeps the first honest.
+   instance of the same hole; rewritten at round 500 by project
+   `scripts-checks-typecheck-gate`).**
+   `bash scripts/checks/check-instrument-typecheck.sh` exits 0. It typechecks
+   **the whole of `scripts/checks/`, enumerated by glob at run time** —
+   recursively, dotfiles included, `.ts` and `.tsx` compiled and `.mts`/`.cts`
+   named and failed by its coverage scan — **one file per `tsc` invocation**,
+   through the checked-in profile `tsconfig.checks-instruments.json`.
+   Enumeration is reconciled against an independent `find`, and zero subjects is
+   a refusal, not a pass.
+
+   **It needs BOTH dependency trees installed, and it now refuses for each of
+   them separately** (round 600, phase 6 A6.1/NF5). `forge-control-web` supplies
+   `tsc`, React and the app types; `forge-control` supplies `pg`, `hono`,
+   `@hono/node-server` and `lz-string` — which the subjects reach directly and,
+   more often, through the `forge-control/src/…` modules they import. Both are
+   gitignored, so a fresh clone has neither:
+
+   ```bash
+   cd forge-control-web && pnpm install --frozen-lockfile --prefer-offline --prod=false
+   cd forge-control     && pnpm install --frozen-lockfile --prefer-offline --prod=false
+   ```
+
+   Until round 600 the gate named only the first. Measured on a cold clone of
+   the merged tree: that line run verbatim left the run at **13 type failures
+   and 423 fidelity violations**, and because every one of those diagnostics
+   sits outside `scripts/checks/`, the fidelity guard printed *"THE PROFILE IS
+   WRONG, NOT THE APP"* — sending the reader to edit
+   `tsconfig.checks-instruments.json` over an install they had never run. The
+   second refusal carries two sentinels: `pg` absent means no install at all,
+   `@types/pg` absent while `pg` is present means the devDependencies were
+   pruned by `NODE_ENV=production`, which is the same `--prod=false` trap in a
+   costume.
+
+   **`scripts/checks/instrument-manifest.txt` is a WAIVER LEDGER, not an
+   inclusion list, and the manifest guard is retired.** Nothing in that file can
+   add a subject or remove one: it names instruments whose failure is EXCUSED,
+   with a diagnostic, a reason and an owner, and the gate prints every entry
+   above its verdict on every run and fails if a waived file compiles clean
+   ("waived but clean"). **A path written in that file TWICE is a hard ledger
+   error naming both line numbers** (round 501): the gate discounts one observed
+   failure per valid entry, so a duplicate discounts a failure it does not own —
+   measured at `f30dfdc`, two broken subjects with one of them waived twice made
+   the gate print both failures and then `type failures 0`, `PASSED`, exit 0 over
+   an unexcused type error in a file nobody waived
+   (`docs/plan/scripts-checks-typecheck-gate/evidence/phase6-ledger-c4.md`).
+   The duplicate is refused, not skipped, and step 11 additionally refuses to
+   issue any verdict if `FAILED + WAIVED` stops equalling what the compile loop
+   counted. Its target state is empty, and it is empty today. The
+   guard — which failed the run when a `scripts/checks/*.ts` the branch had
+   touched was absent from the list — is retired because glob enumeration makes
+   the question it asked, *"did the author remember to list their file"*,
+   unaskable: there is no list to be absent from, and a new instrument is
+   covered the moment it is written.
 
    **The hole.** `scripts/checks/*.ts` is compiled by **nothing**. `tsx` strips
    types without checking them, and that directory sits outside **both**
@@ -284,8 +331,19 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    by which it stayed invisible three times. Any phase can add an instrument, so
    every phase checks its own.
 
+   > **HISTORY — the two passages below describe the ROUND-800 gate and are no
+   > longer true of this one. They are kept because their measurements are real
+   > and were the reason for a design that has since been replaced. Superseded
+   > by `docs/plan/scripts-checks-typecheck-gate/`, round 500: the compile
+   > profile (`tsconfig.checks-instruments.json`) compiles each subject ALONE,
+   > which removes the merged-program argument entirely, and the three red
+   > scripts named below were fixed at the source rather than excused —
+   > measured at round 500, 42 subjects found, 42 compiled, 0 failures. Read
+   > them as an account of what was once measured, not as a rule.**
+
    **Why MANIFEST-SCOPED and not directory-wide — measured at round 800, and it
-   changes the shape of the gate.** 6B's invocation over **all** the directory's
+   changes the shape of the gate.** [HISTORY, superseded at round 500.] 6B's
+   invocation over **all** the directory's
    `*.ts` at once **does not pass and cannot be made to pass by this project**.
    Compiled together they pull `forge-control-web/app` into the program (DOM-lib
    errors in `useAutogrow.ts` and `tokens.ts`), and three other projects'
@@ -305,7 +363,11 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    finding rather than a surprise.
 
    **What the manifest guard buys: a new instrument cannot escape the gate by
-   being new.** A manifest alone would be a gate that shrinks to fit — the
+   being new.** [HISTORY, superseded at round 500 — the glob catches a new
+   instrument structurally, so nothing has to be bought; and the
+   "directory-wide would be red tomorrow from another project's merge" argument
+   was answered by fixing the other projects' scripts instead of scoping around
+   them.] A manifest alone would be a gate that shrinks to fit — the
    easiest way to pass it is to leave your script out of it. The guard inverts
    that: adding or modifying a `scripts/checks/*.ts` **without** listing it is
    itself a failure, so the manifest can only grow with the branch. The
@@ -315,22 +377,40 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    tomorrow from another project's merge alone, having caught nothing about this
    branch.
 
-   *Two instrument traps found while measuring this gate, recorded because they
-   would each have made it report wrongly (`evidence/phase8-corpus.md` §5.2):*
-   **(a)** the invocation's working directory is load-bearing — run from the
-   repo root, all six fail with `TS2307 Cannot find module 'node:fs'` and
-   `TS2580 Cannot find name 'process'`, because `@types/node` resolves from
-   `forge-control/node_modules` and nowhere else. A false red on green code.
-   **(b)** the branch-ownership set must **not** be computed from
-   `merge-base...HEAD`: after round 801's merge that expression returns 25
-   files, `main`'s included, because the merge commit carries them. The
-   expression that returns exactly the six is
+   *Two instrument traps found while measuring the round-800 gate, recorded
+   because they would each have made it report wrongly
+   (`evidence/phase8-corpus.md` §5.2). Both are HISTORY as stated; what
+   replaced each one is named beside it:*
+   **(a)** [HISTORY, superseded at round 500.] the invocation's working
+   directory was load-bearing — run from the repo root, all six failed with
+   `TS2307 Cannot find module 'node:fs'` and `TS2580 Cannot find name
+   'process'`, because `@types/node` resolved from `forge-control/node_modules`
+   and nowhere else. A false red on green code. **What replaced it:** the gate
+   no longer runs `tsc` with a hand-rolled flag list from `forge-control/`. It
+   generates one per-file config that `extends` the checked-in profile
+   `tsconfig.checks-instruments.json`, which pins `typeRoots` explicitly, and it
+   compiles **from the repo root** — deliberately, because `tsc` prints
+   diagnostic paths relative to its own cwd and the gate's profile-fidelity
+   check compares them against `scripts/checks/`. Running it from anywhere else
+   now yields an identical verdict.
+   **(b)** [HISTORY as an input to the retired manifest guard; the expression
+   itself is STILL LIVE elsewhere.] the branch-ownership set must **not** be
+   computed from `merge-base...HEAD`: after round 801's merge that expression
+   returns 25 files, `main`'s included, because the merge commit carries them.
+   The expression that returns exactly the six is
    `git log --no-merges --name-only --pretty=format: main..HEAD -- 'scripts/checks/*.ts'`.
+   **What it is still for:** *not* item 9 — item 9 no longer scopes anything to
+   the diff, and computing "the files this branch touched" tells it nothing it
+   uses. The identical expression, with `'*.sh'` in place of the pathspec, is
+   how **item 10** below derives its shell-lint subject list, and the
+   merge-commit trap recorded here is exactly why item 10 spells it out. Read
+   this as the derivation's provenance, not as a step of item 9.
 
-   The script and the manifest are builder 8D's
+   The script and the ledger are builder 8D's by origin
    (`scripts/checks/check-instrument-typecheck.sh`,
-   `scripts/checks/instrument-manifest.txt`, §10 of `04-phases.md`); this clause
-   and the §4 command line are what run them.
+   `scripts/checks/instrument-manifest.txt`, §10 of `04-phases.md`) and were
+   rewritten by project `scripts-checks-typecheck-gate` (rounds 100–500); this
+   clause and the §4 command line are what run them.
 
 10. **Shell lint (round 804, finding 4 — the gate that keeps a retired
     disclosure retired).** `shellcheck -S error` over every `*.sh` this branch
@@ -854,9 +934,26 @@ python3 docs/plan/engine-task-graph/check-instrument-identity.py
 # the file. Re-measures; never trusts the document.
 python3 scripts/checks/check-r20-census.py
 # §3.1 item 9 — the instruments are the least-verified code in the repo. Exits 0,
-# or names the manifest script that no longer typechecks / the scripts/checks/*.ts
-# this branch touched and did not list. One tsc invocation per file, from
-# forge-control/ (that is where @types/node resolves) — see §3.1 item 9's traps.
+# or names the instrument under scripts/checks/ that no longer typechecks. Scope
+# is THE WHOLE DIRECTORY, enumerated by glob at run time — not the manifest, not
+# the diff. One tsc invocation per file (R11), from the repo root, through
+# tsconfig.checks-instruments.json. instrument-manifest.txt is a WAIVER LEDGER:
+# it excuses a named failure, it never obtains coverage, and the gate prints
+# every entry above its verdict and fails on a waived file that compiles clean.
+# ONE SUBJECT, ONE WAIVER (round 501): a path written in that ledger twice is a
+# hard ledger error naming both lines, because a duplicate entry discounts a
+# failure it does not own and turned a real type error into PASSED/exit 0 at
+# f30dfdc (scripts-checks-typecheck-gate/evidence/phase6-ledger-c4.md).
+# It needs BOTH dependency trees and refuses, separately, for each (round 600).
+# forge-control-web supplies tsc and the app types; forge-control supplies pg,
+# hono and lz-string, which the subjects reach through forge-control/src. On a
+# cold clone, installing only the first leaves 13 type failures and 423 fidelity
+# violations that blame the PROFILE for a missing install. --prod=false is
+# load-bearing in both: NODE_ENV=production drops @types/pg, tsx and typescript
+# and exits 0.
+( cd forge-control-web && pnpm install --frozen-lockfile --prefer-offline --prod=false )
+( cd forge-control     && pnpm install --frozen-lockfile --prefer-offline --prod=false )
+# ~150s for 42 subjects; do not background it and read the verdict line.
 bash scripts/checks/check-instrument-typecheck.sh
 # §3.1 item 10 — shell lint. Exits 0, or names the *.sh this branch touched that
 # fails at ERROR severity. The file list is DERIVED (no-merges main..HEAD), not
