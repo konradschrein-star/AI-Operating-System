@@ -20,7 +20,8 @@ Everything below was run against the live checkout `/opt/forge-ai-os`, the live
 | 4 | Migrations that rode along | **PASS** — all three tables exist, both routes 200. One finding: the brief's `\dt` command silently ignores its 2nd and 3rd arguments. |
 | 5 | R14 in the deployed tree | **PASS** — `dependencies_corrupt` is present in the deployed tree and `force` does not open it. The watchdog does **not** need disabling. |
 | 6 | The cycle 400, honestly | **PASS** — both reachable 400s observed, each naming the offending id. No cycle was claimed. |
-| 7 | DoD-1 / DoD-2 live observations | see §7 — **recorded at the end of this run**; if open, handed to round 817 by name. |
+| 7 | DoD-1 / DoD-2 live observations | **7a OBSERVED** (round 100 `ready` while round 0 `running`, 07:03:31Z). **7b NOT OBSERVED** — one workstream, one worktree, for the whole window; open, handed to round 817. |
+| 7c | Achieved concurrency of the DoD-6 project | **1**, over 224 samples — a **FAILED DoD-6 on width**, cause identified: one running task per workstream (round-222 ruling) plus a planner prompt that discourages opening a second. |
 | 8 | DoD-6 project created + watcher launched | **DONE** — project `b7ab4c57-7ebd-4ef5-a7e3-9345941467c5`, watcher pid alive. One finding: the brief's `POST /api/projects` body is **wrong against the deployed route** and 400s. |
 
 ---
@@ -597,7 +598,214 @@ missing by the first bulk insert.
 *Filled in at the end of this run, from live SQL and live disk. Nothing here is
 asserted from expectation. See §7.3 for what was open when this task ended.*
 
-<!-- OBSERVATIONS -->
+**The window.** The DoD-6 project's fan-out began at **07:03:23Z** (the architect's
+first child row, `26066a98`, created 07:03:13Z and promoted 07:03:31Z). The
+45-minute window therefore closed at **07:48:30Z**. Both halves are reported as of
+that instant; nothing after it is claimed.
+
+**The instrument, and how it could have lied.** Both observations were taken by one
+predicate, run every 15–20s by two detached samplers (224 + 135 samples,
+`/tmp/dod6-conc.log`, `/tmp/dod6-samples.txt`):
+
+```sql
+SELECT … FROM project_tasks a JOIN project_tasks b ON a.project_id = b.project_id
+ WHERE a.project_id = '<NEW_ID>' AND a.status IN ('ready','running')
+   AND b.status <> 'done' AND a.round > b.round;
+```
+
+The way this instrument would report a pass wrongly is by being **incapable of
+returning a row** — a predicate that never fires certifies whatever it is pointed
+at. So it was controlled both ways before it was believed:
+
+```text
+NEGATIVE CONTROL — a project scheduled by the OLD engine must produce 0:
+$ … WHERE a.project_id='8ea0cc08-28d9-4301-9f28-c98e1c5d6838' …
+ old_rule_violations
+---------------------
+                   0
+
+POSITIVE CONTROL — the same predicate over a synthetic three-row fixture, to prove
+it CAN fire (and is not merely silent):
+$ psql … -c "WITH fixture(id, project_id, round, status) AS (VALUES
+    ('synthetic-high','p',3,'running'), ('synthetic-low','p',1,'pending'), ('synthetic-done','p',2,'done'))
+   SELECT a.id AS higher, …"
+     higher     | a_round | a_status |     lower     | b_round | b_status
+----------------+---------+----------+---------------+---------+----------
+ synthetic-high |       3 | running  | synthetic-low |       1 | pending
+(1 row)
+```
+
+### 7a — A GRAPH-SCHEDULED TASK PROMOTED WITHOUT ITS ROUND DRAINING: **OBSERVED**
+
+First seen **20 seconds into the fan-out**, and continuously thereafter — the
+sampler's count of qualifying pairs rose to **5** at 07:12:08Z:
+
+```text
+$ grep '^=== ' /tmp/dod6-samples.txt | (first sample with a non-zero count)
+=== 2026-08-18T07:03:24Z running=1 old_rule_violations=1
+$ … (the maximum over 135 samples)
+=== 2026-08-18T07:12:08Z running=1 old_rule_violations=5
+```
+
+The named pair at first sighting (07:03:41Z):
+
+```text
+             promoted_id              | promoted_round | promoted_role | promoted_status |         promoted_at          |              blocker_id              | blocker_round | blocker_role | blocker_status
+--------------------------------------+----------------+---------------+-----------------+------------------------------+--------------------------------------+---------------+--------------+----------------
+ 26066a98-2838-4261-b487-00ebd4994be8 |            100 | planner       | ready           | 2026-08-18 07:03:31.88031+00 | 69686d9e-62db-467c-ad72-f95654b40b0b |             0 | architect    | running
+```
+
+**Task `26066a98` (round 100, planner) was `ready` at 07:03:31.880Z while task
+`69686d9e` (round 0, architect) was still `running`.** Under the legacy rule —
+"nothing in round N+1 becomes ready until every task of that project in a round
+< N+1 is done" — that row could not exist. It exists because `26066a98` carries
+`depends_on = '{}'`, an explicit graph root, and the graph is the only ordering
+consulted.
+
+And the same shape still held at the window's close, one full phase later:
+
+```text
+$ … the pair-wise statement, 2026-08-18T07:48:51Z
+               promoted               | a_round | a_role  | a_status |          promoted_at          |               blocker                | b_round | b_role  | b_status
+--------------------------------------+---------+---------+----------+-------------------------------+--------------------------------------+---------+---------+----------
+ 80701ad9-bef1-41aa-b559-5ca24275bf2a |     300 | planner | ready    | 2026-08-18 07:48:47.604583+00 | b1d473eb-91ab-4e93-bd23-75554a1e1d68 |     200 | planner | running
+```
+
+The full table at window close, which is also the DoD-6 fan-out shape:
+
+```text
+                  id                  | round |   role    | status  | workstream | nd |          created_at           |          updated_at           |                   title
+--------------------------------------+-------+-----------+---------+------------+----+-------------------------------+-------------------------------+--------------------------------------------
+ 69686d9e-62db-467c-ad72-f95654b40b0b |     0 | architect | done    | main       |  0 | 2026-08-18 06:38:19.426013+00 | 2026-08-18 07:06:43.011218+00 | Plan: scripts-checks-typecheck-gate
+ ce531eeb-2bd4-4323-9e1e-f94e19cb90e9 |     0 | builder   | done    | main       |  0 | 2026-08-18 07:10:46.556561+00 | 2026-08-18 07:30:51.44306+00  | Phase 1 — the compile profile: tsconfig.ch
+ 2bb68fcc-c880-44d6-8a1a-3f32e005f8b6 |     1 | reviewer  | done    | main       |  1 | 2026-08-18 07:11:27.789022+00 | 2026-08-18 07:44:36.222947+00 | Phase 1 gate — reproduce the census exactl
+ 26066a98-2838-4261-b487-00ebd4994be8 |   100 | planner   | done    | main       |  0 | 2026-08-18 07:03:13.108088+00 | 2026-08-18 07:11:44.671927+00 | Phase 1 — the compile profile
+ b1d473eb-91ab-4e93-bd23-75554a1e1d68 |   200 | planner   | running | main       |  1 | 2026-08-18 07:03:45.830472+00 | 2026-08-18 07:44:46.306063+00 | Phase 2 — the gate rewrite
+ 80701ad9-bef1-41aa-b559-5ca24275bf2a |   300 | planner   | ready   | main       |  1 | 2026-08-18 07:04:23.249643+00 | 2026-08-18 07:48:47.604583+00 | Phase 3 — fix the six red instruments
+ 9f64be10-0059-4266-a3f0-8adb075328aa |   400 | planner   | pending | main       |  2 | 2026-08-18 07:04:48.466858+00 | 2026-08-18 07:04:48.466858+00 | Phase 4 — negative controls, prove the gat
+ 550e6620-8243-4f12-8e6f-700c65ff03bd |   499 | scout     | pending | main       |  1 | 2026-08-18 07:05:05.863028+00 | 2026-08-18 07:05:05.863028+00 | Scout — every corpus claim about the instr
+ 476bb9d0-ad0a-4e0c-a1c4-602dcd3abe64 |   500 | planner   | pending | main       |  2 | 2026-08-18 07:05:31.696048+00 | 2026-08-18 07:05:31.696048+00 | Phase 5 — the waiver ledger and the corpus
+ c27f6825-4a1c-478a-886a-f72960df3b8b |   600 | planner   | pending | main       |  1 | 2026-08-18 07:05:57.380802+00 | 2026-08-18 07:05:57.380802+00 | Phase 6 — deploy and cold-tree verify
+(10 rows)
+```
+
+Two details in that table worth round 817's attention, both good news:
+
+- **The PLANNER wrote no round.** Its two children — builder `ce531eeb` and
+  reviewer `2bb68fcc` — carry rounds **0** and **1**, which are *computed*:
+  `depends_on []` → 0, `depends_on [builder]` → 1 + 0. That is DoD-5 observed on
+  live data. The **architect**, by contrast, still supplies rounds explicitly
+  (100, 200, 300, 400, 499, 500, 600) — a spacing convention it invented for
+  itself. Harmless, because `round` no longer schedules anything, but it means
+  "planners no longer write round numbers" is true and "the engine no longer
+  receives a round number" is not.
+- **The dependency edges are real data**: 7 of 10 rows carry a non-empty
+  `depends_on`, including a genuine **join** — phase 4's planner (`9f64be10`)
+  waits on both phase 2 (`b1d473eb`) and phase 3 (`80701ad9`). That is the graph
+  the Manager Chat UI v3 bottom zone could not previously draw.
+
+### 7b — TWO WORKSTREAM WORKTREES ON DISK: **NOT OBSERVED.** Open, and handed on
+
+```text
+$ ls -la /opt/ai-os/workspace/projects/ | grep b7ab4c57
+drwxr-xr-x 10 root root 4096 Aug 18 09:19 b7ab4c57-7ebd-4ef5-a7e3-9345941467c5
+$ git -C /opt/ai-os/workspace/projects/b7ab4c57-7ebd-4ef5-a7e3-9345941467c5 rev-parse --abbrev-ref HEAD
+project/b7ab4c57
+$ git -C /opt/forge-ai-os worktree list | grep b7ab4c57
+/opt/ai-os/workspace/projects/b7ab4c57-7ebd-4ef5-a7e3-9345941467c5  fbf4a0e [project/b7ab4c57]
+$ psql … -c "SELECT count(DISTINCT workstream) FROM project_tasks WHERE project_id='b7ab4c57…'"
+ 1
+```
+
+**One worktree, one workstream (`main`), for the whole 45 minutes.** There is no
+sibling directory to show, so I do not show one. Two secondary notes, so the
+absence is not mistaken for a defect elsewhere:
+
+1. The main worktree's `git status --porcelain` is **not** empty — it holds the
+   phase-1 builder's committed-and-then-further-edited tree while later tasks run
+   in it. R34's "porcelain empty" is a statement about a *settled* worktree, not
+   one with a live agent inside it; at 07:48Z this project had a `running` planner.
+2. **The brief's expected branch name does not exist and cannot.** Item 7b predicts
+   `project/<NEW_ID>/<workstream>`. The shipped `workstreamBranch()` in
+   `forge-control/src/lib/workspace.ts` produces **`project/<id8>-<ws>`** — a
+   hyphen, not a slash — and its own comment records why: git refuses a branch
+   that is simultaneously a ref file and a ref directory, so `project/b7ab4c57`
+   and `project/b7ab4c57/ui` cannot coexist. Round 817 must assert the hyphen
+   form. (Standing rule 1: reported as a finding, not silently re-read.)
+
+### 7c — WHY 7b did not happen, and why that is the finding rather than the footnote
+
+This is not "the planners had not got there yet". It is structural, and it is the
+most consequential thing this task measured.
+
+**Achieved concurrency for this project over the whole window was 1.** 224 samples
+at 15–20s intervals, from 07:06:25Z to 07:48:41Z, every one of them
+`running=1 peak=1 ws=1`. Two planners (`b1d473eb`, `80701ad9`) were *both* `ready`
+from **07:16:56Z** with **disjoint write-sets** — phase 2 writes
+`scripts/checks/check-instrument-typecheck.sh`, phase 3 writes six different
+`scripts/checks/*.ts{,x}` files — and the second one waited **32 minutes** without
+running. The deployed executor says exactly why, once per tick:
+
+```text
+$ tail /root/.pm2/logs/forge-executor-out.log
+[project-tick] holding planner task 80701ad9-bef1-41aa-b559-5ca24275bf2a — workstream "main" of project b7ab4c57-7ebd-4ef5-a7e3-9345941467c5 already has a task running (one running task per workstream)
+```
+
+Cited by symbol: the `deferred` branch of `spawnTaskRuns()` in
+`forge-control/src/lib/project-tick.ts`, built from `busyWorkstreams()` +
+`partitionByWorkstream()`, whose own comment names its provenance — *"The
+operator's ruling of round 222, enforced."* It defers **every** eligible task of a
+workstream that already has one running, unconditionally: write-sets are not
+consulted at this belt at all.
+
+That is a deliberate, operator-ruled invariant, and it is not a bug. But it has a
+consequence the corpus does not state anywhere I could find, and DoD-6 is the first
+thing to measure it:
+
+> **Under the shipped engine, the unit of parallelism is the WORKSTREAM, not the
+> DAG.** `conflicts()`/`selectClaimable()` (R16/R17) decide contention *within* a
+> workstream and would happily run two disjoint tasks together — R17 even states
+> "an empty write-set … is always claimable … every task shares one worktree and
+> runs in parallel" — but the spawn-time belt above then holds the second one
+> anyway. A project that keeps everything in `main` therefore runs **strictly
+> serially**, whatever its graph says.
+
+And the planner prompt actively steers toward exactly that. `GRAPH_GUIDE` in
+`project-tick.ts` says workstreams correctly ("one git worktree whose tasks run one
+at a time"), and then advises:
+
+> *"…so open a second only when two teams truly need one file concurrently."*
+
+Under the round-222 belt that advice is too narrow by a wide margin: two teams do
+not need to want the *same file* to need a second workstream — they need only to
+want to run *at the same time*. The architect of the DoD-6 project followed the
+advice faithfully (its six phases touch disjoint files, so it opened nothing) and
+produced a correct DAG that executes one task at a time.
+
+**What this does and does not say about DoD-6.** It does not yet say the engine is
+slower: the baseline (`evidence/baseline-8ea0cc08.md` PART 2 §10.1) measured the
+OLD engine at **S1 mean 0.29, peak 6** — a high peak with long idle troughs while
+rounds drained. The new engine on this project shows peak 1 with, so far, no
+troughs at all; mean concurrency near 1.0 would be a *utilisation* improvement even
+at a lower peak. Which of those wins is an empirical question and it belongs to
+round 817's `measure-schedule.ts` read, not to a paragraph. What this section does
+say is that round 817 must interpret its S1 against **`distinct_workstreams = 1`**,
+and that if the number disappoints, the cause is already identified and is one
+sentence of prompt text — not the scheduler.
+
+### 7.3 What was open when this task ended
+
+- **7a: OBSERVED and closed.** Nothing outstanding.
+- **7b: OPEN.** No second workstream was opened within 45 minutes of the fan-out,
+  so no sibling worktree exists to observe. **Handed to the round-817 report task
+  ("Phase 8H: the number, or the honest absence of one", `payload-report.json`).**
+  That task should (a) re-check `count(DISTINCT workstream)` for
+  `b7ab4c57-7ebd-4ef5-a7e3-9345941467c5` at its own run time — phases 3–5 may yet
+  open one — and (b) if it is still 1, report DoD-2's live half as **unobserved on
+  this project**, with §7c's cause, rather than as a failure of
+  `provisionWorkstreamWorkspace()`, which was never asked to run. The unit tests
+  and `check-workstream-e2e.sh` already prove the mechanism; what is missing is a
+  *live planner that opens one*.
 
 ---
 
@@ -694,7 +902,39 @@ honest absence of one", round 817) will be seeded by it when the project reaches
 
 ### 8.4 The falsifiable fan-out spot observation
 
-<!-- FANOUT -->
+Taken at **07:48:30Z**, 45 minutes after the fan-out began at 07:03:23Z. These are
+a **SPOT OBSERVATION** of the fan-out and are **NOT** the DoD-6 after-measurement:
+that one is round 817's, under `payload-report.json` item 1b, with instrument
+`fb5a6434` re-derived from disk and the half-open instant sampling convention of
+PART 2 §10.1 of `evidence/baseline-8ea0cc08.md`. Two conventions would make the
+before/after an artefact rather than a finding, so these figures are deliberately
+labelled as a different measurement, not offered as a cheap version of that one.
+
+```text
+$ psql … -c "SELECT count(*) AS tasks, count(*) FILTER (WHERE cardinality(depends_on)>0) AS tasks_with_deps, count(DISTINCT workstream) AS distinct_workstreams FROM project_tasks WHERE project_id='b7ab4c57-7ebd-4ef5-a7e3-9345941467c5';"
+ tasks | tasks_with_deps | distinct_workstreams
+-------+-----------------+----------------------
+    10 |               7 |                    1
+```
+
+| # | Figure | Value |
+|---|---|---|
+| (i) | **maximum concurrency actually reached** | **1** — peak over 224 samples at 15–20s intervals, 07:06:25Z → 07:48:41Z (`/tmp/dod6-conc.log`), corroborated by 135 samples of the second sampler |
+| (ii) | **tasks with a non-empty `depends_on`** | **7 of 10** (including one true join: phase 4 waits on phases 2 *and* 3) |
+| (iii) | **distinct `workstream` values** | **1** (`main`) |
+
+**Verdict, stated as the brief demands it rather than inferred from the absence of
+an error: this is a FAILED DoD-6 on figure (i).** The project came out one task
+wide. It did *not* come out one task **deep** — the graph is real, the edges are
+real data, two tasks were simultaneously `ready` with disjoint write-sets for 32
+minutes — but width is what DoD-6 measures and the width was 1. The cause is
+identified in §7c and it is not the scheduler: the round-222 spawn belt allows one
+running task per workstream, and `GRAPH_GUIDE`'s advice to open a second workstream
+"only when two teams truly need one file concurrently" makes a single-workstream
+plan the default for exactly the disjoint-file work that most needs parallelism.
+
+I did not "report the prompt worked". The prompt produced a well-formed graph and a
+serial execution, and both halves of that sentence are measured above.
 
 ---
 
