@@ -73,10 +73,19 @@ that names its own forbidden strings.
 `S3cr3tLiveP4ss` would blunt the exact demonstration the paragraph exists to make. Two further
 rounds of the same trap had to be walked out on the way:
 
-1. the replacement recipe's `printf` format string was itself DSN-shaped (`postgresql://%s:%s@`),
-   captured password `%s` → still red. The scheme is now a shell variable (`$S`).
-2. the format string still carried a literal `PGPASSWORD=%s` → still red. `PGPASSWORD` is now
-   passed as a printf *argument*.
+1. the replacement recipe's `printf` **format string** was itself DSN-shaped — scheme, colon,
+   placeholder, `@` — so the captured password was the bare placeholder token, which carries no
+   safe marker → still red. The scheme is now a shell variable (`$S`), so no DSN shape survives in
+   the format string.
+2. the format string still spelled the shell variable's name immediately followed by `=` and a
+   placeholder → still red for the same reason. That name is now passed as a printf *argument*
+   instead of being written into the format.
+
+**And this document walked into it a third time**, describing rounds 1 and 2 by quoting the two
+format strings — which is why the two paragraphs above name the shapes in words and quote neither.
+The lesson generalises past this file: a checker that scans the whole corpus will scan the prose
+written *about* it, so a defect report on a pattern-matcher must describe its patterns, never
+reproduce them.
 
 Measured at the working tree after the fix:
 
