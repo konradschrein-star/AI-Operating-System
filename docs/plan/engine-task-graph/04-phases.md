@@ -19,7 +19,7 @@ because `operator-visibility` is live and this diff is executor-loaded.
 
 ## Phase 1 — Schema, fixture, replica harness
 **Planner round 100.**
-**Requirements: R1–R9, R18 (harness only), NF3.**
+**Requirements: R1–R9, R71, R18 (harness only), NF3.**
 
 ### Scope
 The migration, its lint case, the committed fixture, and the *shell* of the
@@ -633,7 +633,12 @@ own numbers move it further.
   changes the verdict.**
 
 ### Verification task (separate task, after the restart has landed)
-- The three columns exist; the indexes exist.
+- The four columns exist (`depends_on`, `workstream`, `write_set`, and
+  `graph_frozen` — R71, added round 242); the indexes exist. On the live
+  database `graph_frozen` must be `true` on every row the backfill wrote and
+  `false` on every row inserted after it: `SELECT graph_frozen, count(*) FROM
+  project_tasks GROUP BY 1` beside `SELECT count(*) FROM project_tasks WHERE
+  graph_frozen <> (depends_on IS NOT NULL)`, which must be 0.
 - A graph-scheduled task promotes **without its round draining** — observed, not
   asserted.
 - A cycle POST returns `400` with a named path, against the live API.
@@ -662,7 +667,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 
 | Phase | Requirements covered |
 |---|---|
-| 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R18 (harness only), NF3 |
+| 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R71, R18 (harness only), NF3 |
 | 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
 | 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, R70, R17, NF1, NF5 |
@@ -671,7 +676,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 7 | R59, R60, R61, R62 |
 | 8 | R63, R64, R65, R66, R67, R68, NF2, NF5 |
 
-R1–R69 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
+R1–R71 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
 each has exactly one **primary owner** phase here. Four entries appear in two
 rows and each is deliberate, so a reader does not have to guess whether it is a
 mistake:

@@ -94,6 +94,10 @@ function gt(id: string, over: Partial<GraphTask> = {}): GraphTask {
     status: "pending" as TaskStatus,
     depends_on: [],
     write_set: [],
+    // NOT frozen by default (R71, round 242): the migration touched no row this
+    // factory builds, and `graph_frozen: true` widens R69's term, so a default
+    // of `true` would make every case below quietly test the straddle path.
+    graph_frozen: false,
     ...over,
   };
 }
@@ -302,17 +306,26 @@ describe("graphReady — the graph branch (R11, R14, R69)", () => {
   });
 });
 
-describe("graphReady — R69, the legacy-row term (E3, F13)", () => {
-  // The frozen closure cannot name a row the OLD engine inserted after 0040 ran
+describe("graphReady — R69, the straddle term (E3/E4, F13)", () => {
+  // The frozen closure cannot name a row inserted after 0040 ran
   // (02-architecture.md §3.2.1). Without this term a backfilled row promotes
   // straight past a fix chain numbered far below it, and R18 case (f) diverges
   // on tick 2. Measured, not argued: evidence/phase1-migration.md §13.4.
+  //
+  // WIDENED IN ROUND 242 (E4, §9.3), and the widening is keyed on the
+  // CANDIDATE's provenance, not the blocker's: a row carrying `graph_frozen`
+  // (R71) is held behind ANY non-done lower-round row, because the closure it
+  // would otherwise be judged on was derived from a round number against a
+  // snapshot. A row that declared its own dependencies is held only behind
+  // legacy rows, exactly as before. Both halves are cased below, and the pair
+  // of cases named "a lower-round GRAPH row …" is where the two part company.
 
-  /** A graph row at round 1352 whose frozen closure is entirely `done`. */
+  /** A graph row at round 1352 whose frozen closure is entirely `done` — a row
+   *  0040's backfill wrote, so it carries the marker that backfill sets. */
   function frozenRow(): GraphTask {
-    return gt("frozen", { round: 1352, depends_on: ["settled"] });
+    return gt("frozen", { round: 1352, depends_on: ["settled"], graph_frozen: true });
   }
-  const settled = gt("settled", { round: 1350, status: "done" });
+  const settled = gt("settled", { round: 1350, status: "done", graph_frozen: true });
 
   test("all deps done, but a lower-round legacy row is not done → NOT ready", () => {
     const fixBuilder = gt("fix-1307", { round: 1307, depends_on: null, status: "pending" });
@@ -341,14 +354,54 @@ describe("graphReady — R69, the legacy-row term (E3, F13)", () => {
     assert.equal(graphReady(row, byId(settled, same, row)), true);
   });
 
-  test("a lower-round GRAPH row does not block — the term reads legacy rows only", () => {
+  test("a lower-round GRAPH row does not block a NON-frozen candidate — the cost claim", () => {
     // This is the whole claim that R69 costs nothing on a project planned after
-    // the restart: with no NULL row in the map the term is vacuously true and
-    // `round` is never consulted. A term that blocked on any lower-round row
-    // would re-serialize exactly the projects this engine exists to parallelise.
+    // the restart: nothing is frozen, nothing is NULL, the term is vacuously
+    // true and `round` is never consulted. A term that blocked on any
+    // lower-round row would re-serialize exactly the projects this engine
+    // exists to parallelise — measured as 3 ticks / 8-wide against 17 / 1-wide
+    // by probe 3 of scripts/checks/check-r69-straddle.sh.
+    const lower = gt("graph-1300", { round: 1300, depends_on: [], status: "pending" });
+    const declared = gt("declared", { round: 1352, depends_on: ["settled"] });
+    assert.equal(graphReady(declared, byId(settled, lower, declared)), true);
+  });
+
+  test("a lower-round GRAPH row DOES block a frozen candidate (E4, round 242)", () => {
+    // The E4 change, in one case. Same map, same rounds, same statuses as the
+    // case above; the only difference is that the candidate's closure was
+    // written by 0040's backfill rather than declared by a planner. That
+    // closure was computed against a snapshot taken before `graph-1300`
+    // existed, so "every dep is done" says nothing about it — and today's
+    // engine, whose behaviour this row was created under, holds it.
     const lower = gt("graph-1300", { round: 1300, depends_on: [], status: "pending" });
     const row = frozenRow();
+    assert.equal(graphReady(row, byId(settled, lower, row)), false);
+  });
+
+  test("…and the same frozen candidate is ready once that graph row is done", () => {
+    // The positive control for the case above: the term HOLDS, it does not
+    // wedge. Without this, a predicate that returned false unconditionally for
+    // frozen rows would pass every negative case in this block.
+    const lower = gt("graph-1300", { round: 1300, depends_on: [], status: "done" });
+    const row = frozenRow();
     assert.equal(graphReady(row, byId(settled, lower, row)), true);
+  });
+
+  test("a frozen candidate is not blocked by a lower-round row of ANOTHER kind it already names", () => {
+    // `settled` is at 1350, below the candidate's 1352, and is `done` — the
+    // term reads status, not membership, so a dependency that has finished
+    // cannot block the row that depends on it. Stated because the widened term
+    // now scans every row rather than only NULL ones, and a scan that forgot
+    // the `status !== 'done'` test would deadlock every frozen project on its
+    // own closure.
+    const row = frozenRow();
+    assert.equal(graphReady(row, byId(settled, row)), true);
+  });
+
+  test("a HIGHER-round row does not block a frozen candidate either — strictly lower only", () => {
+    const above = gt("graph-1400", { round: 1400, depends_on: [], status: "pending" });
+    const row = frozenRow();
+    assert.equal(graphReady(row, byId(settled, above, row)), true);
   });
 
   test("the term does not fire before the deps-done term is satisfied either", () => {

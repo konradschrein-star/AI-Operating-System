@@ -65,15 +65,18 @@ function task(over: Partial<ProjectTask> = {}): ProjectTask {
     tier: null,
     attempt: 0,
     chain_key: null,
-    // Migration 0040's three columns, at their schema defaults. `depends_on:
+    // Migration 0040's four columns, at their schema defaults. `depends_on:
     // null` is the LEGACY sentinel, which is what every row this factory
     // stands in for is: these cases predate the task graph and must keep
-    // reading as pre-graph rows. Added with the ProjectTask fields themselves
-    // (engine-task-graph phase 2) — a factory that omits a required column
-    // stops compiling, which is the point of the columns moving together.
+    // reading as pre-graph rows. `graph_frozen: false` is the same statement
+    // about provenance — no backfill ever touched these rows (R71, round 242).
+    // Added with the ProjectTask fields themselves (engine-task-graph phase 2)
+    // — a factory that omits a required column stops compiling, which is the
+    // point of the columns moving together.
     depends_on: null,
     workstream: "main",
     write_set: [],
+    graph_frozen: false,
     created_at: "",
     updated_at: "",
     ...over,
@@ -923,18 +926,25 @@ describe("T18 escalation protocol", () => {
     );
   });
 
-  test("BROWSER_FIRST reaches scout and builder; the researcher has its own instrument block", () => {
+  test("BROWSER_FIRST reaches scout, builder and tester; the researcher has its own instrument block", () => {
     // Scope is the contract, exactly as for RESEARCH_INSTRUMENTS: these are the
     // roles that meet unknowns while working. A reviewer or planner that grew
     // the block would be prompt bloat with no matching behaviour.
+    //
+    // THE TESTER JOINED IN ROUND 242 (finding F-E), and it is a widening of the
+    // scope this case asserts, so it is stated here rather than left to the
+    // membership list below. Its own branch sends it at "the real surface
+    // (browser, CLI, API)" — it was the one role that drives a browser on
+    // instruction while carrying neither constant, which meant B4's run-control
+    // rules reached it only if a brief pasted them by hand.
     const proj = project({ repo: "ai-os" });
-    for (const role of ["scout", "builder"] as const) {
+    for (const role of ["scout", "builder", "tester"] as const) {
       assert.ok(
         buildPrompt(task({ role }), proj).includes(BROWSER_FIRST),
         `role ${role} is missing BROWSER_FIRST`,
       );
     }
-    for (const role of ALL_TASK_ROLES.filter((r) => r !== "scout" && r !== "builder")) {
+    for (const role of ALL_TASK_ROLES.filter((r) => r !== "scout" && r !== "builder" && r !== "tester")) {
       assert.ok(
         !buildPrompt(task({ role }), proj).includes(BROWSER_FIRST),
         `role ${role} carries BROWSER_FIRST — it belongs to the roles that meet unknowns hands-on`,
@@ -2783,12 +2793,15 @@ describe("B4 the browser rules reach exactly the derived role set", () => {
    * CONCRETE membership as well, and computes its complement rather than listing
    * it (failure (d) in this section's header).
    *
-   * TESTER IS OUT, and it is a judgement rather than an oversight: its branch
-   * carries neither constant today. Its prompt does name the browser as a
-   * testing surface, which makes it the one role this derivation arguably
-   * under-serves — reported to the manager chat at round 240 rather than fixed
-   * by widening a block into a branch this task was told not to touch. */
-  const EXPECTED_BROWSER_ROLES = ["builder", "researcher", "scout"] as const;
+   * TESTER IS IN, from round 242 (finding F-E). Round 240 reported the gap
+   * rather than closing it — the tester's branch carried neither constant, so
+   * the derivation excluded it while its own prompt sent it at "the real
+   * surface (browser, CLI, API)" — and the operator ruled the obvious way: give
+   * the tester BROWSER_FIRST. The DERIVATION did not change, which is the
+   * point; the branch joined the set it computes over, and the block followed
+   * by construction. The tester is also the role most likely to repeat round
+   * 1873's incident, because clicking what a user would click is its job. */
+  const EXPECTED_BROWSER_ROLES = ["builder", "researcher", "scout", "tester"] as const;
 
   test("the derivation and the membership agree", () => {
     const carriesABrowserBlock = ALL_TASK_ROLES.filter((role) => {

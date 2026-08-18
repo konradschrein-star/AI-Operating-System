@@ -196,16 +196,28 @@ executor-loaded files this diff touches — after this design, it does not.
 
 ## 2. Data model
 
-### 2.1 The three columns
+### 2.1 The four columns
 
 ```sql
 -- db/migrations/0040_task_graph.sql
 ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS depends_on uuid[];              -- NULL default
 ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS workstream  text  NOT NULL DEFAULT 'main';
 ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS write_set   text[] NOT NULL DEFAULT '{}';
+ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS graph_frozen boolean NOT NULL DEFAULT false;
 ```
 
-`ADD COLUMN IF NOT EXISTS` on all three — required by `migrations.test.ts`'s
+**THE FOURTH COLUMN JOINED IN ROUND 242 (R71, E4 §9.3).** `graph_frozen` is the
+PROVENANCE of `depends_on`: `true` on exactly the rows whose closure the backfill
+below wrote, set by that same `UPDATE`, and `false` — the default — on every row
+any engine wrote itself. It is what lets §3.2's straddle term ask "was this
+closure derived from a round number, or declared?" instead of guessing from a
+shape. Round 223 measured four ways of inferring it after the event and all four
+failed (§9.3); recording it costs one additive statement and, on a project
+planned after the restart, exactly nothing (probe 3b of
+`check-r69-straddle.sh`). It is not a second sentinel: `depends_on` still selects
+the RULE, and this describes where the array came from.
+
+`ADD COLUMN IF NOT EXISTS` on all four — required by `migrations.test.ts`'s
 lint and by the fact that there is no migration ledger in this repo: applying a
 migration is a manual `psql -f`, so re-application must be a no-op rather than
 an error.
@@ -409,9 +421,9 @@ UPDATE project_tasks pt
                        WHERE d.id = ANY(pt.depends_on) AND d.status <> 'done')
       AND (SELECT count(*) FROM project_tasks d WHERE d.id = ANY(pt.depends_on))
           = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
-      AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3: the legacy-row term
+      AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3/E4: the straddle term
                        WHERE l.project_id = pt.project_id
-                         AND l.depends_on IS NULL
+                         AND (pt.graph_frozen OR l.depends_on IS NULL)  -- R71, E4
                          AND l.round < pt.round
                          AND l.status <> 'done'))  -- TODO(R12-retire)
      OR
@@ -435,29 +447,48 @@ Both branches are in **one** statement so a row can never satisfy neither. Two
 statements would leave a window in which a row whose `depends_on` flipped
 between them is skipped by both.
 
-The **legacy-row term** (R69) is the graph branch's only reference to `round`,
-and it reads it only *about legacy rows*. §3.2 is why it is there. On a project
-planned entirely after the restart no row has a NULL `depends_on`, the `NOT
-EXISTS` is vacuously true, and `round` is never consulted — the term costs
-nothing where the project's whole point applies. It is part of the legacy
-surface and is deleted with R12's branch in one commit (NF6, standing rule 4).
+The **straddle term** (R69) is the graph branch's only reference to `round`, and
+it reads it only about rows whose ordering no closure could have expressed. §3.2
+is why it is there. Its disjunct has two sides and they are asymmetric on
+purpose:
+
+- **`pt.graph_frozen`** — a candidate whose closure the MIGRATION derived is held
+  behind any non-`done` lower-round row, whoever wrote that row. Its closure was
+  computed against a snapshot, so "every dep is done" is a statement about a task
+  list that no longer exists; its round is the only ordering it ever declared.
+- **`l.depends_on IS NULL`** — a candidate that declared its own dependencies is
+  held only behind rows created under the OLD semantics, which never had the
+  chance to declare anything.
+
+On a project planned entirely after the restart, no row is frozen and no row is
+NULL, both sides are false, and `round` is never consulted — measured at 3 ticks
+/ 8-wide against the same widening ungated at 17 / 1-wide (probe 3b). It is part
+of the legacy surface and is deleted with R12's branch in one commit (NF6,
+standing rule 4), when no NULL and no frozen row remains.
 
 ### 3.2 The legacy branch is the migration strategy
 
 There is no flag day and no engine-version switch. The behaviour of a row is
 decided by its own data — **by the semantics it was created under**. A row that
 existed before the migration, or that the OLD engine wrote after it, finishes
-under the old rule; a row the NEW engine creates is scheduled by the graph; a
-project that straddles the restart holds both kinds and each kind keeps its own.
+under the old rule; a row the NEW engine creates is scheduled by the graph; and
+**a project in flight when the new engine loads finishes under its original
+semantics**.
 
-**NARROWED IN ROUND 223, by experiment, and the wider sentence is retired.**
-Through round 222 this paragraph read *"A project in flight when the new engine
-loads finishes under its original semantics"* — a claim about the PROJECT. R69
-does not deliver that and cannot: it holds a frozen row behind LEGACY rows, and
-a row the new engine inserts after the restart is not one. The sentence above is
-the claim the engine actually keeps, which is about the ROW. §3.2.2 states
-exactly what is given up and measures it; §9.3 is the ruling and the four
-implementations of the alternative that were tried and failed.
+**NARROWED IN ROUND 223, RESTORED IN ROUND 242, and the round trip is the
+point.** Through round 222 the last clause above was asserted on a term that did
+not deliver it: R69 held a frozen row behind LEGACY rows only, and a fix chain
+the new engine creates after the restart is not one (§3.2.2, F14). Round 223
+retired the sentence rather than leave a claim the engine did not keep, ruled
+option B on measurement, and named the single change that would make the wider
+claim true — *record which closures the migration wrote*. Round 242 made it:
+`graph_frozen` (R71, §2.1), written by the backfill itself, gating the straddle
+term. The sentence is therefore back, and it is back as a MEASUREMENT: the
+shipped engine now reproduces today's schedule on the straddling fixture tick for
+tick, 17 ticks, no first divergence (`check-r69-straddle.sh` probe 1b), and
+clearing the marker or deleting the term brings the divergence back at tick 2 on
+the two rows §3.2.1 names (probes 1 and 1c). §9.3 carries the ruling, the four
+inferences that failed, and why the recorded fact beats all of them.
 
 #### 3.2.1 A straddling project needs one more term — the frozen closure (F13, E3)
 
@@ -501,13 +532,15 @@ semantics**. Both directions are covered — a legacy row already waits on froze
 rows below it, because R12's branch scans by round without looking at
 `depends_on`.
 
-**AMENDED ROUND 223.** This paragraph used to end *"and the sentence this
-section used to end on becomes true"*, meaning §3.2's claim about the whole
-project. It does not become true, and §3.2.2 is why. R69 closes F13 — the
-divergence caused by rows the OLD engine inserts in the deploy gap — completely,
-and that is the whole of what it was ruled to do (E3, §9.2). It closes nothing
-about rows the NEW engine inserts afterwards, and the two are not the same
-hazard.
+**AMENDED ROUND 223, AMENDED AGAIN ROUND 242.** This paragraph used to end *"and
+the sentence this section used to end on becomes true"*, meaning §3.2's claim
+about the whole project. Under R69 as round 106 landed it that was false, and
+§3.2.2 is where round 223 said so: the term closed F13 — rows the OLD engine
+inserts in the deploy gap — completely, and nothing about rows the NEW engine
+inserts afterwards. Since round 242 the term reads `graph_frozen` rather than the
+blocker's sentinel, so both hazards close under one predicate and §3.2's sentence
+is true again. The two hazards are still not the same hazard; what changed is
+that the candidate's own provenance answers for both.
 
 *Rejected — move the backfill to a quiet fleet.* §2.2 already closed this: the
 restart is detached and self-timed, so the deploy task has no moment to sequence
@@ -520,52 +553,58 @@ argument at all, which is why it wins.
 central claim is that the migration is an exact replica (R18, DoD). A divergence
 that is reachable on the very project we deploy against is not a footnote.
 
-#### 3.2.2 What R69 does not close — the post-restart insertion (round 223)
+#### 3.2.2 What R69 did not close, and what closed it (rounds 223, 242)
 
-R69 tests `depends_on IS NULL`. R42 gives a fix chain created by the **new**
-engine real graph fields. So a row the new engine inserts below a frozen row is
-invisible to R69's term, and the frozen row promotes where today's engine would
-hold it. Phase 1 found this, read it as intended DAG behaviour, and correctly
-declined to fix something outside its phase; it flagged that §3.2's sentence was
-wider than what R69 delivers. Round 223 settled it by experiment —
+R69 as round 106 landed it tested `depends_on IS NULL` — a property of the
+BLOCKING row. R42 gives a fix chain created by the **new** engine real graph
+fields, so a row the new engine inserts below a frozen row was invisible to the
+term, and the frozen row promoted where today's engine holds it. Phase 1 found
+this, read it as intended DAG behaviour, and correctly declined to fix something
+outside its phase; it flagged that §3.2's sentence was wider than what R69
+delivered. Round 223 settled it by experiment —
 `scripts/checks/check-r69-straddle.sh`, transcript in
-`evidence/phase4-workstreams.md` §5, ruling in §9.3.
+`evidence/phase4-workstreams.md` §5 — ruled option B, and priced the one change
+that would let option A be taken. Round 242 took it (§9.3, `evidence/…` §11).
 
-**The divergence is real, and it is the SAME divergence F13 names.** Fed the R9
-fixture with every row frozen and a post-restart chain at 1307/1308, the shipped
-engine and today's engine part company on **tick 2**, on **`511070c9…` and
-`608dbecb…`** — the identical two rows, on the identical tick, that §3.2.1
-records for the closure-only measurement. Only the provenance of the blocking
-row differs: a NULL sentinel there, real graph fields here. Today's rule takes 17
-ticks; the graph takes 14.
+**THE DIVERGENCE WAS REAL, AND IT WAS THE SAME DIVERGENCE F13 NAMES.** Fed the R9
+fixture with every row frozen and a post-restart chain at 1307/1308, the engine
+before round 242 and today's engine part company on **tick 2**, on **`511070c9…`
+and `608dbecb…`** — the identical two rows, on the identical tick, that §3.2.1
+records for the closure-only measurement. Only the provenance of the blocking row
+differed: a NULL sentinel there, real graph fields here. Today's rule takes 17
+ticks; that engine took 14.
 
-**What is given up, stated so it cannot be discovered at 3am.** In a project
-that straddles the restart, a row the NEW engine inserts at a lower round does
-not hold a frozen row above it. Concretely: a fix builder repairing round-1306
-work runs concurrently with a frozen builder at round 1352 that today's engine
-would have held. Both are `workstream = 'main'`, so both are in one worktree;
-both carry `write_set = '{}'`, because the backfill gives frozen rows an empty
-write-set, so R17's contention filter cannot separate them either. That is a real
-exposure and it is not bounded by the deploy window — it lasts as long as the
-straddling project has frozen `pending` rows.
+**WHAT CLOSED IT.** One additive column (R71) and one disjunct. `graph_frozen` is
+`true` on exactly the rows 0040's backfill wrote, set by the same `UPDATE`, so
+the term can key on the CANDIDATE's provenance instead of the blocker's: a row
+whose closure was derived is held behind any non-`done` lower-round row, and a
+row that declared its dependencies is not. Measured both ways rather than
+asserted:
 
-**What bounds it.** R63 requires the deploy's own target (`8ea0cc08`) to have no
-`running` and no `pending` task before anything happens, so the project §3.2.1's
-reachability argument is built on is *drained* at the moment the risk would
-begin. What remains is any other project holding frozen `pending` rows that later
-produces a lower-round insertion — reachable, but no longer reachable on the
-project we deploy against, which is the distinction §3.2.1 rested its own
-rejection of "accept and document" on.
+| probe | reading |
+|---|---|
+| 1b — the straddle, with the marker | legacy 17 ticks / 10 promoted, shipped **17 / 10**, first divergence **NONE** |
+| 1 — the marker cleared (the pre-242 schema) | diverges at **tick 2** on `511070c9…`, `608dbecb…`; 14 ticks against 17 |
+| 1c — R69's disjunct DELETED from a copy of the module | the same divergence, on the same tick, on the same rows — and identical to the marker-cleared arm on all three fixtures |
+| 3b — a project planned entirely after the restart | **3 ticks / 8-wide**, byte-identical to the engine before the column existed; the same widening ungated is 17 / 1-wide |
 
-**Why this is the right line rather than a concession.** `depends_on IS NULL`
-does not mean "old row" by accident — it means *created under the old
-semantics*. Holding a frozen row behind an old-semantics row is replaying the
-rule that row was born under, which is what R18's replica claim is about.
-Refusing to hold it behind a NEW-semantics row is the graph doing its job: the
-new row declared its dependencies, the frozen row is not among them, and
-inventing an edge from a round number is the exact conflation `00-vision.md` §2
-exists to end. **R69's sentinel is the semantic boundary, not an implementation
-detail that happens to sit near one.**
+**WHY THE MARKER AND NOT A CLEVERER PREDICATE.** Round 223 built and measured the
+four signatures the schema could express and each failed in its own way — the
+sentinel gate silent on a straddle with no gap row, the same gate firing on one
+only because an unrelated settled row happened to carry NULL,
+`isClosureShaped()` blind on 8/8 of the exposed rows the moment the post-restart
+row exists, a `created_at` horizon right on the straddle and ruinous everywhere
+else. Those measurements still run, on the pre-242 rows, as arms of the same
+script: they are the argument for the column, so deleting them would leave the
+column asserted rather than justified. §9.3 has the table.
+
+**WHAT REMAINS ACCEPTED.** Nothing of F14. What the marker does NOT do is make a
+frozen row's closure complete — it cannot, no closure can name a row that did not
+exist — it makes the row's ORDERING complete, by replaying the round rule the row
+was born under for as long as it lives. A project with frozen rows therefore
+schedules exactly as today's engine schedules it, which is the replica claim
+(R18), and gains the graph's concurrency only for rows planned after the restart,
+which is where the concurrency was measured to matter (`00-vision.md` §2).
 
 ### 3.3 The backfill must be the full closure, not the previous round
 
@@ -998,7 +1037,7 @@ Every one of these must be **loud**. NF1 forbids the silent variants.
 | F11 | A group never drains (all deps done, task never promoted) | `measure-schedule.ts`'s S3 metric reports a non-zero numbering stall | Reported as a number | The measurement table |
 | F12 | Consolidation throws repeatedly | existing `noteGroupFailure` / `MAX_GROUP_FAILURES = 3` | Escalated once at the threshold | The existing `🚫 … frozen` push |
 | F13 | **Frozen closure outruns a post-migration row.** A row the old engine inserted between `psql -f 0040` and the restart is named by no frozen closure, so a backfilled row promotes past it (§3.2.1) | R18 case (f) at build time; the legacy-row term (R69) at runtime | The graph branch holds the row until every lower-round legacy row is `done` | Nothing — it does not happen. Without R69 Konrad would have seen a phase-18 builder run before a round-8 fix chain, with no error anywhere |
-| F14 | **Frozen closure outruns a row the NEW engine inserted.** Same shape as F13 from the other side: a post-restart fix chain carries real graph fields (R42), so R69's `depends_on IS NULL` term cannot see it, and a frozen row above it promotes where today's engine holds it (§3.2.2) | Nothing at runtime — **this one is ACCEPTED**, ruled as E4 in §9.3 after four candidate mitigations were measured and each failed. Detected only at build time, by `scripts/checks/check-r69-straddle.sh` | None. The mitigation requires distinguishing a frozen closure from a declared dependency set, which this schema does not record; every signature that stands in for it either goes blind exactly when needed or convicts ordinary fan-out | **Real, and this row is where it is written down.** In a straddling project a fix builder may run beside a frozen builder that today's engine would have held — same `main` workstream, same worktree, and empty `write_set` on the frozen side so contention does not separate them either. Bounded by R63 draining `8ea0cc08` before the deploy; unbounded for any other project still holding frozen `pending` rows. Reopened by one additive column (§9.3, "what would reopen this"), cheap only until `psql -f` runs |
+| ~~F14~~ | **RETIRED ROUND 242 — the condition cannot occur.** F14 recorded that a frozen closure outran a row the NEW engine inserted, because R69's term tested the BLOCKING row's `depends_on IS NULL` and a post-restart fix chain carries real graph fields (R42). The term now keys on the CANDIDATE's `graph_frozen` (R71), so a derived closure is held behind any non-`done` lower-round row whatever wrote it | It does not arise. `scripts/checks/check-r69-straddle.sh` probe 1b measures the straddle matching today's engine tick for tick, and probes 1/1c measure the divergence RETURNING when the marker is cleared or the term deleted | — | **Nothing. The risk this row described is gone, not accepted.** It is kept as a struck row rather than deleted because §3.2.2 and §9.3 both cite it, and because a reader who remembers the accepted risk must be able to find where it was closed. Retired together with its blast-radius note in §3.2.2 and the narrowed sentence in §3.2, in one commit (standing rule 4) |
 
 **Explicitly forbidden degradations** (the reviewer must check for each):
 an unparseable workstream silently becoming `main`; a write-set validation
@@ -1150,7 +1189,31 @@ A later round that wants to delete R69 must delete it *with* R12's legacy branch
 and R18 case (f), in one commit, when no `depends_on IS NULL` row remains
 (standing rule 4). Deleting it alone re-opens F13.
 
-### 9.3 E4 — the R69 straddle, ruled 2026-08-17, round 223
+### 9.3 E4 — the R69 straddle, ruled 2026-08-17 (round 223), REOPENED AND CLOSED 2026-08-18 (round 242)
+
+**THE OUTCOME FIRST. Option A is implemented.** `project_tasks.graph_frozen`
+(R71) records which closures 0040's backfill wrote, set `true` by the same
+`UPDATE` that writes them; R69's term gates on it; §3.2's sentence is restored
+and F14 is retired. The operator reopened E4 on exactly the terms round 223
+specified — *"option A becomes implementable the moment a frozen row is MARKED
+rather than INFERRED"* — inside the window round 223 priced, which closes when
+phase 8 runs `psql -f`.
+
+**Round 223's ruling is superseded, not withdrawn, and its reasoning is not
+weakened.** For a schema with no marker, option B was correct: every one of the
+four inferences below was built, measured, and failed. That measurement is the
+evidence that justifies the column, so it is preserved below in full and its
+arms still RUN, against the pre-242 rows, in the same script (`PRE-E4`,
+`WIDE-*`). What changed is not the argument but the schema it reasons about.
+
+Round 242's own measurements — the straddle matching today's engine tick for
+tick, the divergence returning under both a data mutation and a source-level
+deletion of the term, and the post-restart project unchanged at 3 ticks / 8-wide
+— are in §3.2.2's table and in `evidence/phase4-workstreams.md` §11.
+
+---
+
+#### 9.3.1 The ruling as it stood in round 223 (superseded 2026-08-18)
 
 **The question.** R69 holds a frozen row behind LEGACY rows only. R42 gives fix
 chains created after the restart REAL graph fields. So in a straddling project a
@@ -1208,8 +1271,9 @@ them either. R63 drains the deploy's own target before the deploy, so the
 project §3.2.1's reachability argument was built on is not exposed; any other
 project holding frozen `pending` rows is.
 
-**What would reopen this.** Option A becomes implementable the moment a frozen
-row is *marked* rather than *inferred* — one more additive column in 0040
+**What would reopen this — AND DID, in round 242.** Option A becomes
+implementable the moment a frozen row is *marked* rather than *inferred* — one
+more additive column in 0040
 (`ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS graph_frozen boolean NOT
 NULL DEFAULT false`, set `true` by the same backfill `UPDATE`), after which the
 gate is `pt.graph_frozen` and every objection above evaporates. That is cheap
@@ -1219,15 +1283,24 @@ and impossible to do honestly afterwards. It is a phase-1 change touching
 `task-graph-replay.test.ts` (a case (g)), `check-scheduler-sql.sh` and R3/R6/R69
 — six files across three phases. Round 223 did not take it, and did not take it
 silently: it is priced here so the choice is one decision rather than a
-rediscovery.
+rediscovery. **Round 242 took it, and the price was accurate**: the six files
+named here plus `check-migration-0040.sh` (the migration's own test, which counts
+the columns), `routes/chat.ts` (a `GraphTask` literal that stops compiling
+without the field — which is the point of the field being required), and the four
+test factories that build a whole `ProjectTask`. Every one of those was a compile
+error rather than a silent default, which is why the estimate held.
 
-**Who ruled, and on what.** Round 223's builder, under fleet escalation policy
+**Who ruled, and on what** (round 223). Round 223's builder, under fleet escalation policy
 rule 3 — measured first, ruled second, and reported to the manager chat with the
 `graph_frozen` alternative attached as an explicit choice rather than described
 in prose. It is a correctness-versus-cost decision with a measured answer, not a
 preference decision, so it was not blocked on. **Konrad may overrule it**; if he
 does, the change is the `graph_frozen` column above and the six files it touches,
-and §3.2's original sentence comes back with it.
+and §3.2's original sentence comes back with it. **He did, on 2026-08-18** — the
+task brief for round 242 is the overrule, and it arrived with the reasoning
+round 223 asked to be measured against: *the fact is not recorded, so every gate
+is archaeology; record the fact at the moment it is true, by the process that
+makes it true.*
 
 ---
 

@@ -177,6 +177,7 @@ cd forge-control && pnpm typecheck && pnpm test
 git -C /opt/forge-ai-os status --porcelain          # MUST be empty
 git log --oneline "$(git merge-base main HEAD)"..HEAD --name-only
 python3 docs/plan/engine-task-graph/check-instrument-identity.py   # MUST exit 0
+python3 scripts/checks/check-r20-census.py                          # MUST exit 0
 ```
 
 1. `tsc --noEmit` clean.
@@ -213,6 +214,28 @@ python3 docs/plan/engine-task-graph/check-instrument-identity.py   # MUST exit 0
    found in `evidence/baseline-8ea0cc08.md`, is a **failure** and not a clean
    run, so a glob that matches nothing cannot certify itself
    (`00-vision.md` §7 rule 2).
+
+8. **R20 census (round 242, on round 223's recommendation).**
+   `scripts/checks/check-r20-census.py` exits 0. It re-measures every `round`
+   occurrence in `db/projects.ts`, asserts that **every non-comment `round` line
+   inside `promoteReadyTasks`, `claimReadyTasks` and `sweepDanglingDependencies`
+   is one of the justified lines** — a new scheduling predicate that reads
+   `round` fails it by name — and verifies the generated census region in
+   `evidence/phase2-replay.md` byte-for-byte against the file it describes.
+   **Why it is universal and not phase-2's:** it sat red across three rounds
+   precisely *because* it blocked nobody, which is the failure mode it exists to
+   catch. Any phase can add a `round` predicate or move a doc-comment, and the
+   document it guards rots silently in either case — round 205 found its
+   headline pair stale in a table the round-204 commit had itself edited.
+   It carries its own calibration: `--self-check` re-censuses `27d300f` and
+   fails if the four numbers a human derived by hand there move, so an
+   attribution rule that drifted cannot launder itself into the document with
+   `--write`. When it reports STALE, the fix is `--write`, in the same commit as
+   the change that moved the numbers.
+   *At round 242 it exits 0 at 129 hits (51 code / 78 comment, 3 SQL
+   annotations) over `db/projects.ts` sha256 `79a62da97552c1c2…`. The count is
+   not a gate — the R20 assertion and the region comparison are; it is recorded
+   so a reader can tell a re-measurement from a rot.*
 
 ### 3.2 Phase gates
 
@@ -517,6 +540,10 @@ grep -rn "consecutive rounds" forge-control/         # must be empty from phase 
 # that quotes a dead one. Reads the disk, not the corpus's claims about the disk.
 python3 docs/plan/engine-task-graph/check-corpus-map.py
 python3 docs/plan/engine-task-graph/check-instrument-identity.py
+# §3.1 item 8 — the R20 census. Exits 0, or names the scheduling line that reads
+# `round` without a justification / the generated region that no longer matches
+# the file. Re-measures; never trusts the document.
+python3 scripts/checks/check-r20-census.py
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

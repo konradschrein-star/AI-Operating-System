@@ -350,6 +350,11 @@ function legacyInput(rows: readonly FixtureRow[]): GraphTask[] {
     workstream: "main",
     status: toStatus(r.status),
     depends_on: null,
+    // TODAY's engine has no such column: the field exists on `GraphTask`, so it
+    // must be given a value, and `false` is the only honest one — this side is
+    // the world before 0040 ran, where no closure has been frozen by anything.
+    // `legacyRoundReady()` never reads it in any case.
+    graph_frozen: false,
     write_set: [],
   }));
 }
@@ -362,6 +367,15 @@ interface GraphInputOptions {
    * is what cases (a)–(e) model.
    */
   snapshot?: ReadonlySet<string>;
+  /**
+   * Dependencies for rows OUTSIDE the snapshot that the NEW engine created —
+   * post-restart rows, which carry real graph fields (R42) instead of the NULL
+   * sentinel. Case (g). A row outside the snapshot and absent from this map is
+   * a row the OLD engine inserted in the deploy gap and is born `null` (E2),
+   * which is case (f); the two orders are different scenarios and the input
+   * builder is where they are told apart.
+   */
+  newEngineDeps?: ReadonlyMap<string, readonly string[]>;
 }
 
 /**
@@ -378,9 +392,19 @@ interface GraphInputOptions {
  * invisible to the very test that is supposed to find it.
  *
  * ROUND WITHHOLDING is decided from the OUTPUT, not from the options: withheld
- * on a pure-graph input, real on a mixed one. See the header, guard 3. Deciding
- * it from `opts.snapshot` instead would let a caller passing a snapshot of every
- * id get real rounds by accident and quietly lose the guard.
+ * where every row came out of the migration's own backfill, real as soon as one
+ * did not. See the header, guard 3. Deciding it from `opts.snapshot` instead
+ * would let a caller passing a snapshot of every id get real rounds by accident
+ * and quietly lose the guard.
+ *
+ * AMENDED ROUND 242, WHERE IT IS ENFORCED. The condition used to be "some row
+ * came out with `depends_on: null`", which is a test for case (f)'s legacy rows.
+ * Case (g)'s post-restart rows carry REAL graph fields, so that condition called
+ * a straddling input pure and withheld its rounds — and R69's widened term reads
+ * `round` about frozen rows, so the case would have been decided by an artefact
+ * of the harness rather than by the rule. The condition is now "every row is
+ * frozen", which is the property the withholding actually depends on and which
+ * still withholds on cases (a)–(e) exactly as before.
  */
 function graphInput(rows: readonly FixtureRow[], opts: GraphInputOptions = {}): GraphTask[] {
   const present = new Set(rows.map((r) => r.id));
@@ -412,18 +436,25 @@ function graphInput(rows: readonly FixtureRow[], opts: GraphInputOptions = {}): 
       write_set: [],
     };
     if (!snapshotIds.has(r.id)) {
-      // Inserted after 0040 ran, by an INSERT that does not name the column.
-      return { ...base, depends_on: null };
+      // Inserted after 0040 ran. Either the OLD engine wrote it, by an INSERT
+      // that does not name the column (case (f), `null`), or the NEW engine did
+      // and declared its dependencies (case (g), R42). Neither is frozen: the
+      // backfill never saw either row, which is the whole of what `graph_frozen`
+      // records (R71).
+      const declared = opts.newEngineDeps?.get(r.id);
+      return { ...base, depends_on: declared === undefined ? null : [...declared], graph_frozen: false };
     }
     const deps = closure.get(r.id);
     if (!deps) {
       throw new Error(`task-graph-replay: closure produced no entry for task ${r.id}`);
     }
-    return { ...base, depends_on: deps };
+    // The backfill wrote this array, so it sets the marker in the same UPDATE
+    // (R71) — the mirror of `SET depends_on = …, graph_frozen = true`.
+    return { ...base, depends_on: deps, graph_frozen: true };
   });
 
-  const mixed = built.some((t) => t.depends_on === null);
-  return mixed ? built : built.map((t) => ({ ...t, round: ROUND_WITHHELD }));
+  const allFrozen = built.every((t) => t.graph_frozen);
+  return allFrozen ? built.map((t) => ({ ...t, round: ROUND_WITHHELD })) : built;
 }
 
 /* -------------------------------------------------------------------------- *
@@ -845,6 +876,80 @@ export function caseF(): CaseF {
   return { rows: all, snapshot, base };
 }
 
+/**
+ * (g) INSERT-AFTER-RESTART — the same fix chain as case (f), created by the NEW
+ * engine, and the case E4 exists for (round 242).
+ *
+ * `safe-restart.sh` waits for a QUIET fleet, and quiet means the last run has
+ * just finished — so the consolidation that lands after the restart is the one
+ * a straddling project is most likely to see. `createFixChain` then runs under
+ * the new engine, which gives its rows REAL `depends_on` (R42): the builder
+ * names the gating reviewer ids, the re-reviewer names the builder.
+ *
+ * THE DIFFERENCE FROM CASE (f), AND WHY IT IS A SEPARATE CASE. Case (f)'s chain
+ * is born `depends_on IS NULL`, so R69's original term — which tested exactly
+ * that — held the frozen rows above it. This chain declares its dependencies,
+ * so that term is blind to it, and a frozen row above it promoted where today's
+ * engine holds it. That gap is F14, ruled as E4, and it is closed by the
+ * CANDIDATE-side marker (R71): a frozen row is held behind any non-`done`
+ * lower-round row whatever wrote it. This case fails without the marker and
+ * passes with it, which is why it is here and not in a document.
+ *
+ * The chain hangs off the fixture's highest `done` reviewer, derived exactly as
+ * case (f) derives it, and the same vacuity guard applies.
+ */
+const RESTART_BUILDER_ID = "00000000-0000-4000-8000-0000000000a1";
+const RESTART_REVIEWER_ID = "00000000-0000-4000-8000-0000000000a2";
+
+interface CaseG {
+  rows: FixtureRow[];
+  snapshot: Set<string>;
+  /** The declared dependencies of the two post-restart rows (R42). */
+  newEngineDeps: Map<string, readonly string[]>;
+  base: number;
+}
+
+export function caseG(): CaseG {
+  const all = rows();
+  const snapshot = new Set(all.map((r) => r.id));
+
+  const doneReviewers = all.filter((r) => r.role === "reviewer" && r.status === "done");
+  if (doneReviewers.length === 0) {
+    throw new Error("task-graph-replay: case (g) needs a done reviewer to hang a fix chain off; the fixture has none");
+  }
+  const base = Math.max(...doneReviewers.map((r) => r.round));
+
+  const lowestOpen = Math.min(...all.filter((r) => r.status !== "done").map((r) => r.round));
+  if (base + 2 >= lowestOpen) {
+    throw new Error(
+      `task-graph-replay: case (g) is vacuous — the fix chain would land at ${base + 1}/${base + 2}, ` +
+        `not strictly below the lowest non-done round ${lowestOpen}, so today's rule would not hold anything behind it`,
+    );
+  }
+
+  all.push(
+    insertedTask(RESTART_BUILDER_ID, base + 1, {
+      role: "builder",
+      title: "fix chain created by the NEW engine after the executor restarted",
+    }),
+    insertedTask(RESTART_REVIEWER_ID, base + 2, {
+      role: "reviewer",
+      title: "re-review of the fix chain created after the restart",
+    }),
+  );
+
+  // R42's own shape: the fix builder depends on the reviewers of the group it
+  // repairs, the re-reviewer on the builder. Sorted and de-duplicated because
+  // `graphReady()` throws R14 on a duplicated id, and a case that tripped that
+  // would be testing integrity, not scheduling.
+  const gating = [...new Set(doneReviewers.filter((r) => r.round === base).map((r) => r.id))].sort();
+  const newEngineDeps = new Map<string, readonly string[]>([
+    [RESTART_BUILDER_ID, gating],
+    [RESTART_REVIEWER_ID, [RESTART_BUILDER_ID]],
+  ]);
+  return { rows: all, snapshot, newEngineDeps, base };
+}
+
 /* -------------------------------------------------------------------------- *
  * GREEN IN PHASE 1 — the fixture, the harness, and the stubs
  * -------------------------------------------------------------------------- */
@@ -943,7 +1048,7 @@ describe("R18 — the harness itself runs over the real fixture", () => {
     // has: an instrument that stops early would compare two truncated
     // schedules and call them equal.
     const stuck: GraphTask[] = [
-      { id: "a", round: 1, workstream: "main", status: "running", depends_on: null, write_set: [] },
+      { id: "a", round: 1, workstream: "main", status: "running", depends_on: null, write_set: [], graph_frozen: false },
     ];
     const neverSettles: PromotionRule = () => true;
     assert.throws(
@@ -1019,6 +1124,7 @@ describe("R18 — the harness itself runs over the real fixture", () => {
       ["c", caseC],
       ["e", caseE],
       ["f", () => caseF().rows],
+      ["g", () => caseG().rows],
     ] as const) {
       const built = build();
       assert.ok(built.length >= FIXTURE.length, `case ${name} lost rows`);
@@ -1028,6 +1134,8 @@ describe("R18 — the harness itself runs over the real fixture", () => {
     assert.equal(caseC().length, FIXTURE.length + 1, "case c inserted no task");
     assert.equal(caseE().filter((r) => r.status === "failed").length, 1, "case e failed no task");
     assert.equal(caseF().rows.length, FIXTURE.length + 2, "case f inserted no fix chain");
+    assert.equal(caseG().rows.length, FIXTURE.length + 2, "case g inserted no fix chain");
+    assert.equal(caseG().newEngineDeps.size, 2, "case g declared no graph fields — that is case f");
   });
 });
 
@@ -1077,22 +1185,66 @@ describe("F13 — a row inserted after 0040 is named by no frozen closure", () =
     assert.ok(base > 0, "case (f) derived a non-positive fix-chain base round");
   });
 
-  test("a mixed input carries real rounds; a pure-graph input withholds them", () => {
+  test("a straddling input carries real rounds; an all-frozen input withholds them", () => {
     const { rows: built, snapshot } = caseF();
     const mixed = graphInput(built, { snapshot });
     assert.ok(
       mixed.every((t) => t.round !== ROUND_WITHHELD),
-      "a mixed input withheld round — R69's legacy-row term would be unevaluable",
+      "a straddling input withheld round — R69's straddle term would be unevaluable",
+    );
+    // ROUND 242: the same must hold for case (g), whose post-restart rows carry
+    // REAL graph fields and so would have read as pure-graph under the old
+    // `some depends_on === null` condition. This assertion is the amendment.
+    const g = caseG();
+    assert.ok(
+      graphInput(g.rows, { snapshot: g.snapshot, newEngineDeps: g.newEngineDeps }).every(
+        (t) => t.round !== ROUND_WITHHELD,
+      ),
+      "a post-restart straddle withheld round — R69's widened term reads round about frozen rows, so " +
+        "case (g) would have been decided by the harness rather than by the rule",
     );
     assert.ok(
       graphInput(FIXTURE).every((t) => t.round === ROUND_WITHHELD),
-      "a pure-graph input kept its rounds — guard 3 of this file's header is lost",
+      "an all-frozen input kept its rounds — guard 3 of this file's header is lost",
     );
     // And the decision is made from the output, not from the option: passing a
-    // snapshot that happens to cover every row is still pure-graph.
+    // snapshot that happens to cover every row is still all-frozen.
     assert.ok(
       graphInput(FIXTURE, { snapshot: new Set(FIXTURE.map((r) => r.id)) }).every((t) => t.round === ROUND_WITHHELD),
       "a snapshot covering every row produced real rounds — withholding is being decided from the option",
+    );
+  });
+
+  test("the backfill's marker follows the snapshot, on both straddle orders (R71)", () => {
+    // `graph_frozen` is not a second sentinel and must not be derivable from
+    // `depends_on`: case (g)'s post-restart rows carry a real array AND a false
+    // marker, which is exactly the state round 223 could find no way to infer.
+    const f = caseF();
+    const g = caseG();
+    const fRows = graphInput(f.rows, { snapshot: f.snapshot });
+    const gRows = graphInput(g.rows, { snapshot: g.snapshot, newEngineDeps: g.newEngineDeps });
+
+    for (const [label, built, snapshot] of [
+      ["f", fRows, f.snapshot],
+      ["g", gRows, g.snapshot],
+    ] as const) {
+      for (const t of built) {
+        assert.equal(
+          t.graph_frozen,
+          snapshot.has(t.id),
+          `case (${label}): row ${t.id} carries graph_frozen=${t.graph_frozen} but ` +
+            `${snapshot.has(t.id) ? "was" : "was not"} in the migration-time snapshot`,
+        );
+      }
+    }
+    // The state that has no other witness: a non-frozen row with a real array.
+    const restartBuilder = gRows.find((t) => t.id === RESTART_BUILDER_ID);
+    assert.ok(restartBuilder, "case (g) built no post-restart builder");
+    assert.equal(restartBuilder.graph_frozen, false);
+    assert.ok(
+      Array.isArray(restartBuilder.depends_on) && restartBuilder.depends_on.length > 0,
+      "case (g)'s post-restart builder must declare real dependencies (R42) — that is what makes it case (g) " +
+        "and not case (f)",
     );
   });
 
@@ -1252,6 +1404,7 @@ describe("stub discipline — no export of task-graph.ts is a stub any more", ()
     status: "pending",
     depends_on: [],
     write_set: [],
+    graph_frozen: false,
   };
 
   const TASK_GRAPH_REL = "forge-control/src/lib/task-graph.ts";
@@ -1435,6 +1588,82 @@ describe("R18 — the graph is an exact replica of today's rounds", () => {
     // widening the snapshot.
     assertReplica("R18-f fix chain inserted after the migration", built, { snapshot });
   });
+
+  test("(g) a fix chain created by the NEW engine AFTER the restart (E4, R71)", () => {
+    const { rows: built, snapshot, newEngineDeps } = caseG();
+
+    // Same legacy-side premise as (f), asserted rather than assumed: today's
+    // rule holds every captured pending row behind the new chain. If it did
+    // not, the graph side could agree with it while promoting freely and the
+    // case would prove nothing.
+    const legacy = simulate(legacyInput(built), LEGACY_RULE);
+    const reviewerTick = promotedOnTick(legacy, RESTART_REVIEWER_ID);
+    assert.ok(reviewerTick > 0, "the post-restart re-reviewer was never promoted under today's rule");
+    for (const row of FIXTURE.filter((r) => r.status === "pending")) {
+      assert.ok(
+        promotedOnTick(legacy, row.id) > reviewerTick,
+        `today's rule released ${row.id} before the post-restart fix chain drained`,
+      );
+    }
+
+    // THE ASSERTION, and what fails without the marker. R69's original term
+    // tests `depends_on IS NULL`; this chain declares real dependencies (R42),
+    // so that term is blind to it and every frozen row above it promotes on
+    // tick 2 — the divergence measured in evidence/phase4-workstreams.md §5.4
+    // on `511070c9…` and `608dbecb…`. With `graph_frozen` on the CANDIDATE the
+    // two schedules are identical again.
+    assertReplica("R18-g fix chain created after the restart", built, { snapshot, newEngineDeps });
+  });
+
+  test("(g) POSITIVE CONTROL — clearing the marker brings the divergence back", () => {
+    /* A predicate not observed FAILING is not a predicate (00-vision.md §7
+     * rule 3). The mutation is on the DATA, not on a re-implemented rule: with
+     * `graph_frozen` cleared everywhere, the shipped `graphReady()` computes
+     * exactly what it computed before E4 — the disjunct's frozen side is false
+     * on every row, leaving `o.depends_on === null`, which is R69 as round 106
+     * landed it. So this case runs the SHIPPED rule and still shows the old
+     * behaviour, rather than transcribing the old rule and comparing against a
+     * copy of it.
+     *
+     * The assertion is that the two sides DIVERGE, and it names the tick and
+     * the rows, so a mutation that broke the case some other way (an empty
+     * schedule, a wedge) cannot read as a pass. */
+    const { rows: built, snapshot, newEngineDeps } = caseG();
+    const legacy = simulate(legacyInput(built), LEGACY_RULE);
+    const unmarked = graphInput(built, { snapshot, newEngineDeps }).map((t) => ({
+      ...t,
+      graph_frozen: false,
+    }));
+    const mutated = simulate(unmarked, GRAPH_RULE);
+
+    assert.notDeepEqual(
+      mutated.schedule,
+      legacy.schedule,
+      "clearing graph_frozen left the schedules identical — R69's widened term is not what closes case (g), " +
+        "so this file is proving something other than what it claims",
+    );
+    // The divergence is the one the experiment measured: the graph side runs
+    // AHEAD, promoting rows today's engine holds — not merely differently.
+    assert.ok(
+      mutated.ticks < legacy.ticks,
+      `without the marker the graph side took ${mutated.ticks} ticks against today's ${legacy.ticks}; the ` +
+        "expected failure is the graph running ahead of the fix chain, not an unrelated difference",
+    );
+    const firstDiff = legacy.schedule.findIndex(
+      (tickSet, i) => tickSet.join(",") !== (mutated.schedule[i] ?? []).join(","),
+    );
+    assert.ok(firstDiff >= 0, "no tick differed although the schedules did — impossible, so the comparison is wrong");
+    const early = (mutated.schedule[firstDiff] ?? []).filter((id) => !legacy.schedule[firstDiff].includes(id));
+    assert.ok(
+      early.length > 0,
+      `the first divergence is at tick ${firstDiff + 1} but the graph side promoted nothing extra there`,
+    );
+    console.log(
+      `task-graph-replay: CONTROL  case (g) without graph_frozen — diverges at tick ${firstDiff + 1}, ` +
+        `graph promoted early: [${early.map((id) => id.slice(0, 8)).join(", ")}] ` +
+        `(graph ${mutated.ticks} ticks vs legacy ${legacy.ticks})`,
+    );
+  });
 });
 
 /* -------------------------------------------------------------------------- *
@@ -1485,16 +1714,23 @@ const CASE_PINS: readonly CasePin[] = [
   // reader knows which of these six numbers is a prediction that held and which
   // is a baseline this round set.
   { label: "R18-f fix chain inserted after the migration", ticks: 17, promoted: 10, wedged: 0, predicted: false },
+  // Case (g) is round 242's, added with E4. Same shape as (f) — the same chain
+  // at the same two rounds, differing only in which engine created it — so the
+  // same 17/10 is expected, and its agreeing with (f) is itself a reading: the
+  // schedule a straddling project gets must not depend on which side of the
+  // restart its fix chain was born on. Baseline set this round, not predicted.
+  { label: "R18-g fix chain created after the restart", ticks: 17, promoted: 10, wedged: 0, predicted: false },
 ];
 
 describe("R18 — the schedules match the round-103 prediction, on both sides", () => {
   test("every case recorded a measurement", () => {
     // A case that threw before recording, or a label edited on one side only,
-    // must fail here rather than let the pins below silently skip it.
+    // must fail here rather than let the pins below silently skip it. The set
+    // is seven from round 242 (case (g) joined with E4).
     assert.deepEqual(
       [...MEASURED.keys()].sort(),
       CASE_PINS.map((p) => p.label).sort(),
-      "the recorded comparisons are not exactly the six pinned cases",
+      "the recorded comparisons are not exactly the pinned cases",
     );
   });
 

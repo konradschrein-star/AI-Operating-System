@@ -96,7 +96,7 @@ cd "$REPO_ROOT"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
-EXPECTED_ASSERTIONS=36
+EXPECTED_ASSERTIONS=43
 ASSERTIONS_RUN=0
 
 pass() {
@@ -245,9 +245,9 @@ done
 echo "  applied $applied migrations below 0040 into $SCHEMA"
 assert_eq 'project_tasks exists' 'project_tasks' \
   "$(q "SELECT table_name FROM information_schema.tables WHERE table_schema='$SCHEMA' AND table_name='project_tasks'")"
-# Pre-flight (failure mode (b)): none of the three columns, neither index.
-assert_eq 'pre-0040: none of the 3 columns present' '0' \
-  "$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name IN ('depends_on','workstream','write_set')")"
+# Pre-flight (failure mode (b)): none of the four columns, neither index.
+assert_eq 'pre-0040: none of the 4 columns present' '0' \
+  "$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name IN ('depends_on','workstream','write_set','graph_frozen')")"
 assert_eq 'pre-0040: neither R7 index present' '0' \
   "$(q "SELECT count(*) FROM pg_indexes WHERE schemaname='$SCHEMA' AND indexname IN ('project_tasks_depends_on_gin','project_tasks_workstream_idx')")"
 echo
@@ -334,6 +334,12 @@ assert_eq 'write_set type is text[]' '_text' \
   "$(q "SELECT udt_name FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name='write_set'")"
 assert_eq "write_set defaults to '{}'" "'{}'::text[]" \
   "$(q "SELECT column_default FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name='write_set'")"
+assert_eq 'graph_frozen type is boolean' 'bool' \
+  "$(q "SELECT udt_name FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name='graph_frozen'")"
+assert_eq 'graph_frozen defaults to false' 'false' \
+  "$(q "SELECT column_default FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name='graph_frozen'")"
+assert_eq 'graph_frozen is NOT NULL' 'NO' \
+  "$(q "SELECT is_nullable FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name='graph_frozen'")"
 assert_eq 'write_set is NOT NULL' 'NO' \
   "$(q "SELECT is_nullable FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name='write_set'")"
 
@@ -358,6 +364,25 @@ assert_eq "every backfilled row write_set='{}'" "$SEEDED" \
   "$(q "SELECT count(*) FROM project_tasks WHERE write_set='{}'")"
 assert_eq 'no row left with NULL depends_on' '0' \
   "$(q 'SELECT count(*) FROM project_tasks WHERE depends_on IS NULL')"
+# --- R71 (E4): the marker landed on exactly the rows the backfill wrote ------
+# The property the widened R69 term rests on. Asserted three ways, because
+# "every row is true" alone would also pass if the column had simply been
+# DEFAULTed to true — which would mark every row any engine ever writes and
+# re-serialise every future project (probe 3 of check-r69-straddle.sh prices
+# that at 17 ticks against 3).
+assert_eq 'R71: every backfilled row carries graph_frozen' "$SEEDED" \
+  "$(q 'SELECT count(*) FROM project_tasks WHERE graph_frozen')"
+assert_eq 'R71: the marker and the closure agree on every row' '0' \
+  "$(q 'SELECT count(*) FROM project_tasks WHERE graph_frozen <> (depends_on IS NOT NULL)')"
+# The negative control, inserted AFTER the backfill exactly as the engine does:
+# an INSERT that does not name the column must produce a NOT-frozen row, or the
+# column would be marking rows no migration ever touched.
+q "INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on)
+   SELECT '00000000-0000-4000-8000-0000000f0040', id, 9999, 'builder', 'post-backfill control', 'x', 'pending', '{}'::uuid[]
+     FROM projects LIMIT 1" >/dev/null
+assert_eq 'R71 CONTROL: a row inserted after the backfill is NOT frozen' 'f' \
+  "$(q "SELECT graph_frozen FROM project_tasks WHERE id='00000000-0000-4000-8000-0000000f0040'")"
+q "DELETE FROM project_tasks WHERE id='00000000-0000-4000-8000-0000000f0040'" >/dev/null
 echo
 
 # ---------------------------------------------------------------------------
@@ -435,7 +460,7 @@ echo
 #    two empty files compare equal, and that must never read as a pass.
 # ---------------------------------------------------------------------------
 echo '--- 6. snapshot ---------------------------------------------------------------'
-SNAP_SQL='SELECT id, depends_on, workstream, write_set FROM project_tasks ORDER BY id'
+SNAP_SQL='SELECT id, depends_on, workstream, write_set, graph_frozen FROM project_tasks ORDER BY id'
 psql_run -q -At -F'|' -c "$SNAP_SQL" > "$WORK/snap1.txt"
 SNAP1_LINES="$(wc -l < "$WORK/snap1.txt" | tr -d ' ')"
 echo "  $WORK/snap1.txt — $SNAP1_LINES lines, $(wc -c < "$WORK/snap1.txt" | tr -d ' ') bytes"
@@ -456,7 +481,13 @@ assert_eq 'pass 2 backfill UPDATE changed zero rows' 'UPDATE 0' "$PASS2_UPDATE"
 # indexes skipped. Without this, a pass 2 against a fresh table would also
 # report UPDATE 0 (nothing to backfill) and look identical.
 SKIPS="$(grep -c 'already exists, skipping' "$WORK/pass2.err" || true)"
-assert_ge 'pass 2: IF NOT EXISTS engaged on 5 objects' 5 "$SKIPS"
+assert_ge 'pass 2: IF NOT EXISTS engaged on 6 objects' 6 "$SKIPS"
+# R71 again, after the replay: a second application must not mark anything new.
+# It cannot — its UPDATE matched zero rows — but a marker that drifted on replay
+# would change which rows R69 holds, and the snapshot comparison below would
+# report it as a diff without naming what changed.
+assert_eq 'R71: pass 2 marked no additional row' "$SEEDED" \
+  "$(q 'SELECT count(*) FROM project_tasks WHERE graph_frozen')"
 
 psql_run -q -At -F'|' -c "$SNAP_SQL" > "$WORK/snap2.txt"
 SNAP2_LINES="$(wc -l < "$WORK/snap2.txt" | tr -d ' ')"

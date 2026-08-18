@@ -95,6 +95,20 @@ export interface GraphTask {
   status: TaskStatus;
   depends_on: DepsField;
   write_set: string[];
+  /**
+   * PROVENANCE OF `depends_on`, not a second sentinel (R71, E4, round 242).
+   * `true` on exactly the rows whose closure `0040_task_graph.sql`'s backfill
+   * wrote; `false` on every row an engine wrote itself, which is the column
+   * default and therefore the answer for every row the migration never touched.
+   *
+   * It is REQUIRED rather than optional on purpose. `graph_frozen?: boolean`
+   * read as `?? false` would be the silent fallback NF1 forbids — a caller that
+   * forgot the field would get "not frozen" and the widened R69 term would go
+   * quiet on precisely the rows it exists for, with nothing to notice. A missing
+   * field is a compile error instead, which is how the three columns of 0040
+   * were introduced and for the same reason.
+   */
+  graph_frozen: boolean;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -200,32 +214,61 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  * DISPLAY code, and R14's hard error belongs to the path where a corrupt array
  * changes what the engine DOES.
  *
- * AND THE LEGACY-ROW TERM (R69). `depends_on` is a FROZEN closure: the backfill
+ * AND THE STRADDLE TERM (R69). `depends_on` is a FROZEN closure: the backfill
  * (R6) writes the ids of the rows that existed AT MIGRATION TIME, and 0040 is
- * applied before the executor restarts (R64), so the old engine keeps inserting
- * rows — `createFixChain` at `round + 1` and `round + 2` — in the gap. Those
- * rows are born `depends_on IS NULL` (E2, §2.2) and NO frozen closure names
- * them. Without a second term a frozen row promotes the moment its frozen deps
- * drain, straight past a fix chain numbered far below it; today's engine holds
- * it. So a graph row is ALSO not ready while any LEGACY row of the same project
- * in a strictly lower round is not `done`:
+ * applied before the executor restarts (R64), so rows keep being inserted in
+ * the gap and after it — `createFixChain` at `round + 1` and `round + 2` — that
+ * NO frozen closure names, because they did not exist to be named. Without a
+ * second term a frozen row promotes the moment its frozen deps drain, straight
+ * past a fix chain numbered far below it; today's engine holds it. So:
  *
  *     ready = every dep is done
- *             AND NOT ∃ l ∈ byId : l.depends_on === null
- *                                  ∧ l.round < task.round
- *                                  ∧ l.status !== 'done'
+ *             AND NOT ∃ o ∈ byId : o.round < task.round
+ *                                  ∧ o.status !== 'done'
+ *                                  ∧ (task.graph_frozen ∨ o.depends_on === null)
  *
- * On a project planned entirely after the restart the term is free — no row has
- * a NULL `depends_on`, so it is vacuously true and `round` is never consulted.
- * It costs something only where it must: a project that straddles the deploy.
- * `02-architecture.md` §3.2 and §9.2 (E3) carry the ruling and the two
- * alternatives it was chosen over; `F13` in §6 is the failure it closes; R18
- * case (f) in `task-graph-replay.test.ts` is the test that fails without it.
+ * TWO KINDS OF ROW GET HELD, AND THE DISJUNCT IS WHY (E4, round 242):
+ *
+ *  - A FROZEN candidate (`graph_frozen`, R71) is held behind ANY non-`done`
+ *    lower-round row, whatever that row's own provenance. Its closure was
+ *    computed against a SNAPSHOT, so "every dep is done" is a statement about a
+ *    task list that no longer exists; the round it was born under is the only
+ *    ordering it ever declared, and this term replays it. That covers a fix
+ *    chain the OLD engine inserted in the deploy gap (F13) and one the NEW
+ *    engine creates after the restart with real graph fields (F14) with one
+ *    predicate, because the candidate's provenance — not the blocker's — is
+ *    what makes the closure untrustworthy.
+ *  - A NON-FROZEN candidate is held only behind LEGACY rows (`depends_on IS
+ *    NULL`), exactly as before. Its own closure was declared, not derived, so
+ *    the ids it names are the whole of its ordering — except against a row
+ *    created under the old semantics, which never got the chance to declare
+ *    anything and whose round is therefore still binding.
+ *
+ * The two together are what make the term FREE where it must be. On a project
+ * planned entirely after the restart, no row is frozen and no row is NULL, so
+ * both sides of the disjunct are false, `round` is never consulted, and eight
+ * independent builders stay eight-wide. That is not an argument, it is probe 3
+ * of `scripts/checks/check-r69-straddle.sh`: with the marker, 3 ticks / 8-wide;
+ * with the widening ungated, 17 ticks / 1-wide, which is today's engine.
+ *
+ * WHY A RECORDED MARKER AND NOT AN INFERRED ONE. Round 223 built and measured
+ * all four ways to infer "this row's closure was written by the migration" from
+ * the data — the NULL sentinel, the sentinel plus a settled inert row,
+ * `isClosureShaped()`, and a `created_at` horizon — and each either goes blind
+ * exactly where sight is needed or convicts ordinary fan-out of being a
+ * backfill (`02-architecture.md` §9.3, `evidence/phase4-workstreams.md` §5.7).
+ * The fact is now RECORDED by the statement that makes it true (R71), so the
+ * predicate reads a column instead of guessing from a shape.
+ *
+ * `02-architecture.md` §3.2, §3.2.1 and §9.2/§9.3 (E3, E4) carry the ruling;
+ * `F13` in §6 is the failure it closes; R18 cases (f) and (g) in
+ * `task-graph-replay.test.ts` are the tests that fail without each half.
  *
  * This is the ONE place a graph-branch predicate reads `round`, and it reads it
- * only about legacy rows. It is part of the legacy surface, not of the graph:
- * it is deleted in the same commit as `readyRule()` and R12's legacy branch,
- * when no `depends_on IS NULL` row remains. TODO(R12-retire)
+ * only about the migration's own rows and about legacy rows. It is part of the
+ * legacy surface, not of the graph: it is deleted in the same commit as
+ * `readyRule()` and R12's legacy branch, when no `depends_on IS NULL` and no
+ * `graph_frozen` row remains. TODO(R12-retire)
  *
  * THE `pending` TERM LIVES HERE, not in the caller — operator ruling, round 102,
  * inherited and binding. `legacyRoundReady()` gates on `pending` in its own body
@@ -241,7 +284,7 @@ export function legacyRoundReady(task: GraphTask, all: readonly GraphTask[]): bo
  *      THROW (R14). Integrity beats scheduling, so it precedes both remaining
  *      terms; never `false`, never `true`.
  *   3. every dep `done`         → otherwise `false`
- *   4. the legacy-row term (R69) → otherwise `false`
+ *   4. the straddle term (R69)  → otherwise `false`
  *
  * PRECONDITION 1: `readyRule(task) === "graph"`. A `depends_on` of `null` is the
  * LEGACY branch's row and is judged by `legacyRoundReady()`; both callers
@@ -318,12 +361,18 @@ export function graphReady(task: GraphTask, byId: ReadonlyMap<string, GraphTask>
     if (byId.get(id)!.status !== "done") return false;
   }
 
-  // 4. R69 — the legacy-row term (E3, §9.2; F13). The sentinel test comes FIRST
-  //    in the conjunction, so on a project with no legacy row left `round` is
-  //    never consulted at all and the term costs nothing. TODO(R12-retire)
-  for (const legacy of byId.values()) {
-    if (legacy.depends_on !== null) continue;
-    if (legacy.round < task.round && legacy.status !== "done") return false;
+  // 4. R69 — the straddle term (E3, §9.2, F13; widened by E4, §9.3, round 242).
+  //    The candidate's own marker is read ONCE, outside the loop: on a project
+  //    where nothing is frozen and nothing is legacy the loop still runs but no
+  //    iteration can return, so `round` decides nothing — which is what probe 3
+  //    of check-r69-straddle.sh measures as 3 ticks / 8-wide. A frozen
+  //    candidate short-circuits the provenance test on the blocker, because for
+  //    it every lower-round row is binding regardless of who wrote that row.
+  //    TODO(R12-retire)
+  const frozen = task.graph_frozen;
+  for (const other of byId.values()) {
+    if (other.round >= task.round || other.status === "done") continue;
+    if (frozen || other.depends_on === null) return false;
   }
 
   return true;

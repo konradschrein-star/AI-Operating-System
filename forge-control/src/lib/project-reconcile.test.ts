@@ -1085,6 +1085,7 @@ function gt(round: number, over: Partial<GraphTask> = {}): GraphTask {
     status: "done",
     depends_on: [],
     write_set: [],
+    graph_frozen: false,
     ...over,
   };
 }

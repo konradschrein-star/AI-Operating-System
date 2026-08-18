@@ -47,6 +47,32 @@ and matches the validator's regex character for character).
 POSIX paths of the files a task intends to write.
 *How proved:* unit — validator tests.
 
+**R71. `project_tasks.graph_frozen boolean NOT NULL DEFAULT false`, set `true`
+by the backfill UPDATE that writes the closure — the same statement, the same
+transaction. ADDED ROUND 242 (E4, `02-architecture.md` §9.3).** It records the
+PROVENANCE of `depends_on`: `true` on exactly the rows 0040 derived a closure
+for, `false` on every row any engine wrote itself, before or after the migration.
+Nothing else ever writes it.
+
+**Why a recorded fact and not an inferred one — this is the requirement's whole
+content.** R69 needs to know whether a row's `depends_on` was derived from a
+round number against a snapshot or declared by a planner, because only the first
+is untrustworthy against rows that did not exist when it was written. Round 223
+built and measured all four ways of inferring that after the event and each
+failed in its own direction (§9.3's table). A fact the process knows at the
+moment it is true must be recorded then, by that process; inferring it later is
+archaeology, and archaeology is what five separate defects in this project have
+had in common.
+
+*How proved:* `check` — `scripts/checks/check-migration-0040.sh` asserts the
+type, the `NOT NULL DEFAULT false`, that the marker and the closure agree on
+every row, that a row inserted AFTER the backfill by an INSERT not naming the
+column is not frozen, and that a second application marks nothing new; unit —
+`migrations.test.ts` pins the guarded ADD COLUMN and the `graph_frozen = true`
+clause inside the one backfill statement.
+*Retired with:* R12's legacy branch and R69, in one commit, when no frozen row
+remains (NF6, standing rule 4) — it is legacy surface, not graph vocabulary.
+
 **R6.** 0040 backfills `depends_on` for every row that exists at migration time,
 per project, as **the full set of ids of every task in a strictly lower round of
 the same project** (the transitive closure of today's rule, written out).
@@ -64,15 +90,21 @@ the term that restores it **for every row created under the old semantics**,
 case (f) is the test. Widening the backfill is *not* an alternative — it would
 have to name rows that do not yet exist.
 
-**NARROWED ROUND 223 (E4, `02-architecture.md` §9.3).** This clause read *"R69
-is the term that makes it one"* — one meaning an exact replica for the whole
-straddling project. It is not: a row the NEW engine inserts after the restart
-carries real graph fields (R42), so R69's `depends_on IS NULL` term cannot see
-it, and a frozen row above it promotes where today's engine holds it. Measured,
-not conceded: `scripts/checks/check-r69-straddle.sh` puts the divergence on tick
-2, on the same two rows §3.2.1 records for F13. R69 and its wider description
-are narrowed together in one commit, per standing rule 4; §3.2.2 carries the
-blast radius and §9.3 the four mitigations that were tried and failed.
+**NARROWED ROUND 223, RESTORED ROUND 242 (E4, `02-architecture.md` §9.3).** This
+clause read *"R69 is the term that makes it one"* — one meaning an exact replica
+for the whole straddling project. Under R69 as round 106 landed it that was
+false: a row the NEW engine inserts after the restart carries real graph fields
+(R42), so a term testing the BLOCKING row's `depends_on IS NULL` could not see
+it, and a frozen row above it promoted where today's engine holds it. Measured,
+not conceded: `scripts/checks/check-r69-straddle.sh` put the divergence on tick
+2, on the same two rows §3.2.1 records for F13.
+
+**R69 now keys on the CANDIDATE's `graph_frozen` (R71)**, so R6's closure plus
+R69's term is again an exact replica for the whole straddling project — and that
+is a measurement, not a restored adjective: probe 1b of the same script shows
+the straddle matching today's engine tick for tick, and probes 1 and 1c show the
+divergence returning the moment the marker is cleared or the term deleted from
+the source. F14 is retired with this clause, in one commit (standing rule 4).
 *How proved:* unit (R18's replay test over the committed fixture) + `check`
 (`scripts/checks/check-migration-0040.sh` applies 0040 twice to a throwaway
 Postgres schema seeded from the fixture and diffs the resulting rows).
@@ -120,54 +152,68 @@ project in a strictly lower round is anything other than `done`. Both branches
 live in **one** statement, so a task can never satisfy neither.
 *How proved:* unit + `check`.
 
-**R69. The legacy-row term.** The graph branch additionally refuses a candidate
-while **any legacy row** (`depends_on IS NULL`) of the same project in a
-strictly lower round is not `done`. Without it a backfilled row, whose closure
+**R69. The straddle term.** The graph branch additionally refuses a candidate
+while any row of the same project in a strictly lower round is not `done`, where
+"any row" means — **and the asymmetry is the requirement** — ANY such row when
+the candidate itself carries `graph_frozen` (R71), and only a **legacy row**
+(`depends_on IS NULL`) when it does not.
+
+    NOT ready while ∃ o : o.round < candidate.round
+                        ∧ o.status <> 'done'
+                        ∧ (candidate.graph_frozen ∨ o.depends_on IS NULL)
+
+A candidate whose closure the MIGRATION derived has no other ordering to be
+judged by; a candidate that declared its dependencies has said everything it
+needs to, except against a row created under the old semantics, which never got
+to declare anything. **WIDENED ROUND 242 (E4, §9.3)** — through round 241 the
+term read the blocking row's sentinel alone. Without it a backfilled row, whose closure
 was frozen when 0040 ran (R6), promotes straight past a row the old engine
 inserted afterwards — `createFixChain`'s builder at `round + 1` and re-reviewer
 at `round + 2`, both born NULL — because no frozen closure can name them. On
 `operator-visibility` that chain lands at 1307/1308, below every one of its
 eight `pending` rows, so the hazard is reachable on the deploy's own target.
-Ruled as **E3** in `02-architecture.md` §9.2, reasoned in §3.2.1, tabled as
-**F13**. On a project planned after the restart no row is NULL, the term is
-vacuously true, and `round` is never consulted — it costs only where it must.
-It is part of the legacy surface: **deleted in the same commit as R12's branch
-and R18 case (f)**, when no NULL row remains (NF6, standing rule 4).
-*How proved:* unit — R18 case (f) fails without it and passes with it, shown by
-mutation test in `evidence/phase1-migration.md` §13.4; + `check` for the SQL.
+Ruled as **E3** in `02-architecture.md` §9.2, widened as **E4** in §9.3,
+reasoned in §3.2.1 and §3.2.2, tabled as **F13**. On a project planned after the
+restart no row is frozen and no row is NULL, both sides of the disjunct are
+false, and `round` is never consulted — measured at 3 ticks / 8-wide against the
+same widening ungated at 17 / 1-wide, so "it costs only where it must" is a
+reading rather than a claim. It is part of the legacy surface: **deleted in the
+same commit as R12's branch and R18 cases (f) and (g)**, when no NULL and no
+frozen row remains (NF6, standing rule 4).
+*How proved:* unit — R18 case (f) fails without the term and passes with it
+(mutation transcript in `evidence/phase1-migration.md` §13.4), R18 case (g) fails
+without the marker and passes with it, with a POSITIVE CONTROL in the same file
+that clears `graph_frozen` and asserts the divergence returns; + `check` for the
+SQL (`check-scheduler-sql.sh` cases 5 and 5b, the second carrying two candidates
+identical but for the marker) and `check-r69-straddle.sh` for the schedule.
 
-**WHAT R69 DOES NOT HOLD — bounded round 223, ruled as E4 in
-`02-architecture.md` §9.3, blast radius in §3.2.2, tabled as F14.** The term
-tests `depends_on IS NULL`, so it sees rows the OLD engine wrote and nothing
-else. A fix chain the NEW engine creates after the restart carries real graph
-fields (R42), and a frozen row above it therefore promotes where today's engine
-would hold it. **This is accepted, not overlooked.** Two things make it the
-right line rather than a concession:
+**WHAT R69 DID NOT HOLD, AND WHAT NOW HOLDS IT — round 223 bounded it, round 242
+closed it (E4, `02-architecture.md` §9.3).** Through round 241 the term tested
+`depends_on IS NULL`, so it saw rows the OLD engine wrote and nothing else, and a
+fix chain the NEW engine creates after the restart (R42) went unseen — F14. That
+was **accepted on the record, not overlooked**, for one reason: option A's
+arithmetic was right and it had no implementable gate. Round 223 built and
+measured all four candidates and each failed differently — the sentinel gate
+silent on a straddle with no gap row and firing on one only by coincidence;
+`isClosureShaped()` reading 8/8 exposed rows as frozen before the post-restart
+chain exists and 0/8 after; a `created_at` horizon right on the straddle and
+taking a post-restart project from 3 ticks / 8-wide to 17 / 1-wide; ungated the
+same collapse.
 
-1. **The sentinel is the semantic boundary.** `depends_on IS NULL` means
-   *created under the old semantics*. Holding a frozen row behind such a row
-   replays the rule that row was born under — which is what R18's replica claim
-   is about. Refusing to hold it behind a NEW-semantics row is the graph doing
-   its job: that row declared its dependencies, the frozen row is not among
-   them, and inventing an edge out of a round number is the conflation
-   `00-vision.md` §2 exists to end.
-2. **The alternative has no implementable gate.** Widening the term "while a row
-   is frozen" requires distinguishing a backfilled closure from a declared
-   dependency set, and nothing records that distinction. Four gates were built
-   and measured (§9.3's table): the sentinel gate is silent on a straddle with
-   no gap row and fires on one only by coincidence; `isClosureShaped()` — the
-   corpus's own frozen-row detector — reads 8/8 exposed rows as frozen before
-   the post-restart chain exists and 0/8 after; a `created_at` horizon gate is
-   right on the straddle and takes a post-restart project from 3 ticks / 8-wide
-   to 17 ticks / 1-wide; ungated is the same collapse.
+**The gate now exists because the fact is recorded (R71).** Marking a frozen row
+costs one additive column and, where nothing is frozen, exactly nothing — the
+same S3 fixture that convicted every inferred gate is byte-identical under the
+marker. F14 is retired with this paragraph, in the same commit as the term it
+described (standing rule 4). Round 223's four measurements are kept and still
+run, as the pre-242 arms of `check-r69-straddle.sh`: they are the argument for
+the column, and an argument whose measurements have been deleted is an assertion.
 
 *How the boundary is proved:* `check` —
-`scripts/checks/check-r69-straddle.sh`, 11 probes, which is also the instrument
-that would catch a later round quietly widening the term. It needs no database:
-it composes the SHIPPED `graphReady()` with each candidate widening over the R9
-fixture, and it exits non-zero if a probe did not run.
-*Reopened by:* one additive column in 0040 marking a backfilled row, priced in
-§9.3 — cheap only while 0040 is un-applied.
+`scripts/checks/check-r69-straddle.sh`, 14 probes, which is also the instrument
+that would catch a later round quietly widening or narrowing the term. It needs
+no database: it composes the SHIPPED `graphReady()` over the R9 fixture with and
+without the marker, and against a copy of the module with the term deleted, and
+it exits non-zero if a probe did not run.
 
 **R13.** `promoteReadyTasks()` keeps the `AND p.status = 'active'` gate joined
 from `projects`, unchanged in meaning: paused, blocked, done and cancelled
@@ -1306,7 +1352,9 @@ recreated as the main one.
 `|| fallback` added by the diff and states why each is not a swallowed error.
 
 **NF2. Operability over elegance.** No new dependency, no new process, no new
-table. One new pure module, one migration, three columns.
+table. One new pure module, one migration, four columns (the fourth is R71's
+`graph_frozen`, added round 242 — additive, defaulted, and read by exactly one
+predicate).
 *How proved:* review — `git diff --stat` and `package.json` unchanged.
 
 **NF3. Test-process purity.** No test opens a database connection, a network
@@ -1362,7 +1410,7 @@ budget written into the assertion message.
 
 | Phase | Requirements |
 |---|---|
-| 1 — Schema, fixture, replica harness | R1–R9, R18 (harness only), NF3 |
+| 1 — Schema, fixture, replica harness | R1–R9, R71, R18 (harness only), NF3 |
 | 2 — Graph scheduler | R10–R21, R69, R18 (proof), NF1, NF6 |
 | 3 — Task creation, validation, cycles | R22–R31, NF4 |
 | 4 — Workstream worktrees, integration, consolidation | R32–R46, R70, R17 (warn clause), NF1, NF5 |

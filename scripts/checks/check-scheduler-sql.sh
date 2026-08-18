@@ -5,8 +5,9 @@
 # promotes with its round undrained), R12 (a legacy row still waits for every
 # strictly lower round), R13 (the p.status = 'active' gate is a filter, not a
 # state change), R14 (a dangling dependency lands on `blocked` and notifies,
-# never on `ready`) and R69 (the legacy-row term holds a frozen closure behind
-# a post-migration legacy row).
+# never on `ready`) and R69 (the straddle term: a frozen closure is held behind
+# a post-migration legacy row — case 5 — and, since E4/R71, behind a post-RESTART
+# graph row too, while a row that declared its own dependencies is not — case 5b).
 #
 # ROUND 204 ADDED CASES 8, 8b, 9 AND 10, each the measured shape of a round-203
 # finding. R14 was a guarantee with holes in it, and they are closed here against
@@ -147,13 +148,13 @@ cd "$REPO_ROOT"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
-EXPECTED_ASSERTIONS=82
+EXPECTED_ASSERTIONS=93
 ASSERTIONS_RUN=0
 # Every row the seed inserts: 3 + 2 + 2 + 3 + 2 + 4 across cases 1–7, plus
 # 2 + 2 + 2 + 2 + 2 for cases 8, 8b, 9, 10 and case 10's foreign project.
 # T3_GHOST and T8_GHOST are NOT among them — they are the ids cases 3 and 8 name
 # and nobody inserts. Guard against failure mode (a).
-SEED_EXPECTED_ROWS=26
+SEED_EXPECTED_ROWS=30
 
 pass() {
   ASSERTIONS_RUN=$((ASSERTIONS_RUN + 1))
@@ -297,8 +298,8 @@ for f in db/migrations/*.sql; do
   applied=$((applied + 1))
 done
 echo "  applied $applied migrations (including 0040) into $SCHEMA"
-assert_eq 'all three 0040 columns present' '3' \
-  "$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name IN ('depends_on','workstream','write_set')")"
+assert_eq 'all four 0040 columns present' '4' \
+  "$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name IN ('depends_on','workstream','write_set','graph_frozen')")"
 assert_eq 'notifications table reachable in this search_path' 'notifications' \
   "$(q "SELECT table_name FROM information_schema.tables WHERE table_schema='$SCHEMA' AND table_name='notifications'")"
 assert_eq 'notifications starts empty (failure mode (d))' '0' \
@@ -323,6 +324,7 @@ P1='00000000-0000-4000-8000-0000000000c1'   # R11
 P2='00000000-0000-4000-8000-0000000000c2'   # R12
 P3='00000000-0000-4000-8000-0000000000c3'   # R14
 P5='00000000-0000-4000-8000-0000000000c5'   # R69
+P5B='00000000-0000-4000-8000-0000000000d5'  # R69 widened — E4/R71, round 242
 P6='00000000-0000-4000-8000-0000000000c6'   # R13
 P7='00000000-0000-4000-8000-0000000000c7'   # R16/R17 claim belt
 P8='00000000-0000-4000-8000-0000000000c8'   # R14 via retryTask (round 204)
@@ -342,6 +344,10 @@ T3_GHOST='00000000-0000-4000-8000-0000000014ff'  # named by T3_CAND, inserted NO
 T5_LEGACY='00000000-0000-4000-8000-00000000690a'
 T5_DEP='00000000-0000-4000-8000-00000000690b'
 T5_CAND='00000000-0000-4000-8000-00000000690c'
+T5B_GRAPH='00000000-0000-4000-8000-00000000710a'   # a NEW-engine row at a LOWER round
+T5B_DEP='00000000-0000-4000-8000-00000000710b'
+T5B_FROZEN='00000000-0000-4000-8000-00000000710c'  # graph_frozen — must be held
+T5B_DECLARED='00000000-0000-4000-8000-00000000710d' # same shape, NOT frozen — must promote
 T6_ROOT='00000000-0000-4000-8000-00000000130a'
 T6_LEGACY='00000000-0000-4000-8000-00000000130b'
 T7_A='00000000-0000-4000-8000-00000000160a'
@@ -366,6 +372,7 @@ INSERT INTO projects (id, name, brief, repo, status) VALUES
   ('$P2','case2-R12','synthetic','ai-os','active'),
   ('$P3','case3+4-R14','synthetic','ai-os','active'),
   ('$P5','case5-R69','synthetic','ai-os','active'),
+  ('$P5B','case5b-R69-widened','synthetic','ai-os','active'),
   ('$P6','case6-R13','synthetic','ai-os','paused'),
   ('$P7','case7-R16','synthetic','ai-os','active'),
   -- Cases 8–10 start PAUSED so their sweep happens in section 9, after case 4's
@@ -412,6 +419,24 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
   ('$T5_LEGACY','$P5',100,'builder','c5 post-migration legacy row','x','pending',NULL,'main','{}'),
   ('$T5_DEP','$P5',150,'builder','c5 frozen dependency, done','x','done','{}','main','{}'),
   ('$T5_CAND','$P5',200,'reviewer','c5 frozen-closure candidate','x','pending','{$T5_DEP}','main','{}');
+
+-- CASE 5b (R69 WIDENED — E4, R71, round 242), the SQL-layer twin of R18 case
+-- (g). Same shape as case 5 with ONE difference that is the whole case: the row
+-- sitting at a strictly lower round is not a legacy row but a GRAPH row the new
+-- engine wrote — the fix chain a post-restart consolidation creates (R42),
+-- which carries real depends_on and which R69's original term could not see.
+--
+-- TWO CANDIDATES, IDENTICAL BUT FOR THE MARKER, and that is the control: both
+-- name the same done dependency, both sit at round 200 above the same open row.
+-- The frozen one must be held (its closure was derived from a round number
+-- against a snapshot that predates \$T5B_GRAPH); the declared one must promote
+-- (its dependencies are exactly what it says they are). If the widening were
+-- keyed on anything but the marker, the two would share a fate.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set, graph_frozen) VALUES
+  ('$T5B_GRAPH','$P5B',100,'builder','c5b post-restart fix builder, real graph fields','x','pending','{}','main','{}',false),
+  ('$T5B_DEP','$P5B',150,'builder','c5b frozen dependency, done','x','done','{}','main','{}',true),
+  ('$T5B_FROZEN','$P5B',200,'reviewer','c5b FROZEN candidate, closure entirely done','x','pending','{$T5B_DEP}','main','{}',true),
+  ('$T5B_DECLARED','$P5B',200,'reviewer','c5b DECLARED candidate, same deps, not frozen','x','pending','{$T5B_DEP}','main','{}',false);
 
 -- CASE 6 (R13). One graph root and one legacy row in a PAUSED project. Both
 -- would promote on their own merits; the gate must stop both, and flipping the
@@ -535,8 +560,11 @@ if (step === "promote") {
     process.exit(5);
   }
   const all = await probe.query<import("$REPO_ROOT/forge-control/src/lib/task-graph.ts").GraphTask>(
-    "select id::text, round, workstream, status, depends_on::text[] as depends_on, write_set" +
-      " from project_tasks where project_id = \$1",
+    // graph_frozen is SELECTed, not defaulted: an absent field would arrive as
+    // `undefined`, read as falsy inside graphReady()'s R69 term, and make the
+    // mirror answer for a rule the engine is not running (R71, E4).
+    "select id::text, round, workstream, status, depends_on::text[] as depends_on, write_set," +
+      " graph_frozen from project_tasks where project_id = \$1",
     [row.rows[0].project_id],
   );
   await probe.end();
@@ -594,6 +622,15 @@ PY
 
 echo '--- 4. tick 1: promoteReadyTasks() --------------------------------------------'
 snapshot "$WORK/s0.txt"
+# THE MIRROR FOR CASE 5b IS TAKEN HERE, BEFORE THE PROMOTE, and the timing is
+# the assertion's whole content. `graphReady()` answers `false` for any row that
+# is not `pending` (its first term, operator ruling round 102), so a mirror read
+# AFTER tick 1 would report `false` for a row precisely because the statement
+# had just promoted it — an instrument agreeing with itself about the wrong
+# question. Both 5b candidates are `pending` at this instant, so the pure side
+# is asked the same question the statement is about to answer.
+MIRROR5BF="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T5B_FROZEN" 2>/dev/null)"
+MIRROR5BD="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T5B_DECLARED" 2>/dev/null)"
 DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" promote | sed 's/^/  | /'
 snapshot "$WORK/s1.txt"
 PROMOTED1="$(promoted "$WORK/s0.txt" "$WORK/s1.txt")"
@@ -665,6 +702,35 @@ assert_eq 'R69: candidate NOT promoted while the legacy row is open' 'no' "$(ins
 assert_eq 'R69: candidate is still pending' 'pending' "$(st "$T5_CAND")"
 echo
 
+echo '--- 5. case 5b — R69 widened: graph_frozen holds a DERIVED closure (E4) -------'
+assert_eq 'E4 premise: the candidates share one done dependency' 'done' "$(st "$T5B_DEP")"
+assert_eq 'E4 premise: the lower-round row is a GRAPH row, not a legacy one' 'f' \
+  "$(q "SELECT depends_on IS NULL FROM project_tasks WHERE id='$T5B_GRAPH'")"
+# NOT `= pending`: it is a graph root of an ACTIVE project, so tick 1 promotes
+# it to `ready` on its own merits — which is exactly the post-restart fix
+# builder starting work. What the case needs is that it is not DONE, because
+# that is what R69's term reads.
+assert_eq 'E4 premise: that lower-round row is not done' 'no' \
+  "$([ "$(st "$T5B_GRAPH")" = 'done' ] && echo yes || echo no)"
+assert_eq 'E4: the FROZEN candidate is NOT promoted' 'no' "$(inset "$T5B_FROZEN" "$PROMOTED1")"
+assert_eq 'E4: the frozen candidate is still pending' 'pending' "$(st "$T5B_FROZEN")"
+# THE CONTROL, and the reason this case is two rows rather than one: without it
+# a term that held EVERY graph row behind every lower round would pass every
+# assertion above while re-serialising every project this engine exists to
+# parallelise (17 ticks against 3 — probe 3 of check-r69-straddle.sh).
+assert_eq 'E4 CONTROL: the DECLARED candidate promotes in the same tick' 'yes' \
+  "$(inset "$T5B_DECLARED" "$PROMOTED1")"
+# THE MIRROR (02-architecture.md §1.2), read from the pre-tick capture in
+# section 4: the pure predicate answered, on the same rows in the same state,
+# exactly what the statement then did — refuse the frozen candidate, release the
+# declared one. Both took the graph branch, so neither answer came from the
+# legacy rule by accident.
+assert_has 'E4 MIRROR: the frozen candidate took the graph branch' "$MIRROR5BF" 'MIRROR_RULE=graph'
+assert_has 'E4 MIRROR: graphReady() also refuses the frozen candidate' "$MIRROR5BF" 'MIRROR=false'
+assert_has 'E4 MIRROR: the declared candidate took the graph branch' "$MIRROR5BD" 'MIRROR_RULE=graph'
+assert_has 'E4 MIRROR: graphReady() also releases the declared one' "$MIRROR5BD" 'MIRROR=true'
+echo
+
 echo '--- 5. case 6 — R13: the active gate is a FILTER ------------------------------'
 assert_eq 'R13: paused project promoted nothing (graph row)' 'no' "$(inset "$T6_ROOT" "$PROMOTED1")"
 assert_eq 'R13: paused project promoted nothing (legacy row)' 'no' "$(inset "$T6_LEGACY" "$PROMOTED1")"
@@ -676,7 +742,7 @@ echo
 # ---------------------------------------------------------------------------
 echo '--- 6. tick 2: drain the blockers, then promoteReadyTasks() again -------------'
 psql_run -q >/dev/null <<SQL
-UPDATE project_tasks SET status = 'done' WHERE id IN ('$T2_LOW','$T5_LEGACY');
+UPDATE project_tasks SET status = 'done' WHERE id IN ('$T2_LOW','$T5_LEGACY','$T5B_GRAPH');
 UPDATE projects SET status = 'active' WHERE id = '$P6';
 SQL
 snapshot "$WORK/s2.txt"
@@ -686,6 +752,8 @@ PROMOTED2="$(promoted "$WORK/s2.txt" "$WORK/s3.txt")"
 echo "  promoted on tick 2 : $PROMOTED2"
 assert_eq 'R12: legacy candidate promotes once its round drains' 'yes' "$(inset "$T2_CAND" "$PROMOTED2")"
 assert_eq 'R69: candidate promotes once the legacy row is done' 'yes' "$(inset "$T5_CAND" "$PROMOTED2")"
+assert_eq 'E4: the frozen candidate promotes once the graph row is done' 'yes' \
+  "$(inset "$T5B_FROZEN" "$PROMOTED2")"
 assert_eq 'R13: resumed project promotes its graph row' 'yes' "$(inset "$T6_ROOT" "$PROMOTED2")"
 assert_eq 'R13: resumed project promotes its legacy row' 'yes' "$(inset "$T6_LEGACY" "$PROMOTED2")"
 assert_eq 'R14: the blocked project promoted nothing on tick 2 either' 'blocked' "$(st "$T3_CAND")"
@@ -875,7 +943,9 @@ echo
 echo "PASS — the graph branch promotes past an undrained round (R11), the legacy"
 echo "       branch still waits (R12), the active gate is a filter (R13), a dangling"
 echo "       dependency lands on blocked and notifies (R14), the legacy-row term holds"
-echo "       a frozen closure (R69), and the contention belt defers rather than fails"
+echo "       a frozen closure (R69), that graph_frozen holds a DERIVED closure behind"
+echo "       a post-restart row while releasing a declared one (E4/R71, case 5b), and"
+echo "       the contention belt defers rather than fails"
 echo "       (R16/R17). Round 204: no route into 'running' survives a corrupt"
 echo "       depends_on — not promote, not retryTask, not an out-of-band 'ready'"
 echo "       write — a duplicated id is refused by BOTH sides, and a cross-project"

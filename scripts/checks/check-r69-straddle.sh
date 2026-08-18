@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# check-r69-straddle.sh — THE R69 STRADDLE EXPERIMENT (phase 4D, round 223).
+# check-r69-straddle.sh — THE R69 STRADDLE EXPERIMENT (phase 4D, round 223;
+# REOPENED AND CLOSED IN ROUND 242, E4 option A, on the terms 223 set).
 #
 # THE QUESTION IT ANSWERS. R69 (the legacy-row term, ruled as E3 in
 # `02-architecture.md` §9.2) holds a FROZEN row — one whose dependency closure
@@ -20,6 +21,25 @@
 #       non-done row of strictly lower round, not merely a legacy one.
 #   B — NARROW §3.2 to match R69, on the record, with the blast radius stated.
 #
+# ROUND 223 RULED B, AND RULED IT CORRECTLY FOR THE SCHEMA IT HAD: option A's
+# arithmetic was right (probe 2d) and it had no GATE, because nothing recorded
+# which closures 0040 had written. Round 223 then named the one change that
+# would make A sound — record the fact — and round 242 made it:
+# `project_tasks.graph_frozen` (R71), set true by the same backfill UPDATE that
+# writes the closure. R69 now gates on that column, and this script measures
+# the result the way 223 measured the alternatives:
+#   MARKED   the engine as it ships — rows as 0040 writes them. On S1 it is
+#            identical to today's engine, tick for tick (probe 1b), and on S3 it
+#            is identical to the PRE-E4 engine, tick for tick (probe 3b): the
+#            marker buys the straddle and costs a post-restart project nothing.
+#   PRE-E4   the same SHIPPED rule over the same rows with the marker cleared —
+#            the engine round 223 measured, kept and kept RUNNING because its
+#            four failed gates are the evidence for the column.
+#   NO-TERM  the SHIPPED rule with R69's `graph_frozen` disjunct deleted from a
+#            COPY of the module. Two ways of removing one term must agree, and
+#            probe 1c asserts they do; the mutant is built by this script and
+#            refuses unless the deletion matches exactly once.
+#
 # WHAT THIS SCRIPT MEASURES, and why each measurement is here:
 #   S1  a straddling project with NO gap row: 131 frozen rows (the R9 fixture,
 #       closures computed over the migration-time snapshot) + a post-restart fix
@@ -35,7 +55,8 @@
 # widening composed ON TOP of it, so no arm is a re-implementation of the rule
 # under test and the narrow arm is the shipped predicate by construction:
 #   LEGACY         today's engine — `legacyRoundReady()` over NULL-deps rows.
-#   NARROW         `readyRule()` + the SHIPPED `graphReady()` — R69 as landed.
+#   NARROW         `readyRule()` + the SHIPPED `graphReady()`. Round 242 runs it
+#                  twice, as MARKED and PRE-E4 above, over the two row sets.
 #   WIDE-SENTINEL  NARROW + option A gated on "this project contains a row with
 #                  the NULL sentinel" — the only gate the schema can express at
 #                  zero cost.
@@ -168,6 +189,13 @@ import {
   readyRule,
   type GraphTask,
 } from "__REPO__/forge-control/src/lib/task-graph.ts";
+// THE SOURCE-LEVEL MUTANT (round 242). A COPY of the module above with R69's
+// `graph_frozen` disjunct deleted by the generator in this script's shell half,
+// which refuses unless the deletion matched exactly once. Importing it is what
+// makes "drop the term and the divergence returns" a measurement rather than a
+// paraphrase: the term is really gone from the code that runs, not merely
+// unreachable because of the data it was fed.
+import { graphReady as graphReadyNoTerm } from "__MUTANT__";
 import { inputCensus, type MetricTask } from "__REPO__/forge-control/src/lib/schedule-metrics.ts";
 
 /* -------------------------------------------------------------------------- *
@@ -300,7 +328,20 @@ function legacyView(rows: readonly Row[]): GraphTask[] {
     status: r.status,
     depends_on: null,
     write_set: [],
+    // TODAY's engine predates the column entirely, so nothing on this side is
+    // frozen. `legacyRoundReady()` never reads the field in any case.
+    graph_frozen: false,
   }));
+}
+
+/** The same rows with the provenance marker cleared — the engine EXACTLY as
+ *  round 223 measured it. Clearing the marker makes R69's widened disjunct
+ *  `false || o.depends_on === null`, which is the term as round 106 landed it,
+ *  so this is not a re-implementation of the old rule: it is the SHIPPED rule
+ *  fed the data the old schema could express. Probe 5 checks that equivalence
+ *  against an actual source-level deletion of the term. */
+function unmarked(rows: readonly Row[]): Row[] {
+  return rows.map((r) => ({ ...r, graph_frozen: false }));
 }
 
 function metricView(rows: readonly Row[]): MetricTask[] {
@@ -376,6 +417,10 @@ function buildS1(): Fixture {
       status: toStatus(r.status),
       depends_on: deps,
       write_set: [],
+      // 0040's backfill wrote this closure, so the same UPDATE set the marker
+      // (R71). The two are written together in the migration and are therefore
+      // set together here.
+      graph_frozen: true,
       kind: "frozen",
       role: r.role,
       title: r.title,
@@ -390,6 +435,7 @@ function buildS1(): Fixture {
       status: "pending",
       depends_on: [...new Set(gating.map((g) => g.id))].sort(),
       write_set: [],
+      graph_frozen: false,
       kind: "post-restart",
       role: "builder",
       title: "fix chain created by the NEW engine after the restart (R42)",
@@ -402,6 +448,7 @@ function buildS1(): Fixture {
       status: "pending",
       depends_on: [POST_BUILDER_ID],
       write_set: [],
+      graph_frozen: false,
       kind: "post-restart",
       role: "reviewer",
       title: "re-review of the post-restart fix chain (R42)",
@@ -440,6 +487,7 @@ function buildS2(): Fixture {
       status: "done",
       depends_on: null,
       write_set: [],
+      graph_frozen: false,
       kind: "gap-legacy",
       role: "builder",
       title: "inserted by the OLD engine in the deploy gap, and finished before the restart",
@@ -474,6 +522,7 @@ function buildS3(): Fixture {
     status: "done",
     depends_on: [],
     write_set: [],
+    graph_frozen: false,
     kind: "post-restart",
     role: "planner",
     title: "planner — the graph root",
@@ -486,6 +535,7 @@ function buildS3(): Fixture {
     status: "pending",
     depends_on: [planner],
     write_set: [],
+    graph_frozen: false,
     kind: "post-restart",
     role: "reviewer",
     title: "the 32-minute reviewer that stalled seven unrelated builders",
@@ -499,6 +549,7 @@ function buildS3(): Fixture {
       status: "pending",
       depends_on: [planner],
       write_set: [],
+      graph_frozen: false,
       kind: "post-restart",
       role: "builder",
       title: `builder ${i + 1} — numbered above the reviewer, dependent on none of it`,
@@ -614,6 +665,21 @@ const GATE_CLOSURE: Gate = (t, ctx) => isClosureShapedLocal(t, [...ctx.byId.valu
 
 /** No gate at all — the widening applied to every graph row. */
 const GATE_NONE: Gate = () => true;
+
+/**
+ * THE ENGINE AS IT NOW SHIPS (E4, round 242): the same composition as `NARROW`,
+ * but the rows carry `graph_frozen` and `graphReady()`'s R69 term reads it. It
+ * is not a new arm's worth of code — it is `NARROW` over marked rows, which is
+ * exactly the point: the widening lives in the SHIPPED predicate, and this file
+ * changes the data it is given, never the rule.
+ */
+const MARKED: Rule = NARROW;
+
+/** The same shipped rule with R69's `graph_frozen` disjunct DELETED FROM THE
+ *  SOURCE. Fed the marked rows, so any difference from `MARKED` is the term and
+ *  nothing else. */
+const NO_TERM: Rule = (t, ctx) =>
+  readyRule(t) === "graph" ? graphReadyNoTerm(t, ctx.byId) : legacyRoundReady(t, ctx.all);
 
 /**
  * THE CLEVEREST GATE THE DATA CAN EXPRESS, and the one that has to be measured
@@ -748,6 +814,7 @@ const p0a = probe("0a", "simulate() reproduces the tick count the replay harness
     status: toStatus(r.status),
     depends_on: null,
     write_set: [],
+    graph_frozen: false,
     kind: "frozen",
     role: r.role,
     title: r.title,
@@ -838,7 +905,7 @@ const p0d = probe("0d", "the transcribed isClosureShaped() matches the SHIPPED i
  * ========================================================================== */
 
 console.log();
-console.log("--- 1. the divergence R69 does not close --------------------------------------");
+console.log("--- 1. the divergence, with the marker and without it ---------------------------");
 
 const sims = new Map<string, SimResult>();
 const counters = new Map<string, WideCounters>();
@@ -855,16 +922,41 @@ function newCounters(key: string): WideCounters {
   return c;
 }
 
-const ARMS = ["LEGACY", "NARROW", "WIDE-SENTINEL", "WIDE-CLOSURE", "WIDE-HORIZON", "WIDE-UNGATED"] as const;
+const ARMS = [
+  "LEGACY",
+  "MARKED",
+  "NO-TERM",
+  "PRE-E4",
+  "WIDE-SENTINEL",
+  "WIDE-CLOSURE",
+  "WIDE-HORIZON",
+  "WIDE-UNGATED",
+] as const;
 
+/* WHICH ROWS EACH ARM SEES, and why the table has two baselines rather than one.
+ *
+ * `MARKED` is the engine at HEAD: the shipped rule over the rows 0040 actually
+ * writes. `PRE-E4` is the same shipped rule over the same rows with the marker
+ * cleared, which is the engine round 223 measured — kept, and kept RUNNING,
+ * because its four failed gates are the evidence that justifies the marker, and
+ * an argument whose measurements have been deleted is an assertion. The four
+ * `WIDE-*` arms therefore compose on the UNMARKED rows, exactly as they did in
+ * round 223, and reproduce its numbers line for line.
+ *
+ * `NO-TERM` is the third baseline and the only one that changes the CODE: R69's
+ * disjunct deleted from a copy of the module, fed the MARKED rows. Two ways of
+ * removing the same term must agree, and probe 5 asserts they do. */
 for (const f of ALL) {
   const createdAt = new Map(f.rows.map((r) => [r.id, r.created_at]));
+  const old = unmarked(f.rows);
   run(f, "LEGACY", LEGACY, f.legacy);
-  run(f, "NARROW", NARROW);
-  run(f, "WIDE-SENTINEL", wide(GATE_SENTINEL, newCounters(`${f.label}/WIDE-SENTINEL`)));
-  run(f, "WIDE-CLOSURE", wide(GATE_CLOSURE, newCounters(`${f.label}/WIDE-CLOSURE`)));
-  run(f, "WIDE-HORIZON", wide(makeHorizonGate(createdAt), newCounters(`${f.label}/WIDE-HORIZON`)));
-  run(f, "WIDE-UNGATED", wide(GATE_NONE, newCounters(`${f.label}/WIDE-UNGATED`)));
+  run(f, "MARKED", MARKED);
+  run(f, "NO-TERM", NO_TERM);
+  run(f, "PRE-E4", NARROW, old);
+  run(f, "WIDE-SENTINEL", wide(GATE_SENTINEL, newCounters(`${f.label}/WIDE-SENTINEL`)), old);
+  run(f, "WIDE-CLOSURE", wide(GATE_CLOSURE, newCounters(`${f.label}/WIDE-CLOSURE`)), old);
+  run(f, "WIDE-HORIZON", wide(makeHorizonGate(createdAt), newCounters(`${f.label}/WIDE-HORIZON`)), old);
+  run(f, "WIDE-UNGATED", wide(GATE_NONE, newCounters(`${f.label}/WIDE-UNGATED`)), old);
 }
 
 function get(key: string): SimResult {
@@ -886,17 +978,68 @@ for (const f of ALL) {
   }
 }
 
-const p1 = probe("1", "S1: the SHIPPED engine (NARROW) diverges from today's engine on a straddling project");
+const p1 = probe("1", "S1: WITHOUT the marker the engine diverges from today's — both ways of removing it");
 {
-  const d = firstDivergence(get("S1/LEGACY"), get("S1/NARROW"));
+  // Round 223's finding, still measured rather than quoted, and now measured
+  // TWICE: once by clearing the recorded fact (PRE-E4, the schema round 223
+  // had) and once by deleting the predicate that reads it (NO-TERM, a source
+  // mutation). A predicate not observed FAILING is not a predicate.
+  const dData = firstDivergence(get("S1/LEGACY"), get("S1/PRE-E4"));
+  const dCode = firstDivergence(get("S1/LEGACY"), get("S1/NO-TERM"));
   report(
     p1,
-    d !== null,
-    d === null
+    dData !== null && dCode !== null && dData === dCode,
+    dData === null || dCode === null
       ? "NO DIVERGENCE — the premise of this whole task is false and nothing below means anything"
-      : `first divergence, legacy vs narrow — ${d}\n` +
-          `legacy ticks=${get("S1/LEGACY").ticks}, narrow ticks=${get("S1/NARROW").ticks}`,
+      : `marker CLEARED (the pre-E4 schema): ${dData}\n` +
+          `term DELETED from the source:       ${dCode}\n` +
+          `legacy ticks=${get("S1/LEGACY").ticks}, without-the-marker ticks=${get("S1/PRE-E4").ticks}\n` +
+          `Both removals produce the same first divergence, on the same tick, on the same two rows — the ` +
+          `two rows 02-architecture.md 3.2.1 records for F13.`,
   );
+}
+
+const p1b = probe("1b", "S1: WITH the marker the SHIPPED engine matches today's engine tick for tick (E4)");
+{
+  // The whole of what round 242 delivers, in one reading. Note this is the arm
+  // that runs the rule as it ships, over the rows 0040 as it ships would write.
+  const legacy = get("S1/LEGACY");
+  const marked = get("S1/MARKED");
+  const d = firstDivergence(legacy, marked);
+  report(
+    p1b,
+    d === null && marked.ticks === legacy.ticks && marked.promotedTotal === legacy.promotedTotal,
+    `legacy      ticks=${legacy.ticks} promoted=${legacy.promotedTotal} widest-tick=${legacy.widestTick}\n` +
+      `shipped     ticks=${marked.ticks} promoted=${marked.promotedTotal} widest-tick=${marked.widestTick}\n` +
+      `first divergence: ${d ?? "NONE — identical, tick for tick"}\n` +
+      `The divergence probe 1 shows returning is gone. R69's term now reads graph_frozen (R71), which the ` +
+      `backfill writes in the same UPDATE as the closure, so "this closure was derived, not declared" is a ` +
+      `fact the row carries rather than a shape a gate has to guess at.`,
+  );
+}
+
+const p1c = probe("1c", "the two removals are the SAME removal — clearing the fact equals deleting the term");
+{
+  // The equivalence this file leans on: with the marker false everywhere,
+  // `task.graph_frozen || o.depends_on === null` is `o.depends_on === null`,
+  // which is R69 as round 106 landed it. Asserted on all three fixtures rather
+  // than argued, because if it did not hold, PRE-E4 would not be the pre-E4
+  // engine and every probe below it would be measuring something unnamed.
+  const lines: string[] = [];
+  let ok = true;
+  for (const f of ALL) {
+    const same = firstDivergence(get(`${f.label}/PRE-E4`), get(`${f.label}/NO-TERM`));
+    ok = ok && same === null;
+    lines.push(`${f.label}: marker-cleared vs term-deleted — ${same ?? "identical, tick for tick"}`);
+  }
+  // …and the mutant must be genuinely DIFFERENT code, or the equality above is
+  // the trivial one. On S1 it must disagree with the arm it was cut from.
+  const differs = firstDivergence(get("S1/MARKED"), get("S1/NO-TERM"));
+  ok = ok && differs !== null;
+  lines.push(
+    `S1: shipped vs term-deleted — ${differs ?? "IDENTICAL, which means the mutant is not a mutant"}`,
+  );
+  report(p1c, ok, lines.join("\n"));
 }
 
 /* ========================================================================== *
@@ -910,7 +1053,7 @@ const p2a = probe("2a", "S1 WIDE-SENTINEL is INDISTINGUISHABLE from NARROW — t
 {
   const c = counters.get("S1/WIDE-SENTINEL");
   if (!c) throw new Error("check-r69-straddle: no counters for S1/WIDE-SENTINEL");
-  const d = firstDivergence(get("S1/NARROW"), get("S1/WIDE-SENTINEL"));
+  const d = firstDivergence(get("S1/PRE-E4"), get("S1/WIDE-SENTINEL"));
   report(
     p2a,
     d === null && c.evaluated > 0 && c.gated === 0,
@@ -918,7 +1061,7 @@ const p2a = probe("2a", "S1 WIDE-SENTINEL is INDISTINGUISHABLE from NARROW — t
       `it fired ${c.fired} times.\n` +
       `S1 holds no row with the NULL sentinel — 0040's backfill wrote over every one of them — so ` +
       `"the project contains a legacy row" is FALSE and option A is silent.\n` +
-      `narrow vs wide-sentinel: ${d ?? "identical schedules, tick for tick"}`,
+      `pre-E4 vs wide-sentinel: ${d ?? "identical schedules, tick for tick"}`,
   );
 }
 
@@ -926,7 +1069,7 @@ const p2b = probe("2b", "S1 WIDE-CLOSURE never fires — the frozen-row detector
 {
   const c = counters.get("S1/WIDE-CLOSURE");
   if (!c) throw new Error("check-r69-straddle: no counters for S1/WIDE-CLOSURE");
-  const d = firstDivergence(get("S1/NARROW"), get("S1/WIDE-CLOSURE"));
+  const d = firstDivergence(get("S1/PRE-E4"), get("S1/WIDE-CLOSURE"));
   // The rows the widening exists for: frozen, pending, above the chain, and
   // named by no closure that could mention it. Probe 0b counted them; this asks
   // what the corpus's frozen-row detector says about THOSE rows in particular.
@@ -963,7 +1106,7 @@ const p2b = probe("2b", "S1 WIDE-CLOSURE never fires — the frozen-row detector
       `post-migration row at a LOWER round makes every frozen row above it stop matching the ` +
       `signature. The detector goes blind on precisely the rows the widening would have to hold, ` +
       `and stays sighted only on the rows below the chain, which need nothing.\n` +
-      `narrow vs wide-closure: ${d ?? "identical schedules, tick for tick"}`,
+      `pre-E4 vs wide-closure: ${d ?? "identical schedules, tick for tick"}`,
   );
 }
 
@@ -972,7 +1115,7 @@ const p2c = probe("2c", "S2 WIDE-SENTINEL DOES close it — and S1 and S2 differ
   const c = counters.get("S2/WIDE-SENTINEL");
   if (!c) throw new Error("check-r69-straddle: no counters for S2/WIDE-SENTINEL");
   const vsLegacy = firstDivergence(get("S2/LEGACY"), get("S2/WIDE-SENTINEL"));
-  const narrowVsLegacy = firstDivergence(get("S2/LEGACY"), get("S2/NARROW"));
+  const narrowVsLegacy = firstDivergence(get("S2/LEGACY"), get("S2/PRE-E4"));
   report(
     p2c,
     vsLegacy === null && narrowVsLegacy !== null && c.gated > 0 && c.fired > 0,
@@ -980,7 +1123,7 @@ const p2c = probe("2c", "S2 WIDE-SENTINEL DOES close it — and S1 and S2 differ
     // shares the prefix `00000000`, so a shortened one names nothing.
     `S2 = S1 + one row: ${GAP_ROW_ID}, status DONE, depends_on NULL, inserted in the gap.\n` +
       `Under R69 that row is inert — R69 only refuses on a legacy row that is NOT done.\n` +
-      `narrow vs legacy on S2:        ${narrowVsLegacy ?? "identical"}  ← still diverges\n` +
+      `pre-E4 vs legacy on S2:        ${narrowVsLegacy ?? "identical"}  ← still diverges\n` +
       `wide-sentinel vs legacy on S2: ${vsLegacy ?? "identical"}  ← closed\n` +
       `the widening fired ${c.fired} times with the gate open ${c.gated} times.\n` +
       `SO: the same straddling project is scheduled correctly or incorrectly according to whether ` +
@@ -1010,7 +1153,7 @@ const p2e = probe("2e", "WIDE-HORIZON closes S1 — and charges the same price o
   const c3 = counters.get("S3/WIDE-HORIZON");
   if (!c1 || !c3) throw new Error("check-r69-straddle: no counters for WIDE-HORIZON");
   const s1 = firstDivergence(get("S1/LEGACY"), get("S1/WIDE-HORIZON"));
-  const narrow3 = get("S3/NARROW");
+  const narrow3 = get("S3/MARKED");
   const horizon3 = get("S3/WIDE-HORIZON");
   report(
     p2e,
@@ -1038,9 +1181,36 @@ const p2e = probe("2e", "WIDE-HORIZON closes S1 — and charges the same price o
 console.log();
 console.log("--- 3. what an ungated widening costs a project planned after the restart --------");
 
+const p3b = probe("3b", "S3: the MARKER costs a post-restart project NOTHING — the price E4 does not pay");
+{
+  // The reading that decides whether E4 was affordable at all. On a project
+  // planned entirely after the restart not one row is frozen, so the widened
+  // disjunct's first term is false on every row and the schedule must be
+  // byte-identical to the pre-E4 engine's — 3 ticks, 8 wide — while the ungated
+  // widening on the same rows is 17 ticks, 1 wide. That difference is the whole
+  // argument for recording the fact instead of inferring it.
+  const marked = get("S3/MARKED");
+  const preE4 = get("S3/PRE-E4");
+  const ungated = get("S3/WIDE-UNGATED");
+  const d = firstDivergence(preE4, marked);
+  const frozenRows = S3.rows.filter((t) => t.graph_frozen).length;
+  report(
+    p3b,
+    d === null && frozenRows === 0 && marked.widestTick > ungated.widestTick && marked.ticks < ungated.ticks,
+    `S3 holds ${frozenRows} frozen rows, so the marker term can never fire here.\n` +
+      `  pre-E4 (the engine round 223 measured): ticks=${preE4.ticks} widest-tick=${preE4.widestTick}\n` +
+      `  shipped, with the marker:               ticks=${marked.ticks} widest-tick=${marked.widestTick}` +
+      `   ← ${d ?? "identical, tick for tick"}\n` +
+      `  the same widening, ungated:             ticks=${ungated.ticks} widest-tick=${ungated.widestTick}` +
+      `   ← the collapse E4 had to avoid\n` +
+      `A recorded fact is free where it is false; an inferred one is not, which is what probes 2b and 2e ` +
+      `measure about the two cleverest gates the schema could express.`,
+  );
+}
+
 const p3 = probe("3", "S3: WIDE-UNGATED collapses the graph scheduler back onto the round rule");
 {
-  const narrow = get("S3/NARROW");
+  const narrow = get("S3/MARKED");
   const ungated = get("S3/WIDE-UNGATED");
   const legacy = get("S3/LEGACY");
   const sentinel = get("S3/WIDE-SENTINEL");
@@ -1091,21 +1261,69 @@ if (missed.length > 0 || failed.length > 0) {
 console.log();
 console.log("  ALL PROBES RAN AND REPORTED AS EXPECTED.");
 console.log();
-console.log("  THE FINDING, in one paragraph:");
-console.log("  The divergence is REAL (probe 1). Option A's arithmetic is right (2d). What option A");
-console.log("  does not have is a GATE. The schema records nothing that says 'this closure was");
-console.log("  frozen by 0040', and each of the four stand-ins fails a different way: the sentinel");
-console.log("  gate is silent on a straddle with no gap row (2a) and fires on one only because an");
-console.log("  unrelated settled row happens to carry NULL (2c); the corpus's own frozen-row");
-console.log("  detector reads 'not frozen' on 8/8 of the exposed rows the moment the post-restart");
-console.log("  row exists (2b); the created_at horizon gate is right on the straddle and takes a");
-console.log("  post-restart project from 3 ticks / 8-wide to 17 / 1-wide (2e); and no gate at all");
-console.log("  is the same collapse (3). An option implementable only by charging every future");
-console.log("  project the cost of a migration window is not the cheaper option.");
+console.log("  THE FINDING, in one paragraph (round 242; round 223's is the paragraph below it):");
+console.log("  The divergence is CLOSED. With graph_frozen the shipped engine reproduces today's");
+console.log("  schedule on the straddle tick for tick — 17 ticks, no first divergence (1b) — and on");
+console.log("  a project planned after the restart it is byte-identical to the engine before the");
+console.log("  column existed, 3 ticks and 8 wide (3b). Remove the fact and the divergence comes");
+console.log("  back at tick 2 on 511070c9 and 608dbecb, whether it is removed by clearing the");
+console.log("  column or by deleting the predicate from the source (1, 1c).");
+console.log();
+console.log("  WHY THE COLUMN AND NOT A CLEVERER GATE — round 223's measurement, still running:");
+console.log("  Option A's arithmetic was always right (2d). What it did not have was a GATE. The");
+console.log("  schema recorded nothing that said 'this closure was frozen by 0040', and each of the");
+console.log("  four stand-ins fails a different way: the sentinel gate is silent on a straddle with");
+console.log("  no gap row (2a) and fires on one only because an unrelated settled row happens to");
+console.log("  carry NULL (2c); the corpus's own frozen-row detector reads 'not frozen' on 8/8 of");
+console.log("  the exposed rows the moment the post-restart row exists (2b); the created_at horizon");
+console.log("  gate is right on the straddle and takes a post-restart project from 3 ticks / 8-wide");
+console.log("  to 17 / 1-wide (2e); and no gate at all is the same collapse (3). That is the");
+console.log("  argument for RECORDING the fact at the moment it is true instead of inferring it");
+console.log("  later — which is what R71 does, and what probe 3b prices at zero.");
 process.exit(0);
 DRIVER
 
-sed "s|__REPO__|$REPO_ROOT|g" "$WORK/drive.mts.in" > "$WORK/drive.mts"
+# ---------------------------------------------------------------------------
+# THE SOURCE-LEVEL MUTANT (round 242) — R69's `graph_frozen` disjunct, deleted.
+#
+# The brief for E4 asks for the term to be dropped and the divergence shown
+# returning. Clearing the marker in the fixture computes the same thing (probe
+# 1c asserts it does), but only this cuts the predicate out of the code, and the
+# difference matters: a term that had been quietly rewritten to read something
+# else would survive a data mutation and die here.
+#
+# It is a COPY in a temp directory, never a write into the worktree — a check
+# that edited the module it measures would be measuring itself, and a stray
+# untracked file makes the reviewer's cleanliness gate cry wolf. The module's
+# one relative import is type-only and is rewritten to an absolute path so the
+# copy resolves from outside the tree.
+#
+# THE DELETION MUST MATCH EXACTLY ONCE. Zero matches means the term has been
+# renamed or removed already and this script is measuring a mutation that never
+# happened; more than one means it hit something else too. Either way: refuse.
+MUTANT="$WORK/task-graph-no-frozen-term.ts"
+python3 - "$TASK_GRAPH" "$MUTANT" "$REPO_ROOT" <<'PY' || fail "could not build the R69 mutant"
+import sys
+src, dst, repo = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(src).read()
+term = "    if (frozen || other.depends_on === null) return false;"
+without = "    if (other.depends_on === null) return false;   // MUTANT: graph_frozen term deleted"
+if text.count(term) != 1:
+    sys.exit(f"REFUSING: R69's graph_frozen term matched {text.count(term)} times in {src}, expected exactly 1")
+text = text.replace(term, without)
+imp = 'from "../db/projects.ts"'
+if text.count(imp) != 1:
+    sys.exit(f"REFUSING: expected exactly one relative import to rewrite, found {text.count(imp)}")
+text = text.replace(imp, f'from "{repo}/forge-control/src/db/projects.ts"')
+open(dst, "w").write(text)
+PY
+echo "  mutant              $MUTANT"
+echo "  mutant sha256       $(sha256sum "$MUTANT" | cut -d' ' -f1)"
+echo "  mutant diff vs task-graph.ts (the ONE line the experiment deletes):"
+diff "$TASK_GRAPH" "$MUTANT" | sed 's/^/    /' || true
+echo
+
+sed -e "s|__REPO__|$REPO_ROOT|g" -e "s|__MUTANT__|$MUTANT|g" "$WORK/drive.mts.in" > "$WORK/drive.mts"
 echo "  driver              $WORK/drive.mts"
 echo "  driver sha256       $(sha256sum "$WORK/drive.mts" | cut -d' ' -f1)"
 echo "  (the driver is generated from this script; its sha changes with this file and nothing else)"

@@ -1194,7 +1194,18 @@ export function buildPrompt(
       `would be satisfied, or "VERDICT: NEEDS_FIXES" followed by a concrete numbered list (the ` +
       `journey step, what you did, what happened, what a customer expects, severity, evidence). ` +
       `Never skip the VERDICT line: the orchestrator parses it, a NEEDS_FIXES opens a fix cycle that ` +
-      `re-tests against your findings, and a missing verdict blocks the whole project.`
+      `re-tests against your findings, and a missing verdict blocks the whole project.\n\n` +
+      // F-E, round 242. The tester was the one browser-driving role outside
+      // withPolicy()'s derived set: the branch above sends it at "the real
+      // surface (browser, CLI, API)" while carrying neither BROWSER_FIRST nor
+      // RESEARCH_INSTRUMENTS, so it received the run-control rules (B4) only if
+      // a brief happened to paste them. That is the hand-written-list failure
+      // the derivation exists to prevent, reached from the other side — and the
+      // tester is the role most likely to repeat round 1873's incident, because
+      // clicking what a user would click is its job. Adding the constant here
+      // fixes it WITHOUT touching the derivation: the set stays computed from
+      // the body, and this branch simply joins it.
+      `${BROWSER_FIRST}`
     );
   }
   if (task.role === "builder") {

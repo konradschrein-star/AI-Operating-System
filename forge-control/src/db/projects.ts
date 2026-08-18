@@ -27,17 +27,20 @@
  * `round` therefore no longer schedules anything. It remains a stored,
  * engine-computed integer (E1) for Kanban grouping, consolidation keys and human
  * conversation, plus ONE legacy-surface predicate: R69's term, which holds a
- * graph row behind a lower-round LEGACY row so that in a project straddling the
- * deploy, every row created under the OLD semantics still schedules under them
- * (F13).
+ * graph row behind a lower-round row it cannot have named, so that a project
+ * that straddles the deploy behaves exactly as it did before it (F13).
  *
- * NARROWED ROUND 223 — comment only, the statement below is unchanged. This
- * read "so a project that straddles the deploy behaves exactly as it did before
- * it", which is wider than the term delivers: a fix chain the NEW engine creates
- * after the restart carries real graph fields (R42), so `depends_on IS NULL`
- * cannot see it and a frozen row above it promotes where today's engine holds
- * it. Accepted and bounded as E4 (`02-architecture.md` §9.3), blast radius in
- * §3.2.2, tabled as F14, measured by `scripts/checks/check-r69-straddle.sh`.
+ * NARROWED ROUND 223, RESTORED ROUND 242 — comment only both times; the
+ * statement below changed once, in 242, and by one disjunct. Round 223 narrowed
+ * that sentence to a claim about the ROW because R69 tested `depends_on IS
+ * NULL` alone: a fix chain the NEW engine creates after the restart carries real
+ * graph fields (R42), so the term could not see it and a frozen row above it
+ * promoted where today's engine holds it (F14). Round 242 records the fact that
+ * makes the wider claim true — `graph_frozen` (R71), written by 0040's backfill
+ * itself — and R69 now holds a FROZEN row behind any non-`done` lower-round row
+ * whatever wrote it. The claim about the whole straddling project is therefore
+ * back, and F14 is retired rather than annotated: E4 in `02-architecture.md`
+ * §9.3, measured by `scripts/checks/check-r69-straddle.sh` both ways.
  *
  * A `depends_on` whose cardinality does not match the same-project rows it names
  * is CORRUPTION, never a schedule: it blocks the task, blocks the project and
@@ -153,6 +156,17 @@ export interface ProjectTask {
    *  and is therefore always claimable (R17), which is today's behaviour
    *  exactly. NOT NULL with a `'{}'` default in the schema. */
   write_set: string[];
+  /** Whether 0040's backfill wrote this row's `depends_on` (migration 0040,
+   *  R71, E4). `true` on exactly those rows; `false` — the column default —
+   *  on every row an engine wrote itself, before or after the migration.
+   *
+   *  It is PROVENANCE, not a second sentinel: `depends_on` still says which
+   *  rule applies (`readyRule()`), and this says whether the array that rule
+   *  reads was derived from a round number against a snapshot or declared by a
+   *  planner. `promoteReadyTasks()` reads it in one place, R69's term, to hold
+   *  a derived closure behind rows it could not have named. NOT NULL with a
+   *  default in the schema, so it is never null here. */
+  graph_frozen: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -165,7 +179,7 @@ const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, w
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
   run_id::text, fix_cycle, tier, attempt, chain_key,
-  depends_on::text[], workstream, write_set,
+  depends_on::text[], workstream, write_set, graph_frozen,
   created_at::text, updated_at::text`;
 /** TASK_COLS qualified for queries that join `project_tasks pt` to another
  *  table — `projects` and `runs` both carry id/status/created_at, so an
@@ -174,7 +188,7 @@ const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status
  *  joined SELECT (every ProjectTask row this module returns must be whole). */
 const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.title,
   pt.brief, pt.status, pt.run_id::text, pt.fix_cycle, pt.tier, pt.attempt,
-  pt.chain_key, pt.depends_on::text[], pt.workstream, pt.write_set,
+  pt.chain_key, pt.depends_on::text[], pt.workstream, pt.write_set, pt.graph_frozen,
   pt.created_at::text, pt.updated_at::text`;
 /** Last assistant message of the joined run `r`, by thread timestamp — the
  *  text every verdict parse reads. Shared by listSettledRunningTasks() and
@@ -984,21 +998,31 @@ async function dependencyCorruption(taskId: string): Promise<DepsCorruption | nu
  *  path an operator `psql`, an import or a future writer opens, so the SQL
  *  enforces the precondition the pure side documents instead of trusting it.
  *
- *  THE LEGACY-ROW TERM (R69, ruled as E3 in 02-architecture.md §9.2) is the
- *  graph branch's only reference to `round`, and it reads it only ABOUT legacy
- *  rows. `depends_on` is a FROZEN closure: the R6 backfill writes the rows that
- *  existed when 0040 ran, and 0040 is applied BEFORE the executor restarts
- *  (R64), so the old engine keeps inserting `depends_on IS NULL` rows in the
- *  gap — createFixChain's builder at `round + 1` and re-reviewer at `round + 2`
- *  — that no frozen closure can name. Without the term a backfilled row
- *  promotes straight past a fix chain numbered far below it, where today's
- *  engine holds it (failure F13). Measured, not argued: closure-only leaves
- *  R18 cases (a)–(e) green and (f) diverging on tick 2
- *  (evidence/phase1-migration.md §13.4). On a project planned entirely after
- *  the restart no row is NULL, the term is vacuously true, and `round` is never
- *  consulted — it costs only where it must. It is legacy SURFACE, not graph
- *  logic, and it is deleted in the same commit as the legacy branch and R18
- *  case (f), when no NULL row remains. TODO(R12-retire)
+ *  THE STRADDLE TERM (R69, ruled as E3 in 02-architecture.md §9.2 and widened
+ *  as E4 in §9.3) is the graph branch's only reference to `round`, and it reads
+ *  it only about rows whose ordering a closure cannot express. `depends_on` is
+ *  a FROZEN closure: the R6 backfill writes the rows that existed when 0040
+ *  ran, and 0040 is applied BEFORE the executor restarts (R64), so rows keep
+ *  arriving that no frozen closure can name — createFixChain's builder at
+ *  `round + 1` and re-reviewer at `round + 2`, born NULL before the restart
+ *  (E2) and carrying real graph fields after it (R42). Without the term a
+ *  backfilled row promotes straight past a fix chain numbered far below it,
+ *  where today's engine holds it (failure F13). Measured, not argued:
+ *  closure-only leaves R18 cases (a)–(e) green and (f) diverging on tick 2
+ *  (evidence/phase1-migration.md §13.4).
+ *
+ *  THE DISJUNCT, and which side of it applies to whom (round 242). A candidate
+ *  carrying `graph_frozen` (R71 — written by 0040's backfill and by nothing
+ *  else) is held behind ANY non-`done` lower-round row, because ITS closure is
+ *  the derived one; a candidate that declared its own dependencies is held only
+ *  behind `depends_on IS NULL` rows, which never got to declare anything. On a
+ *  project planned entirely after the restart nothing is frozen and nothing is
+ *  NULL, both sides are false, and `round` is never consulted — it costs only
+ *  where it must, measured as 3 ticks / 8-wide by probe 3 of
+ *  check-r69-straddle.sh against 17 / 1-wide for the same widening ungated. It
+ *  is legacy SURFACE, not graph logic, and it is deleted in the same commit as
+ *  the legacy branch and R18 cases (f)/(g), when no NULL and no frozen row
+ *  remains. TODO(R12-retire)
  *
  *  SQL MIRROR — this module owns NO scheduling decision (02-architecture.md
  *  §1.2), exactly as markVerdictTaskDone mirrors verdictMemberSettled today.
@@ -1033,9 +1057,9 @@ export async function promoteReadyTasks(): Promise<number> {
                  WHERE d.id = ANY(pt.depends_on)
                    AND d.project_id = pt.project_id)     -- R27, round 204
                = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
-           AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3: the legacy-row term
+           AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3/E4: the straddle term
                             WHERE l.project_id = pt.project_id
-                              AND l.depends_on IS NULL
+                              AND (pt.graph_frozen OR l.depends_on IS NULL)  -- R71, E4
                               AND l.round < pt.round
                               AND l.status <> 'done'))  -- TODO(R12-retire)
           OR
@@ -1205,10 +1229,13 @@ export async function claimReadyTasks(): Promise<
   }
 }
 
-/** The narrow projection lib/task-graph.ts decides over (R10) — the six
+/** The narrow projection lib/task-graph.ts decides over (R10) — the seven
  *  columns a scheduling decision may read, and nothing else. Written out here
  *  rather than passing the whole row so that a decision function cannot
- *  quietly start depending on a brief, a run id or a timestamp. */
+ *  quietly start depending on a brief, a run id or a timestamp.
+ *  `graph_frozen` joined the projection with R69's widening (E4, round 242):
+ *  the predicate that reads it is in `graphReady()`, so the column has to reach
+ *  it, and a projection that dropped it would make every row read not-frozen. */
 function toGraphTask(t: ProjectTask): GraphTask {
   return {
     id: t.id,
@@ -1217,6 +1244,7 @@ function toGraphTask(t: ProjectTask): GraphTask {
     status: t.status,
     depends_on: t.depends_on,
     write_set: t.write_set,
+    graph_frozen: t.graph_frozen,
   };
 }
 

@@ -751,7 +751,7 @@ interface PlanResponse {
  *  scheduler owns, and `PlanTask` gaining a field nothing draws would be a
  *  shape change bought for nothing (N4: the renderer is a different project). */
 const PLAN_TASKS_SQL = `SELECT id::text, round, role, title, status, tier,
-       depends_on::text[], workstream, write_set
+       depends_on::text[], workstream, write_set, graph_frozen
   FROM project_tasks
  WHERE project_id = $1
  ORDER BY round, created_at`;
@@ -784,6 +784,11 @@ interface PlanTaskRow {
   depends_on: string[] | null;
   workstream: string;
   write_set: string[];
+  /** Provenance of `depends_on` (migration 0040, R71): `true` only where the
+   *  backfill wrote the array. Not drawn — carried because `GraphTask` requires
+   *  it, and a hardcoded `false` here would be this route inventing a scheduling
+   *  input rather than reading one. */
+  graph_frozen: boolean;
 }
 
 /**
@@ -825,6 +830,7 @@ function planDepths(rows: PlanTaskRow[]): { depth: Map<string, number>; graph_er
     status: row.status as GraphTask["status"],
     depends_on: row.depends_on,
     write_set: row.write_set,
+    graph_frozen: row.graph_frozen,
   }));
 
   try {

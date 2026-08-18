@@ -117,7 +117,7 @@ describe("db/migrations re-runnability", () => {
   // statement carries its IF NOT EXISTS; this case pins the *specific* shape the
   // graph scheduler depends on, so that losing a piece of it reads as the bug it
   // is rather than as a silently smaller migration.
-  test("0040 (task graph) adds three guarded columns, two named indexes, and a no-op-on-replay backfill", () => {
+  test("0040 (task graph) adds four guarded columns, two named indexes, and a no-op-on-replay backfill", () => {
     // The generic per-file lint is driven by readdirSync + .endsWith(".sql").
     // Assert 0040 is in that list rather than assuming it: a file this case
     // reads directly by path but that FILES never enumerated would be linted by
@@ -135,10 +135,14 @@ describe("db/migrations re-runnability", () => {
     // Select on the UNGUARDED pattern, so the selector cannot presuppose the
     // guard the assertion is about to check.
     const adds = stmts.filter((s) => /\bADD COLUMN\b/.test(s));
+    // FOUR since round 242: `graph_frozen` joined depends_on/workstream/
+    // write_set with E4. The count is not decoration — it is what catches a
+    // column added to this migration without a corresponding decision, and it
+    // moves in the same commit as the column, never after it (standing rule 4).
     assert.equal(
       adds.length,
-      3,
-      `expected exactly three ADD COLUMN statements (depends_on, workstream, write_set), found ${adds.length}: ${adds.join(" | ")}`,
+      4,
+      `expected exactly four ADD COLUMN statements (depends_on, workstream, write_set, graph_frozen), found ${adds.length}: ${adds.join(" | ")}`,
     );
 
     /** The one ADD COLUMN statement for `col`. Never a COMMENT ON that merely
@@ -157,6 +161,16 @@ describe("db/migrations re-runnability", () => {
     assert.match(dependsOn, /ADD COLUMN IF NOT EXISTS DEPENDS_ON UUID\[\]/);
     assert.match(addFor("WORKSTREAM"), /ADD COLUMN IF NOT EXISTS WORKSTREAM TEXT NOT NULL DEFAULT 'MAIN'/);
     assert.match(addFor("WRITE_SET"), /ADD COLUMN IF NOT EXISTS WRITE_SET TEXT\[\] NOT NULL DEFAULT '\{\}'/);
+    // R71. `NOT NULL DEFAULT false` is the whole of what makes this column
+    // additive: every row any engine ever wrote, before or after 0040 runs, is
+    // correctly not-frozen without being visited, so no behaviour changes for a
+    // row the backfill never touched.
+    assert.match(
+      addFor("GRAPH_FROZEN"),
+      /ADD COLUMN IF NOT EXISTS GRAPH_FROZEN BOOLEAN NOT NULL DEFAULT FALSE/,
+      "graph_frozen must be NOT NULL DEFAULT false — a nullable marker would make 'unknown provenance' " +
+        "expressible, which is the archaeology E4 exists to end (02-architecture.md 9.3)",
+    );
 
     // R3. depends_on must carry NO default clause at all. NULL is a sentinel
     // meaning "never graph-scheduled, apply the legacy round rule"; '{}' means
@@ -200,6 +214,18 @@ describe("db/migrations re-runnability", () => {
       /WHERE PT\.DEPENDS_ON IS NULL/,
       `the backfill UPDATE must be guarded by WHERE pt.depends_on IS NULL — without it a ` +
         `second application rewrites every graph-scheduled row's edges from its round (R2, R6). ` +
+        `Statement: ${backfill[0]}`,
+    );
+    // R71. The marker must be set by THIS statement — same UPDATE, same WHERE,
+    // same transaction as the closure it describes — so a row's closure and its
+    // provenance can never disagree. A separate UPDATE would be re-runnable and
+    // still correct, but it would also be a second statement whose WHERE could
+    // drift from this one's, which is the shape of every bug E4's four failed
+    // gates were built out of.
+    assert.match(
+      backfill[0]!,
+      /GRAPH_FROZEN = TRUE/,
+      `the backfill UPDATE must set graph_frozen = true on the rows whose closure it writes (R71, E4). ` +
         `Statement: ${backfill[0]}`,
     );
     // R6: the closure, not the previous round. `e.round < pt.round` is the whole
