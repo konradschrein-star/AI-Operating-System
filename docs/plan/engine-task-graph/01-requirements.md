@@ -1567,7 +1567,7 @@ one commit once no `depends_on IS NULL` rows remain. A `TODO(R12-retire)` marks
 each site. *How proved:* review — the marker appears at every site and nowhere
 else.
 
-**NF7. Prompt budget.** The planner prompt grows by no more than **3050**
+**NF7. Prompt budget.** The planner prompt grows by no more than **3700**
 characters net. Every worker prompt already carries WORKTREE_POLICY +
 ESCALATION_POLICY + MANAGER_COMMS, and unbounded prompt growth is a real cost
 per spawn.
@@ -1621,6 +1621,36 @@ is identical at every pin — 652 at 5A, 176 after 5B — and **3050 is untouche
 The frame moved, not the allowance. (Round 242 recorded this as "tightens by
 34", which is backwards; corrected at round 244 with the measurement, in
 `project-tick.test.ts`'s NF7 block and in `evidence/phase5-fix-cycle-1.md`.)*
+
+*Amended a second time at **round 822**: **3050 → 3700**, cap **12271 → 12921**,
+and unlike the two paragraphs above **this one is a widening** — 650 characters
+that could not have been spent before it can be spent after it. Round 961 left
+three findings that are each a NEW RULE in `GRAPH_GUIDE`, not a word swap: the
+cap counts the `"main"` every project is born in (so the openable count is
+`cap - 1`); a task does **not** inherit its creator's workstream, so FAN-OUT
+teaches a fan-out that lands in one lane and runs one at a time; and
+`depends_on` is immutable at insert (N7), so a lane opened **for** a planner can
+never be integrated by whoever opened it. Headroom before the amendment: **25**.
+MEASURED with `scripts/checks/measure-graph-guide-budget.ts` (round 822, new —
+it parses `BASELINE`/`BUDGET`/`FIVE_A_TIP`/every `spent` out of the enforcing
+test rather than copying them, and re-executes the ledger's own `assert.equal`
+before reporting): a reference wording of the three rules, built by
+**transforming** the live constant so all 23 gate-frozen needles survive by
+construction, measures **1951 → 2515, +564 net**, projecting **12810** against a
+cap of 12271. Shrinking cannot pay — round 960 spent the last retirable clause
+and the reference wording retires a second (`"the cheapest parallelism there
+is"`, 33 characters, which finding 4 shows is false while every researcher lands
+in `"main"`) — and writing text that merely fits is the option round 239's
+amendment already refused in these words: "the only text that fits is text that
+satisfies `.includes()` and misleads a planner". Of the new 675 of headroom,
+**650 is reserved for round 962** (564 measured + 86 of margin, so that round
+phrases the rules its own way instead of inheriting a second barely-passable
+gate) and **25 is the pre-existing unreserved slack**. No LEDGER row is added by
+round 822: the ledger is an `assert.equal` against a live measurement, so a row
+for unwritten text fails immediately — round 962 adds
+`{ round: 962, spent: <measured net>, reserved: 650 }` in the commit that spends
+it, exactly as round 239 reserved 652 and builder 5B added the row at round 240.
+Reported to manager chat `bfd1283a` for a ruling rather than taken silently.*
 
 *How proved:* unit — a length assertion on the built planner prompt, with the
 budget written into the assertion message.

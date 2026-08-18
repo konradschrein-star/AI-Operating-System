@@ -1047,6 +1047,19 @@ bash scripts/check-schedule-sql.sh
 # one, and the criterion this check replaced passed every substring gate in the
 # repo for eight rounds.
 (cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-workstream-claim.ts)
+# Round 822 — NF7's budget, from OUTSIDE the suite that enforces it. With no
+# argument it is a gate: it rebuilds the maximal planner prompt, re-executes the
+# LEDGER's own `assert.equal` against constants it PARSES out of
+# project-tick.test.ts (never copies — a cap copied into an instrument is the
+# rotted pin of standing rule 1), and exits 1 if the tree carries an unledgered
+# prompt edit. It also asserts the one thing nothing else does: that GRAPH_GUIDE
+# occurs EXACTLY ONCE in that prompt, which is what makes every net-delta
+# arithmetic in this project's history valid — rounds 900 and 960 both relied on
+# it silently. ~2s, no database, no git repo, so a build task may run it.
+# WITH --candidate <file> it is the sizing tool for an edit to GRAPH_GUIDE: it
+# prints the net delta and the LEDGER row that edit must declare, BEFORE the
+# edit is written. Round 962 runs it that way; see 01-requirements.md §J.
+(cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/measure-graph-guide-budget.ts)
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

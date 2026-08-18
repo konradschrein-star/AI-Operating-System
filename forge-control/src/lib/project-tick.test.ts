@@ -2491,8 +2491,97 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * quantities that happen to collide — the reviewer's 60 was a uuid plus a
    * longer name and work_branch at fe14a7e; this 12121 is a uuid alone at
    * fe14a7e plus round 242's own 26. Neither corroborates the other. */
+  /* ── ROUND 822: BUDGET 3050 -> 3700, AMENDED HERE, WHERE IT IS ENFORCED ───
+   *
+   * WHY. Round 821's reviewer left three findings open and handed the next
+   * round a budget with the first of them: round 962 (`c527a985`) must close
+   * round 961's findings 3, 4 and 5 — all three of them NEW RULES in
+   * `GRAPH_GUIDE`, none of them a word swap:
+   *
+   *   961/3  the cap counts the "main" every project is born in, so the
+   *          openable count is cap - 1, and a flat ceiling handed to an
+   *          architect AND to every planner it seeds teaches a 400
+   *   961/4  a task does not inherit its creator's workstream (it comes only
+   *          from the POST body; `createTask()` writes `input.workstream ??
+   *          "main"`), so FAN-OUT — the paragraph a planner actually uses —
+   *          teaches a fan-out that lands in one lane and runs one at a time
+   *   961/5  `depends_on` is immutable at insert (N7), so a lane opened FOR a
+   *          planner can never be integrated by whoever opened it
+   *
+   * The headroom before this commit is 25 characters.
+   *
+   * MEASURED, NOT ESTIMATED. `scripts/checks/measure-graph-guide-budget.ts`
+   * (round 822, new) sizes a candidate `GRAPH_GUIDE` against this block —
+   * BASELINE, BUDGET, FIVE_A_TIP and every ledger `spent` are PARSED out of
+   * this file rather than copied into that one, and it re-executes the ledger's
+   * own `assert.equal` before reporting anything. A reference wording of the
+   * three rules above, built by TRANSFORMING the live constant so that all 23
+   * gate-frozen needles survive by construction, measures:
+   *
+   *   live GRAPH_GUIDE                     1951
+   *   reference wording                    2515
+   *   net delta                            +564   <- against 25 of headroom
+   *   projected maximal prompt            12810   (substitution control: 12810)
+   *
+   *   evidence/round822-graph-guide-sizing.txt is that wording, kept as the
+   *   SIZING INPUT and explicitly NOT the deliverable — round 962 owns the
+   *   text and may beat it.
+   *
+   * SO THE GATE COULD NOT BE PASSED, by a factor of twenty-two, and standing
+   * rule 2 says amend it where it is enforced rather than let a fourth
+   * consecutive round disclose-and-proceed. The three ways out, weighed:
+   *
+   *   SHRINK. There is nothing left to retire that pays. Round 960 already
+   *   spent the one retirable clause, and this round's reference wording
+   *   retires a second ("the cheapest parallelism there is", 33 characters,
+   *   which finding 4 shows is false while every researcher lands in "main").
+   *   Everything else in the guide is held by an R38/R47/R48 needle.
+   *
+   *   WRITE TEXT THAT FITS. That is the option NF7's own round-239 amendment
+   *   already refused, in these terms: "the only text that fits is text that
+   *   satisfies `.includes()` and misleads a planner, which 03-quality.md §3.2
+   *   calls a passing gate on a broken deliverable". Findings 3 and 4 exist
+   *   BECAUSE the guide states a rule too tersely to be followed.
+   *
+   *   AMEND. Taken. BUDGET 3050 -> 3700, cap 12271 -> 12921.
+   *
+   * THE ARITHMETIC, and what the 650 is:
+   *
+   *   BUDGET                            3050 -> 3700   (+650)
+   *   cap = BASELINE + BUDGET          12271 -> 12921
+   *   measured at this commit                  12246   (unmoved — this commit
+   *                                                     edits no prompt text)
+   *   headroom                            25 ->   675
+   *     of which RESERVED for round 962         650   = 564 measured + 86 of
+   *                                                     margin (15%) so that
+   *                                                     962 may phrase the
+   *                                                     three rules its own way
+   *                                                     rather than inherit a
+   *                                                     second gate it can only
+   *                                                     just pass
+   *     unreserved slack, as before               25
+   *
+   * WHICH WAY THIS MOVED THE GATE, stated plainly because round 242 got this
+   * sentence backwards and round 244 had to fix it: THIS IS A WIDENING. Not a
+   * re-derivation, not a frame change, not a tightening wearing a rising cap.
+   * 650 characters that could not have been spent before this commit can be
+   * spent after it. It is licensed the same way round 239's 1500 -> 3050 was:
+   * the requirement is unmeetable as written, the arithmetic is inline, the
+   * requirement text moves in the SAME commit (01-requirements.md §J, standing
+   * rule 4), and the divergence is REPORTED to the manager chat for a ruling
+   * rather than taken silently (round 822's report, manager chat bfd1283a).
+   *
+   * WHAT THIS COMMIT DOES NOT DO. It does not add a LEDGER row. The ledger is
+   * an `assert.equal` against a LIVE measurement, so a row for text that has
+   * not been written yet would fail immediately with its own reservation as
+   * the discrepancy. Round 962 adds `{ round: 962, spent: <its measured net>,
+   * reserved: 650 }` in the commit that spends it — which is the same
+   * separation round 239 used when it reserved 652 for builder 5B and 5B added
+   * the row at round 240. If round 962 comes in UNDER 650, the surplus stays
+   * headroom and BUDGET is not trimmed to match; if it needs MORE, that is a
+   * second amendment with its own arithmetic, not a quiet spend of the 25. */
   const BASELINE = 9221;
-  const BUDGET = 3050;
+  const BUDGET = 3700;
 
   test("G5 — the maximal planner prompt stays inside the amended budget", () => {
     const measured = maximalPlannerPrompt().length;

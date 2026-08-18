@@ -427,7 +427,23 @@ export const IDEMPOTENCY_NOTE =
  *  planner path (`scripts/checks/measure-prompt-baseline.sh`), +19 net — the
  *  retired clause is 73 characters and its replacement 92, so the removal pays
  *  for most of it. Headroom after: 12271 - 12246 = 25. Carried as its own row
- *  in NF7's LEDGER below, row "round 960". */
+ *  in NF7's LEDGER below, row "round 960".
+ *
+ *  ROUND 822 — THE CAP IN THE LINE ABOVE IS NO LONGER THE LIVE ONE, and it is
+ *  annotated rather than rewritten because 12271 is what round 960 really
+ *  measured against. NF7's BUDGET was amended 3050 -> 3700 at round 822 (cap
+ *  12271 -> 12921, arithmetic inline in `project-tick.test.ts`'s NF7 block and
+ *  in `01-requirements.md` §J), because round 961's findings 3, 4 and 5 need
+ *  +564 characters of new RULES here and 25 were left. Of the 675 that now
+ *  remain, 650 are RESERVED FOR ROUND 962 and are not free for anyone else.
+ *
+ *  BEFORE YOU EDIT THIS CONSTANT, size the edit first — it is one command and
+ *  it prints the LEDGER row you will have to declare:
+ *
+ *    cd forge-control && ./node_modules/.bin/tsx \
+ *      ../scripts/checks/measure-graph-guide-budget.ts --candidate <file>
+ *
+ *  where <file> holds the replacement text of this whole constant verbatim. */
 export const GRAPH_GUIDE =
   `SCHEDULING IS A GRAPH, NOT A ROUND NUMBER. Every task you create declares three fields and never a round:\n` +
   `- "depends_on": ids of the tasks it waits for, as your earlier curls returned them ([] = starts at once). ` +
