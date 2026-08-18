@@ -295,7 +295,18 @@ rather than a preference:
   this document saying a collision occurred, the ledger saying every write was declared.
 
 Escalated to Konrad rather than decided unilaterally, since it sets how audit ledgers get corrected
-fleet-wide. Default taken: keep the rows, keep the disclosure. Reversible in one `UPDATE`.
+fleet-wide.
+
+**RULED 2026-08-19** — `AI OS/Operator Decisions.md`, *"A ledger you may edit after the fact stops
+being evidence"*. The refusal is upheld, and the ruling is sharper than the reasoning above:
+
+> `write_set` records what a task **declared**; the commit records what it **wrote**. Those are two
+> separate facts, and **the gap between them is the only signal that a collision happened.**
+
+So the rows stay as written and the violation is disclosed here, where violations are disclosed.
+**A PATCH endpoint for task `write_set` was also rejected** — "do not make retroactive ledger edits
+convenient; an audit trail whose entries can be corrected is a draft, not a trail." That applies to
+every append-only record the fleet keeps, this document included: it is appended to, never amended.
 
 ---
 

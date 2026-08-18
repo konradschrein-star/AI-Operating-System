@@ -193,9 +193,22 @@ recommends against it.** Three measured reasons:
    every write was declared — the two artefacts disagreeing, with the machine-readable one wrong.
 
 This is a policy call about how audit ledgers are corrected, and everything downstream inherits it,
-so it was **escalated to Konrad rather than decided unilaterally** (manager chat, run
-`bfd1283a`). The default, taken here and reversible in one `UPDATE` if he rules the other way: keep
-the rows as they were written and keep the disclosure in the phase record.
+so it was **escalated to Konrad rather than decided unilaterally** (manager chat, run `bfd1283a`),
+with the default applied meanwhile: keep the rows as written, keep the disclosure.
+
+**RULED 2026-08-19, before this report was filed** — `AI OS/Operator Decisions.md`, *"A ledger you
+may edit after the fact stops being evidence"*. The refusal is upheld, on a sharper argument than
+the three above:
+
+> `write_set` records what a task **declared**; the commit records what it **wrote**. Those are two
+> separate facts, and **the gap between them is the only signal that a collision happened.**
+> Amending collapses them, deletes the evidence, and removes the ability to detect the pattern
+> later — the exact pattern the task-graph project exists to remove.
+
+The third option this pass offered — a PATCH endpoint so amendments would be auditable rather than
+hand-edited SQL — was **also rejected**: *"do not make retroactive ledger edits convenient; an audit
+trail whose entries can be corrected is a draft, not a trail."* Recorded here because the reasoning
+generalises past this blocker: **the row is not wrong. The gap is the finding.**
 
 ---
 
@@ -216,7 +229,7 @@ the rows as they were written and keep the disclosure in the phase record.
 | `tsc --noEmit` — forge-control | clean |
 | `tsc --noEmit` — forge-control-web | clean |
 | `pnpm test` — forge-control unit suite | **1365 pass, 0 fail** (249 suites) |
-| `check-secret-scan.ts` | **ALL PASS — 916 tracked files** (was `EXIT=1`, 1 file, at `6a1fa33`) |
+| `check-secret-scan.ts` | **ALL PASS — 918 tracked files** in a fresh clone of the committed tip (was `EXIT=1`, 1 file, at `6a1fa33`) — see the ordering note below |
 | `check-connection-states.ts` | ALL PASS |
 | `check-quota-row.ts` | ALL PASS |
 | `check-settings-surface.tsx` | PASS |
@@ -228,6 +241,28 @@ the rows as they were written and keep the disclosure in the phase record.
 
 Mutation kill, in the worktree, restored by hash: both card mounts deleted →
 `check-settings-surface.tsx` 2 FAILURES → restored, sha256 identical.
+
+**The ordering rule this round paid for.** `check-secret-scan.ts` takes its corpus from
+`git ls-files`, so a run in the working tree **cannot see the evidence document that is about to be
+committed** — which is precisely how the round-4 report came to assert `ALL PASS — 914 files` while
+carrying the paste that falsified it. Every number in the table above from that checker is therefore
+taken from a **fresh `git clone --shared` of the committed tip**, not from the working tree, and the
+run is the last step rather than a step. Ruled generally on 2026-08-19
+(`AI OS/Operator Decisions.md`, *Gates*): *"run the scan as the LAST step, after the evidence lands,
+and paste the exit code from that run. Any earlier number describes a repo that no longer exists."*
+
+This terminates rather than regressing forever: the figure above is measured on the clone of the
+commit that precedes this sentence's own commit, and the final tip is re-scanned once more after it
+lands, with the result reported to the operator rather than written back into the corpus.
+
+**A design-time question left open, deliberately.** The same ruling says *"any checker that scans
+text will eventually scan a description of itself — decide at design time whether it distinguishes
+use from mention, and close the class, not the instance."* `check-secret-scan.ts` currently does
+**not** distinguish them, which is why this cycle hit it three times. Closing that class properly
+means teaching it a use/mention rule (a fenced-block or explicit-marker convention it can trust) —
+a change to a security instrument, outside this fix cycle's blockers and outside its write-set.
+**Recorded as a recommendation, not smuggled in**; the prose discipline above is the interim
+mitigation and it is not a substitute.
 
 **An operator error worth recording**, because it looks exactly like a broken instrument: run without
 the gate's `--tsconfig ../tsconfig.checks.json`, both `.tsx` checks die with
@@ -249,4 +284,8 @@ is not optional. Nothing was wrong with the checks.
 - **The `agy` sidecar still does not exist on the live box**, so after deploy every connection reads
   UNKNOWN until the first re-check tick. That is the correct first state, and it is the second
   screenshot.
-- **The task-row amendment in §4 is Konrad's call**, asked and not blocked on.
+- **The task-row amendment in §4 was Konrad's call, and he has made it**: refusal upheld, PATCH
+  endpoint rejected, rows stay as written. Nothing is outstanding on this blocker.
+- **The use/mention hole in `check-secret-scan.ts` is open** (§6). It is a real defect of the class
+  the operator log calls "close the class, not the instance", and it belongs to whoever owns that
+  instrument — not to a fix cycle whose write-set is documentation.
