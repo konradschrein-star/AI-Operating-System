@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Money surface (v2.3) — the AI spend cockpit.
+ * Money surface (v2.4) — the AI spend cockpit.
  *
  * One glance answers: how much did the machine burn today / this week /
  * this month, which areas (provider × kind) eat the credits, and is the
@@ -9,6 +9,48 @@
  * gateway (claude-code runs, fastgen images, TTS, forge-api video) POSTs
  * a row per billable call. Numbers are gateway-side estimates, not
  * invoices — the point is "is today surprising?", not accounting.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * PHASE 5 (R69, R70) — TWO LABELS, AND NOTHING ELSE
+ * ───────────────────────────────────────────────────────────────────────────
+ * Konrad does not use this tab. R69 forbids investing in it and forbids
+ * deleting it; the keep-cost is written up in
+ * docs/plan/artifacts/os-usable-for-work/phase5/money-keep-cost.md. So the
+ * only change here is wording, in exactly two places in `StatCard`:
+ *
+ *   1. THE ZERO NOW SAYS WHAT IT MEANS. `€0.00` is `spend_log`'s sum with
+ *      `provider <> 'claude-code'` (db/spend.ts:132-145) over the window. It
+ *      is not revenue, it is not "nothing ran", and it has nothing to do with
+ *      any ledger. Measured 2026-08-18: over 30 days that filter matches
+ *      0 rows and €0.00, while the table holds 858 claude-code rows worth
+ *      €2,907.59. `calls` is likewise a count of BILLED calls — the old bare
+ *      "0 calls" sat on the same screen as "858 calls" in the breakdown panel
+ *      and contradicted it.
+ *
+ *      LABEL 1 OCCURS TWICE ON THIS SURFACE, and shipping one half would have
+ *      left the contradiction on screen: `DailyChart`'s empty state read "no
+ *      spend recorded in the last 30 days" directly beside a breakdown panel
+ *      showing ~€2.9k of the same 30 days (the exact figure grows hourly, so it
+ *      is deliberately not quoted here). Both are the SAME zero — `daily` filters
+ *      `provider <> 'claude-code'` (db/spend.ts:173) exactly as the windows do,
+ *      so the series is empty for the same reason the tiles are. Both now name
+ *      the filter. `by_area` does NOT carry that filter and is the one panel
+ *      that mixes shadow with metered; it is left alone (R69) and reported in
+ *      money-keep-cost.md § findings, because its rows name their provider.
+ *
+ *   2. THE SHADOW PRICE IS NO LONGER A FOOTNOTE. It was already labelled
+ *      "(not billed)" — the defect measured in phase5/premises-remeasured.md
+ *      § P3b was never absence, it was PROMINENCE: the only large number on
+ *      the screen was 9.5px textGhost under a €0.00 headline. It now carries
+ *      its own labelled block, in type big enough to read, saying what it is
+ *      (a shadow price on a flat-rate subscription) rather than leaving the
+ *      reader to infer it from a parenthesis.
+ *
+ * R70's corpus wording — label the €0.00 "no ledger entries recorded" — was
+ * MEASURED AND REJECTED. It would have shipped a falsehood: that figure reads
+ * `spend_log` in `content_forge`, the ledger is `ledger_entries` in `ai_os` on
+ * :5434, and the ledger is not empty (172 rows). The full argument, with the
+ * commands, is in money-keep-cost.md § "how the shipped labels differ".
  */
 
 import { useQuery } from "@tanstack/react-query";
@@ -95,25 +137,34 @@ export function MoneySurface() {
       {/* Window totals */}
       <div style={{ display: "flex", gap: 9, marginBottom: 18 }}>
         <StatCard
-          label="TODAY"
+          label="TODAY · METERED SPEND"
           value={eur(data.today.total_eur)}
-          sub={`${data.today.calls} calls`}
+          sub={`${data.today.calls} billed calls`}
           tone={data.today.total_eur > DAILY_ALERT_EUR ? tokens.warn : tokens.textHi}
+          zeroValue={data.today.total_eur === 0}
+          windowLabel="today"
           claudeEur={data.today.claude_eur}
+          claudeCalls={data.today.claude_calls}
         />
         <StatCard
-          label="LAST 7 DAYS"
+          label="LAST 7 DAYS · METERED SPEND"
           value={eur(data.d7.total_eur)}
-          sub={`${data.d7.calls} calls · ${eur(data.d7.total_eur / 7)}/day`}
+          sub={`${data.d7.calls} billed calls · ${eur(data.d7.total_eur / 7)}/day`}
           tone={tokens.textHi}
+          zeroValue={data.d7.total_eur === 0}
+          windowLabel="in the last 7 days"
           claudeEur={data.d7.claude_eur}
+          claudeCalls={data.d7.claude_calls}
         />
         <StatCard
-          label="LAST 30 DAYS"
+          label="LAST 30 DAYS · METERED SPEND"
           value={eur(data.d30.total_eur)}
-          sub={`${data.d30.calls} calls · ${eur(data.d30.total_eur / 30)}/day`}
+          sub={`${data.d30.calls} billed calls · ${eur(data.d30.total_eur / 30)}/day`}
           tone={tokens.textHi}
+          zeroValue={data.d30.total_eur === 0}
+          windowLabel="in the last 30 days"
           claudeEur={data.d30.claude_eur}
+          claudeCalls={data.d30.claude_calls}
         />
       </div>
 
@@ -264,13 +315,22 @@ function StatCard({
   value,
   sub,
   tone,
+  zeroValue,
+  windowLabel,
   claudeEur,
+  claudeCalls,
 }: {
   label: string;
   value: string;
   sub: string;
   tone: string;
+  /** The headline is exactly €0.00 — say what that means (label 1, R70). */
+  zeroValue: boolean;
+  /** Reads into the zero sentence: "no metered spend recorded <windowLabel>" —
+   *  so it carries its own preposition ("today", "in the last 7 days"). */
+  windowLabel: string;
   claudeEur?: number;
+  claudeCalls?: number;
 }) {
   return (
     <div
@@ -297,13 +357,47 @@ function StatCard({
       <div className="mono" style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4 }}>
         {sub}
       </div>
+      {/* LABEL 1 — a zero with no unit is how this fleet keeps getting bitten.
+          This one means one specific thing: spend_log holds no row for that window
+          with a provider other than claude-code. It is not revenue and it is
+          not idleness. */}
+      {zeroValue && (
+        <div
+          style={{ fontSize: 10.5, color: tokens.textSecondary, marginTop: 6, lineHeight: 1.45 }}
+        >
+          no metered spend recorded {windowLabel} — nothing was billed by a
+          metered provider. Not "no revenue", not "nothing ran".
+        </div>
+      )}
+      {/* LABEL 2 — the shadow price, out of the footnote. It was already marked
+          "(not billed)"; what made it misread was that the biggest number on
+          the screen was the smallest type on the screen. */}
       {claudeEur !== undefined && claudeEur > 0 && (
         <div
-          className="mono"
-          style={{ fontSize: 9.5, color: tokens.textGhost, marginTop: 4 }}
+          style={{
+            marginTop: 9,
+            paddingTop: 8,
+            borderTop: `1px solid ${tokens.borderDivider}`,
+          }}
           title="claude-code is a flat-rate subscription — this is what the tokens would've cost on metered API pricing, not a real charge"
         >
-          + {eur(claudeEur)} claude (not billed)
+          <div
+            className="mono"
+            style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}
+          >
+            CLAUDE CODE · SHADOW PRICE · NOT CHARGED
+          </div>
+          <div
+            className="mono"
+            style={{ fontSize: 15, fontWeight: 500, color: tokens.stuck, marginTop: 5 }}
+          >
+            {eur(claudeEur)}
+          </div>
+          <div style={{ fontSize: 10.5, color: tokens.textSecondary, marginTop: 3, lineHeight: 1.45 }}>
+            {claudeCalls !== undefined ? `${claudeCalls} subscription calls · ` : ""}
+            what these tokens would have cost on metered API pricing. No money
+            left the account.
+          </div>
         </div>
       )}
     </div>
@@ -331,7 +425,8 @@ function DailyChart({
           textAlign: "center",
         }}
       >
-        no spend recorded in the last 30 days.
+        no metered spend in the last 30 days — this chart is billed providers
+        only, and claude-code (flat-rate subscription) is excluded from it.
       </div>
     );
   }
