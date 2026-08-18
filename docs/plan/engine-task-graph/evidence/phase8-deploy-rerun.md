@@ -765,3 +765,45 @@ and `/opt/forge-ai-os` is unchanged at `4f6cd31`.
    round 820's, unchanged and unrelaxed. Step 1's fleet reading is fresh as of
    `06:59:36` and must be re-taken by 820 — one `active` project, this one, is
    what the restart will wait for.
+
+---
+
+## 10. `07:11:52+02:00` — the same gates, re-run on the COMMITTED tree
+
+§8 ran over a dirty worktree, which is the state a reader can no longer inspect.
+Round 813's habit, adopted here: re-run on the tree that actually exists in git,
+at `cc821f7`.
+
+```
+$ git status --porcelain                          <- empty, exit=0
+$ git -C /opt/forge-ai-os status --porcelain      <- empty, exit=0
+$ python3 docs/plan/engine-task-graph/check-instrument-identity.py
+OK — 12 pasted header(s) across 3 file(s) name fb5a6434…
+OK — 33 pasted manifest line(s) name the current digest of their half
+OK — no retired identity quoted without '[historical instrument]'
+$ python3 docs/plan/engine-task-graph/check-corpus-map.py
+OK — R1..R71 and NF1..NF7 complete, all three statements of the map agree.
+$ python3 scripts/checks/check-r20-census.py
+check-r20-census: R20     every scheduling `round` line is justified  PASS
+check-r20-census: REGION  …/evidence/phase2-replay.md matches the measurement  PASS
+$ bash scripts/checks/check-instrument-typecheck.sh
+check-instrument-typecheck.sh PASSED — 6/6 entries compiled clean, manifest complete.
+```
+
+**The artifact was verified from the committed blob, not from the file on
+disk** — the two can differ, and the digest part 2 §9 offers a reader is only
+worth what the repository holds:
+
+```
+$ git show HEAD:docs/plan/engine-task-graph/evidence/baseline-8ea0cc08-part2-raw.txt | sha256sum
+e6239ef1d27bd6f7c0da49af81bb6937082c877cf090683afc5e5e7fa40d976d  -
+$ git show HEAD:… | wc -l
+18058
+$ git show HEAD:…/baseline-8ea0cc08.md | head -1108 | diff -q <part 1 at HEAD~1> -
+IDENTICAL
+```
+
+Same sha256, same 18,058 lines, and part 1 of the baseline byte-identical to its
+pre-append state inside the commit itself. The four numbers this document offers
+a reader — the artifact digest, its line count, the sample-row count and part 1's
+length — are all now true of the repository and not only of a working directory.
