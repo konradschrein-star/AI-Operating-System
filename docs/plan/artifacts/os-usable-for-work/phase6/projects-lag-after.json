@@ -1,0 +1,6953 @@
+{
+  "label": "after",
+  "base": "http://127.0.0.1:7786",
+  "when": "2026-08-18T21:00:10.216Z",
+  "script": "docs/plan/artifacts/os-usable-for-work/phase6/measure-projects-lag.cjs",
+  "shape": {
+    "reps": 3,
+    "shortMs": 3000,
+    "longMs": 30000,
+    "settleMs": 1500,
+    "minCards": 100
+  },
+  "commitDurationSource": "(a) React fiber actualDuration from a `next build --profile` bundle, per commit",
+  "host": {
+    "cpus": 16,
+    "uptimeS": 2345641,
+    "loadavg": [
+      5.02,
+      6.94,
+      8.46
+    ]
+  },
+  "preflight": {
+    "cardsAtStart": {
+      "total": 152,
+      "byColumn": {
+        "Architect": 0,
+        "Planner": 2,
+        "Scout": 0,
+        "Builder": 12,
+        "Reviewer": 13,
+        "Done": 125
+      },
+      "byStyle": 152,
+      "agree": true
+    },
+    "firstBoardReadyMs": 91,
+    "domNodesOnBoard": 1476,
+    "reactCommitsSoFar": 11,
+    "reactProfilingBuild": true,
+    "renderersInjected": 1
+  },
+  "summary": {
+    "w1": {
+      "action": {
+        "reactCommits": [
+          1,
+          1,
+          1
+        ],
+        "commitMsTotal": [
+          18,
+          17.1,
+          12.8
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          21,
+          20,
+          20
+        ],
+        "requests": [
+          0,
+          0,
+          0
+        ],
+        "decodedBytes": [
+          0,
+          0,
+          0
+        ],
+        "wireBytes": [
+          0,
+          0,
+          0
+        ],
+        "domNodesAfter": [
+          1476,
+          1476,
+          1476
+        ]
+      },
+      "idle": {
+        "reactCommits": [
+          0,
+          0,
+          0
+        ],
+        "commitMsTotal": [
+          null,
+          null,
+          null
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          0,
+          0,
+          0
+        ],
+        "requests": [
+          0,
+          0,
+          0
+        ],
+        "decodedBytes": [
+          0,
+          0,
+          0
+        ],
+        "wireBytes": [
+          0,
+          0,
+          0
+        ],
+        "domNodesAfter": [
+          226,
+          226,
+          226
+        ]
+      },
+      "medians": {
+        "actionCommits": 1,
+        "idleCommits": 0,
+        "actionCommitMsTotal": 17.1,
+        "idleCommitMsTotal": null,
+        "actionBlockedMs": 0,
+        "idleBlockedMs": 0,
+        "actionScriptRendererWideMs": 20,
+        "idleScriptRendererWideMs": 0,
+        "actionDecodedBytes": 0,
+        "idleDecodedBytes": 0,
+        "timeToReadyMs": 3
+      },
+      "attributable": [
+        {
+          "reactCommits": 1,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 21,
+          "decodedBytes": 0
+        },
+        {
+          "reactCommits": 1,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 20,
+          "decodedBytes": 0
+        },
+        {
+          "reactCommits": 1,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 20,
+          "decodedBytes": 0
+        }
+      ]
+    },
+    "w2": {
+      "action": {
+        "reactCommits": [
+          3,
+          3,
+          3
+        ],
+        "commitMsTotal": [
+          48.1,
+          22.1,
+          17.9
+        ],
+        "longTasks": [
+          1,
+          0,
+          0
+        ],
+        "blockedMs": [
+          81,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          81,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          66,
+          40,
+          32
+        ],
+        "requests": [
+          2,
+          1,
+          1
+        ],
+        "decodedBytes": [
+          320242,
+          169287,
+          169287
+        ],
+        "wireBytes": [
+          111647,
+          0,
+          0
+        ],
+        "domNodesAfter": [
+          440,
+          474,
+          474
+        ]
+      },
+      "idle": {
+        "reactCommits": [
+          1,
+          1,
+          1
+        ],
+        "commitMsTotal": [
+          4,
+          2.7,
+          2.6
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          9,
+          6,
+          6
+        ],
+        "requests": [
+          1,
+          1,
+          1
+        ],
+        "decodedBytes": [
+          241204,
+          241236,
+          241236
+        ],
+        "wireBytes": [
+          20117,
+          20229,
+          20228
+        ],
+        "domNodesAfter": [
+          1476,
+          1476,
+          1476
+        ]
+      },
+      "medians": {
+        "actionCommits": 3,
+        "idleCommits": 1,
+        "actionCommitMsTotal": 22.1,
+        "idleCommitMsTotal": 2.7,
+        "actionBlockedMs": 0,
+        "idleBlockedMs": 0,
+        "actionScriptRendererWideMs": 40,
+        "idleScriptRendererWideMs": 6,
+        "actionDecodedBytes": 169287,
+        "idleDecodedBytes": 241236,
+        "timeToReadyMs": 7
+      },
+      "attributable": [
+        {
+          "reactCommits": 2,
+          "blockedMs": 81,
+          "scriptRendererWideMs": 57,
+          "decodedBytes": 79038
+        },
+        {
+          "reactCommits": 2,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 34,
+          "decodedBytes": -71949
+        },
+        {
+          "reactCommits": 2,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 26,
+          "decodedBytes": -71949
+        }
+      ]
+    },
+    "w3": {
+      "action": {
+        "reactCommits": [
+          8,
+          5,
+          4
+        ],
+        "commitMsTotal": [
+          7.1,
+          4.6,
+          3.8
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          32,
+          21,
+          18
+        ],
+        "requests": [
+          12,
+          7,
+          7
+        ],
+        "decodedBytes": [
+          3011183,
+          1294312,
+          1294312
+        ],
+        "wireBytes": [
+          414484,
+          0,
+          0
+        ],
+        "domNodesAfter": [
+          360,
+          360,
+          360
+        ]
+      },
+      "idle": {
+        "reactCommits": [
+          0,
+          0,
+          1
+        ],
+        "commitMsTotal": [
+          null,
+          null,
+          3.6
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          1,
+          1,
+          7
+        ],
+        "requests": [
+          1,
+          1,
+          1
+        ],
+        "decodedBytes": [
+          52310,
+          52310,
+          52310
+        ],
+        "wireBytes": [
+          20579,
+          20579,
+          20579
+        ],
+        "domNodesAfter": [
+          1476,
+          1476,
+          1476
+        ]
+      },
+      "medians": {
+        "actionCommits": 5,
+        "idleCommits": 0,
+        "actionCommitMsTotal": 4.6,
+        "idleCommitMsTotal": 3.6,
+        "actionBlockedMs": 0,
+        "idleBlockedMs": 0,
+        "actionScriptRendererWideMs": 21,
+        "idleScriptRendererWideMs": 1,
+        "actionDecodedBytes": 1294312,
+        "idleDecodedBytes": 52310,
+        "timeToReadyMs": 1
+      },
+      "attributable": [
+        {
+          "reactCommits": 8,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 31,
+          "decodedBytes": 2958873
+        },
+        {
+          "reactCommits": 5,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 20,
+          "decodedBytes": 1242002
+        },
+        {
+          "reactCommits": 3,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 11,
+          "decodedBytes": 1242002
+        }
+      ]
+    },
+    "w4": {
+      "action": {
+        "reactCommits": [
+          3,
+          5,
+          3
+        ],
+        "commitMsTotal": [
+          13.8,
+          16.2,
+          8.3
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          33,
+          38,
+          21
+        ],
+        "requests": [
+          7,
+          8,
+          7
+        ],
+        "decodedBytes": [
+          1310701,
+          1311534,
+          1310800
+        ],
+        "wireBytes": [
+          142034,
+          143054,
+          142290
+        ],
+        "domNodesAfter": [
+          1476,
+          1476,
+          1476
+        ]
+      },
+      "idle": {
+        "reactCommits": [
+          0,
+          0,
+          2
+        ],
+        "commitMsTotal": [
+          null,
+          null,
+          0.6
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          1,
+          1,
+          2
+        ],
+        "requests": [
+          0,
+          0,
+          1
+        ],
+        "decodedBytes": [
+          0,
+          0,
+          737
+        ],
+        "wireBytes": [
+          0,
+          0,
+          762
+        ],
+        "domNodesAfter": [
+          226,
+          226,
+          226
+        ]
+      },
+      "medians": {
+        "actionCommits": 3,
+        "idleCommits": 0,
+        "actionCommitMsTotal": 13.8,
+        "idleCommitMsTotal": 0.6,
+        "actionBlockedMs": 0,
+        "idleBlockedMs": 0,
+        "actionScriptRendererWideMs": 33,
+        "idleScriptRendererWideMs": 1,
+        "actionDecodedBytes": 1310800,
+        "idleDecodedBytes": 0,
+        "timeToReadyMs": null
+      },
+      "attributable": [
+        {
+          "reactCommits": 3,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 32,
+          "decodedBytes": 1310701
+        },
+        {
+          "reactCommits": 5,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 37,
+          "decodedBytes": 1311534
+        },
+        {
+          "reactCommits": 1,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 19,
+          "decodedBytes": 1310063
+        }
+      ]
+    },
+    "w5": {
+      "action": {
+        "reactCommits": [
+          33,
+          1,
+          0
+        ],
+        "commitMsTotal": [
+          8.9,
+          0.1,
+          null
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          42,
+          8,
+          8
+        ],
+        "requests": [
+          3,
+          8,
+          8
+        ],
+        "decodedBytes": [
+          0,
+          0,
+          0
+        ],
+        "wireBytes": [
+          0,
+          0,
+          0
+        ],
+        "domNodesAfter": [
+          360,
+          360,
+          360
+        ]
+      },
+      "idle": {
+        "reactCommits": [
+          2,
+          0,
+          1
+        ],
+        "commitMsTotal": [
+          0.5,
+          null,
+          0.2
+        ],
+        "longTasks": [
+          0,
+          0,
+          0
+        ],
+        "blockedMs": [
+          0,
+          0,
+          0
+        ],
+        "maxLongTaskMs": [
+          0,
+          0,
+          0
+        ],
+        "scriptRendererWideMs": [
+          3,
+          1,
+          1
+        ],
+        "requests": [
+          1,
+          0,
+          0
+        ],
+        "decodedBytes": [
+          737,
+          0,
+          0
+        ],
+        "wireBytes": [
+          762,
+          0,
+          0
+        ],
+        "domNodesAfter": [
+          226,
+          226,
+          226
+        ]
+      },
+      "medians": {
+        "actionCommits": 1,
+        "idleCommits": 1,
+        "actionCommitMsTotal": 8.9,
+        "idleCommitMsTotal": 0.5,
+        "actionBlockedMs": 0,
+        "idleBlockedMs": 0,
+        "actionScriptRendererWideMs": 8,
+        "idleScriptRendererWideMs": 1,
+        "actionDecodedBytes": 0,
+        "idleDecodedBytes": 0,
+        "timeToReadyMs": null
+      },
+      "attributable": [
+        {
+          "reactCommits": 31,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 39,
+          "decodedBytes": -737
+        },
+        {
+          "reactCommits": 1,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 7,
+          "decodedBytes": 0
+        },
+        {
+          "reactCommits": -1,
+          "blockedMs": 0,
+          "scriptRendererWideMs": 7,
+          "decodedBytes": 0
+        }
+      ]
+    }
+  },
+  "requestsByUrl": {
+    "GET /api/proxy/projects/board": {
+      "count": 24,
+      "wireBytes": 484978,
+      "decodedBytes": 5789497,
+      "maxDurationMs": 25776
+    },
+    "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+      "count": 3,
+      "wireBytes": 133194,
+      "decodedBytes": 498635,
+      "maxDurationMs": 11580
+    },
+    "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+      "count": 6,
+      "wireBytes": 167114,
+      "decodedBytes": 997414,
+      "maxDurationMs": 3200
+    },
+    "GET /api/proxy/projects": {
+      "count": 12,
+      "wireBytes": 246948,
+      "decodedBytes": 627720,
+      "maxDurationMs": 16763
+    },
+    "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+      "count": 3,
+      "wireBytes": 117679,
+      "decodedBytes": 510277,
+      "maxDurationMs": 11540
+    },
+    "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+      "count": 3,
+      "wireBytes": 171127,
+      "decodedBytes": 770039,
+      "maxDurationMs": 11499
+    },
+    "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+      "count": 3,
+      "wireBytes": 167839,
+      "decodedBytes": 749832,
+      "maxDurationMs": 11464
+    },
+    "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+      "count": 4,
+      "wireBytes": 332680,
+      "decodedBytes": 1316936,
+      "maxDurationMs": 11491
+    },
+    "GET /api/proxy/chat/7379b332-c7c3-421d-9cbc-ec231aa44966": {
+      "count": 1,
+      "wireBytes": 98637,
+      "decodedBytes": 492454,
+      "maxDurationMs": 133
+    },
+    "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+      "count": 3,
+      "wireBytes": 0,
+      "decodedBytes": 510349,
+      "maxDurationMs": 3024
+    },
+    "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+      "count": 3,
+      "wireBytes": 0,
+      "decodedBytes": 770111,
+      "maxDurationMs": 3024
+    },
+    "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+      "count": 3,
+      "wireBytes": 0,
+      "decodedBytes": 750478,
+      "maxDurationMs": 3024
+    },
+    "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+      "count": 3,
+      "wireBytes": 0,
+      "decodedBytes": 982408,
+      "maxDurationMs": 3024
+    },
+    "GET /api/events/7379b332-c7c3-421d-9cbc-ec231aa44966": {
+      "count": 1,
+      "wireBytes": 0,
+      "decodedBytes": 492478,
+      "maxDurationMs": 3013
+    },
+    "GET /api/proxy/usage/quota": {
+      "count": 3,
+      "wireBytes": 2286,
+      "decodedBytes": 2211,
+      "maxDurationMs": 334
+    },
+    "GET /api/events/71a1284d-9073-4369-ae90-9d3524424838": {
+      "count": 2,
+      "wireBytes": 0,
+      "decodedBytes": 170098,
+      "maxDurationMs": 3025
+    },
+    "GET /api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838": {
+      "count": 2,
+      "wireBytes": 44350,
+      "decodedBytes": 170050,
+      "maxDurationMs": 11578
+    }
+  },
+  "reps": [
+    {
+      "rep": 1,
+      "w1_idle": {
+        "key": "rep1/w1/idle-on-today",
+        "wallMs": 3002,
+        "holdMs": 3000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 3010,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 0,
+          "styleRendererWideMs": 1,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 6,
+          "heapUsedMbAfter": 9.4
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          15.2,
+          11.63,
+          10.05
+        ],
+        "loadavgAfter": [
+          15.2,
+          11.63,
+          10.05
+        ]
+      },
+      "w1": {
+        "key": "rep1/w1/navigate-into-projects",
+        "wallMs": 3003,
+        "holdMs": 3000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 1250,
+        "windowMs": 3006,
+        "reactCommits": 1,
+        "commitMsTotal": 18,
+        "commitMsMax": 18,
+        "commitMsEach": [
+          18
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 21,
+          "styleRendererWideMs": 11,
+          "layoutRendererWideMs": 13,
+          "taskRendererWideMs": 84,
+          "heapUsedMbAfter": 5.7
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          15.2,
+          11.63,
+          10.05
+        ],
+        "loadavgAfter": [
+          14.94,
+          11.64,
+          10.06
+        ],
+        "timeToReadyMs": 4
+      },
+      "w2_idle": {
+        "key": "rep1/w2/idle-on-board",
+        "wallMs": 3001,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 3004,
+        "reactCommits": 1,
+        "commitMsTotal": 4,
+        "commitMsMax": 4,
+        "commitMsEach": [
+          4
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 9,
+          "styleRendererWideMs": 2,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 28,
+          "heapUsedMbAfter": 7.2
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 20117,
+          "decodedBytes": 241204,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 20117,
+              "decodedBytes": 241204,
+              "durationsMs": [
+                47
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w2/idle-on-board",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345194.797275,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20117,
+              "decodedBytes": 241204,
+              "durationMs": 47,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          14.94,
+          11.64,
+          10.06
+        ],
+        "loadavgAfter": [
+          14.94,
+          11.69,
+          10.09
+        ]
+      },
+      "w2": {
+        "key": "rep1/w2/click-task-card",
+        "wallMs": 3003,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 440,
+        "domNodesDelta": -1036,
+        "windowMs": 3006,
+        "reactCommits": 3,
+        "commitMsTotal": 48.1,
+        "commitMsMax": 46.6,
+        "commitMsEach": [
+          1.2,
+          0.3,
+          46.6
+        ],
+        "commitDurationsMeasured": 3,
+        "longTasks": 1,
+        "blockedMs": 81,
+        "maxLongTaskMs": 81,
+        "longTaskDetail": [
+          {
+            "startTime": 16335.8,
+            "duration": 81,
+            "name": "self"
+          }
+        ],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 66,
+          "styleRendererWideMs": 6,
+          "layoutRendererWideMs": 27,
+          "taskRendererWideMs": 137,
+          "heapUsedMbAfter": 11.6
+        },
+        "network": {
+          "requests": 2,
+          "wireBytes": 111647,
+          "decodedBytes": 320242,
+          "perUrl": {
+            "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 42846,
+              "decodedBytes": 160109,
+              "durationsMs": [
+                50
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 68801,
+              "decodedBytes": 160133,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w2/click-task-card",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345196.264233,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 42846,
+              "decodedBytes": 160109,
+              "durationMs": 50,
+              "failed": null
+            },
+            {
+              "window": "rep1/w2/click-task-card",
+              "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345196.265474,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 68801,
+              "decodedBytes": 160133,
+              "durationMs": 3200,
+              "failed": "net::ERR_ABORTED"
+            }
+          ]
+        },
+        "loadavgBefore": [
+          14.94,
+          11.69,
+          10.09
+        ],
+        "loadavgAfter": [
+          14.39,
+          11.63,
+          10.08
+        ],
+        "clickedCard": {
+          "running": true,
+          "text": "running r200 Plan phase 2 — memory surface truth os-usable-for-work · 4m",
+          "cardsOnBoard": 152
+        },
+        "timeToReadyMs": 2
+      },
+      "w3_idle": {
+        "key": "rep1/w3/idle-on-board",
+        "wallMs": 3000,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 3004,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 1,
+          "styleRendererWideMs": 4,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 12,
+          "heapUsedMbAfter": 8
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 20579,
+          "decodedBytes": 52310,
+          "perUrl": {
+            "GET /api/proxy/projects": {
+              "count": 1,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationsMs": [
+                13
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w3/idle-on-board",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345203.797131,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 13,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          14.39,
+          11.63,
+          10.08
+        ],
+        "loadavgAfter": [
+          14.39,
+          11.63,
+          10.08
+        ]
+      },
+      "w3": {
+        "key": "rep1/w3/toggle-to-floor",
+        "wallMs": 3000,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 360,
+        "domNodesDelta": -1116,
+        "windowMs": 3003,
+        "reactCommits": 8,
+        "commitMsTotal": 7.1,
+        "commitMsMax": 2.7,
+        "commitMsEach": [
+          2.7,
+          0.6,
+          0.8,
+          0.6,
+          0.5,
+          0.9,
+          0.3,
+          0.7
+        ],
+        "commitDurationsMeasured": 8,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 32,
+          "styleRendererWideMs": 10,
+          "layoutRendererWideMs": 9,
+          "taskRendererWideMs": 237,
+          "heapUsedMbAfter": 16.5
+        },
+        "network": {
+          "requests": 12,
+          "wireBytes": 414484,
+          "decodedBytes": 3011183,
+          "perUrl": {
+            "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+              "count": 1,
+              "wireBytes": 34807,
+              "decodedBytes": 152229,
+              "durationsMs": [
+                62
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+              "count": 1,
+              "wireBytes": 52439,
+              "decodedBytes": 238357,
+              "durationsMs": [
+                97
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+              "count": 1,
+              "wireBytes": 52275,
+              "decodedBytes": 229002,
+              "durationsMs": [
+                95
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 78013,
+              "decodedBytes": 313136,
+              "durationsMs": [
+                141
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/chat/7379b332-c7c3-421d-9cbc-ec231aa44966": {
+              "count": 1,
+              "wireBytes": 98637,
+              "decodedBytes": 492454,
+              "durationsMs": [
+                133
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 98313,
+              "decodedBytes": 160133,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 152253,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 238381,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 229600,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 313160,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/7379b332-c7c3-421d-9cbc-ec231aa44966": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 492478,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+              "method": "GET",
+              "startedAt": 2345204.04098,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 34807,
+              "decodedBytes": 152229,
+              "durationMs": 62,
+              "failed": null
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+              "method": "GET",
+              "startedAt": 2345204.04211,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 52439,
+              "decodedBytes": 238357,
+              "durationMs": 97,
+              "failed": null
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+              "method": "GET",
+              "startedAt": 2345204.043203,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 52275,
+              "decodedBytes": 229002,
+              "durationMs": 95,
+              "failed": null
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345204.044261,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 78013,
+              "decodedBytes": 313136,
+              "durationMs": 141,
+              "failed": null
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/7379b332-c7c3-421d-9cbc-ec231aa44966",
+              "method": "GET",
+              "startedAt": 2345204.045286,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 98637,
+              "decodedBytes": 492454,
+              "durationMs": 133,
+              "failed": null
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345204.049994,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 98313,
+              "decodedBytes": 160133,
+              "durationMs": 3013,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+              "method": "GET",
+              "startedAt": 2345204.050188,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 152253,
+              "durationMs": 3013,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+              "method": "GET",
+              "startedAt": 2345204.050274,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 238381,
+              "durationMs": 3013,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+              "method": "GET",
+              "startedAt": 2345204.050356,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 229600,
+              "durationMs": 3013,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345204.05044,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 313160,
+              "durationMs": 3013,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/7379b332-c7c3-421d-9cbc-ec231aa44966",
+              "method": "GET",
+              "startedAt": 2345204.050511,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 492478,
+              "durationMs": 3013,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep1/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345206.889337,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20118,
+              "decodedBytes": 241205,
+              "durationMs": 210,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          14.39,
+          11.63,
+          10.08
+        ],
+        "loadavgAfter": [
+          14.52,
+          11.7,
+          10.11
+        ],
+        "timeToReadyMs": 2
+      },
+      "w4_idle": {
+        "key": "rep1/w4/idle-on-today-30s",
+        "wallMs": 30030,
+        "holdMs": 30000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 30032,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 1,
+          "styleRendererWideMs": 6,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 77,
+          "heapUsedMbAfter": 9.1
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          14.24,
+          11.69,
+          10.12
+        ],
+        "loadavgAfter": [
+          12.53,
+          11.54,
+          10.12
+        ]
+      },
+      "w4": {
+        "key": "rep1/w4/idle-on-projects-30s",
+        "wallMs": 30001,
+        "holdMs": 30000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 30004,
+        "reactCommits": 3,
+        "commitMsTotal": 13.8,
+        "commitMsMax": 5.1,
+        "commitMsEach": [
+          5.1,
+          4,
+          4.7
+        ],
+        "commitDurationsMeasured": 3,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 33,
+          "styleRendererWideMs": 31,
+          "layoutRendererWideMs": 3,
+          "taskRendererWideMs": 196,
+          "heapUsedMbAfter": 11.8
+        },
+        "network": {
+          "requests": 7,
+          "wireBytes": 142034,
+          "decodedBytes": 1310701,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 5,
+              "wireBytes": 100876,
+              "decodedBytes": 1206081,
+              "durationsMs": [
+                45,
+                27,
+                34,
+                28,
+                27
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/projects": {
+              "count": 2,
+              "wireBytes": 41158,
+              "decodedBytes": 104620,
+              "durationsMs": [
+                11,
+                11
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345246.2379,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20117,
+              "decodedBytes": 241205,
+              "durationMs": 45,
+              "failed": null
+            },
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345252.289207,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20117,
+              "decodedBytes": 241205,
+              "durationMs": 27,
+              "failed": null
+            },
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345255.238411,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 11,
+              "failed": null
+            },
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345258.322115,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20186,
+              "decodedBytes": 241201,
+              "durationMs": 34,
+              "failed": null
+            },
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345264.362084,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20228,
+              "decodedBytes": 241235,
+              "durationMs": 28,
+              "failed": null
+            },
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345270.251329,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 11,
+              "failed": null
+            },
+            {
+              "window": "rep1/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345270.396116,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20228,
+              "decodedBytes": 241235,
+              "durationMs": 27,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          12.53,
+          11.54,
+          10.12
+        ],
+        "loadavgAfter": [
+          9.85,
+          10.97,
+          9.97
+        ]
+      },
+      "w5_idle": {
+        "key": "rep1/w5/idle-on-today-30s",
+        "wallMs": 30002,
+        "holdMs": 30000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 30006,
+        "reactCommits": 2,
+        "commitMsTotal": 0.5,
+        "commitMsMax": 0.4,
+        "commitMsEach": [
+          0.4,
+          0.1
+        ],
+        "commitDurationsMeasured": 2,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 3,
+          "styleRendererWideMs": 6,
+          "layoutRendererWideMs": 1,
+          "taskRendererWideMs": 55,
+          "heapUsedMbAfter": 13.7
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 762,
+          "decodedBytes": 737,
+          "perUrl": {
+            "GET /api/proxy/usage/quota": {
+              "count": 1,
+              "wireBytes": 762,
+              "decodedBytes": 737,
+              "durationsMs": [
+                248
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w5/idle-on-today-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/usage/quota",
+              "method": "GET",
+              "startedAt": 2345300.513713,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 762,
+              "decodedBytes": 737,
+              "durationMs": 248,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          9.85,
+          10.97,
+          9.97
+        ],
+        "loadavgAfter": [
+          8.82,
+          10.59,
+          9.87
+        ]
+      },
+      "w5": {
+        "key": "rep1/w5/idle-on-floor-30s",
+        "wallMs": 30001,
+        "holdMs": 30000,
+        "domNodesBefore": 360,
+        "domNodesAfter": 360,
+        "domNodesDelta": 0,
+        "windowMs": 30004,
+        "reactCommits": 33,
+        "commitMsTotal": 8.9,
+        "commitMsMax": 0.5,
+        "commitMsEach": [
+          0.4,
+          0.2,
+          0.4,
+          0.3,
+          0.2,
+          0.5,
+          0.3,
+          0.1,
+          0.3,
+          0.3,
+          0.2,
+          0.2,
+          0.2,
+          0.2,
+          0.3,
+          0.2,
+          0.2,
+          0.3,
+          0.3,
+          0.3,
+          0.3,
+          0.3,
+          0.3,
+          0.4,
+          0.5,
+          0.1,
+          0.2,
+          0.2,
+          0.4,
+          0.3,
+          0.2,
+          0.2,
+          0.1
+        ],
+        "commitDurationsMeasured": 33,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 42,
+          "styleRendererWideMs": 83,
+          "layoutRendererWideMs": 31,
+          "taskRendererWideMs": 453,
+          "heapUsedMbAfter": 12.3
+        },
+        "network": {
+          "requests": 3,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/projects": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep1/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345309.405506,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20227,
+              "decodedBytes": 241236,
+              "durationMs": 25751,
+              "failed": null
+            },
+            {
+              "window": "rep1/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345318.405566,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 16735,
+              "failed": null
+            },
+            {
+              "window": "rep1/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345323.747797,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 84889,
+              "decodedBytes": 334600,
+              "durationMs": 11398,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          8.68,
+          10.53,
+          9.86
+        ],
+        "loadavgAfter": [
+          8.17,
+          10.24,
+          9.78
+        ],
+        "floorTiles": 6
+      }
+    },
+    {
+      "rep": 2,
+      "w1_idle": {
+        "key": "rep2/w1/idle-on-today",
+        "wallMs": 3003,
+        "holdMs": 3000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 3006,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 0,
+          "styleRendererWideMs": 1,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 7,
+          "heapUsedMbAfter": 15
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          8.17,
+          10.24,
+          9.78
+        ],
+        "loadavgAfter": [
+          8.07,
+          10.18,
+          9.77
+        ]
+      },
+      "w1": {
+        "key": "rep2/w1/navigate-into-projects",
+        "wallMs": 3003,
+        "holdMs": 3000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 1250,
+        "windowMs": 3006,
+        "reactCommits": 1,
+        "commitMsTotal": 17.1,
+        "commitMsMax": 17.1,
+        "commitMsEach": [
+          17.1
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 20,
+          "styleRendererWideMs": 11,
+          "layoutRendererWideMs": 15,
+          "taskRendererWideMs": 68,
+          "heapUsedMbAfter": 15.4
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          8.07,
+          10.18,
+          9.77
+        ],
+        "loadavgAfter": [
+          8.07,
+          10.18,
+          9.77
+        ],
+        "timeToReadyMs": 3
+      },
+      "w2_idle": {
+        "key": "rep2/w2/idle-on-board",
+        "wallMs": 3001,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 3004,
+        "reactCommits": 1,
+        "commitMsTotal": 2.7,
+        "commitMsMax": 2.7,
+        "commitMsEach": [
+          2.7
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 6,
+          "styleRendererWideMs": 2,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 36,
+          "heapUsedMbAfter": 12.6
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 20229,
+          "decodedBytes": 241236,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 20229,
+              "decodedBytes": 241236,
+              "durationsMs": [
+                39
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep2/w2/idle-on-board",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345347.239328,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20229,
+              "decodedBytes": 241236,
+              "durationMs": 39,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          7.83,
+          10.1,
+          9.74
+        ],
+        "loadavgAfter": [
+          7.83,
+          10.1,
+          9.74
+        ]
+      },
+      "w2": {
+        "key": "rep2/w2/click-task-card",
+        "wallMs": 3002,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 474,
+        "domNodesDelta": -1002,
+        "windowMs": 3005,
+        "reactCommits": 3,
+        "commitMsTotal": 22.1,
+        "commitMsMax": 18.8,
+        "commitMsEach": [
+          18.8,
+          1.9,
+          1.4
+        ],
+        "commitDurationsMeasured": 3,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 40,
+          "styleRendererWideMs": 5,
+          "layoutRendererWideMs": 15,
+          "taskRendererWideMs": 89,
+          "heapUsedMbAfter": 15.2
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 0,
+          "decodedBytes": 169287,
+          "perUrl": {
+            "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep2/w2/click-task-card",
+              "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345348.755963,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationMs": 3055,
+              "failed": "net::ERR_ABORTED"
+            }
+          ]
+        },
+        "loadavgBefore": [
+          7.83,
+          10.1,
+          9.74
+        ],
+        "loadavgAfter": [
+          7.52,
+          10,
+          9.71
+        ],
+        "clickedCard": {
+          "running": true,
+          "text": "running r200 Plan phase 2 — memory surface truth os-usable-for-work · 7m",
+          "cardsOnBoard": 152
+        },
+        "timeToReadyMs": 7
+      },
+      "w3_idle": {
+        "key": "rep2/w3/idle-on-board",
+        "wallMs": 3001,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 3003,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 1,
+          "styleRendererWideMs": 3,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 12,
+          "heapUsedMbAfter": 15.3
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 20579,
+          "decodedBytes": 52310,
+          "perUrl": {
+            "GET /api/proxy/projects": {
+              "count": 1,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationsMs": [
+                12
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep2/w3/idle-on-board",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345356.239248,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 12,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          7.52,
+          10,
+          9.71
+        ],
+        "loadavgAfter": [
+          7.16,
+          9.88,
+          9.67
+        ]
+      },
+      "w3": {
+        "key": "rep2/w3/toggle-to-floor",
+        "wallMs": 3001,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 360,
+        "domNodesDelta": -1116,
+        "windowMs": 3003,
+        "reactCommits": 5,
+        "commitMsTotal": 4.6,
+        "commitMsMax": 2.4,
+        "commitMsEach": [
+          2.4,
+          0.4,
+          1.1,
+          0.5,
+          0.2
+        ],
+        "commitDurationsMeasured": 5,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 21,
+          "styleRendererWideMs": 7,
+          "layoutRendererWideMs": 3,
+          "taskRendererWideMs": 153,
+          "heapUsedMbAfter": 12.2
+        },
+        "network": {
+          "requests": 7,
+          "wireBytes": 0,
+          "decodedBytes": 1294312,
+          "perUrl": {
+            "GET /api/events/71a1284d-9073-4369-ae90-9d3524424838": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 85049,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 179048,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 265865,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 260439,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 334624,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/71a1284d-9073-4369-ae90-9d3524424838",
+              "method": "GET",
+              "startedAt": 2345356.384486,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 85049,
+              "durationMs": 3018,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345356.38466,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationMs": 3018,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+              "method": "GET",
+              "startedAt": 2345356.384731,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 179048,
+              "durationMs": 3018,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+              "method": "GET",
+              "startedAt": 2345356.384794,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 265865,
+              "durationMs": 3018,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+              "method": "GET",
+              "startedAt": 2345356.384859,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 260439,
+              "durationMs": 3018,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345356.384935,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 334624,
+              "durationMs": 3018,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep2/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345359.319698,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20227,
+              "decodedBytes": 241234,
+              "durationMs": 116,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          7.16,
+          9.88,
+          9.67
+        ],
+        "loadavgAfter": [
+          6.83,
+          9.77,
+          9.64
+        ],
+        "timeToReadyMs": 1
+      },
+      "w4_idle": {
+        "key": "rep2/w4/idle-on-today-30s",
+        "wallMs": 30030,
+        "holdMs": 30000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 30033,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 1,
+          "styleRendererWideMs": 4,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 38,
+          "heapUsedMbAfter": 17.5
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          6.83,
+          9.77,
+          9.64
+        ],
+        "loadavgAfter": [
+          5.87,
+          9.26,
+          9.47
+        ]
+      },
+      "w4": {
+        "key": "rep2/w4/idle-on-projects-30s",
+        "wallMs": 30002,
+        "holdMs": 30000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 30005,
+        "reactCommits": 5,
+        "commitMsTotal": 16.2,
+        "commitMsMax": 5.5,
+        "commitMsEach": [
+          5,
+          5.5,
+          5.1,
+          0.3,
+          0.3
+        ],
+        "commitDurationsMeasured": 5,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 38,
+          "styleRendererWideMs": 23,
+          "layoutRendererWideMs": 2,
+          "taskRendererWideMs": 175,
+          "heapUsedMbAfter": 14.9
+        },
+        "network": {
+          "requests": 8,
+          "wireBytes": 143054,
+          "decodedBytes": 1311534,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 5,
+              "wireBytes": 101134,
+              "decodedBytes": 1206177,
+              "durationsMs": [
+                37,
+                28,
+                25,
+                41,
+                37
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/projects": {
+              "count": 2,
+              "wireBytes": 41158,
+              "decodedBytes": 104620,
+              "durationsMs": [
+                14,
+                14
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/usage/quota": {
+              "count": 1,
+              "wireBytes": 762,
+              "decodedBytes": 737,
+              "durationsMs": [
+                334
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345398.560454,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20226,
+              "decodedBytes": 241235,
+              "durationMs": 37,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345404.604503,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20228,
+              "decodedBytes": 241236,
+              "durationMs": 28,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345407.560677,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 14,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345410.642741,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20228,
+              "decodedBytes": 241236,
+              "durationMs": 25,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345416.676131,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20226,
+              "decodedBytes": 241235,
+              "durationMs": 41,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/usage/quota",
+              "method": "GET",
+              "startedAt": 2345420.76294,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 762,
+              "decodedBytes": 737,
+              "durationMs": 334,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345422.576616,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 14,
+              "failed": null
+            },
+            {
+              "window": "rep2/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345422.72495,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20226,
+              "decodedBytes": 241235,
+              "durationMs": 37,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.87,
+          9.26,
+          9.47
+        ],
+        "loadavgAfter": [
+          5.56,
+          8.86,
+          9.33
+        ]
+      },
+      "w5_idle": {
+        "key": "rep2/w5/idle-on-today-30s",
+        "wallMs": 30030,
+        "holdMs": 30000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 30033,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 1,
+          "styleRendererWideMs": 4,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 40,
+          "heapUsedMbAfter": 17
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          5.52,
+          8.8,
+          9.31
+        ],
+        "loadavgAfter": [
+          6.17,
+          8.64,
+          9.24
+        ]
+      },
+      "w5": {
+        "key": "rep2/w5/idle-on-floor-30s",
+        "wallMs": 30002,
+        "holdMs": 30000,
+        "domNodesBefore": 360,
+        "domNodesAfter": 360,
+        "domNodesDelta": 0,
+        "windowMs": 30004,
+        "reactCommits": 1,
+        "commitMsTotal": 0.1,
+        "commitMsMax": 0.1,
+        "commitMsEach": [
+          0.1
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 8,
+          "styleRendererWideMs": 52,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 179,
+          "heapUsedMbAfter": 11.9
+        },
+        "network": {
+          "requests": 8,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/projects": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345461.763861,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20228,
+              "decodedBytes": 241236,
+              "durationMs": 25776,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345470.763918,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 16763,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838",
+              "method": "GET",
+              "startedAt": 2345475.930808,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 22175,
+              "decodedBytes": 85025,
+              "durationMs": 11578,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345475.950272,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 45174,
+              "decodedBytes": 169263,
+              "durationMs": 11580,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+              "method": "GET",
+              "startedAt": 2345475.995039,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 41436,
+              "decodedBytes": 179024,
+              "durationMs": 11540,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+              "method": "GET",
+              "startedAt": 2345476.092152,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 59344,
+              "decodedBytes": 265841,
+              "durationMs": 11466,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+              "method": "GET",
+              "startedAt": 2345476.092415,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 57782,
+              "decodedBytes": 260415,
+              "durationMs": 11464,
+              "failed": null
+            },
+            {
+              "window": "rep2/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345476.092649,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 84889,
+              "decodedBytes": 334600,
+              "durationMs": 11491,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          6.17,
+          8.64,
+          9.24
+        ],
+        "loadavgAfter": [
+          5.53,
+          8.26,
+          9.1
+        ],
+        "floorTiles": 6
+      }
+    },
+    {
+      "rep": 3,
+      "w1_idle": {
+        "key": "rep3/w1/idle-on-today",
+        "wallMs": 3004,
+        "holdMs": 3000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 3007,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 0,
+          "styleRendererWideMs": 0,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 3,
+          "heapUsedMbAfter": 15.4
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          5.32,
+          8.17,
+          9.06
+        ],
+        "loadavgAfter": [
+          5.32,
+          8.17,
+          9.06
+        ]
+      },
+      "w1": {
+        "key": "rep3/w1/navigate-into-projects",
+        "wallMs": 3003,
+        "holdMs": 3000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 1250,
+        "windowMs": 3006,
+        "reactCommits": 1,
+        "commitMsTotal": 12.8,
+        "commitMsMax": 12.8,
+        "commitMsEach": [
+          12.8
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 20,
+          "styleRendererWideMs": 10,
+          "layoutRendererWideMs": 13,
+          "taskRendererWideMs": 78,
+          "heapUsedMbAfter": 12.3
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          5.32,
+          8.17,
+          9.06
+        ],
+        "loadavgAfter": [
+          5.22,
+          8.1,
+          9.03
+        ],
+        "timeToReadyMs": 3
+      },
+      "w2_idle": {
+        "key": "rep3/w2/idle-on-board",
+        "wallMs": 3002,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 3005,
+        "reactCommits": 1,
+        "commitMsTotal": 2.6,
+        "commitMsMax": 2.6,
+        "commitMsEach": [
+          2.6
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 6,
+          "styleRendererWideMs": 2,
+          "layoutRendererWideMs": 1,
+          "taskRendererWideMs": 25,
+          "heapUsedMbAfter": 13.7
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 20228,
+          "decodedBytes": 241236,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 20228,
+              "decodedBytes": 241236,
+              "durationsMs": [
+                44
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w2/idle-on-board",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345499.600457,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20228,
+              "decodedBytes": 241236,
+              "durationMs": 44,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.22,
+          8.1,
+          9.03
+        ],
+        "loadavgAfter": [
+          5.28,
+          8.07,
+          9.02
+        ]
+      },
+      "w2": {
+        "key": "rep3/w2/click-task-card",
+        "wallMs": 3004,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 474,
+        "domNodesDelta": -1002,
+        "windowMs": 3007,
+        "reactCommits": 3,
+        "commitMsTotal": 17.9,
+        "commitMsMax": 15.2,
+        "commitMsEach": [
+          15.2,
+          1.5,
+          1.2
+        ],
+        "commitDurationsMeasured": 3,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 32,
+          "styleRendererWideMs": 5,
+          "layoutRendererWideMs": 16,
+          "taskRendererWideMs": 80,
+          "heapUsedMbAfter": 19.1
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 0,
+          "decodedBytes": 169287,
+          "perUrl": {
+            "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w2/click-task-card",
+              "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345501.10601,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationMs": 3059,
+              "failed": "net::ERR_ABORTED"
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.28,
+          8.07,
+          9.02
+        ],
+        "loadavgAfter": [
+          5.28,
+          8.07,
+          9.02
+        ],
+        "clickedCard": {
+          "running": true,
+          "text": "running r200 Plan phase 2 — memory surface truth os-usable-for-work · 9m",
+          "cardsOnBoard": 152
+        },
+        "timeToReadyMs": 7
+      },
+      "w3_idle": {
+        "key": "rep3/w3/idle-on-board",
+        "wallMs": 3001,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 3005,
+        "reactCommits": 1,
+        "commitMsTotal": 3.6,
+        "commitMsMax": 3.6,
+        "commitMsEach": [
+          3.6
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 7,
+          "styleRendererWideMs": 4,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 27,
+          "heapUsedMbAfter": 14.2
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 20579,
+          "decodedBytes": 52310,
+          "perUrl": {
+            "GET /api/proxy/projects": {
+              "count": 1,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationsMs": [
+                11
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w3/idle-on-board",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345508.600424,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 11,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.34,
+          8.03,
+          9
+        ],
+        "loadavgAfter": [
+          5.34,
+          8.03,
+          9
+        ]
+      },
+      "w3": {
+        "key": "rep3/w3/toggle-to-floor",
+        "wallMs": 3002,
+        "holdMs": 3000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 360,
+        "domNodesDelta": -1116,
+        "windowMs": 3004,
+        "reactCommits": 4,
+        "commitMsTotal": 3.8,
+        "commitMsMax": 2.3,
+        "commitMsEach": [
+          2.3,
+          0.4,
+          0.3,
+          0.8
+        ],
+        "commitDurationsMeasured": 4,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 18,
+          "styleRendererWideMs": 6,
+          "layoutRendererWideMs": 3,
+          "taskRendererWideMs": 137,
+          "heapUsedMbAfter": 19.6
+        },
+        "network": {
+          "requests": 7,
+          "wireBytes": 0,
+          "decodedBytes": 1294312,
+          "perUrl": {
+            "GET /api/events/71a1284d-9073-4369-ae90-9d3524424838": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 85049,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 179048,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 265865,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 260439,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 334624,
+              "durationsMs": [],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/71a1284d-9073-4369-ae90-9d3524424838",
+              "method": "GET",
+              "startedAt": 2345508.744784,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 85049,
+              "durationMs": 3025,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345508.744979,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 169287,
+              "durationMs": 3024,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+              "method": "GET",
+              "startedAt": 2345508.745069,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 179048,
+              "durationMs": 3024,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+              "method": "GET",
+              "startedAt": 2345508.745185,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 265865,
+              "durationMs": 3024,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+              "method": "GET",
+              "startedAt": 2345508.74529,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 260439,
+              "durationMs": 3024,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/events/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345508.745366,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 0,
+              "decodedBytes": 334624,
+              "durationMs": 3024,
+              "failed": "net::ERR_ABORTED"
+            },
+            {
+              "window": "rep3/w3/toggle-to-floor",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345511.685555,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20230,
+              "decodedBytes": 241236,
+              "durationMs": 113,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.34,
+          8.03,
+          9
+        ],
+        "loadavgAfter": [
+          5.55,
+          8.03,
+          9
+        ],
+        "timeToReadyMs": 1
+      },
+      "w4_idle": {
+        "key": "rep3/w4/idle-on-today-30s",
+        "wallMs": 30004,
+        "holdMs": 30000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 30007,
+        "reactCommits": 2,
+        "commitMsTotal": 0.6,
+        "commitMsMax": 0.4,
+        "commitMsEach": [
+          0.4,
+          0.2
+        ],
+        "commitDurationsMeasured": 2,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 2,
+          "styleRendererWideMs": 4,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 44,
+          "heapUsedMbAfter": 14.2
+        },
+        "network": {
+          "requests": 1,
+          "wireBytes": 762,
+          "decodedBytes": 737,
+          "perUrl": {
+            "GET /api/proxy/usage/quota": {
+              "count": 1,
+              "wireBytes": 762,
+              "decodedBytes": 737,
+              "durationsMs": [
+                330
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w4/idle-on-today-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/usage/quota",
+              "method": "GET",
+              "startedAt": 2345541.097462,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 762,
+              "decodedBytes": 737,
+              "durationMs": 330,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.59,
+          8,
+          8.98
+        ],
+        "loadavgAfter": [
+          5.03,
+          7.63,
+          8.83
+        ]
+      },
+      "w4": {
+        "key": "rep3/w4/idle-on-projects-30s",
+        "wallMs": 30001,
+        "holdMs": 30000,
+        "domNodesBefore": 1476,
+        "domNodesAfter": 1476,
+        "domNodesDelta": 0,
+        "windowMs": 30004,
+        "reactCommits": 3,
+        "commitMsTotal": 8.3,
+        "commitMsMax": 2.9,
+        "commitMsEach": [
+          2.6,
+          2.8,
+          2.9
+        ],
+        "commitDurationsMeasured": 3,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 21,
+          "styleRendererWideMs": 24,
+          "layoutRendererWideMs": 2,
+          "taskRendererWideMs": 142,
+          "heapUsedMbAfter": 20
+        },
+        "network": {
+          "requests": 7,
+          "wireBytes": 142290,
+          "decodedBytes": 1310800,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 5,
+              "wireBytes": 101132,
+              "decodedBytes": 1206180,
+              "durationsMs": [
+                43,
+                29,
+                23,
+                22,
+                24
+              ],
+              "statuses": [
+                200
+              ]
+            },
+            "GET /api/proxy/projects": {
+              "count": 2,
+              "wireBytes": 41158,
+              "decodedBytes": 104620,
+              "durationsMs": [
+                11,
+                13
+              ],
+              "statuses": [
+                200
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345550.879166,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20226,
+              "decodedBytes": 241236,
+              "durationMs": 43,
+              "failed": null
+            },
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345556.928226,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20226,
+              "decodedBytes": 241236,
+              "durationMs": 29,
+              "failed": null
+            },
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345559.879231,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 11,
+              "failed": null
+            },
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345562.963403,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20226,
+              "decodedBytes": 241236,
+              "durationMs": 23,
+              "failed": null
+            },
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345568.991825,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20227,
+              "decodedBytes": 241236,
+              "durationMs": 22,
+              "failed": null
+            },
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345574.891393,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 13,
+              "failed": null
+            },
+            {
+              "window": "rep3/w4/idle-on-projects-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345575.01955,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20227,
+              "decodedBytes": 241236,
+              "durationMs": 24,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.03,
+          7.63,
+          8.83
+        ],
+        "loadavgAfter": [
+          5,
+          7.38,
+          8.7
+        ]
+      },
+      "w5_idle": {
+        "key": "rep3/w5/idle-on-today-30s",
+        "wallMs": 30030,
+        "holdMs": 30000,
+        "domNodesBefore": 226,
+        "domNodesAfter": 226,
+        "domNodesDelta": 0,
+        "windowMs": 30033,
+        "reactCommits": 1,
+        "commitMsTotal": 0.2,
+        "commitMsMax": 0.2,
+        "commitMsEach": [
+          0.2
+        ],
+        "commitDurationsMeasured": 1,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 1,
+          "styleRendererWideMs": 4,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 38,
+          "heapUsedMbAfter": 22.4
+        },
+        "network": {
+          "requests": 0,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {},
+          "detail": []
+        },
+        "loadavgBefore": [
+          5,
+          7.38,
+          8.7
+        ],
+        "loadavgAfter": [
+          4.96,
+          7.15,
+          8.58
+        ]
+      },
+      "w5": {
+        "key": "rep3/w5/idle-on-floor-30s",
+        "wallMs": 30001,
+        "holdMs": 30000,
+        "domNodesBefore": 360,
+        "domNodesAfter": 360,
+        "domNodesDelta": 0,
+        "windowMs": 30004,
+        "reactCommits": 0,
+        "commitMsTotal": null,
+        "commitMsMax": null,
+        "commitMsEach": [],
+        "commitDurationsMeasured": 0,
+        "longTasks": 0,
+        "blockedMs": 0,
+        "maxLongTaskMs": 0,
+        "longTaskDetail": [],
+        "longtaskSupported": true,
+        "rendererWide": {
+          "scriptRendererWideMs": 8,
+          "styleRendererWideMs": 66,
+          "layoutRendererWideMs": 0,
+          "taskRendererWideMs": 222,
+          "heapUsedMbAfter": 11.3
+        },
+        "network": {
+          "requests": 8,
+          "wireBytes": 0,
+          "decodedBytes": 0,
+          "perUrl": {
+            "GET /api/proxy/projects/board": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/projects": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            },
+            "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+              "count": 1,
+              "wireBytes": 0,
+              "decodedBytes": 0,
+              "durationsMs": [],
+              "statuses": [
+                null
+              ]
+            }
+          },
+          "detail": [
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+              "method": "GET",
+              "startedAt": 2345614.062839,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20232,
+              "decodedBytes": 241236,
+              "durationMs": 25769,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/projects",
+              "method": "GET",
+              "startedAt": 2345623.06288,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 20579,
+              "decodedBytes": 52310,
+              "durationMs": 16750,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838",
+              "method": "GET",
+              "startedAt": 2345628.217625,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 22175,
+              "decodedBytes": 85025,
+              "durationMs": 11578,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192",
+              "method": "GET",
+              "startedAt": 2345628.254578,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 45174,
+              "decodedBytes": 169263,
+              "durationMs": 11552,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+              "method": "GET",
+              "startedAt": 2345628.320643,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 41436,
+              "decodedBytes": 179024,
+              "durationMs": 11492,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+              "method": "GET",
+              "startedAt": 2345628.320992,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 59344,
+              "decodedBytes": 265841,
+              "durationMs": 11499,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+              "method": "GET",
+              "startedAt": 2345628.401127,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 57782,
+              "decodedBytes": 260415,
+              "durationMs": 11434,
+              "failed": null
+            },
+            {
+              "window": "rep3/w5/idle-on-floor-30s",
+              "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+              "method": "GET",
+              "startedAt": 2345628.401606,
+              "status": 200,
+              "fromCache": false,
+              "wireBytes": 84889,
+              "decodedBytes": 334600,
+              "durationMs": 11446,
+              "failed": null
+            }
+          ]
+        },
+        "loadavgBefore": [
+          5.12,
+          7.14,
+          8.57
+        ],
+        "loadavgAfter": [
+          5.02,
+          6.94,
+          8.46
+        ],
+        "floorTiles": 6
+      }
+    }
+  ],
+  "windows": [
+    {
+      "key": "rep1/w1/idle-on-today",
+      "wallMs": 3002,
+      "holdMs": 3000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 3010,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 0,
+        "styleRendererWideMs": 1,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 6,
+        "heapUsedMbAfter": 9.4
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        15.2,
+        11.63,
+        10.05
+      ],
+      "loadavgAfter": [
+        15.2,
+        11.63,
+        10.05
+      ]
+    },
+    {
+      "key": "rep1/w1/navigate-into-projects",
+      "wallMs": 3003,
+      "holdMs": 3000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 1250,
+      "windowMs": 3006,
+      "reactCommits": 1,
+      "commitMsTotal": 18,
+      "commitMsMax": 18,
+      "commitMsEach": [
+        18
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 21,
+        "styleRendererWideMs": 11,
+        "layoutRendererWideMs": 13,
+        "taskRendererWideMs": 84,
+        "heapUsedMbAfter": 5.7
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        15.2,
+        11.63,
+        10.05
+      ],
+      "loadavgAfter": [
+        14.94,
+        11.64,
+        10.06
+      ],
+      "timeToReadyMs": 4
+    },
+    {
+      "key": "rep1/w2/idle-on-board",
+      "wallMs": 3001,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 3004,
+      "reactCommits": 1,
+      "commitMsTotal": 4,
+      "commitMsMax": 4,
+      "commitMsEach": [
+        4
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 9,
+        "styleRendererWideMs": 2,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 28,
+        "heapUsedMbAfter": 7.2
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 20117,
+        "decodedBytes": 241204,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 20117,
+            "decodedBytes": 241204,
+            "durationsMs": [
+              47
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w2/idle-on-board",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345194.797275,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20117,
+            "decodedBytes": 241204,
+            "durationMs": 47,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        14.94,
+        11.64,
+        10.06
+      ],
+      "loadavgAfter": [
+        14.94,
+        11.69,
+        10.09
+      ]
+    },
+    {
+      "key": "rep1/w2/click-task-card",
+      "wallMs": 3003,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 440,
+      "domNodesDelta": -1036,
+      "windowMs": 3006,
+      "reactCommits": 3,
+      "commitMsTotal": 48.1,
+      "commitMsMax": 46.6,
+      "commitMsEach": [
+        1.2,
+        0.3,
+        46.6
+      ],
+      "commitDurationsMeasured": 3,
+      "longTasks": 1,
+      "blockedMs": 81,
+      "maxLongTaskMs": 81,
+      "longTaskDetail": [
+        {
+          "startTime": 16335.8,
+          "duration": 81,
+          "name": "self"
+        }
+      ],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 66,
+        "styleRendererWideMs": 6,
+        "layoutRendererWideMs": 27,
+        "taskRendererWideMs": 137,
+        "heapUsedMbAfter": 11.6
+      },
+      "network": {
+        "requests": 2,
+        "wireBytes": 111647,
+        "decodedBytes": 320242,
+        "perUrl": {
+          "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 42846,
+            "decodedBytes": 160109,
+            "durationsMs": [
+              50
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 68801,
+            "decodedBytes": 160133,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w2/click-task-card",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345196.264233,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 42846,
+            "decodedBytes": 160109,
+            "durationMs": 50,
+            "failed": null
+          },
+          {
+            "window": "rep1/w2/click-task-card",
+            "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345196.265474,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 68801,
+            "decodedBytes": 160133,
+            "durationMs": 3200,
+            "failed": "net::ERR_ABORTED"
+          }
+        ]
+      },
+      "loadavgBefore": [
+        14.94,
+        11.69,
+        10.09
+      ],
+      "loadavgAfter": [
+        14.39,
+        11.63,
+        10.08
+      ],
+      "clickedCard": {
+        "running": true,
+        "text": "running r200 Plan phase 2 — memory surface truth os-usable-for-work · 4m",
+        "cardsOnBoard": 152
+      },
+      "timeToReadyMs": 2
+    },
+    {
+      "key": "rep1/w3/idle-on-board",
+      "wallMs": 3000,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 3004,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 1,
+        "styleRendererWideMs": 4,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 12,
+        "heapUsedMbAfter": 8
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 20579,
+        "decodedBytes": 52310,
+        "perUrl": {
+          "GET /api/proxy/projects": {
+            "count": 1,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationsMs": [
+              13
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w3/idle-on-board",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345203.797131,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 13,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        14.39,
+        11.63,
+        10.08
+      ],
+      "loadavgAfter": [
+        14.39,
+        11.63,
+        10.08
+      ]
+    },
+    {
+      "key": "rep1/w3/toggle-to-floor",
+      "wallMs": 3000,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 360,
+      "domNodesDelta": -1116,
+      "windowMs": 3003,
+      "reactCommits": 8,
+      "commitMsTotal": 7.1,
+      "commitMsMax": 2.7,
+      "commitMsEach": [
+        2.7,
+        0.6,
+        0.8,
+        0.6,
+        0.5,
+        0.9,
+        0.3,
+        0.7
+      ],
+      "commitDurationsMeasured": 8,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 32,
+        "styleRendererWideMs": 10,
+        "layoutRendererWideMs": 9,
+        "taskRendererWideMs": 237,
+        "heapUsedMbAfter": 16.5
+      },
+      "network": {
+        "requests": 12,
+        "wireBytes": 414484,
+        "decodedBytes": 3011183,
+        "perUrl": {
+          "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+            "count": 1,
+            "wireBytes": 34807,
+            "decodedBytes": 152229,
+            "durationsMs": [
+              62
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+            "count": 1,
+            "wireBytes": 52439,
+            "decodedBytes": 238357,
+            "durationsMs": [
+              97
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+            "count": 1,
+            "wireBytes": 52275,
+            "decodedBytes": 229002,
+            "durationsMs": [
+              95
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 78013,
+            "decodedBytes": 313136,
+            "durationsMs": [
+              141
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/chat/7379b332-c7c3-421d-9cbc-ec231aa44966": {
+            "count": 1,
+            "wireBytes": 98637,
+            "decodedBytes": 492454,
+            "durationsMs": [
+              133
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 98313,
+            "decodedBytes": 160133,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 152253,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 238381,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 229600,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 313160,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/7379b332-c7c3-421d-9cbc-ec231aa44966": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 492478,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+            "method": "GET",
+            "startedAt": 2345204.04098,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 34807,
+            "decodedBytes": 152229,
+            "durationMs": 62,
+            "failed": null
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+            "method": "GET",
+            "startedAt": 2345204.04211,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 52439,
+            "decodedBytes": 238357,
+            "durationMs": 97,
+            "failed": null
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+            "method": "GET",
+            "startedAt": 2345204.043203,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 52275,
+            "decodedBytes": 229002,
+            "durationMs": 95,
+            "failed": null
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345204.044261,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 78013,
+            "decodedBytes": 313136,
+            "durationMs": 141,
+            "failed": null
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/7379b332-c7c3-421d-9cbc-ec231aa44966",
+            "method": "GET",
+            "startedAt": 2345204.045286,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 98637,
+            "decodedBytes": 492454,
+            "durationMs": 133,
+            "failed": null
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345204.049994,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 98313,
+            "decodedBytes": 160133,
+            "durationMs": 3013,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+            "method": "GET",
+            "startedAt": 2345204.050188,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 152253,
+            "durationMs": 3013,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+            "method": "GET",
+            "startedAt": 2345204.050274,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 238381,
+            "durationMs": 3013,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+            "method": "GET",
+            "startedAt": 2345204.050356,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 229600,
+            "durationMs": 3013,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345204.05044,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 313160,
+            "durationMs": 3013,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/7379b332-c7c3-421d-9cbc-ec231aa44966",
+            "method": "GET",
+            "startedAt": 2345204.050511,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 492478,
+            "durationMs": 3013,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep1/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345206.889337,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20118,
+            "decodedBytes": 241205,
+            "durationMs": 210,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        14.39,
+        11.63,
+        10.08
+      ],
+      "loadavgAfter": [
+        14.52,
+        11.7,
+        10.11
+      ],
+      "timeToReadyMs": 2
+    },
+    {
+      "key": "rep1/w4/idle-on-today-30s",
+      "wallMs": 30030,
+      "holdMs": 30000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 30032,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 1,
+        "styleRendererWideMs": 6,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 77,
+        "heapUsedMbAfter": 9.1
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        14.24,
+        11.69,
+        10.12
+      ],
+      "loadavgAfter": [
+        12.53,
+        11.54,
+        10.12
+      ]
+    },
+    {
+      "key": "rep1/w4/idle-on-projects-30s",
+      "wallMs": 30001,
+      "holdMs": 30000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 30004,
+      "reactCommits": 3,
+      "commitMsTotal": 13.8,
+      "commitMsMax": 5.1,
+      "commitMsEach": [
+        5.1,
+        4,
+        4.7
+      ],
+      "commitDurationsMeasured": 3,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 33,
+        "styleRendererWideMs": 31,
+        "layoutRendererWideMs": 3,
+        "taskRendererWideMs": 196,
+        "heapUsedMbAfter": 11.8
+      },
+      "network": {
+        "requests": 7,
+        "wireBytes": 142034,
+        "decodedBytes": 1310701,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 5,
+            "wireBytes": 100876,
+            "decodedBytes": 1206081,
+            "durationsMs": [
+              45,
+              27,
+              34,
+              28,
+              27
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/projects": {
+            "count": 2,
+            "wireBytes": 41158,
+            "decodedBytes": 104620,
+            "durationsMs": [
+              11,
+              11
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345246.2379,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20117,
+            "decodedBytes": 241205,
+            "durationMs": 45,
+            "failed": null
+          },
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345252.289207,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20117,
+            "decodedBytes": 241205,
+            "durationMs": 27,
+            "failed": null
+          },
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345255.238411,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 11,
+            "failed": null
+          },
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345258.322115,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20186,
+            "decodedBytes": 241201,
+            "durationMs": 34,
+            "failed": null
+          },
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345264.362084,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20228,
+            "decodedBytes": 241235,
+            "durationMs": 28,
+            "failed": null
+          },
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345270.251329,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 11,
+            "failed": null
+          },
+          {
+            "window": "rep1/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345270.396116,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20228,
+            "decodedBytes": 241235,
+            "durationMs": 27,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        12.53,
+        11.54,
+        10.12
+      ],
+      "loadavgAfter": [
+        9.85,
+        10.97,
+        9.97
+      ]
+    },
+    {
+      "key": "rep1/w5/idle-on-today-30s",
+      "wallMs": 30002,
+      "holdMs": 30000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 30006,
+      "reactCommits": 2,
+      "commitMsTotal": 0.5,
+      "commitMsMax": 0.4,
+      "commitMsEach": [
+        0.4,
+        0.1
+      ],
+      "commitDurationsMeasured": 2,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 3,
+        "styleRendererWideMs": 6,
+        "layoutRendererWideMs": 1,
+        "taskRendererWideMs": 55,
+        "heapUsedMbAfter": 13.7
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 762,
+        "decodedBytes": 737,
+        "perUrl": {
+          "GET /api/proxy/usage/quota": {
+            "count": 1,
+            "wireBytes": 762,
+            "decodedBytes": 737,
+            "durationsMs": [
+              248
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w5/idle-on-today-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/usage/quota",
+            "method": "GET",
+            "startedAt": 2345300.513713,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 762,
+            "decodedBytes": 737,
+            "durationMs": 248,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        9.85,
+        10.97,
+        9.97
+      ],
+      "loadavgAfter": [
+        8.82,
+        10.59,
+        9.87
+      ]
+    },
+    {
+      "key": "rep1/w5/idle-on-floor-30s",
+      "wallMs": 30001,
+      "holdMs": 30000,
+      "domNodesBefore": 360,
+      "domNodesAfter": 360,
+      "domNodesDelta": 0,
+      "windowMs": 30004,
+      "reactCommits": 33,
+      "commitMsTotal": 8.9,
+      "commitMsMax": 0.5,
+      "commitMsEach": [
+        0.4,
+        0.2,
+        0.4,
+        0.3,
+        0.2,
+        0.5,
+        0.3,
+        0.1,
+        0.3,
+        0.3,
+        0.2,
+        0.2,
+        0.2,
+        0.2,
+        0.3,
+        0.2,
+        0.2,
+        0.3,
+        0.3,
+        0.3,
+        0.3,
+        0.3,
+        0.3,
+        0.4,
+        0.5,
+        0.1,
+        0.2,
+        0.2,
+        0.4,
+        0.3,
+        0.2,
+        0.2,
+        0.1
+      ],
+      "commitDurationsMeasured": 33,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 42,
+        "styleRendererWideMs": 83,
+        "layoutRendererWideMs": 31,
+        "taskRendererWideMs": 453,
+        "heapUsedMbAfter": 12.3
+      },
+      "network": {
+        "requests": 3,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/projects": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep1/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345309.405506,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20227,
+            "decodedBytes": 241236,
+            "durationMs": 25751,
+            "failed": null
+          },
+          {
+            "window": "rep1/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345318.405566,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 16735,
+            "failed": null
+          },
+          {
+            "window": "rep1/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345323.747797,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 84889,
+            "decodedBytes": 334600,
+            "durationMs": 11398,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        8.68,
+        10.53,
+        9.86
+      ],
+      "loadavgAfter": [
+        8.17,
+        10.24,
+        9.78
+      ],
+      "floorTiles": 6
+    },
+    {
+      "key": "rep2/w1/idle-on-today",
+      "wallMs": 3003,
+      "holdMs": 3000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 3006,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 0,
+        "styleRendererWideMs": 1,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 7,
+        "heapUsedMbAfter": 15
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        8.17,
+        10.24,
+        9.78
+      ],
+      "loadavgAfter": [
+        8.07,
+        10.18,
+        9.77
+      ]
+    },
+    {
+      "key": "rep2/w1/navigate-into-projects",
+      "wallMs": 3003,
+      "holdMs": 3000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 1250,
+      "windowMs": 3006,
+      "reactCommits": 1,
+      "commitMsTotal": 17.1,
+      "commitMsMax": 17.1,
+      "commitMsEach": [
+        17.1
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 20,
+        "styleRendererWideMs": 11,
+        "layoutRendererWideMs": 15,
+        "taskRendererWideMs": 68,
+        "heapUsedMbAfter": 15.4
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        8.07,
+        10.18,
+        9.77
+      ],
+      "loadavgAfter": [
+        8.07,
+        10.18,
+        9.77
+      ],
+      "timeToReadyMs": 3
+    },
+    {
+      "key": "rep2/w2/idle-on-board",
+      "wallMs": 3001,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 3004,
+      "reactCommits": 1,
+      "commitMsTotal": 2.7,
+      "commitMsMax": 2.7,
+      "commitMsEach": [
+        2.7
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 6,
+        "styleRendererWideMs": 2,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 36,
+        "heapUsedMbAfter": 12.6
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 20229,
+        "decodedBytes": 241236,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 20229,
+            "decodedBytes": 241236,
+            "durationsMs": [
+              39
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep2/w2/idle-on-board",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345347.239328,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20229,
+            "decodedBytes": 241236,
+            "durationMs": 39,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        7.83,
+        10.1,
+        9.74
+      ],
+      "loadavgAfter": [
+        7.83,
+        10.1,
+        9.74
+      ]
+    },
+    {
+      "key": "rep2/w2/click-task-card",
+      "wallMs": 3002,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 474,
+      "domNodesDelta": -1002,
+      "windowMs": 3005,
+      "reactCommits": 3,
+      "commitMsTotal": 22.1,
+      "commitMsMax": 18.8,
+      "commitMsEach": [
+        18.8,
+        1.9,
+        1.4
+      ],
+      "commitDurationsMeasured": 3,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 40,
+        "styleRendererWideMs": 5,
+        "layoutRendererWideMs": 15,
+        "taskRendererWideMs": 89,
+        "heapUsedMbAfter": 15.2
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 0,
+        "decodedBytes": 169287,
+        "perUrl": {
+          "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep2/w2/click-task-card",
+            "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345348.755963,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationMs": 3055,
+            "failed": "net::ERR_ABORTED"
+          }
+        ]
+      },
+      "loadavgBefore": [
+        7.83,
+        10.1,
+        9.74
+      ],
+      "loadavgAfter": [
+        7.52,
+        10,
+        9.71
+      ],
+      "clickedCard": {
+        "running": true,
+        "text": "running r200 Plan phase 2 — memory surface truth os-usable-for-work · 7m",
+        "cardsOnBoard": 152
+      },
+      "timeToReadyMs": 7
+    },
+    {
+      "key": "rep2/w3/idle-on-board",
+      "wallMs": 3001,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 3003,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 1,
+        "styleRendererWideMs": 3,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 12,
+        "heapUsedMbAfter": 15.3
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 20579,
+        "decodedBytes": 52310,
+        "perUrl": {
+          "GET /api/proxy/projects": {
+            "count": 1,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationsMs": [
+              12
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep2/w3/idle-on-board",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345356.239248,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 12,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        7.52,
+        10,
+        9.71
+      ],
+      "loadavgAfter": [
+        7.16,
+        9.88,
+        9.67
+      ]
+    },
+    {
+      "key": "rep2/w3/toggle-to-floor",
+      "wallMs": 3001,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 360,
+      "domNodesDelta": -1116,
+      "windowMs": 3003,
+      "reactCommits": 5,
+      "commitMsTotal": 4.6,
+      "commitMsMax": 2.4,
+      "commitMsEach": [
+        2.4,
+        0.4,
+        1.1,
+        0.5,
+        0.2
+      ],
+      "commitDurationsMeasured": 5,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 21,
+        "styleRendererWideMs": 7,
+        "layoutRendererWideMs": 3,
+        "taskRendererWideMs": 153,
+        "heapUsedMbAfter": 12.2
+      },
+      "network": {
+        "requests": 7,
+        "wireBytes": 0,
+        "decodedBytes": 1294312,
+        "perUrl": {
+          "GET /api/events/71a1284d-9073-4369-ae90-9d3524424838": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 85049,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 179048,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 265865,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 260439,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 334624,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/71a1284d-9073-4369-ae90-9d3524424838",
+            "method": "GET",
+            "startedAt": 2345356.384486,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 85049,
+            "durationMs": 3018,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345356.38466,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationMs": 3018,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+            "method": "GET",
+            "startedAt": 2345356.384731,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 179048,
+            "durationMs": 3018,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+            "method": "GET",
+            "startedAt": 2345356.384794,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 265865,
+            "durationMs": 3018,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+            "method": "GET",
+            "startedAt": 2345356.384859,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 260439,
+            "durationMs": 3018,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345356.384935,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 334624,
+            "durationMs": 3018,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep2/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345359.319698,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20227,
+            "decodedBytes": 241234,
+            "durationMs": 116,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        7.16,
+        9.88,
+        9.67
+      ],
+      "loadavgAfter": [
+        6.83,
+        9.77,
+        9.64
+      ],
+      "timeToReadyMs": 1
+    },
+    {
+      "key": "rep2/w4/idle-on-today-30s",
+      "wallMs": 30030,
+      "holdMs": 30000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 30033,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 1,
+        "styleRendererWideMs": 4,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 38,
+        "heapUsedMbAfter": 17.5
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        6.83,
+        9.77,
+        9.64
+      ],
+      "loadavgAfter": [
+        5.87,
+        9.26,
+        9.47
+      ]
+    },
+    {
+      "key": "rep2/w4/idle-on-projects-30s",
+      "wallMs": 30002,
+      "holdMs": 30000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 30005,
+      "reactCommits": 5,
+      "commitMsTotal": 16.2,
+      "commitMsMax": 5.5,
+      "commitMsEach": [
+        5,
+        5.5,
+        5.1,
+        0.3,
+        0.3
+      ],
+      "commitDurationsMeasured": 5,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 38,
+        "styleRendererWideMs": 23,
+        "layoutRendererWideMs": 2,
+        "taskRendererWideMs": 175,
+        "heapUsedMbAfter": 14.9
+      },
+      "network": {
+        "requests": 8,
+        "wireBytes": 143054,
+        "decodedBytes": 1311534,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 5,
+            "wireBytes": 101134,
+            "decodedBytes": 1206177,
+            "durationsMs": [
+              37,
+              28,
+              25,
+              41,
+              37
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/projects": {
+            "count": 2,
+            "wireBytes": 41158,
+            "decodedBytes": 104620,
+            "durationsMs": [
+              14,
+              14
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/usage/quota": {
+            "count": 1,
+            "wireBytes": 762,
+            "decodedBytes": 737,
+            "durationsMs": [
+              334
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345398.560454,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20226,
+            "decodedBytes": 241235,
+            "durationMs": 37,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345404.604503,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20228,
+            "decodedBytes": 241236,
+            "durationMs": 28,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345407.560677,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 14,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345410.642741,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20228,
+            "decodedBytes": 241236,
+            "durationMs": 25,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345416.676131,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20226,
+            "decodedBytes": 241235,
+            "durationMs": 41,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/usage/quota",
+            "method": "GET",
+            "startedAt": 2345420.76294,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 762,
+            "decodedBytes": 737,
+            "durationMs": 334,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345422.576616,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 14,
+            "failed": null
+          },
+          {
+            "window": "rep2/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345422.72495,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20226,
+            "decodedBytes": 241235,
+            "durationMs": 37,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.87,
+        9.26,
+        9.47
+      ],
+      "loadavgAfter": [
+        5.56,
+        8.86,
+        9.33
+      ]
+    },
+    {
+      "key": "rep2/w5/idle-on-today-30s",
+      "wallMs": 30030,
+      "holdMs": 30000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 30033,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 1,
+        "styleRendererWideMs": 4,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 40,
+        "heapUsedMbAfter": 17
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        5.52,
+        8.8,
+        9.31
+      ],
+      "loadavgAfter": [
+        6.17,
+        8.64,
+        9.24
+      ]
+    },
+    {
+      "key": "rep2/w5/idle-on-floor-30s",
+      "wallMs": 30002,
+      "holdMs": 30000,
+      "domNodesBefore": 360,
+      "domNodesAfter": 360,
+      "domNodesDelta": 0,
+      "windowMs": 30004,
+      "reactCommits": 1,
+      "commitMsTotal": 0.1,
+      "commitMsMax": 0.1,
+      "commitMsEach": [
+        0.1
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 8,
+        "styleRendererWideMs": 52,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 179,
+        "heapUsedMbAfter": 11.9
+      },
+      "network": {
+        "requests": 8,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/projects": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345461.763861,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20228,
+            "decodedBytes": 241236,
+            "durationMs": 25776,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345470.763918,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 16763,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838",
+            "method": "GET",
+            "startedAt": 2345475.930808,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 22175,
+            "decodedBytes": 85025,
+            "durationMs": 11578,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345475.950272,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 45174,
+            "decodedBytes": 169263,
+            "durationMs": 11580,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+            "method": "GET",
+            "startedAt": 2345475.995039,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 41436,
+            "decodedBytes": 179024,
+            "durationMs": 11540,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+            "method": "GET",
+            "startedAt": 2345476.092152,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 59344,
+            "decodedBytes": 265841,
+            "durationMs": 11466,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+            "method": "GET",
+            "startedAt": 2345476.092415,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 57782,
+            "decodedBytes": 260415,
+            "durationMs": 11464,
+            "failed": null
+          },
+          {
+            "window": "rep2/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345476.092649,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 84889,
+            "decodedBytes": 334600,
+            "durationMs": 11491,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        6.17,
+        8.64,
+        9.24
+      ],
+      "loadavgAfter": [
+        5.53,
+        8.26,
+        9.1
+      ],
+      "floorTiles": 6
+    },
+    {
+      "key": "rep3/w1/idle-on-today",
+      "wallMs": 3004,
+      "holdMs": 3000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 3007,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 0,
+        "styleRendererWideMs": 0,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 3,
+        "heapUsedMbAfter": 15.4
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        5.32,
+        8.17,
+        9.06
+      ],
+      "loadavgAfter": [
+        5.32,
+        8.17,
+        9.06
+      ]
+    },
+    {
+      "key": "rep3/w1/navigate-into-projects",
+      "wallMs": 3003,
+      "holdMs": 3000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 1250,
+      "windowMs": 3006,
+      "reactCommits": 1,
+      "commitMsTotal": 12.8,
+      "commitMsMax": 12.8,
+      "commitMsEach": [
+        12.8
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 20,
+        "styleRendererWideMs": 10,
+        "layoutRendererWideMs": 13,
+        "taskRendererWideMs": 78,
+        "heapUsedMbAfter": 12.3
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        5.32,
+        8.17,
+        9.06
+      ],
+      "loadavgAfter": [
+        5.22,
+        8.1,
+        9.03
+      ],
+      "timeToReadyMs": 3
+    },
+    {
+      "key": "rep3/w2/idle-on-board",
+      "wallMs": 3002,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 3005,
+      "reactCommits": 1,
+      "commitMsTotal": 2.6,
+      "commitMsMax": 2.6,
+      "commitMsEach": [
+        2.6
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 6,
+        "styleRendererWideMs": 2,
+        "layoutRendererWideMs": 1,
+        "taskRendererWideMs": 25,
+        "heapUsedMbAfter": 13.7
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 20228,
+        "decodedBytes": 241236,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 20228,
+            "decodedBytes": 241236,
+            "durationsMs": [
+              44
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w2/idle-on-board",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345499.600457,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20228,
+            "decodedBytes": 241236,
+            "durationMs": 44,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.22,
+        8.1,
+        9.03
+      ],
+      "loadavgAfter": [
+        5.28,
+        8.07,
+        9.02
+      ]
+    },
+    {
+      "key": "rep3/w2/click-task-card",
+      "wallMs": 3004,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 474,
+      "domNodesDelta": -1002,
+      "windowMs": 3007,
+      "reactCommits": 3,
+      "commitMsTotal": 17.9,
+      "commitMsMax": 15.2,
+      "commitMsEach": [
+        15.2,
+        1.5,
+        1.2
+      ],
+      "commitDurationsMeasured": 3,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 32,
+        "styleRendererWideMs": 5,
+        "layoutRendererWideMs": 16,
+        "taskRendererWideMs": 80,
+        "heapUsedMbAfter": 19.1
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 0,
+        "decodedBytes": 169287,
+        "perUrl": {
+          "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w2/click-task-card",
+            "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345501.10601,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationMs": 3059,
+            "failed": "net::ERR_ABORTED"
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.28,
+        8.07,
+        9.02
+      ],
+      "loadavgAfter": [
+        5.28,
+        8.07,
+        9.02
+      ],
+      "clickedCard": {
+        "running": true,
+        "text": "running r200 Plan phase 2 — memory surface truth os-usable-for-work · 9m",
+        "cardsOnBoard": 152
+      },
+      "timeToReadyMs": 7
+    },
+    {
+      "key": "rep3/w3/idle-on-board",
+      "wallMs": 3001,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 3005,
+      "reactCommits": 1,
+      "commitMsTotal": 3.6,
+      "commitMsMax": 3.6,
+      "commitMsEach": [
+        3.6
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 7,
+        "styleRendererWideMs": 4,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 27,
+        "heapUsedMbAfter": 14.2
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 20579,
+        "decodedBytes": 52310,
+        "perUrl": {
+          "GET /api/proxy/projects": {
+            "count": 1,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationsMs": [
+              11
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w3/idle-on-board",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345508.600424,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 11,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.34,
+        8.03,
+        9
+      ],
+      "loadavgAfter": [
+        5.34,
+        8.03,
+        9
+      ]
+    },
+    {
+      "key": "rep3/w3/toggle-to-floor",
+      "wallMs": 3002,
+      "holdMs": 3000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 360,
+      "domNodesDelta": -1116,
+      "windowMs": 3004,
+      "reactCommits": 4,
+      "commitMsTotal": 3.8,
+      "commitMsMax": 2.3,
+      "commitMsEach": [
+        2.3,
+        0.4,
+        0.3,
+        0.8
+      ],
+      "commitDurationsMeasured": 4,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 18,
+        "styleRendererWideMs": 6,
+        "layoutRendererWideMs": 3,
+        "taskRendererWideMs": 137,
+        "heapUsedMbAfter": 19.6
+      },
+      "network": {
+        "requests": 7,
+        "wireBytes": 0,
+        "decodedBytes": 1294312,
+        "perUrl": {
+          "GET /api/events/71a1284d-9073-4369-ae90-9d3524424838": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 85049,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 179048,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 265865,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 260439,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/events/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 334624,
+            "durationsMs": [],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/71a1284d-9073-4369-ae90-9d3524424838",
+            "method": "GET",
+            "startedAt": 2345508.744784,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 85049,
+            "durationMs": 3025,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345508.744979,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 169287,
+            "durationMs": 3024,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+            "method": "GET",
+            "startedAt": 2345508.745069,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 179048,
+            "durationMs": 3024,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+            "method": "GET",
+            "startedAt": 2345508.745185,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 265865,
+            "durationMs": 3024,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+            "method": "GET",
+            "startedAt": 2345508.74529,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 260439,
+            "durationMs": 3024,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/events/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345508.745366,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 0,
+            "decodedBytes": 334624,
+            "durationMs": 3024,
+            "failed": "net::ERR_ABORTED"
+          },
+          {
+            "window": "rep3/w3/toggle-to-floor",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345511.685555,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20230,
+            "decodedBytes": 241236,
+            "durationMs": 113,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.34,
+        8.03,
+        9
+      ],
+      "loadavgAfter": [
+        5.55,
+        8.03,
+        9
+      ],
+      "timeToReadyMs": 1
+    },
+    {
+      "key": "rep3/w4/idle-on-today-30s",
+      "wallMs": 30004,
+      "holdMs": 30000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 30007,
+      "reactCommits": 2,
+      "commitMsTotal": 0.6,
+      "commitMsMax": 0.4,
+      "commitMsEach": [
+        0.4,
+        0.2
+      ],
+      "commitDurationsMeasured": 2,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 2,
+        "styleRendererWideMs": 4,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 44,
+        "heapUsedMbAfter": 14.2
+      },
+      "network": {
+        "requests": 1,
+        "wireBytes": 762,
+        "decodedBytes": 737,
+        "perUrl": {
+          "GET /api/proxy/usage/quota": {
+            "count": 1,
+            "wireBytes": 762,
+            "decodedBytes": 737,
+            "durationsMs": [
+              330
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w4/idle-on-today-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/usage/quota",
+            "method": "GET",
+            "startedAt": 2345541.097462,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 762,
+            "decodedBytes": 737,
+            "durationMs": 330,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.59,
+        8,
+        8.98
+      ],
+      "loadavgAfter": [
+        5.03,
+        7.63,
+        8.83
+      ]
+    },
+    {
+      "key": "rep3/w4/idle-on-projects-30s",
+      "wallMs": 30001,
+      "holdMs": 30000,
+      "domNodesBefore": 1476,
+      "domNodesAfter": 1476,
+      "domNodesDelta": 0,
+      "windowMs": 30004,
+      "reactCommits": 3,
+      "commitMsTotal": 8.3,
+      "commitMsMax": 2.9,
+      "commitMsEach": [
+        2.6,
+        2.8,
+        2.9
+      ],
+      "commitDurationsMeasured": 3,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 21,
+        "styleRendererWideMs": 24,
+        "layoutRendererWideMs": 2,
+        "taskRendererWideMs": 142,
+        "heapUsedMbAfter": 20
+      },
+      "network": {
+        "requests": 7,
+        "wireBytes": 142290,
+        "decodedBytes": 1310800,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 5,
+            "wireBytes": 101132,
+            "decodedBytes": 1206180,
+            "durationsMs": [
+              43,
+              29,
+              23,
+              22,
+              24
+            ],
+            "statuses": [
+              200
+            ]
+          },
+          "GET /api/proxy/projects": {
+            "count": 2,
+            "wireBytes": 41158,
+            "decodedBytes": 104620,
+            "durationsMs": [
+              11,
+              13
+            ],
+            "statuses": [
+              200
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345550.879166,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20226,
+            "decodedBytes": 241236,
+            "durationMs": 43,
+            "failed": null
+          },
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345556.928226,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20226,
+            "decodedBytes": 241236,
+            "durationMs": 29,
+            "failed": null
+          },
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345559.879231,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 11,
+            "failed": null
+          },
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345562.963403,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20226,
+            "decodedBytes": 241236,
+            "durationMs": 23,
+            "failed": null
+          },
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345568.991825,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20227,
+            "decodedBytes": 241236,
+            "durationMs": 22,
+            "failed": null
+          },
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345574.891393,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 13,
+            "failed": null
+          },
+          {
+            "window": "rep3/w4/idle-on-projects-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345575.01955,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20227,
+            "decodedBytes": 241236,
+            "durationMs": 24,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.03,
+        7.63,
+        8.83
+      ],
+      "loadavgAfter": [
+        5,
+        7.38,
+        8.7
+      ]
+    },
+    {
+      "key": "rep3/w5/idle-on-today-30s",
+      "wallMs": 30030,
+      "holdMs": 30000,
+      "domNodesBefore": 226,
+      "domNodesAfter": 226,
+      "domNodesDelta": 0,
+      "windowMs": 30033,
+      "reactCommits": 1,
+      "commitMsTotal": 0.2,
+      "commitMsMax": 0.2,
+      "commitMsEach": [
+        0.2
+      ],
+      "commitDurationsMeasured": 1,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 1,
+        "styleRendererWideMs": 4,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 38,
+        "heapUsedMbAfter": 22.4
+      },
+      "network": {
+        "requests": 0,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {},
+        "detail": []
+      },
+      "loadavgBefore": [
+        5,
+        7.38,
+        8.7
+      ],
+      "loadavgAfter": [
+        4.96,
+        7.15,
+        8.58
+      ]
+    },
+    {
+      "key": "rep3/w5/idle-on-floor-30s",
+      "wallMs": 30001,
+      "holdMs": 30000,
+      "domNodesBefore": 360,
+      "domNodesAfter": 360,
+      "domNodesDelta": 0,
+      "windowMs": 30004,
+      "reactCommits": 0,
+      "commitMsTotal": null,
+      "commitMsMax": null,
+      "commitMsEach": [],
+      "commitDurationsMeasured": 0,
+      "longTasks": 0,
+      "blockedMs": 0,
+      "maxLongTaskMs": 0,
+      "longTaskDetail": [],
+      "longtaskSupported": true,
+      "rendererWide": {
+        "scriptRendererWideMs": 8,
+        "styleRendererWideMs": 66,
+        "layoutRendererWideMs": 0,
+        "taskRendererWideMs": 222,
+        "heapUsedMbAfter": 11.3
+      },
+      "network": {
+        "requests": 8,
+        "wireBytes": 0,
+        "decodedBytes": 0,
+        "perUrl": {
+          "GET /api/proxy/projects/board": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/projects": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          },
+          "GET /api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846": {
+            "count": 1,
+            "wireBytes": 0,
+            "decodedBytes": 0,
+            "durationsMs": [],
+            "statuses": [
+              null
+            ]
+          }
+        },
+        "detail": [
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects/board",
+            "method": "GET",
+            "startedAt": 2345614.062839,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20232,
+            "decodedBytes": 241236,
+            "durationMs": 25769,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/projects",
+            "method": "GET",
+            "startedAt": 2345623.06288,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 20579,
+            "decodedBytes": 52310,
+            "durationMs": 16750,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/71a1284d-9073-4369-ae90-9d3524424838",
+            "method": "GET",
+            "startedAt": 2345628.217625,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 22175,
+            "decodedBytes": 85025,
+            "durationMs": 11578,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/17286f35-a5b7-4c13-a981-b010ccaa4192",
+            "method": "GET",
+            "startedAt": 2345628.254578,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 45174,
+            "decodedBytes": 169263,
+            "durationMs": 11552,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/f2fac587-35ec-4e0f-b6ba-5c99fbecdb25",
+            "method": "GET",
+            "startedAt": 2345628.320643,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 41436,
+            "decodedBytes": 179024,
+            "durationMs": 11492,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/56407352-c54e-4d5a-ac3a-6279fae9d8d2",
+            "method": "GET",
+            "startedAt": 2345628.320992,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 59344,
+            "decodedBytes": 265841,
+            "durationMs": 11499,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/2281e982-0adc-4bb4-826d-a2b72c6437cc",
+            "method": "GET",
+            "startedAt": 2345628.401127,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 57782,
+            "decodedBytes": 260415,
+            "durationMs": 11434,
+            "failed": null
+          },
+          {
+            "window": "rep3/w5/idle-on-floor-30s",
+            "url": "http://127.0.0.1:7786/api/proxy/chat/7552f864-cb89-4e15-a560-6c0a63ddd846",
+            "method": "GET",
+            "startedAt": 2345628.401606,
+            "status": 200,
+            "fromCache": false,
+            "wireBytes": 84889,
+            "decodedBytes": 334600,
+            "durationMs": 11446,
+            "failed": null
+          }
+        ]
+      },
+      "loadavgBefore": [
+        5.12,
+        7.14,
+        8.57
+      ],
+      "loadavgAfter": [
+        5.02,
+        6.94,
+        8.46
+      ],
+      "floorTiles": 6
+    }
+  ]
+}
