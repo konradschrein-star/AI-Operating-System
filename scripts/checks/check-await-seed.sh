@@ -52,6 +52,17 @@
 #       mattering. Guarded because case 2 asserts the transcript carries at
 #       least one pre-flip "not firing" line before the FIRE line, so the
 #       watcher is proved to have refused the baseline first.
+#   (f) A STUB THAT ONLY EVER SAYS YES (round 804 finding 2). Every case here
+#       POSTs its manager message to a recorder that answered 202
+#       unconditionally, so "the manager was told" was asserted six times and
+#       the REFUSAL branch zero times — and the watcher duly reported a 409 as
+#       "notified" for two rounds. A stub whose every answer is a success cannot
+#       distinguish a handled failure from an unhandled one. Guarded by making
+#       the `/message` code settable (`$TMP/message-code`, default 202) and by
+#       case 7, which refuses the message with the LIVE route's bytes and
+#       asserts both the WARNING and the unchanged exit code. The general rule:
+#       every response code this watcher branches on gets a case, or the branch
+#       is untested however green the run looks.
 #
 # Usage:  bash scripts/checks/check-await-seed.sh
 # Exit:   0 = every case ran and every assertion passed.
@@ -71,9 +82,9 @@ SEED_PROJECT="8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4"
 MANAGER_RUN="bfd1283a-b71b-4f35-b577-7d09aad803f2"
 
 # Kept in sync by hand and enforced at the end, in BOTH directions.
-EXPECTED_ASSERTIONS=49
+EXPECTED_ASSERTIONS=56
 ASSERTIONS_RUN=0
-CASES_DECLARED=6
+CASES_DECLARED=7
 CASES_EXECUTED=0
 
 pass() {
@@ -152,6 +163,10 @@ PORT = int(sys.argv[2])
 LOG = os.path.join(BASE, "requests.jsonl")
 TASK_CODE = os.path.join(BASE, "task-code")
 PROJECT_STATUS = os.path.join(BASE, "project-status")
+# Round 804 finding 2. This used to be a hard-wired 202, so the watcher's
+# rejection path had never once been observed — a stub that only ever accepts
+# proves only that the happy branch exists.
+MESSAGE_CODE = os.path.join(BASE, "message-code")
 
 
 def read(path, default):
@@ -206,7 +221,16 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.endswith("/status"):
             return self.answer(200, {"project": {"status": "active"}})
         if self.path.endswith("/message"):
-            return self.answer(202, {"queued": True, "delivery": "next-turn"})
+            code = int(read(MESSAGE_CODE, "202"))
+            if 200 <= code < 300:
+                return self.answer(code, {"queued": True, "delivery": "next-turn"})
+            # VERBATIM from the live route, not a paraphrase: a stub answering
+            # bytes the real API never emits proves the watcher handles the
+            # stub. Copied from `messageAction()`'s `cancelled` rejection in
+            # `forge-control/src/lib/run-control-rules.ts`.
+            return self.answer(code, {
+                "error": "run cancelled - use POST /api/runs/:id/resume-chat to reopen it",
+            })
         return self.answer(404, {"error": "unexpected POST %s" % self.path})
 
     def log_message(self, *args):
@@ -434,6 +458,49 @@ assert_eq  "6.5 exactly one task POST"                         "1" "$(REQ_PATHS 
 assert_has "6.6 --substitute rendered the token in write_set"  "$(REQ_BODY_MATCH /tasks)" "after-$DOD6.md"
 assert_lacks "6.7 no token survived into the POSTed body"      "$(REQ_BODY_MATCH /tasks)" "DOD6_PROJECT_ID"
 assert_eq  "6.8 it polled the project, not pm2"                "0" "$(wc -l < "$TMP/pm2-calls.log" | tr -d ' ')"
+
+# ---------------------------------------------------------------------------
+case_begin "7 — the manager chat REFUSES the message: a WARNING, not 'notified'"
+# ---------------------------------------------------------------------------
+# Round 804 finding 2. Cases 4 and 5 both POST a manager message and both were
+# only ever answered 202, so the watcher's rejection branch had never been
+# observed — a gate seen only passing is not a gate.
+#
+# THE SCENARIO THIS REPRODUCES. 811 launches the watcher; the restart never
+# lands; thirteen hours later it times out and POSTs "SEEDED NOTHING" to the
+# manager run — which by then has FAILED or been CANCELLED, and `messageAction()`
+# answers those two with a 409. Before the fix, `curl -sS` (no `--fail`) exits 0
+# on a 409, so the transcript read "manager chat notified (HTTP 409)" and the
+# only record that phase 8 had stopped was a log nobody opens.
+#
+# MEASURED CORRECTION to the round-803 finding's wording, recorded rather than
+# quietly reinterpreted (standing rule 1): the finding named a *settled* run as
+# the rejecting state. `messageAction()` ACCEPTS `completed` (`append_and_queue`
+# — it requeues the run). The states that reject are `failed` and `cancelled`,
+# both 409, and `unknown run` is a 404. The defect and its fix are unchanged;
+# only the trigger moves, and this stub answers the `cancelled` text verbatim.
+#
+# The timeout path is used because it is the one that matters most — it is the
+# path on which the message IS the entire deliverable — and because it lets 7.1
+# assert the exit code is UNCHANGED against case 5's measured 2.
+RESET_RECORDER
+echo 409 > "$TMP/message-code"
+pm2_state 9 900000 online
+run_watcher "$TMP/case7.log" 3 executor-restart "$TMP/payload-ok.json"
+RC=0; wait "$WATCHER_PID" || RC=$?
+C7="$(cat "$TMP/case7.log")"
+SHOW "case7.log" "$TMP/case7.log"
+# 7.1 is the "never changes the exit path" contract: 2 is exactly what case 5
+# measured with a 202, so a rejected message costs the caller nothing.
+assert_eq  "7.1 the exit code is UNCHANGED — still 2"          "2" "$RC"
+assert_has "7.2 the timeout reason is still reported"          "$C7" "TIMEOUT after"
+# 7.3 without 7.6 would be satisfiable by a watcher that died before notifying.
+assert_eq  "7.6 the message really WAS POSTed (probe reached)" "1" "$(REQ_PATHS | grep -c "/api/runs/$MANAGER_RUN/message" || true)"
+assert_lacks "7.3 it does NOT claim the chat was notified"     "$C7" "manager chat notified"
+assert_has "7.4 a WARNING names the refusal and its code"      "$C7" "REJECTED the message — HTTP 409"
+assert_has "7.5 the WARNING quotes the API's body verbatim"    "$C7" "run cancelled - use POST /api/runs/:id/resume-chat"
+assert_eq  "7.7 nothing was seeded despite the refusal"        "0" "$(REQ_PATHS | grep -c '/tasks$' || true)"
+echo 202 > "$TMP/message-code"
 
 # ---------------------------------------------------------------------------
 # THE CENSUS. A sweep whose probes miss must exit non-zero rather than certify

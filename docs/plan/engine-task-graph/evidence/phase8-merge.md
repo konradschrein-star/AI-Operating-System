@@ -199,13 +199,38 @@ $ grep -rn '^<<<<<<< \|^>>>>>>> \|^||||||| ' --include='*.ts' --include='*.tsx' 
 It is in my declared write-set, so "git said it was fine" is not sufficient.
 
 - **Ours** added three fields to the task interface: `depends_on: string[] | null`, `workstream: string`, `write_set: string[]` — present in the merged file.
-- **Main** added `"max"` to `ENGINE_EFFORT_CHOICES` (present, line 729) and **moved** `QuotaWindow` / `QuotaSnapshot` / `fetchQuota` out of this module into `app/desktop/quota/quotaQuery.ts`.
+- **Main** added `"max"` to `ENGINE_EFFORT_CHOICES` — the exported `const` is present in the merged `api.ts`, its tuple reading `["low", "medium", "high", "xhigh", "max"]` — and **moved** `QuotaWindow` / `QuotaSnapshot` / `fetchQuota` out of this module into `app/desktop/quota/quotaQuery.ts`.
 
 The relocation is the part worth checking, because an auto-merge that
 resurrected the moved symbols would compile and quietly give the app two
-sources of truth. It did not: `QuotaSnapshot` is **absent** from `api.ts`
-(only a doc-comment breadcrumb remains at line 140 explaining the move) and
-**present** at `quotaQuery.ts:63`. Exactly one definition survives.
+sources of truth. It did not: no declaration of `QuotaSnapshot` exists in
+`api.ts` — the only occurrence of the name there is inside a doc comment
+explaining the move, in prose, not in a declaration — while
+`export interface QuotaSnapshot` is declared in `app/desktop/quota/quotaQuery.ts`
+alongside `fetchQuotaSnapshot()` and `useQuotaSnapshot()`. Exactly one
+definition survives.
+
+*Cited by symbol, round 804 finding 3 (standing rule 1).* This paragraph
+previously pinned all three claims to bare line numbers — `ENGINE_EFFORT_CHOICES`
+"(present, line 729)", the breadcrumb "at line 140", and `quotaQuery.ts:63`. All
+three still resolved when round 803 checked them, so nothing here was wrong; the
+defect is the citation form. This document is the audit trail the deploy rests
+on, and a bare number in it rots into something that reads authoritative and is
+not. The symbols above are what a future reader should grep. Re-derive with:
+
+```
+$ git rev-parse --short HEAD    # 674d860
+$ grep -n "ENGINE_EFFORT_CHOICES" forge-control-web/app/api.ts
+729:export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "max"] as const;
+$ grep -n "QuotaSnapshot" forge-control-web/app/api.ts
+(no declaration; the sole hit is the doc-comment breadcrumb)
+$ grep -n "QuotaSnapshot" forge-control-web/app/desktop/quota/quotaQuery.ts
+63:export interface QuotaSnapshot {
+```
+
+The three numbers appear here **only** inside that transcript, where they are
+the output of a command pinned to the recorded SHA `674d860` — which is the form
+standing rule 1 permits, and not the form it forbids.
 
 ---
 

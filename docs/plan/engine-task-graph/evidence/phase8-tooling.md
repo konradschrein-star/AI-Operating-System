@@ -15,7 +15,7 @@ port; every `pm2` read went to a shell shim printing a canned string.
 | `scripts/deploy/payload-verify.json` | The round-815 live-verification task, POSTed by the watcher in `executor-restart` mode. |
 | `scripts/deploy/payload-report.json` | The round-817 DoD-6 measurement task, POSTed in `project-done` mode. |
 | `scripts/deploy/payload-review.json` | The round-819 gating reviewer, POSTed by the report task itself. |
-| `scripts/checks/check-await-seed.sh` | Drives the watcher against fakes. 6 cases, 49 assertions, censused. |
+| `scripts/checks/check-await-seed.sh` | Drives the watcher against fakes. 7 cases, 56 assertions, censused. |
 | `scripts/checks/check-instrument-typecheck.sh` | Universal gate item 9. Compiles every manifested instrument, one per invocation. |
 | `scripts/checks/instrument-manifest.txt` | What that gate is responsible for, and why it is scoped rather than directory-wide. |
 
@@ -152,7 +152,13 @@ fire cannot slip past. Case 4 of `check-await-seed.sh` exercises the launch call
 
 ---
 
-## 4. `check-await-seed.sh` — 6 cases, 49 assertions, censused both ways
+## 4. `check-await-seed.sh` — 7 cases, 56 assertions, censused both ways
+
+> **Round 804 raised this from 6/49 to 7/56.** Case 7 refuses the manager
+> message and asserts the watcher warns rather than reporting it as notified
+> (finding 2 — §4.2). The transcript pasted below is the **round-802 run at
+> `3dd39b4`, before case 7 existed**; it is left byte-intact rather than
+> regenerated, and the current run's census is appended after it.
 
 It drives the real watcher against a shell shim for `pm2 jlist` and a throwaway
 python3 HTTP server on an ephemeral port that RECORDS every request (method,
@@ -332,11 +338,86 @@ CENSUS
 check-await-seed.sh PASSED — 6/6 cases, 49/49 assertions.
 ```
 
+*(End of the round-802 transcript. `[historical instrument]` — the subject
+sha256 `efe79f2c…` and this check's `7b68fa82…` above are the round-802 files;
+both moved at round 804. Nothing in it was edited.)*
+
+**The round-804 run of the same check, after case 7 landed:**
+
+```
+BUILD IDENTITY OF THE CODE UNDER TEST
+  worktree path    : /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+  git branch       : project/8c591d6c
+  subject sha256   : 9429971eea0c1aa77afe346f58988c0405b57410e373a282b55b5630c6e2a8d0   <-- authoritative
+  this check sha256: cd3b654ce2d6c1e74396b6b6d19c470a1d6d3fd57bdfff17e045321e8e2db8c8
+
+CASE 7 — the manager chat REFUSES the message: a WARNING, not 'notified'
+      [.. TIMEOUT after 3s (ceiling 3s) — waiting for: forge-executor to restart
+          past restart_time=9 and come back online. SEEDING NOTHING.
+      [.. WARNING: the manager chat REJECTED the message — HTTP 409: {"error": "run cancelled - use POST /api/runs/:id/resume-chat to reopen it"}
+      [..          POSTed to http://127.0.0.1:36177/api/runs/bfd1283a-.../message. Nobody was told; the message above is only in this log.
+  ok   7.1 the exit code is UNCHANGED — still 2               = 2
+  ok   7.2 the timeout reason is still reported                 contains: TIMEOUT after
+  ok   7.6 the message really WAS POSTed (probe reached)        = 1
+  ok   7.3 it does NOT claim the chat was notified              no: manager chat notified
+  ok   7.4 a WARNING names the refusal and its code             contains: REJECTED the message — HTTP 409
+  ok   7.5 the WARNING quotes the API's body verbatim           contains: run cancelled - use POST /api/runs/:id/resume-chat
+  ok   7.7 nothing was seeded despite the refusal               = 0
+
+CENSUS
+  cases      declared 7   executed 7
+  assertions declared 56   executed 56
+
+check-await-seed.sh PASSED — 7/7 cases, 56/56 assertions.
+```
+
+**The `git HEAD` and `subject dirty` lines the harness prints are deliberately
+omitted from this paste, and the reason is not tidiness.** This transcript lives
+*inside* the commit that carries the code it measures, so any commit sha written
+here is either the previous commit's — which is not what ran — or a sha that does
+not exist yet. A header pasted into the commit it names cannot be correct, and an
+amend changes it again. The **content-addressed** `sha256` lines have no such
+problem: they identify the bytes, not the history, and they are what the harness
+itself marks `<-- authoritative`. Verify by content, which is reproducible at any
+HEAD:
+
+```
+$ sha256sum scripts/deploy/await-and-seed.sh scripts/checks/check-await-seed.sh
+9429971eea0c1aa77afe346f58988c0405b57410e373a282b55b5630c6e2a8d0  scripts/deploy/await-and-seed.sh
+cd3b654ce2d6c1e74396b6b6d19c470a1d6d3fd57bdfff17e045321e8e2db8c8  scripts/checks/check-await-seed.sh
+```
+
+If those two values match your checkout, this is the run you are reading, whatever
+`git HEAD` says. (`00-vision.md` §7 rule 3 — "a sha naming the worktree rather
+than the build" is how a stale harness certified itself once already; a sha naming
+a commit that cannot exist yet is the same error one step further on.)
+
 ### 4.1 Proving the census can fail
 
 The gate that matters most here is the one round 223 found missing in
 `check-plan-store.ts`: a table that declares a case it never reaches reads as
-coverage. `CASES_DECLARED` was raised to 7 without adding a seventh case:
+coverage. At round 802 the mutation was `CASES_DECLARED` raised to **7** without
+adding a seventh case — the transcript below. **Round 804 added a real seventh
+case, so 7 is now the honest value and the equivalent mutation today is 8.** Re-run
+at round 804 rather than asserted, because a red mutation whose re-run nobody
+watched is the same claim it exists to replace:
+
+```
+$ sed 's/^CASES_DECLARED=7$/CASES_DECLARED=8/' check-await-seed.sh > <scratch copy>   # no eighth case added
+$ bash <scratch copy>
+CENSUS
+  cases      declared 8   executed 7
+  assertions declared 56   executed 56
+check-await-seed.sh FAILED: 7 cases ran, 8 declared.
+  fewer => a declared case never ran and this run certifies nothing.
+  more  => a case was added without updating CASES_DECLARED.
+exit=1
+```
+
+Note it fails **after** case 7 has already printed seven `ok` lines: the census
+is what turns a screen full of passes into a verdict. The round-802 transcript
+below is left as it was — regenerating it would destroy the measurement it
+records, and the two runs agree.
 
 ```
 check-await-seed.sh — engine-task-graph phase 8D (await-and-seed.sh)
@@ -719,8 +800,8 @@ which is the form of failure that gets disclosed and ignored (the precedent is
 $ bash -n scripts/deploy/await-and-seed.sh              # OK
 $ bash -n scripts/checks/check-await-seed.sh            # OK
 $ bash -n scripts/checks/check-instrument-typecheck.sh  # OK
-$ command -v shellcheck                                 # ABSENT on this box — see the finding below
-$ bash scripts/checks/check-await-seed.sh               # exit 0 — 6/6 cases, 49/49 assertions
+$ command -v shellcheck                                 # /usr/bin/shellcheck — 0.9.0 (round 804; see §6.1)
+$ bash scripts/checks/check-await-seed.sh               # exit 0 — 7/7 cases, 56/56 assertions (round 804)
 $ bash scripts/checks/check-instrument-typecheck.sh     # exit 0 — 6/6 entries clean, manifest complete
 ```
 
@@ -756,13 +837,101 @@ the reviewer's own instruction to RUN that grep — the same construction
 declared `*.ts`/`*.sh` scope, so the count above is unaffected. Named here so the
 round-803 reviewer does not have to rediscover it.
 
-**Finding — `shellcheck` is not installed on this box.** Three new shell scripts
-shipped this round with `bash -n` as their only static check. `bash -n` catches
-syntax, not quoting or unset-variable hazards. Every script runs under
-`set -euo pipefail` with an ERR trap, and all three were executed end to end
-(including four deliberate failure paths), which is stronger evidence than a
-linter — but it is not the same evidence, and the gap is recorded rather than
-glossed.
+**RETIRED at round 804 — the disclosure below is superseded, and its gate was
+written in the same commit (standing rule 4).** What stood here read:
+
+> **Finding — `shellcheck` is not installed on this box.** Three new shell
+> scripts shipped this round with `bash -n` as their only static check. `bash -n`
+> catches syntax, not quoting or unset-variable hazards. […] the gap is recorded
+> rather than glossed.
+
+It is no longer true: `shellcheck 0.9.0` is at `/usr/bin/shellcheck`. A recorded
+gap that nobody re-measures becomes a licence, so round 804 executed the run the
+finding deferred, fixed what it caught, and turned it into `03-quality.md` §3.1
+**universal gate item 10** — because without the gate this reappears the moment
+an eighth script is added. See §6.1.
+
+### 6.1 The shellcheck run the finding deferred — executed, round 804
+
+**The file list is derived, never typed.** Same expression as §3.1 item 9's
+branch-ownership set, for the same measured reason: `merge-base...HEAD` returns
+`main`'s files too after round 801's merge commit.
+
+```
+$ git rev-parse --short HEAD
+674d860
+
+$ git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u | sed '/^$/d'
+scripts/checks/check-await-seed.sh
+scripts/checks/check-instrument-typecheck.sh
+scripts/checks/check-migration-0040.sh
+scripts/checks/check-r69-straddle.sh
+scripts/checks/check-scheduler-sql.sh
+scripts/checks/check-workstream-e2e.sh
+scripts/deploy/await-and-seed.sh
+                                        7 files
+```
+
+**Before the fix** — six clean, one not:
+
+```
+$ shellcheck -S error scripts/deploy/await-and-seed.sh
+In scripts/deploy/await-and-seed.sh line 312:
+  # shellcheck disable=SC2086 — PM2_CMD is a command line by contract (see the
+                              ^-- SC1125 (error): Invalid key=value pair? Ignoring the rest of this directive starting here.
+exit=1
+```
+
+**After** — all seven, one invocation:
+
+```
+$ shellcheck -S error $(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+exit=0
+```
+
+**Why `-S error` and not the default severity — the gate has to be passable
+(standing rule 2).** At full severity the same seven emit SC2154 (`rc` in the
+ERR traps, assigned by `rc=$?` in a scope shellcheck cannot see), SC2015 (the
+`A && pass || fail` assert helpers, where `pass` cannot fail so the idiom is
+sound) and SC1010, across scripts **five of the six check scripts already
+shipped**. A default-severity gate would therefore be red on arrival and be
+disclosed-and-ignored, which is the exact habit `00-vision.md` §7 rule 2 exists
+to stop. `-S error` is the severity at which the whole set is clean today, so it
+is the severity that can be *enforced* today.
+
+**What the gate does NOT cover, stated so nobody mistakes its silence for
+proof.** SC2086 is an *info*, so `-S error` can never emit it — which is why
+round 804 finding 1's question ("was the suppression load-bearing?") had to be
+settled by direct measurement rather than by this gate. Measured at 0.9.0:
+SC2086 fires for a variable in ARGUMENT position (`cat $X`) and does **not**
+fire for one in COMMAND-NAME position (`{ $CMD …; } | …`), which is
+`read_pm2()`'s shape — so the suppression suppressed nothing, and was dropped
+rather than kept bare. Reasoning inline at the site.
+
+**The gate can fail, and it did — twice, on this branch's own code.** Once on
+`await-and-seed.sh`'s SC1125 (the transcript above), and once on the reworded
+comment that replaced it (SC1073/SC1072, below). Neither was hypothetical and
+neither was injected; a gate first observed failing on real code is worth more
+than a red mutation.
+
+**It also cannot certify an EMPTY sweep** — the property a derived file list
+most needs. Measured:
+
+```
+$ shellcheck -S error          # i.e. what happens if the git expression returns nothing
+No files specified.
+exit=3
+```
+
+Non-zero. A broken file-list expression fails the gate instead of reporting a
+clean tree.
+
+**A trap this run walked into itself, recorded because it will catch the next
+author.** Any comment line *beginning* with the hash, a space and the linter's
+name is parsed as a directive wherever it sits — prose included. Writing the
+explanatory paragraph at `read_pm2()` the obvious way produced SC1073/SC1072 on
+the very branch that was removing an SC1125. Caught by re-running the gate after
+the fix, which is the argument for the gate in one sentence.
 
 ---
 

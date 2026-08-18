@@ -313,6 +313,64 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    `scripts/checks/instrument-manifest.txt`, §10 of `04-phases.md`); this clause
    and the §4 command line are what run them.
 
+10. **Shell lint (round 804, finding 4 — the gate that keeps a retired
+    disclosure retired).** `shellcheck -S error` over every `*.sh` this branch
+    adds or modifies exits 0. The file list is **derived, never typed**:
+
+    ```bash
+    shellcheck -S error $(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+    ```
+
+    **Why this exists at all.** It is item 9's hole one directory over. `*.ts`
+    under `scripts/checks/` was compiled by nothing; `*.sh` under
+    `scripts/checks/` and `scripts/deploy/` was *linted* by nothing — `bash -n`
+    was the only static check, and it reads syntax, not directives or quoting.
+    The branch now ships **seven** shell scripts, one of which is
+    `scripts/deploy/await-and-seed.sh`: the detached watcher 811 launches, which
+    runs unattended for up to thirteen hours with nobody reading its output.
+
+    **It caught a real defect on its first run.** `await-and-seed.sh` carried
+    `# shellcheck disable=SC2086 — <rationale>`; the em-dash makes an invalid
+    key=value pair, so the linter reported **SC1125 (error)** and that one file
+    failed while the other six passed. Fixed in the same commit as this clause
+    (round 804 finding 1). Transcript: `evidence/phase8-tooling.md` §6.1.
+
+    **Why `-S error` and not the default severity — this gate is written to be
+    PASSABLE (standing rule 2, `00-vision.md` §7 rule 2).** At default severity
+    the same seven files emit SC2154, SC2015 and SC1010 across five of the six
+    check scripts *already shipped* — `rc` assigned inside an ERR trap, and the
+    `A && pass || fail` assert idiom in which `pass` cannot fail. A
+    default-severity gate would be red the day it was written, and a gate that
+    can only be disclosed teaches that disclosure is normal. `-S error` is the
+    severity at which the whole set is clean today, which is what makes it
+    enforceable today. If a future round wants the warnings, it raises the
+    severity **and** clears them in the same commit — never one without the
+    other.
+
+    **It cannot certify an empty sweep**, which is the property a derived file
+    list most needs. If the expression ever returns nothing — a branch that
+    touched no `*.sh`, or an expression someone broke — `shellcheck` answers
+    `No files specified.` and **exits 3**, not 0. A gate whose probes match
+    nothing must fail rather than report clean (`00-vision.md` §7 rule 2);
+    measured, not assumed.
+
+    **What its silence does NOT prove.** SC2086 is an *info*, so this gate can
+    never emit it. A quoting question must be settled by measurement at the
+    site, not by a green run here — which is exactly how finding 1's second half
+    was answered (`evidence/phase8-tooling.md` §6.1).
+
+    **Its own trap, recorded because it is not guessable.** A comment line that
+    *begins* with the hash, a space and the linter's name is parsed as a
+    directive anywhere in a file, prose included — the paragraph explaining
+    finding 1 produced SC1073/SC1072 until it was reworded. Re-run the gate
+    after any comment that discusses it.
+
+    *Prerequisite, checked by the command itself: `shellcheck` 0.9.0 at
+    `/usr/bin/shellcheck`. If it is ever absent, that is a **finding** naming
+    this item — not a silent skip. A missing linter reporting nothing looks
+    identical to a clean tree, which is the failure mode `00-vision.md` §7 rule 3
+    is about.*
+
 ### 3.2 Phase gates
 
 **Phase 1 — schema, fixture, replica harness**
@@ -671,6 +729,12 @@ python3 scripts/checks/check-r20-census.py
 # this branch touched and did not list. One tsc invocation per file, from
 # forge-control/ (that is where @types/node resolves) — see §3.1 item 9's traps.
 bash scripts/checks/check-instrument-typecheck.sh
+# §3.1 item 10 — shell lint. Exits 0, or names the *.sh this branch touched that
+# fails at ERROR severity. The file list is DERIVED (no-merges main..HEAD), not
+# typed, for the same reason as item 9's: a merge commit carries main's files.
+# -S error is deliberate and its limits are stated in item 10 — do not raise the
+# severity here without clearing the warnings in the same commit.
+shellcheck -S error $(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

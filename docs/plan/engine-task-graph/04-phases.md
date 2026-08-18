@@ -976,6 +976,28 @@ the reason is a live instance of exactly what §10 exists to compute.
 |---|---|
 | `evidence/fix-cycle-2.md` (5 lines), `evidence/phase6-plan-api.md` (1), `evidence/phase8-merge.md` (1) | **One `[historical instrument]` marker appended per line; no recorded value altered.** Mid-round, 8B's uncommitted `--exclude-task` edit moved `scripts/measure-schedule.ts` from `f6828a68…` to `6ec72b35…`, which retired an identity quoted in **20** places and turned the **universal** gate `check-instrument-identity.py` red for the whole round. Thirteen of those are 8B's own declared files and are 8B's to close (the eight pasted headers oblige the part-1 re-run in the same commit — R62, `03-quality.md` §3.2). **Seven sat in no round-802 write-set at all**, in settled files from rounds 217, 231 and 801 with no concurrent writer. Left alone they would have handed round 803 a universal gate that no declared owner could turn green — a gate that can only be disclosed, which is the precise pathology `03-quality.md` §4 was rewritten to remove. Taken here because the risk is nil (no concurrent writer; the marker annotates the record and does not alter it) and the alternative is a red gate with no owner. |
 
+**Round 804's write-set, declared in the commit that makes it (fix cycle 1 on
+round 803's four findings).** One task, no concurrent builder, so this is stated
+rather than reconstructed. Round 803's own verdict scoped it: *"all four are
+small and none touches the scheduler"* — and none of these files is in 810's or
+811's write-set, so the deploy tasks are unaffected.
+
+| file | why round 804 writes it |
+|---|---|
+| `scripts/deploy/await-and-seed.sh` | Findings **1** and **2**. The malformed suppression directive above `read_pm2()`'s `$PM2_CMD` pipeline (SC1125) is removed and its rationale moved to plain comment lines; `notify_manager()` now branches on `$HTTP_CODE` so a non-2xx is a WARNING carrying the code and the body, not "notified". A new hazard **(f)** joins the file's own instrument-honesty list. **Finding 1 lands before 811 merges to `main`, as round 803 required** — otherwise the shipped watcher carries it permanently. |
+| `scripts/checks/check-await-seed.sh` | Finding **2**'s gate. The recorder's `/message` code becomes settable (`$TMP/message-code`, default 202) and **case 7** refuses the message with the live route's bytes, asserting the WARNING and the *unchanged* exit code. 6/49 → **7/56**. Hazard **(f)** added to the harness's own list: a stub that only ever says yes cannot distinguish a handled failure from an unhandled one. |
+| `docs/plan/engine-task-graph/evidence/phase8-merge.md` | Finding **3**. §4's three bare line pins (`ENGINE_EFFORT_CHOICES`, the `api.ts` breadcrumb, `quotaQuery.ts:63`) are restated by symbol, with the numbers surviving only inside a transcript pinned to the recorded SHA `674d860` — the form standing rule 1 permits. |
+| `docs/plan/engine-task-graph/evidence/phase8-tooling.md` | Finding **4**, the retirement half. §6's `command -v shellcheck # ABSENT` line and the finding paragraph below it are retired — quoted, marked superseded, not deleted — and replaced by **§6.1**, the executed run over the derived 7-file list. §4's counts follow the harness to 7/56 and §4.1's red mutation is restated at 8 and re-run. |
+| `docs/plan/engine-task-graph/03-quality.md` | Finding **4**, the gate half — **standing rule 4: retire a requirement and its gate clause together, in one commit.** §3.1 gains **universal gate item 10** (shell lint) and §4's block gains its line. Universal and not phase-8's for item 9's reason: any phase can add a script. |
+| `docs/plan/engine-task-graph/04-phases.md` | **Standing rule 2 — declare the write-set where the audit looks.** This table. No other section of this file is touched. |
+
+**What this round did NOT do, stated so the re-check does not go looking.** No
+scheduler file, no `forge-control/src/**`, no migration, no payload under
+`scripts/deploy/payload-*.json`, and no `main` merge. `pnpm test` is unchanged at
+**1270 pass / 0 fail / 0 skipped** — the four fixes live in shell and markdown,
+which the TS suite has no jurisdiction over, and that is precisely why each one
+is proved by an executed run rather than by the suite staying green.
+
 **And note what this row is.** The three builders of round 802 were split by
 declared write-set, and the split held for every *file* — no two builders touched
 one. What crossed the boundary was not a file but a **fact**: one builder's edit

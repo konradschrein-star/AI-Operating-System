@@ -96,6 +96,15 @@
 #       returns an explicit `unknown` token that the fire test rejects, the
 #       reason is logged on every poll it happens, and an unreadable BASELINE at
 #       launch is a hard error rather than a zero.
+#   (f) IT REPORTED A REJECTED MESSAGE AS DELIVERED (round 804 finding 2). Every
+#       terminal path that seeds nothing ends by telling the manager chat, and
+#       that log line is the ONLY trace an operator will ever look at. `curl -sS`
+#       without `--fail` exits 0 on a 409, so branching on curl's return code
+#       alone logged "manager chat notified (HTTP 409)" for a message the route
+#       had refused. Guarded by `notify_manager` branching on $HTTP_CODE: only a
+#       2xx is a notification, anything else is a WARNING carrying the code and
+#       the body. Proved by check-await-seed.sh case 7, whose stub REFUSES the
+#       message — a gate observed only passing is not a gate.
 #
 # Exit: 0 = the task was seeded (201) or already existed (409).
 #       1 = a hard error: unusable payload, unreadable baseline, a POST that
@@ -263,8 +272,18 @@ assert_no_unsubstituted_tokens() {  # where
 # ---------------------------------------------------------------------------
 # HTTP. One helper, because every call in this script wants the same three
 # things: the status code, the body, and no silent failure.
-# `curl --fail` is deliberately NOT used — a 409 is a success here and --fail
-# would turn it into an exit code the caller has to un-interpret.
+#
+# `curl --fail` is deliberately NOT used, and the reason is narrow: on the TASK
+# POST a 409 is a SUCCESS (migration 0035's identity — see (c) above), and
+# --fail would turn it into an exit code the caller has to un-interpret.
+#
+# THE PRICE OF THAT CHOICE, and it is the whole of the helper's contract:
+# `http_post`/`http_get` return CURL's exit code, which is 0 for every HTTP
+# status curl managed to receive — 409, 500 and 404 included. A caller that
+# branches on the return value alone has asked "did the bytes leave the box",
+# not "was the request accepted". EVERY CALLER MUST THEREFORE READ $HTTP_CODE
+# ITSELF. All of them do; `notify_manager` did not, and reported a rejected
+# message as delivered until round 804 finding 2.
 # ---------------------------------------------------------------------------
 HTTP_CODE=""
 HTTP_BODY=""
@@ -287,14 +306,39 @@ http_get() {  # url → sets HTTP_CODE / HTTP_BODY
   return $rc
 }
 
+# Best effort, and "best effort" is load-bearing: this is called from the
+# terminal paths, so it must NEVER change the exit code — it returns 0 on every
+# branch, including the ones it calls a failure.
+#
+# It reports DELIVERY, not transmission (round 804 finding 2). Two distinct
+# failures, logged distinctly because they need different repairs:
+#   * curl could not reach the API at all      — the box or the port is wrong;
+#   * the API answered, and REFUSED the message — the route rejected it, and the
+#     one that matters is `409 {"error":"run is not accepting messages"}` from a
+#     manager run that has since settled. That is not hypothetical: the watcher
+#     may sit for thirteen hours before it has anything to say, and the run it
+#     was told to report to can be long gone by then. If that reads as
+#     "notified", the operator's transcript says someone was told when nobody
+#     was, and phase 8 stops without a single line of warning anywhere.
+# The status code and the body are both logged, because "409" alone does not
+# say whether the run settled or the payload was malformed.
 notify_manager() {  # text — best effort, never changes the exit path
   local text="$1" json
   json="$(python3 -c 'import json,sys; print(json.dumps({"text": sys.argv[1], "from": "worker"}))' "$text")"
-  if http_post "$API/api/runs/$MANAGER_RUN/message" "$json"; then
-    log "manager chat notified (HTTP $HTTP_CODE)"
-  else
+  if ! http_post "$API/api/runs/$MANAGER_RUN/message" "$json"; then
     log "WARNING: could not reach the manager chat at $API/api/runs/$MANAGER_RUN/message — the message above is only in this log"
+    return 0
   fi
+  case "$HTTP_CODE" in
+    2??)
+      log "manager chat notified (HTTP $HTTP_CODE)"
+      ;;
+    *)
+      log "WARNING: the manager chat REJECTED the message — HTTP ${HTTP_CODE:-none}: $(printf '%s' "$HTTP_BODY" | head -c 300)"
+      log "         POSTed to $API/api/runs/$MANAGER_RUN/message. Nobody was told; the message above is only in this log."
+      ;;
+  esac
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -309,8 +353,32 @@ read_pm2() {
   # turning "pm2 hiccuped for one poll" into "the verification task never
   # exists". The reader's contract is to answer `unknown`, and that is what an
   # unreadable pm2 must produce here too.
-  # shellcheck disable=SC2086 — PM2_CMD is a command line by contract (see the
-  # AWAIT_SEED_PM2_CMD hook above), and word-splitting it is the point.
+  #
+  # $PM2_CMD is UNQUOTED ON PURPOSE: it is a command LINE by contract (see the
+  # AWAIT_SEED_PM2_CMD hook above — the check passes `bash /tmp/…/fake-pm2.sh`),
+  # so word-splitting it is the point.
+  #
+  # There is NO SC2086 suppression directive here, and that is deliberate —
+  # round 804 finding 1. The directive that used to sit on this line carried its
+  # rationale after an em-dash, which the linter parses as an invalid key=value
+  # pair and reports as SC1125 (an ERROR), making this the only script on the
+  # branch that failed `-S error`. Measured at version 0.9.0 before removing it,
+  # rather than assumed:
+  #   * a variable in ARGUMENT position (`cat $X`) does emit SC2086 — so the
+  #     probe can see the code at all, and this reasoning is not vacuous;
+  #   * a variable in COMMAND-NAME position, which is this site's shape
+  #     (`{ $CMD 2>/dev/null || true; } | …`), emits NOTHING, at any severity.
+  # So the suppression suppressed a diagnostic that never fired. It was dropped
+  # rather than kept bare: a live suppression here would tell the next reader
+  # that SC2086 is a real hazard at this line, and it is not. If this ever moves
+  # into argument position, SC2086 will fire and must be answered then, in a
+  # directive of its own with the rationale on a SEPARATE line.
+  #
+  # And note the shape of this very comment: a line that BEGINS with the hash,
+  # a space and the linter's name is parsed as a directive wherever it appears,
+  # prose or not. Writing this paragraph the obvious way produced SC1073/SC1072
+  # on the branch that was fixing SC1125. The rule the file follows: never open
+  # a comment line with that word.
   { $PM2_CMD 2>/dev/null || true; } | python3 -c '
 import json, sys
 
