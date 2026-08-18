@@ -800,19 +800,61 @@ last run ending, rather than waiting on unrelated traffic.
   changes the verdict.**
 
 ### Verification task (separate task, after the restart has landed)
+**Every live query below runs as `psql -h 127.0.0.1 -p 5432 -U postgres -d
+content_forge`** (amended round 815). A bare `psql -U postgres -d content_forge`
+reaches the host's *local* cluster on port **5434**, not the containerised server
+`DATABASE_URL` names — `safe-restart.sh` already pins the same host and port for
+the same reason. A check that answers from 5434 is a confident, wrong PASS.
+
 - The four columns exist (`depends_on`, `workstream`, `write_set`, and
   `graph_frozen` — R71, added round 242); the indexes exist. On the live
   database `graph_frozen` must be `true` on every row the backfill wrote and
-  `false` on every row inserted after it: `SELECT graph_frozen, count(*) FROM
-  project_tasks GROUP BY 1` beside `SELECT count(*) FROM project_tasks WHERE
-  graph_frozen <> (depends_on IS NOT NULL)`, which must be 0.
+  `false` on every row inserted after it. The census
+  `SELECT graph_frozen, count(*) FROM project_tasks GROUP BY 1` is context; the
+  assertion is `SELECT count(*) FROM project_tasks WHERE graph_frozen AND
+  depends_on IS NULL`, which must be **0**.
+  **Amended round 815 (standing rule 2), where the gate is enforced.** This
+  clause used to demand `count(*) WHERE graph_frozen <> (depends_on IS NOT NULL)`
+  = 0, which is **unsatisfiable on live data from the first post-migration graph
+  row onward** and was measured non-zero (2) by phase 8G within four minutes of
+  the restart. `graph_frozen` marks *provenance* — "0040's backfill wrote this
+  row's closure" — in **one direction only**: `graph_frozen → depends_on IS NOT
+  NULL`. The converse is false by construction, because a task the new engine
+  creates as an explicit graph root carries `depends_on = '{}'` (non-NULL, see
+  the sentinel table in the module header of `forge-control/src/db/projects.ts`)
+  and no backfill provenance, so the biconditional's counter-example count equals
+  the number of tasks this engine has created since the deploy and only ever
+  grows. The prose beside it was always right; only the SQL disagreed with it.
+  The *throwaway-schema* assertion in `scripts/checks/check-migration-0040.sh`
+  keeps the biconditional deliberately — there every row is a backfilled row, and
+  that script's own negative control ("a row inserted after the backfill is NOT
+  frozen") is what proves this reading rather than contradicting it. Evidence:
+  `evidence/phase8-verify.md` §3.2, finding 3B.
 - A graph-scheduled task promotes **without its round draining** — observed, not
   asserted.
-- A cycle POST returns `400` with a named path, against the live API.
+- The reachable dependency `400`s answer against the live API, each **naming the
+  offending id**: (a) a `depends_on` naming an id that exists nowhere, (b) one
+  naming a real task id of a *different* project.
+  **Amended round 815 (standing rules 2 and 4).** This clause used to read "a
+  cycle POST returns `400` with a named path". **R26** states that an insert-time
+  cycle is unreachable by construction — a row that does not exist yet cannot be
+  named in any other row's `depends_on`, and R29 makes `depends_on` immutable —
+  so no live POST can produce that `400` and the clause could only ever be
+  disclosed, never passed. R25's detector and its table-driven test are **not**
+  retired: the two live probes above exercise the same validation block, and the
+  cycle belt is kept for the psql-wielding operator and for the bulk-insert path
+  that would reopen the door. Evidence: `evidence/phase8-verify.md` §6.
 - Two workstream worktrees exist on disk with the expected branch names, and
   `git status --porcelain` in the main worktree is empty.
-- `pm2 list` shows `forge-executor` restarted and healthy; `/tmp/safe-restart.log`
-  shows the idle-wait and the restart.
+- `pm2 jlist` shows `forge-executor` `online` with an increased `restart_time`,
+  and **`/var/log/forge-safe-restart.log`** shows the idle-wait and the restart.
+  **Amended round 815 (standing rule 2).** This clause used to name
+  `/tmp/safe-restart.log`. `safe-restart.sh` sets `LOG=/var/log/forge-safe-restart.log`
+  and routes *every* line — its own `log()` output and both `pm2 restart`
+  invocations — to `$LOG`; it writes nothing to stdout, so the `>> /tmp/…`
+  redirect in the detached launch receives nothing and that path holds an
+  unrelated 2026-08-05 artefact. Phase 8G found the file 0 lines long and
+  thirteen days stale. Evidence: `evidence/phase8-verify.md` §1.3.
 
 ### The report (DoD-6)
 Run `scripts/measure-schedule.ts` against a project scheduled by the new engine
@@ -910,6 +952,7 @@ is computing contention from **declared** write-sets.
 | `forge-control/src/lib/schedule-source.ts`, by phase 7's builder (`b1bb731`) | 212 | Declared write_set was `measure-schedule.ts` + `schedule-truncated-4.json` + `03-quality.md`. The module had to exist because `scripts/` has no `node_modules`, so a bare `pg` specifier in a root-level script resolves nowhere — the wrapper could not have held those thirty lines. Sound code, but it is the module phase 8's live read runs entirely through and it shipped with **no test file** (round 214 phase-7 finding 4). `schedule-source.test.ts` closes the coverage half; this row closes the declaration half. |
 | `forge-control/src/lib/schedule-source.test.ts`, `forge-control/src/lib/source-hygiene.test.ts` | 215 | New files created by this fix cycle, declared here in the same commit that creates them. |
 | `forge-control/src/lib/project-tick.ts` (the `formatSpawnLog()` formatter and its call site in `spawnTaskRuns()`) | 231 | R58 (01-requirements.md §G; 04-phases.md §9) is a **phase-6** requirement whose only implementation site is `spawnTaskRuns()` in `project-tick.ts` — a file the ownership table above assigns to phases **4** (spawn/log) and **5** (prompts), not 6. Found by the round-221 planner: R58's requirement and R58's file were owned by different phases, a genuine gap in the table. Ruled: phase 6 writes the spawn log line at a round strictly *after* every phase-4 round including its fix cycles (phase 4's last fix-cycle round was 223, so round 231 could not collide with a live phase-4 builder), and the write is *recorded* here rather than reconstructed later — the same precedent this table already sets for round 213's and round 215's writes: disclose, not abstain. Phase 5's round-500+ prompt-constant rewrite in the same file is unaffected; `formatSpawnLog()` is not a prompt constant. |
+| `docs/plan/engine-task-graph/04-phases.md` (the §"Verification task" bullet list of phase 8 only), by phase 8G's verification task (round 815) | 815 | Declared write_set was `evidence/phase8-verify.md` alone. **Standing rule 2 — amend the gate where it is enforced, in the same commit**: three of that bullet list's clauses could not be passed, and this file is where they are stated about *live* data. (1) The R71 pair demanded `graph_frozen <> (depends_on IS NOT NULL)` = 0, which the new engine falsifies with every task it creates — measured at 2 within four minutes of the restart, both rows correct-by-design explicit graph roots. (2) "A cycle POST returns 400" contradicts R26's own unreachability argument. (3) `/tmp/safe-restart.log` is never written by `safe-restart.sh`. Each amendment carries its reasoning inline and cites the transcript in `evidence/phase8-verify.md`. No other section of the file was touched; `git show --stat` on the round-815 commit shows two files. |
 | `forge-control/src/routes/projects.ts` (one doc-comment only — the `round` guard of `POST /:id/tasks`, the "Safe:" clause) | 239 | The ownership table above assigns this file to phase **3** alone. Phase 5A wrote one comment in it and nothing else, because R53 **falsified** that comment: it justified treating an absent `round` differently from a supplied one on the premise that "`taskCurl()`'s shipped example in `project-tick.ts` sends `\"round\": 1\"`", and R53 makes `taskCurl()` omit `round`. Handed to the builder as the round-239 planner's finding F-B and confirmed at `d9858b9`. **Standing rule 2 — amend the gate where it is enforced, in the same commit**: the enforcement is phase 3's route, the premise is phase 5's prompt, and the comment is the reasoning a future reader of that guard inherits. Recorded here in the commit that makes it, per the round-213 and round-215 precedent: disclose, not abstain. No expression, message, status code or test in `routes/projects.ts` was touched — `git diff` on that file is one comment hunk. |
 
 **Round 217's write-set, declared in the commit that makes it (fix cycle 2).**
