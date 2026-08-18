@@ -25,10 +25,20 @@ there. Two populations took screenshots nobody could ever see:
 2. The operator's own manager-chat runs — no `project-tick.ts` prompt reaches
    these at all; their whole prompt is `cc-runner.ts`'s `buildSystemPrompt()`.
 
+> **AMENDED AT ROUND 902 (fix cycle 1) — read this first.** Round 901's review
+> found the text below making a claim that is false: the desktop chat does NOT
+> render every shot under the directory inline. The numbers in this document are
+> the round-900 measurements and stay as the record of that round;
+> `SCREENSHOT_CONVENTION` is now **1056 characters against a budget of 1100**,
+> names the read-back action, states the fallback surface honestly and defines
+> `<stamp>`. See `evidence/round902-screenshot-convention-fixes.md` and
+> `scripts/checks/check-screenshot-render-shapes.ts`.
+
 **The fix, in two files, one convention:**
 
 - `forge-control/src/lib/project-tick.ts` — new exported constant
-  `SCREENSHOT_CONVENTION` (555 characters, budget 650), delivered through
+  `SCREENSHOT_CONVENTION` (555 characters, budget 650 — both superseded at round
+  902, see the note above), delivered through
   `withPolicy()`'s existing `drivesBrowser` predicate — the SAME test that
   already selects `BROWSER_CONTROL_SAFETY` (B4, round 240). No second
   hand-written role list: a role gains this the moment its branch carries

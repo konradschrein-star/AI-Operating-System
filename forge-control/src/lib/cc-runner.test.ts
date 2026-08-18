@@ -203,4 +203,70 @@ describe("round 900 — the operator's own runs get the screenshot convention to
         "SCREENSHOT_CONVENTION — a project task and a manager chat would file screenshots differently",
     );
   });
+
+  /* ROUND 902 (fix cycle 1, review finding 1). Both prompts claimed this chat
+   * "renders every shot under that directory inline"; `extractBrowserShots`
+   * matches a `Read` of the path or a printed JSON `"url"` member and nothing
+   * else, so an operator's hand-saved shot rendered nowhere inline. The two
+   * prompts are corrected together and pinned together — the same cross-check
+   * shape as the case above, extended to the clauses the correction added,
+   * because the failure this suite exists to prevent is one prompt being fixed
+   * and the other quietly keeping the old promise.
+   *
+   * Each half is asserted with a POSITIVE CONTROL on SCREENSHOT_CONVENTION
+   * first: without it, a constant that had dropped the clause would make the
+   * cc-runner half look like the only survivor of a drift that had in fact gone
+   * the other way. */
+  test("round 902 — both prompts name the read-back action and define <stamp>", async () => {
+    const { buildSystemPrompt } = await import("./cc-runner.ts");
+    const { SCREENSHOT_CONVENTION } = await import("./project-tick.ts");
+    for (const [what, taskNeedle, chatNeedle] of [
+      [
+        "the read-back action",
+        "THEN READ THE FILE BACK with the Read tool",
+        "Then READ THE FILE BACK with the Read tool",
+      ],
+      [
+        "the stamp format, by example",
+        "20260818T093000Z",
+        "20260818T093000Z",
+      ],
+      [
+        "the honest fallback surface",
+        "camera indicator in the Team and Live panels",
+        "camera indicator in the Team and Live panels",
+      ],
+    ] as const) {
+      assert.ok(
+        SCREENSHOT_CONVENTION.includes(taskNeedle),
+        `positive control: SCREENSHOT_CONVENTION no longer states ${what} — fix project-tick.ts first, ` +
+          "this test compares the two prompts and cannot tell which one drifted on its own",
+      );
+      for (const vaultAccess of [true, false]) {
+        assert.ok(
+          buildSystemPrompt(vaultAccess).includes(chatNeedle),
+          `round 902: buildSystemPrompt(${vaultAccess}) does not state ${what}, but ` +
+            "SCREENSHOT_CONVENTION does — the operator's own screenshots would follow the older, " +
+            "false instruction while project tasks follow the corrected one",
+        );
+      }
+    }
+  });
+
+  test("round 902 — neither prompt still promises that writing the file is enough", async () => {
+    const { buildSystemPrompt } = await import("./cc-runner.ts");
+    const { SCREENSHOT_CONVENTION } = await import("./project-tick.ts");
+    for (const [name, text] of [
+      ["SCREENSHOT_CONVENTION", SCREENSHOT_CONVENTION],
+      ["buildSystemPrompt(true)", buildSystemPrompt(true)],
+      ["buildSystemPrompt(false)", buildSystemPrompt(false)],
+    ] as const) {
+      assert.ok(
+        !text.includes("renders every shot under that directory inline"),
+        `round 902: ${name} still promises that every shot under the directory renders inline. It does ` +
+          "not — extractBrowserShots matches a Read of the path or a printed \"url\" member, and a shot " +
+          "that was only written matches neither",
+      );
+    }
+  });
 });

@@ -95,8 +95,8 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   appears in the researcher's built prompt on both a repo and a scratch project, and in **no
   other role's** prompt (it is prepended to every run of its role, so scope is the contract);
   all three instruments are named with a path that exists in the checkout; the screenshot
-  convention is stated literally (`/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png`
-  **and** the `/api/uploads/$FORGE_RUN_ID/<name>` URL form); the login-wall rule is present
+  convention's **URL half** is stated literally (`/api/uploads/$FORGE_RUN_ID/<name>` — the
+  on-disk half moved out at R900, see §1.3); the login-wall rule is present
   verbatim (`LOGIN WALL = STOP`, `NEVER attempt credentials`, noVNC named so "stop" cannot read
   as "give up"). The anti-drift half **executes** `--help` on each of
   `scripts/research-browser.mjs`, `scripts/perplexity.mjs`, `scripts/gemini-qa.mjs` and asserts
@@ -105,6 +105,7 @@ New file `forge-control/src/lib/project-reconcile.test.ts` covering
   `--backend pool|api`, `4  LOGIN REQUIRED`, `4  NEEDS LOGIN`, `default: pool`,
   `Default backend: api`). Rounds 701/702 own those scripts; if a subcommand is renamed,
   this test is what notices instead of a confused researcher at 3am.
+  **T16's on-disk screenshot half AMENDED at R900, recorded at R902** — see §1.3.
   **T16's perplexity default AMENDED at R776** — see §1.2. The asserted literal was
   `Default backend: browser` until R776 re-ranked the backends; the shipped assertions are now
   `Default backend: api` (`perplexity-cli.test.ts:415`, `project-tick.test.ts:665`), and
@@ -213,6 +214,38 @@ What T16 asserts now, and why each half is load-bearing:
 The ranking is a property of **this host's egress**, not of Perplexity: on a box Cloudflare
 scores differently it could reasonably flip back. If it does, this table and the literals move
 together — a round that changes one without the other is the drift T16 exists to catch.
+
+### 1.3 T16's on-disk screenshot literal, amended at R900 and recorded at R902
+
+R703 gave `RESEARCH_INSTRUMENTS` both halves of the screenshot convention — the ON-DISK path
+and the servable URL — and T16 asserted both. R900 (project `engine-task-graph`) moved the
+on-disk half OUT of that constant: every role that can drive a browser needs it, not the
+researcher alone, so it now lives in `SCREENSHOT_CONVENTION` and is delivered through
+`withPolicy()` on the same `drivesBrowser` predicate as `BROWSER_CONTROL_SAFETY`. The spelling
+changed with the move — `<timestamp>-<label>.png` → `<stamp>-<label>.png` — and T16's assertion
+on that literal was deleted in the same commit.
+
+This document was **not** updated in that commit, so between R900 and R902 the paragraph above
+described a gate that no longer existed: a stale pin that reads exactly like a live one, which
+is the rot round 244 diagnosed and which no check catches here —
+`check-instrument-identity.py` scans only `docs/plan/engine-task-graph/`. R902 (fix cycle 1,
+review finding 2) is the correction, and it is the same commit applying `GRAPH_GUIDE`'s own
+R900 rule to R900's work: *a round that moves a constant the corpus quotes owes the documents
+quoting it a place in its `write_set`.*
+
+Where each half is asserted now:
+
+| Half | Constant | Asserted in |
+|---|---|---|
+| `/api/uploads/$FORGE_RUN_ID/<name>` (cite the shot in the research doc) | `RESEARCH_INSTRUMENTS` | T16, `project-tick.test.ts` |
+| `/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png` (where the file lands) | `SCREENSHOT_CONVENTION` | the round-900 suite in `project-tick.test.ts`, against the researcher's **built prompt** — strictly stronger than the retired constant-only assertion — and against `buildSystemPrompt()` in `cc-runner.test.ts` |
+
+R902 additionally corrected what those two constants *claim* about rendering: the round-900
+text said the desktop chat renders every shot under the directory inline, and it does not —
+`extractBrowserShots` matches a `Read` of the path or a printed JSON `"url"` member, so a
+hand-saved shot rendered nowhere inline. Both constants now name the read-back action, define
+`<stamp>`, and state the camera-indicator fallback. The executed six-payload transcript is at
+`docs/plan/engine-task-graph/evidence/round902-screenshot-convention-fixes.md`.
 
 ## 2. Integration checks (real DB, careful scope)
 

@@ -43,3 +43,17 @@ scripts/checks/check-plan-api.ts
 scripts/checks/check-plan-store.ts
 scripts/checks/check-project-metadata.ts
 scripts/checks/check-task-api.ts
+
+# ROUND 902 (fix cycle 1, review finding 1). The first entry here that imports
+# `forge-control-web/app` — deliberately, and it is why this one compiles when
+# `check-browser-shots.ts` next to it does not: it imports
+# `app/desktop/chat/browser-shots.ts` ALONE, which is React-free, DOM-free and
+# dependency-free by construction (read its header), so no DOM lib is pulled in.
+# The neighbouring script imports `thread-mapping.ts` and `api.ts` too, and
+# those drag `tokens.ts`/`useAutogrow.ts` and @assistant-ui's `.d.ts` into the
+# program — measured again at round 902: 10+ TS2304 errors, unchanged from the
+# round-800 finding above. That is the whole difference, and it is the reason
+# this entry does not reopen the case the header closes.
+# MEASURED AT ROUND 902: exit 0, zero errors, same one-file-per-invocation
+# options.
+scripts/checks/check-screenshot-render-shapes.ts

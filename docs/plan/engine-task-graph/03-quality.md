@@ -149,6 +149,7 @@ suite stays hermetic (NF3).
 | `scripts/checks/check-workstream-e2e.sh` | R32–R35, R38 | In a throwaway git repo under `/tmp`: provision `main` + two workstreams, assert branch names and sibling directories, assert `git status --porcelain` in `main` is **empty**, have two workstreams write the same file, run the integration merge, assert it exits non-zero and names the conflicting file, assert nothing was auto-resolved. |
 | `scripts/checks/check-task-api.ts` | R22–R31 | Mounts **only** `routes/projects.ts` on a spare port against the scratch database (the single-router probe pattern — `src/index.ts` starts cron/telegram/vault ticks and must not be booted), then drives the 400s and the 409. |
 | `scripts/checks/check-plan-store.ts` | R54–R56 | Extended: real edges in, `planEdges()` out, phase grouping intact. |
+| `scripts/checks/check-screenshot-render-shapes.ts` | round 902, review finding 1 | The only check that executes a PROMPT'S CLAIM against the code it describes. Seven payload shapes — a `Read` of the saved path, a JSON `"url"` member, a bare URL echoed as text, an MCP screenshot call, a silent `cp`, an unstamped name, prose mentioning the directory — through the shipped `extractBrowserShots`, then the two prompts asserted to state exactly what the table proved. Needs no database and no git repo, so it is safe from a build task; prints the resolved path and sha256 of every module it imported, and fails rather than certifies if its case census comes up short. |
 
 **Scratch database, not the live one.** Every script takes its connection string
 from `SCRATCH_DATABASE_URL` and **refuses to run** if that variable is unset or
@@ -880,6 +881,12 @@ shellcheck -S error $(for f in $SH_ALL; do [ -f "$f" ] && printf '%s\n' "$f"; do
 # so it is safe from a build task; it exits 1, never skips, if the server
 # binaries are missing or if its suite was skipped rather than run.
 bash scripts/check-schedule-sql.sh
+# Round 902 — the prompts' claim about the renderer, EXECUTED. Exits 0, or names
+# the payload shape that does not render the way SCREENSHOT_CONVENTION and
+# buildSystemPrompt() say it does. It is here and not in `pnpm test` because the
+# claim spans two packages and forge-control's suite cannot import the web app;
+# it needs no database and no git repo, so a build task may run it.
+(cd forge-control-web && npx tsx ../scripts/checks/check-screenshot-render-shapes.ts)
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

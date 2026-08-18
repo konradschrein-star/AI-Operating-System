@@ -2641,13 +2641,40 @@ import {
  *  BROWSER_CONTROL_SAFETY does (see its own doc-comment). Kept in this same
  *  array rather than a parallel one — it is the same shape of claim, and a
  *  second array is exactly the kind of "hand-written list" this project's
- *  standing rules keep finding rot in. */
+ *  standing rules keep finding rot in.
+ *
+ *  ROUND 902 RAISES SCREENSHOT_CONVENTION's budget 650 → 1100, and this is the
+ *  line that enforces it, so this is where the reasoning belongs (standing rule
+ *  2). Read the failure message below first: it forbids widening a budget to
+ *  make one's own work green, and that prohibition stands. This is the other
+ *  case, and the distinction is the whole justification.
+ *
+ *  Round 901's review found the round-900 text making a claim that is FALSE —
+ *  "the desktop chat renders every shot under that directory inline", when
+ *  `extractBrowserShots` renders only a `Read` of the path or a printed JSON
+ *  `"url"` member. The correction is not decoration: it must name the action
+ *  that makes the promise true, state the surface a merely-written shot
+ *  actually reaches, and define `<stamp>`, which nothing did. MEASURED, the
+ *  shortest text this builder could write that says all three truthfully is
+ *  1056 characters. 650 is therefore a budget that NO CORRECT version of this
+ *  constant can satisfy — an unsatisfiable gate, which teaches
+ *  disclose-and-proceed exactly as §4's R66 sweep did before round 215 amended
+ *  it. Shrinking the text to fit would mean deleting one of the three true
+ *  statements, i.e. paying for the budget with the defect.
+ *
+ *  What the new number is NOT: an invitation. 1100 is the measurement plus 44,
+ *  the same tight margin the other rows carry, so the next round that wants
+ *  another sentence here trips this gate and has to argue for it in the open.
+ *  And the cost is bounded where it matters — SCREENSHOT_CONVENTION reaches
+ *  only the four roles `drivesBrowser` selects, never the planner, so NF7's
+ *  ledger (whose assertion is EXACT, not a bound) stays at 12227 and would go
+ *  red in this same file if that were wrong. */
 const B5_BUDGETS = [
   ["DEP_INSTALL_NOTE", DEP_INSTALL_NOTE, 500],
   ["REVIEWER_TIP_DISCIPLINE", REVIEWER_TIP_DISCIPLINE, 1300],
   ["REVIEWER_GATE_SUITE", REVIEWER_GATE_SUITE, 1250],
   ["BROWSER_CONTROL_SAFETY", BROWSER_CONTROL_SAFETY, 900],
-  ["SCREENSHOT_CONVENTION", SCREENSHOT_CONVENTION, 650],
+  ["SCREENSHOT_CONVENTION", SCREENSHOT_CONVENTION, 1100],
 ] as const;
 
 describe("phase 5B — the constants stay inside their stated budgets", () => {
@@ -3027,12 +3054,71 @@ describe("round 900 — SCREENSHOT_CONVENTION reaches exactly the same derived r
       ["never /tmp", "never /tmp"],
       ["the playwright-skill's own default is named", "playwright-skill's own default"],
       ["the reason: shots outside the directory are unservable", "invisible to Konrad and gone at the next reboot"],
+      // ROUND 902, finding 3 — `<stamp>` was undefined while the rule told four
+      // roles to save BY HAND. The EXAMPLE literal is asserted, not just the
+      // words "ISO-8601": it is the only form of the clause that a reader can
+      // copy, and `parseShotName` (both copies) keys on exactly this shape.
+      ["the stamp format, by example", "20260818T093000Z"],
+      ["the label's character class", "<label> is lowercase [a-z0-9-]"],
+      // ROUND 902, finding 1 — the ACTION that makes the inline claim true, and
+      // the honest statement of where a merely-written shot actually lands.
+      ["the action that makes a shot render inline", "THEN READ THE FILE BACK with the Read tool"],
+      ["the fallback surface, honestly", "camera indicator in the Team and Live panels"],
     ] as const) {
       assert.ok(
         SCREENSHOT_CONVENTION.includes(needle),
         `round 900: SCREENSHOT_CONVENTION no longer states ${what} (looked for "${needle}")`,
       );
     }
+  });
+
+  /* ROUND 902 (fix cycle 1, review finding 1). The round-900 text promised
+   * "the desktop chat renders every shot under that directory inline". It does
+   * not: `extractBrowserShots` matches a `Read` tool_call on the path or a
+   * printed JSON `"url": "/api/uploads/<12hex>/<name>"` member, and a shot that
+   * is merely written to the directory produces neither — it is reachable only
+   * through `RunShotsIndicator` on a Team/Live row.
+   *
+   * ── WHAT WOULD MAKE THESE TWO CASES REPORT A PASS WRONGLY ────────────────
+   * (a) "They grep the CONSTANT, so withPolicy() could stop delivering it and
+   *     they would still pass." Closed: the first case runs over the BUILT
+   *     prompt for every role in EXPECTED_SCREENSHOT_ROLES, so it fails if the
+   *     clause is present in the constant but absent from what a builder reads.
+   * (b) "The negative is a needle so specific that any rewording satisfies it
+   *     vacuously." Closed by pairing: the same test asserts the replacement
+   *     clause is PRESENT. A constant that had lost both — emptied, reworded
+   *     away, or replaced by a shorter falsehood — fails the positive half.
+   * (c) "The whole claim is asserted from the doc-comment rather than from the
+   *     renderer." Closed OUTSIDE this file, because this package cannot import
+   *     forge-control-web: the six payload shapes were executed against the
+   *     shipped `extractBrowserShots` and the transcript, with its provenance,
+   *     is committed at docs/plan/engine-task-graph/evidence/
+   *     round902-screenshot-convention-fixes.md. */
+  test("round 902 — the built prompt names the action that makes a shot render inline", () => {
+    for (const repo of ["ai-os", "scratch"] as const) {
+      const p = project({ repo });
+      for (const role of EXPECTED_SCREENSHOT_ROLES) {
+        assert.ok(
+          buildPrompt(task({ role }), p).includes("THEN READ THE FILE BACK with the Read tool"),
+          `round 902: role ${role} on repo '${repo}' is told where to save a screenshot but not to read ` +
+            "it back — extractBrowserShots renders a Read of the path or a printed \"url\" member and " +
+            "nothing else, so the shot would never appear inline in the desktop chat",
+        );
+      }
+    }
+  });
+
+  test("round 902 — the false 'renders every shot under that directory inline' claim is gone", () => {
+    assert.ok(
+      !SCREENSHOT_CONVENTION.includes("renders every shot under that directory inline"),
+      "round 902: the round-900 promise is back. It is false for every hand-saved shot: writing the file " +
+        "produces no transcript payload extractBrowserShots matches",
+    );
+    assert.ok(
+      SCREENSHOT_CONVENTION.includes("renders a shot INLINE when the transcript shows a Read of its path"),
+      "round 902: the replacement clause is missing — without it the previous assertion passes vacuously " +
+        "on a constant that simply stopped talking about rendering at all",
+    );
   });
 
   test("SCREENSHOT_CONVENTION is delivered alongside BROWSER_CONTROL_SAFETY, before ESCALATION_POLICY", () => {

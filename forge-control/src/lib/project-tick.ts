@@ -708,17 +708,62 @@ export const BROWSER_FIRST =
  *  `rehype-forge-allowlist.ts` (markdown images stay inert — a closed beacon
  *  hole).
  *
- *  MEASURED at 555 characters. Reaches only {builder, researcher, scout,
- *  tester} — the roles `drivesBrowser` already selects — so it costs the NF7
- *  planner-prompt budget nothing: the planner branch carries neither
- *  BROWSER_FIRST nor RESEARCH_INSTRUMENTS, exactly as B4 costs it nothing
- *  today. Own budget 650, asserted in project-tick.test.ts alongside B4's. */
+ *  ROUND 902 (fix cycle 1, review findings 1 and 3) — TWO CORRECTIONS, both
+ *  about the promise this text makes rather than the directory it names.
+ *
+ *  (1) "The desktop chat renders every shot under that directory inline" was
+ *  FALSE for exactly the populations this constant exists to serve.
+ *  `extractBrowserShots` (forge-control-web/app/desktop/chat/browser-shots.ts)
+ *  renders two payload shapes and no others: a `Read` tool_call whose
+ *  `file_path` is under the directory, and a `Bash` tool_result carrying a JSON
+ *  `"url": "/api/uploads/<12hex>/<name>"` MEMBER — which only
+ *  `scripts/research-browser.mjs` prints, i.e. the one population already
+ *  covered before round 900. A builder obeying the old text — the
+ *  playwright-skill through Bash, or `mcp__playwright__browser_take_screenshot`
+ *  — produced NO inline ref at all; its shot reached Konrad only through
+ *  `RunShotsIndicator`'s camera on a Team/Live row, a click away on another
+ *  surface. EXECUTED at round 902, six payload shapes against the shipped
+ *  extractor imported by ABSOLUTE worktree path (an import from a stale tree
+ *  throws rather than answering): Read of the saved path → 1 ref; a JSON
+ *  `"url"` member → 1 ref; a BARE `/api/uploads/...` line echoed in a Bash
+ *  result → 0 refs; the playwright MCP call → 0 refs; a `cp` into the directory
+ *  printing nothing → 0 refs. Transcript in
+ *  `docs/plan/engine-task-graph/evidence/round902-screenshot-convention-fixes.md`.
+ *  The text now names the ACTION that makes the promise true — read the file
+ *  back — and states the fallback surface honestly. NOTE the bare-URL case:
+ *  round 901's review offered "print its URL" as an equal alternative and,
+ *  measured, it does not render; only the quoted `"url"` member does.
+ *  Prescribing it would have rebuilt this very defect one round later.
+ *
+ *  (2) `<stamp>` was never defined. Until round 900 the only writers were tools
+ *  that stamp themselves; this constant now tells builders, scouts and testers
+ *  to save BY HAND. `parseShotName` — both copies, `uploads-index.ts` and
+ *  `browser-shots.ts`, each keyed on `\d{8}T\d{6}Z` — yields `ts: null` for a
+ *  name like `settings-dark.png`, which then sorts last in `newestFirst` and
+ *  shows no clock in `shotClock` (case F of the same executed run). The format
+ *  is stated here, matching what `agents/researcher.md` already documents.
+ *
+ *  MEASURED at 1056 characters (was 555 at round 900). Reaches only {builder,
+ *  researcher, scout, tester} — the roles `drivesBrowser` already selects — so
+ *  it costs the NF7 planner-prompt budget nothing: the planner branch carries
+ *  neither BROWSER_FIRST nor RESEARCH_INSTRUMENTS, exactly as B4 costs it
+ *  nothing today, and NF7's ledger assertion is EXACT rather than a bound, so
+ *  that claim is checked rather than asserted. Own budget RAISED 650 → 1100 in
+ *  this same commit, at the line that enforces it (`B5_BUDGETS` in
+ *  project-tick.test.ts), with the reasoning written there: 650 cannot hold a
+ *  TRUE statement of this rule, and a budget the correct text cannot satisfy is
+ *  the unsatisfiable gate of standing rule 2 — not a licence to bloat. */
 export const SCREENSHOT_CONVENTION =
   `SCREENSHOTS LAND WHERE KONRAD CAN SEE THEM. Whatever tool takes one — research-browser.mjs (does this ` +
   `itself), the playwright-skill, or an MCP browser — save it at ` +
   `/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png, never /tmp. FORGE_RUN_ID is already in your ` +
-  `environment. The desktop chat renders every shot under that directory inline; one saved anywhere else ` +
-  `(the playwright-skill's own default) is invisible to Konrad and gone at the next reboot — every ` +
+  `environment; <stamp> is compact UTC ISO-8601 (e.g. 20260818T093000Z) and <label> is lowercase ` +
+  `[a-z0-9-] — an unstamped name still serves, but it carries no clock and sorts last. THEN READ THE FILE ` +
+  `BACK with the Read tool: the desktop chat renders a shot INLINE when the transcript shows a Read of its ` +
+  `path, or a printed JSON "url": "/api/uploads/<id>/<name>" member (research-browser.mjs emits that ` +
+  `itself and needs no Read). A shot only written is NOT inline — it reaches Konrad through the run's ` +
+  `camera indicator in the Team and Live panels, one click away on another surface. One saved anywhere ` +
+  `else (the playwright-skill's own default) is invisible to Konrad and gone at the next reboot — every ` +
   `Playwright verification screenshot this fleet took before this rule existed went exactly there.`;
 
 /** B4 (round 1873's incident, 2026-08-17 14:08:58 UTC, delivered round 240) —
