@@ -326,6 +326,31 @@ cost-sensitive and a fix cycle costs a full agent.
 A fix-cycle task inherits its parent's `write_set`, which makes a write-set audit against the fix row
 unsatisfiable; audit against the **parent phase row** instead.
 
+### 3.6 Where the verdict lives — the artefact is mandatory, `runs.thread` is authoritative
+
+Written after phase 3, where the gating reviewer declared
+`docs/plan/artifacts/os-usable-for-work/phase3/gate-verdict.md` and **never wrote it** — four of its
+five declared artefacts were missing. The integration task and its reviewer both had to recover
+`VERDICT: NEEDS_FIXES` out of the database by hand.
+
+The danger is not the inconvenience. It is that **a missing `NEEDS_FIXES` and a missing `PASS` look
+exactly alike.** A reader who cannot find the artefact has no way to tell "the phase was blocked" from
+"the reviewer forgot to write the file", and the safe default — treat absence as not-a-pass — only
+*happened* to match the truth here. That is luck, and luck is not a control. Both rules below now hold:
+
+1. **The artefact is mandatory.** A gating reviewer's verdict is not delivered until
+   `docs/plan/artifacts/<project>/<phase>/gate-verdict.md` exists in the worktree and is committed.
+   The task is not `done` without it, and the next task's reviewer treats a missing file as a finding
+   against the *reviewer*, not against the tree.
+2. **`runs.thread` is the fallback of record, and it is authoritative.** When the artefact is absent,
+   the verdict is the last assistant message of the reviewer task's run, read from `runs.thread` in the
+   database behind `DATABASE_URL` (`project_tasks.run_id` → `runs.id`). Whoever reads it that way
+   **quotes it verbatim in their own report and names the run id**, so the recovery is auditable
+   instead of being one agent's word. Absence of both is `NEEDS_FIXES` — never an implicit pass.
+
+Rule 2 is not a licence to skip rule 1. It exists so a *reader* is never stuck, not so a reviewer may
+choose not to write the file.
+
 ---
 
 ## 4. What "done" looks like to a reviewer

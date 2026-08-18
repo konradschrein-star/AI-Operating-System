@@ -105,6 +105,35 @@ function check(name: string, actual: unknown, expected: unknown): void {
 
 const SCRATCH_DB = process.env.USAGE_FOLD_DB ?? "r1354_sampler";
 
+/**
+ * `os-usable-for-work` round-4 review, finding F4. The default name above is a
+ * CONSTANT, and `gates-808.sh` used to invoke this check without overriding it.
+ * That project runs five lanes concurrently by design, every lane runs the gate
+ * suite, and two runs then `TRUNCATE runs, spend_log, usage_hourly` in the SAME
+ * database — Postgres kills one of them:
+ *
+ *     ERROR:  deadlock detected
+ *     DETAIL: Process 759483 waits for AccessExclusiveLock …; blocked by 759484.
+ *
+ * a RED that says nothing whatever about the code under test, and a flaky red
+ * teaches readers to discount the suite. `gates-808.sh` now hands each run a
+ * private `USAGE_FOLD_DB` and sets `USAGE_FOLD_DROP=1` so the per-run names do
+ * not accumulate on the server.
+ *
+ * The drop is deliberately NARROW: it only ever fires on a database THIS
+ * process created in THIS run (see `scratchCreatedHere`). A scratch database
+ * that was already there belongs to whoever made it — an operator who names a
+ * long-lived one in `USAGE_FOLD_DB` keeps it, and `USAGE_FOLD_DROP` cannot
+ * outrank that.
+ */
+const DROP_SCRATCH = process.env.USAGE_FOLD_DROP === "1";
+
+/** Both set by `main()` once the scratch database is known to exist, and read
+ *  by `dropScratch()` on BOTH exit paths — a failing assertion must not leak a
+ *  per-run database either. */
+let scratchCreatedHere = false;
+let adminDb: PsqlDb | null = null;
+
 function dsn(): { admin: string; scratch: string } {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -126,6 +155,38 @@ function dsn(): { admin: string; scratch: string } {
   const scratch = new URL(url);
   scratch.pathname = `/${SCRATCH_DB}`;
   return { admin: url, scratch: scratch.toString() };
+}
+
+/**
+ * Teardown for the per-run scratch database. Called on the passing path and
+ * from the top-level `catch`, so a red gate leaks nothing either.
+ *
+ * Every statement this file issues goes through `execFileSync("psql", …)`,
+ * which exits before the next one starts, so nothing here holds a session open
+ * against the database being dropped.
+ */
+function dropScratch(): void {
+  if (!DROP_SCRATCH || adminDb === null) return;
+  if (!scratchCreatedHere) {
+    console.log(
+      `(kept scratch database ${SCRATCH_DB} — it existed before this run; ` +
+        "USAGE_FOLD_DROP only drops what this run created)",
+    );
+    return;
+  }
+  try {
+    adminDb.exec(`DROP DATABASE "${SCRATCH_DB.replace(/"/g, '""')}"`);
+    console.log(`(dropped scratch database ${SCRATCH_DB})`);
+  } catch (e: unknown) {
+    // Reported, never rethrown: on the failure path this runs INSIDE the
+    // handler for the real defect, and a teardown error must not replace the
+    // diagnostic the reader came for. Loud enough to be actioned by hand.
+    console.error(
+      `WARNING: could not drop scratch database ${SCRATCH_DB} — it is still on ` +
+        `the server. Drop it with: psql "$DATABASE_URL" -c 'DROP DATABASE ` +
+        `"${SCRATCH_DB}"'\n  ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 /** Minimal `runs`: the sampler reads `id` and `metadata` and nothing else. */
@@ -339,6 +400,7 @@ async function main(): Promise<void> {
   const { admin, scratch } = dsn();
 
   const admin_db = psqlQuerier(admin);
+  adminDb = admin_db;
   const present = await admin_db.query<{ ok: number }>(
     `SELECT 1 AS ok FROM pg_database WHERE datname = ${lit(SCRATCH_DB)}`,
   );
@@ -347,6 +409,7 @@ async function main(): Promise<void> {
     // it stays ONE identifier whatever it contains. `CREATE DATABASE` cannot
     // run inside the wrapping CTE, so it goes through `exec`.
     admin_db.exec(`CREATE DATABASE "${SCRATCH_DB.replace(/"/g, '""')}"`);
+    scratchCreatedHere = true;
     console.log(`(created scratch database ${SCRATCH_DB})`);
   }
 
@@ -591,6 +654,10 @@ async function main(): Promise<void> {
     console.log(text.trimEnd().split("\n").map((l) => `        ${l}`).join("\n"));
   }
 
+  // Before the summary, so the verdict stays the LAST line this prints —
+  // `gates-808.sh` pipes it through `tail -3` and reads that line.
+  dropScratch();
+
   console.log(
     `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — usage fold (scratch db: ${SCRATCH_DB})`,
   );
@@ -599,5 +666,6 @@ async function main(): Promise<void> {
 
 void main().catch((e: unknown) => {
   console.error(e instanceof Error ? e.stack : e);
+  dropScratch();
   process.exit(1);
 });
