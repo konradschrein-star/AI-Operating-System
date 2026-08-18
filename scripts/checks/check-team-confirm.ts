@@ -210,6 +210,15 @@ console.log("\n── sustained click STREAMS (round 505 finding #1) ───�
         armed,
         nowMs,
         canTerminate,
+        // The leaf value, matching TODAY/LATER above. It is INERT on this
+        // path and that is worth stating rather than leaving to be
+        // rediscovered: `needsConfirm` returns true on `!settled` before it
+        // ever reads `hidesRows`, so a running row takes the two-click machine
+        // whatever this number says. Measured — the whole file still prints
+        // ALL PASS with 165 here. Every assertion below is about the terminate
+        // machine; none of them is about a cascade, and this stream is not the
+        // place to start asserting one.
+        hidesRows: 1,
       });
       decisions.push(tag(d));
       switch (d.action) {

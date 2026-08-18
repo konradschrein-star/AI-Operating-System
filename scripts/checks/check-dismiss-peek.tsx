@@ -99,7 +99,15 @@ function node(): TeamNode {
     status: "completed",
     tokens: { input: 100, output: 20, cache_read: 0, cache_creation: 0, total: 120 },
     working_ms: 252_000,
-    working_ms_source: "run",
+    /* "thread", because this fixture is a RUN node and a run node cannot carry
+     * anything else. `teamNodeFromRun` in forge-control/src/routes/chat.ts:555
+     * ships `working_ms_source: timing ? "thread" : null` for every run;
+     * "rollup" is reachable only from `subagentWorkingTime` (same file, :481),
+     * the fallback for a SUB-AGENT with no thread slice of its own. A worker
+     * with `subagents: []` and a non-null `working_ms` therefore has exactly
+     * one permitted source, and "run" was never a member of the union at all
+     * (`WorkingMsSource` = "thread" | "rollup", teamApi.ts:37). */
+    working_ms_source: "thread",
     started_at: "2026-08-17T09:00:00.000Z",
     settled: true,
     description: "a row somebody dismissed",
@@ -112,7 +120,21 @@ function node(): TeamNode {
 
 function row(): TeamRow {
   const n = node();
-  return { node: n, depth: 1, parentDescription: "operator chat", displayWorkingMs: n.working_ms };
+  /* `hidesRows: 1` is the only value `cascadeRowCount` can produce for this
+   * node — a childless worker (`subagents: []`) — and it is also the value the
+   * assertions below describe: at 1 the ✕ is the one-click, undoable dismissal
+   * (`needsConfirm` is false, since the row is settled and `kind` is not
+   * "operator", so `widerReach` is false), which is what "the ✕ names the
+   * affordance that brings the row back" is asserting about. Anything above 1
+   * would render the two-click cascade ✕ — a different control, on a row this
+   * fixture says has nothing under it. */
+  return {
+    node: n,
+    depth: 1,
+    parentDescription: "operator chat",
+    hidesRows: 1,
+    displayWorkingMs: n.working_ms,
+  };
 }
 
 const noop = (): void => {};

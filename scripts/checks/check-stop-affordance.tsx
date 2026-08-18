@@ -95,7 +95,13 @@ function node(settled: boolean): TeamNode {
     status: settled ? "completed" : "running",
     tokens: { input: 100, output: 20, cache_read: 0, cache_creation: 0, total: 120 },
     working_ms: 252_000,
-    working_ms_source: "run",
+    /* "thread" — the only source a RUN node can carry. `teamNodeFromRun`
+     * (forge-control/src/routes/chat.ts:555) ships `timing ? "thread" : null`
+     * for runs; "rollup" belongs to `subagentWorkingTime` (:481), the sub-agent
+     * fallback when there is no thread slice. This fixture is a worker run with
+     * `subagents: []` and a measured 252s, so "thread" is what the wire would
+     * actually say. "run" was never a member of `WorkingMsSource`. */
+    working_ms_source: "thread",
     started_at: "2026-08-17T09:00:00.000Z",
     settled,
     description: "fix the stop button's affordance",
@@ -108,7 +114,22 @@ function node(settled: boolean): TeamNode {
 
 function row(settled: boolean): TeamRow {
   const n = node(settled);
-  return { node: n, depth: 1, parentDescription: "operator chat", displayWorkingMs: n.working_ms };
+  /* 1 — the leaf. Two reasons, and they agree: `cascadeRowCount` cannot return
+   * anything else for a node with `subagents: []`, and 1 is the value that
+   * keeps the row rendering the affordance these assertions describe. The ⏸
+   * under test does not read `hidesRows`, but the ✕ beside it does
+   * (`data-x-confirms={needsConfirm(scope)}` in TeamRow.tsx): at 1 a settled
+   * row's ✕ is the one-click dismissal and a running row's ✕ is the
+   * capability-gated terminate — the two states the CASES table walks. A value
+   * above 1 would put the settled row's ✕ into the two-click cascade machine,
+   * i.e. a control this fixture's node has nothing to cascade over. */
+  return {
+    node: n,
+    depth: 1,
+    parentDescription: "operator chat",
+    hidesRows: 1,
+    displayWorkingMs: n.working_ms,
+  };
 }
 
 const noop = (): void => {};

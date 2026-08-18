@@ -84,6 +84,15 @@ function row(over: Partial<TeamRow> & { node: TeamNode }): TeamRow {
   return {
     depth: 1,
     parentDescription: null,
+    /* The leaf blast radius, defaulted here for the same reason `depth` and
+     * `displayWorkingMs` are: this helper builds rows for the
+     * `interpolatedWorkingMs` section, whose fixtures are all childless nodes,
+     * and `cascadeRowCount` of a childless node is exactly 1 (`Math.max(1,
+     * visibleSubtreeSize(...))` in ../../forge-control-web/app/desktop/team/teamRows.ts).
+     * It sits BEFORE the spread, so a caller that means a cascade can still say
+     * so and win — no call site does today, which is why this default overrides
+     * no assertion. */
+    hidesRows: 1,
     displayWorkingMs: over.node.working_ms,
     ...over,
   };
