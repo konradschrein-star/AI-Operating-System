@@ -367,7 +367,34 @@ Teach the fleet the new vocabulary. Delete the old one in the same commit.
 forge-control/src/lib/project-tick.ts                   (prompt constants + branches)
 forge-control/src/lib/project-tick.test.ts              (APPEND, and delete the retired assertion)
 docs/plan/engine-task-graph/evidence/phase5-prompts.md  (new)
+
+ADDED BY THE FIX CYCLE (round 242), for round 241's three gating findings — the
+NON-goal architect branch, NF7 measured at a fixture id no real project has, and
+GRAPH_GUIDE's fan-out sentence naming no research role literal:
+forge-control/src/lib/project-tick.ts                     (both architect branches; GRAPH_GUIDE)
+forge-control/src/lib/project-tick.test.ts                (APPEND, + three declared in-place NF7 amendments)
+
+ADDED BY FIX CYCLE 2 (round 244), for round 243's four findings. All four are
+corpus defects left behind by the write-set directly above: it covers the two
+code files and NOT the documents quoting the constants those files moved, so
+`BASELINE` went 9187 -> 9221 while §J and the phase-5 record kept stating the
+old numbers, and three consecutive reviews read them as authoritative. NO ENGINE
+BEHAVIOUR IS CHANGED — no assertion, constant or prompt string moves, and the
+maximal prompt measures 12121 before and after:
+docs/plan/engine-task-graph/evidence/phase5-fix-cycle-1.md (new — round 242's record, written late)
+docs/plan/engine-task-graph/01-requirements.md             (§J NF7: live uuid-frame pins; the budget trail)
+docs/plan/engine-task-graph/evidence/phase5-prompts.md     (§4.3 frame banner; §4.4 note; §4.7 pointer)
+forge-control/src/lib/project-tick.test.ts                 (NF7: "tightens" -> "RISES", + why)
+forge-control/src/lib/project-tick.ts                      (one doc-comment: GRAPH_GUIDE's cost restated in the live frame)
+docs/plan/engine-task-graph/04-phases.md                   (this list)
 ```
+
+**The rule this fix cycle earned, and the reason the list above exists at all:
+if a round moves a constant the corpus quotes, the documents quoting it belong
+in that round's write-set.** Otherwise the fix half-lands, the stale pin reads
+as authoritative rather than as stale, and every later round pays to rediscover
+it. Round 242's record is written by round 244 and says so; supersession, never
+rewriting, is how the earlier records keep stating what they actually measured.
 
 ### Deliverables
 1. `PARALLELISM_GUIDE` **deleted** and replaced by a graph guide: declare

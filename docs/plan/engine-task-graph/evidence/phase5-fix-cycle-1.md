@@ -176,6 +176,14 @@ change.
 | `docs/plan/engine-task-graph/01-requirements.md` | §J NF7: live uuid-frame pins added above the round-240 ones (kept as history); the budget trail now carries round 242's 26, `176 → 150`; the direction stated correctly |
 | `docs/plan/engine-task-graph/evidence/phase5-prompts.md` | §4.3 superseded-frame banner + column relabel; §4.4 frame note fencing *"tightens"* to round 240; §4.7 pointer to §J's new pins |
 | `docs/plan/engine-task-graph/evidence/phase5-fix-cycle-1.md` | This record |
+| `docs/plan/engine-task-graph/04-phases.md` | Phase 5's "Files this phase writes" block gains round 242's and round 244's write-sets, per the convention phase 2 sets for both of its fix cycles — including this record and that list itself |
+
+The last row is the finding applied to itself. Phase 5's file block had never
+been amended, so **neither round 242's record nor this one was reachable from
+the corpus** — an evidence record nobody points to is the same defect as a
+constant nobody updates. Phase 2 registers both of its fix cycles this way;
+phase 5 now does too, and 04-phases.md carries the rule in one sentence where
+the next planner writing a write-set will read it.
 
 **No test was deleted, weakened, or modified.** Round 244 changed comments,
 documents, and one restated measurement frame — no assertion, constant, or
