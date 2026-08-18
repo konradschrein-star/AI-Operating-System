@@ -110,8 +110,15 @@ failure modes are project-wide:
 
 ```bash
 # P-A. No suppressions were introduced, in any phase. (R28)
+# `@ts-nocheck` FIRST, added round 2 fix cycle 1: it was missing from this
+# alternation and from R28, it disables a whole file in one line, and a planted
+# subject carrying it compiled clean past every gate in this corpus (red-team
+# breach B4). P-A is diff-scoped by construction, so it cannot see a
+# suppression already on `main` — the gate itself now scans the DIRECTORY for
+# the three comment directives and reports `suppressions N` in its census.
+# Run both; neither subsumes the other.
 git diff main...HEAD -- scripts/checks/ \
-  | grep -E '^\+.*(@ts-ignore|@ts-expect-error|:\s*any\b|as any\b|as unknown as)' \
+  | grep -E '^\+.*(@ts-nocheck|@ts-ignore|@ts-expect-error|:\s*any\b|as any\b|as unknown as)' \
   && echo "FAIL: suppression introduced" || echo "ok: no suppressions"
 
 # P-B. The dependency footprint is untouched. (NF8, S7)
@@ -149,6 +156,11 @@ not the one that was measured, and every downstream number is void.**
 ```bash
 bash scripts/checks/check-instrument-typecheck.sh ; echo "exit=$?"
 # expect: exit 1, 42 subjects found, 42 compiled, 6 failures — phase 3 has not run yet
+#         and, since round 2 fix cycle 1: uncovered 0, suppressions 0, and a
+#         SELF-TEST block whose three canaries all say ok before any subject runs
+# the six red-team breaches, each re-planted and each now caught (round 2):
+#   .d.ts / subdirectory / dotfile / .cts / @ts-nocheck — see
+#   evidence/phase2-fixcycle1.md for the transcripts and the exact commands
 git status --porcelain                      # empty (NF3)
 ls /tmp | wc -l                             # before/after: no leaked temp dirs
 bash scripts/checks/check-instrument-typecheck.sh > /tmp/a 2>&1; bash scripts/checks/check-instrument-typecheck.sh > /tmp/b 2>&1

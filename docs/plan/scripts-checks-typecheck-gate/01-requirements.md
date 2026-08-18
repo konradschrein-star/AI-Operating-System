@@ -95,13 +95,31 @@ Both empty.
 
 ### R8 — Glob enumeration over the whole directory
 The gate shall enumerate its subjects at run time by globbing
-`scripts/checks/*.ts` and `scripts/checks/*.tsx`. It shall not read a
+`scripts/checks/**/*.ts` and `scripts/checks/**/*.tsx`, **at any depth and
+including dotfiles** (`globstar`, `dotglob`, `nullglob`). It shall not read a
 hand-maintained inclusion list.
 
+**Amended round 2, fix cycle 1.** The original text globbed one level and
+without `dotglob`, and the red team walked through both gaps: a type-broken
+`scripts/checks/sub/broken.ts` was uncompiled *and* unnamed, and `.broken.ts` —
+and a file named exactly `.ts` — were skipped in silence (breaches B2, B3).
+"Enumerate the directory" has to mean the directory, not its top level minus
+its hidden files.
+
 **Verify:** `bash scripts/checks/check-instrument-typecheck.sh` reports a
-subject count equal to `ls scripts/checks/*.ts scripts/checks/*.tsx | wc -l`
-(42 at the time of writing). Add a throwaway file to the directory; the count
-rises by one with no edit to any list. (This is R23's control (b).)
+subject count equal to
+`find scripts/checks \( -name '*.ts' -o -name '*.tsx' \) | wc -l`
+(42 at the time of writing). Add a throwaway file to the directory — including
+one in a new subdirectory, and one whose name begins with a dot; the count
+rises by one each time with no edit to any list. (This is R23's control (b).)
+
+The gate shall additionally reconcile its own enumeration against an
+independent one taken with a different tool (`find`), and refuse when the two
+disagree. **Rationale:** round 200's "a failure to enumerate is a refusal"
+guard was structurally dead — a `for` loop over an empty glob returns 0, so a
+full disk truncated the subject list 31 → 24 with the guard silent and the
+census reconciling happily (finding F1). Enumeration now writes nothing, so
+there is no partial write to detect; the second opinion is what proves that.
 
 > **Precedent.** Universal gate item 10 (shell lint) already derives its subject
 > list — `git log --no-merges --name-only main..HEAD -- '*.sh'` — rather than
@@ -122,14 +140,25 @@ exactly that file. A diff-scoped gate would not have found it.
 **Verify:** with a clean `git diff main...HEAD -- scripts/checks/` the gate still
 reports 42 subjects and compiles all of them.
 
-### R10 — Both extensions, no silent extension gap
-`.ts` and `.tsx` are both enumerated. If a future instrument arrives with
-another TypeScript extension (`.mts`, `.cts`), the gate shall either cover it or
-name it in its census as uncovered — never omit it silently.
+### R10 — Every TypeScript-family file is covered, or the run fails
+`.ts` and `.tsx` are both enumerated. If a TypeScript-family file the subject
+globs do not match is present anywhere under `scripts/checks/` — another
+extension (`.mts`, `.cts`), at any depth, dotfile or not — the gate shall
+**name it AND fail the run**.
+
+**Amended round 2, fix cycle 1 — the requirement was the defect.** The original
+said "either cover it or name it", and the gate implemented it faithfully: a
+type-broken `zz-broken.cts` was named in the UNCOVERED block and the final line
+still said `PASSED` with exit 0 (finding F7). That sentence — final line
+`PASSED`, exit code 0, a type-broken file on disk — is verbatim what
+`03-quality.md` §6 brief A2 defines as a breach of this gate. Naming is the
+right *message*; exit 0 was the wrong *verdict*. A file this gate declines to
+read cannot also be certified by it.
 
 **Verify:** create `scripts/checks/throwaway.mts` containing a type error and
-run the gate. It either fails, or its output contains a line naming
-`throwaway.mts` as an uncovered extension. Silence is a defect.
+run the gate. Its output contains a line naming `throwaway.mts` as uncovered,
+the census reports `uncovered 1`, and the run **exits non-zero**. Silence is a
+defect; so is a green tick.
 
 ### R11 — One file per invocation
 Each subject shall be compiled in its own `tsc` invocation.
@@ -311,12 +340,35 @@ types, not from an annotation bolted on.
 is empty; the server still binds its port and serves SSE.
 
 ### R28 — No suppressions, no widening
-This project shall introduce zero `@ts-ignore`, zero `@ts-expect-error`, zero
-`: any`, zero `as any`, zero `as unknown as`.
+This project shall introduce zero **`@ts-nocheck`**, zero `@ts-ignore`, zero
+`@ts-expect-error`, zero `: any`, zero `as any`, zero `as unknown as`.
 
-**Verify:**
-`git diff main...HEAD -- scripts/checks/ | grep -E '^\+.*(@ts-ignore|@ts-expect-error|: any\b|as any\b|as unknown as)'`
-is empty. This is a gating-reviewer command, not a suggestion.
+**`@ts-nocheck` added round 2, fix cycle 1, and it is listed first because it is
+the strongest of the six:** one line at the top of a file disables typechecking
+for the WHOLE file. It was in neither this requirement nor the P-A grep, so a
+planted `nocheck-broken.ts` compiled clean and every gate in the corpus waved it
+through (breach B4). R29's rationale — "the cheapest way to make a check compile
+is to make it check nothing" — describes exactly this, and it is the obvious
+move for a phase-3 builder facing six reds.
+
+**Verify — two commands, because one of them cannot see the whole problem:**
+
+```bash
+# P-A, diff-scoped: did THIS branch introduce one?
+git diff main...HEAD -- scripts/checks/ \
+  | grep -E '^\+.*(@ts-nocheck|@ts-ignore|@ts-expect-error|:\s*any\b|as any\b|as unknown as)'
+# directory-scoped: is one PRESENT, whoever wrote it and whenever?
+bash scripts/checks/check-instrument-typecheck.sh   # census reports `suppressions 0`
+```
+
+The first is empty; the second reports zero. The gate carries the second check
+because P-A greps a diff and therefore cannot see a suppression that is already
+on `main` — and R9's own argument ("all four repetitions of this hole were
+found by someone compiling a file nobody had touched in months") applies
+verbatim to suppressions (finding F2). The gate refuses the three comment
+directives, which it can detect exactly; `: any` and the casts remain P-A's,
+because a directory-wide grep for them would also match an instrument that
+legitimately searches app source for that string.
 
 ### R29 — Every fixed instrument still detects its own subject's breakage
 For each of the six fixed files, the reviewer shall break the thing it checks,

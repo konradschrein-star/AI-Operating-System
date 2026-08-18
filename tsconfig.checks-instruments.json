@@ -58,8 +58,36 @@
     "2026-08-18; recorded in 02-architecture.md §3.1. JSONC `//` line comments",
     "also compile clean but break `jq -r .extends`, which is R1's verify clause."
   ],
+  "//skipLibCheck": [
+    "MUST be false, and this is an OVERRIDE: the base config",
+    "forge-control-web/tsconfig.json says `\"skipLibCheck\": true`, which is",
+    "correct for the app and catastrophic here. `skipLibCheck` means `do not",
+    "typecheck declaration files`, and the gate's subject glob matches",
+    "`*.d.ts` — so with the inherited value a declaration file under",
+    "scripts/checks/ is enumerated, handed to tsc, counted as COMPILED, and",
+    "never checked. The census reconciles, the verdict says PASSED, and the",
+    "file was never looked at. Measured 2026-08-18 (round 2 red team, breach",
+    "B1): a two-line .d.ts carrying TS2717 reported `PASS … exit 0, 0",
+    "diagnostics` on the real 37-subject directory.",
+    "",
+    "It also closes the same hole one step out: a .d.ts that an instrument",
+    "IMPORTS is unchecked under the inherited value.",
+    "",
+    "Cost, measured on check-settings-surface.tsx (the heaviest subject):",
+    "3.2s -> 5.6s per invocation. The whole-directory run goes from ~54s to",
+    "~90s. That is the price of the gate actually reading its subjects.",
+    "",
+    "CONSEQUENCE THE NEXT MAINTAINER MUST KNOW: with this off, tsc also",
+    "checks every .d.ts in the dependency tree. If a future @types upgrade",
+    "ships a conflict, this gate reports a diagnostic located in",
+    "node_modules/ — step 12's fidelity scan names that case separately from",
+    "an app-source diagnostic, because the remedy is different (upgrade or",
+    "pin the dependency; do NOT re-enable skipLibCheck to hide it)."
+  ],
   "extends": "./forge-control-web/tsconfig.json",
   "compilerOptions": {
+    "skipLibCheck": false,
+
     "jsx": "react-jsx",
     "jsxImportSource": "react",
 

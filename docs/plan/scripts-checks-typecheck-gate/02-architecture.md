@@ -243,25 +243,37 @@ person to read one of them will otherwise try to unify them.
 ### 4.1 Control flow
 
 ```
-0.  set -euo pipefail; ERR trap that prints "ABORTED … NOT a pass"
-1.  resolve REPO_ROOT, SELF, PROFILE, LEDGER, WEB
+0.  set -euEo pipefail; ERR trap that prints "ABORTED … NOT a pass"
+       -E because an ERR trap is NOT inherited by functions or subshells
+1.  resolve REPO_ROOT, SELF, PROFILE, LEDGER, WEB; export LC_ALL=C
 2.  REFUSE unless PROFILE exists                                  → exit 1
 3.  REFUSE unless $WEB/node_modules/.bin/tsc exists and is exec   → exit 1
        message carries the exact --prod=false install line        (R17,R18,C3)
+3b. resolve node absolutely; REFUSE unless `tsc --version` and
+       `node --version` are both well-formed                      → exit 1 (B5)
 4.  TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT                   (NF3,NF4)
-5.  enumerate SUBJECTS := glob scripts/checks/*.ts *.tsx          (R8,R9,R10)
+5.  enumerate SUBJECTS := glob scripts/checks/**/*.ts *.tsx,
+       globstar + dotglob + nullglob, IN-PROCESS into an array    (R8,R9,R10)
+5b. REFUSE unless an independent `find` count agrees with it      → exit 1 (F1)
 6.  REFUSE if |SUBJECTS| == 0                                     → exit 1 (R13)
-7.  scan for uncovered TS-family extensions (.mts,.cts) → report  (R10)
+7.  COVERAGE scan: every TS-family file under the roots at any
+       depth, minus SUBJECTS → name each, and FAIL the run        (R10 amended)
 8.  read LEDGER → WAIVERS                                         (R14)
 9.  PROVENANCE block: paths, HEAD, branch, sha256 of self and
        profile, tsc/node versions, subject count, invocation shape (R20)
+9b. SELF-TEST: three canaries through the same generated-config
+       path — strict-null MUST yield TS2322, a .d.ts MUST yield
+       TS2717, a clean .tsx MUST compile clean — then assert
+       nothing was emitted beside them; REFUSE otherwise    → exit 1 (B1,B5,B6)
 10. for each SUBJECT:
+       scan for @ts-nocheck / @ts-ignore / @ts-expect-error → failure (R28,B4)
        write $TMP/<n>.json = { extends: <abs PROFILE>, files: [<abs SUBJECT>] }
        run  $WEB/node_modules/.bin/tsc -p $TMP/<n>.json
        record PASS | FAIL + full unfiltered output                (R11,R21)
        compiled++
 11. WAIVER RECONCILIATION: a waived subject that compiled clean   → failure (R14)
 12. PROFILE FIDELITY: any diagnostic path outside scripts/checks/ → failure (S5)
+       node_modules/ and hostile-filename cases reported apart    (F3,F4)
 13. CENSUS: found vs compiled, both directions                    → failure (R12)
 14. verdict line + wall-clock; exit 0 only if every counter is 0  (R22,NF6)
 ```
@@ -269,6 +281,14 @@ person to read one of them will otherwise try to unify them.
 Steps 11 and 12 are the two checks the round-800 gate did not have, and both
 exist because of something the measurement found rather than something the
 design imagined.
+
+**Steps 3b, 5b, 9b, and the failing half of step 7 and step 10, were added at
+round 2 fix cycle 1** — every one of them because the red team walked through
+where it now stands, not because a second design pass imagined it. Their common
+shape is worth naming: round 200 checked its inputs for EXISTENCE (the profile
+is there, tsc is there, the glob returned something) and never for BEHAVIOUR.
+Step 9b is the correction in one line — the gate watches its compiler fail twice
+and succeed once before it is allowed to certify anything.
 
 ### 4.2 The generated per-file config
 
