@@ -1076,6 +1076,32 @@ changes to `db/projects.ts` that genuinely interlock — put them in one builder
 not in two rounds. One builder writing a file twice is cheaper than two builders
 serialising on it.
 
+**Round 820's write-set, declared in the commit that makes it (phase 8F, the
+deploy).** The task's declared `write_set` was one file —
+`evidence/phase8-deploy.md`. Three writes fell outside it, and the rule is
+disclose, not abstain, so they are named here rather than reconstructed later by
+grepping the diff.
+
+| file | why round 820 writes it |
+|---|---|
+| `docs/plan/engine-task-graph/evidence/phase8-deploy.md` | **Declared.** Steps 3-6 appended in execution order with timestamps, because the phase-8 gate checks the ORDER and not the intent. |
+| `scripts/deploy/payload-report.json` | **Undeclared, and the operator's pre-launch instruction.** New item **1b**: the after-measurement must re-derive the instrument composite `fb5a6434…` from disk rather than paste it, and must state and cite its sampling convention (PART 2 §10.1 of `evidence/baseline-8ea0cc08.md`). Amended **here** and not in `payload-verify.json` because this is *where the gate is enforced* — round 817's report task is the one that computes S1/S2/S3. Standing rule 2: a gate belongs at its enforcement site. |
+| `scripts/deploy/payload-verify.json` | **Undeclared.** One sentence in item 8, marking its three fan-out figures as a SPOT OBSERVATION rather than the DoD-6 after-measurement, and pointing at `payload-report.json` item 1b. The verify task seeds the report task, so the chain — not merely one file — has to carry the obligation. |
+| `docs/plan/engine-task-graph/04-phases.md` | **Standing rule 5 — disclose the undeclared write where the audit looks.** This table. No other section of this file is touched. |
+
+**Why an amendment to a payload was in scope for a deploy task at all.** Round
+816 measured, rather than asserted, that the S1 sampling convention is
+load-bearing: the same baseline rows give S1 0.29 / peak 6 under the committed
+instrument's half-open **instant** convention and S1 0.30 / peak 7 under the
+**overlap** convention. That gap is the same magnitude as the improvement DoD-6
+exists to demonstrate, in either direction. An after-measurement taken under the
+other convention would therefore manufacture or erase the result with nobody
+able to tell which — **a before/after comparison across two conventions is not a
+finding, it is an artefact.** Both payloads were read before launching the
+watcher, as the deploy step requires; neither stated the constraint; the window
+to fix that closes the moment the merge lands, because the watcher reads these
+files from `/opt/forge-ai-os`. Hence: amend first, commit, then merge.
+
 ---
 
 ## 11. What "done" looks like from here
