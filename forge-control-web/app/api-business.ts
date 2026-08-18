@@ -79,7 +79,8 @@ export interface WorkerHealth {
   status: string;
   /** null when pm2 reports no start time (i.e. not running). Never 0. */
   uptime_ms: number | null;
-  restarts: number;
+  /** null when pm2 omits `restart_time`. Never 0 — a 0 would claim "never restarted". */
+  restarts: number | null;
 }
 
 export type WorkerHealthResult =

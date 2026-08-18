@@ -132,6 +132,17 @@ function formatUptime(ms: number | null): string {
   return `${Math.floor(s / 86_400)}d ${Math.floor((s % 86_400) / 3600)}h`;
 }
 
+/**
+ * `null` is pm2 omitting `restart_time`, not a worker that has never restarted
+ * — the same distinction `formatUptime` draws for a missing start time. "0
+ * restarts" is a claim about the worker's whole life; we only make it when pm2
+ * actually said so.
+ */
+function formatRestarts(n: number | null): string {
+  if (n === null) return "restarts not reported";
+  return `${n} restarts`;
+}
+
 /** `2026-08-18T19:59:52.343Z` → `2026-08-18 19:59:52Z`, for a header line. */
 const asOf = (iso: string): string =>
   `${iso.replace("T", " ").slice(0, 19)}Z`;
@@ -491,10 +502,13 @@ function WorkerRow({ worker }: { worker: WorkerHealth }) {
         className="mono"
         style={{
           fontSize: 10.5,
-          color: worker.restarts > 0 ? tokens.warn : tokens.textGhost,
+          color:
+            worker.restarts !== null && worker.restarts > 0
+              ? tokens.warn
+              : tokens.textGhost,
         }}
       >
-        {worker.restarts} restarts
+        {formatRestarts(worker.restarts)}
       </span>
     </div>
   );

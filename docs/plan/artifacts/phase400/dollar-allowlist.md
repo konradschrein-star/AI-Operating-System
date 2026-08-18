@@ -101,3 +101,87 @@ Both themes: the header's five tokens (`borderSoft`, `ok`, `warn`, `textFaint`,
 `textMuted`) each resolve in both palettes — verified as two definitions apiece
 in `app/theme.css` (`:root` dark + `html[data-theme="light"]`). Screenshots are
 round 403's job.
+
+---
+
+# Phase 5 / Round 4 — two business facts, and the gate nobody ran
+
+This section is appended by the `os-usable-for-work` project, not by phase 400.
+It is here because `scripts/checks/dollar-allowlist.txt` names this file as its
+prose form, and the phase-5 gate's blocker was that the two files had drifted.
+
+**Read this caveat before trusting the tables above.** The `.txt` has moved on
+without this document since round 402: rounds 1351–1356, 1875 and 1876 added
+eight entries (`settings/UsagePanel.tsx`, `settings/usageApi.ts`,
+`settings/integrationCards.tsx`, `settings/SettingsSurface.tsx`,
+`chat/context-window.ts`, `team/TeamRow.tsx`, `nav-items.ts`,
+`quota/geminiLine.ts`) that are documented **only** as comments inside the
+`.txt` itself. Backfilling them is not this task's scope; the `.txt` is the
+authority, and its inline comments carry the reasons.
+
+## What failed
+
+`scripts/checks/dollar-sweep.sh` (gate 8 of `gates-808.sh`) reads `0` in
+`phase5/gates-baseline-business.txt` and `1` at the phase-5 tip. `git blame`
+puts both offenders in `c94b10d` — phase 5, round 2:
+
+| File | Line | Snippet | Fires on |
+|---|---|---|---|
+| `app/desktop/businesses-inventory.ts` | 467 | `…and who signs off on spend.` | `\bspen[dt]` |
+| `app/desktop/businesses-inventory.ts` | 592 | `Pricing is locked in code at $197 / $497 / $2,497 one-time…` | `\$[0-9]` |
+
+**The procedural finding, which matters more than either line:** no phase-5
+builder ran the suite after the product code landed. Round 2 introduced both
+hits; rounds 3 and 4 passed over them; the gate reviewer found them red at HEAD.
+A baseline file recorded at round 0 is not a substitute for running the gate
+after you write code.
+
+## What changed, and what deliberately did not
+
+**Neither source line was touched.** Both are spec-faithful transcriptions that
+R63 requires on screen — 467 is the `qualified` funnel stage's criterion from
+`Directory + Business Plan Hub — Business Model.md` §3.2 L263, and 592 is the
+Axtrelis arm's state from §2.2 L211. Rewording a business fact so a grep stays
+quiet would put a fiction in front of Konrad; the gate exists to stop dollars
+being *rendered as this fleet's cost*, and neither of these is that. 467's
+"spend" is the **prospect's** budget authority — who at the target company signs
+a purchase. 592's figures are **Konrad's own product's price list**, quoted from
+his spec.
+
+Two rows were added to `scripts/checks/dollar-allowlist.txt`:
+
+| Pattern | Why not something broader |
+|---|---|
+| `signs off on spend` | Anchored to that sentence. Not `spend`, which would pre-excuse every future `\bspen[dt]` hit in a 600-line inventory of business facts. |
+| `\$197 / \$497 / \$2,497` | Anchored to that price list. Not `\$[0-9]`, which would waive *any* dollar figure in the file, and not the file alone — the loader excuses a hit only when the file **and** the hit's own content match. |
+
+## Verification (round 4)
+
+```
+$ bash scripts/checks/dollar-sweep.sh ; echo "EXIT=$?"
+… ALLOW  forge-control-web/app/desktop/businesses-inventory.ts:467
+  ALLOW  forge-control-web/app/desktop/businesses-inventory.ts:592
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+EXIT=0            # 131 hits, all allowlisted (was 129 allowed + 2 FAIL)
+```
+
+**Anchoring proven by breaking it, not by reading it.** A control mutation
+appended one new, different dollar to the same now-listed file:
+
+```
+$ printf '\n// CONTROL MUTATION (round 4, reverted immediately): const price = "$99 / month";\n' \
+    >> forge-control-web/app/desktop/businesses-inventory.ts
+$ bash scripts/checks/dollar-sweep.sh ; echo "EXIT=$?"
+FAIL    forge-control-web/app/desktop/businesses-inventory.ts:612
+        // CONTROL MUTATION (round 4, reverted immediately): const price = "$99 / month";
+        → no allowlist entry covers this hit
+EXIT=1
+$ # restored from a pre-mutation copy; sha256 identical before and after:
+$ sha256sum forge-control-web/app/desktop/businesses-inventory.ts
+01177934c9dc93ac39b95767121d76f42aa258fbdb48d6143a095c5c3c6cae45  …/businesses-inventory.ts
+$ bash scripts/checks/dollar-sweep.sh >/dev/null ; echo "EXIT=$?"
+EXIT=0
+```
+
+A listed file is still a swept file. That is the property these two rows were
+written to preserve, and it is now measured rather than asserted.

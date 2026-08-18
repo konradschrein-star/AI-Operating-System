@@ -7,6 +7,24 @@ Every number here carries the command that produced it (N10). Where a command
 was run more than once its outputs differ, and that is itself a finding — see
 P3.
 
+> **Round 4 amendment (fix cycle 1).** As first written, four of the `psql`
+> lines below carried a placeholder instead of their SQL —
+> `<the surface WHERE clause, no LIMIT>`, `<ages>`, `<R70 30-day figure,
+> verbatim from the brief>`, `<spend_log all-time by provider>` — and a fifth
+> result set (the `ledger_entries` breakdown by `direction`) carried no `$`
+> prompt at all. Five numbers with no runnable command is exactly the N10 miss
+> this document opens by claiming it does not have, and the phase-5 gate found
+> it. The SQL is now written out in full. **The outputs are unchanged** — they
+> are round 0's, at the timestamps stated, and were not re-measured: `spend_log`
+> grows continuously (§ P3a), so re-running these today returns larger numbers,
+> not a correction. Each restored predicate is the one its own paragraph already
+> named in prose (`db/pipeline.ts:132`, `db/spend.ts:132-145`); the same filters
+> against the same tables, run an hour later by task 4, are `money-keep-cost.md`
+> CMD-M1/CMD-M2, whose output has the same shape and larger claude-code figures.
+> The one placeholder deliberately left standing is `<bucket dump>` in CMD-A: it
+> is a `node -e` *formatter* for the preceding `curl`, which is itself the
+> runnable command and the actual source of those numbers.
+
 - Branch: `project/7851068b-business`
 - Commit measured at: `bd4601ca3541b376e8f9abc151ebb6cb1f676917`
 - Instruments: `phase5/serve-pipeline.ts` (worktree API on :7841),
@@ -121,7 +139,11 @@ $ psql "$DATABASE_URL" -c "SELECT status::text, count(*) FROM content_jobs GROUP
  AWAITING_QC         |     1
 (3 rows)
 
-$ psql "$DATABASE_URL" -c "<the surface WHERE clause, no LIMIT>"
+$ psql "$DATABASE_URL" \
+    -c "SELECT status::text, count(*) FROM content_jobs
+          WHERE status <> 'MARKED_FOR_DELETION' GROUP BY 1 ORDER BY 2 DESC;" \
+    -c "SELECT count(*) AS rows_matching_where FROM content_jobs
+          WHERE status <> 'MARKED_FOR_DELETION';"
       status       | count 
 -------------------+-------
  AWAITING_UPLOADER |     4
@@ -133,7 +155,10 @@ $ psql "$DATABASE_URL" -c "<the surface WHERE clause, no LIMIT>"
                    5
 (1 row)
 
-$ psql "$DATABASE_URL" -c "<ages>"
+$ psql "$DATABASE_URL" -c "SELECT left(j.id::text,8) AS id8, j.status::text AS status,
+      j.status_updated_at, now() - j.status_updated_at AS age
+    FROM content_jobs j WHERE j.status <> 'MARKED_FOR_DELETION'
+    ORDER BY j.status_updated_at;"
    id8    |      status       |     status_updated_at      |       age        
 ----------+-------------------+----------------------------+------------------
  797bc9b0 | AWAITING_UPLOADER | 2026-08-04 01:01:34.885+00 | 14 days 18:40:13
@@ -144,6 +169,12 @@ $ psql "$DATABASE_URL" -c "<ages>"
 (5 rows)
 
 ```
+
+*The predicate in the second and third commands is the surface's own, spelled
+out: `db/pipeline.ts:132` at the commit measured above reads `WHERE j.status <>
+'MARKED_FOR_DELETION'`, with `ORDER BY j.status_updated_at DESC LIMIT 500` on
+line 133–134. Dropping the `LIMIT` is the whole point — it is what turns the
+cap back into a count.*
 
 **True per-bucket numbers, right now:** `qc` = 5 (4 `AWAITING_UPLOADER` +
 1 `AWAITING_QC`); every other bucket = 0. `total` = 5. The whole `content_jobs`
@@ -180,13 +211,19 @@ that is what it exists for. See `browser-harness.md` § "Mode B".
 
 ```
 ### CMD-C
-$ psql "$DATABASE_URL" -c "<R70 30-day figure, verbatim from the brief>"
+$ psql "$DATABASE_URL" -c "SELECT
+    COALESCE(SUM(amount_eur) FILTER (WHERE provider <> 'claude-code'), 0) AS non_claude_eur,
+    COALESCE(SUM(amount_eur) FILTER (WHERE provider =  'claude-code'), 0) AS claude_code_eur,
+    COUNT(*)                                                             AS rows_30d
+  FROM spend_log WHERE created_at >= now() - interval '30 days';"
  non_claude_eur | claude_code_eur | rows_30d 
 ----------------+-----------------+----------
               0 |       2773.4815 |      837
 (1 row)
 
-$ psql "$DATABASE_URL" -c "<spend_log all-time by provider>"
+$ psql "$DATABASE_URL" -c "SELECT provider, count(*) AS count,
+    sum(amount_eur)::numeric(12,4) AS eur, min(created_at) AS first, max(created_at) AS last
+  FROM spend_log GROUP BY provider ORDER BY eur DESC;"
   provider   | count |    eur    |             first             |             last              
 -------------+-------+-----------+-------------------------------+-------------------------------
  claude-code |   964 | 2868.1100 | 2026-07-02 19:39:03.231984+00 | 2026-08-18 19:40:52.055065+00
@@ -198,6 +235,9 @@ $ psql "$AI_OS_DATABASE_URL" -c "SELECT count(*) FROM ledger_entries;"   # ai_os
             172
 (1 row)
 
+$ psql "$AI_OS_DATABASE_URL" -c "SELECT direction, count(*) AS count,
+    sum(amount_eur)::numeric(12,2) AS eur, min(occurred_on) AS first, max(occurred_on) AS last
+  FROM ledger_entries GROUP BY direction ORDER BY count DESC;"
  direction | count |  eur   |   first    |    last    
 -----------+-------+--------+------------+------------
  out       |   172 | 176.07 | 2026-07-02 | 2026-08-03

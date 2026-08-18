@@ -285,6 +285,39 @@ describe("parsePm2Jlist", () => {
     assert.equal(workers[0]!.uptime_ms, null);
   });
 
+  test("a missing restart_time reports null, NEVER 0", () => {
+    // Same rule as uptime_ms, and the reason is the same: `0 restarts` is a
+    // CLAIM ("this worker has never restarted") rendered on the surface. pm2
+    // omitting the field must not be able to make that claim. `restart_time`
+    // is deleted here rather than merely overridden, because `proc()`'s
+    // default supplies 0 — which is exactly the value under test.
+    const entry = proc("worker-render");
+    const env = entry["pm2_env"] as Record<string, unknown>;
+    delete env["restart_time"];
+    assert.equal("restart_time" in env, false, "the fixture must not carry restart_time at all");
+
+    const { workers } = parsePm2Jlist(JSON.stringify([entry]), NOW);
+    assert.equal(workers[0]!.restarts, null);
+    // The worker is otherwise perfectly healthy: this is missing DATA, not a
+    // missing worker, and the two must not collapse into the same rendering.
+    assert.equal(workers[0]!.status, "online");
+    assert.equal(workers[0]!.uptime_ms, 7.6 * DAY);
+  });
+
+  test("a non-numeric restart_time reports null, not a coerced 0", () => {
+    const jlist = JSON.stringify([proc("claude-pool", { restart_time: "3" })]);
+    const { workers } = parsePm2Jlist(jlist, NOW);
+    assert.equal(workers[0]!.restarts, null);
+  });
+
+  test("a real 0 from pm2 is still 0 — null and 0 are different answers", () => {
+    // The null above must not have swallowed the honest zero: pm2 saying
+    // "restart_time: 0" IS the claim "never restarted", and it stays.
+    const { workers } = parsePm2Jlist(JSON.stringify([proc("worker-render")]), NOW);
+    assert.equal(workers[0]!.restarts, 0);
+    assert.notEqual(workers[0]!.restarts, null);
+  });
+
   test("garbage from pm2 THROWS with what it was handed", () => {
     // pm2 prints warnings to stdout under some node versions. A parser that
     // swallowed that would report "no workers" for a healthy fleet.

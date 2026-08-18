@@ -375,7 +375,10 @@ export type WorkerHealthResult =
  * from job movement: four idle-but-online workers must not look like four dead
  * ones.
  *
- * `pm2 list` is the ONLY pm2 verb used. No restart, ever (R68).
+ * `pm2 jlist` is the ONLY pm2 verb used — the JSON form of `pm2 list`, chosen
+ * because `parsePm2Jlist` needs a machine-readable answer rather than a table
+ * to scrape. It is read-only. No restart, ever (R68), and an auditor grepping
+ * this file for the verb under R68 should find the verb the code runs.
  */
 export async function getWorkerHealth(now: number = Date.now()): Promise<WorkerHealthResult> {
   const as_of = new Date(now).toISOString();

@@ -252,7 +252,13 @@ export interface WorkerHealth {
    * reads as "just restarted", which is the opposite of "not running".
    */
   uptime_ms: number | null;
-  restarts: number;
+  /**
+   * pm2's `restart_time`, or null when pm2 omits it — the same NEVER-0 rule as
+   * `uptime_ms` above, for the same reason. A `0` here is a CLAIM ("this worker
+   * has never restarted"), and the surface renders it as one; missing data must
+   * not be able to make that claim.
+   */
+  restarts: number | null;
 }
 
 export interface WorkerHealthSelection {
@@ -314,7 +320,7 @@ export function parsePm2Jlist(
         status === "online" && typeof startedAt === "number" && Number.isFinite(startedAt)
           ? Math.max(0, now - startedAt)
           : null,
-      restarts: typeof restarts === "number" && Number.isFinite(restarts) ? restarts : 0,
+      restarts: typeof restarts === "number" && Number.isFinite(restarts) ? restarts : null,
     });
   }
 
