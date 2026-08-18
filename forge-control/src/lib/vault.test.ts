@@ -318,7 +318,44 @@ describe("the snapshot is load-bearing (R4, R5)", () => {
       !result.snapshot.startsWith(path.resolve(VAULT) + path.sep),
       "a snapshot inside the vault would pollute the thing it protects",
     );
-    assert.match(path.basename(result.snapshot), /^Notes__scratch-\d+\.md\.\d{13}\.md$/);
+    // <flat path>.<epoch-ms>-<random>.md — the random suffix is what stops two
+    // edits inside one millisecond from colliding on the "wx" write below and
+    // refusing the second, valid, edit with a 500.
+    assert.match(
+      path.basename(result.snapshot),
+      /^Notes__scratch-\d+\.md\.\d{13}-[0-9a-f]{8}\.md$/,
+    );
+  });
+
+  test("two edits inside ONE millisecond both snapshot and both land", async () => {
+    // Freezing the clock is the only way to make the collision deterministic:
+    // with a real clock two sequential edits are milliseconds apart and the
+    // defect (a `<flat>.<ms>.md` name written "wx") hides. Measured on the
+    // frozen clock before the random suffix existed: edit 2 was refused with
+    // "vault snapshot failed … THE NOTE WAS NOT WRITTEN" and the note kept
+    // edit 1's bytes.
+    const v1 = "# same-ms\n\nv1\n";
+    const v2 = "# same-ms\n\nv2\n";
+    const v3 = "# same-ms\n\nv3\n";
+    const note = await scratchNote(v1);
+    const realNow = Date.now;
+    Date.now = () => 1_787_000_000_000;
+    let first: Awaited<ReturnType<typeof vault.writeVaultFile>>;
+    let second: Awaited<ReturnType<typeof vault.writeVaultFile>>;
+    try {
+      first = await vault.writeVaultFile({ path: note.rel, content: v2, baseSha256: hex(v1) });
+      second = await vault.writeVaultFile({ path: note.rel, content: v3, baseSha256: hex(v2) });
+    } finally {
+      Date.now = realNow;
+    }
+    assert.equal(await fsp.readFile(note.abs, "utf8"), v3);
+    // Both snapshots exist, both carry the SAME frozen millisecond, and they
+    // are different files — that pair is the whole fix.
+    assert.notEqual(first.snapshot, second.snapshot);
+    assert.equal(await fsp.readFile(first.snapshot, "utf8"), v1);
+    assert.equal(await fsp.readFile(second.snapshot, "utf8"), v2);
+    assert.match(path.basename(first.snapshot), /\.1787000000000-[0-9a-f]{8}\.md$/);
+    assert.match(path.basename(second.snapshot), /\.1787000000000-[0-9a-f]{8}\.md$/);
   });
 
   test("a snapshot that cannot be written aborts the write (R5)", async () => {
@@ -414,26 +451,366 @@ describe("the write is atomic (R6)", () => {
     assert.equal(await fsp.readFile(note.abs, "utf8"), "# atomic\n\nnever lands\n");
   });
 
-  test("by source inspection: the destination is reached only by rename", () => {
-    const start = CODE.indexOf("export async function writeVaultFile");
-    assert.notEqual(start, -1, "writeVaultFile must be exported from lib/vault.ts");
-    const rest = CODE.slice(start + 1);
-    const end = rest.indexOf("\nexport ");
-    const body = end === -1 ? rest : rest.slice(0, end);
-
-    const DIRECT_WRITE = /(writeFile|appendFile|truncate|createWriteStream|open)\(\s*abs\b/;
-    assert.match(body, /await fs\.rename\(tmpAbs, abs\)/);
-    assert.doesNotMatch(body, DIRECT_WRITE, "no code path may write the destination directly");
-    // Flip the inspection itself: the same regex DOES match a direct write, so
-    // the assertion above is not a pattern that could never fire.
+  test("by source inspection: NO verb in the module opens a destination O_TRUNC", () => {
+    // THE PREVIOUS VERSION OF THIS TEST WAS SCOPED TO writeVaultFile's OWN BODY
+    // and then used the literal `await fs.writeFile(abs, next, "utf8")` as its
+    // negative control — a line that was, at the time, line 170 of the module
+    // under test, inside appendToDailyNote. The counterexample was the very code
+    // the assertion had been scoped away from. R6 is a property of the MODULE,
+    // so the subject here is the whole module.
+    const DIRECT_WRITE = /(writeFile|appendFile|truncate|createWriteStream|open)\(\s*abs\b[^\n]*/g;
+    const hits = CODE.match(DIRECT_WRITE) ?? [];
+    // Not vacuous: there ARE direct writes to a path named `abs` in this module
+    // (createNote's collision-safe create, and the snapshot store's own write).
+    assert.ok(hits.length >= 2, `expected direct-write sites to inspect, found ${hits.length}`);
+    for (const hit of hits) {
+      assert.match(
+        hit,
+        /flag: "wx"/,
+        `every direct write to a destination must be an exclusive create; this one is not: ${hit}`,
+      );
+    }
+    // Flip the inspection itself: the same regex matches a TRUNCATING write and
+    // that write fails the wx assertion, so neither half could never fire.
     assert.match('await fs.writeFile(abs, next, "utf8")', DIRECT_WRITE);
+    assert.doesNotMatch('await fs.writeFile(abs, next, "utf8")', /flag: "wx"/);
 
-    // Exactly one rename call in the whole module, and it is that one. Counted
-    // over CODE — SOURCE also mentions fs.rename() in the header prose.
+    // The one non-exclusive write path in the module is atomicWrite, and it
+    // reaches the destination only by renaming a temp file onto it.
+    assert.match(CODE, /async function atomicWrite\(/);
+    assert.match(CODE, /await fs\.rename\(tmpAbs, input\.abs\)/);
     assert.equal(CODE.split("fs.rename(").length - 1, 1);
     assert.ok(SOURCE.split("fs.rename(").length - 1 > 1, "the header documents it too");
+
+    // And the two verbs that used to write in place now call it.
+    for (const verb of ["appendToDailyNote", "writeVaultFile"]) {
+      const start = CODE.indexOf(`export async function ${verb}`);
+      assert.notEqual(start, -1, `${verb} must be exported from lib/vault.ts`);
+      const rest = CODE.slice(start + 1);
+      const end = rest.indexOf("\nexport ");
+      const body = end === -1 ? rest : rest.slice(0, end);
+      assert.match(body, /await atomicWrite\(\{/, `${verb} must write through atomicWrite`);
+    }
+
     // Flip the stripper: it must remove a commented-out call, not everything.
     assert.equal(stripComments("// fs.rename(a)\nfs.rename(b)\n").trim(), "fs.rename(b)");
+  });
+});
+
+describe("concurrent writes to ONE note are serialised, not interleaved", () => {
+  /** Every snapshot taken of `rel`, newest last, as bodies. */
+  async function snapshotsOf(rel: string): Promise<string[]> {
+    const flat = rel.split("/").join("__");
+    const bodies: string[] = [];
+    for (const day of await fsp.readdir(SNAPSHOTS)) {
+      const dir = path.join(SNAPSHOTS, day);
+      if (!(await fsp.stat(dir)).isDirectory()) continue;
+      for (const name of (await fsp.readdir(dir)).sort()) {
+        if (name.startsWith(`${flat}.`)) bodies.push(await fsp.readFile(path.join(dir, name), "utf8"));
+      }
+    }
+    return bodies;
+  }
+
+  test("two PUTs on the same base: one 200, one 409, and nothing acknowledged is lost", async () => {
+    // Before serialisation, 2 of 5 runs returned 200 TWICE: both requests
+    // passed compare-and-swap against the same base, both snapshotted the same
+    // pre-state, and the second rename destroyed content the caller had already
+    // been told was saved. Five runs, because the defect was timing-selected.
+    for (let run = 1; run <= 5; run++) {
+      const original = `# concurrent ${run}\n\noriginal\n`;
+      const note = await scratchNote(original);
+      const first = `# concurrent ${run}\n\nKonrad's paragraph\n`;
+      const second = `# concurrent ${run}\n\na second save, milliseconds later\n`;
+
+      const settled = await Promise.allSettled([
+        vault.writeVaultFile({ path: note.rel, content: first, baseSha256: hex(original) }),
+        vault.writeVaultFile({ path: note.rel, content: second, baseSha256: hex(original) }),
+      ]);
+      const won = settled.filter((s) => s.status === "fulfilled");
+      const lost = settled.filter((s) => s.status === "rejected");
+      assert.equal(
+        won.length,
+        1,
+        `run ${run}: exactly one write may be acknowledged, got ${won.length}`,
+      );
+      assert.equal(lost.length, 1);
+      const conflict = lost[0].reason;
+      assert.ok(
+        conflict instanceof vault.VaultConflictError,
+        `run ${run}: the loser must be a conflict, got ${conflict}`,
+      );
+
+      // The acknowledged bytes ARE the bytes on disk.
+      const disk = await fsp.readFile(note.abs, "utf8");
+      assert.equal(hex(disk), won[0].value.sha256);
+      assert.ok(disk === first || disk === second);
+      // The loser read the winner's bytes — proof it ran after, not beside.
+      assert.equal(conflict.currentSha256, won[0].value.sha256);
+      assert.equal(conflict.currentContent, disk);
+      // Exactly ONE snapshot, holding the pre-state. Two snapshots of the same
+      // pre-state is the signature of the interleaving this closes.
+      assert.deepEqual(await snapshotsOf(note.rel), [original]);
+    }
+  });
+
+  test("the queue is PER PATH: two different notes are not serialised behind each other", async () => {
+    // Flip of the test above. A single global lock would also make it pass, and
+    // would quietly serialise every edit in the vault behind the slowest one.
+    const aOriginal = "# a\n\nv1\n";
+    const bOriginal = "# b\n\nv1\n";
+    const a = await scratchNote(aOriginal);
+    const b = await scratchNote(bOriginal);
+    const settled = await Promise.allSettled([
+      vault.writeVaultFile({ path: a.rel, content: "# a\n\nv2\n", baseSha256: hex(aOriginal) }),
+      vault.writeVaultFile({ path: b.rel, content: "# b\n\nv2\n", baseSha256: hex(bOriginal) }),
+    ]);
+    assert.deepEqual(
+      settled.map((s) => s.status),
+      ["fulfilled", "fulfilled"],
+      "concurrent writes to DIFFERENT notes must both succeed",
+    );
+    assert.equal(await fsp.readFile(a.abs, "utf8"), "# a\n\nv2\n");
+    assert.equal(await fsp.readFile(b.abs, "utf8"), "# b\n\nv2\n");
+  });
+
+  test("a rejected write does not wedge its path for the rest of the process", async () => {
+    // A chain built with .then(work) alone continues only on success, so the
+    // first 409 would leave every later edit of that note waiting forever.
+    const original = "# wedge\n\nv1\n";
+    const note = await scratchNote(original);
+    await assert.rejects(
+      () =>
+        vault.writeVaultFile({
+          path: note.rel,
+          content: "# wedge\n\nv2\n",
+          baseSha256: hex("something else entirely\n"),
+        }),
+      (e: unknown) => e instanceof vault.VaultConflictError,
+    );
+    await vault.writeVaultFile({
+      path: note.rel,
+      content: "# wedge\n\nv2\n",
+      baseSha256: hex(original),
+    });
+    assert.equal(await fsp.readFile(note.abs, "utf8"), "# wedge\n\nv2\n");
+  });
+
+  test("the chain map is drained, not grown one entry per note edited", async () => {
+    // An in-process queue that never forgets a path is a slow leak: one Map
+    // entry per note ever edited, for the life of the process.
+    const before = vault.pendingVaultWrites();
+    assert.equal(before, 0, "nothing may still be queued when this test starts");
+    const notes = await Promise.all([1, 2, 3, 4].map(() => scratchNote("# drain\n\nv1\n")));
+
+    // Hold every write at the rename so all four are provably IN the map at
+    // once. Polling for a peak would make the flip below timing-dependent.
+    const realRename = fsp.rename;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    fsp.rename = (async (from: string, to: string) => {
+      await gate;
+      return realRename(from, to);
+    }) as typeof fsp.rename;
+
+    try {
+      const inFlight = notes.map((n) =>
+        vault.writeVaultFile({
+          path: n.rel,
+          content: "# drain\n\nv2\n",
+          baseSha256: hex("# drain\n\nv1\n"),
+        }),
+      );
+      const deadline = Date.now() + 5_000;
+      while (vault.pendingVaultWrites() < notes.length) {
+        assert.ok(
+          Date.now() < deadline,
+          `only ${vault.pendingVaultWrites()} of ${notes.length} writes reached the queue`,
+        );
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      // Flip: the counter DOES move, so the assertion after the drain is
+      // measuring drainage rather than a number that is always zero.
+      assert.equal(vault.pendingVaultWrites(), notes.length);
+      release();
+      await Promise.all(inFlight);
+    } finally {
+      release();
+      fsp.rename = realRename;
+    }
+    assert.equal(vault.pendingVaultWrites(), 0);
+  });
+});
+
+describe("a symlink inside the vault does not escape it (R9)", () => {
+  // path.resolve() is lexical. Before the realpath check, GET through a file
+  // symlink returned any file the root process could open, and PUT through a
+  // directory symlink overwrote a file outside the vault. Both measured at 200.
+  let outsideDir: string;
+  let outsideNote: string;
+  const OUTSIDE_BODY = "TOP SECRET, outside the vault\n";
+
+  before(async () => {
+    outsideDir = await fsp.mkdtemp(path.join(os.tmpdir(), "forge-vault-outside-"));
+    outsideNote = path.join(outsideDir, "secret.md");
+    await fsp.writeFile(outsideNote, OUTSIDE_BODY, "utf8");
+    await fsp.symlink(outsideNote, abs("Notes/leak.md"));
+    await fsp.symlink(outsideDir, abs("escape"));
+    await fsp.symlink(abs("Notes/with spaces & sym.md"), abs("Notes/inside-link.md"));
+  });
+
+  test("GET through a file symlink pointing outside is refused", async () => {
+    await assert.rejects(
+      () => vault.readVaultFile("Notes/leak.md"),
+      (e: unknown) => isRefused(e) && /escapes the vault through a symlink/.test(e.reason),
+    );
+  });
+
+  test("PUT through a directory symlink is refused and the outside file is untouched", async () => {
+    await assert.rejects(
+      () =>
+        vault.writeVaultFile({
+          path: "escape/secret.md",
+          content: "OVERWRITTEN FROM INSIDE THE VAULT\n",
+          baseSha256: hex(OUTSIDE_BODY),
+        }),
+      (e: unknown) => isRefused(e) && /escapes the vault through a symlink/.test(e.reason),
+    );
+    assert.equal(await fsp.readFile(outsideNote, "utf8"), OUTSIDE_BODY);
+  });
+
+  test("PUT to a not-yet-existing path THROUGH a directory symlink is refused too", async () => {
+    // The deepest-existing-ancestor walk is what makes this reachable: the file
+    // does not exist, so only its parent can be resolved.
+    await assert.rejects(
+      () =>
+        vault.writeVaultFile({
+          path: "escape/brand-new.md",
+          content: "x\n",
+          baseSha256: hex("x\n"),
+        }),
+      (e: unknown) => isRefused(e) && /escapes the vault through a symlink/.test(e.reason),
+    );
+    await assert.rejects(
+      () => fsp.access(path.join(outsideDir, "brand-new.md")),
+      (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  });
+
+  test("flip: a symlink to another note INSIDE the vault still resolves", async () => {
+    // The guard is containment, not "no symlinks" — refusing every symlink
+    // would pass the three tests above while breaking legitimate vault layouts.
+    const read = await vault.readVaultFile("Notes/inside-link.md");
+    assert.equal(read.content, FIXTURE_NOTES["Notes/with spaces & sym.md"]);
+  });
+
+  test("flip: a real note that does not exist yet still reports ENOENT, not a refusal", async () => {
+    await assert.rejects(
+      () => vault.readVaultFile("Notes/no-such-note.md"),
+      (e: unknown) => (e as NodeJS.ErrnoException).code === "ENOENT",
+    );
+  });
+});
+
+describe("an invisible body is refused like the blank note it renders as (R7)", () => {
+  const INVISIBLE: Array<[string, string]> = [
+    ["U+200B zero-width space", "\u200B"],
+    ["U+200C zero-width non-joiner", "\u200C"],
+    ["U+200D zero-width joiner", "\u200D"],
+    ["U+2060 word joiner", "\u2060"],
+    ["U+FEFF byte-order mark", "\uFEFF"],
+    ["zero-width mixed with real whitespace", " \u200B\n\t\u2060 "],
+  ];
+
+  for (const [name, body] of INVISIBLE) {
+    test(`${name} only is refused`, async () => {
+      const original = "# invisible\n\nreal content\n";
+      const note = await scratchNote(original);
+      await assert.rejects(
+        () => vault.writeVaultFile({ path: note.rel, content: body, baseSha256: hex(original) }),
+        (e: unknown) => isRefused(e) && /empty content refused/.test(e.reason),
+      );
+      assert.equal(await fsp.readFile(note.abs, "utf8"), original);
+    });
+  }
+
+  test("flip: a zero-width character INSIDE real prose is content and is written verbatim", async () => {
+    // The strip happens on a COPY, for the blank test only. Stripping the body
+    // itself would silently rewrite Konrad's bytes and break the sha256 he is
+    // handed back.
+    const original = "# invisible\n\nv1\n";
+    const note = await scratchNote(original);
+    const body = "# invisible\n\nZWJ here \u200D and the note is not blank\n";
+    const result = await vault.writeVaultFile({
+      path: note.rel,
+      content: body,
+      baseSha256: hex(original),
+    });
+    assert.equal(await fsp.readFile(note.abs, "utf8"), body);
+    assert.equal(result.sha256, hex(body));
+    assert.ok(body.includes("\u200D"), "the fixture must carry a zero-width char or this proves nothing");
+  });
+
+  test("the refusal names which kind of blank it was", async () => {
+    const original = "# kinds\n\nv1\n";
+    const note = await scratchNote(original);
+    const cases: Array<[string, RegExp]> = [
+      ["", /zero-length/],
+      ["   \n", /whitespace-only/],
+      ["\u200B\u200B", /zero-width-only/],
+    ];
+    for (const [body, expected] of cases) {
+      await assert.rejects(
+        () => vault.writeVaultFile({ path: note.rel, content: body, baseSha256: hex(original) }),
+        (e: unknown) => isRefused(e) && expected.test(e.reason),
+        `expected ${expected} for ${JSON.stringify(body)}`,
+      );
+    }
+  });
+});
+
+describe("orphaned temp files are swept, and only those", () => {
+  const TWO_HOURS_AGO = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+  test("an hour-old orphan goes; a fresh one, a note and a look-alike stay", async () => {
+    const original = "# sweep\n\nv1\n";
+    const note = await scratchNote(original);
+    const dir = path.dirname(note.abs);
+
+    const stale = path.join(dir, "crashed.md.tmp-1328992-2b5ef015ac5f");
+    const fresh = path.join(dir, "in-flight.md.tmp-1328993-2b5ef015ac5f");
+    const lookalike = path.join(dir, "not-ours.md.tmp-nopid-xyz");
+    const realNote = path.join(dir, "sweep-bystander.md");
+    for (const p of [stale, fresh, lookalike, realNote]) {
+      await fsp.writeFile(p, "60 MB of nothing, morally\n", "utf8");
+    }
+    await fsp.utimes(stale, TWO_HOURS_AGO, TWO_HOURS_AGO);
+    // The bystander note is old too: age alone must not be enough to delete it.
+    await fsp.utimes(realNote, TWO_HOURS_AGO, TWO_HOURS_AGO);
+    await fsp.utimes(lookalike, TWO_HOURS_AGO, TWO_HOURS_AGO);
+
+    await vault.writeVaultFile({
+      path: note.rel,
+      content: "# sweep\n\nv2\n",
+      baseSha256: hex(original),
+    });
+
+    const survives = async (p: string): Promise<boolean> => {
+      try {
+        await fsp.access(p);
+        return true;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
+        throw e;
+      }
+    };
+    assert.equal(await survives(stale), false, "an hour-old orphan must be swept");
+    assert.equal(await survives(fresh), true, "a temp file another process may still be writing must survive");
+    assert.equal(await survives(lookalike), true, "only this module's own name shape may be swept");
+    assert.equal(await survives(realNote), true, "A NOTE MUST NEVER BE SWEPT");
+    assert.equal(await fsp.readFile(note.abs, "utf8"), "# sweep\n\nv2\n");
   });
 });
 
@@ -644,5 +1021,125 @@ describe("R11 characterisation — appendToDailyNote, createNote, readDailyNote"
 
     // Flip: the first note is untouched by the second call.
     assert.equal(await fsp.readFile(abs(first.path), "utf8"), content);
+  });
+
+  // -------------------------------------------------------------------------
+  // The two loss paths R1-red demonstrated in this verb. Both are behavioural
+  // changes to a verb R11 freezes, ruled on by the operator on 2026-08-19 and
+  // recorded in 04-phases.md §10: R11 protects append-or-create SEMANTICS, and
+  // replacing a note with an empty template is the opposite of appending.
+  // They run last, on the note the characterisation tests above built.
+  // -------------------------------------------------------------------------
+
+  test("a read failure that is not ENOENT THROWS; the note is byte-identical", async () => {
+    // Measured before this guard: a simulated EIO took the daily note from
+    // 4 245 bytes to 76 — the empty template, written over it — and resolved
+    // {ok:true, created:true}. No snapshot; unrecoverable.
+    const before3 = await fsp.readFile(dailyAbs, "utf8");
+    assert.ok(before3.length > 0, "this test needs an existing daily note to destroy");
+
+    const realRead = fsp.readFile;
+    for (const code of ["EIO", "EACCES", "ENOMEM", "ERR_FS_FILE_TOO_LARGE"]) {
+      // Patch the SHARED node:fs promises object, the same technique the
+      // rename test above uses, and scope it to the daily note's own path.
+      fsp.readFile = (async (p: unknown, ...rest: unknown[]) => {
+        if (String(p) === dailyAbs) {
+          const err: NodeJS.ErrnoException = new Error(`${code}: simulated read failure`);
+          err.code = code;
+          throw err;
+        }
+        return (realRead as (...a: unknown[]) => Promise<unknown>)(p, ...rest);
+      }) as typeof fsp.readFile;
+      try {
+        await assert.rejects(
+          () => vault.appendToDailyNote({ section: "Notes", text: "a captured thought" }),
+          (e: unknown) => (e as NodeJS.ErrnoException).code === code,
+          `a ${code} read failure must reach the caller, not be read as "no note today"`,
+        );
+      } finally {
+        fsp.readFile = realRead;
+      }
+      assert.equal(await fsp.readFile(dailyAbs, "utf8"), before3);
+    }
+
+    // Flip: ENOENT — and ONLY ENOENT — still means "today's note does not
+    // exist yet", so the create-from-template branch is still reachable.
+    const stashed3 = `${dailyAbs}.enoent-flip`;
+    await fsp.rename(dailyAbs, stashed3);
+    try {
+      const result = await vault.appendToDailyNote({ section: "Tasks", text: "created again" });
+      assert.deepEqual(result, { path: dailyRel, created: true });
+      assert.match(await fsp.readFile(dailyAbs, "utf8"), /^# \d{4}-\d{2}-\d{2}\n/);
+    } finally {
+      await fsp.rename(stashed3, dailyAbs);
+    }
+    assert.equal(await fsp.readFile(dailyAbs, "utf8"), before3);
+  });
+
+  test("readDailyNote reports content: null ONLY for ENOENT", async () => {
+    const realRead = fsp.readFile;
+    fsp.readFile = (async (p: unknown, ...rest: unknown[]) => {
+      if (String(p) === dailyAbs) {
+        const err: NodeJS.ErrnoException = new Error("EIO: simulated read failure");
+        err.code = "EIO";
+        throw err;
+      }
+      return (realRead as (...a: unknown[]) => Promise<unknown>)(p, ...rest);
+    }) as typeof fsp.readFile;
+    try {
+      await assert.rejects(
+        () => vault.readDailyNote(),
+        (e: unknown) => (e as NodeJS.ErrnoException).code === "EIO",
+        'a transient EIO must not render as "no daily note today" in the Capture preview',
+      );
+    } finally {
+      fsp.readFile = realRead;
+    }
+    // Flip: the real read still returns the note.
+    const read = await vault.readDailyNote();
+    assert.equal(read.path, dailyRel);
+    assert.equal(read.content, await fsp.readFile(dailyAbs, "utf8"));
+  });
+
+  test("the append is atomic: a failed rename leaves the note byte-identical", async () => {
+    // Before this, the append was `fs.writeFile(abs, next, "utf8")` — O_TRUNC
+    // on the destination. Measured: 40 000 048 bytes observed at 0 on disk
+    // mid-call, with no snapshot and no temp file to recover from. Forcing the
+    // rename to fail is the deterministic form of the same proof: if the write
+    // still reached the destination directly, the note would have CHANGED here.
+    const before4 = await fsp.readFile(dailyAbs, "utf8");
+    const realRename = fsp.rename;
+    fsp.rename = async (): Promise<void> => {
+      const err: NodeJS.ErrnoException = new Error("EXDEV: simulated cross-device rename");
+      err.code = "EXDEV";
+      throw err;
+    };
+    try {
+      await assert.rejects(
+        () => vault.appendToDailyNote({ section: "Journal", text: "never lands" }),
+        (e: unknown) => (e as NodeJS.ErrnoException).code === "EXDEV",
+      );
+    } finally {
+      fsp.rename = realRename;
+    }
+    assert.equal(await fsp.readFile(dailyAbs, "utf8"), before4);
+    const leftovers = (await fsp.readdir(path.dirname(dailyAbs))).filter((f) =>
+      f.includes(".tmp-"),
+    );
+    assert.deepEqual(leftovers, [], "the temp file must be cleaned up on failure");
+
+    // Flip: with rename restored, the identical append lands and the note grows
+    // by exactly the one line — the bytes are unchanged by the atomicity fix,
+    // which is what keeps R11's characterisation above passing.
+    const result = await vault.appendToDailyNote({ section: "Journal", text: "never lands" });
+    assert.deepEqual(result, { path: dailyRel, created: false });
+    const after4 = await fsp.readFile(dailyAbs, "utf8");
+    assert.notEqual(after4, before4);
+    assert.equal(
+      after4.split("\n").length,
+      before4.split("\n").length + 1,
+      "an append adds exactly one line",
+    );
+    assert.ok(after4.includes(before4.replace(/\n## Journal\n$/, "")));
   });
 });

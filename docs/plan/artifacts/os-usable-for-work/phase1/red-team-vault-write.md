@@ -429,3 +429,45 @@ whether it recurred.
 ---
 
 RED-TEAM VERDICT: 3 BLOCKERS
+
+---
+
+## APPENDIX — resolution, round 100 fix cycle 1 (2026-08-19)
+
+Appended, not edited: the report above is the record of what the tree looked like at
+`9a4beeb`/`01fa802` and stays as written.
+
+All three blockers and every folded finding are closed on `project/7851068b-vault`. The evidence —
+each defect reproduced against the committed tree **first**, then the identical harness re-run against
+the fix — is in `fix-cycle-1-vault-write.md` beside this file.
+
+| R1-red item | Status |
+|---|---|
+| B-1 concurrent PUTs lose an acknowledged edit | **CLOSED** — `serialiseOnPath()`, per resolved absolute path. 5/5 runs: one 200, one 409, one snapshot |
+| B-2 bare catch destroys the daily note | **CLOSED** — ENOENT-only. 4 245 B → 4 245 B, and the call throws |
+| B-3 non-atomic append | **CLOSED** — `atomicWrite()` shared by both verbs. Smallest size observed on disk during a 40 MB append: 40 000 048 B |
+| F-1 symlink escape (security) | **CLOSED** — realpath containment in `resolveOrRefuse`, read and write |
+| F-2 zero-width body | **CLOSED** — folded, as instructed |
+| F-3 same-millisecond snapshot collision | **CLOSED** — folded; 8 hex of randomness in the snapshot name |
+| F-5 409 serialises a 256 MB note | **CLOSED** — folded; 8 MiB cap, announced via `current_content_truncated` + `current_bytes` |
+| F-6 orphan `.tmp-` after a crash | **CLOSED** — folded; `sweepOrphanTempFiles()`, own name shape only, older than an hour |
+| F-4 §1.2 asserts two false things | **CLOSED** — both sentences quoted and corrected in `02-architecture.md` §1.2 |
+| N-2 `readDailyNote` swallows every error | **CLOSED** — same ENOENT-only guard, under the same R11 ruling |
+| N-1 path disclosure in 500s | **NOT FIXED**, deliberately — cosmetic on an authenticated surface, and the path is the diagnostic R20 exists to keep |
+| N-3 dead clause in `resolveInVault:69` | **NOT FIXED** — harmless, and touching it is diff noise |
+| F-7 snapshot retention | **NOT FIXED** — a policy decision, not a defect. The coupling is now stated in the module header; B-3, which it armed, is closed regardless |
+
+**The R11/R20 decision the report escalated was ruled by the operator: fix B-2.** R11 protects
+append-or-create *semantics*, not a data-destroying fallback. The exception is recorded in
+`04-phases.md` §10.1 with its reasoning, its exact scope, and a statement of what did **not** change.
+
+**The `vault.ts:10` claim is narrowed.** The module-wide sentence "NO CONTENT THIS MODULE EVER REMOVES
+IS UNRECOVERABLE" is gone. In its place: what each verb guarantees, and an explicit **"what is NOT
+claimed"** list naming the cross-process window, the scope of the realpath check, and the absent
+snapshot retention policy.
+
+**The test the report called out is rewritten, not patched.** `vault.test.ts`'s source inspection had
+scoped itself to `writeVaultFile`'s body and then used line 170 — the defect — as its own negative
+control. It now measures the whole module: every direct write to a destination must carry `flag:
+"wx"`, and the only non-exclusive path is `atomicWrite`, which reaches the destination by `rename`
+alone.

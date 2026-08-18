@@ -182,8 +182,10 @@ Three derived stores, each with exactly one writer:
         └─ not *.md?         → 400
       content empty/blank?            → 400        (R7)
       read current bytes → sha256
-        └─ ≠ base_sha256   → 409 { current_sha256, current_content }   NOTHING WRITTEN
-      snapshot current bytes → /opt/ai-os/vault-snapshots/<date>/<flat>.<epoch>.md
+      ── everything below runs serialised per path (one chain per note) ──
+        └─ ≠ base_sha256   → 409 { current_sha256, current_content,
+                                   current_content_truncated, current_bytes }   NOTHING WRITTEN
+      snapshot current bytes → /opt/ai-os/vault-snapshots/<date>/<flat>.<epoch>-<rand>.md
         └─ snapshot failed  → 500                  NOTHING WRITTEN     (R5)
       write <file>.tmp-<pid> → fsync → rename over <file>              (R6)
       → 200 { path, sha256, bytes, snapshot }
@@ -209,18 +211,49 @@ Snapshots live **outside** the vault because `resolveInVault()` rejects dot-segm
 inside the vault would show up in Obsidian's file tree, in search, in the graph, and in
 `syncVaultNotes()`'s 284-file scan. Backups that pollute the thing they protect are not backups.
 
-**Naming:** `/opt/ai-os/vault-snapshots/<YYYY-MM-DD>/<path with / → __>.<epoch-ms>.md`. Flat, sorted by
-date, greppable, and recoverable with `cp`. No index, no database, no manifest — a restore path that
-needs a working database is a restore path that fails exactly when you need it.
+**Naming:** `/opt/ai-os/vault-snapshots/<YYYY-MM-DD>/<path with / → __>.<epoch-ms>-<8 hex>.md`. Flat,
+sorted by date, greppable, and recoverable with `cp`. No index, no database, no manifest — a restore
+path that needs a working database is a restore path that fails exactly when you need it. The random
+suffix was added at round 100, fix cycle 1: the name was `<flat>.<epoch-ms>.md` and the write is `wx`,
+so two edits to one note inside a single millisecond collided and the **second, valid, edit** was
+refused with a 500 the surface has no retry story for.
 
-**Concurrency.** Single-process Node, so the read-compare-snapshot-write sequence is not interleaved
-with another request *in this process* — but agents write to the vault from other processes entirely.
-The `base_sha256` compare-and-swap is therefore the real serialisation mechanism, and there is a
-residual window between the compare and the rename. Accepted, explicitly: closing it needs a lock file,
-a lock file needs a stale-lock policy, and a stale-lock policy on a vault that LiveSync also writes is
-a larger system than the problem. The snapshot makes the worst case recoverable, which is the right
-trade for a single-operator system. **This is written down so a reviewer does not "discover" it as a
-defect.**
+**Concurrency.** *Corrected at round 100, fix cycle 1 (2026-08-19). The two sentences this paragraph
+used to open with were false, and one of them was the root cause of a blocker — R1-red, blocker B-1.
+They are quoted below so the correction is legible rather than silent.*
+
+> ~~"Single-process Node, so the read-compare-snapshot-write sequence is not interleaved with another
+> request *in this process*."~~ — **false.** Every step of that sequence is `await`ed, so two
+> concurrent PUTs interleave freely. Measured: 2 of 5 runs returned `200 {ok:true, sha256:…}` **twice**
+> for the same base; the second rename destroyed content the caller had already been told was saved,
+> and both snapshots held the identical pre-state, so the lost paragraph was in no snapshot. The other
+> 3 runs collided on the snapshot filename and returned 500.
+>
+> ~~"The snapshot makes the worst case recoverable, which is the right trade."~~ — **false for the
+> case it was defending.** The snapshot holds the bytes read *before* the compare, so a third-party
+> write that lands inside the residual window is overwritten and appears in no snapshot.
+
+What is true, and what the code now does:
+
+- **In-process concurrency is serialised, per path.** `writeVaultFile()` runs its read → compare →
+  snapshot → write inside a promise chain keyed on the resolved absolute path (`lib/vault.ts`,
+  `serialiseOnPath`). The second of two concurrent PUTs re-reads what the first wrote and returns
+  **409**, which is the honest answer. This is **not** the lock file rejected below: no on-disk state,
+  therefore no stale-lock policy. It is ~20 lines and it closes the in-process case completely.
+  Different paths are not serialised against each other, so one slow 200 MB edit cannot queue the
+  rest of the vault behind it.
+- **The cross-process window stays open, and stays accepted.** Agents and LiveSync write from other
+  processes; between this module's compare and its rename their bytes can still be overwritten.
+  Closing *that* needs the lock file. Accepted explicitly, with the honest statement of what the
+  snapshot covers: **the pre-edit state is always recoverable; a third-party write that lands inside
+  the window is not.**
+- **The snapshot store has no retention policy** (still a later decision). When it fills the
+  filesystem every edit fails closed — verified against a real 1 MB tmpfs, at both the snapshot write
+  and the temp-file write, with the note byte-identical and no stray `.tmp-` afterwards.
+
+**This is written down so a reviewer does not "discover" it as a defect** — and the correction above is
+written down because the first version of this paragraph is exactly what a reviewer *did* have to
+discover, at the cost of a review round.
 
 **Rejected:** `PATCH` with a JSON-patch or diff body — smaller payloads, but it makes the client
 responsible for constructing a valid patch and turns every client bug into a corrupted note.

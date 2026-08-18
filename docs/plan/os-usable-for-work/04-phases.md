@@ -472,3 +472,62 @@ Every R1–R90 appears exactly once. No requirement is unassigned and none is as
 | A planner opens a seventh workstream and gets a 400 mid-run | The cap is documented in every planner brief; six are pre-assigned |
 | Konrad does not rule on the Businesses spine or the reminder policy | Both have stated defaults (Funnel; pending + 7 days) recorded with the date the default was taken |
 | A phase drifts into building Goals/Journal/Map | Explicit non-goal in `00-vision.md §5`; phase 3's scope is words, not features |
+
+---
+
+## 10. Write-set ownership and disclosed exceptions
+
+Authoritative. This is what the next round and the successor project read to learn who owns a file and
+which behavioural freezes have been lifted. A commit message is not consulted; this table is.
+
+### 10.1 Requirement exception — R11 vs R20, `appendToDailyNote` and `readDailyNote`
+
+**Ruled by the operator on 2026-08-19, at round 100 fix cycle 1, on R1-red's blockers B-2 and B-3.**
+
+R11 freezes the three pre-existing verbs: `POST /append`, `POST /note`, `GET /daily` must "behave
+identically to before this project". R20 requires the vault verbs to hard-error, with no `catch {}`
+that returns a default. `lib/vault.ts:161` could not satisfy both: a bare `catch` read *every* read
+failure as "today's note does not exist yet" and then wrote the empty daily template over the note
+that was sitting right there, returning `{ok:true, created:true}`. Measured by the red team: **4 245
+bytes → 76, no snapshot, unrecoverable.**
+
+**Ruling: R20 wins, and R11 is excepted here.** R11 protects append-or-create **semantics**, not a
+data-destroying fallback. Silently replacing a note with an empty template is not "append behaving
+identically" — it is the opposite of appending.
+
+| Verb | Frozen behaviour that changed | Now |
+|---|---|---|
+| `appendToDailyNote` | any read failure → write `DAILY_TEMPLATE` over the note, resolve `{ok:true, created:true}` | ENOENT → create from template, unchanged. Anything else → **throw**, note untouched |
+| `appendToDailyNote` | `fs.writeFile(abs, …)` — destination opened `O_TRUNC` | temp file → fsync → rename (`atomicWrite`). **The bytes that land are unchanged**, which is why R11's byte-level characterisation tests still pass unmodified |
+| `readDailyNote` | any read failure → `content: null` ("no daily note today") | ENOENT → `content: null`, unchanged. Anything else → **throw** |
+
+`readDailyNote` is not in the reviewer's blocker list — it was raised as note N-2, "same R20 smell as
+B-2". It is fixed under the same ruling and disclosed here rather than left as a known R20 violation
+inside the phase that owns R20. `createNote` is untouched: it only ever opens `wx`.
+
+**What did NOT change:** the exact bytes written by an append, the section-insertion rule, the
+`{path, created}` result shape, the daily filename and timezone, and `POST /note` in every respect.
+
+### 10.2 Undeclared writes — round 100, fix cycle 1 (task `R1-fix`), disclosed here
+
+The fix-cycle task row inherited its `write_set` from the **reviewer** row it was seeded from
+(`docs/plan/artifacts/os-usable-for-work/phase1/red-team-vault-write.md` — a report file), which is
+unsatisfiable for a task whose entire brief is "fix three blockers in `lib/vault.ts`". This is the
+condition `03-quality.md` §3.5 names: audit a fix cycle against the **parent phase row** (B1a/B1b),
+not against the inherited row. Every path below is inside B1a's or B1b's declared write set, except
+the two corpus files, which are named in the reviewer's own prescription.
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control/src/lib/vault.ts` | B1a | the three blockers (B-1, B-2, B-3), the symlink escape, and folded findings F-2, F-3, F-6 |
+| `forge-control/src/lib/vault.test.ts` | B1a | 20 regression assertions, each verified to fail against the pre-fix tree |
+| `forge-control/src/routes/vault.ts` | B1b | folded finding F-5 — the 409 body cap |
+| `forge-control/src/lib/vault-routes.test.ts` | B1b | the two 409-cap assertions |
+| `docs/plan/os-usable-for-work/02-architecture.md` | — | §1.2 stated two things that are false (F-4); blocker 1's prescription is explicitly "and correct §1.2's claim" |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | this section — the R11 exception and this disclosure |
+| `docs/plan/artifacts/os-usable-for-work/phase1/red-team-vault-write.md` | **the declared row** | resolution appendix appended (nothing removed) |
+| `docs/plan/artifacts/os-usable-for-work/phase1/fix-cycle-1-vault-write.md` | — | the before/after evidence the fixes are proven by |
+
+`forge-control/src/lib/vault-fixture.ts` was **not** touched: the symlink fixtures are created inside
+the test that needs them, because a symlink committed into a shared fixture would change what every
+other lane-1 test resolves.

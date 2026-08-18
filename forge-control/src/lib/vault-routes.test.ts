@@ -75,6 +75,8 @@ interface FileBody {
   error?: string;
   current_sha256?: string;
   current_content?: string;
+  current_content_truncated?: boolean;
+  current_bytes?: number;
 }
 
 async function body(res: Response): Promise<FileBody> {
@@ -292,6 +294,76 @@ describe("PUT /api/vault/file", () => {
     });
     assert.equal(ok.status, 200);
     assert.equal(await read(note.rel), "# v3\n\nmy edit\n");
+  });
+
+  test("the 409 body is capped, and the cap is ANNOUNCED, not silent", async () => {
+    // Measured on the un-capped route: a 256 MB note serialised into the
+    // conflict body took 3.2 s and +224 MB RSS in the single process that also
+    // runs the cron tick, the vault sync and Telegram delivery. The cap is
+    // pinned as a literal here ON PURPOSE — importing it from the route would
+    // make this assertion agree with whatever the route happens to say.
+    const CAP = 8 * 1024 * 1024;
+    const HEAD = "# huge\n\n";
+    const huge = HEAD + "x".repeat(CAP + 1000 - HEAD.length);
+    assert.equal(huge.length, CAP + 1000);
+    const note = await scratch(huge);
+
+    const res = await putFile({
+      path: note.rel,
+      content: "# huge\n\nmy edit\n",
+      base_sha256: hex("a different note entirely\n"),
+    });
+    assert.equal(res.status, 409);
+    const b = await body(res);
+    assert.equal(b.current_content_truncated, true);
+    assert.equal(b.current_content?.length, CAP);
+    assert.equal(b.current_content, huge.slice(0, CAP), "the prefix must be the note's own bytes");
+    // The sha256 is still over the WHOLE note, and the true size travels too —
+    // a client that offered the prefix as "the current version" would truncate
+    // the note on the next save, so it must be able to tell.
+    assert.equal(b.current_sha256, hex(huge));
+    assert.equal(b.current_bytes, Buffer.byteLength(huge, "utf8"));
+    assert.equal(await read(note.rel), huge, "NOTHING may be written");
+
+    // Flip: an ordinary note is carried WHOLE and says so. Every real note in
+    // Konrad's vault is on this side of the boundary.
+    const small = await scratch("# small\n\nall of it\n");
+    const res2 = await putFile({
+      path: small.rel,
+      content: "# small\n\nmy edit\n",
+      base_sha256: hex("a different note entirely\n"),
+    });
+    assert.equal(res2.status, 409);
+    const b2 = await body(res2);
+    assert.equal(b2.current_content_truncated, false);
+    assert.equal(b2.current_content, "# small\n\nall of it\n");
+    assert.equal(b2.current_bytes, Buffer.byteLength("# small\n\nall of it\n", "utf8"));
+  });
+
+  test("the 409 cap never cuts a surrogate pair in half", async () => {
+    // A cut between the two code units of an astral character emits a lone
+    // surrogate; JSON.parse then yields U+FFFD and the diff the operator is
+    // shown is not the note. Put the pair exactly ON the boundary.
+    const CAP = 8 * 1024 * 1024;
+    const huge = "# emoji\n\n" + "a".repeat(CAP - "# emoji\n\n".length - 1) + "😀 tail\n";
+    const note = await scratch(huge);
+    const res = await putFile({
+      path: note.rel,
+      content: "# emoji\n\nmy edit\n",
+      base_sha256: hex("a different note entirely\n"),
+    });
+    assert.equal(res.status, 409);
+    const b = await body(res);
+    assert.equal(b.current_content_truncated, true);
+    // One code unit short of the cap, because the pair could not be split.
+    assert.equal(b.current_content?.length, CAP - 1);
+    assert.ok(
+      !/[\uD800-\uDBFF]$/.test(b.current_content ?? ""),
+      "the body must not end on a lone high surrogate",
+    );
+    assert.equal(b.current_content, huge.slice(0, CAP - 1));
+    // Flip: the naive slice DOES end on one, so the guard above is not inert.
+    assert.match(huge.slice(0, CAP), /[\uD800-\uDBFF]$/);
   });
 
   test("a base taken from a DIFFERENT file is 409 and writes nothing", async () => {

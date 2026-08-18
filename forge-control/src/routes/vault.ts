@@ -8,7 +8,8 @@
  *                           → { path, content, sha256, mtime_ms, bytes }
  *   PUT  /api/vault/file    { path, content, base_sha256 }
  *                           → 200 { ok, path, sha256, bytes, snapshot }
- *                           → 409 { error, current_sha256, current_content }
+ *                           → 409 { error, current_sha256, current_content,
+ *                                   current_content_truncated, current_bytes }
  *
  * THE UNDO CONTRACT (02-architecture.md §1.2): every edit snapshots the prior
  * bytes before the new ones land, empty and whitespace-only bodies are refused,
@@ -104,6 +105,20 @@ function describe(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** How much of the conflicting note the 409 carries, in UTF-16 code units.
+ *
+ *  R3 requires the current content to travel with the conflict — a 409 the
+ *  operator cannot diff is a dead end he learns to click through. But the whole
+ *  note is not free: a 256 MB note measured a 3.2 s stall and +224 MB RSS in
+ *  the SINGLE process that also runs the cron tick, the vault sync and Telegram
+ *  delivery, and past V8's string limit it fails outright. 8 Mi characters is
+ *  larger than every note in the vault by three orders of magnitude, so the cap
+ *  is invisible in normal use and only fires on the pathological case.
+ *
+ *  Cut on code units, never on bytes: a byte slice through a multi-byte
+ *  character emits a lone surrogate and the JSON body becomes undecodable. */
+const MAX_CONFLICT_CONTENT = 8 * 1024 * 1024;
+
 /** GET /file?path=… — the exact bytes on disk, with the hash the caller must
  *  hand back as base_sha256 on the matching PUT (R1). */
 r.get("/file", async (c) => {
@@ -184,12 +199,27 @@ r.put("/file", async (c) => {
     if (e instanceof VaultConflictError) {
       console.error("[vault/file:put]", e.message);
       // The current content travels in the body or the conflict is a dead end
-      // the operator learns to click through (R3).
+      // the operator learns to click through (R3) — capped, and the cap is
+      // ANNOUNCED. A client that receives a silently shortened note and offers
+      // it as "the current version" would destroy the tail on the next save.
+      const full = e.currentContent;
+      let prefix = full.slice(0, MAX_CONFLICT_CONTENT);
+      // Never end on a lone high surrogate: the pair's other half is past the
+      // cut, and JSON.stringify would emit an unpaired code unit.
+      const last = prefix.charCodeAt(prefix.length - 1);
+      if (prefix.length < full.length && last >= 0xd800 && last <= 0xdbff) {
+        prefix = prefix.slice(0, -1);
+      }
+      const truncated = prefix.length < full.length;
       return c.json(
         {
           error: e.message,
           current_sha256: e.currentSha256,
-          current_content: e.currentContent,
+          current_content: prefix,
+          // The sha256 is over the WHOLE note, so a client that hands
+          // current_content back as the new body must know it is a prefix.
+          current_content_truncated: truncated,
+          current_bytes: Buffer.byteLength(full, "utf8"),
         },
         409,
       );
