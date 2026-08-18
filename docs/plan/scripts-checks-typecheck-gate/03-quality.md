@@ -253,11 +253,22 @@ transcript lacks the gate's own output; any mutation was left in the tree.
 
 ```bash
 grep -n 'manifest' docs/plan/engine-task-graph/03-quality.md          # no surviving inclusion-list claim
-sed -n '855,865p' docs/plan/engine-task-graph/03-quality.md           # §4 item 9 line
+sed -n '903,911p' docs/plan/engine-task-graph/03-quality.md           # §4 item 9's comment + its command
 head -60 scripts/checks/instrument-manifest.txt                       # ledger header, semantics inverted
 grep -n 'superseded' docs/plan/engine-task-graph/evidence/phase8-tooling.md
+grep -n 'WAIVERS\|waived but clean' scripts/checks/check-instrument-typecheck.sh   # R14's two hooks, implemented
 git log -1 --name-only                                                 # code + docs in ONE commit (standing rule 2)
 ```
+
+**The `sed` window was re-derived at round 500 and moved from `855,865` to
+`903,911`.** Phase 5's own amendment to §3.1 item 9 lengthened the file above
+§4, so the old window read ten lines of item 10's shell-lint block — a gate that
+passes on prose it never looked at. The window is nine lines, not ten, because
+that is exactly item 9's comment plus the command it introduces; if a later
+round moves it again, re-derive with
+`grep -n '§3.1 item 9 — the instruments' docs/plan/engine-task-graph/03-quality.md`
+and correct this block in the same commit. **A line number is pinned to the
+round-500 commit** (`git log -1 --format=%H -- scripts/checks/instrument-manifest.txt`).
 
 **PASS requires:** every corpus location that described the manifest-scoped gate
 now describes the glob-scoped one, or is explicitly marked superseded with a

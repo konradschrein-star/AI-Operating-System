@@ -451,22 +451,60 @@ without reading the source.
 
 ## 7. The successor project (NG3)
 
-Three directories carry the identical hole and are out of scope:
+Three directories carry the identical hole and are out of scope. **Amended at
+round 500 (R34, A5.5): named in files and lines, re-derived on the tree this
+commit ships, not in intentions.**
 
-- `scripts/measure-schedule.ts`, `scripts/import-scraper-places.ts` — outside
-  every `include`; repo root has no `package.json`.
-- `forge-control/scripts/` — nine `smoke-*.ts` plus `probe-usage-router.ts`;
-  `forge-control/tsconfig.json` reads `"include": ["src/**/*.ts"]`.
-- `forge-control-mcp/scripts/smoke-list-tools.ts` — same shape.
+**How to read the pins (standing rule 1).** Every line number below was
+re-resolved by round 500 against the tree it committed. Two of the four files
+are UNCHANGED by that commit, so their numbers hold at its parent
+`60ca3fc` as well and can be checked today. The two in
+`scripts/checks/check-instrument-typecheck.sh` are valid **as of the round-500
+commit** — the one that rewrote steps 8 and 11 — which resolves as:
 
-**What the successor must change, precisely:** the glob in step 5 of §4.1, and
-nothing else — provided the subjects compile under a profile. Those three
-directories are node-side and will most likely want a second profile extending
-`forge-control/tsconfig.json` rather than the web one, which turns the gate's
-single `PROFILE` variable into a two-entry mapping from path prefix to profile.
-That is a fifteen-line change to A2 and one new file beside A1. It is
-deliberately not done here: this project's scope is `scripts/checks/`, and the
-measurement that would justify the second profile has not been taken.
+```bash
+git log -1 --format=%H -- scripts/checks/instrument-manifest.txt   # the round-500 commit
+```
+
+Each pin also carries its SYMBOL, which is what a successor should search for if
+a later commit moves the line. A pin that will not resolve is a finding to
+report, not a footnote to reinterpret.
+
+#### The uncovered subjects, by name — 11 files, counted on disk at round 500
+
+| Directory | Files | Why uncovered today |
+|---|---|---|
+| `scripts/` | `scripts/measure-schedule.ts`, `scripts/import-scraper-places.ts` (2) | outside every `include`; the repo root has no `package.json` |
+| `forge-control/scripts/` | `probe-usage-router.ts` and **seven** `smoke-*.ts` — `smoke-cron-parser.ts`, `smoke-memory-prefetch.ts`, `smoke-project-pause.ts`, `smoke-project-recovery.ts`, `smoke-skills-curator.ts`, `smoke-thread-compressor.ts`, `smoke-webhook-helpers.ts` (8) | `forge-control/tsconfig.json:15` — `"include": ["src/**/*.ts"]` |
+| `forge-control-mcp/scripts/` | `smoke-list-tools.ts` (1) | `forge-control-mcp/tsconfig.json:15` — the same line, the same shape |
+
+*Round 3 of this project said "nine `smoke-*.ts`". There are **seven**;
+re-counted at round 500 with `find forge-control/scripts -name '*.ts'`. The
+directory also holds `canvas-cli.mjs` and `twenty/mint-api-key.mjs`, which are
+`.mjs` and therefore not TypeScript-family files at all — they are neither
+subjects nor uncovered.*
+
+#### What the successor changes, line by line
+
+| File:line (pin) | Symbol | Today | What the successor changes it to |
+|---|---|---|---|
+| `scripts/checks/check-instrument-typecheck.sh:310` *(round-500 commit)* | `SUBJECT_GLOBS` | `SUBJECT_GLOBS=( "scripts/checks/**/*.ts" "scripts/checks/**/*.tsx" )` | append `"scripts/*.ts" "forge-control/scripts/**/*.ts" "forge-control-mcp/scripts/**/*.ts"`. Nothing else in the script moves: the coverage globs, the fidelity prefixes and the `find` second opinion are all derived from this array by `decompose_glob` (the round-3 table below is why). Both glob shapes it supports are represented — `scripts/*.ts` is depth-1 deliberately, so that `scripts/checks/**` is not walked twice. |
+| `scripts/checks/check-instrument-typecheck.sh:311` *(round-500 commit)* | `PROFILE` | `PROFILE="$REPO_ROOT/tsconfig.checks-instruments.json"` | **the single variable that must become a path-prefix→profile mapping.** A parallel array or an associative array from prefix to profile path, longest prefix wins, with a REFUSAL — never a default — when a subject matches no prefix, because a subject compiled under a profile nobody chose is the round-800 flag-list drift returning. `write_config` already takes the profile only through `$PROFILE`, so the mapping is read there and in the three canaries of step 9b, which must then run once per distinct profile. |
+| `tsconfig.checks-instruments.json` *(unchanged at `60ca3fc`)* | the whole file | `extends: ./forge-control-web/tsconfig.json`; the only profile that exists | keep it, unchanged, for `scripts/checks/`. |
+| — (new file, beside the above) | — | — | `tsconfig.checks-node.json`, extending `forge-control/tsconfig.json`, for the three node-side roots. It needs `typeRoots` pinned at `./forge-control/node_modules/@types` for the reason R4 records — automatic `@types` discovery walks up from the *config file's own directory*, and the generated per-file config lives in a temp dir. It does **not** need R2's `jsx` override or R3's four React `paths`: no node-side subject renders JSX. |
+| `forge-control/tsconfig.json:15` *(unchanged at `60ca3fc`)* | `"include"` | `"include": ["src/**/*.ts"]` | **unchanged — do not widen it.** Widening it puts eight scripts into the app's own build and its `pnpm typecheck`, which is a different decision with a different owner (NF8, R6: the profile must not be reachable from any build). The successor reaches those files with the gate's glob, exactly as this project reached `scripts/checks/`. |
+| `forge-control-mcp/tsconfig.json:15` *(unchanged at `60ca3fc`)* | `"include"` | `"include": ["src/**/*.ts"]` | unchanged, for the same reason. |
+
+**The measurement the successor must take first, because this project did not:**
+compile all eleven files above one at a time under the new node-side profile and
+count the reds. That number decides whether the successor is a fifteen-line
+change or a fix-the-instruments project like this one was. Round 3 of this
+project already measured the `scripts/*.ts` half of it — adding that one glob
+and nothing else yielded 44 subjects found, 44 compiled, both root scripts green
+(`evidence/phase2-fixcycle1-round3.md` §3) — so the open question is the eight
+`forge-control/scripts/` files and the one under `forge-control-mcp/`.
+
+It is deliberately not done here: this project's scope is `scripts/checks/`.
 
 The design constraint this imposes on phase 2 is therefore explicit: **the
 subject glob and the profile path must each be a single named variable at the

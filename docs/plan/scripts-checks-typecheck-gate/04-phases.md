@@ -485,10 +485,29 @@ in their `write_set`. The phase write_sets in §10 are disjoint by construction.
 | 2 | `scripts/checks/check-instrument-typecheck.sh`, `.../evidence/phase2-gate.md` |
 | 3 | `scripts/checks/check-orientation.ts`, `check-team-confirm.ts`, `check-team-rows.ts`, `serve-sse-808.ts`, `check-dismiss-peek.tsx`, `check-stop-affordance.tsx`, `.../evidence/instruments-still-detect.md` |
 | 4 | `.../evidence/negative-controls.md` |
-| 5 | `scripts/checks/instrument-manifest.txt`, `docs/plan/engine-task-graph/03-quality.md`, `docs/plan/engine-task-graph/evidence/phase8-tooling.md`, `docs/plan/scripts-checks-typecheck-gate/02-architecture.md` |
+| 5 | `scripts/checks/instrument-manifest.txt`, `scripts/checks/check-instrument-typecheck.sh`, `scripts/deploy/payload-review.json`, `docs/plan/engine-task-graph/03-quality.md`, `docs/plan/engine-task-graph/evidence/phase8-tooling.md`, `docs/plan/engine-task-graph/evidence/round902-screenshot-convention-fixes.md`, `docs/plan/scripts-checks-typecheck-gate/02-architecture.md`, `docs/plan/scripts-checks-typecheck-gate/03-quality.md`, `docs/plan/scripts-checks-typecheck-gate/04-phases.md`, `.../evidence/phase5-ledger.md` |
 | 6 | `.../evidence/phase6-deploy.md` |
 
-Disjoint. No file appears twice.
+**The phase-5 row grew from four files to ten, amended here at round 500 in the
+same commit as the writes (§3.1 item 4 of `03-quality.md`: an undeclared write
+is a finding, and the rule is disclose, not abstain).** Two reasons, both
+structural rather than scope creep. **(1) R14's gate BEHAVIOUR is phase 5's**,
+not phase 2's: the requirement reads "the gate shall print every waiver in its
+transcript on every run, and shall fail if a waived file compiles clean", §8
+maps R14 to phase 5, and the round-200 script marked the two places with hook
+comments saying in its own text that phase 5 implements them in the same commit
+as the ledger. So `check-instrument-typecheck.sh` had to be written by phase 5,
+and phase 2 no longer holds it (phase 2 is complete; the file is not co-written,
+it is handed over — C5). **(2) The round-499 scout missed
+`scripts/deploy/payload-review.json`**, the worst site in the corpus: not prose
+but a LIVE reviewer brief that is rendered into a future task's instructions,
+still telling that reviewer to expect manifest-scoped coverage — the exact A5.1
+breach. `round902-screenshot-convention-fixes.md` was likewise found by
+re-grepping rather than by the scout. `03-quality.md` and `04-phases.md` of this
+project are this row and its phase-5 gate block, which had to move with it.
+`.../evidence/phase5-ledger.md` is D5's evidence file (A5.3).
+
+Otherwise disjoint. No file appears twice.
 
 ### Round 6, fix cycle 3 — undeclared writes, disclosed here per §3.1 item 4
 

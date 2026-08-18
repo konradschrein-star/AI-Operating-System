@@ -29,22 +29,46 @@
 #     the DIRECTORY, not of the diff: all four repetitions of this hole were
 #     found by someone compiling a file nobody had touched in months, and a
 #     diff-scoped gate would not have found any of them.
-#   * THE MANIFEST IS NOT READ BY THIS SCRIPT AT ALL, and the manifest guard
+#   * THE MANIFEST IS NEVER READ AS AN INCLUSION LIST, and the manifest guard
 #     (`git diff --diff-filter=ACMR main..HEAD`) is deleted. The guard was a
 #     good answer to the wrong question — "did the author remember to add their
 #     file to the list" is a question that exists only because there is a list.
 #     With glob enumeration there is nothing to forget: a new instrument is
 #     covered the moment it is written, including by someone who never read the
 #     plan.
+#     THE DISTINCTION MATTERS AND IS NOW LOAD-BEARING, because since round 500
+#     this script DOES read that file — as a WAIVER LEDGER (steps 8 and 11),
+#     never as a list of what to compile. Nothing in it can add a subject and
+#     nothing in it can remove one: SUBJECT_GLOBS decides what is compiled, the
+#     ledger decides only whether an already-observed FAILURE is excused, and
+#     every entry is printed above the verdict on every run. Between round 200
+#     and round 500 the file was read NOWHERE, which was the safe direction
+#     while it still held seven round-800 inclusion entries.
 #   * COMPILATION GOES THROUGH THE PROFILE (`tsconfig.checks-instruments.json`)
 #     via a generated per-file config, not through a hand-rolled flag list. The
 #     old flag list was an approximation of the app's tsconfig that drifted from
 #     it silently — which is why 13 files were red for `--lib`/`--jsx` alone.
 #
-# STANDING RULE 2 IS SATISFIED BY PHASE 5, NOT HERE: the manifest's header, its
-# repurposing into a waiver ledger, `03-quality.md` §3.1 item 9 and
-# `phase8-tooling.md` §5.1 are amended by phase 5 in ONE commit — the documents
-# were not forgotten, they are owned by a round that also owns this file.
+# ---------------------------------------------------------------------------
+# WHAT CHANGED AT ROUND 500 (phase 5) — STANDING RULE 2, DISCHARGED. Round 200
+# said "standing rule 2 is satisfied by phase 5, not here". Phase 5 is the
+# commit that carries these lines, and it landed, in one commit:
+#
+#   * THE WAIVER LEDGER, implemented. `scripts/checks/instrument-manifest.txt`
+#     was inverted from an inclusion list into a waiver ledger holding ZERO
+#     entries, and steps 8 and 11 below stopped being hook comments and became
+#     the two behaviours R14 demands: every waiver is parsed, validated on four
+#     required fields, and PRINTED above the verdict on every run; a waived
+#     subject that compiles clean fails the run with the words "waived but
+#     clean". A header that claimed those properties while this script read the
+#     file nowhere was the corpus lie phase 5 existed to kill.
+#   * THE CORPUS, amended to the gate that exists: `03-quality.md` §3.1 item 9
+#     and its §4 command block, `phase8-tooling.md` §1/§5/§5.1,
+#     `round902-screenshot-convention-fixes.md` control (e), and
+#     `scripts/deploy/payload-review.json` — a LIVE reviewer brief that was
+#     still instructing a future reviewer to expect manifest-scoped coverage.
+#   * `02-architecture.md` §7, the successor project, named in files and lines
+#     rather than in intentions (R34, A5.5).
 #
 # ---------------------------------------------------------------------------
 # WHAT CHANGED AT ROUND 2, FIX CYCLE 1 — the red team got in six times
@@ -225,10 +249,19 @@
 #       error such as TS5083 or TS6053, which is what a corrupt generated
 #       config produces — is a failure too, never silently ignored.
 #   (g) A STALE WAIVER — a file excused from the gate whose excuse has expired.
-#       NOT IMPLEMENTED HERE. The waiver ledger (R14/R15) is phase 5's, and the
-#       two hooks below mark exactly where its two steps belong. Until phase 5
-#       lands there are no waivers, so nothing can be waived wrongly; the gate
-#       compiles every subject it finds and excuses none.
+#       IMPLEMENTED HERE SINCE ROUND 500, in the two steps the round-200 hooks
+#       reserved. What closes it: a waived subject that compiles CLEAN fails
+#       the run with the words "waived but clean", naming the path, so an
+#       excuse cannot outlive the error it excuses. Three further failures
+#       close the neighbouring holes — a waived path that is not on disk, a
+#       waived path this gate does not compile at all, and an entry missing any
+#       of the four required fields — because a waiver that names nothing, or
+#       justifies nothing, is an exclusion wearing a ledger's clothes. And the
+#       ledger cannot hide: every entry is printed above the verdict on every
+#       run, and an EMPTY ledger prints that it is empty rather than printing
+#       nothing. The ledger never removes a subject from the compile loop; it
+#       reclassifies an already-observed FAIL into an excused WAIVED and no
+#       more (step 11).
 #   (h) A SUBJECT THAT COMPILES BECAUSE IT ASKED NOT TO BE COMPILED — one
 #       `// @ts-nocheck` line. Refused by step 10b, on every subject, every
 #       run, whether or not this branch introduced it.
@@ -236,8 +269,21 @@
 # Usage:  bash scripts/checks/check-instrument-typecheck.sh
 # Exit:   0 = every subject found on disk compiled clean, with zero profile
 #             fidelity violations, zero uncovered TypeScript-family files, zero
-#             suppression directives, zero missing subjects and a reconciled
-#             census. Any other outcome is non-zero and says which counter.
+#             suppression directives, zero missing subjects, zero waiver-ledger
+#             errors, zero waived-but-clean subjects and a reconciled census.
+#             Any other outcome is non-zero and says which counter.
+#
+#         The last two arrived at round 500 with the waiver ledger (R14):
+#           ledger errors     — an entry missing one of its four required
+#                               fields, a field block with no path, a waived
+#                               path absent from disk, or a waived path this
+#                               gate does not compile. Each is named with the
+#                               line number in the ledger.
+#           waived but clean  — a waived subject that compiled with zero
+#                               diagnostics. The excuse outlived the error.
+#         Neither can turn a failure into a pass: a waiver reclassifies an
+#         observed FAIL into an excused WAIVED and changes nothing else, and an
+#         INVALID entry excuses nothing at all.
 #
 # `-E` (errtrace) is new at round 2 and is not decoration: an ERR trap is NOT
 # inherited by shell functions, command substitutions or subshells without it.
@@ -836,24 +882,172 @@ fi
 echo
 
 # ---------------------------------------------------------------------------
-# 8. PHASE 5 HOOK — READ THE WAIVER LEDGER (R14).
+# 8. READ THE WAIVER LEDGER (R14, implemented at round 500; the round-200 hook
+#    that reserved this place is discharged).
 #
-#    `scripts/checks/instrument-manifest.txt` is repurposed by phase 5 from an
-#    inclusion list into a waiver ledger, and this is where reading it belongs:
-#    parse its four required fields per entry (path, diagnostic, reason,
-#    owner), fail on an entry missing a field, and print EVERY waiver here,
-#    above the verdict, because a waiver that is not printed is an exclusion
-#    nobody sees.
+#    `scripts/checks/instrument-manifest.txt` is a WAIVER LEDGER — it listed
+#    what IS compiled, it now lists what is NOT, and the target is that it
+#    lists nothing. This step PARSES and VALIDATES it. It does not print: the
+#    WAIVERS block lives at step 11, after the compile loop, so that every
+#    waiver can be printed with the diagnostic the compiler ACTUALLY produced
+#    beside the one the ledger records. Printing here would mean printing the
+#    recorded half alone, which is the half that goes stale.
 #
-#    NOT IMPLEMENTED AT ROUND 200, DELIBERATELY. Today that file still holds
-#    seven bare paths in round-800 inclusion-list form. A ledger reader pointed
-#    at it now would read all seven as waivers, find all seven compile clean,
-#    and report seven "waived but clean" violations — destroying acceptance
-#    criterion A2.2's "exactly 6 failures" with noise from a file this phase
-#    does not own. Phase 5 rewrites the file and implements this hook in the
-#    same commit. Until then this gate reads that file NOWHERE and waives
-#    NOTHING, which is the safe direction: every subject is compiled.
+#    THE GRAMMAR, and it is deliberately unforgiving. Blank lines and `#`
+#    comments are ignored, EXCEPT that a line of the exact shape
+#    `# <field> …: <value>` — one space after the `#`, then the field name —
+#    is a FIELD LINE, and the four field lines immediately preceding a bare
+#    path constitute that path's record. Anything else (a blank line, an
+#    ordinary comment) ENDS a field block. Hence:
+#
+#      * a bare path with any of `path`, `diagnostic`, `reason`, `owner`
+#        missing or empty is an ERROR naming the path and the missing field(s);
+#      * a field block with no bare path after it is an ERROR too — a
+#        justification that excuses nothing is a note, and notes are prose;
+#      * a waived path that is NOT ON DISK is an ERROR: a waiver for a file
+#        that is gone is stale by definition;
+#      * a waived path that is not among the enumerated SUBJECTS is an ERROR:
+#        a waiver must name something this gate actually compiles, or it is
+#        excusing nothing and hiding that fact.
+#
+#    "One space after the `#`" is why the ledger's own header indents its
+#    format example: an example written in live shape would be parsed as a live
+#    record, and the header says so where it does it.
+#
+#    THE `path` FIELD AND THE BARE PATH ARE BOTH REQUIRED AND MUST AGREE. The
+#    bare path is what the gate matches against; the field exists so that a
+#    record read on its own is complete, and a disagreement between the two is
+#    an ERROR rather than a silent preference for one of them.
+#
+#    NO ENTRY IS EVER EXCLUDED FROM COMPILATION HERE OR ANYWHERE. This step
+#    runs AFTER enumeration and touches neither SUBJECTS nor the loop.
 # ---------------------------------------------------------------------------
+LEDGER="$REPO_ROOT/scripts/checks/instrument-manifest.txt"
+
+if [ ! -f "$LEDGER" ]; then
+  echo "REFUSING TO RUN: no waiver ledger at $LEDGER" >&2
+  echo "  The file is checked in and is expected to exist even when it is EMPTY," >&2
+  echo "  which is its target state. Its absence is not \"no waivers\": it is the" >&2
+  echo "  first step towards the next exclusion being an \`--exclude\` flag nobody" >&2
+  echo "  prints (02-architecture.md §4.6). Restore it from git." >&2
+  exit 1
+fi
+
+WAIVER_PATHS=()          # the bare path of each entry, in ledger order
+WAIVER_DIAGNOSTIC=()
+WAIVER_REASON=()
+WAIVER_OWNER=()
+WAIVER_LINENO=()
+WAIVER_VALID=()          # 1 = all four fields present and consistent
+LEDGER_ERRORS=0
+LEDGER_ERROR_LOG=""
+
+ledger_error() {  # $1 = the message, already naming the line and the path
+  LEDGER_ERRORS=$((LEDGER_ERRORS + 1))
+  LEDGER_ERROR_LOG+="  LEDGER ERROR $1"$'\n'
+}
+
+# The pending field block. Empty strings mean "not seen"; a field seen with an
+# empty value is recorded as the sentinel below so that "absent" and "present
+# but empty" are the same ERROR with the same message and neither is silent.
+pend_path=""; pend_diag=""; pend_reason=""; pend_owner=""
+pend_start=0; pend_any=0
+
+ledger_flush_dangling() {  # a field block that never reached a bare path
+  if [ "$pend_any" -eq 1 ]; then
+    ledger_error "at line $pend_start: a field block with NO bare path after it. Fields: ${pend_path:+path }${pend_diag:+diagnostic }${pend_reason:+reason }${pend_owner:+owner }— an entry is four field lines AND the path, and a justification that excuses nothing is a note, not a waiver."
+  fi
+  pend_path=""; pend_diag=""; pend_reason=""; pend_owner=""
+  pend_start=0; pend_any=0
+  return 0
+}
+
+ledger_lineno=0
+while IFS= read -r ledger_line || [ -n "$ledger_line" ]; do
+  ledger_lineno=$((ledger_lineno + 1))
+
+  if [ -z "${ledger_line//[[:space:]]/}" ]; then
+    ledger_flush_dangling
+    continue
+  fi
+
+  # A FIELD LINE: `# ` then the field name immediately, then optional padding,
+  # then `:`, then the value. Anything else beginning with `#` is prose.
+  if [[ "$ledger_line" =~ ^\#\ (path|diagnostic|reason|owner)[[:space:]]*:(.*)$ ]]; then
+    ledger_field="${BASH_REMATCH[1]}"
+    ledger_value="${BASH_REMATCH[2]}"
+    # Trim both ends; a field whose value is only whitespace stays empty and is
+    # reported as missing.
+    ledger_value="${ledger_value#"${ledger_value%%[![:space:]]*}"}"
+    ledger_value="${ledger_value%"${ledger_value##*[![:space:]]}"}"
+    if [ "$pend_any" -eq 0 ]; then pend_start="$ledger_lineno"; fi
+    pend_any=1
+    case "$ledger_field" in
+      path)       pend_path="$ledger_value" ;;
+      diagnostic) pend_diag="$ledger_value" ;;
+      reason)     pend_reason="$ledger_value" ;;
+      owner)      pend_owner="$ledger_value" ;;
+    esac
+    continue
+  fi
+
+  case "$ledger_line" in
+    \#*) ledger_flush_dangling; continue ;;
+  esac
+
+  # A BARE PATH. Leading and trailing whitespace is stripped — a ledger is a
+  # hand-edited file and an entry indented by a stray space must still be read,
+  # loudly, rather than silently excusing nothing.
+  ledger_entry="${ledger_line#"${ledger_line%%[![:space:]]*}"}"
+  ledger_entry="${ledger_entry%"${ledger_entry##*[![:space:]]}"}"
+
+  # `[ … ] && var+=…` would be wrong here, not merely unidiomatic: under
+  # `set -e` the LAST such line evaluating false makes the compound statement
+  # the loop's exit status and aborts the run — an entry with all four fields
+  # present would kill the gate. `if` blocks have no exit status to inherit.
+  ledger_missing=""
+  if [ -z "$pend_path" ];   then ledger_missing+="path "; fi
+  if [ -z "$pend_diag" ];   then ledger_missing+="diagnostic "; fi
+  if [ -z "$pend_reason" ]; then ledger_missing+="reason "; fi
+  if [ -z "$pend_owner" ];  then ledger_missing+="owner "; fi
+
+  ledger_valid=1
+  if [ -n "$ledger_missing" ]; then
+    ledger_valid=0
+    ledger_error "at line $ledger_lineno: the entry '$ledger_entry' is missing required field(s): ${ledger_missing% }. All four of path/diagnostic/owner/reason are required by 02-architecture.md §4.6, and an entry without them excuses NOTHING — this run still counts its subject's failures."
+  elif [ "$pend_path" != "$ledger_entry" ]; then
+    ledger_valid=0
+    ledger_error "at line $ledger_lineno: the entry's \`path\` field says '$pend_path' but the bare path says '$ledger_entry'. The two must agree; this gate matches on the bare path and will not guess which one was meant."
+  fi
+
+  if [ ! -f "$REPO_ROOT/$ledger_entry" ]; then
+    ledger_valid=0
+    ledger_error "at line $ledger_lineno: the waived path '$ledger_entry' is NOT ON DISK. A waiver for a file that is gone is stale by definition — delete the entry."
+  else
+    ledger_in_subjects=0
+    for ledger_subject in "${SUBJECTS[@]}"; do
+      if [ "$ledger_subject" = "$ledger_entry" ]; then ledger_in_subjects=1; break; fi
+    done
+    if [ "$ledger_in_subjects" -eq 0 ]; then
+      ledger_valid=0
+      ledger_error "at line $ledger_lineno: the waived path '$ledger_entry' is not among the $FOUND subject(s) this gate compiles (${SUBJECT_GLOBS[*]}). A waiver must name something this gate actually reads, or it excuses nothing and hides the fact that it does."
+    fi
+  fi
+
+  WAIVER_PATHS+=( "$ledger_entry" )
+  WAIVER_DIAGNOSTIC+=( "$pend_diag" )
+  WAIVER_REASON+=( "$pend_reason" )
+  WAIVER_OWNER+=( "$pend_owner" )
+  WAIVER_LINENO+=( "$ledger_lineno" )
+  WAIVER_VALID+=( "$ledger_valid" )
+
+  pend_path=""; pend_diag=""; pend_reason=""; pend_owner=""
+  pend_start=0; pend_any=0
+done < "$LEDGER"
+ledger_flush_dangling
+unset ledger_line ledger_field ledger_value ledger_entry ledger_missing
+unset ledger_valid ledger_in_subjects ledger_subject
+WAIVER_COUNT=${#WAIVER_PATHS[@]}
 
 # ---------------------------------------------------------------------------
 # 9. PROVENANCE — before any verdict. A harness that does not expose its own
@@ -1225,6 +1419,14 @@ FAILED=0
 MISSING=0
 SUPPRESSED=0
 
+# WHAT EACH SUBJECT DID, keyed by its repo-relative path — the input to the
+# waiver reconciliation of step 11 (round 500). Associative rather than
+# index-parallel because the ledger names PATHS, and a lookup by path is the
+# one thing that cannot drift out of step with the loop. Bash array keys are
+# byte strings, so a subject whose name carries a newline is still a valid key.
+declare -A SUBJECT_OUTCOME=()      # path -> clean | fail | missing
+declare -A SUBJECT_FIRST_DIAG=()   # path -> the compiler's first output line
+
 # ---------------------------------------------------------------------------
 # 10. COMPILE — one file per invocation (R11). Compiling them together merges
 #     42 unrelated entry points into one program, which is how round 800's
@@ -1312,6 +1514,7 @@ for subject in "${SUBJECTS[@]}"; do
   if [ ! -f "$abs" ]; then
     printf '  MISSING %-45s %s\n' "$subject" "enumerated but ABSENT at compile time — NOT compiled"
     MISSING=$((MISSING + 1))
+    SUBJECT_OUTCOME[$subject]="missing"
     continue
   fi
 
@@ -1344,7 +1547,15 @@ for subject in "${SUBJECTS[@]}"; do
 
   if [ "$rc" -eq 0 ] && [ -z "$OUT" ]; then
     printf '  PASS %-48s %s\n' "$subject" "exit 0, 0 diagnostics"
+    SUBJECT_OUTCOME[$subject]="clean"
   else
+    SUBJECT_OUTCOME[$subject]="fail"
+    # The FIRST line of the compiler's output, taken by parameter expansion so
+    # that no subprocess and no `|| true` sits between the compiler and the
+    # record. It is what step 11 prints beside the ledger's `diagnostic` field:
+    # a waiver whose recorded diagnostic no longer matches what the compiler
+    # says is a waiver written for a different error.
+    SUBJECT_FIRST_DIAG[$subject]="${OUT%%$'\n'*}"
     printf '  FAIL %-48s %s\n' "$subject" "exit $rc"
     # R21: the compiler's FULL, UNFILTERED output for this subject. No head, no
     # truncation, no summarising — the indent is the only thing added.
@@ -1355,17 +1566,120 @@ done
 echo
 
 # ---------------------------------------------------------------------------
-# 11. PHASE 5 HOOK — WAIVER RECONCILIATION (R14).
+# 11. WAIVER RECONCILIATION, AND THE WAIVERS BLOCK (R14, implemented at round
+#     500; the round-200 hook that reserved this place is discharged).
 #
-#     When phase 5 lands the ledger, this is where "waived but clean" belongs:
-#     any subject listed in the ledger that compiled clean above FAILS the run.
-#     Stale waivers are the mechanism by which an exclusion list outlives its
-#     reason, and that check is what closes it.
+#     EVERY SUBJECT WAS STILL COMPILED. Look at the loop above: it has no
+#     branch that consults the ledger, and step 8 runs after enumeration and
+#     writes nothing into SUBJECTS. A waiver acts on the VERDICT, never on the
+#     subject list, and this file must not grow an `--exclude` path — the whole
+#     argument for keeping a ledger instead of a flag is that a flag removes
+#     the file from the transcript while a ledger cannot.
 #
-#     NOT IMPLEMENTED AT ROUND 200 — see the hook at step 8 for why. There are
-#     no waivers to reconcile, so no waiver can be stale, and every subject
-#     above was compiled rather than excused.
+#     WHAT A VALID WAIVER DOES, exactly one thing: an already-observed FAIL is
+#     reclassified as an excused WAIVED. `FAILED` goes down by one and `WAIVED`
+#     goes up by one, and the entry is printed with BOTH diagnostics side by
+#     side — the one the ledger records and the one the compiler produced this
+#     run — because a waiver written for a different error is a waiver nobody
+#     re-read.
+#
+#     WHAT A WAIVER CANNOT DO:
+#       * excuse a subject that compiled CLEAN. That is a FAILURE, in the exact
+#         words "waived but clean", naming the path. Stale waivers are how an
+#         exclusion list outlives its reason: the error gets fixed, the excuse
+#         does not get deleted, and every later reader believes the file is
+#         still broken.
+#       * excuse anything at all while INVALID. An entry missing a field, or
+#         naming a path that is absent or not compiled here, was counted as a
+#         ledger error at step 8 and is printed below as INVALID; its subject's
+#         failure stays a failure.
+#       * excuse a MISSING subject. Absence is not a type error and R19 owns it.
+#
+#     THE BLOCK PRINTS ON EVERY RUN, in the shape of its neighbours, above the
+#     verdict — including when the ledger is empty, which is its target state.
+#     A block that disappears when it has nothing to say is a block nobody
+#     notices has stopped running.
 # ---------------------------------------------------------------------------
+WAIVED=0
+WAIVED_CLEAN=0
+WAIVER_REPORT=""
+
+waiver_index=0
+while [ "$waiver_index" -lt "$WAIVER_COUNT" ]; do
+  w_path="${WAIVER_PATHS[$waiver_index]}"
+  w_line="${WAIVER_LINENO[$waiver_index]}"
+  w_valid="${WAIVER_VALID[$waiver_index]}"
+  w_diag="${WAIVER_DIAGNOSTIC[$waiver_index]}"
+  w_reason="${WAIVER_REASON[$waiver_index]}"
+  w_owner="${WAIVER_OWNER[$waiver_index]}"
+  w_outcome="${SUBJECT_OUTCOME[$w_path]:-not-a-subject}"
+  w_observed="${SUBJECT_FIRST_DIAG[$w_path]:-}"
+  waiver_index=$((waiver_index + 1))
+
+  if [ "$w_valid" -ne 1 ]; then
+    WAIVER_REPORT+="  INVALID $w_path (ledger line $w_line) — excuses nothing; see the LEDGER ERROR line(s) below."$'\n'
+    continue
+  fi
+
+  case "$w_outcome" in
+    fail)
+      FAILED=$((FAILED - 1))
+      WAIVED=$((WAIVED + 1))
+      WAIVER_REPORT+="  WAIVED  $w_path (ledger line $w_line)"$'\n'
+      WAIVER_REPORT+="    recorded diagnostic : $w_diag"$'\n'
+      WAIVER_REPORT+="    observed diagnostic : $w_observed"$'\n'
+      WAIVER_REPORT+="    reason              : $w_reason"$'\n'
+      WAIVER_REPORT+="    owner               : $w_owner"$'\n'
+      ;;
+    clean)
+      WAIVED_CLEAN=$((WAIVED_CLEAN + 1))
+      WAIVER_REPORT+="  WAIVED BUT CLEAN $w_path (ledger line $w_line) — waived but clean: this subject"$'\n'
+      WAIVER_REPORT+="    compiled with ZERO diagnostics, so its waiver is stale and this run FAILS."$'\n'
+      WAIVER_REPORT+="    recorded diagnostic : $w_diag"$'\n'
+      WAIVER_REPORT+="    observed diagnostic : (none — the file compiles)"$'\n'
+      WAIVER_REPORT+="    owner               : $w_owner"$'\n'
+      WAIVER_REPORT+="    Delete the entry. An excuse that outlives its error tells every later"$'\n'
+      WAIVER_REPORT+="    reader the file is still broken."$'\n'
+      ;;
+    missing)
+      WAIVER_REPORT+="  WAIVED (subject MISSING) $w_path (ledger line $w_line) — the subject vanished"$'\n'
+      WAIVER_REPORT+="    between enumeration and compilation. A waiver excuses a type error, never"$'\n'
+      WAIVER_REPORT+="    an absence: the MISSING counter above still governs this run (R19)."$'\n'
+      ;;
+    *)
+      # Unreachable: step 8 already made "waived path that is not a subject" a
+      # ledger error and therefore INVALID. Kept as a refusal rather than a
+      # silent skip, because an unreachable branch that falls through quietly is
+      # how a later edit turns a failure into a pass.
+      echo "REFUSING TO CERTIFY: waiver '$w_path' (ledger line $w_line) passed step 8's" >&2
+      echo "  validation but has no compile outcome. Step 8 and step 11 disagree about" >&2
+      echo "  what a valid waiver is, and this gate will not issue a verdict on that." >&2
+      exit 1
+      ;;
+  esac
+done
+unset waiver_index w_path w_line w_valid w_diag w_reason w_owner w_outcome w_observed
+
+echo "WAIVERS — every exclusion is printed here, on every run (R14, 02-architecture.md §4.6)"
+printf '  ledger: %s — %d entry/entries, %d error(s), %d waived, %d waived but clean\n' \
+  "scripts/checks/instrument-manifest.txt" "$WAIVER_COUNT" "$LEDGER_ERRORS" "$WAIVED" "$WAIVED_CLEAN"
+if [ "$WAIVER_COUNT" -eq 0 ] && [ "$LEDGER_ERRORS" -eq 0 ]; then
+  echo "  ok: 0 waivers — the ledger is empty"
+  echo "  Every subject above was compiled and none was excused. An empty ledger is"
+  echo "  this project's target state, not an oversight: the file exists so that the"
+  echo "  NEXT exclusion has somewhere loud to live instead of becoming an --exclude"
+  echo "  flag nobody prints."
+else
+  printf '%s' "$WAIVER_REPORT"
+  printf '%s' "$LEDGER_ERROR_LOG"
+  if [ "$LEDGER_ERRORS" -ne 0 ] || [ "$WAIVED_CLEAN" -ne 0 ]; then
+    echo "  This run FAILS because of the line(s) above. Adding a path to the ledger"
+    echo "  EXCUSES a failure; it never obtains coverage — coverage is by glob and is"
+    echo "  automatic. Read scripts/checks/instrument-manifest.txt's header for the"
+    echo "  four required fields."
+  fi
+fi
+echo
 
 # ---------------------------------------------------------------------------
 # 10b (report). SUPPRESSION DIRECTIVES — gathered during the loop.
@@ -1378,8 +1692,11 @@ else
   echo "  them. A suppressed instrument compiles clean and checks nothing, which is"
   echo "  the cheapest way to turn this gate green and the one R29's rationale"
   echo "  names outright. Fix the type, or — if it genuinely cannot be fixed now —"
-  echo "  phase 5's waiver ledger is where an exclusion is allowed to live, in the"
-  echo "  open, with an owner."
+  echo "  scripts/checks/instrument-manifest.txt is the waiver ledger, and it is"
+  echo "  where an exclusion is allowed to live: in the open, with a diagnostic, a"
+  echo "  reason and an owner, printed in the WAIVERS block above on every run. A"
+  echo "  waiver excuses a FAILURE; it does not make a suppression acceptable, and"
+  echo "  a waived file that compiles clean fails this gate as well."
 fi
 echo
 
@@ -1450,12 +1767,24 @@ echo
 #     counter is zero.
 # ---------------------------------------------------------------------------
 if [ "$FAILED" -eq 0 ] && [ "$FIDELITY" -eq 0 ] && [ "$MISSING" -eq 0 ] \
-   && [ "$CENSUS_MISMATCH" -eq 0 ] && [ "$UNCOVERED_COUNT" -eq 0 ] && [ "$SUPPRESSED" -eq 0 ]; then
-  printf 'check-instrument-typecheck.sh PASSED — %d/%d subjects compiled clean.\n' \
-    "$COMPILED" "$FOUND"
+   && [ "$CENSUS_MISMATCH" -eq 0 ] && [ "$UNCOVERED_COUNT" -eq 0 ] && [ "$SUPPRESSED" -eq 0 ] \
+   && [ "$LEDGER_ERRORS" -eq 0 ] && [ "$WAIVED_CLEAN" -eq 0 ]; then
+  # A WAIVED SUBJECT DID NOT COMPILE CLEAN, and the verdict line must not say
+  # it did — that sentence is the one a reader quotes. With an empty ledger
+  # (the target state) the first branch prints exactly what round 200 printed,
+  # byte for byte, which is what makes this whole change a no-op on an
+  # unchanged tree.
+  if [ "$WAIVED" -eq 0 ]; then
+    printf 'check-instrument-typecheck.sh PASSED — %d/%d subjects compiled clean.\n' \
+      "$COMPILED" "$FOUND"
+  else
+    printf 'check-instrument-typecheck.sh PASSED — %d/%d subjects compiled clean, %d WAIVED (named in the WAIVERS block above).\n' \
+      "$(( COMPILED - WAIVED ))" "$FOUND" "$WAIVED"
+  fi
   exit 0
 fi
 
-printf 'check-instrument-typecheck.sh FAILED — %d type failure(s), %d fidelity violation(s), %d missing subject(s), %d uncovered file(s), %d suppression(s), census mismatch %d.\n' \
-  "$FAILED" "$FIDELITY" "$MISSING" "$UNCOVERED_COUNT" "$SUPPRESSED" "$CENSUS_MISMATCH" >&2
+printf 'check-instrument-typecheck.sh FAILED — %d type failure(s), %d fidelity violation(s), %d missing subject(s), %d uncovered file(s), %d suppression(s), %d ledger error(s), %d waived but clean, census mismatch %d.\n' \
+  "$FAILED" "$FIDELITY" "$MISSING" "$UNCOVERED_COUNT" "$SUPPRESSED" \
+  "$LEDGER_ERRORS" "$WAIVED_CLEAN" "$CENSUS_MISMATCH" >&2
 exit 1
