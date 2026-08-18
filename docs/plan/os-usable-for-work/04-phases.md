@@ -360,6 +360,19 @@ depending on `B6b` is what makes ruled-before-implemented structural.
 
 **Round 700 · workstream `main` · requirements R83–R90 · depends on every gating reviewer**
 
+> **CORRECTION TO THE PHASE-7 PLANNER'S BRIEF (round 0, after seeding).** That brief tells you to list
+> the project's tasks with `curl -s http://127.0.0.1:7700/api/projects/<id>/tasks`. **That path is
+> POST-only and answers `404 Not Found` on GET.** The corpus is authoritative and this is the correct
+> lookup:
+>
+> ```bash
+> curl -s http://127.0.0.1:7700/api/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a
+> # → {"project": {...}, "tasks": [ {id, round, role, workstream, status, title, depends_on}, ... ]}
+> ```
+>
+> `GET /api/projects/board` also exists but returns active/blocked tasks across **every** project, so
+> filter by `project_id` if you use it. Everything else in the phase-7 brief stands.
+
 ### Scope
 
 1. **Integration tasks** — one per non-`main` workstream, each carrying the union of its lane's
