@@ -1,0 +1,45 @@
+# instrument-manifest.txt — the TypeScript instruments this branch is
+# responsible for compiling. Read by scripts/checks/check-instrument-typecheck.sh
+# (universal gate item 9, 03-quality.md §3.1).
+#
+# One repo-relative path per line. Blank lines and `#` comments are ignored.
+# Each entry is typechecked in ITS OWN tsc invocation.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS FILE EXISTS AT ALL. `scripts/checks/*.ts` is compiled by NOTHING.
+# `tsx` strips types without checking them, and the directory sits outside both
+# tsconfig `include` lists — `forge-control/tsconfig.json` reads
+# `"include": ["src/**/*.ts"]` and `forge-control-web`'s covers its own app. So
+# the fleet's verification instruments are the least-verified code in the repo:
+# a check script can carry a type error for months and still run green, because
+# nothing ever asked the compiler. This is the THIRD instance of the same hole —
+# phase 7's `measure-schedule.ts` ("Added round 212" in 03-quality.md §3.2),
+# phase 6's `forge-control-web/` half ("Added round 223"), and phase 6B's
+# whole-directory measurement — and this gate is the repair.
+#
+# ---------------------------------------------------------------------------
+# WHY A MANIFEST AND NOT THE WHOLE DIRECTORY. MEASURED AT ROUND 800.
+# 6B's invocation over all 25 `scripts/checks/*.ts` in ONE invocation does not
+# pass and CANNOT be made to pass by this project:
+#   * compiled together they pull `forge-control-web/app` into the program, and
+#     `useAutogrow.ts` and `tokens.ts` then fail on DOM lib resolution;
+#   * three other projects' scripts are independently red — `check-orientation.ts`
+#     (3 type errors plus a `--jsx` failure), `serve-sse-808.ts` (implicit
+#     `any`s), `check-chat-rich.tsx`.
+# A gate that can only ever be disclosed is the failure standing rule 2 exists to
+# kill (03-quality.md §4). So the gate is scoped to what this branch OWNS and can
+# fix, and it GROWS BY CONSTRUCTION: check-instrument-typecheck.sh fails, by
+# name, if any `scripts/checks/*.ts` this branch added or modified is missing
+# from this file. Closing the rest of the directory is the DoD-6 measurement
+# project's job, and that project's goal says so.
+#
+# MEASURED AT ROUND 800: one file per invocation, all six below exit 0 with zero
+# errors.
+# ---------------------------------------------------------------------------
+
+scripts/checks/check-close-gate.ts
+scripts/checks/check-fix-chain-graph.ts
+scripts/checks/check-plan-api.ts
+scripts/checks/check-plan-store.ts
+scripts/checks/check-project-metadata.ts
+scripts/checks/check-task-api.ts
