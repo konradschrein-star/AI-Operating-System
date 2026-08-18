@@ -249,6 +249,22 @@ ALL PASS — 19 checks
 EXIT=0
 ```
 
+> **SUPERSEDED AT ROUND 820 — and this transcript is left standing, because a
+> record edited to match today's code is the same rot one level worse.** The
+> `19 checks` above is what round 960 really measured and it was **green for
+> the wrong reason**: rounds 961 and 819 both mutation-proved that §3's
+> `PROJECT_MAX_WORKSTREAMS=6` row and §5's "the cap §3.6 exercises" were
+> *labels*, not executions — this file imported neither the constant nor R39's
+> guard, so `PROJECT_MAX_WORKSTREAMS=2` printed this same `ALL PASS — 19
+> checks, exit 0` against an engine that would `400` the third lane, and a
+> same-length `(9 unless the host overrides it)` edit passed it 19/19. Round 820
+> imports the constant, derives §3's table from it, executes
+> `workstreamCapRefusal()` at the cap and one past it (new §5), and parses the
+> guide's advertised default (new §6.6). The instrument now reads **27 checks**
+> at the default cap and **25** under `PROJECT_MAX_WORKSTREAMS=2` — a count that
+> moves with the cap is the evidence that the cap is read. See
+> `evidence/round820-fix-cycle-1.md` §2 for both mutations re-run and killed.
+
 §3 is the criterion itself as arithmetic: six independent tasks — no
 dependencies, no shared files, the cheapest parallelism there is — split across
 k workstreams reach width k. The retired criterion asked about files; none of
@@ -306,9 +322,30 @@ new gate asserting its absence; the rest are records, annotated in this commit
 rather than rewritten, because a record edited to match today's code is the same
 rot one level worse:
 
+**Every line number below is pinned to `5d0e0c0`** — the commit that retired the
+sentence, and the tree this sweep was run against. *Added round 820 (round 819's
+finding 7, standing rule 1): these were written as bare `file:NN` pins with no
+SHA. They resolved correctly when written and still resolve at `dc94603`, so
+this is rot risk rather than an error — but a mutation ledger is exactly the
+document whose pins move under it, and round 820 moves two of these files
+itself.* Do not read the numbers; **re-derive them**, which is what the pin is
+for:
+
+```bash
+git grep -n "truly need one file concurrently" 5d0e0c0 -- \
+  scripts/checks/check-workstream-claim.ts \
+  forge-control/src/lib/project-tick.test.ts \
+  docs/plan/engine-task-graph/01-requirements.md \
+  docs/plan/engine-task-graph/evidence/phase8-verify.md \
+  docs/plan/engine-task-graph/evidence/phase5-prompts.md
+```
+
 ```text
-scripts/checks/check-workstream-claim.ts:18,315   the gate (header + assertion)
-forge-control/src/lib/project-tick.test.ts:2077,2564,2687  the gate clause + NF7 row
+# @ 5d0e0c0 — cited by symbol first, line number second
+scripts/checks/check-workstream-claim.ts:18,315   the gate: the header's retired-criterion
+                                                  paragraph, and §5's `check("5.5 …")` assertion
+forge-control/src/lib/project-tick.test.ts:2077,2564,2687  the R48 clause gate, round 960's case,
+                                                  and the NF7 LEDGER row "round 960"
 docs/plan/engine-task-graph/01-requirements.md:1139         R48's amendment, quoting what it retires
 docs/plan/engine-task-graph/evidence/phase8-verify.md:784,951  round 815's finding — annotated "CLOSED AT ROUND 960"
 docs/plan/engine-task-graph/evidence/phase5-prompts.md:100     phase 5A's snapshot — annotated as superseded
@@ -370,8 +407,8 @@ round chose to make**: see `04-phases.md` §10.
 | `scripts/checks/measure-prompt-baseline.sh` (3 ledger refs + HEAD) | PASS — 17 controls, 0 failures; HEAD 12227 |
 | `pnpm test` (forge-control) | **1294/1294 pass**, 0 fail, 239 suites |
 | `tsx --test src/lib/project-tick.test.ts` | 152/152 pass — includes R48's new clause gate and NF7's round-960 row |
-| `tsx ../scripts/checks/check-workstream-claim.ts` | ALL PASS — 19 checks, exit 0 |
-| `bash scripts/checks/check-instrument-typecheck.sh` | PASSED — 8/8 entries compiled clean, manifest complete |
+| `tsx ../scripts/checks/check-workstream-claim.ts` | ALL PASS — 19 checks, exit 0 — **superseded round 820, see §3's note: green for the wrong reason, now 27** |
+| `bash scripts/checks/check-instrument-typecheck.sh` | PASSED — 8/8 entries compiled clean, manifest complete — **superseded round 820: this branch had not merged `main`, whose round-500 rewrite globs the directory; 43/43 after the merge** |
 | `bash scripts/checks/check-await-seed.sh` | PASSED — 7/7 cases, 56/56 assertions |
 | M1–M6 (§4) | every one red, every file restored by sha |
 

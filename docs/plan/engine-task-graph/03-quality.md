@@ -195,6 +195,46 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    `git log --name-only` for that task's commits against its declared
    `write_set`. An undeclared write is a finding. This is satisfiable exactly
    because write-sets are declared rather than reconstructed.
+
+   **A FIX-CYCLE ROW'S `write_set` IS `[]` BY CONSTRUCTION, AND THIS CLAUSE IS
+   AMENDED HERE RATHER THAN DISCLOSED AGAIN — round 820, closing round 819's
+   finding 6 / round 961's finding 6.** Both reviewers reported empty
+   `write_set` columns on builder rows and both routed the fix to "the seeding
+   site". **The seeding site cannot comply.** `fixChainGraphFields()`
+   (`lib/project-reconcile.ts`, R42) computes a fix builder's write-set as *the
+   union of its GATING tasks' write-sets*, and its gating tasks are the
+   **reviewers** — who by R31's deliberate design declare none (`check-task-api.ts`
+   case 14c: "a reviewer with no write_set is created, which is what keeps the
+   gate a rule rather than a blanket refusal"). The union of empty sets is
+   empty. So **every fix-cycle builder this engine has ever seeded, or ever
+   will, is born with `write_set = []`** — task `3610b0fc` (round 820) and task
+   `c527a985` (round 962) both are, and no brief, flag or `strict_write_sets`
+   setting changes it, because `createFixChain()` writes the row through the db
+   layer and never passes the route's R31 guard.
+
+   Demanding a declared write-set from a row that cannot carry one is exactly
+   the ">= 8 rows on a 7-row rail" gate the standing rules name — the kind three
+   consecutive rounds disclosed-and-ignored, teaching reviewers that
+   disclose-and-proceed is normal. **So the audit is restated, not relaxed:**
+
+   - For a **phase builder** row: unchanged. Compare commits against the
+     declared `write_set`; an undeclared write is a finding.
+   - For a **fix-cycle** row (`fix_cycle > 0`, `chain_key` set): the empty
+     column is **not** a finding and proves nothing either way. Audit the
+     commits against **(a)** the write-sets of the tasks the fix chain gates —
+     i.e. the phase rows the reviewer judged, reachable through
+     `depends_on` — and **(b)** the builder's own §-disclosure and
+     `04-phases.md` §10, which remain mandatory and are where an undeclared
+     write is actually caught. A fix-cycle builder that writes a file outside
+     both is the finding.
+
+   **What is NOT decided here.** Whether R42 should union over the *reviewed
+   builders* instead of the *reviewing reviewers* is a real question with
+   consequences for R41's chain identity (`depends_on` and `write_set` both feed
+   `duplicatesFixChain()`), and it is **not** taken by round 820: it changes
+   consolidation, which this project's brief lists under MUST NOT BREAK, and it
+   would need its own phase and its own reviewer. It is recorded as an open
+   engine question, not as a defect this clause hides.
 5. **Citation audit.** Every `file.ts:NN` in the phase's commits, briefs and
    docs is either resolved against the recorded SHA beside it or reported as a
    finding. Three rounds on the previous project found rotted pins that read as
@@ -869,9 +909,22 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
   no `depends_on` column, so every row is a legacy row and D7's first arm
   refuses. Judge the refusal by its **counts**, which is what makes this gate
   satisfiable:
-  - `S3 … NOT COMPUTABLE (131 legacy rows, 0 closure-shaped rows)` — the
-    **PASS**. The read happened before the migration and the refusal names the
-    legacy sentinel.
+  - `S3 … NOT COMPUTABLE (N legacy rows, 0 closure-shaped rows)`, **N non-zero**
+    — the **PASS**. The read happened before the migration and the refusal names
+    the legacy sentinel.
+    **Amended at round 820 (round 819's finding 8), where the gate is
+    enforced.** This clause used to name a literal `131`, and by the time part 2
+    was read the pasted evidence said **156**. Both numbers are honest: 8ea0cc08
+    was **live while it was being measured**, part 1 read it at 131 rows
+    (`evidence/baseline-8ea0cc08.md` line 701) and part 2 at 156
+    (line 1201, `tasks=156 … legacy-rows=156`), the project having grown by 25
+    tasks in between. A literal count is therefore **not** the gate and never
+    could have been one — it is a number that rots on a live project between two
+    reads of the same instrument, and pinning it here would have failed a
+    correct deploy or, worse, taught the next round that disclose-and-proceed is
+    how you get past it. What is load-bearing is the **shape**: `NOT COMPUTABLE`,
+    legacy rows **non-zero**, closure-shaped rows **exactly 0**. The two measured
+    values are recorded above so a reader can tell a re-measurement from a rot.
   - `S3 … NOT COMPUTABLE (0 legacy rows, N closure-shaped rows)` — a **finding
     and a redo**. `legacy-rows=0` on a project that has never been graph-planned
     means the backfill already ran; the detector caught a late read.

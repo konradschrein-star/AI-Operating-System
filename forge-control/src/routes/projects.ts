@@ -78,6 +78,70 @@ export const PROJECT_MAX_WORKSTREAMS = ((): number => {
   return parsed;
 })();
 
+/**
+ * R39's refusal, as a VALUE rather than as a branch buried in the handler —
+ * the one place the cap decision and its wording exist. `null` means the task
+ * may be created; a string is the exact `error` body of the `400`.
+ *
+ * WHY THIS IS EXPORTED, AND WHY IT IS THE FIX FOR ROUND 819's FINDING 2 /
+ * ROUND 961's FINDING 2. `check-workstream-claim.ts` §3 asserted a six-lane
+ * fan-out and LABELLED it "the widest lawful fan-out" — but lawfulness is a
+ * property of this cap, and that instrument imported neither the constant nor
+ * this decision. It was mutation-proved inert twice, by two reviewers:
+ * `PROJECT_MAX_WORKSTREAMS=2 tsx check-workstream-claim.ts` printed
+ * `ALL PASS — 19 checks`, exit 0, while the engine would 400 the third lane.
+ * A check that names a cap it never executes is the instrument lying before
+ * the code does, which is the failure class the standing rules put first.
+ *
+ * Until this round R39's decision could ONLY be reached over HTTP with a live
+ * Postgres behind it (`check-task-api.ts` case 13, which needs
+ * `$SCRATCH_DATABASE_URL`), so the one instrument a build task can afford to
+ * run could not reach it at all. Hoisting the decision — NOT the route, NOT
+ * the status code, NOT the database read that supplies `tasks` — makes it a
+ * pure function of (present workstreams, requested workstream) and therefore
+ * executable from a table-driven script with no database, no server and no
+ * git repo. The handler below still returns the 400; `check-task-api.ts` case
+ * 13 still asserts the same wire bytes, unmodified, which is the control that
+ * this hoist changed no behaviour.
+ *
+ * COUNTED OVER THE DISTINCT WORKSTREAMS THE PROJECT ALREADY HAS. A task
+ * joining one of them is always allowed, however many there are, because it
+ * provisions no new worktree. Sorted so the message is byte-identical for one
+ * project state regardless of insert order.
+ *
+ * THE CALLER PASSES `workstream ?? "main"` — the same default-for-OMITTED that
+ * `createTask()` applies, because the cap must count the workstream the row
+ * will actually be written into. It is not a fallback-for-invalid: an invalid
+ * name is refused before this is reached. Stated at the call site rather than
+ * defaulted here, so this function cannot silently absorb an absent argument.
+ *
+ * NOTE FOR ANY ROUND READING THIS AS "THE OPENABLE COUNT" (round 961's finding
+ * 3, which is task 962's and is NOT closed here): every project is born with
+ * its architect row in `main`, and this counts ALL rows regardless of status,
+ * so a project can open `PROJECT_MAX_WORKSTREAMS - 1` NEW lanes, not
+ * `PROJECT_MAX_WORKSTREAMS`. That is a fact about the guard, recorded where
+ * the guard is; `GRAPH_GUIDE`'s "up to that cap" not saying so is the separate
+ * open finding.
+ */
+export function workstreamCapRefusal(
+  presentWorkstreams: readonly string[],
+  requestedWorkstream: string,
+): string | null {
+  const distinct = [...new Set(presentWorkstreams)].sort();
+  if (
+    distinct.includes(requestedWorkstream) ||
+    distinct.length < PROJECT_MAX_WORKSTREAMS
+  ) {
+    return null;
+  }
+  return (
+    `project already has ${distinct.length} workstream(s) ` +
+    `(limit PROJECT_MAX_WORKSTREAMS=${PROJECT_MAX_WORKSTREAMS}): ` +
+    `${distinct.join(", ")}; refusing to create a task in new ` +
+    `workstream "${requestedWorkstream}"`
+  );
+}
+
 /* ── Project metadata construction (U1, 13-ui-v3-architecture.md §5) ────────
  *
  * The metadata object is built HERE, at the route layer. db/projects.ts takes
@@ -671,23 +735,11 @@ r.post("/:id/tasks", async (c) => {
    * applies one call below, stated here because the cap must count the
    * workstream the row will actually be written into. It is not a
    * fallback-for-invalid: an invalid name has already been refused above. */
-  const requestedWorkstream = workstream ?? "main";
-  const presentWorkstreams = [...new Set(tasks.map((t) => t.workstream))].sort();
-  if (
-    !presentWorkstreams.includes(requestedWorkstream) &&
-    presentWorkstreams.length >= PROJECT_MAX_WORKSTREAMS
-  ) {
-    return c.json(
-      {
-        error:
-          `project already has ${presentWorkstreams.length} workstream(s) ` +
-          `(limit PROJECT_MAX_WORKSTREAMS=${PROJECT_MAX_WORKSTREAMS}): ` +
-          `${presentWorkstreams.join(", ")}; refusing to create a task in new ` +
-          `workstream "${requestedWorkstream}"`,
-      },
-      400,
-    );
-  }
+  const capRefusal = workstreamCapRefusal(
+    tasks.map((t) => t.workstream),
+    workstream ?? "main",
+  );
+  if (capRefusal !== null) return c.json({ error: capRefusal }, 400);
 
   // R28 — the write set. The NORMALISED values are what gets stored: R16's
   // contention test is exact string equality, so two spellings of one file

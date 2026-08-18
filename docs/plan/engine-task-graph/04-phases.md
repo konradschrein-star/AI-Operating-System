@@ -1177,6 +1177,30 @@ watcher, as the deploy step requires; neither stated the constraint; the window
 to fix that closes the moment the merge lands, because the watcher reads these
 files from `/opt/forge-ai-os`. Hence: amend first, commit, then merge.
 
+**Round 820's write-set (fix cycle 1 on round 819's review) — declared here in
+the commit that makes it, and EVERY file below is outside a declared set.**
+Task `3610b0fc-a2f3-4b01-a8ca-e1d7b5f0a621` was seeded with `write_set = []`,
+so, exactly as round 960's row above says, there is no set to have written
+outside of and the honest form is a full manifest. **The seeding is not a
+lapse and cannot be fixed by a brief**: a fix-cycle row's write-set is the union
+of its GATING tasks' write-sets (`fixChainGraphFields()`, R42) and its gating
+tasks are reviewers, who declare none by R31's design — verified on live data
+for this row and for `c527a985` (round 962), both gated by reviewers carrying
+`[]`. That is now written into the gate itself, `03-quality.md` §3.1 item 4,
+rather than disclosed for a third round. Standing rule 5 is disclose, not
+abstain.
+
+| file | why round 820 writes it |
+|---|---|
+| **the merge commit** (`main` → `project/8c591d6c`) | Round 819's finding 5. This branch had never merged `main`, so item 9 ran the **pre-round-500 manifest-scoped** gate at **8 of 43** subjects. A merge commit cannot honour a write-set — a property of merges, not a violation — and it necessarily carries `main`'s files; declared here per phase 8A's precedent above. One conflict, `scripts/checks/instrument-manifest.txt`, resolved **by reasoning and not by `-X ours`/`-X theirs`**: the file's semantics changed from inclusion list to **waiver ledger**, under which our branch's seven inclusion lines would be malformed waivers excusing failures that do not exist. Resolved to the empty ledger, which is that project's stated target state. |
+| `forge-control/src/routes/projects.ts` | Round 819's finding 2 / round 961's finding 2. R39's cap decision is hoisted out of the `POST /:id/tasks` handler into an exported `workstreamCapRefusal()` that the handler calls, so the guard can be **executed** by an instrument with no database. The route still returns the same `400` with byte-identical `error` text; `check-task-api.ts` case 13 is unmodified and is the control that nothing behavioural moved. Phase 3 owns this file (§10 above) — recorded here for the same reason round 239's one-comment write to it was. |
+| `scripts/checks/check-workstream-claim.ts` | The instrument that was reported inert by two consecutive reviewers. It now imports `PROJECT_MAX_WORKSTREAMS`, derives §3's lane table from it, executes `workstreamCapRefusal()` at the cap and one past it (new §5), and parses `GRAPH_GUIDE`'s advertised default against the constant (new §6.6). Both mutations that survived it are re-run and killed in `evidence/round820-fix-cycle-1.md` §2. |
+| `scripts/checks/instrument-manifest.txt` | Resolved as part of the merge above, to `main`'s waiver-ledger form with **zero entries**. Round 960's row above lists this file under "item 9's manifest guard: a `scripts/checks/*.ts` this branch adds must be listed" — **that guard is retired** and the sentence is false of the gate that exists after the merge. Retiring the requirement and its gate clause together, standing rule 4. |
+| `docs/plan/engine-task-graph/03-quality.md` | Two gate amendments, each **where it is enforced**: §3.2's phase-8 S3 clause, whose literal `131` the evidence measured as `156` (finding 8); and §3.1 item 4's write-set audit, unsatisfiable by construction on every fix-cycle row (finding 6). Item 9's prose needed no edit — `main`'s copy already carries the corrected glob/waiver-ledger wording, which the merge brought in. |
+| `docs/plan/engine-task-graph/evidence/round960-workstream-criterion.md` | Finding 7: §5's two bare `file:NN` pin blocks gain the SHA they were measured at (`5d0e0c0`, each re-derived) plus the command to re-derive them. Its `ALL PASS — 19 checks` transcript and its §6 verdict table are **annotated as superseded, never rewritten** — that record is what round 960 really measured, and it was green for the wrong reason. |
+| `docs/plan/engine-task-graph/04-phases.md` | This table. No other section of this file is touched. |
+| `docs/plan/engine-task-graph/evidence/round820-fix-cycle-1.md` | **New.** This round's transcript: every gate re-run, both mutations, and the four findings round 820 does **not** close. |
+
 ---
 
 ## 11. What "done" looks like from here
