@@ -920,6 +920,7 @@ most needs. Measured:
 ```
 $ shellcheck -S error          # i.e. what happens if the git expression returns nothing
 No files specified.
+[18 further lines of usage text elided — marked, round 806]
 exit=3
 ```
 
@@ -932,6 +933,127 @@ name is parsed as a directive wherever it sits — prose included. Writing the
 explanatory paragraph at `read_pm2()` the obvious way produced SC1073/SC1072 on
 the very branch that was removing an SC1125. Caught by re-running the gate after
 the fix, which is the argument for the gate in one sentence.
+
+**A scope correction, round 806, recorded here because a commit message cannot be
+amended without rewriting shared history.** Round 804's commit (`9147dff`) says
+"zero suppression directives remain anywhere on the branch". *Anywhere* is one
+file too wide: `scripts/import-scraper-places.acceptance.sh` still carries a
+well-formed `SC1091` suppression. That file lives on `main` and this branch never
+touches it, so it is outside the gate's derived list and the gate is not wrong —
+only the sentence is. **The accurate claim is: zero suppression directives remain
+in the seven `*.sh` this branch adds or modifies**, which is the set item 10
+lints and the only set this branch can speak for. Round 805's reviewer raised
+this and declined to block on it; agreed on both counts, and it is written down
+here rather than left to a reader who reads the commit message and not this
+paragraph.
+
+```
+$ SH_ALL=$(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+$ grep -l "shellcheck disable" $(for f in $SH_ALL; do [ -f "$f" ] && printf '%s\n' "$f"; done)
+                                # no output, exit 1 — none of the seven carries one
+$ grep -rn "shellcheck disable" scripts/ | grep -v "^docs/"
+scripts/import-scraper-places.acceptance.sh:31:  # shellcheck disable=SC1091
+                                # the one survivor, on main, untouched by this branch
+                                # (the two leading spaces are the file's own indent)
+```
+
+---
+
+### 6.2 The delete case — why item 10's file list is filtered (round 806)
+
+Round 805's reviewer noted, without blocking on it, that item 10's derived list
+"will error rather than pass if a future branch *deletes* a `.sh`". Measured, it
+is worse than an error and narrower than it sounds, so it is amended in
+`03-quality.md` §3.1 item 10 and §4 — where it is enforced, in this commit,
+standing rule 2.
+
+Scratch repo, four cases. `main` holds `doomed.sh`; the branch adds `added.sh`
+and deletes `doomed.sh`. The two files are made textually distinct on purpose:
+a first attempt used near-identical one-liners, git scored them as a **rename**
+(`R050 doomed.sh added.sh`), only the destination appeared in `--name-only`, and
+the measurement quietly tested nothing. **The instrument lied before the code
+did**, which is why the `name-status` line is pasted below — it is what proves
+the case under test is the case intended.
+
+**A — the delete reaches the linter (unfiltered, i.e. the form before this
+commit).**
+
+```
+$ git show --name-status --pretty=format:"" HEAD
+A	added.sh
+D	doomed.sh
+$ git log --no-merges --name-only --pretty=format: main..HEAD -- "*.sh" | sort -u
+added.sh
+doomed.sh
+$ shellcheck -S error $(git log --no-merges --name-only --pretty=format: main..HEAD -- "*.sh" | sort -u)
+doomed.sh: doomed.sh: openBinaryFile: does not exist (No such file or directory)
+exit=2
+```
+
+`added.sh` is clean, and the run still cannot exit 0.
+
+**C — the same tree with an SC1125 planted in `added.sh`, which is the case that
+tells us what the exit code is worth.**
+
+```
+--- unfiltered ---
+doomed.sh: doomed.sh: openBinaryFile: does not exist (No such file or directory)
+
+In added.sh line 2:
+# shellcheck disable=SC2086 — an em-dash, as in the real defect
+                            ^-- SC1125 (error): Invalid key=value pair? Ignoring the rest of this directive starting here.
+
+For more information:
+  https://www.shellcheck.net/wiki/SC1125 -- Invalid key=value pair? Ignoring ...
+exit=2
+```
+
+So the survivors **are** still linted — the finding is printed. What breaks is
+the verdict: **exit 2 in case A with a clean tree, exit 2 in case C with a
+broken one.** A gate whose pass and fail are the same number has stopped
+measuring, and the branch cannot reach 0 whatever it does.
+
+**B and C — filtered (the form this commit installs). The absent path is named,
+not silently dropped; the surviving file is linted; the exit code discriminates
+again.**
+
+```
+--- B, clean survivor ---
+deleted on this branch, not linted: doomed.sh
+exit=0
+
+--- C, SC1125 planted ---
+deleted on this branch, not linted: doomed.sh
+
+In added.sh line 2:
+# shellcheck disable=SC2086 — an em-dash, as in the real defect
+                            ^-- SC1125 (error): Invalid key=value pair? Ignoring the rest of this directive starting here.
+
+For more information:
+  https://www.shellcheck.net/wiki/SC1125 -- Invalid key=value pair? Ignoring ...
+exit=1
+```
+
+**D — the filter must not turn the empty-sweep property off.** A branch that
+deletes every `*.sh` it touched leaves the filtered list empty, and an empty
+list is the one thing this gate must refuse to certify (§6.1 above).
+
+```
+$ SH_ALL=added.sh doomed.sh          # both now absent from the tree
+$ shellcheck -S error $(for f in $SH_ALL; do [ -f "$f" ] && printf '%s\n' "$f"; done)
+No files specified.
+[18 further lines of usage text elided — the marker is the exit code]
+exit=3
+```
+
+Non-zero, as before. The filter removes a crash and no teeth.
+
+**And the real branch, unchanged by the amendment:** 7 files derived, 7 on disk,
+no `deleted on this branch` note, `exit=0` — the same verdict round 805 recorded
+for the unfiltered form, which is the point. Fed the pre-fix `await-and-seed.sh`
+(`674d860`, sha256 `efe79f2c5368` against HEAD's `9429971eea0c`) through the
+filtered pipeline alongside one absent path, it still reports SC1125 at line 312
+and exits 1.
 
 ---
 

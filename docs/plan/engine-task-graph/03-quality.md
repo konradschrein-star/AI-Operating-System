@@ -318,7 +318,9 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     adds or modifies exits 0. The file list is **derived, never typed**:
 
     ```bash
-    shellcheck -S error $(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+    SH_ALL=$(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+    for f in $SH_ALL; do [ -f "$f" ] || echo "deleted on this branch, not linted: $f"; done
+    shellcheck -S error $(for f in $SH_ALL; do [ -f "$f" ] && printf '%s\n' "$f"; done)
     ```
 
     **Why this exists at all.** It is item 9's hole one directory over. `*.ts`
@@ -352,7 +354,44 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     touched no `*.sh`, or an expression someone broke — `shellcheck` answers
     `No files specified.` and **exits 3**, not 0. A gate whose probes match
     nothing must fail rather than report clean (`00-vision.md` §7 rule 2);
-    measured, not assumed.
+    measured, not assumed. **The two-line preamble does not weaken this**: when
+    every derived path is gone the filtered list is empty, `shellcheck` receives
+    no arguments, and the run still exits 3. Measured on a scratch repo whose
+    branch deletes its only `*.sh`.
+
+    **Why the list is filtered before it is linted — round 805's second
+    non-blocker, amended here where it is enforced (standing rule 2).** The
+    derived list names every `*.sh` the branch *touched*, and a delete is a
+    touch. The unfiltered form handed the vanished path straight to the linter,
+    which answers with a **filesystem** error, not a lint one. Measured on a
+    scratch repo — a branch adding `added.sh` and deleting `doomed.sh`, the two
+    files made textually distinct so git records a `D` and not an `R`, which a
+    first attempt at this measurement got wrong:
+
+    ```
+    doomed.sh: doomed.sh: openBinaryFile: does not exist (No such file or directory)
+    exit=2
+    ```
+
+    **What is actually broken is the exit code, and that is worse than it
+    looks.** The surviving files *are* still linted — run again with a
+    deliberate SC1125 in `added.sh`, the finding is printed. But the run exits
+    **2** either way: 2 with a clean `added.sh`, 2 with a broken one. So a
+    branch that retires a script cannot exit 0 by any means available to it —
+    the unsatisfiable shape standing rule 2 forbids, reached by a route nobody
+    typed — and for as long as it is in that state the gate's own verdict stops
+    telling clean from dirty. A gate whose pass and fail are the same number is
+    not a gate.
+
+    The filter drops only paths absent from the tree and **names each one on
+    stdout** — a disclosed skip is not a silent one, and a reviewer reading
+    `deleted on this branch, not linted: …` can check the delete was intended.
+    Re-measured after the change: the delete case exits **0** with the note and
+    `added.sh` linted; the same case with SC1125 planted in `added.sh` exits
+    **1** with the finding; the pre-fix `await-and-seed.sh` fed through the
+    filtered pipeline still fails at exit **1**. Transcripts in
+    `evidence/phase8-tooling.md` §6.2. The amendment removed a crash and no
+    teeth.
 
     **What its silence does NOT prove.** SC2086 is an *info*, so this gate can
     never emit it. A quoting question must be settled by measurement at the
@@ -734,7 +773,12 @@ bash scripts/checks/check-instrument-typecheck.sh
 # typed, for the same reason as item 9's: a merge commit carries main's files.
 # -S error is deliberate and its limits are stated in item 10 — do not raise the
 # severity here without clearing the warnings in the same commit.
-shellcheck -S error $(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+# A path this branch DELETED is on the derived list and not on disk; unfiltered it
+# aborts the linter at exit 2 before the surviving files are read (item 10). Absent
+# paths are named and skipped; an all-absent list still leaves shellcheck at exit 3.
+SH_ALL=$(git log --no-merges --name-only --pretty=format: main..HEAD -- '*.sh' | sort -u)
+for f in $SH_ALL; do [ -f "$f" ] || echo "deleted on this branch, not linted: $f"; done
+shellcheck -S error $(for f in $SH_ALL; do [ -f "$f" ] && printf '%s\n' "$f"; done)
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

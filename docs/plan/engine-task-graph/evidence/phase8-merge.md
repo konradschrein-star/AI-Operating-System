@@ -211,17 +211,35 @@ home — while
 alongside `fetchQuotaSnapshot()` and `useQuotaSnapshot()`. Exactly one
 definition survives.
 
-> **Corrected by the operator, round 805 → 806.** The text this paragraph replaced the
-> line-pins with was itself a fabricated measurement: it asserted the name occurred
-> "inside a doc comment" and pasted a `$ grep` showing that as the output. The real
-> command returns **nothing and exits 1**. The conclusion — exactly one definition,
-> in `quotaQuery.ts` — was and is true, and is in fact *stronger* than what was
-> claimed. Verified at `9147dff`; the breadcrumb names `fetchQuota`.
+> **Corrected twice, rounds 805 and 806.** The text that first replaced the line-pins
+> was itself a fabricated measurement: it asserted the name occurred "inside a doc
+> comment" and pasted a `$ grep` showing that as the output. The real command returns
+> **nothing and exits 1**. The conclusion — exactly one definition, in `quotaQuery.ts`
+> — was and is true, and is in fact *stronger* than what was claimed: the name is
+> wholly absent from `api.ts`, not merely undeclared there. Round 805 (`0da7415`)
+> repaired the prose and that one line of the transcript.
+>
+> **Round 806 repaired the rest of the same transcript**, which round 805 left in two
+> weaker versions of the same defect: the `quotaQuery.ts` grep was shown with **one**
+> line of output when the command emits **ten**, with no elision marked; and the
+> closing sentence counted "three numbers" against a block that no longer contained
+> three. Both are now shown as measured. Re-derived at `0da7415`; neither `api.ts` nor
+> `quotaQuery.ts` has been touched since `674d860`, which the transcript's first line
+> records and `git log 674d860..HEAD -- <both files>` (empty) proves.
+>
+> *A correction to the finding, recorded rather than quietly absorbed.* Round 805's
+> reviewer put the real hit count at **five** (`21`, `63`, `108`, `113`, `118`). It is
+> ten — their list is the first five of them. The finding stands exactly as written;
+> only its arithmetic was short, and the transcript below carries the full output so
+> the number is no longer anybody's recollection.
 >
 > Worth naming, since this document is the deploy's audit trail: **the fix for a
-> rotted citation introduced a fabricated one.** A pasted command with an invented
-> output is worse than a bare line number — a line pin visibly needs re-checking,
-> whereas a transcript looks like it already was.
+> rotted citation introduced a fabricated one, and the fix for that left an elision.**
+> A pasted command with an invented or trimmed output is worse than a bare line number
+> — a line pin visibly needs re-checking, whereas a transcript looks like it already
+> was. The rule this section now follows: paste what the command printed, all of it,
+> or mark the cut; and where a command printed nothing, show the exit status rather
+> than a sentence summarising it.
 
 *Cited by symbol, round 804 finding 3 (standing rule 1).* This paragraph
 previously pinned all three claims to bare line numbers — `ENGINE_EFFORT_CHOICES`
@@ -232,20 +250,51 @@ on, and a bare number in it rots into something that reads authoritative and is
 not. The symbols above are what a future reader should grep. Re-derive with:
 
 ```
-$ git rev-parse --short HEAD    # 674d860
+$ git rev-parse --short HEAD    # 674d860 when taken; re-run at 0da7415, byte-identical
+$ git log --oneline 674d860..HEAD -- forge-control-web/app/api.ts \
+                                     forge-control-web/app/desktop/quota/quotaQuery.ts
+                                # no output: neither file has changed since that SHA
 $ grep -n "ENGINE_EFFORT_CHOICES" forge-control-web/app/api.ts
 729:export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "max"] as const;
 $ grep -n "QuotaSnapshot" forge-control-web/app/api.ts
-(no output, exit 1 — the name does not occur in this file)
+$ echo $?
+1
 $ grep -n "fetchQuota" forge-control-web/app/api.ts
 140: * serves it at /usage/quota. This module used to hold a `fetchQuota` beside a
 $ grep -n "QuotaSnapshot" forge-control-web/app/desktop/quota/quotaQuery.ts
+21: * `useQuotaSnapshot()`. React Query then does what it was built for — many
+63:export interface QuotaSnapshot {
+108:export async function fetchQuotaSnapshot(fresh = false): Promise<QuotaSnapshot> {
+113:  return (await res.json()) as QuotaSnapshot;
+118:export function useQuotaSnapshot() {
+119:  return useQuery<QuotaSnapshot>({
+121:    queryFn: () => fetchQuotaSnapshot(false),
+130:export async function refreshQuotaSnapshot(qc: QueryClient): Promise<void> {
+131:  const fresh = await fetchQuotaSnapshot(true);
+138:  return () => refreshQuotaSnapshot(qc);
+$ grep -n "^export interface QuotaSnapshot" forge-control-web/app/desktop/quota/quotaQuery.ts
 63:export interface QuotaSnapshot {
 ```
 
-The three numbers appear here **only** inside that transcript, where they are
-the output of a command pinned to the recorded SHA `674d860` — which is the form
-standing rule 1 permits, and not the form it forbids.
+Read the two `QuotaSnapshot` greps as a pair, because that pairing is the whole
+argument. In `api.ts` the name matches **nothing** — the empty result followed by
+`echo $?` printing `1` is the evidence, and it is stronger than the "no
+declaration" wording it replaced, since it rules out a stale re-export and a
+commented-out relic as well as a declaration. In `quotaQuery.ts` it matches **ten
+lines, all ten shown**: one prose mention, one declaration, and eight uses of the
+declared type. Anchoring the pattern to `^export interface` reduces those ten to
+the one line that is a definition. **Exactly one definition survives the merge —
+`export interface QuotaSnapshot`, in `app/desktop/quota/quotaQuery.ts`.** Its
+line number is deliberately not written into this sentence; it is legible above
+as something the last command printed, which is the only place standing rule 1
+lets a number live.
+
+Every line number in this section behaves that way: it appears **only** inside
+that transcript, as output of a command re-derivable at the SHA the first line
+records. That is the form standing rule 1 permits, and the bare pin in running
+prose is the form it forbids. Nothing above is elided; where a command printed
+ten lines there are ten, and where one printed nothing there is its exit status
+instead of a sentence describing it.
 
 ---
 

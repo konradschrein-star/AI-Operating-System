@@ -998,6 +998,26 @@ scheduler file, no `forge-control/src/**`, no migration, no payload under
 which the TS suite has no jurisdiction over, and that is precisely why each one
 is proved by an executed run rather than by the suite staying green.
 
+**Rounds 805 and 806's write-set, declared in the commit that makes it (fix
+cycle 2 on round 805's one blocker).** One task, no concurrent builder. Round
+805's blocker was scoped "no code change, no gate change"; the gate change below
+is a second item the same reviewer raised and declined to block on, and it is
+taken here for the reason standing rule 2 gives — an unsatisfiable gate is
+amended where it is enforced, in the same commit, not filed for later.
+
+| file | why rounds 805–806 write it |
+|---|---|
+| `docs/plan/engine-task-graph/evidence/phase8-merge.md` | **The blocker.** §4's replacement citation was a fabricated `$ grep`. `0da7415` (round 805, operator) fixed the prose and the `api.ts` line; round 806 fixes what remained — the `quotaQuery.ts` grep shown with **one** of its **ten** output lines and no elision marked, and a closing sentence counting "three numbers" against a block that no longer held three. The transcript now shows every line the commands print, an `echo $?` where one prints nothing, and a `git log` proving neither source file has moved since the SHA the block names. The conclusion is unchanged and was always true. |
+| `docs/plan/engine-task-graph/evidence/phase8-tooling.md` | **§6.2, new** — the four measured cases behind the item-10 amendment, including the false start where git scored the scratch delete as a rename and the measurement tested nothing. Plus a scope correction to round 804's commit message ("zero suppression directives **anywhere** on the branch" is one file too wide; the accurate claim is the seven `*.sh` this branch touches), recorded here because a commit message cannot be amended without rewriting shared history. §6.1's own empty-sweep block gains its elision marker, so the rule this round installs holds in the file that installs it. |
+| `docs/plan/engine-task-graph/03-quality.md` | **Universal gate item 10, amended where it is enforced (§3.1 and §4 both — a gate stated twice rots if only one copy is fixed).** The derived file list now names and skips paths the branch deleted. Measured: unfiltered, a branch that retires one `*.sh` exits **2** whether its surviving scripts are clean or broken, so it cannot reach 0 by any means and its verdict stops discriminating. Filtered, the delete case exits 0 with the skip disclosed, a planted SC1125 exits 1, and an all-absent list still exits 3. |
+| `docs/plan/engine-task-graph/04-phases.md` | **Standing rule 2 — declare the write-set where the audit looks.** This table. No other section of this file is touched. |
+
+**What these two rounds did NOT do.** No scheduler file, no `forge-control/src/**`,
+no migration, no payload, no `main` merge, and no check script. `pnpm test` is
+unchanged at **1270 pass / 0 fail / 0 skipped**, which is the expected reading
+for a markdown-only diff and is therefore evidence of nothing — every claim here
+rests on an executed run pasted whole.
+
 **And note what this row is.** The three builders of round 802 were split by
 declared write-set, and the split held for every *file* — no two builders touched
 one. What crossed the boundary was not a file but a **fact**: one builder's edit
