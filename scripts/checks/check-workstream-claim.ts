@@ -625,6 +625,37 @@ check(
   GRAPH_GUIDE.includes("A lane you open for a task that itself creates tasks belongs to THAT task"),
   true,
 );
+
+/* 6.10 — ROUND 963's FINDING 4: FAN-OUT's two lane instructions carry the
+ * bound, not just the bullet three paragraphs above them.
+ *
+ * §5.6 and 6.7a measure that only CAP - 1 lanes open. 6.8 measures what the
+ * lane field buys. Neither says anything about FAN-OUT's own arithmetic, and
+ * FAN-OUT is where a planner decides HOW MANY researchers to fan out to: it
+ * said "a lane each" and "as many lanes as you want building at once", both
+ * unbounded, so six independent research questions met the 400 at the one
+ * moment the planner was not reading the workstream bullet. That is the same
+ * shape as 6.8c's own argument, which is why round 963 raised it.
+ *
+ * A CLAUSE CHECK, AND THE REASON IT IS ENOUGH HERE. The engine behaviour these
+ * clauses describe is already executed twice over — the refusal by §5, the
+ * openable count by 6.7a. What was missing was only the sentence, so a needle
+ * is the whole of the fix; there is no second thing to drive. It is asserted
+ * rather than left to the ledger because the edit is NET ZERO (round 964's
+ * LEDGER row) and a zero-delta reflow is invisible to every arithmetic gate in
+ * this project — this needle is the only thing that would notice it going. */
+for (const [what, needle] of [
+  ["researchers", "a lane each while lanes remain"],
+  ["builders", "in as many lanes as remain"],
+] as const) {
+  check(
+    `6.10 FAN-OUT bounds its ${what} instruction by the lanes that REMAIN, in the vocabulary the ` +
+      'workstream bullet uses ("so cap-1 remain") and never "up to the cap", which is the ' +
+      "phrasing round 961 finding 3 condemned for over-promising by one",
+    GRAPH_GUIDE.includes(needle),
+    true,
+  );
+}
 console.log();
 
 /* ── 7. VERDICT, with the sweep's own census first ────────────────────────── */
@@ -639,10 +670,13 @@ if (LANE_CASES.length !== DECLARED_LANE_CASES) {
 /* §1 four, §2 three, §3 one per lane case, §4 three, §5 six, §6 seven (four
  * clause needles + the retired-criterion absence + 6.6a + whichever branch of
  * 6.6b the host selects — exactly one of the two runs, never both, never
- * neither), §6B seven (6.7a/b/c, 6.8a/b/c, 6.9). At the default cap of 6 that
- * is 4+3+4+3+6+7+7 = 34; the pre-820 baseline was 19, +8 was §5's six and
- * §6.6's two at round 820, and +7 is round 962's §6B. */
-const EXPECTED_CHECKS = 4 + 3 + DECLARED_LANE_CASES + 3 + 6 + 7 + 7;
+ * neither), §6B nine (6.7a/b/c, 6.8a/b/c, 6.9, and 6.10's two needles — one per
+ * FAN-OUT instruction, because a bound stated for researchers and dropped for
+ * builders is exactly the half-fix round 963's finding 4 describes). At the
+ * default cap of 6 that is 4+3+4+3+6+7+9 = 36; the pre-820 baseline was 19, +8
+ * was §5's six and §6.6's two at round 820, +7 is round 962's §6B, and +2 is
+ * round 964's 6.10. */
+const EXPECTED_CHECKS = 4 + 3 + DECLARED_LANE_CASES + 3 + 6 + 7 + 9;
 if (ran !== EXPECTED_CHECKS) {
   console.log(
     `FAIL  ${ran} checks ran, ${EXPECTED_CHECKS} expected — a section stopped executing and the ` +

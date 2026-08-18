@@ -2746,6 +2746,41 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       spent: 637,
       reserved: 650,
     },
+    // ROUND 964 — round 963's finding 4, which that reviewer offered as an
+    // observation to weigh rather than a demand. Weighed and taken, because it
+    // is the SHAPE that produced the blockers of rounds 961 and 963: a rule
+    // stated in one bullet while the decision is made in another. FAN-OUT told
+    // a planner to give researchers "a lane each" and builders "as many lanes
+    // as you want building at once", both unbounded, while only cap-1 lanes
+    // are openable — so six independent research questions meet the 400 at the
+    // one moment the planner is not reading the workstream bullet.
+    //
+    // A ZERO-COST ROW, AND WHY IT EXISTS ANYWAY. The exactness assertion above
+    // is arithmetic, and +0 is arithmetically invisible: an unledgered edit of
+    // this shape is the one kind the gate CANNOT catch. The row is therefore
+    // documentation, not accounting — it is what makes the edit visible to the
+    // next round at all. Sized before it was written, same instrument and same
+    // command as round 962 (`measure-graph-guide-budget.ts --candidate`):
+    // "a lane each" -> "a lane each while lanes remain" is +19, "in as many
+    // lanes as you want building at once" -> "in as many lanes as remain" is
+    // -19, net +0, and the shipped constant is byte-identical to the measured
+    // candidate (2588 chars, asserted in evidence/round964-fix-cycle-2.md §4).
+    // Headroom is unmoved at 38, so this closes a finding at zero cost to the
+    // budget round 822 widened and the operator ruled on.
+    //
+    // NOT the words "up to the cap": that is the exact phrasing round 961's
+    // finding 3 condemned for over-promising by one, and repeating it here
+    // would re-teach in FAN-OUT what round 962 fixed in the bullet. Both edits
+    // use the bullet's own corrected vocabulary — "so cap-1 remain".
+    {
+      round: 964,
+      what: "GRAPH_GUIDE's FAN-OUT bounds its two lane instructions by the budget the workstream " +
+        'bullet defines — "a lane each" becomes "a lane each while lanes remain" (+19) and "in ' +
+        'as many lanes as you want building at once" becomes "in as many lanes as remain" (-19), ' +
+        "a net-zero replacement that states the cap where the fan-out decision is made",
+      spent: 0,
+      reserved: 0,
+    },
   ] as const;
 
   test("every character spent since the 5A tip is attributed to a round that declared it", () => {

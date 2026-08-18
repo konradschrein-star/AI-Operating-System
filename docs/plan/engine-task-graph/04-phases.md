@@ -980,6 +980,43 @@ Nothing outside `docs/plan/engine-task-graph/`, `scripts/checks/` and the two
 all** — see `evidence/round962-fix-cycle-1.md` §6 for why round 961's prescribed
 `git checkout --` was *not* executed against a tree that had since moved.
 
+**Round 964's write-set — again EVERY path undeclared, for the same reason and
+with the same verdict.** Round 963's footnote to its finding 6 traced it to the
+seeding site: `strict_write_sets` is set only for goal-mode projects, and this
+project is not one, so its rows carry `write_set = []` whether they are phase
+builders or fix cycles. A gate that compares a commit against an empty row is
+unsatisfiable by construction, so **§10 is the only place this manifest can
+exist**, and it is written in the commit that makes it — not reconstructed by a
+later reviewer grepping the diff. Repeated verbatim in
+`evidence/round964-fix-cycle-2.md` §7 and in the commit message, so three
+independent statements can be cross-checked against each other and against
+`git show --stat`.
+
+| file | why round 964 writes it |
+|---|---|
+| `forge-control/src/routes/projects.ts` | **round 963's blocker 2, and the deliverable.** `workstreamCapRefusal()`'s docstring still ended "`GRAPH_GUIDE`'s \"up to that cap\" not saying so is the separate open finding" — a sentence the commit it shipped in had already made false. Round 962 retired the twin `OPEN, task 962` label in `check-workstream-claim.ts` §5.6 and missed this one. The arithmetic is untouched; only the verdict on the guide moves, and the retirement is explicit (standing rule 4). This file matches **no** gate-6 ban pattern, so it costs the allow list nothing — verified both ways, below. |
+| `docs/plan/engine-task-graph/03-quality.md` | **round 963's finding 3 — standing rule 2, amended where it is enforced.** §4's item-12 block now exports `USAGE_FOLD_DB`, because `check-usage-fold.ts` defaults to the fixed name `r1354_sampler` and the per-process fix `f283d5b` is not an ancestor of `main` or `HEAD`. Not asserted from the constant: two concurrent runs on a throwaway cluster were **measured** on the shared name (both exit 1 — one wrong-arithmetic `FAIL`, one `deadlock detected`) and on distinct names (both `ALL PASS`). |
+| `forge-control/src/lib/project-tick.ts` | **round 963's finding 4**, offered as an observation and taken. `GRAPH_GUIDE`'s FAN-OUT told a planner to give researchers "a lane each" and builders "as many lanes as you want building at once" — both unbounded, where only `cap-1` are openable. Bounded in the workstream bullet's own corrected vocabulary and deliberately **not** the words "up to the cap", which is the phrasing round 961's finding 3 condemned. |
+| `forge-control/src/lib/project-tick.test.ts` | **standing rule 2 — NF7's ledger is enforced here.** `{ round: 964, spent: 0, reserved: 0 }`. A zero-delta edit is the one kind the exactness assertion *cannot* catch, so the row is documentation rather than accounting. `BUDGET` is **not** touched and headroom is unmoved at 38. |
+| `scripts/checks/check-workstream-claim.ts` | `6.10`'s two needles (34 → 36), one per FAN-OUT instruction, because a bound stated for researchers and dropped for builders is exactly the half-fix round 963 describes. The census moves with them and still tracks the cap: **34 / 35 / 36 / 36** at `PROJECT_MAX_WORKSTREAMS` = 2 / 3 / 9 / 12. |
+| `docs/plan/engine-task-graph/04-phases.md` | this disclosure. |
+| `docs/plan/engine-task-graph/evidence/round964-fix-cycle-2.md` | **new.** This round's transcript: the archival of the live checkout's sole-copy files, the two concurrent-run controls on gate 18, the candidate sizing, and the mutation that proves `6.10` fires. |
+
+Nothing outside `docs/plan/engine-task-graph/`, `scripts/checks/` and the three
+`forge-control` files was written. **`/opt/forge-ai-os` was READ but not
+written** — round 963's blocker 1 asked for an archive, and an archive is a read:
+every command this round issued against that tree was `git status`, `git log`,
+`tar`, `cmp` or `sha256sum`.
+
+Its `HEAD` **did** move during the round, and saying so is the point rather than
+a caveat: `91f6b28` → `6ee76c2` (`feat(prompt): point every worker at the shared
+memory the last one wrote`, plus its merge), which is another project's work
+landing normally. The `git status --porcelain -uall` output is byte-identical
+across that move and **all 21 untracked paths are still in no commit on any
+branch** at the new tip. So the tree has an active committer who is not
+committing this work — which is what makes blocker 1 a standing risk rather than
+a snapshot, and why `evidence/round964-fix-cycle-2.md` §1 records both tips.
+
 **Round 217's write-set, declared in the commit that makes it (fix cycle 2).**
 Not "recorded after the fact" — this fix cycle has one task and no concurrent
 builder, so the set is stated rather than reconstructed, which is the standing

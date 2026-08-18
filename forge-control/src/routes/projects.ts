@@ -116,12 +116,26 @@ export const PROJECT_MAX_WORKSTREAMS = ((): number => {
  * defaulted here, so this function cannot silently absorb an absent argument.
  *
  * NOTE FOR ANY ROUND READING THIS AS "THE OPENABLE COUNT" (round 961's finding
- * 3, which is task 962's and is NOT closed here): every project is born with
- * its architect row in `main`, and this counts ALL rows regardless of status,
- * so a project can open `PROJECT_MAX_WORKSTREAMS - 1` NEW lanes, not
- * `PROJECT_MAX_WORKSTREAMS`. That is a fact about the guard, recorded where
- * the guard is; `GRAPH_GUIDE`'s "up to that cap" not saying so is the separate
- * open finding.
+ * 3, CLOSED at round 962): every project is born with its architect row in
+ * `main`, and this counts ALL rows regardless of status, so a project can open
+ * `PROJECT_MAX_WORKSTREAMS - 1` NEW lanes, not `PROJECT_MAX_WORKSTREAMS`. That
+ * is a fact about the guard, recorded where the guard is.
+ *
+ * THE GUIDE SAYS IT TOO, AND THAT IS WHY THIS PARAGRAPH CHANGED — round 963's
+ * blocker 2. Round 962 replaced `GRAPH_GUIDE`'s "up to that cap" with
+ * `COUNTING the "main" every project is born in, so cap-1 remain`;
+ * `check-workstream-claim.ts` 6.7b asserts the guide carries that clause, and
+ * 6.7a derives the openable count by walking THIS function from the birth
+ * state rather than reading a literal. The same commit retired the twin
+ * `OPEN, task 962` label in that check's §5.6 — and missed this one, so the
+ * sentence that used to end here ("`GRAPH_GUIDE`'s \"up to that cap\" not
+ * saying so is the separate open finding") survived the round that made it
+ * false. A closed finding declared live AT THE GUARD WHERE THE FACT LIVES is
+ * round 825's blocker exactly: one false sentence of documentation, read as
+ * authoritative by the next round, which then re-opens a closed item or cites
+ * it as proof the guide is still wrong. Retired here in the same commit as the
+ * round that found it (standing rule 4). The arithmetic above is unchanged;
+ * only the verdict on the guide moved.
  */
 export function workstreamCapRefusal(
   presentWorkstreams: readonly string[],

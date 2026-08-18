@@ -503,9 +503,10 @@ export const GRAPH_GUIDE =
   `FAN-OUT: a task does NOT inherit your workstream — omit the field and it lands in "main" and waits its ` +
   `turn, so name one on every task you mean to run beside another. RESEARCH wide and early — independent ` +
   `questions share no files and have no ordering, the ` +
-  `cheapest parallelism there is — one "researcher" (or "scout") task each, depends_on [], a lane each. ` +
+  `cheapest parallelism there is — one "researcher" (or "scout") task each, depends_on [], a lane ` +
+  `each while lanes remain. ` +
   `BUILDERS by FILE OWNERSHIP, one write_set ` +
-  `each, in as many lanes as you want building at once. ` +
+  `each, in as many lanes as remain. ` +
   `REVIEWERS are a genuine join: one reviewer depending on EVERY builder of its group.\n` +
   `INTEGRATION, NEVER AUTO-MERGE: every workstream but "main" ends in an integration task (role builder, ` +
   `workstream "main") depending on every task of that workstream, carrying the union of their write_sets, ` +

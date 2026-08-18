@@ -1177,6 +1177,25 @@ bash scripts/check-schedule-sql.sh
 # gate 6 was unsatisfiable on this branch for four rounds; it is now bound to the
 # declared write-set (operator ruling, 2026-08-18) and it is TESTED.
 export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
+# GATE 18 NEEDS A PRIVATE SCRATCH DATABASE — round 963's finding 3, amended here
+# where the suite is invoked. `check-usage-fold.ts`'s SCRATCH_DB reads
+# `USAGE_FOLD_DB` and falls back to the FIXED name `r1354_sampler`, so two
+# projects running this suite at once build their fixtures in one database.
+# Measured, round 964, two concurrent runs on a throwaway cluster: with the
+# default name BOTH exited 1 — one `FAIL hour 10 still reports the run as
+# billed` (wrong arithmetic on green code), the other `ERROR: deadlock
+# detected`. The same pair with distinct names is ALL PASS / exit 0 twice.
+# The wrong-arithmetic face is the dangerous one: it names a real assertion, so
+# a reviewer either blocks a correct branch or learns to wave a red through.
+# The per-process fix is `f283d5b` on `project/7851068b` and is NOT an ancestor
+# of main or HEAD, so on THIS branch the name must be supplied. Any value works
+# provided it is unique to your run and is not the database DATABASE_URL points
+# at (the check refuses that outright); `$$` is the shell's pid.
+# It does NOT drop what it creates. Either accept one leftover database per run
+# and say so in your report, or point DATABASE_URL at a throwaway cluster —
+# round 964 used an initdb'd cluster on port 5601 and stopped it afterwards, so
+# all four scratch databases died with it and the shared server was untouched.
+export USAGE_FOLD_DB="usage_fold_$$"
 bash scripts/checks/gates-808.sh --strict
 git diff --name-only main...HEAD | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
 bash scripts/checks/check-forbidden-file-diff.sh
