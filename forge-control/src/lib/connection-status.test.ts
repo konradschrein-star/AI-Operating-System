@@ -36,6 +36,8 @@ import {
   STALE_FACTOR,
   absentConnectionStatus,
   agyBinIsAbsolute,
+  agyBinaryPresent,
+  agyUltraNarrative,
   buildConnectionStatus,
   classifyAgyProbe,
   connectionRecheckIntervalMs,
@@ -51,6 +53,7 @@ import {
   writeConnectionRecord,
   type CommandOutcome,
   type ConnectionRecord,
+  type RenderedState,
 } from "./connection-status.ts";
 
 const MINUTE = 60_000;
@@ -485,6 +488,130 @@ describe("agy probe classification", () => {
     const r = classifyAgyProbe(outcome({ code: null, signal: "SIGTERM" }), CHECKED);
     assert.equal(r.ok, false);
     assert.match(r.detail, /killed by SIGTERM/);
+  });
+
+  /* R4-red item 4. The branch used to return ok:true on the exit code alone
+   * and then write "(exit 0 but no output)" into the same line as the SIGNED
+   * IN chip: one row, two opposite claims, and the green one wins the reader.
+   * Exit 0 is not the evidence — the model list is. */
+  test("exit 0 with NO stdout is a failure, not a SIGNED IN chip", () => {
+    const r = classifyAgyProbe(outcome({ stdout: "", stderr: "" }), CHECKED);
+    assert.equal(r.ok, false, "an empty answer was accepted as a live credential");
+    assert.match(r.detail, /printed NOTHING on stdout/);
+    assert.ok(
+      !r.detail.includes("holds a live Google credential"),
+      "the success sentence survived into a failure record",
+    );
+  });
+
+  test("…and whitespace-only stdout counts as no output", () => {
+    assert.equal(classifyAgyProbe(outcome({ stdout: "  \n \t\n" }), CHECKED).ok, false);
+  });
+
+  test("…while one line of model list is still enough — the rule is not 'exit 0 never counts'", () => {
+    assert.equal(classifyAgyProbe(outcome({ stdout: "gemini-3-pro" }), CHECKED).ok, true);
+  });
+
+  test("no success detail ever carries the words that used to contradict the chip", () => {
+    const r = classifyAgyProbe(outcome({ stdout: "gemini-3-pro" }), CHECKED);
+    assert.ok(
+      !r.detail.includes("exit 0 but no output"),
+      "the placeholder that produced the contradictory row is still reachable",
+    );
+  });
+});
+
+/* ========================================================================== *
+ * R4-red fix 1 — the Google AI Ultra row's substrate.
+ *
+ * `routes/usage.ts` used to walk the forge-control PROCESS's PATH looking for
+ * a file called `agy`. pm2 never sources `.bashrc`, where `agy install` puts
+ * its export, so the row asserted "agy is not installed on this box" while the
+ * binary sat at /root/.local/bin/agy answering probes four inches below it on
+ * the same panel. These tests pin the composition that replaced it.
+ * ========================================================================== */
+
+describe("the Ultra row's words come from the binary and the probe, never from PATH", () => {
+  const fresh = (over: Partial<RenderedState> = {}): RenderedState => ({
+    state: "connected",
+    identity: null,
+    checked_at: "2026-08-18T20:00:00.000Z",
+    detail: "agy models exited 0 and listed 7 models.",
+    ...over,
+  });
+
+  test("not installed: says so, names the path, and offers the install step", () => {
+    const n = agyUltraNarrative({ installed: false, probe: null, read_error: null });
+    assert.match(n.auth_note, /not installed on this box/);
+    assert.ok(n.auth_note.includes(AGY_BIN), "the note does not name the path it checked");
+    assert.ok(n.connect_command !== null);
+    assert.ok(n.connect_command.includes(AGY_BIN));
+  });
+
+  test("installed + a fresh successful probe: no connect command is offered", () => {
+    const n = agyUltraNarrative({ installed: true, probe: fresh(), read_error: null });
+    assert.equal(n.connect_command, null);
+    assert.match(n.auth_note, /is installed and its last probe succeeded/);
+    assert.ok(
+      !n.auth_note.includes("not installed"),
+      "the installed branch still says the CLI is missing",
+    );
+  });
+
+  test("installed + never probed: NOT a claim that it is missing", () => {
+    const n = agyUltraNarrative({
+      installed: true,
+      probe: fresh({ state: "unknown", checked_at: null, detail: "Never checked." }),
+      read_error: null,
+    });
+    assert.ok(
+      !n.auth_note.includes("not installed"),
+      "an installed CLI was reported as not installed — the exact defect this replaces",
+    );
+    assert.match(n.auth_note, /no probe currently vouches/);
+    assert.ok(n.connect_command !== null, "the sign-in step disappeared");
+  });
+
+  test("installed + a probe that said no: still installed, still a sign-in step", () => {
+    const n = agyUltraNarrative({
+      installed: true,
+      probe: fresh({ state: "broken", detail: "exit 1 — Please sign in to view available models." }),
+      read_error: null,
+    });
+    assert.ok(!n.auth_note.includes("not installed"));
+    assert.match(n.auth_note, /Please sign in to view available models/);
+  });
+
+  test("the check itself failed: 'we do not know' is not folded into 'no'", () => {
+    const n = agyUltraNarrative({
+      installed: null,
+      probe: null,
+      read_error: "could not stat /root/.local/bin/agy: EIO: i/o error",
+    });
+    assert.ok(
+      !n.auth_note.includes("is not installed on this box"),
+      "a disk error was rendered as a claim that the CLI is absent",
+    );
+    assert.match(n.auth_note, /could not be determined/);
+    assert.match(n.auth_note, /EIO/);
+    assert.equal(n.connect_command, null, "an instruction was printed for a state we cannot read");
+  });
+
+  test("installed:true with no rendered probe THROWS rather than defaulting (N1)", () => {
+    assert.throws(
+      () => agyUltraNarrative({ installed: true, probe: null, read_error: null }),
+      /must pass renderState/,
+    );
+  });
+
+  test("the real box: the binary is where AGY_BIN says, so the row cannot say 'not installed'", async () => {
+    // NOT skipped when absent — it fails loudly, exactly like the env -i test
+    // above. If `agy` is genuinely gone from this box, that is a finding.
+    assert.equal(
+      await agyBinaryPresent(),
+      true,
+      `agyBinaryPresent() says ${AGY_BIN} is absent. Either the CLI was removed, or the substrate check regressed to something that cannot see it.`,
+    );
   });
 });
 

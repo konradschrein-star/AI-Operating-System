@@ -53,17 +53,23 @@ import {
   type AccountRegistry,
 } from "./accountRegistry";
 import {
+  AgyCard,
   GeminiCard,
+  GitHubCard,
   GoogleCard,
   type GeminiKeyFacts,
 } from "./integrationCards";
 import {
+  agyConnection,
   claudeConnection,
   geminiKeyConnection,
+  githubConnection,
   googleConnection,
   ultraConnection,
+  type AgyFacts,
   type ConnectionState,
   type ConnectionSummary,
+  type GithubFacts,
   type GoogleFacts,
 } from "./connections";
 import { useQuotaSnapshot } from "../quota/quotaQuery";
@@ -97,6 +103,12 @@ export function ConnectionsPanel(): JSX.Element {
   const registry = useAccountRegistry();
   const [gemini, setGemini] = useState<GeminiKeyFacts | null>(null);
   const [google, setGoogle] = useState<GoogleFacts | null>(null);
+  // Reported UPWARD by the cards, exactly as Gemini and Google already do —
+  // one fetch per subject. `agy` is read twice on this panel (its own row and
+  // the Ultra row) and fetched once, which is what makes the two rows
+  // structurally incapable of disagreeing.
+  const [agy, setAgy] = useState<AgyFacts | null>(null);
+  const [github, setGithub] = useState<GithubFacts | null>(null);
   // The Ultra row rides the indicator row's cache entry — an observer, not a
   // poll. See desktop/quota/quotaQuery.ts.
   const quota = useQuotaSnapshot();
@@ -190,7 +202,7 @@ export function ConnectionsPanel(): JSX.Element {
 
       <GroupLabel
         text="GEMINI — two different products, wired separately"
-        note="a billed API key · and the Ultra subscription"
+        note="a billed API key · and the Ultra subscription behind the agy CLI"
       />
       <Row
         summary={geminiKeyConnection(
@@ -204,7 +216,7 @@ export function ConnectionsPanel(): JSX.Element {
         <GeminiCard onFacts={setGemini} />
       </Row>
       <Row
-        summary={ultraConnection(quota.data?.gemini)}
+        summary={ultraConnection(quota.data?.gemini, agy)}
         open={open === "gemini-ultra"}
         onToggle={toggle}
       >
@@ -236,6 +248,33 @@ export function ConnectionsPanel(): JSX.Element {
             {quota.data?.gemini?.auth_note ?? "Tally not read yet."}
           </div>
         </div>
+      </Row>
+
+      {/* THE agy ROW. R53/R54 lived in `AgyCard` for a whole phase without a
+          mount point, which made them unreachable on the only surface Konrad
+          opens — R4-gate blocker 1. The card reports its facts upward, and the
+          Ultra row above reads the SAME `agy` state, so the two rows about one
+          binary cannot contradict each other any more. */}
+      <Row
+        summary={agyConnection(agy)}
+        open={open === "agy"}
+        onToggle={toggle}
+        verbatimError={agy?.status.state === "broken" ? agy.status.detail : null}
+      >
+        <AgyCard onFacts={setAgy} />
+      </Row>
+
+      <GroupLabel
+        text="GITHUB — the token that pushes branches and opens pull requests"
+        note="write-only from this browser · verified by a real GET /user"
+      />
+      <Row
+        summary={githubConnection(github)}
+        open={open === "github"}
+        onToggle={toggle}
+        verbatimError={github?.status.state === "broken" ? github.status.detail : null}
+      >
+        <GitHubCard onFacts={setGithub} />
       </Row>
     </div>
   );

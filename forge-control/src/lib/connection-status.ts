@@ -49,7 +49,8 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { constants as FS } from "node:fs";
+import { access, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
 /* ── The shape B4c renders ───────────────────────────────────────────────── */
@@ -597,11 +598,32 @@ export function classifyAgyProbe(
   }
 
   if (outcome.code === 0) {
+    // EXIT 0 IS NOT THE EVIDENCE — THE MODEL LIST IS.
+    //
+    // R4-red's fix cycle: the first version of this branch returned `ok: true`
+    // on the exit code alone and then wrote "(exit 0 but no output)" into the
+    // very sentence beside the SIGNED IN chip. One row, two contradictory
+    // claims, and the green one wins the reader.
+    //
+    // A silent exit 0 is what a wrapper script, a `--quiet` flag or a future
+    // `agy` that prints its list to stderr all produce, and none of those has
+    // shown us a credential. The probe asks "list the models this session can
+    // reach"; an empty answer is not that list, so it is `ok: false` carrying
+    // exactly what we saw. Under-claiming, in the direction every other rule
+    // in this module leans.
+    if (stdout === "") {
+      return {
+        ok: false,
+        identity: null,
+        detail: `${AGY_BIN} ${AGY_PROBE_ARGS.join(" ")} exited 0 but printed NOTHING on stdout, so no model list came back and nothing here is evidence of a live Google credential. An exit code is not an answer.${stderr ? `\n\nSTDERR: ${stderr}` : "\n\nSTDERR: (empty)"}`,
+        checked_at: checkedAt,
+      };
+    }
     const head = stdout.split("\n").slice(0, 8).join("\n");
     return {
       ok: true,
       identity: null,
-      detail: `${AGY_BIN} ${AGY_PROBE_ARGS.join(" ")} exited 0 — the CLI holds a live Google credential. Model list head:\n${head || "(exit 0 but no output)"}`,
+      detail: `${AGY_BIN} ${AGY_PROBE_ARGS.join(" ")} exited 0 — the CLI holds a live Google credential. Model list head:\n${head}`,
       checked_at: checkedAt,
     };
   }
@@ -630,6 +652,185 @@ export async function probeAgy(
     env: opts.env,
   });
   return classifyAgyProbe(outcome, checkedAt);
+}
+
+/**
+ * The exact line a human types to sign `agy` in. Lives here, beside `AGY_BIN`,
+ * because two modules print it and a sign-in command that names a different
+ * path from the one the probe spawns is a wrong instruction with a confident
+ * face.
+ */
+export const AGY_SIGNIN_COMMAND = AGY_BIN;
+
+/**
+ * IS THE BINARY THERE — THE ONE SUBSTRATE QUESTION, ASKED ONE WAY.
+ *
+ * This function exists because there used to be two answers on one panel.
+ * `routes/usage.ts` walked `process.env.PATH` looking for a file called `agy`;
+ * `routes/integrations.ts` stat'ed the absolute path. pm2 never sources
+ * `.bashrc`, so `/root/.local/bin` is not on forge-control's `PATH`, and the
+ * two rows on the Connections surface said opposite things about one binary:
+ * "agy is not installed on this box" directly above a probe reporting
+ * "SIGNED IN · agy models exited 0 and listed 7 models". R4-red photographed
+ * exactly that.
+ *
+ * So the PATH walk is gone and this is the only substrate check. ENOENT and
+ * EACCES mean there is nothing here to be connected — ABSENT. Any other errno
+ * is this box failing at something it should be able to do, and is rethrown
+ * rather than degrading into a state (N1): "not installed" and "the disk is
+ * unhappy" are different sentences and must not render as one.
+ */
+export async function agyBinaryPresent(): Promise<boolean> {
+  try {
+    await access(AGY_BIN, FS.X_OK);
+    return true;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT" || e.code === "EACCES") return false;
+    throw new Error(`could not stat ${AGY_BIN}: ${e.message}`);
+  }
+}
+
+/** What the Ultra row is told about `agy`. Two measurements, no configuration:
+ *  the binary is on disk, and this is what the last probe of it said. */
+export interface AgySubstrate {
+  /** `agyBinaryPresent()`. Never a PATH walk, never a systemd unit.
+   *
+   *  NULL IS A THIRD ANSWER AND IT IS LOAD-BEARING. `access()` failing with
+   *  something that is not ENOENT/EACCES — EIO, ELOOP, a mount that went away
+   *  — means we could not decide. Folding that into `false` would print "the
+   *  CLI is not installed" because a disk hiccuped, which is the same species
+   *  of confident wrong answer this whole fix cycle is about. */
+  installed: boolean | null;
+  /** The persisted record put through `renderState` — the ONE function that
+   *  may emit "connected". Null ONLY when `installed` is not true, because
+   *  there is no point rendering the age of a probe of a binary we cannot
+   *  confirm is there. */
+  probe: RenderedState | null;
+  /** The verbatim failure behind `installed: null`, or behind an unreadable
+   *  status record. Null when nothing failed. Never swallowed (N1). */
+  read_error: string | null;
+}
+
+/** The two sentences the Google AI Ultra row prints. Pure, so every branch is
+ *  reachable from a unit test — the row itself is only ever in one of them on
+ *  any given box, which is how the PATH bug survived. */
+export interface AgyNarrative {
+  /** One line, rendered verbatim: what state the sign-in is actually in. */
+  auth_note: string;
+  /** The exact thing to type. Null only when a probe has confirmed a session —
+   *  never merely because a settings file exists on disk. */
+  connect_command: string | null;
+}
+
+/**
+ * Compose the Ultra row's words from what was measured, and nothing else.
+ *
+ * The rule that used to be broken here: a file at
+ * `~/.gemini/antigravity-cli/settings.json` was read as "signed in locally".
+ * A settings file is configuration; it is written the first time the CLI runs
+ * and it survives a revoked session, a rotated Google password and an
+ * uninstall that left the dotfiles behind. Only the probe decides.
+ */
+export function agyUltraNarrative(s: AgySubstrate): AgyNarrative {
+  if (s.installed === null) {
+    return {
+      auth_note: `Whether the Antigravity CLI is installed could not be determined — checking ${AGY_BIN} failed: ${s.read_error ?? "(no error was recorded, which is itself a bug)"}. This row is reporting that it does not know, which is not the same as "no".`,
+      // Deliberately null. We do not know what state this is in, so there is
+      // no honest next step to print — an instruction is a claim too.
+      connect_command: null,
+    };
+  }
+
+  if (s.installed === false) {
+    return {
+      auth_note: `The Antigravity CLI is not installed on this box — nothing is present or executable at ${AGY_BIN}, so the Ultra subscription has never been signed in here.`,
+      connect_command: `install the Antigravity CLI so that ${AGY_BIN} exists, then run \`${AGY_SIGNIN_COMMAND}\` once to sign in`,
+    };
+  }
+
+  if (s.probe === null) {
+    throw new Error(
+      `agyUltraNarrative was given installed:true with no rendered probe — the caller must pass renderState(record, clock), which handles a missing record itself. A null here would silently become "we do not know" for an installed CLI.`,
+    );
+  }
+
+  if (s.probe.state === "connected") {
+    return {
+      auth_note: `${AGY_BIN} is installed and its last probe succeeded: ${s.probe.detail}`,
+      connect_command: null,
+    };
+  }
+
+  return {
+    auth_note: `${AGY_BIN} is installed, but no probe currently vouches for the session: ${s.probe.detail}`,
+    connect_command: `sign in at a terminal on this box: \`${AGY_SIGNIN_COMMAND}\`, then open the printed Google URL and paste the authorization code back within 60 seconds`,
+  };
+}
+
+/**
+ * Read both measurements. NEVER THROWS, and that is a deliberate boundary
+ * decision rather than a swallowed error.
+ *
+ * The caller is `GET /api/usage/quota`, which also carries the Anthropic
+ * windows. `check-gemini-tally.ts` §5 already pins the rule that the two
+ * upstreams are independent — an Anthropic 429 must not take the Gemini line
+ * down — and the converse holds here: an unreadable `agy` sidecar must not
+ * take the Claude quota row down with it. So every failure becomes a FIELD,
+ * carried verbatim in `read_error` and printed by `agyUltraNarrative`, rather
+ * than a 500. Nothing is defaulted and nothing is hidden; the failure is
+ * simply rendered instead of thrown (N1).
+ */
+export async function readAgySubstrate(nowMs: number = Date.now()): Promise<AgySubstrate> {
+  let installed: boolean;
+  try {
+    installed = await agyBinaryPresent();
+  } catch (err) {
+    return { installed: null, probe: null, read_error: (err as Error).message };
+  }
+  if (!installed) return { installed: false, probe: null, read_error: null };
+
+  let record: ConnectionRecord | null;
+  try {
+    record = await readConnectionRecord("agy");
+  } catch (err) {
+    // A corrupt record is NOT "never checked": those two produce identical
+    // amber for entirely different reasons, and only one of them is our fault.
+    return {
+      installed: true,
+      probe: {
+        state: "unknown",
+        identity: null,
+        checked_at: null,
+        detail: `The stored agy status record could not be read, so this row has no evidence to show: ${(err as Error).message}`,
+      },
+      read_error: (err as Error).message,
+    };
+  }
+
+  try {
+    return {
+      installed: true,
+      probe: renderState(record, {
+        now: nowMs,
+        intervalMs: connectionRecheckIntervalMs(),
+      }),
+      read_error: null,
+    };
+  } catch (err) {
+    // `renderState` throws on an unparseable `checked_at` and on a
+    // non-positive interval. Same rule: rendered, not thrown, not defaulted.
+    return {
+      installed: true,
+      probe: {
+        state: "unknown",
+        identity: null,
+        checked_at: null,
+        detail: `The stored agy status record could not be rendered: ${(err as Error).message}`,
+      },
+      read_error: (err as Error).message,
+    };
+  }
 }
 
 /* ── GitHub (R55, R56) ───────────────────────────────────────────────────── */

@@ -190,6 +190,30 @@ const claimedConnectedWithNoTimestamp = (identity: string): ConnectionStatusFact
     action: "fixture action",
   });
 
+/**
+ * THE FOURTH FIXTURE: CONNECTED, FRESH, AND CARRYING NO IDENTITY.
+ *
+ * R4-red's item 3. Every `connected` fixture above supplies an identity, so
+ * the `connected` + `identity: null` path was never rendered — and that path
+ * is the NORMAL case for `agy`, whose probe returns `identity: null` by
+ * construction (`connection-status.ts#classifyAgyProbe`: `agy models` prints a
+ * model list and nothing about the account, and inventing an address there
+ * would be configuration-as-truth wearing a different hat). A mutation that
+ * substituted a configured address into that branch passed green.
+ *
+ * So this is the fixture that measures it: the state is CONNECTED, the probe
+ * returned no name, and §5b asserts that what lands in the identity slot is a
+ * stated absence — never `CONFIGURED_ONLY`, never an address from anywhere.
+ */
+const connectedWithNoIdentity = (detail: string): ConnectionStatusFacts =>
+  status({
+    state: "connected",
+    identity: null,
+    checked_at: iso(3 * 60_000),
+    detail,
+    action: "fixture action",
+  });
+
 /* ── Claude ──────────────────────────────────────────────────────────────── */
 
 const CLAUDE_BASE: Account = {
@@ -383,6 +407,38 @@ const githubStale = githubConnection(
   NOW,
 );
 
+/* ── The fourth fixture, one per integration ─────────────────────────────── */
+
+const googleAnon = googleConnection(
+  { ...googleFacts({}), status: connectedWithNoIdentity("Google renewed the token but Gmail named nobody.") },
+  NOW,
+);
+const agyAnon = agyConnection(
+  { ...agyFacts({}), status: connectedWithNoIdentity("/root/.local/bin/agy models exited 0 and listed 7 models.") },
+  NOW,
+);
+const githubAnon = githubConnection(
+  { ...githubFacts({}), status: connectedWithNoIdentity("GET https://api.github.com/user answered 200 with no login field.") },
+  NOW,
+);
+/** Claude's equivalent: probed, healthy, and its address is configuration —
+ *  which is the same question asked of the one integration that has no probed
+ *  identity to lose. */
+const claudeAnon = claudeConnection(
+  {
+    ...CLAUDE_BASE,
+    login_email: null,
+    health: "healthy",
+    stored_health: "healthy",
+    health_detail: "confirmed by a successful run",
+    probe_age_ms: 3 * 60_000,
+    last_probed_at: iso(3 * 60_000),
+    last_ok_at: iso(3 * 60_000),
+  },
+  false,
+  INTERVAL_MS,
+);
+
 /**
  * The four integrations, indexed by the states the phase names.
  *
@@ -398,6 +454,7 @@ const githubStale = githubConnection(
 const MATRIX = [
   {
     id: "claude",
+    anon: claudeAnon,
     never: claudeNever,
     ok: claudeOk,
     fail: claudeBroken,
@@ -409,6 +466,7 @@ const MATRIX = [
   },
   {
     id: "google",
+    anon: googleAnon,
     never: googleNever,
     ok: googleOk,
     fail: googleFail,
@@ -420,6 +478,7 @@ const MATRIX = [
   },
   {
     id: "agy",
+    anon: agyAnon,
     never: agyNever,
     ok: agyOk,
     fail: agyFail,
@@ -431,6 +490,7 @@ const MATRIX = [
   },
   {
     id: "github",
+    anon: githubAnon,
     never: githubNever,
     ok: githubOk,
     fail: githubFail,
@@ -660,6 +720,55 @@ ok(
 );
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * §5b CONNECTED WITH NO IDENTITY — the fourth fixture, and the normal `agy`
+ *     case. R4-red item 3: this path was rendered by nothing, and a mutation
+ *     that substituted a configured address into it passed green.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n§5b a fresh CONNECTED probe that returned no identity (the normal agy case)");
+
+/** Every address any layer could reach for if it started inventing one: the
+ *  configured-only fixture AND each integration's own probed address, which
+ *  must not leak from one fixture into another row. */
+const NO_ADDRESS_MAY_APPEAR = [
+  CONFIGURED_ONLY,
+  PROBE_IDENTITY.google,
+  PROBE_IDENTITY.agy,
+  PROBE_IDENTITY.github,
+  PROBE_IDENTITY.claude,
+];
+
+for (const c of MATRIX) {
+  ok(
+    `${c.id}: a fresh probe that named nobody is still CONNECTED — the state is the probe's, not the name's`,
+    c.anon.state === "connected",
+    `state=${c.anon.state}`,
+  );
+  ok(
+    `${c.id}: …and NO address appears in the identity slot, configured or otherwise`,
+    !NO_ADDRESS_MAY_APPEAR.some((addr) => c.anon.identity.includes(addr)),
+    `identity=${c.anon.identity}`,
+  );
+  ok(
+    `${c.id}: …and the slot states the absence in words rather than sitting empty`,
+    c.anon.identity.trim().length > 0 && !/^(null|undefined|-|—)$/.test(c.anon.identity.trim()),
+    `identity=${JSON.stringify(c.anon.identity)}`,
+  );
+}
+
+/* The anti-inert control for the rule above: "no address appears" must FAIL on
+ * the fixture where the probe DID return one, or it is measuring nothing. The
+ * three integrations with a probed identity are the ones that can carry it. */
+for (const c of MATRIX.filter((m) => m.identityIsProbed)) {
+  discriminates(
+    `${c.id}: "the identity slot names no address" separates the anonymous probe from the named one`,
+    (sum) => !NO_ADDRESS_MAY_APPEAR.some((addr) => sum.identity.includes(addr)),
+    { label: `${c.id}.anon`, summary: c.anon },
+    { label: `${c.id}.ok`, summary: c.ok },
+  );
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * §6 THE PHOTOGRAPHED DEFECT, and the layer that now stops it.
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -847,6 +956,7 @@ ok("…and carries the reason it is absent", absent.health === "no credential fi
 
 console.log(
   `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — phase 4 connection states ` +
-    `(4 integrations × {null, fresh-ok, fresh-fail, stale}, R50/R51/R57/R58)`,
+    `(4 integrations × {null, fresh-ok, fresh-fail, stale, connected-with-no-identity}, ` +
+    `R50/R51/R57/R58)`,
 );
 process.exit(failures === 0 ? 0 : 1);

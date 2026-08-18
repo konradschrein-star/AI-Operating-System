@@ -36,10 +36,12 @@ import {
   resetsIn,
 } from "../../forge-control-web/app/desktop/quota/quotaQuery";
 import {
+  agyConnection,
   claudeConnection,
   geminiKeyConnection,
   googleConnection,
   ultraConnection,
+  type AgyFacts,
 } from "../../forge-control-web/app/desktop/settings/connections";
 import type { Account } from "../../forge-control-web/app/desktop/settings/accountRegistry";
 
@@ -173,9 +175,13 @@ console.log("\n§2 the Gemini line says only what is true");
 
 const BASE: GeminiTally = {
   cli_installed: false,
-  cli_profile: false,
-  auth_note: "Antigravity CLI (agy) is not installed on this box, so the Ultra subscription has never been signed in here.",
-  connect_command: "install the Antigravity CLI, then run `agy` once to sign in",
+  probe_state: null,
+  probe_checked_at: null,
+  session_probed_ok: false,
+  auth_note:
+    "The Antigravity CLI is not installed on this box — nothing is present or executable at /root/.local/bin/agy, so the Ultra subscription has never been signed in here.",
+  connect_command:
+    "install the Antigravity CLI so that /root/.local/bin/agy exists, then run `/root/.local/bin/agy` once to sign in",
   five_hour: { calls: 0, tokens: null },
   seven_day: { calls: 0, tokens: null },
   no_limit_note:
@@ -187,11 +193,33 @@ ok("unauthenticated: says so instead of showing 0%", unauthenticated.text === "n
 ok("…tone is not a healthy one", unauthenticated.tone === "unsigned");
 ok("…and names the exact sign-in step", unauthenticated.title.includes("agy"));
 
+/* THE CONTROL for the line above. The predicate used to be "a settings file
+ * exists"; it is now "a probe vouched for the session". So a box where the
+ * probe SUCCEEDED but nothing has been counted must NOT say "not signed in" —
+ * otherwise the predicate is inert and would pass with the field removed. */
+const signedInButIdle = geminiLine({
+  ...BASE,
+  cli_installed: true,
+  probe_state: "connected",
+  probe_checked_at: "2026-08-18T20:00:00.000Z",
+  session_probed_ok: true,
+  auth_note: "/root/.local/bin/agy is installed and its last probe succeeded.",
+  connect_command: null,
+});
+ok(
+  "a proven session with nothing counted does NOT say 'not signed in'",
+  signedInButIdle.text !== "not signed in",
+  signedInButIdle.text,
+);
+
 const counted = geminiLine({
   ...BASE,
   cli_installed: true,
-  cli_profile: true,
-  auth_note: "agy has a local profile; the session lives in the OS keyring and cannot be read from here, so this is still our own count.",
+  probe_state: "connected",
+  probe_checked_at: "2026-08-18T20:00:00.000Z",
+  session_probed_ok: true,
+  auth_note:
+    "/root/.local/bin/agy is installed and its last probe succeeded: agy models exited 0 and listed 7 models.",
   connect_command: null,
   five_hour: { calls: 4, tokens: 12_400 },
   seven_day: { calls: 31, tokens: 208_000 },
@@ -203,7 +231,9 @@ ok("…and states there is no published limit", counted.title.includes("no denom
 const noUnits = geminiLine({
   ...BASE,
   cli_installed: true,
-  cli_profile: true,
+  probe_state: "connected",
+  probe_checked_at: "2026-08-18T20:00:00.000Z",
+  session_probed_ok: true,
   five_hour: { calls: 3, tokens: null },
   seven_day: { calls: 9, tokens: null },
 });
@@ -437,15 +467,120 @@ ok("no stored Gemini key is NOT CONNECTED", geminiKeyConnection(false, null, nul
 ok("a stored, untested key is UNTESTED — not healthy", geminiKeyConnection(true, "…aB4z", null).stateLabel === "UNTESTED");
 ok("a rejected key is BROKEN", geminiKeyConnection(true, "…aB4z", { ok: false, message: "API key not valid" }).state === "broken");
 
-const ultra = ultraConnection(BASE);
-ok("Ultra with no local profile is NOT CONNECTED", ultra.state === "absent");
-ok("…and the action names agy", ultra.action.includes("agy"));
-ok("…and it never claims a percentage", !ultra.what.includes("%") && ultra.what.includes("unpublished"));
+/* ── The Ultra row, and the contradiction it used to carry ───────────────────
+ *
+ * R4-red photographed ONE PANEL saying two opposite things about ONE binary:
+ * the Ultra row read "agy is not installed on this box" (it walked
+ * forge-control's PATH, which pm2 leaves without /root/.local/bin) while the
+ * agy row, four inches below, read "SIGNED IN · agy models exited 0 and listed
+ * 7 models".
+ *
+ * The fix is structural, so the assertion is too: both rows are now rendered
+ * from the SAME `ConnectionStatus` through the SAME `summaryFromStatus`, and
+ * every fixture below asserts they agree. A future edit that gives the Ultra
+ * row its own opinion fails here rather than on a screenshot.
+ * ──────────────────────────────────────────────────────────────────────────── */
 
-const ultraSigned = ultraConnection({ ...BASE, cli_installed: true, cli_profile: true });
+const ULTRA_INTERVAL_MS = 900_000;
+const ULTRA_NOW = Date.parse("2026-08-18T20:00:00.000Z");
+const ultraIso = (ageMs: number): string => new Date(ULTRA_NOW - ageMs).toISOString();
+
+const agyFacts = (
+  over: Partial<AgyFacts["status"]>,
+): AgyFacts => ({
+  status: {
+    state: "unknown",
+    identity: null,
+    checked_at: null,
+    detail: "fixture",
+    action: "fixture action",
+    ...over,
+  },
+  recheckIntervalMs: ULTRA_INTERVAL_MS,
+});
+
+const AGY_NOT_INSTALLED = agyFacts({
+  state: "absent",
+  detail: "/root/.local/bin/agy is not present or not executable.",
+  action:
+    "Install the Antigravity CLI so that /root/.local/bin/agy exists, then run `/root/.local/bin/agy` once to sign in.",
+});
+const AGY_SIGNED_IN = agyFacts({
+  state: "connected",
+  checked_at: ultraIso(90_000),
+  detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
+  action: "Nothing to do.",
+});
+/** The R57 fixture: a server INSISTING on connected with no timestamp. */
+const AGY_CLAIMED_NO_CLOCK = agyFacts({
+  state: "connected",
+  detail: "the binary is right there on disk",
+  checked_at: null,
+});
+
+const ultraLoading = ultraConnection(BASE, null, ULTRA_NOW);
 ok(
-  "a local agy profile is still UNKNOWN — a keyring session is not proof",
-  ultraSigned.state === "unknown" && ultraSigned.stateLabel === "SIGNED IN LOCALLY",
+  "Ultra before the agy status loads is READING, never a claim about the box",
+  ultraLoading.state === "unknown" && ultraLoading.stateLabel === "READING…",
+  `${ultraLoading.state}/${ultraLoading.stateLabel}`,
+);
+ok("…and it never claims a percentage", !ultraLoading.what.includes("%") && ultraLoading.what.includes("unpublished"));
+
+const ultraAbsent = ultraConnection(BASE, AGY_NOT_INSTALLED, ULTRA_NOW);
+ok("Ultra with no CLI on disk is NOT CONNECTED", ultraAbsent.state === "absent", ultraAbsent.state);
+ok("…and the action names agy", ultraAbsent.action.includes("agy"));
+
+const ultraSigned = ultraConnection(
+  { ...BASE, cli_installed: true, probe_state: "connected", session_probed_ok: true },
+  AGY_SIGNED_IN,
+  ULTRA_NOW,
+);
+ok(
+  "a fresh successful agy probe makes the Ultra row SIGNED IN — the probe is the evidence",
+  ultraSigned.state === "connected" && ultraSigned.stateLabel === "SIGNED IN",
+  `${ultraSigned.state}/${ultraSigned.stateLabel}`,
+);
+ok(
+  "…and the count rides alongside the state rather than promoting it",
+  ultraSigned.health.includes("no denominator exists"),
+  ultraSigned.health.slice(0, 160),
+);
+
+const ultraNoClock = ultraConnection(
+  { ...BASE, cli_installed: true, probe_state: "connected", session_probed_ok: true },
+  AGY_CLAIMED_NO_CLOCK,
+  ULTRA_NOW,
+);
+ok(
+  "a connected claim with NO checked_at is UNKNOWN on the Ultra row too (R57)",
+  ultraNoClock.state === "unknown",
+  `${ultraNoClock.state}/${ultraNoClock.stateLabel}`,
+);
+
+/* THE ANTI-CONTRADICTION ASSERTION. Same facts, both rows, every fixture. */
+for (const [label, facts] of [
+  ["not installed", AGY_NOT_INSTALLED],
+  ["signed in", AGY_SIGNED_IN],
+  ["claimed connected, no clock", AGY_CLAIMED_NO_CLOCK],
+] as const) {
+  const ultraRow = ultraConnection(BASE, facts, ULTRA_NOW);
+  const agyRow = agyConnection(facts, ULTRA_NOW);
+  ok(
+    `agy and Ultra agree on "${label}" — one binary, one verdict`,
+    ultraRow.state === agyRow.state && ultraRow.stateLabel === agyRow.stateLabel,
+    `ultra=${ultraRow.state}/${ultraRow.stateLabel} agy=${agyRow.state}/${agyRow.stateLabel}`,
+  );
+}
+
+/* …and the control: the three fixtures do not all render the same state, so
+ * the agreement above is not agreement-on-a-constant. */
+ok(
+  "…and those three fixtures are genuinely different states, so the agreement means something",
+  new Set([
+    ultraConnection(BASE, AGY_NOT_INSTALLED, ULTRA_NOW).state,
+    ultraConnection(BASE, AGY_SIGNED_IN, ULTRA_NOW).state,
+    ultraConnection(BASE, AGY_CLAIMED_NO_CLOCK, ULTRA_NOW).state,
+  ]).size === 3,
 );
 
 /* The surface itself: one panel, mounted by both entry points, no leftover

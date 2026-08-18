@@ -609,48 +609,75 @@ export function geminiKeyConnection(
   };
 }
 
-/** The Ultra subscription itself, via the Antigravity CLI. Reads the SAME
- *  tally the indicator row shows — one subscription, one truth, no extra
- *  request. There is no percentage here for the same reason there is none up
- *  there: Google publishes no denominator. */
-export function ultraConnection(t: GeminiTally | undefined): ConnectionSummary {
+const ULTRA_COPY: ConnectionCopy = {
+  id: "gemini-ultra",
+  title: "Google AI Ultra (Antigravity CLI)",
+  what: "Konrad's Google subscription, reachable only through the `agy` CLI. Its quota is real but unpublished — no endpoint returns the remaining share, so this OS counts its own calls instead.",
+  labels: {
+    // Identical words to AGY_COPY, deliberately. Two rows describing one
+    // binary that use different vocabulary for the same state is how a reader
+    // concludes they are about different things.
+    connected: "SIGNED IN",
+    unknown: "UNKNOWN",
+    broken: "NOT SIGNED IN",
+    absent: "NOT INSTALLED",
+  },
+  noIdentity: "no signed-in Google account — `agy models` is what would reveal one",
+};
+
+/**
+ * The Ultra subscription itself, via the Antigravity CLI.
+ *
+ * ── WHY THIS TAKES THE agy STATUS AND NOT JUST THE TALLY (R4-red, fix 1) ──
+ * It used to derive its own state from the tally's `cli_profile` — a settings
+ * FILE on disk — while the tally's `cli_installed` came from walking
+ * forge-control's `PATH`, which pm2 leaves without `/root/.local/bin`. The
+ * result was one panel carrying two rows about one binary with opposite
+ * claims: "agy is not installed on this box", directly above a probe reporting
+ * "SIGNED IN · agy models exited 0 and listed 7 models".
+ *
+ * So the state now comes from the SAME `ConnectionStatus` the `agy` row reads,
+ * through the SAME `summaryFromStatus`. The two rows cannot disagree, because
+ * there is only one input and one renderer. The tally still supplies what is
+ * genuinely this row's own: the count, and the reason there is no percentage.
+ *
+ * `agy === null` is "the status has not loaded yet" and renders as reading —
+ * never as absent, which is a claim about the box.
+ */
+export function ultraConnection(
+  t: GeminiTally | undefined,
+  agy: AgyFacts | null,
+  nowMs: number = Date.now(),
+): ConnectionSummary {
   const base = {
-    id: "gemini-ultra",
-    title: "Google AI Ultra (Antigravity CLI)",
-    what: "Konrad's Google subscription, reachable only through the `agy` CLI. Its quota is real but unpublished — no endpoint returns the remaining share, so this OS counts its own calls instead.",
+    id: ULTRA_COPY.id,
+    title: ULTRA_COPY.title,
+    what: ULTRA_COPY.what,
   };
-  if (!t) {
+  if (agy === null) {
     return {
       ...base,
       state: "unknown",
-      stateLabel: "UNKNOWN",
+      stateLabel: "READING…",
       identity: "not read yet",
-      health: "This forge-control does not report a Gemini tally.",
+      health: t
+        ? `Waiting for the agy connection status. ${t.auth_note}`
+        : "Waiting for the agy connection status.",
       action: "Loading…",
     };
   }
-  if (!t.cli_profile) {
-    return {
-      ...base,
-      state: "absent",
-      stateLabel: STATE_LABEL.absent,
-      identity: "no local agy profile",
-      health: t.auth_note,
-      action: t.connect_command
-        ? `On the VPS: ${t.connect_command}`
-        : "Sign in with the Antigravity CLI on this box.",
-    };
-  }
+
+  const summary = summaryFromStatus(ULTRA_COPY, agy.status, {
+    nowMs,
+    intervalMs: agy.recheckIntervalMs,
+  });
+
+  // The tally is this row's own subject and rides ALONGSIDE the state — never
+  // instead of it, and never able to promote it.
   return {
-    ...base,
-    // A profile on disk is not a live session: the session lives in the OS
-    // keyring and no HTTP handler may open it. So this stays UNKNOWN rather
-    // than claiming a connection it has not seen.
-    state: "unknown",
-    stateLabel: "SIGNED IN LOCALLY",
-    identity: "the Google account that ran `agy` on this box",
-    health: t.auth_note,
-    action:
-      "Nothing to wire. Run `agy` and type /usage to see Google's own credit figure — it exists only inside that TUI.",
+    ...summary,
+    health: t
+      ? `${summary.health}\n\nOur own count, with no denominator to divide by: ${t.no_limit_note}`
+      : `${summary.health}\n\nThis forge-control does not report a Gemini tally, so there is no count to show beside the state.`,
   };
 }

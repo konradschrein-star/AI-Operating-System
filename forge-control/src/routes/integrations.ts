@@ -50,9 +50,11 @@ import {
 import {
   AGY_BIN,
   AGY_PROBE_ARGS,
+  AGY_SIGNIN_COMMAND,
   GITHUB_PAT_SECRET,
   GOOGLE_REAUTH_COMMAND,
   absentConnectionStatus,
+  agyBinaryPresent,
   buildConnectionStatus,
   connectionRecheckIntervalMs,
   googleTokenPath,
@@ -783,8 +785,6 @@ r.post("/google/test", async (c) => {
 
 /* ── agy / Antigravity CLI (R52) ─────────────────────────────────────────── */
 
-const AGY_SIGNIN_COMMAND = `${AGY_BIN}`;
-
 const AGY_ACTIONS = {
   connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
   unknown: "Press Probe to run the CLI and see what it says.",
@@ -831,23 +831,15 @@ async function credentialFilePresent(path: string): Promise<boolean> {
   }
 }
 
-async function agyBinaryPresent(): Promise<boolean> {
-  try {
-    await access(AGY_BIN, FS.X_OK);
-    return true;
-  } catch (err) {
-    const e = err as NodeJS.ErrnoException;
-    if (e.code === "ENOENT" || e.code === "EACCES") return false;
-    throw new Error(`could not stat ${AGY_BIN}: ${e.message}`);
-  }
-}
-
 async function agyStatus(record: ConnectionRecord | null): Promise<ConnectionStatus> {
   if (!(await agyBinaryPresent())) {
     return absentConnectionStatus(
       AGY_ID,
       `${AGY_BIN} is not present or not executable — the Antigravity CLI is not installed on this box.`,
-      "Install the Antigravity CLI, then run it once to sign in.",
+      // NAMES THE BINARY. The Ultra row prints this same action, and an
+      // instruction that does not say which path must exist is a step Konrad
+      // cannot follow to a checkable end.
+      `Install the Antigravity CLI so that ${AGY_BIN} exists, then run \`${AGY_SIGNIN_COMMAND}\` once to sign in.`,
     );
   }
   return buildConnectionStatus(AGY_ID, record, clock(), AGY_ACTIONS);

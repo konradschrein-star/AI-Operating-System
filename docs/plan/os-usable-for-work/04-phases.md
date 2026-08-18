@@ -252,6 +252,27 @@ works in `integrationCards.tsx` and `api-connections.ts` and hands B4b any route
 builders in one workstream may not declare the same file — where a split is impossible, one builder
 writes that file twice rather than two builders serialising on it.
 
+### Undeclared writes, disclosed (R4-gate blocker 3)
+
+The rule above was broken once, and R4-gate found it. Recorded here rather than amended away, because
+the point of a write-set is that a violation is visible afterwards.
+
+| Commit | File | Declared by | What actually happened |
+|---|---|---|---|
+| `343a65e` (B4b) | `scripts/checks/check-integrations.tsx` | **B4c**, not B4b | B4b extended the integrations check to cover the Google persistence it had just built. B4c then wrote the same file at `5b36eba`. This is the two-builder collision the paragraph above forbids; the content does not conflict (B4b added Google sections, B4c added agy/GitHub sections) but the rule was still broken. |
+| `5b36eba` (B4c) | `docs/plan/artifacts/os-usable-for-work/phase4/browser-harness-phase4.cjs` | **B4a**, not B4c | B4c added its three `b4c-*` modes to B4a's already-committed harness. Disclosed at the time in B4c's own report and in the file's header; not in its write-set. |
+| `5b36eba` (B4c) | `docs/plan/artifacts/os-usable-for-work/phase4/b4c-after-settings-surface.png` | nobody | A fourth screenshot, taken to record that the cards had no mount point. Never declared. |
+
+**Deliverable naming.** The Deliverables list above names `phase4/agy-flow.md`; what shipped is
+`phase4/agy-flow-affordance.md`. The file is the deliverable, under a longer name — recorded so the
+next reader does not go looking for a document that was never written under that path.
+
+**Round 4 (fix cycle 1) write-set.** The fix cycle was seeded with the R4-red reviewer's write-set —
+`phase4/red-team-report.md` alone — because a fix-cycle row inherits its parent's declaration. Every
+source file it had to touch to close blockers 1 and 2 is therefore an undeclared write by
+construction; they are enumerated in `phase4/fix-cycle-1-report.md` §1 and in the fix commit's own
+message.
+
 ---
 
 ## Phase 5 — Businesses, Pipeline, Money

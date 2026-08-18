@@ -620,6 +620,19 @@ async function api(pathSuffix, init) {
           );
         }
         if (has("agy")) {
+          /* ROUND 4 (fix cycle 1). R54's affordance lives in the CARD, and on
+           * the panel the card body is kept mounted but hidden with CSS until
+           * its row is expanded — so `innerText` on a collapsed row returns
+           * the head only, and these two assertions failed against a surface
+           * that is actually correct. The row is expanded first now.
+           *
+           * `innerText` was the right call and stays: it is what a human can
+           * READ. `textContent` would have "passed" on a display:none card,
+           * which is the opposite of what R54 asks. */
+          if (onPanel) {
+            await page.click('[data-row-toggle="agy"]');
+            await page.waitForSelector("[data-agy-blocker]", { state: "visible", timeout: 10000 });
+          }
           const agyText = await page
             .locator(onPanel ? '[data-connection-row="agy"]' : "[data-agy-card]")
             .innerText();

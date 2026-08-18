@@ -148,6 +148,34 @@ ok(
   accounts.includes("Amber means unknown"),
 );
 
+/* ── EVERY CONNECTION IS ON THE SCREEN, NOT MERELY EXPORTED ──────────────────
+ *
+ * R4-gate blocker 1. `AgyCard` and `GitHubCard` were built, tested and
+ * exported for a whole phase with NO MOUNT POINT, so R54 and R56 were
+ * unreachable on the only surface Konrad opens — and every proof of them ran
+ * against a throwaway page rendering the cards directly. A component test
+ * cannot see that: it imports the thing it is testing.
+ *
+ * So the assertion is over the PANEL'S OWN MARKUP, at first paint, before any
+ * fetch resolves. Delete a `<Row>` and this goes red.
+ * ──────────────────────────────────────────────────────────────────────────── */
+const EXPECTED_ROWS = ["google", "gemini-key", "gemini-ultra", "agy", "github"] as const;
+for (const id of EXPECTED_ROWS) {
+  ok(
+    `the ${id} connection has a row on the panel, not just an exported card`,
+    accounts.includes(`data-connection-row="${id}"`),
+  );
+}
+/* The anti-inert control: `includes("data-connection-row=…")` must FAIL for an
+ * id that is not mounted, or the five lines above measure nothing. */
+ok(
+  "…and the row check discriminates — an unmounted id is not found",
+  !accounts.includes('data-connection-row="not-a-real-connection"'),
+);
+/* And the cards themselves are inside those rows, not merely the heads. */
+ok("the agy card body is mounted under its row", accounts.includes("data-agy-card"));
+ok("the GitHub card body is mounted under its row", accounts.includes("data-github-card"));
+
 console.log("§3b the real panels render — not the round-1351 stubs");
 // Both panels fetch on mount (`useQuery` / a `useEffect` that calls the
 // proxy). Neither fetch fires here: `@tanstack/query-core` gates its

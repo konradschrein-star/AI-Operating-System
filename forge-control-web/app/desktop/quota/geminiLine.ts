@@ -73,10 +73,14 @@ export function geminiLine(tally: GeminiTally | undefined): GeminiLine {
     };
   }
 
-  // Nothing counted AND no sign-in: the sign-in is the thing to say. A "0" here
-  // would read as "you have used none of your Ultra quota", which is a claim
-  // this box cannot make.
-  if (w.calls === 0 && !tally.cli_profile) {
+  // Nothing counted AND no PROVEN sign-in: the sign-in is the thing to say. A
+  // "0" here would read as "you have used none of your Ultra quota", which is
+  // a claim this box cannot make.
+  //
+  // The predicate used to be `!tally.cli_profile` — a settings FILE on disk,
+  // which survives a revoked session. It is now the probe's verdict, so this
+  // line says "not signed in" exactly when nothing vouches for the session.
+  if (w.calls === 0 && !tally.session_probed_ok) {
     return {
       text: "not signed in",
       tone: "unsigned",

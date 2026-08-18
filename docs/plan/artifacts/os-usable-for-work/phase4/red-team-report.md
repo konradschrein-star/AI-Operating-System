@@ -480,3 +480,50 @@ next task must do.
 - No integration that survives a 401, a dead port, a missing binary, a deleted sidecar or a week of
   clock drift while still claiming to be connected.
 - No write outside this worktree; `/opt/forge-ai-os` is clean.
+
+---
+
+## 9. CLOSURE — appended by round 4 (fix cycle 1), 2026-08-19
+
+Appended, never rewritten: §1–§8 above are R4-red's record of what was true at `5b36eba`, and are
+left exactly as written. This section says what happened to each finding.
+
+| # | Sev | Status | Where the fix is, and what proves it |
+|---|---|---|---|
+| **2** | high | **CLOSED** | `agyOnPath()` is deleted. `routes/usage.ts` now derives the row from `agyBinaryPresent()` (`access(AGY_BIN, X_OK)`, shared with `routes/integrations.ts` so there is one substrate check, not two) plus the persisted probe record through `renderState`. Route-level proof: `check-gemini-tally.ts` §1 asserts `cli_installed === true` on this box and that the note does not say "not installed". |
+| **6** | high | **CLOSED** | `ConnectionsPanel.tsx` mounts `<Row summary={agyConnection(agy)}><AgyCard/></Row>` and the GitHub equivalent, both threading `recheck_interval_ms` upward through `onFacts`. Proof: `check-settings-surface.tsx` §3 asserts all five `data-connection-row` ids in the panel's own server-rendered markup, with an anti-inert control on an id that is not mounted. |
+| **1** | med | **CLOSED** | `check-connection-states.ts` §5b: a fourth fixture per integration — `connected`, fresh, `identity: null` — asserting that no address (configured or probed) reaches the identity slot, with a `discriminates()` control against the named-probe fixture. The mutation named in this report was re-run against the fix and **turned 6 assertions red**. |
+| **3** | med | **CLOSED** | `classifyAgyProbe` requires non-empty stdout for `ok: true`. Exit 0 with no model list is a recorded failure carrying what was actually seen. Four new unit tests; reverting the guard turns 2 suites red. |
+| **5** | med | **DISCLOSED** | All three writes are named, with commit and owner, in `docs/plan/os-usable-for-work/04-phases.md` under "Undeclared writes, disclosed", together with the `agy-flow.md` / `agy-flow-affordance.md` naming drift. Content unchanged. |
+| **4** | low | **CLOSED** | `SAFE_MARKERS` in `check-secret-scan.ts` gained `^\*+$`, anchored and scoped to the exact token — never to a file or a directory. `abc***def` still fails, and a real credential elsewhere in the same file still fails (both proved by a canary file in a throwaway clone). |
+
+### The secret scan, measured on both sides
+
+The figure in §2.5 above (6 → 7) was taken against the **merge-base**. Re-measured at the tip this
+fix cycle started from, in a throwaway clone at `07f1c4b`, the checker was failing **8** files, of
+which **5** were pre-existing `***` redactions in other projects' evidence documents.
+
+```
+merge-base 3f98e67                       6 FILE(S) FAILED
+tip        07f1c4b                       8 FILE(S) FAILED
+after this fix cycle                     ALL PASS — 914 tracked files
+```
+
+Two further reds were closed on the way there, neither of them a credential:
+
+- `red-team-report.md:250` — `PGPASSWORD="$DOCPW"`, a shell script READING a credential at run time.
+  `SAFE_MARKERS` already recognised `${VAR}` and `$(cmd)` and flagged the third spelling of the same
+  thing; `^\$[A-Za-z_][A-Za-z0-9_]*$` completes that intent, anchored.
+- `check-gemini-tally.ts` header — a literal throwaway container password in the documented run line,
+  pre-existing at the merge-base. The run line now generates one into a shell variable.
+
+### The Ultra row and the agy row can no longer disagree
+
+The finding this report opens with was two rows on one panel making opposite claims about one binary.
+The fix is structural rather than textual: both rows are rendered from the **same**
+`ConnectionStatus` through the **same** `summaryFromStatus`, so `ultraConnection()` no longer has an
+opinion of its own to be wrong with. `check-quota-row.ts` asserts they agree across three fixtures —
+not installed, signed in, and connected-with-no-clock — plus a control that those three are genuinely
+three different states, so the agreement is not agreement-on-a-constant. Re-introducing the old
+behaviour as a mutation reproduces the reported contradiction verbatim
+(`ultra=absent/NOT INSTALLED agy=connected/SIGNED IN`) and turns the check red.
