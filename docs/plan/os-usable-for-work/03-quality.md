@@ -55,10 +55,20 @@ subsequent browser task uses it and every browser task must begin with:
 ```js
 // FIRST assertion of every browser test, before anything else is believed.
 if (/\/signin\b/.test(page.url())) {
-  throw new Error(`auth wall: landed on ${page.url()} — the cookie did not take. ` +
-                  `Every screenshot after this point would be of the login page.`);
+  throw new Error(`auth wall: landed on ${page.url()}. FIRST SUSPECT IS THE SALT, not the secret: ` +
+    `an https AUTH_URL (production, and :7701) needs salt AND cookie name ` +
+    `"__Secure-authjs.session-token" with secure:true; a plain http throwaway harness needs ` +
+    `"authjs.session-token" with secure:false. A wrong salt is a 307 that looks exactly like an ` +
+    `expired token. Every screenshot after this point would be of the login page.`);
 }
 ```
+
+**Two salts — see `02-architecture.md §0.2`.** The throwaway `next start` from this worktree runs an
+http `AUTH_URL` and takes `authjs.session-token`. The live UI runs an https `AUTH_URL` and takes
+`__Secure-authjs.session-token`, as both the cookie name and the JWE salt, with `secure: true` (CDP
+rejects `secure: false` on a `__Secure-` prefixed name outright). Getting it wrong has already cost
+this fleet two rounds. Reviewers check that any test targeting `:7701` or the https host uses the
+secure salt.
 
 Without it, an agent screenshots `/signin`, sees no memory notes, and files "memory surface renders
 empty" — inventing exactly the class of defect this project exists to remove. **This assertion is
