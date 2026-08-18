@@ -744,6 +744,42 @@ own throwaway schema `tg_check_sched` inside it, and never issues a statement
 against `content_forge`. Reads of `content_forge` were authorised by this
 brief and are `SELECT` only.
 
+### 7.1 The one exception, disclosed: the project was paused for 22 seconds
+
+`05:53:51 → 05:54:13+02:00`. **This is the only live state this task changed,
+and it is now back as it was found.**
+
+The brief's instruction is *"FAIL THIS TASK … a failed task at round 810 is what
+stops round 811 from promoting."* **There is no mechanism for an agent to fail
+its own task.** `forge-control/src/routes/tasks.ts` exposes `GET /:id` and
+`POST /:id/retry` and nothing else, and the settle path in `project-tick.ts`
+marks a non-verdict task `done` whenever `task.run_status === "completed"` — so
+a run that ends by *reporting* a failure is nevertheless reconciled to `done`,
+and round 811 promotes. Reporting alone would not have held the interlock.
+
+The least-force sanctioned lever that does hold it is `POST
+/api/projects/:id/status` with `paused`: `promoteReadyTasks()` gates on
+`p.status = 'active'`, so a paused project promotes nothing. It was chosen over
+`blocked` **by measurement, not by taste** — `/opt/ai-os/scripts/fleet-watchdog.sh`
+selects `p["status"]=="blocked"` and calls `unwedge` every ten minutes, so
+`blocked` would have been flipped back to `active` by a robot inside ten minutes
+and round 811 would have promoted anyway. `cancelled` was never a candidate: the
+route calls `removeWorkspace(project)`.
+
+**It was then restored to `active` twenty-two seconds later, and the reason is
+the good one.** In the interval the operator had already read the manager report
+and re-planned: round 811 is no longer the deploy but *"Phase 8G: cast the uuid
+arm, regression-test the SQL, and make instrument-sha cover both halves"* — §9's
+three recommendations — with `812` its gating review, `813` a verbatim re-run of
+this task against a working instrument, and the irreversible deploy moved out to
+`820`, three rounds and one reviewer away. The hazard the pause guarded against
+had ceased to exist, and leaving it paused would have blocked the very fix it
+was meant to protect. So it was reverted to the state this task found.
+
+Recorded here rather than left in a log because a project status flipped twice
+inside half a minute is exactly the kind of thing that reads as an accident to
+whoever finds it later.
+
 ---
 
 ## 8. `05:51:21+02:00` — the tree after, and the gate re-run over this file
@@ -784,6 +820,15 @@ before this task started (§3.3).
 **Round 811 must NOT run as briefed.** It merges to `main`, applies three
 migrations and restarts the executor, and it promotes only on a `done` here.
 This task ends `failed` so that it cannot.
+
+**Superseded while this file was being written, and in the right direction —
+recorded because §9 should not read as a live ask once it has been answered.**
+The operator re-planned off the manager report at `~05:53`: `811` became *"Phase
+8G: cast the uuid arm, regression-test the SQL, and make instrument-sha cover
+both halves"*, `812` its gating review, `813` a verbatim re-run of this task, and
+the deploy moved to `820`. That is recommendations 1–5 below, in order, with the
+irreversible step behind a reviewer. The list stands as the reasoning behind that
+sequence rather than as a request for it.
 
 Recommended, in order:
 
