@@ -889,3 +889,320 @@ Recommended, in order:
    columns are still absent, 8ea0cc08 is still `done` and quiet, and
    `/opt/forge-ai-os` is still clean. E-3's ordering has not been lost — it has
    been preserved by not proceeding.
+
+---
+
+# ROUND 820 — PHASE 8F: THE DEPLOY (steps 3, 4, 5, 6)
+
+Round 810 wrote everything above: steps 1, 1b, 2 and 2b. This part appends steps
+3 through 6 **in execution order with timestamps**, because the phase-8 gate
+checks the ORDER and not the intent. All timestamps are `+02:00`, from `date -Is`
+run in the same shell as the command they label.
+
+Steps 3–6 were executed **back to back by one task**, which is the point of them
+being one task: between the merge and the migrations `main` carries code whose
+schema the database cannot serve, and between the migrations and
+`pm2 restart forge-control` the API still runs the old routes. Each boundary is a
+window in which a crash-restart lands half a deploy.
+
+## 10. `07:16:37+02:00` — STEP 0: the fleet, re-confirmed
+
+State changes between tasks, so round 810's clearance was not taken on trust.
+
+```
+$ curl -s http://127.0.0.1:7700/api/projects/8ea0cc08-… | python3 -c "…"
+done Counter({'done': 159})
+```
+
+`operator-visibility` is `done` with **159/159 tasks done** — zero `running`, zero
+`pending`. The deploy was cleared to proceed.
+
+## 11. `07:15:49 → 07:16:31+02:00` — the operator's pre-launch check, and the one thing it found
+
+The task's own operator note made one check a precondition of step 6: before
+launching `await-and-seed.sh`, read the payload and confirm the after-measurement
+is pinned to the SAME INSTRUMENT and the SAME SAMPLING CONVENTION.
+
+**It was not.** The finding, and its repair, are recorded here because the repair
+had to happen BEFORE the merge — the watcher reads its payload from
+`/opt/forge-ai-os`, so an amendment made after the merge would never reach the
+task it governs.
+
+**Where the gate actually lives.** `payload-verify.json` (round 815) does not take
+the after-measurement at all; its item 8 records three fan-out figures. The
+after-measurement — S1, S2, S3 — is taken by `payload-report.json` (round 817),
+item 1. Neither file required either constraint. Per standing rule 2, the gate was
+amended **where it is enforced**:
+
+- `payload-report.json` gains **item 1b**: (a) the composite
+  `fb5a6434…` must be re-derived from disk by
+  `sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum`
+  and compared against the header the run itself printed — explicitly NOT pasted
+  out of the brief — with a STOP if they disagree; (b) the document must state and
+  cite its sampling convention to **PART 2 §10.1** of `evidence/baseline-8ea0cc08.md`.
+- `payload-verify.json` gains one sentence marking its three figures a SPOT
+  OBSERVATION and pointing at item 1b, so the *chain* carries the obligation.
+
+**Why this is not pedantry.** Round 816 measured, rather than asserted, that the
+same baseline rows yield **S1 0.29 / peak 6** under the instrument's half-open
+INSTANT convention and **S1 0.30 / peak 7** under the OVERLAP convention. That gap
+is the same magnitude as the improvement DoD-6 exists to demonstrate. A
+before/after comparison taken across two conventions is **not a finding, it is an
+artefact** — in either direction, with no reader able to tell which.
+
+Verification of the amendment, before it was allowed near the merge:
+
+```
+$ python3 -c "json.load(...)"        → both files parse; keys unchanged
+$ grep -o '__[A-Za-z0-9_]\+__' payload-verify.json   → (no output — zero tokens)
+$ grep -o '__[A-Za-z0-9_]\+__' payload-report.json   → __DOD6_PROJECT_ID__  (the intended one, only)
+$ ./scripts/checks/check-await-seed.sh
+  check-await-seed.sh PASSED — 7/7 cases, 56/56 assertions.   EXIT=0
+```
+
+The token check matters because `await-and-seed.sh` HARD-REFUSES any rendered
+payload still carrying a `__…__` token; an amendment that introduced one would
+have silently disarmed the watcher. It introduced none.
+
+Committed as **`b8a5116`**, with the undeclared writes disclosed in
+`04-phases.md` §10 per standing rule 5.
+
+## 12. `07:16:37 → 07:16:46+02:00` — STEP 3a: the merge to `main`
+
+```
+$ git -C /opt/forge-ai-os status --porcelain      # (no output — clean)
+$ git -C /opt/forge-ai-os log --oneline -1
+4f6cd31 fix(round1876): one indicator row, one query, one cadence — …
+$ git -C /opt/forge-ai-os rev-parse --abbrev-ref HEAD
+main
+```
+
+`07:16:40` — the merge:
+
+```
+$ git -C /opt/forge-ai-os merge project/8c591d6c
+Updating 4f6cd31..b8a5116
+Fast-forward
+ … 76 files changed, 67637 insertions(+), 288 deletions(-)
+MERGE_EXIT=0
+```
+
+**Fast-forward, zero conflicts** — round 801 had already merged `main` into this
+branch and resolved the three conflicts, so there was nothing left to resolve. The
+STOP-AND-REPORT-ON-CONFLICT clause was not exercised.
+
+`07:16:46` — after:
+
+```
+$ git -C /opt/forge-ai-os log --oneline -3
+b8a5116 fix(engine-task-graph/round-820, phase 8F): the after-measurement's convention, pinned where the gate is enforced
+abb38e5 docs(engine-task-graph/round-816, phase 8E re-run): the gates re-run on the committed tree, …
+cc821f7 docs(engine-task-graph/round-816, phase 8E re-run): the interlock passes on the tree it will ship, …
+$ git -C /opt/forge-ai-os status --porcelain      # (no output — EMPTY)
+```
+
+The amendment reached the live checkout (`grep -c` returns 1 in each payload), and
+all three migration files are present on disk. **No `pnpm install` was run and none
+was needed**: neither side touched `package.json` or `pnpm-lock.yaml`, and both
+services run TypeScript directly under pm2 with no build step.
+
+## 13. `07:17:06 → 07:17:17+02:00` — STEP 3b: three migrations, by explicit filename, each twice
+
+Applied **by name, never by glob**. `main` carries two files numbered `0040`
+because two active projects independently claimed the number; a glob would sort
+`0040_task_graph.sql` before `0040_usage_hourly.sql` and silently decide an order
+nobody chose. There is no migration runner and no tracking table. Connection came
+from `/opt/ai-os/.secrets/forge-control.env` → `content_forge`; `ON_ERROR_STOP=1`
+so a failure would be loud rather than skipped. **All six applications exited 0.**
+
+`07:17:06` — `0040_task_graph.sql`, 1 of 2:
+
+```
+ALTER TABLE ×4 · COMMENT ×4 · DO · CREATE INDEX ×2 · UPDATE 473      EXIT_1=0
+```
+
+`07:17:06` — `0040_task_graph.sql`, 2 of 2 — **R64, re-runnability**:
+
+```
+NOTICE: column "depends_on"   … already exists, skipping   ALTER TABLE
+NOTICE: column "workstream"   … already exists, skipping   ALTER TABLE
+NOTICE: column "write_set"    … already exists, skipping   ALTER TABLE
+NOTICE: column "graph_frozen" … already exists, skipping   ALTER TABLE
+NOTICE: relation "project_tasks_depends_on_gin"  already exists, skipping   CREATE INDEX
+NOTICE: relation "project_tasks_workstream_idx"  already exists, skipping   CREATE INDEX
+UPDATE 0                                                              EXIT_2=0
+```
+
+**`UPDATE 473` then `UPDATE 0`** is the reading R64 wanted: the R6 backfill is
+idempotent, not merely non-erroring. A re-runnable migration that re-backfilled
+would have printed 473 twice.
+
+`07:17:12` — `0040_usage_hourly.sql` ×2, and `07:17:17` — `0041_ui_dismissals.sql` ×2:
+both applications of both files exited 0 (`EXIT_3..EXIT_6=0`), every object
+reporting `already exists, skipping`.
+
+### 13.1 A stale premise in this task's own brief, reported rather than smoothed over
+
+The brief states that `usage_hourly`, `app_settings` and `ui_dismissals` are **ALL
+absent** from `content_forge`, and that this is why they must be applied. **All
+three already existed** — every one of the four applications printed
+`already exists, skipping` on its FIRST run, not merely its second.
+
+This changes nothing about the action: both files are `IF NOT EXISTS`, applying
+them was harmless, and skipping them would have been the unsafe choice. But the
+premise was measured stale, and a premise nobody re-checks is how a rotted pin
+becomes authoritative. Recorded, per the standing rule that a pin you cannot
+resolve is a finding rather than a footnote.
+
+## 14. `07:17:26+02:00` — the schema, confirmed BY NAME rather than assumed
+
+```
+ column_name  | data_type | column_default
+--------------+-----------+----------------
+ depends_on   | ARRAY     |
+ graph_frozen | boolean   | false
+ workstream   | text      | 'main'::text
+ write_set    | ARRAY     | '{}'::text[]
+(4 rows)
+
+          indexname
+------------------------------
+ project_tasks_depends_on_gin
+ project_tasks_workstream_idx
+(2 rows)
+
+  schemaname  |   tablename   | tableowner
+--------------+---------------+------------
+ public       | app_settings  | postgres
+ public       | ui_dismissals | postgres
+ rev1353_shim | ui_dismissals | postgres
+ public       | usage_hourly  | postgres
+```
+
+All four graph columns, both indexes and all three tables exist. **R71's
+consistency pair**, the second of which must be 0:
+
+```
+ graph_frozen | count        must_be_zero
+--------------+-------       --------------
+ t            |   473                     0
+```
+
+473 rows frozen, and **0** rows where `graph_frozen <> (depends_on IS NOT NULL)` —
+the backfill and the sentinel agree on the live data, which is the condition under
+which the replay proof keeps describing production.
+
+**Disclosed:** `ui_dismissals` appears twice because a pre-existing
+`rev1353_shim.ui_dismissals` shadows nothing — `search_path` is `"$user", public`,
+and `SELECT 'ui_dismissals'::regclass` resolves to the `public` one. Not created by
+this deploy, not a blocker, named here so the next reader does not re-discover it
+as a surprise.
+
+Migration 0040 is additive and the running OLD engine ignores it (R8) — which is
+why it goes BEFORE the restart. The gap it opens is closed by **R69** in the
+engine, not by sequencing.
+
+## 15. `07:17:39 → 07:17:53+02:00` — STEP 4: the API side
+
+```
+$ pm2 restart forge-control          EXIT=0
+$ pm2 jlist | python3 -c "…"
+forge-control    status=online   restart_time=  52   pm_uptime=2026-08-18T07:17:39.918
+forge-executor   status=online   restart_time=   1   pm_uptime=2026-08-17T12:32:20.439
+```
+
+`forge-control` came back online. **`forge-executor` was NOT touched** — still
+`restart_time=1`, still holding yesterday's uptime; that value is the baseline the
+watcher captures in step 6.
+
+`07:17:53` — the routes, including the two 500s the migrations were applied to prevent:
+
+```
+GET /api/health                -> 200
+GET /api/usage/series          -> 200
+GET /api/chat/bfd1283a-…/team  -> 200
+```
+
+Both formerly-500 routes return **200 with real bodies**, not empty 200s:
+`/api/usage/series` returns populated hourly buckets, and `/api/chat/:id/team`
+returns this project linked and `"status":"active"`.
+
+## 16. `07:18:13+02:00` — STEPS 5 AND 6: both launched detached, in that order
+
+`safe-restart.sh` first, the watcher one second later — well inside the "within
+seconds" window, and safe by construction regardless: this task still held a
+heartbeat, so the fleet could not be quiet and the restart could not fire before
+the watcher captured its baseline.
+
+```
+$ setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &
+safe-restart launched, pid=1904779
+$ setsid nohup /opt/forge-ai-os/scripts/deploy/await-and-seed.sh executor-restart \
+    /opt/forge-ai-os/scripts/deploy/payload-verify.json >> /tmp/forge-phase8-seed.log 2>&1 &
+await-and-seed launched, pid=1904780
+```
+
+**`pm2 restart forge-executor` was never run.** R66 holds: the prohibited command
+appears in this task's work only inside sentences forbidding it.
+
+`07:18:17` — both alive:
+
+```
+1904782 bash /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45
+1904783 bash /opt/forge-ai-os/scripts/deploy/await-and-seed.sh executor-restart …/payload-verify.json
+```
+
+`07:18:13` — the watcher's provenance line, the launch line only:
+
+```
+await-and-seed: provenance head=b8a5116 self-sha256=9429971e… mode=executor-restart
+  payload=/opt/forge-ai-os/scripts/deploy/payload-verify.json launched=2026-08-18T07:18:13+02:00
+  baseline=[restart_time=1 pm_uptime=1786962740439 status=online service=forge-executor]
+  poll=30s timeout=46800s api=http://127.0.0.1:7700
+await-and-seed: waiting for: forge-executor to restart past restart_time=1 and come back online
+await-and-seed: poll: restart_time=1 has not passed the baseline 1 (status=online) — not firing
+```
+
+`head=b8a5116` is the merge this task landed, and `baseline=[restart_time=1]` is
+the counter the restart must strictly exceed — so the watcher cannot fire on a
+restart that predates it. `07:18:13` in `/var/log/forge-safe-restart.log`:
+`waiting for idle to restart 'forge-executor' (max 43200s, idle window 45s)`.
+
+Neither log was tailed to completion and neither process was polled.
+
+## 17. What would have made THIS task report a success wrongly
+
+**(a) A merge that silently took one side.** Disproved by the merge being a
+`Fast-forward` from `4f6cd31..b8a5116` — no merge commit, no resolution, nothing to
+choose. A three-way merge with conflicts would have hit the STOP clause.
+
+**(b) A migration that "ran" without changing anything.** `psql -f` exiting 0
+proves the file parsed, not that the schema moved. Disproved by asking
+`information_schema` and `pg_indexes` for the four columns and two indexes **by
+name**, and by `UPDATE 473 → UPDATE 0` distinguishing an applied backfill from a
+repeated one.
+
+**(c) An empty 200.** A route can answer 200 with `{}` if a table exists but is
+unreadable. Disproved by reading the bodies: real hourly buckets, real project
+linkage.
+
+**(d) A watcher that fires on the restart that already happened.** The exact
+failure its own header names. Disproved by its provenance line recording
+`baseline=[restart_time=1]` *before* its first poll, and by the first poll refusing
+to fire on that same value.
+
+**(e) A payload amendment that disarmed the watcher.** An introduced `__TOKEN__`
+would make `await-and-seed.sh` hard-refuse and seed nothing — the deploy would look
+complete and no verification task would ever appear. Disproved by the token grep
+(zero in `payload-verify.json`, only the intended one in `payload-report.json`) and
+by `check-await-seed.sh` passing 7/7 and 56/56 **after** the edit.
+
+## 18. What this task did NOT do, stated so the next one does not look
+
+It did **not** verify against live beyond the three route reads step 4 requires,
+did **not** wait for or poll the executor restart, did **not** tail either log to
+completion, and did **not** create the DoD-6 measurement project. Those belong to
+the watcher-seeded verification task (round 815) and the report task (round 817),
+and they are that task's authority, not this one's. The live checkout is left on
+`main` at `b8a5116` with `git status --porcelain` **empty**; this evidence file is
+committed in the worktree on `project/8c591d6c` and is deliberately NOT on `main`.
