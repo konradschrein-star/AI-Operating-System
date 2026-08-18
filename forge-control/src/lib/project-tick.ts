@@ -350,10 +350,20 @@ export const IDEMPOTENCY_NOTE =
  *  doc-comment is source; it caught this comment quoting the retired phrase on
  *  the first run (`project-tick.test.ts`, "R49 the retired round guide").
  *
- *  Interpolated by the goal-mode architect branch and the planner branch — the
- *  two roles that create tasks. It is as dense as it is because NF7 budgets the
- *  planner prompt: the reasoning lives in doc-comments, which cost the prompt
- *  nothing, and only the rules a planner must act on are in the string. */
+ *  ROUND 242 (fix cycle 1, finding 3) names the two research role literals in
+ *  the fan-out sentence. Every other construct the guide asks for could be
+ *  written from the guide alone — `builder` is in the curl, `reviewer` is in the
+ *  join sentence — but the research fan-out, the cheapest parallelism the guide
+ *  sells hardest, was the one that required inventing a role string and
+ *  recovering from the 400 that enumerates `ROLES`. It costs 26 characters —
+ *  MEASURED through the maximal planner path, 12061 -> 12087, not counted off
+ *  the literal — and it is carried as its own row in NF7's round ledger.
+ *
+ *  Interpolated by the goal-mode architect branch, the NON-goal architect branch
+ *  (round 242 finding 1) and the planner branch — the three roles that create
+ *  tasks. It is as dense as it is because NF7 budgets the planner prompt: the
+ *  reasoning lives in doc-comments, which cost the prompt nothing, and only the
+ *  rules a planner must act on are in the string. */
 export const GRAPH_GUIDE =
   `SCHEDULING IS A GRAPH, NOT A ROUND NUMBER. Every task you create declares three fields and never a round:\n` +
   `- "depends_on": ids of the tasks it waits for, as your earlier curls returned them ([] = starts at once). ` +
@@ -368,7 +378,8 @@ export const GRAPH_GUIDE =
   `in ONE workstream may declare the same file; where a split is impossible, one builder writes that file ` +
   `twice rather than two builders serialising on it.\n` +
   `FAN-OUT: RESEARCH wide and early — independent questions share no files and have no ordering, the ` +
-  `cheapest parallelism there is — one task each, depends_on []. BUILDERS by FILE OWNERSHIP, one write_set ` +
+  `cheapest parallelism there is — one "researcher" (or "scout") task each, depends_on []. ` +
+  `BUILDERS by FILE OWNERSHIP, one write_set ` +
   `each. REVIEWERS are a genuine join: one reviewer depending on EVERY builder of its group.\n` +
   `INTEGRATION, NEVER AUTO-MERGE: every workstream but "main" ends in an integration task (role builder, ` +
   `workstream "main") depending on every task of that workstream, carrying the union of their write_sets, ` +
@@ -1023,13 +1034,33 @@ export function buildPrompt(
         `Do not write implementation code or commit anything outside ${corpus}/ — that's the builders' job.`
       );
     }
+    // THE NON-GOAL ARCHITECT — a task-creating role, and R53 falsified its
+    // ordering sentence without updating it (round 241 finding 1, fixed here).
+    //
+    // Every project created without `"mode":"goal"` reaches this branch, and
+    // `mode` is optional on POST /api/projects, so it is not a rare path. When
+    // taskCurl() stopped sending `round` and started sending depends_on /
+    // workstream / write_set, this branch kept telling the architect to put its
+    // reviewer "in the round right after your last builder round" while handing
+    // it three unexplained fields — an instruction that is no longer executable
+    // (there is no round field to write) attached to a vocabulary it was never
+    // taught. An architect resolving that contradiction the obvious way drops
+    // depends_on: round absent computes to 0, depends_on absent stores the NULL
+    // legacy sentinel, and `legacyRoundReady` then promotes the reviewer in the
+    // same tick as the builders it must join — it reviews an empty diff. So this
+    // branch gets GRAPH_GUIDE, exactly as the goal branch has it, and the round
+    // sentence becomes the dependency join the planner branch already states.
+    // It does NOT get R51's phase label: this architect seeds no per-phase
+    // planners, and "G4 negative" asserts the label stays out.
     return withPolicy(
       header +
-      `\nWhen you're done: write a short plan to PLAN.md in the repo root. Then create the next ` +
-      `round(s) of work by calling forge-control directly, e.g.:\n` +
+      `\nWhen you're done: write a short plan to PLAN.md in the repo root. Then create the work that ` +
+      `follows by calling forge-control directly, e.g.:\n` +
       `${taskCurl(project.id)}\n` +
+      `${GRAPH_GUIDE}\n` +
       `Split implementation into focused, independently-completable builder tasks. Always end with exactly one ` +
-      `"reviewer" task in the round right after your last builder round, briefed to review the whole diff. ` +
+      `"reviewer" task DEPENDING ON every builder you created — the join, not a round number — briefed to ` +
+      `review the whole diff. ` +
       `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
       `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}`
     );

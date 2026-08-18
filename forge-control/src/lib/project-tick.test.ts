@@ -1816,6 +1816,31 @@ const TICK_SRC = (() => {
  *  must match only `lib/cc-runner.ts` and `db/projects.ts`. */
 const MANAGER_LINK_KEY = "origin_" + "chat_id";
 
+/** The project id the maximal measurement is taken with, and the reason it is
+ *  not the `project()` factory's `"p1"` (ROUND 242, fix cycle 1, finding 2).
+ *
+ *  `taskCurl()` renders `project.id` into the prompt verbatim, and every real
+ *  project's id is a uuid — 36 characters, never 2. Measured at fe14a7e, that
+ *  single substitution is worth 34 characters, and it is worth EXACTLY 34 at
+ *  d9858b9 and 05f2842 too (one interpolation site, unchanged across all three
+ *  shas), so it shifts the baseline and every measurement taken against it by
+ *  the same amount. The growth arithmetic below was therefore never wrong — but
+ *  the enforced CAP sat 34 characters looser than any prompt a planner is ever
+ *  handed, while its own comment called this "the only measurement NF7's budget
+ *  is meaningful against". A cap that no real prompt is measured against is an
+ *  instrument reporting a comfortable pass, which is the class 00-vision.md §7
+ *  rule 3 exists to catch. The id is the one field that can be fixed rather than
+ *  merely disclosed, because 36 is invariant across the fleet.
+ *
+ *  WHAT REMAINS VARIABLE, AND IS THEREFORE DISCLOSED INSTEAD OF PINNED: `name`
+ *  (rendered in the header AND, via `projectSlug()`, in every `${corpus}/` path),
+ *  `brief`, the task's `title`/`brief`, and `work_branch`. Those are per-project
+ *  DATA with no fleet-wide size, and no constant cap can bound them. NF7's budget
+ *  governs the prompt's CONSTANT text — the guides and policy blocks every spawn
+ *  pays for — held at this fixture's shape. Read the cap as "the constants, at
+ *  this fixture", never as "the longest prompt any planner receives". */
+const MAXIMAL_PROJECT_ID = "8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4";
+
 /** The MAXIMAL planner prompt — the only measurement NF7's budget is meaningful
  *  against. A repo-backed project (WORKTREE_POLICY + GITHUB_PUSH_GUIDE), goal
  *  metadata, and a manager-chat linkage (MANAGER_COMMS); ESCALATION_POLICY is
@@ -1824,6 +1849,7 @@ const MANAGER_LINK_KEY = "origin_" + "chat_id";
  *  the short path and would report a pass WRONGLY. */
 function maximalPlannerPrompt(): string {
   const proj = project({
+    id: MAXIMAL_PROJECT_ID,
     repo: "ai-os",
     metadata: {
       mode: "goal",
@@ -1831,6 +1857,19 @@ function maximalPlannerPrompt(): string {
     },
   });
   const prompt = buildPrompt(task({ role: "planner", round: 500 }), proj);
+  // The fifth maximality control, and the one that guards the PIN rather than
+  // the path (round 242). Every constant below is measured at a uuid-shaped id;
+  // shortening it would silently loosen the cap by exactly the characters
+  // removed, and BASELINE would rot into the "authoritative and WRONG" pin the
+  // standing rules name. A fixture change that would rot it fails here first.
+  assert.equal(
+    proj.id.length,
+    36,
+    `NOT THE MAXIMAL PATH: the fixture project id is ${proj.id.length} characters, not a uuid's ` +
+      "36. taskCurl() renders it verbatim, so every NF7 constant below — BASELINE, the ledger, " +
+      "the cap — was measured against a prompt this fixture no longer builds. Re-derive them by " +
+      "the method in the NF7 block's comment, or restore the uuid",
+  );
   for (const [name, needle] of [
     ["WORKTREE_POLICY", "WORKTREE-ONLY POLICY"],
     ["ESCALATION_POLICY", "AUTONOMY AND ESCALATION"],
@@ -2281,7 +2320,40 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    *
    * BUDGET is untouched at 3050. It is the operator's ruling (round 240) and is
    * now also written into 01-requirements.md §J, where NF7 read "~1500". */
-  const BASELINE = 9187;
+  /* ── ROUND 242: THE PIN MOVES TO A UUID-SHAPED FIXTURE (finding 2) ────────
+   *
+   * Round 241's reviewer measured the fixture against a real-valued build and
+   * found the fixture short. The cause is `MAXIMAL_PROJECT_ID` above: `"p1"`
+   * where every real project carries a 36-character uuid that `taskCurl()`
+   * renders verbatim. RE-DERIVED, by exactly the method this block prescribes —
+   * three trees exported with `git archive`, node_modules symlinked but no
+   * source symlinked, each measured by a harness that prints its own
+   * sha256(project-tick.ts) and refuses to report a number unless the module's
+   * GRAPH_GUIDE export matches what that sha must have:
+   *
+   *   sha        sha256(project-tick.ts)  exportsGRAPH_GUIDE  id:"p1"  id:uuid
+   *   d9858b9    b10ddc0190bd280e         false  <- control     9187     9221
+   *   05f2842    00bcdeae5cfbd555         true                11585    11619
+   *   fe14a7e    c4141f17fde418ef         true                12061    12095
+   *
+   * Three distinct digests, and the pre-5A tree provably not HEAD because it
+   * fails the export control — the shadow-tree trap, excluded rather than
+   * asserted away. The `id:"p1"` column REPRODUCES round 240's three numbers
+   * exactly, which is the corrected baseline confirmed a second time by a
+   * different builder; the delta is a flat +34 at all three shas, so nothing in
+   * the growth arithmetic above moves and the cap tightens by 34.
+   *
+   *   BASELINE   9187 -> 9221      cap  12237 -> 12271
+   *   5A tip    11585 -> 11619     headroom at 5A unchanged at 652
+   *   5B tip    12061 -> 12095     headroom after 5B unchanged at 176
+   *
+   * ONE COINCIDENCE, FLAGGED SO IT IS NEVER READ AS A CONFIRMATION: this round's
+   * measurement comes to 12121, and 12121 is also the number round 241's
+   * reviewer reported for its real-valued build at fe14a7e. They are different
+   * quantities that happen to collide — the reviewer's 60 was a uuid plus a
+   * longer name and work_branch at fe14a7e; this 12121 is a uuid alone at
+   * fe14a7e plus round 242's own 26. Neither corroborates the other. */
+  const BASELINE = 9221;
   const BUDGET = 3050;
 
   test("G5 — the maximal planner prompt stays inside the amended budget", () => {
@@ -2298,56 +2370,120 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
     );
   });
 
-  test("the headroom builder 5B needs is actually there — RESERVATION DISCHARGED, round 240", () => {
-    /* WHAT THIS CASE WAS, AND WHY IT IS NOW THE OTHER DIRECTION. Round 239 wrote
-     * it as a FORWARD RESERVATION — `headroom >= 600` — "so 5B's brief has a
-     * number to read rather than a subtraction to perform, and so eating that
-     * headroom fails HERE, loudly, rather than as a mysterious overrun in round
-     * 240". Round 240 is the round that spends it: DEP_INSTALL_NOTE now rides
-     * withPolicy() into every repo-backed prompt, this measurement included.
-     *
-     * Left as written, the case would have gone red the moment it did its job —
-     * an unsatisfiable gate of exactly the kind 00-vision.md §7 rule 2 says to
-     * amend WHERE IT IS ENFORCED. It is not deleted and not widened: it is
-     * turned around to audit the same 600 from the other side. The reservation
-     * was a promise about what 5B could spend, so the surviving question is
-     * whether 5B spent more than it was promised.
-     *
-     * This is the one case in this file round 240 edited in place; the rest of
-     * its work is appended below. The exception is declared in the phase 5B
-     * header and in the commit message.
-     *
-     * MEASURED at round 240, on the corrected BASELINE:
-     *   at 05f2842 (5A's tip)            11585   headroom 652
-     *   after 5B                         12061   headroom 176
-     *   5B consumed                        476   of the 600 reserved
-     * The 476 is DEP_INSTALL_NOTE (474) plus the "\n\n" that joins it. B2, B3
-     * and B4 cost this measurement nothing: the reviewer blocks reach only the
-     * reviewer branch, and the browser block only the roles carrying
-     * BROWSER_FIRST or RESEARCH_INSTRUMENTS — the planner is none of them. */
-    const FIVE_A_HEADROOM = 652;
-    const FIVE_B_RESERVATION = 600;
+  /* THE ROUND LEDGER, and why round 242 had to write one (standing rule 2,
+   * amended WHERE IT IS ENFORCED).
+   *
+   * WHAT THIS CASE WAS. Round 239 wrote it as a FORWARD RESERVATION —
+   * `headroom >= 600` — so 5B's brief had a number to read rather than a
+   * subtraction to perform. Round 240 spent it (DEP_INSTALL_NOTE now rides
+   * withPolicy() into every repo-backed prompt, this measurement included) and,
+   * rather than let the case go red the moment it did its job, turned it around
+   * into a backward audit: `FIVE_A_HEADROOM - headroom <= 600`.
+   *
+   * WHY THAT SHAPE CANNOT SURVIVE A SECOND SPENDER. `headroom` is LIVE and
+   * `FIVE_A_HEADROOM` is pinned at 5A, so `consumed` is every character added
+   * since 5A by ANYONE. Round 242 adds 26 to GRAPH_GUIDE (finding 3), and the
+   * assertion would have read 502 <= 600 and passed — charging this round's
+   * spend to 5B's reservation and reporting a 5B underspend that never happened.
+   * The instrument would have lied before the code did, which is the failure
+   * class the standing rules put first. It is not deleted and not widened; it is
+   * generalised into the thing it was always approximating.
+   *
+   * WHAT THE LEDGER ASSERTS. Every character between the 5A tip and the live
+   * measurement is ATTRIBUTED to a round that declared it. The sum is EXACT, not
+   * a bound: an unledgered edit fails with its own size in the message, and the
+   * next round adds a row instead of quietly inheriting someone else's budget.
+   * Each row is additionally held to what its own brief reserved, which is the
+   * 600 the old case checked, per round rather than in aggregate.
+   *
+   * MEASURED, on the round-242 BASELINE (uuid fixture) — the same three numbers
+   * as round 240 plus 34 each, so nothing here is a new claim about 5B:
+   *   at 05f2842 (5A's tip)            11619   headroom 652
+   *   after 5B  (fe14a7e)              12095   headroom 176   5B spent 476/600
+   *   after 242                        12121   headroom 150   242 spent  26/176
+   * The 476 is DEP_INSTALL_NOTE (474) plus the "\n\n" that joins it. B2, B3 and
+   * B4 cost this measurement nothing: the reviewer blocks reach only the reviewer
+   * branch, and the browser block only the roles carrying BROWSER_FIRST or
+   * RESEARCH_INSTRUMENTS — the planner is none of them. Round 242's 26 is the two
+   * research role literals in GRAPH_GUIDE's FAN-OUT sentence and nothing else:
+   * its other two fixes are a non-goal architect branch (a different role, not in
+   * this measurement) and this file. */
+  const FIVE_A_TIP = 11619;
+  const LEDGER = [
+    {
+      round: 240,
+      what: "DEP_INSTALL_NOTE (B1) riding withPolicy(), plus its joining newlines",
+      spent: 476,
+      reserved: 600,
+    },
+    {
+      round: 242,
+      what: 'GRAPH_GUIDE names the two research role literals in FAN-OUT (fix cycle 1, finding 3)',
+      spent: 26,
+      reserved: 176,
+    },
+  ] as const;
+
+  test("every character spent since the 5A tip is attributed to a round that declared it", () => {
+    const measured = maximalPlannerPrompt().length;
+    const ledgered = LEDGER.reduce((sum, row) => sum + row.spent, 0);
+    const expected = FIVE_A_TIP + ledgered;
+    assert.equal(
+      measured,
+      expected,
+      `NF7: the maximal planner prompt measures ${measured}, but the 5A tip (${FIVE_A_TIP}) plus ` +
+        `every ledgered spend (${LEDGER.map((r) => `${r.round}:${r.spent}`).join(" + ")} = ` +
+        `${ledgered}) comes to ${expected} — ${measured - expected} characters are unaccounted ` +
+        "for. Add a row to LEDGER naming your round and what it bought, or, if you did not " +
+        "intend to change the planner prompt at all, you did: this is the number.",
+    );
+  });
+
+  test("no round spent more of the prompt budget than its brief reserved", () => {
+    for (const row of LEDGER) {
+      assert.ok(
+        row.spent <= row.reserved,
+        `NF7: round ${row.round} consumed ${row.spent} characters of the ${row.reserved} ` +
+          `reserved for it (${row.what}). Shrink the text; do NOT widen BUDGET or the ` +
+          "reservation to fit it — that is the one direction 00-vision.md §7 rule 2 does not " +
+          "license.",
+      );
+    }
+  });
+
+  test("the headroom left is real, and the blocks it was spent on are actually delivered", () => {
     const measured = maximalPlannerPrompt().length;
     const headroom = BASELINE + BUDGET - measured;
-    const consumed = FIVE_A_HEADROOM - headroom;
-    assert.ok(
-      consumed <= FIVE_B_RESERVATION,
-      `NF7: phase 5B's withPolicy() addenda consumed ${consumed} characters of the ` +
-        `${FIVE_B_RESERVATION} reserved for them (headroom ${FIVE_A_HEADROOM} -> ${headroom}). ` +
-        "Shrink the addenda; do not widen BUDGET to fit them — that is the direction " +
-        "00-vision.md §7 rule 2 does not license.",
-    );
     assert.ok(
       headroom >= 0,
       `NF7: no headroom left at all (${headroom}) — G5 above says the same thing louder`,
     );
-    // The control. Without this, the arithmetic above would keep passing if
-    // DEP_INSTALL_NOTE stopped being delivered at all: consumed would fall to 0,
-    // which is comfortably <= 600 and means the opposite of what it looks like.
+    // THE DELIVERY CONTROL, and it is what keeps the ledger from being pure
+    // arithmetic. Every row above claims characters were spent BUYING something;
+    // a block that stopped being delivered would shrink `measured`, and the
+    // exactness assertion would then fail in the direction that reads like an
+    // over-count rather than a missing delivery. These two name the deliverable
+    // per row, so the failure says which round's purchase went missing.
+    const prompt = maximalPlannerPrompt();
     assert.ok(
-      maximalPlannerPrompt().includes(DEP_INSTALL_NOTE),
-      "NF7: the reservation reads as discharged, but the block it was reserved for is not in " +
-        "the planner prompt — a spend of 0 is not an underspend here, it is a missing delivery",
+      prompt.includes(DEP_INSTALL_NOTE),
+      "NF7 (round 240's row): the ledger charges 476 characters to DEP_INSTALL_NOTE, but the " +
+        "planner prompt does not contain it — a spend with nothing delivered is not an " +
+        "underspend, it is a missing block",
+    );
+    // Per this file's header convention the CLAUSE is asserted against the
+    // constant and the DELIVERY against the built prompt, so a reworded
+    // GRAPH_GUIDE that dropped the literals fails here rather than drifting.
+    assert.ok(
+      GRAPH_GUIDE.includes('one "researcher" (or "scout") task each'),
+      "NF7 (round 242's row): the ledger charges 26 characters to the research role literals in " +
+        "GRAPH_GUIDE's FAN-OUT sentence, and GRAPH_GUIDE no longer contains them — the one " +
+        "construct a planner could not spell without inventing a role string",
+    );
+    assert.ok(
+      prompt.includes(GRAPH_GUIDE),
+      "NF7 (round 242's row): GRAPH_GUIDE carries the charge but is not in the planner prompt " +
+        "at all, so the clause above was asserted against a constant nobody receives",
     );
   });
 });
@@ -2765,5 +2901,172 @@ describe("phase 5B — the delivery path is the funnel, not a branch", () => {
       prompt.indexOf(BROWSER_CONTROL_SAFETY) < prompt.indexOf(ESCALATION_POLICY),
       "B4 must precede ESCALATION_POLICY",
     );
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * ROUND 242 — FIX CYCLE 1 on round 241's phase-5 gating review.
+ *
+ * Built on fe14a7ebf0a48b46bc46fe1797f96f07d1ff5504 (phase 5B, round 240),
+ * which is the tip round 241 reviewed and named.
+ *
+ * Three findings, and where each is answered:
+ *   1. the NON-goal architect branch — this section, below. R53 falsified its
+ *      ordering sentence and phase 5 did not update it: it still named a round
+ *      that taskCurl() no longer sends, and it never carried GRAPH_GUIDE, so it
+ *      handed an architect three unexplained fields and one dead instruction.
+ *   2. the fixture measured NF7 at `id: "p1"` — answered IN PLACE in the "NF7
+ *      the prompt budget" block above, marked ROUND 242 with the re-derivation
+ *      table, and by MAXIMAL_PROJECT_ID + the uuid-shape control in
+ *      maximalPlannerPrompt().
+ *   3. GRAPH_GUIDE named no research role literal — answered in project-tick.ts
+ *      and asserted here under "R48/finding 3".
+ *
+ * APPENDED ONLY, with THREE DECLARED EXCEPTIONS, all in the NF7 block and all
+ * amendments to a pin or to an instrument that a second spender falsified —
+ * no test is deleted and no assertion is weakened:
+ *   1. BASELINE 9187 -> 9221, re-derived by the method its own comment
+ *      prescribes, over three `git archive` trees with distinct digests and an
+ *      export positive control. TIGHTENS the cap by 34.
+ *   2. maximalPlannerPrompt() gains `id: MAXIMAL_PROJECT_ID` and a fifth
+ *      maximality control asserting the id is uuid-shaped.
+ *   3. "the headroom builder 5B needs is actually there" -> the round ledger.
+ *      The old shape charged THIS round's 26 characters to 5B's reservation and
+ *      would have passed at 502 <= 600, reporting a 5B underspend that never
+ *      happened. Replaced by an EXACT attribution of every character since the
+ *      5A tip, which is strictly stronger: the old case bounded a sum, this one
+ *      admits no unledgered character at all.
+ *
+ * ── WHAT WOULD MAKE THIS INSTRUMENT REPORT A PASS WRONGLY ─────────────────
+ *
+ * (a) "The non-goal cases pass because the fixture is secretly goal-mode, so
+ *     they are re-testing the branch that was already correct." The whole
+ *     finding is that TWO branches exist and only one was fixed. Every case
+ *     below therefore runs the PAIR — the same assertion over the goal project
+ *     and the non-goal one — and additionally asserts the two prompts DIFFER,
+ *     so a fixture that had collapsed into one branch fails instead of
+ *     certifying twice.
+ * (b) "`doesNotMatch(/round right after/)` passes because the sentence was
+ *     reworded rather than replaced, and the branch still orders by round." An
+ *     absence proves nothing on its own — this is the empty-file failure in
+ *     prose form. Each absence below is paired with the POSITIVE that must be
+ *     true instead (the dependency join), so a branch that merely deleted the
+ *     sentence and taught nothing fails.
+ * (c) "The GRAPH_GUIDE delivery assertion passes against a hand-copied
+ *     substring." It takes the whole exported constant, per this file's header.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+describe("round 242 finding 1 — the NON-goal architect schedules by dependency, not by round", () => {
+  const nonGoalProject = project({ repo: "ai-os" });
+  const nonGoal = buildPrompt(task({ role: "architect" }), nonGoalProject);
+  const goal = buildPrompt(task({ role: "architect" }), goalProject);
+
+  test("the two architect branches are genuinely distinct — the pair's own control", () => {
+    // (a) above. Without this, every case in this describe could be passing by
+    // measuring the goal branch twice.
+    // `isGoalMode()` is module-private, so the fixture is checked against the
+    // one thing it reads — metadata.mode — rather than re-implementing it.
+    assert.notEqual(
+      (nonGoalProject.metadata as { mode?: string } | null)?.mode,
+      "goal",
+      "the non-goal fixture carries goal metadata, so this whole section re-tests the branch " +
+        "that was already correct",
+    );
+    assert.equal(
+      (goalProject.metadata as { mode?: string } | null)?.mode,
+      "goal",
+      "the goal fixture is not goal-mode either, so the pair compares two non-goal prompts",
+    );
+    assert.notEqual(
+      nonGoal,
+      goal,
+      "buildPrompt returns the same string for a goal and a non-goal architect — the two " +
+        "branches have collapsed into one and the pairing below proves nothing",
+    );
+  });
+
+  test("it carries GRAPH_GUIDE, as the goal branch already did", () => {
+    assert.ok(
+      nonGoal.includes(GRAPH_GUIDE),
+      "R53/R47: the non-goal architect creates tasks — taskCurl() hands it depends_on, " +
+        "workstream and write_set — and was never taught what any of them mean. An architect " +
+        "given three unexplained fields omits them: round absent computes to 0, depends_on " +
+        "absent stores the legacy NULL sentinel, and the reviewer promotes in the same tick as " +
+        "the builders it must join and reviews an empty diff",
+    );
+    assert.ok(goal.includes(GRAPH_GUIDE), "the pair's positive half: the goal branch still has it");
+  });
+
+  test("the falsified round sentence is gone, and the join is what replaced it", () => {
+    // (b) above: the absence and the positive that must hold instead, together.
+    assert.doesNotMatch(
+      nonGoal,
+      /round right after/,
+      "R53: the non-goal architect is still told to put its reviewer in the round right after " +
+        "its last builder round. taskCurl() sends no round field, so the instruction is not " +
+        "merely stale — it is unexecutable, and an architect resolving it drops the graph fields",
+    );
+    assert.doesNotMatch(
+      nonGoal,
+      /round\(s\) of work/,
+      "R53: the branch still describes what it creates as rounds of work",
+    );
+    assert.ok(
+      nonGoal.includes('"reviewer" task DEPENDING ON every builder you created'),
+      "R47: deleting the round sentence is half the fix. The branch must state the join that " +
+        "replaces it, or it teaches nothing and the architect invents its own ordering",
+    );
+    assert.ok(
+      nonGoal.includes("the join, not a round number"),
+      "R47: the join is stated but not contrasted with the round it replaces — the planner " +
+        "branch makes that contrast explicitly and this branch reaches the same reader",
+    );
+  });
+
+  test("neither architect branch names a round the engine will not read", () => {
+    // The goal branch keeps exactly one hand-written round, R51's phase label,
+    // and "G4 negative" above already asserts it does not leak here. This is the
+    // other direction: the goal branch must not have picked up the dead sentence.
+    assert.doesNotMatch(goal, /round right after/, "R53: the goal branch grew the dead sentence");
+  });
+});
+
+describe("round 242 finding 3 — the research fan-out no longer needs an invented role literal", () => {
+  test("R48/finding 3 — FAN-OUT names the two research roles", () => {
+    assert.ok(
+      GRAPH_GUIDE.includes('one "researcher" (or "scout") task each'),
+      "R48: the FAN-OUT sentence sells research fan-out as the cheapest parallelism there is " +
+        "and then names no role string for it. `builder` is in the curl and `reviewer` is in " +
+        "the join sentence, so research was the ONE construct a planner had to guess at and " +
+        "recover from the 400 that enumerates ROLES",
+    );
+  });
+
+  test("both literals are roles the API will actually accept", () => {
+    /* THE GATE THAT MAKES THE ABOVE WORTH ANYTHING. Naming a role literal in a
+     * prompt is only an improvement if the route accepts it; naming one it
+     * rejects would teach a call that 400s, which is worse than the guess it
+     * replaced. ROLES lives in routes/projects.ts, so this reads that file's
+     * source rather than importing the route module (which would pull in the
+     * pool). The positive control on the read comes first — an empty or wrong
+     * read makes every `includes` below pass vacuously. */
+    const routesSrc = readFileSync(
+      fileURLToPath(new URL("../routes/projects.ts", import.meta.url)),
+      "utf8",
+    );
+    assert.match(
+      routesSrc,
+      /const ROLES\b/,
+      "POSITIVE CONTROL FAILED: routes/projects.ts was read but declares no ROLES — the read is " +
+        "empty or points at the wrong file, and both assertions below would pass vacuously",
+    );
+    for (const role of ["researcher", "scout"] as const) {
+      assert.ok(
+        new RegExp(`"${role}"`).test(routesSrc),
+        `R48: GRAPH_GUIDE now tells planners to create "${role}" tasks, but routes/projects.ts ` +
+          "does not list it in ROLES — the prompt would teach a call the API refuses with a 400, " +
+          "which is strictly worse than the guess it was written to remove",
+      );
+    }
   });
 });
