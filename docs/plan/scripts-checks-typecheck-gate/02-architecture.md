@@ -67,6 +67,32 @@ where results live.
 
 **Extend `forge-control-web/tsconfig.json`. Override exactly three things.**
 
+> **Amended in phase 1 (round 100), standing rule 2 — where the `//…` comment
+> keys sit.** This block originally placed `//jsx`, `//paths` and `//typeRoots`
+> *inside* `compilerOptions`. As written it does not compile: `tsc` validates
+> the keys of `compilerOptions` against the known options and rejects the rest.
+> Measured 2026-08-18, tsc 5.7.2, on a probe copy of the profile:
+>
+> ```
+> zz-probe-base.json(5,5): error TS5025: Unknown compiler option '//jsx'. Did you mean 'jsx'?
+> zz-probe-base.json(8,5): error TS5025: Unknown compiler option '//paths'. Did you mean 'paths'?
+> zz-probe-base.json(17,5): error TS5025: Unknown compiler option '//typeRoots'. Did you mean 'typeRoots'?
+> ```
+>
+> Three spurious diagnostics and `rc=2` on **every** invocation, which would have
+> read out as a census of 0 green / 42 red — including `check-settings-surface.tsx`,
+> the file §3.1 exists to take to zero. The three arrays are therefore siblings of
+> `"//"`, `extends` and `compilerOptions` at the **top level**, where `tsc` ignores
+> unrecognised keys; their text is unchanged and they still sit in reading order
+> beside the options they explain. JSONC `//` line comments compile equally clean
+> and were rejected: they break `jq`, and R1's verify clause is literally
+> `jq -r .extends`. Top-level `"//"`-prefixed keys holding arrays of strings are
+> also what the pre-existing `tsconfig.checks.json` already does.
+>
+> `//cross-reference` is new, and satisfies §3.4's requirement that each of the
+> two configs name the other; §3.1's original text mentioned `tsconfig.checks.json`
+> only in passing, inside `//jsx`. The block below is the file as committed.
+
 ```jsonc
 {
   "//": [
@@ -80,32 +106,59 @@ where results live.
     "NOT referenced by next.config, by either package's tsconfig, or by any",
     "package.json script. It is a gate input, not a build input."
   ],
+  "//jsx": [
+    "The app says jsx:preserve because NEXT compiles its JSX. A check script",
+    "is executed by tsx, which does not. So the check needs a real transform.",
+    "Same reasoning as the pre-existing root tsconfig.checks.json, which this",
+    "profile does not replace — that one is tsx's runtime config, this one is",
+    "the compiler's."
+  ],
+  "//paths": [
+    "A check script lives in scripts/checks/, which has no node_modules and no",
+    "node_modules ancestor up to the repo root, so a bare `react-dom/server`",
+    "import resolves NOWHERE regardless of the compiler's cwd.",
+    "",
+    "These point at @types/ and NOT at the runtime packages, and that is the",
+    "whole trick. forge-control-web/node_modules/react is a pnpm symlink into",
+    ".pnpm/react@19.0.0/ which ships index.js and no declarations. Mapping to",
+    "it resolves the specifier AND defeats the @types/react lookup that would",
+    "have supplied the types — producing TS7016 on every app file and then a",
+    "TS7026 flood on every JSX tag. Measured: check-settings-surface.tsx =",
+    "936 diagnostics under the runtime mapping, 0 under this one.",
+    "See evidence/census-B-root-paths-profile.txt vs census-E-*.txt."
+  ],
+  "//typeRoots": [
+    "MUST be pinned. TypeScript's automatic @types discovery walks up from the",
+    "directory of the CONFIG FILE, and the gate generates its per-file config",
+    "in `mktemp -d`, which has no node_modules ancestry. Without this line the",
+    "whole directory collapses with `Cannot find name 'process'`: measured at",
+    "12/42 green, 30 red. See evidence/negative-controls.md control (d)."
+  ],
+  "//cross-reference": [
+    "SIBLING FILE, DO NOT MERGE: ./tsconfig.checks.json at this same repo root.",
+    "That file is TSX'S RUNTIME CONFIG — its four react paths deliberately point",
+    "at the RUNTIME packages (forge-control-web/node_modules/react, react-dom,",
+    "…) so that `import ReactDOMServer from 'react-dom/server'` actually LOADS",
+    "when tsx executes the instrument. THIS file is TSC'S CONFIG — its four",
+    "paths must point at forge-control-web/node_modules/@types/… so that the",
+    "DECLARATIONS resolve. Same four specifiers, opposite targets, each correct",
+    "for its own consumer. Merging them breaks whichever consumer loses: the",
+    "runtime targets cost check-settings-surface.tsx 936 diagnostics under tsc,",
+    "and the @types targets have no runtime to load under tsx.",
+    "THEY MUST NEVER BE MERGED. See 02-architecture.md §3.4.",
+    "",
+    "COMMENT-KEY PLACEMENT: the three //jsx, //paths and //typeRoots arrays sit",
+    "at the TOP LEVEL, not inside compilerOptions. tsc rejects unknown keys in",
+    "compilerOptions with `error TS5025: Unknown compiler option '//jsx'`, which",
+    "would add three spurious diagnostics and rc=2 to EVERY invocation. Measured",
+    "2026-08-18; recorded in 02-architecture.md §3.1. JSONC `//` line comments",
+    "also compile clean but break `jq -r .extends`, which is R1's verify clause."
+  ],
   "extends": "./forge-control-web/tsconfig.json",
   "compilerOptions": {
-    "//jsx": [
-      "The app says jsx:preserve because NEXT compiles its JSX. A check script",
-      "is executed by tsx, which does not. So the check needs a real transform.",
-      "Same reasoning as the pre-existing root tsconfig.checks.json, which this",
-      "profile does not replace — that one is tsx's runtime config, this one is",
-      "the compiler's."
-    ],
     "jsx": "react-jsx",
     "jsxImportSource": "react",
 
-    "//paths": [
-      "A check script lives in scripts/checks/, which has no node_modules and no",
-      "node_modules ancestor up to the repo root, so a bare `react-dom/server`",
-      "import resolves NOWHERE regardless of the compiler's cwd.",
-      "",
-      "These point at @types/ and NOT at the runtime packages, and that is the",
-      "whole trick. forge-control-web/node_modules/react is a pnpm symlink into",
-      ".pnpm/react@19.0.0/ which ships index.js and no declarations. Mapping to",
-      "it resolves the specifier AND defeats the @types/react lookup that would",
-      "have supplied the types — producing TS7016 on every app file and then a",
-      "TS7026 flood on every JSX tag. Measured: check-settings-surface.tsx =",
-      "936 diagnostics under the runtime mapping, 0 under this one.",
-      "See evidence/census-B-root-paths-profile.txt vs census-E-*.txt."
-    ],
     "baseUrl": "./forge-control-web",
     "paths": {
       "@/*": ["./*"],
@@ -115,13 +168,6 @@ where results live.
       "react-dom/server": ["./node_modules/@types/react-dom/server"]
     },
 
-    "//typeRoots": [
-      "MUST be pinned. TypeScript's automatic @types discovery walks up from the",
-      "directory of the CONFIG FILE, and the gate generates its per-file config",
-      "in `mktemp -d`, which has no node_modules ancestry. Without this line the",
-      "whole directory collapses with `Cannot find name 'process'`: measured at",
-      "12/42 green, 30 red. See evidence/negative-controls.md control (d)."
-    ],
     "typeRoots": ["./forge-control-web/node_modules/@types"],
 
     "allowImportingTsExtensions": true,
@@ -132,6 +178,9 @@ where results live.
   "include": []
 }
 ```
+
+Despite the `jsonc` fence, the file is **strict JSON** and must stay so: R1's
+verify clause is `jq -r .extends`, and `jq` does not read JSONC.
 
 `incremental: false` overrides the app's `incremental: true`: an incremental
 build writes a `.tsbuildinfo`, and NF3 forbids the gate from writing into the

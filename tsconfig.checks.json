@@ -13,7 +13,22 @@
     "`React is not defined`. Root is the only directory above both trees.",
     "",
     "Run (from forge-control-web, whose node_modules holds react/react-dom):",
-    "  ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-rich.tsx"
+    "  ../forge-control/node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-chat-rich.tsx",
+    "",
+    "SIBLING FILE, DO NOT MERGE: ./tsconfig.checks-instruments.json, beside this",
+    "one at the repo root. THIS file is TSX'S RUNTIME CONFIG: its four react",
+    "`paths` below deliberately point at the RUNTIME packages under",
+    "forge-control-web/node_modules/, so that `import ReactDOMServer from",
+    "\"react-dom/server\"` actually LOADS when tsx executes a check.",
+    "tsconfig.checks-instruments.json is TSC'S CONFIG, the compile profile the",
+    "instrument typecheck gate uses: its four `paths` must point at",
+    "forge-control-web/node_modules/@types/ instead, so that the DECLARATIONS",
+    "resolve. Same four specifiers, opposite targets, each correct for its own",
+    "consumer — and each WRONG for the other's. Pointing tsc at the runtime",
+    "packages cost check-settings-surface.tsx 936 diagnostics (measured",
+    "2026-08-18); pointing tsx at @types leaves it nothing to load at run time.",
+    "THEY MUST NEVER BE MERGED. Argued in",
+    "docs/plan/scripts-checks-typecheck-gate/02-architecture.md §3.4."
   ],
   "//paths": [
     "A check script lives in scripts/checks/, which has no node_modules — so a",
