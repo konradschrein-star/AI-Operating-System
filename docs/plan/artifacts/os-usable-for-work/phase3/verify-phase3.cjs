@@ -182,8 +182,19 @@ function check(label, actual, expected) {
  * the document belongs to the phone sheet, which is closed until it is opened.
  * Asserting `nav` at 390px therefore fails on a perfectly healthy page — which
  * is a wrong signpost, and this file exists partly to stop those.
+ *
+ * ORDER IS THE WHOLE POINT (round 3, gate finding 3). The URL check must run
+ * BEFORE anything waits on the DOM. The earlier shape left the wait at the call
+ * site, above this function: on a bad cookie the page sat at /signin, the
+ * selector wait blew up first with a bare `Timeout 30000ms exceeded — waiting
+ * for locator('nav')`, and the salt paragraph below — the entire reason it is
+ * written — never printed. The harness still failed, so nothing false was ever
+ * reported; it just sent the next agent to profile the app instead of the
+ * cookie. The wait therefore lives INSIDE this function now, after the wall,
+ * and a timeout on it is re-thrown as the "did not mount" diagnostic it always
+ * meant. Do not move it back out.
  */
-async function assertPastTheWall(page, where, mountSelector) {
+async function assertPastTheWall(page, where, mountSelector, timeoutMs = 30_000) {
   const url = page.url();
   if (/\/signin/.test(url)) {
     throw new Error(
@@ -193,10 +204,12 @@ async function assertPastTheWall(page, where, mountSelector) {
         `takes "__Secure-authjs.session-token". Then check AUTH_SECRET and maxAge.`,
     );
   }
-  const mounted = await page.locator(mountSelector).count();
-  if (mounted === 0) {
+  try {
+    await page.waitForSelector(mountSelector, { timeout: timeoutMs, state: "visible" });
+  } catch (err) {
     throw new Error(
-      `[${where}] no "${mountSelector}" in the DOM at ${url} — the desktop shell did not mount.`,
+      `[${where}] no visible "${mountSelector}" at ${url} after ${timeoutMs}ms — the desktop ` +
+        `shell did not mount. Playwright: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`,
     );
   }
 }
@@ -328,7 +341,6 @@ async function newDesktop(browser, viewport) {
   const page = await ctx.newPage();
   const mountSelector = viewport.width >= 900 ? "nav" : 'button[title="All destinations"]';
   await page.goto(`${BASE_URL}/desktop`, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(mountSelector, { timeout: 30_000 });
   await assertPastTheWall(page, `initial load @${viewport.label}`, mountSelector);
   await page.waitForTimeout(3500);
   return { ctx, page, mountSelector };
@@ -493,7 +505,6 @@ async function newDesktop(browser, viewport) {
         window.localStorage.setItem("forge.desktop.surface", JSON.stringify("search")),
       );
       await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForSelector("nav", { timeout: 30_000 });
       await assertPastTheWall(page, `search @${viewport.label}`, "nav");
       await page.waitForTimeout(2000);
       const sp = await probe(page, SECTION_HEADINGS);
@@ -547,8 +558,7 @@ async function newDesktop(browser, viewport) {
         );
       }
       await menu.click();
-      await page.waitForSelector("[data-nav-menu-panel]", { timeout: 15_000 });
-      await assertPastTheWall(page, "phone sheet @390x844", "[data-nav-menu-panel]");
+      await assertPastTheWall(page, "phone sheet @390x844", "[data-nav-menu-panel]", 15_000);
       const sheet = await page.evaluate(() => {
         const inSheet = Array.from(
           document.querySelectorAll("[data-nav-menu-panel] [data-nav-unbuilt]"),

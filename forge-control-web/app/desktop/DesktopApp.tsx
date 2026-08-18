@@ -179,7 +179,7 @@ const PLACEHOLDER_SURFACES: Record<PlaceholderKey, PlaceholderCopy> = {
     purpose:
       "The artefact store: what this OS itself produced — run screenshots, reports and generated outputs. The earlier copy promised scripts, voices, clips and templates; that is Content Forge's material and PIPELINE already owns it.",
     needs:
-      "Only the screen. GET /api/uploads/index is mounted and answering right now over 423 files in /opt/ai-os/uploads. No new route, no table and no producer would have to be built — which is why this backing store was chosen over the four that were rejected.",
+      "Only the screen. GET /api/uploads/index is mounted and answers over the artefact store in /opt/ai-os/uploads — more than 400 files when this screen was written (measured 2026-08-18; the store is live and every run adds to it, so read that as a floor and not as today's count). No new route, no table and no producer would have to be built — which is why this backing store was chosen over the four that were rejected.",
     scheduling:
       "Nobody is working on it, and os-usable-for-work does not build it. The artefact-store reading is a default taken on 2026-08-18 because the question went unanswered; your ruling overrides it, and overriding it is cheap while nothing is built. Costed at 1 round, 2 builders, no migration.",
   },
