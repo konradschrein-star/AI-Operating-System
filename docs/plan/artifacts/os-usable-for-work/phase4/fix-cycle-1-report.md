@@ -40,6 +40,10 @@ source file below is an undeclared write by construction.** Enumerated rather th
 | `docs/plan/artifacts/.../phase4/red-team-report.md` | **The one declared file.** §9 appended (never rewritten). |
 | `docs/plan/artifacts/.../phase4/fix-cycle-1-report.md` | This file. |
 | `docs/plan/artifacts/.../phase4/r4fix-panel-agy-github-mounted.png`, `r4fix-panel-unknown-amber.png` | Browser proof of blocker 1, copied out of `/opt/ai-os/uploads` (N7). |
+| `docs/plan/artifacts/.../phase4/gates-round4.txt` | The `gates-808.sh --strict` transcript at the fix-cycle tip, verbatim. |
+
+**21 files, and this list is checkable:** `git diff --name-only 07f1c4b..HEAD | sort` prints exactly
+these paths and nothing else.
 
 Nothing outside this worktree was written. `/opt/forge-ai-os` was never touched; `pm2 restart` was
 never run.
