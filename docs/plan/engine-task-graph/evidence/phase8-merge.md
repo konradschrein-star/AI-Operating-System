@@ -972,7 +972,9 @@ exit `0`.
 
 ### 12.6 `check-instrument-identity.py` — a gate I tripped, and how
 
-**This one FAILED on its first post-commit run**, having passed in §6.9:
+**This one FAILED on its first post-commit run**, having passed in §6.9. The
+failure message quotes the retired sha, so this paste needs the same treatment
+§6.9 got — marked here, on this prose line: `[historical instrument]`.
 
 ```
 FAILED — 1 disagreement(s):
@@ -1004,3 +1006,18 @@ this task (§1.1, §9.1, here) and the only one where the instrument caught *me*
 The count for the round is: two instruments that lied, one that told the truth
 about my own work. A gate that fires on the evidence file describing it is a
 gate doing its job.
+
+**And it fired a second time, one level deeper.** Writing the paragraph above
+meant pasting the failure message — which itself quotes the retired sha — so
+the corpus quoted a dead identity again, at §12.6 this time instead of §6.9.
+Same declared escape, applied again. Worth stating because the shape recurs
+for anyone documenting this gate: *describing* the failure reproduces it, and
+each new paste needs its own marker. The check was re-run after the fix and is
+green; that run is the one quoted directly above.
+
+A process note for the round-803 reviewer, since it is my error and not the
+tool's: I ran this gate, saw it exit `1`, and committed anyway in the same
+command — the correction is commit `f861151`'s successor rather than part of
+it. The gate caught it on the next run and nothing shipped red, but "print the
+exit code and commit regardless" is precisely the disclose-and-proceed habit
+standing rule 2 exists to kill, and it happened here.
