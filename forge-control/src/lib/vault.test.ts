@@ -495,6 +495,53 @@ describe("the write is atomic (R6)", () => {
     // Flip the stripper: it must remove a commented-out call, not everything.
     assert.equal(stripComments("// fs.rename(a)\nfs.rename(b)\n").trim(), "fs.rename(b)");
   });
+
+  test("the two surviving wx writes must NOT be routed through atomicWrite (R6 deviation)", async () => {
+    // R1-gate's blocker 3 was worded "no writeFile(abs…) anywhere in the
+    // module". Two sites survive — createNote's collision-safe create and the
+    // snapshot store's own write — and both carry flag: "wx", which cannot
+    // truncate: the open fails EEXIST and the existing bytes are untouched.
+    // The DEFECT the wording targets is therefore closed.
+    //
+    // Taking the wording literally would REGRESS the module. atomicWrite
+    // reaches its destination by rename, and rename replaces an existing file
+    // silently — which is exactly the collision these two sites detect. This
+    // test exists so a later "cleanup" that finishes the literal instruction is
+    // caught by a red test rather than by Konrad losing a note.
+    const hits = CODE.match(/writeFile\(\s*abs\b[^\n]*/g) ?? [];
+    assert.equal(hits.length, 2, `expected exactly the two known wx sites, got ${hits.length}`);
+    for (const hit of hits) assert.match(hit, /flag: "wx"/);
+
+    // Behavioural, not structural: "wx" refuses rather than truncates.
+    const guarded = path.join(SNAPSHOT_PARENT, "wx-guard.md");
+    const body = "# guarded\n\n" + "bytes that must survive\n".repeat(200);
+    await fsp.writeFile(guarded, body, "utf8");
+    await assert.rejects(
+      () => fsp.writeFile(guarded, "S", { encoding: "utf8", flag: "wx" }),
+      (e: NodeJS.ErrnoException) => e.code === "EEXIST",
+    );
+    assert.equal(await fsp.readFile(guarded, "utf8"), body, "wx must not truncate");
+
+    // And the property each site protects, end to end: a second snapshot of the
+    // same note in the same millisecond becomes a SECOND FILE, never an
+    // overwrite of the first. (createNote's twin is covered by the R11
+    // characterisation test "createNote never overwrites".)
+    const v1 = "# wx-two\n\nv1\n";
+    const v2 = "# wx-two\n\nv2\n";
+    const v3 = "# wx-two\n\nv3\n";
+    const note = await scratchNote(v1);
+    const realNow = Date.now;
+    Date.now = () => 1_787_111_111_111;
+    try {
+      const first = await vault.writeVaultFile({ path: note.rel, content: v2, baseSha256: hex(v1) });
+      const second = await vault.writeVaultFile({ path: note.rel, content: v3, baseSha256: hex(v2) });
+      assert.notEqual(first.snapshot, second.snapshot);
+      assert.equal(await fsp.readFile(first.snapshot, "utf8"), v1, "snapshot 1 must survive");
+      assert.equal(await fsp.readFile(second.snapshot, "utf8"), v2);
+    } finally {
+      Date.now = realNow;
+    }
+  });
 });
 
 describe("concurrent writes to ONE note are serialised, not interleaved", () => {

@@ -531,3 +531,28 @@ the two corpus files, which are named in the reviewer's own prescription.
 `forge-control/src/lib/vault-fixture.ts` was **not** touched: the symlink fixtures are created inside
 the test that needs them, because a symlink committed into a shared fixture would change what every
 other lane-1 test resolves.
+
+### 10.3 Undeclared writes — round 5, fix cycle 1 second pass (task `R1-fix`, re-check), disclosed here
+
+This round's declared `write_set` was `docs/plan/artifacts/os-usable-for-work/phase1/gate-verdict.md`
+— the **gating reviewer's own report file**, inherited by the fix-cycle row exactly as §10.2 describes
+for the round before it. It is unsatisfiable for a task briefed to "address every point" of four
+code blockers, and the file is the reviewer's to write, not the builder's; it was **not** touched.
+
+`698c230` was already at HEAD when this round opened, so no blocker was re-fixed. The round verified
+that commit independently and closed the one gap that survived. Two files moved:
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control/src/lib/vault.test.ts` | B1a | one regression test pinning the §6.1 deviation — that `createNote`'s and the snapshot store's `wx` writes must **not** be routed through `atomicWrite`. Mutation-controlled: 61/0 → 58/3 |
+| `docs/plan/artifacts/os-usable-for-work/phase1/fix-cycle-1-vault-write.md` | — | §6, the independent pre-fix/HEAD probe table, and §6.1, the disclosed deviation (appended; nothing removed) |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | this subsection, in the same commit as the writes it discloses |
+
+**The deviation a re-check will otherwise read as an open blocker.** R1-gate's blocker 3 says "no
+`writeFile(abs…)` anywhere in the module". Two `flag: "wx"` sites survive at `lib/vault.ts:331` and
+`:522`. They are not R6 instances — `wx` refuses with `EEXIST` and truncates nothing (measured) — and
+following the wording literally would make `createNote` silently overwrite an existing note and let
+one snapshot destroy another, because `atomicWrite` reaches its destination by `rename` (also
+measured). The invariant enforced instead is strictly stronger than the sites it leaves standing:
+**every direct write is an exclusive create; the only non-exclusive path is `atomicWrite`, which
+never opens the destination.** Full evidence in the artefact §6.1.

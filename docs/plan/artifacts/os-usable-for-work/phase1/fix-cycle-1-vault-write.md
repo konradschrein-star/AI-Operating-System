@@ -260,3 +260,69 @@ above and 4 are the flips.
   two new verbs, which is what R9 covers and what the reviewer prescribed. Those two verbs address
   fixed configured directories rather than a caller-supplied path; this is stated in the module header
   rather than left for the next reviewer to find.
+
+---
+
+## 6. Round 5 re-verification, and one disclosed deviation from blocker 3's wording
+
+Round 5 (fix cycle 1, second pass) did **not** rebuild this work. `698c230` was already at HEAD when
+the round opened, so the job was to verify it independently and close whatever survived. The probe
+below was written from R1-gate's **blocker text**, not from the fix, and deliberately does not reuse
+`vault.test.ts` — a fix proven only by tests its own author wrote is not independently proven.
+
+The identical probe was run against **both** trees, selected by a `VAULT_SUBJECT` env var: HEAD, and
+a real copy (not a symlink — `md5 3e7ec655…` vs HEAD's `f4c00944…`) of `lib/vault.ts` extracted from
+`01fa802`, the pre-fix tip.
+
+| Probe | pre-fix (`01fa802`) | HEAD (`698c230`) |
+|---|---|---|
+| B1 no acknowledged edit is lost — 6 rounds × 8 concurrent PUTs | **FAIL — 9 acknowledged edits neither on disk nor in any snapshot** | PASS — 0 |
+| B1 no snapshot-collision 500s | **FAIL — 33 of 48 PUTs** | PASS — 0 |
+| B1 concurrent read-modify-write loses no update | **FAIL — 1/8 markers survived** | PASS — 8/8 |
+| B1 the write-chain Map drains | **FAIL — export absent** | PASS — `pendingVaultWrites() === 0` |
+| B2 injected EIO throws instead of `created: true` | **FAIL — returned `{created:true}`** | PASS — throws EIO |
+| B2 the note is byte-identical after the EIO | **FAIL — 4986 B → 76 B** | PASS — 4986 B → 4986 B |
+| B3 destination never observed short mid-write (size polled during a 40 MB append) | **FAIL — 0 B observed** | PASS — 40 000 025 B across 7 318 polls |
+| B4 GET refuses a symlink out of the vault | **FAIL — read 72 B of the outside file** | PASS — refused |
+| B4 PUT refuses a symlinked directory | **FAIL — the outside file was overwritten** | PASS — refused, file intact |
+
+Two probes are **controls that pass on both trees** — `ENOENT still creates the daily note` (R11
+semantics were not collateral damage) and `a legitimate note still resolves` (the containment check
+is not passing by refusing everything). Without them a table of all-FAIL/all-PASS would prove only
+that the old file was different, not that these specific defects moved. **10 failures pre-fix, 0 at
+HEAD.**
+
+### 6.1 Deviation: blocker 3's literal wording is NOT satisfied, deliberately
+
+R1-gate worded the closure condition as "**no `writeFile(abs…)` anywhere in the module**". Two sites
+survive at HEAD and a grep will find them:
+
+- `lib/vault.ts:331` — `createNote`'s collision-safe create, `{ flag: "wx" }`
+- `lib/vault.ts:522` — the snapshot store's own write, `{ flag: "wx" }` (and `abs` there is a path in
+  the snapshot store, not a note in the vault)
+
+Both were measured rather than argued about:
+
+1. **`flag: "wx"` cannot truncate.** 26 015 B file, `writeFile(…, {flag:"wx"})` → `EEXIST`, 26 015 B
+   still there. So neither site is an instance of R6, and **the defect blocker 3 names is closed.**
+2. **Following the wording would regress the module.** `atomicWrite` reaches its destination by
+   `rename`, and rename replaces an existing file *silently* — measured: a pre-existing note was
+   replaced with no error raised. That silent replacement is precisely the collision these two sites
+   exist to detect: routing `createNote` through `atomicWrite` makes a second note with the same
+   title overwrite the first instead of becoming " 2", and routing the snapshot store through it lets
+   one snapshot destroy another, which is the undo itself.
+
+So the module's invariant is stated one notch stronger than the literal instruction and is what the
+source-inspection test enforces: **every direct write to a destination is an exclusive create, and
+the only non-exclusive write path is `atomicWrite`, which never opens the destination at all.**
+
+A new regression test, `the two surviving wx writes must NOT be routed through atomicWrite (R6
+deviation)`, pins this so that a later agent "finishing" the literal instruction is caught by a red
+test instead of by Konrad losing a note. It asserts exactly two direct-write sites, both `wx`; that
+`wx` refuses with EEXIST rather than truncating; and that two snapshots of one note inside a single
+frozen millisecond are two files, never an overwrite.
+
+**Mutation control for that test** — `{ flag: "wx" }` → `"utf8"` at `lib/vault.ts:331` turned
+`61 pass / 0 fail` into `58 pass / 3 fail`, red in both the new test and the R11 characterisation
+`createNote never overwrites`. The tree was restored from a byte copy and re-hashed:
+`dce7882493556add65451e18b5a84cf58a7af20201bc79ec35dad7884d92e95a` before and after, identical.
