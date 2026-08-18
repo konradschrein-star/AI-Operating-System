@@ -691,6 +691,300 @@ describe("concurrent writes to ONE note are serialised, not interleaved", () => 
   });
 });
 
+// ---------------------------------------------------------------------------
+// serialiseOnPath() carries two guards the round-6 re-review mutated one at a
+// time with the suite staying 65/65 green either way. A guard whose removal
+// changes nothing observable is indistinguishable from dead code, and dead code
+// gets deleted — so each one gets a control that discriminates it. Measured on
+// this worktree against vault.ts blob 867c135:
+//
+//   M1  `.then(work, work)` -> `.then(work)`                      65/65 green
+//   M2  successors wait on the RAW result instead of the
+//       rejection-swallowing tail; both guards left intact        65/65 green
+//   M3  M2 and M1 together                                        65/65 green
+//
+// M1 is green because guard 1 is UNREACHABLE at tip: the Map stores `tail`,
+// whose rejection handler returns undefined, so `previous` can never reject and
+// the second argument of `.then(work, work)` is never called. Guard 1 is the
+// second of two layers, and only the PAIR is observable.
+//
+// M3 stayed green for a different reason: the only wedge test in this file was
+// SEQUENTIAL — it awaited the refusal before issuing the next write, by which
+// time the finished chain had already cleared its own entry and the next caller
+// started from `Promise.resolve()`. The wedge needs a successor queued while
+// the failing writer is still in flight, which is what the first test below
+// builds.
+//
+// So guard 1 gets two controls and needs both: a behavioural one that goes red
+// under M3 (it pins the pair, since no test can pin the line alone), and a
+// source assertion that goes red under M1 alone, because the named risk is a
+// cleanup deleting a line nothing defends. Guard 2's control discriminates it
+// on its own.
+// ---------------------------------------------------------------------------
+
+describe("the two guards inside serialiseOnPath, each with a control", () => {
+  /** Park writers at the two points the queue's ordering is observable.
+   *
+   *  rename   — the LAST step of a write. A writer held here is provably inside
+   *             its critical section, and failing its rename rejects the write
+   *             without leaving the note in a different state.
+   *  realpath — resolveOrRefuse()'s final await. Everything from its resolution
+   *             to the Map.set inside serialiseOnPath() is synchronous or a
+   *             microtask, and a write to an existing note resolves exactly two
+   *             realpaths before it registers (the vault root, then the note).
+   *             So "+2, then one macrotask" means REGISTERED. Waiting on a
+   *             millisecond clock instead would make every control below
+   *             timing-dependent, which is the thing this file refuses to be. */
+  function instrument(): {
+    renames: () => number;
+    realpaths: () => number;
+    release: (index: number, outcome?: "proceed" | "fail") => void;
+    restore: () => void;
+  } {
+    const realRename = fsp.rename;
+    const realRealpath = fsp.realpath;
+    const gates = new Map<number, (fail: boolean) => void>();
+    let renames = 0;
+    let realpaths = 0;
+    let opened = false;
+
+    fsp.rename = (async (from: string, to: string) => {
+      const index = renames++;
+      if (!opened) {
+        const fail = await new Promise<boolean>((resolve) => gates.set(index, resolve));
+        if (fail) {
+          throw Object.assign(new Error(`rename #${index} failed by the test harness`), {
+            code: "EIO",
+          });
+        }
+      }
+      return realRename(from, to);
+    }) as typeof fsp.rename;
+
+    fsp.realpath = (async (target: string) => {
+      const resolved = await (realRealpath as (p: string) => Promise<string>)(target);
+      realpaths++;
+      return resolved;
+    }) as typeof fsp.realpath;
+
+    return {
+      renames: () => renames,
+      realpaths: () => realpaths,
+      release(index: number, outcome: "proceed" | "fail" = "proceed") {
+        const gate = gates.get(index);
+        assert.ok(gate, `no writer is parked at rename #${index}`);
+        gates.delete(index);
+        gate(outcome === "fail");
+      },
+      restore() {
+        opened = true;
+        for (const gate of gates.values()) gate(false);
+        gates.clear();
+        fsp.rename = realRename;
+        fsp.realpath = realRealpath;
+      },
+    };
+  }
+
+  const macrotask = (): Promise<void> =>
+    new Promise((resolve) => {
+      setTimeout(resolve, 1);
+    });
+
+  async function waitUntil(condition: () => boolean, what: string): Promise<void> {
+    const deadline = Date.now() + 5_000;
+    while (!condition()) {
+      assert.ok(Date.now() < deadline, `timed out after 5s waiting for ${what}`);
+      await macrotask();
+    }
+    // One more macrotask, so every microtask the condition released has run.
+    // The Map.set that follows a resolved realpath is a microtask, not a tick.
+    await macrotask();
+  }
+
+  test("guard 1: a writer whose rename FAILS must not refuse the writer queued behind it", async () => {
+    // The control for `.then(work, work)`. Under M3 the successor inherits the
+    // predecessor's rejection, `work` is never called, and the note keeps its
+    // original bytes even though the caller asked for a legitimate edit against
+    // the correct base. Sequential refusal-then-retry does not reach this: the
+    // finished chain has already cleared itself by then.
+    const original = "# refusal\n\nv1\n";
+    const saved = "# refusal\n\nv2\n";
+    const note = await scratchNote(original);
+    const h = instrument();
+    try {
+      const failing = vault.writeVaultFile({
+        path: note.rel,
+        content: "# refusal\n\nthe write whose rename fails\n",
+        baseSha256: hex(original),
+      });
+      await waitUntil(() => h.renames() >= 1, "the first writer to reach its rename");
+
+      const mark = h.realpaths();
+      const behind = vault.writeVaultFile({
+        path: note.rel,
+        content: saved,
+        baseSha256: hex(original),
+      });
+      // Mark it handled now: under M3 it rejects long before it is awaited, and
+      // an unhandled rejection would take the whole process down mid-test.
+      void behind.catch(() => undefined);
+      await waitUntil(
+        () => h.realpaths() >= mark + 2,
+        "the second writer to register in the queue",
+      );
+      assert.equal(
+        h.renames(),
+        1,
+        "the second writer must be QUEUED, not running beside the first",
+      );
+
+      h.release(0, "fail");
+      await assert.rejects(failing, /rename #0 failed by the test harness/);
+      // The failed write left the note exactly as it was — nothing to recover.
+      assert.equal(await fsp.readFile(note.abs, "utf8"), original);
+
+      // THE DISCRIMINATOR. A chain that only continues on success never calls
+      // this writer's work at all, so it never reaches a rename and this times
+      // out with `behind` already rejected carrying the FIRST writer's error.
+      await waitUntil(
+        () => h.renames() >= 2,
+        "the queued writer to run after its predecessor was refused",
+      );
+      h.release(1);
+      const result = await behind;
+      assert.equal(await fsp.readFile(note.abs, "utf8"), saved);
+      assert.equal(result.sha256, hex(saved));
+    } finally {
+      h.restore();
+    }
+  });
+
+  test("guard 1 is pinned in the source, because no test can pin the line alone", () => {
+    // Not a behavioural assertion and not pretending to be one. The measured
+    // risk is a cleanup deleting a redundant-looking line; this is the tripwire
+    // for that, and the test above is the proof that the redundancy is the only
+    // reason deleting it is currently free.
+    const call = /\.then\(\s*work\s*,\s*work\s*\)/g;
+    const inCode = [...CODE.matchAll(call)].length;
+    assert.equal(
+      inCode,
+      1,
+      "serialiseOnPath() must continue its chain on rejection: `previous.then(work, work)`. " +
+        "With `.then(work)` a refused write in flight refuses every writer queued behind it.",
+    );
+    // Canary: the module DISCUSSES this call by name in a comment, so the same
+    // grep over SOURCE passes with the call itself deleted. If these two ever
+    // read the same, the assertion above has stopped measuring code.
+    const inSource = [...SOURCE.matchAll(call)].length;
+    assert.ok(
+      inSource > inCode,
+      `the comment occurrence is missing from SOURCE (${inSource}) — this assertion ` +
+        "no longer proves it is measuring code rather than prose",
+    );
+  });
+
+  test("guard 2: a finishing writer must not clear a LATER writer's chain entry", async () => {
+    const original = "# tail\n\nv1\n";
+    const first = "# tail\n\nfirst\n";
+    const note = await scratchNote(original);
+    assert.equal(vault.pendingVaultWrites(), 0, "nothing may still be queued when this test starts");
+    const h = instrument();
+    try {
+      const a = vault.writeVaultFile({ path: note.rel, content: first, baseSha256: hex(original) });
+      await waitUntil(() => h.renames() >= 1, "writer A to reach its rename");
+
+      const mark = h.realpaths();
+      const b = vault.writeVaultFile({
+        path: note.rel,
+        content: "# tail\n\nsecond\n",
+        baseSha256: hex(first),
+      });
+      void b.catch(() => undefined);
+      await waitUntil(() => h.realpaths() >= mark + 2, "writer B to register behind A");
+      // Flip: there IS an entry, so the assertion below is measuring a deletion
+      // rather than a counter that reads zero whatever happens.
+      assert.equal(vault.pendingVaultWrites(), 1);
+
+      h.release(0);
+      await a;
+      await waitUntil(() => h.renames() >= 2, "writer B to reach its own rename");
+      // THE DISCRIMINATOR: A has settled and run its cleanup. Without
+      // `writeChains.get(abs) === tail` that cleanup deletes the entry B is
+      // queued under, and this reads 0 — a note with a write in flight that the
+      // next caller will not be ordered behind.
+      assert.equal(
+        vault.pendingVaultWrites(),
+        1,
+        "the finishing writer deleted the chain entry of a writer still in flight",
+      );
+      h.release(1);
+      await b;
+    } finally {
+      h.restore();
+    }
+    assert.equal(vault.pendingVaultWrites(), 0, "the chain must still drain once everything settles");
+  });
+
+  test("guard 2: without it a new writer races the queued one and an acknowledged edit is lost", async () => {
+    // Why the entry above is load-bearing rather than tidy. Once A's cleanup has
+    // emptied the Map, the next caller finds no chain, runs BESIDE the writer
+    // still in flight, passes compare-and-swap on the same base — and blocker 1
+    // is back, with two 200s and one surviving body.
+    const original = "# race\n\nv1\n";
+    const landed = "# race\n\nlanded\n";
+    const fromB = "# race\n\nB\n";
+    const note = await scratchNote(original);
+    const h = instrument();
+    try {
+      const a = vault.writeVaultFile({ path: note.rel, content: landed, baseSha256: hex(original) });
+      await waitUntil(() => h.renames() >= 1, "writer A to reach its rename");
+
+      let mark = h.realpaths();
+      const b = vault.writeVaultFile({ path: note.rel, content: fromB, baseSha256: hex(landed) });
+      void b.catch(() => undefined);
+      await waitUntil(() => h.realpaths() >= mark + 2, "writer B to register behind A");
+
+      h.release(0);
+      await a;
+      // B has now read `landed`, compared, snapshotted, and is parked at its
+      // rename — so the bytes on disk are still the base D is about to quote.
+      await waitUntil(() => h.renames() >= 2, "writer B to reach its rename");
+      assert.equal(await fsp.readFile(note.abs, "utf8"), landed);
+
+      mark = h.realpaths();
+      const d = vault.writeVaultFile({ path: note.rel, content: "# race\n\nD\n", baseSha256: hex(landed) });
+      void d.catch(() => undefined);
+      await waitUntil(() => h.realpaths() >= mark + 2, "writer D to register");
+
+      h.restore(); // opens every gate, parked and future
+      const settled = await Promise.allSettled([b, d]);
+      const acknowledged = settled.filter((s) => s.status === "fulfilled");
+      assert.equal(
+        acknowledged.length,
+        1,
+        `two writers quoted base ${hex(landed).slice(0, 12)}…; exactly one may be ` +
+          `acknowledged, got ${acknowledged.length}`,
+      );
+      assert.equal(settled[0].status, "fulfilled", "B was first in the queue and must win");
+      const loser = settled[1];
+      assert.ok(
+        loser.status === "rejected" && loser.reason instanceof vault.VaultConflictError,
+        `D must be refused with a conflict, got ${loser.status === "rejected" ? loser.reason : "a 200"}`,
+      );
+      const disk = await fsp.readFile(note.abs, "utf8");
+      assert.equal(disk, fromB);
+      assert.equal(
+        hex(disk),
+        (acknowledged[0] as PromiseFulfilledResult<{ sha256: string }>).value.sha256,
+        "the acknowledged bytes are not the bytes on disk",
+      );
+    } finally {
+      h.restore();
+    }
+  });
+});
+
 describe("a symlink inside the vault does not escape it (R9)", () => {
   // path.resolve() is lexical. Before the realpath check, GET through a file
   // symlink returned any file the root process could open, and PUT through a

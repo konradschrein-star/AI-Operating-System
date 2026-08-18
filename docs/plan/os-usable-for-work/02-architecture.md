@@ -181,8 +181,8 @@ Three derived stores, each with exactly one writer:
         ├─ escapes vault?    → 400
         └─ not *.md?         → 400
       content empty/blank?            → 400        (R7)
-      read current bytes → sha256
       ── everything below runs serialised per path (one chain per note) ──
+      read current bytes → sha256
         └─ ≠ base_sha256   → 409 { current_sha256, current_content,
                                    current_content_truncated, current_bytes }   NOTHING WRITTEN
       snapshot current bytes → /opt/ai-os/vault-snapshots/<date>/<flat>.<epoch>-<rand>.md
@@ -190,6 +190,15 @@ Three derived stores, each with exactly one writer:
       write <file>.tmp-<pid> → fsync → rename over <file>              (R6)
       → 200 { path, sha256, bytes, snapshot }
 ```
+
+**The read is INSIDE the critical section, and that placement IS the fix for blocker 1.** The marker
+line used to sit one step lower, below `read current bytes`, which is precisely the lost-update race
+this project had to close: two writers that read before the queue both pass compare-and-swap against
+the same base and the second rename destroys an acknowledged edit. It was moved on 2026-08-19; a
+successor implementing from the old diagram would have reintroduced the defect. *Source of truth:
+`forge-control/src/lib/vault.ts`. Where this document and that module disagree about the write path,
+the module is right and the document is the defect — fix the document, never the code, and fix it in
+the same commit that finds the disagreement.*
 
 **The core architectural move: the append-only contract becomes an *undo* contract.**
 
