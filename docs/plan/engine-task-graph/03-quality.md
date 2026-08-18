@@ -272,7 +272,16 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    add a subject or remove one: it names instruments whose failure is EXCUSED,
    with a diagnostic, a reason and an owner, and the gate prints every entry
    above its verdict on every run and fails if a waived file compiles clean
-   ("waived but clean"). Its target state is empty, and it is empty today. The
+   ("waived but clean"). **A path written in that file TWICE is a hard ledger
+   error naming both line numbers** (round 501): the gate discounts one observed
+   failure per valid entry, so a duplicate discounts a failure it does not own —
+   measured at `f30dfdc`, two broken subjects with one of them waived twice made
+   the gate print both failures and then `type failures 0`, `PASSED`, exit 0 over
+   an unexcused type error in a file nobody waived
+   (`docs/plan/scripts-checks-typecheck-gate/evidence/phase6-ledger-c4.md`).
+   The duplicate is refused, not skipped, and step 11 additionally refuses to
+   issue any verdict if `FAILED + WAIVED` stops equalling what the compile loop
+   counted. Its target state is empty, and it is empty today. The
    guard — which failed the run when a `scripts/checks/*.ts` the branch had
    touched was absent from the list — is retired because glob enumeration makes
    the question it asked, *"did the author remember to list their file"*,
@@ -907,6 +916,10 @@ python3 scripts/checks/check-r20-census.py
 # tsconfig.checks-instruments.json. instrument-manifest.txt is a WAIVER LEDGER:
 # it excuses a named failure, it never obtains coverage, and the gate prints
 # every entry above its verdict and fails on a waived file that compiles clean.
+# ONE SUBJECT, ONE WAIVER (round 501): a path written in that ledger twice is a
+# hard ledger error naming both lines, because a duplicate entry discounts a
+# failure it does not own and turned a real type error into PASSED/exit 0 at
+# f30dfdc (scripts-checks-typecheck-gate/evidence/phase6-ledger-c4.md).
 # ~150s for 42 subjects; do not background it and read the verdict line.
 bash scripts/checks/check-instrument-typecheck.sh
 # §3.1 item 10 — shell lint. Exits 0, or names the *.sh this branch touched that

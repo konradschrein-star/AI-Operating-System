@@ -51,10 +51,10 @@
 # nothing is a note, and notes belong in prose, not in a ledger.
 #
 # ---------------------------------------------------------------------------
-# THE TWO PROPERTIES THAT MAKE A LEDGER SAFER THAN AN EXCLUSION FLAG. Both are
+# THE THREE PROPERTIES THAT MAKE A LEDGER SAFER THAN AN EXCLUSION FLAG. All are
 # implemented in the gate — step 8 reads this file, step 11 reconciles it —
-# and both landed in the same commit as this header (round 500, standing
-# rule 2).
+# and each landed in the same commit as the header text claiming it (standing
+# rule 2): the first two at round 500, the third at round 501.
 #
 #   1. EVERY WAIVER IS PRINTED ON EVERY RUN, in the WAIVERS block above the
 #      verdict, with its four fields and with the diagnostic the compiler
@@ -70,6 +70,21 @@
 #      waived path that is not on disk, and a waived path the gate does not
 #      compile at all, are both refused — a waiver must name something this
 #      gate actually reads, or it is excusing nothing and hiding that fact.
+#   3. ONE SUBJECT, ONE WAIVER — A PATH WRITTEN HERE TWICE IS A LEDGER ERROR,
+#      and the gate names BOTH line numbers. This one was missing until round
+#      501 and its absence was the hole properties 1 and 2 were supposed to
+#      make impossible: step 11 discounts ONE observed failure per valid entry,
+#      so a second entry for the same path discounts a failure IT DOES NOT OWN.
+#      Measured — two broken subjects, one of them waived twice with two
+#      perfectly valid four-field entries: the gate printed both failures, then
+#      `type failures 0`, then `PASSED`, and exited 0 over an unexcused TS2322
+#      in a file nobody had waived (`evidence/phase6-ledger-c4.md`, control C4).
+#      A duplicated path is an ordinary hand-edit slip — two projects excusing
+#      the same stubborn instrument, or one copy-paste — which is exactly why
+#      it is refused rather than quietly ignored: a skip would repair the
+#      arithmetic while leaving you believing this file says what you wrote. If
+#      two rounds need to waive one path, they share ONE entry and its
+#      `diagnostic` field names both errors.
 #
 # THE LEDGER NEVER EXCLUDES A FILE FROM COMPILATION. Every subject is compiled,
 # every run, waived or not; the waiver acts on the VERDICT, never on the

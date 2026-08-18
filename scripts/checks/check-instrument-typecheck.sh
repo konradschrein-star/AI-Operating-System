@@ -252,11 +252,13 @@
 #       IMPLEMENTED HERE SINCE ROUND 500, in the two steps the round-200 hooks
 #       reserved. What closes it: a waived subject that compiles CLEAN fails
 #       the run with the words "waived but clean", naming the path, so an
-#       excuse cannot outlive the error it excuses. Three further failures
+#       excuse cannot outlive the error it excuses. Four further failures
 #       close the neighbouring holes — a waived path that is not on disk, a
-#       waived path this gate does not compile at all, and an entry missing any
-#       of the four required fields — because a waiver that names nothing, or
-#       justifies nothing, is an exclusion wearing a ledger's clothes. And the
+#       waived path this gate does not compile at all, an entry missing any of
+#       the four required fields, and (round 501) a path waived TWICE — because
+#       a waiver that names nothing, or justifies nothing, is an exclusion
+#       wearing a ledger's clothes, and a waiver counted twice excuses a
+#       failure it does not own. And the
 #       ledger cannot hide: every entry is printed above the verdict on every
 #       run, and an EMPTY ledger prints that it is empty rather than printing
 #       nothing. The ledger never removes a subject from the compile loop; it
@@ -276,14 +278,22 @@
 #         The last two arrived at round 500 with the waiver ledger (R14):
 #           ledger errors     — an entry missing one of its four required
 #                               fields, a field block with no path, a waived
-#                               path absent from disk, or a waived path this
-#                               gate does not compile. Each is named with the
-#                               line number in the ledger.
+#                               path absent from disk, a waived path this gate
+#                               does not compile, or a path waived TWICE. Each
+#                               is named with the line number in the ledger;
+#                               the duplicate names both of them.
 #           waived but clean  — a waived subject that compiled with zero
 #                               diagnostics. The excuse outlived the error.
 #         Neither can turn a failure into a pass: a waiver reclassifies an
 #         observed FAIL into an excused WAIVED and changes nothing else, and an
 #         INVALID entry excuses nothing at all.
+#         THAT SENTENCE WAS FALSE UNTIL ROUND 501 and is now enforced twice.
+#         A path waived twice discounted TWO failures — the second one belonging
+#         to a subject nobody waived — and the gate said PASSED, exit 0, over an
+#         unexcused TS2322 (measured at f30dfdc; `evidence/phase6-ledger-c4.md`).
+#         The duplicate is now a hard ledger error at step 8, and step 11 refuses
+#         to issue any verdict if it discounts one path twice or if FAILED and
+#         WAIVED stop summing to what the compile loop observed.
 #
 # `-E` (errtrace) is new at round 2 and is not decoration: an ERR trap is NOT
 # inherited by shell functions, command substitutions or subshells without it.
@@ -908,7 +918,13 @@ echo
 #        that is gone is stale by definition;
 #      * a waived path that is not among the enumerated SUBJECTS is an ERROR:
 #        a waiver must name something this gate actually compiles, or it is
-#        excusing nothing and hiding that fact.
+#        excusing nothing and hiding that fact;
+#      * a path named by MORE THAN ONE entry is an ERROR on the second entry
+#        and every later one, naming both lines. One subject, one waiver:
+#        step 11 discounts one failure per valid entry, so a duplicate
+#        discounts a failure it does not own and launders another subject's
+#        type error into a pass (round 501; the gating review's control C4,
+#        `evidence/phase6-ledger-c4.md`).
 #
 #    "One space after the `#`" is why the ledger's own header indents its
 #    format example: an example written in live shape would be parsed as a live
@@ -1020,6 +1036,31 @@ while IFS= read -r ledger_line || [ -n "$ledger_line" ]; do
     ledger_error "at line $ledger_lineno: the entry's \`path\` field says '$pend_path' but the bare path says '$ledger_entry'. The two must agree; this gate matches on the bare path and will not guess which one was meant."
   fi
 
+  # THE UNIQUENESS CONDITION (round 501, phase 6; the phase-5 gating review's
+  # control C4). Step 11 decrements `FAILED` once per VALID entry naming a
+  # failing subject, and `SUBJECT_OUTCOME` is keyed by path and never consumed,
+  # so N entries naming ONE failing path decrement `FAILED` N times — and the
+  # surplus decrements cancel the failures of subjects NOBODY waived. Measured
+  # at f30dfdc: two broken subjects, one of them waived twice with two valid
+  # four-field entries, and the gate printed both failures, `type failures 0`,
+  # `PASSED`, exit 0. That is the failure-into-pass path this whole design
+  # exists to make impossible, so the SECOND entry is a HARD ledger error
+  # naming BOTH lines, not a skip: a skip would silently repair a ledger the
+  # author still believes says what they wrote.
+  ledger_dup_line=""
+  ledger_dup_index=0
+  while [ "$ledger_dup_index" -lt "${#WAIVER_PATHS[@]}" ]; do
+    if [ "${WAIVER_PATHS[$ledger_dup_index]}" = "$ledger_entry" ]; then
+      ledger_dup_line="${WAIVER_LINENO[$ledger_dup_index]}"
+      break
+    fi
+    ledger_dup_index=$((ledger_dup_index + 1))
+  done
+  if [ -n "$ledger_dup_line" ]; then
+    ledger_valid=0
+    ledger_error "at line $ledger_lineno: the path '$ledger_entry' is ALREADY WAIVED at line $ledger_dup_line. One subject, one waiver: a second entry for the same path excuses a failure it does not own — step 11 discounts one failure per valid entry, so a duplicate discounts ANOTHER subject's failure and can turn this run green over a type error nobody waived. Delete one of the two entries (lines $ledger_dup_line and $ledger_lineno); if the two record different diagnostics, the surviving entry's \`diagnostic\` field must name them both."
+  fi
+
   if [ ! -f "$REPO_ROOT/$ledger_entry" ]; then
     ledger_valid=0
     ledger_error "at line $ledger_lineno: the waived path '$ledger_entry' is NOT ON DISK. A waiver for a file that is gone is stale by definition — delete the entry."
@@ -1047,6 +1088,7 @@ done < "$LEDGER"
 ledger_flush_dangling
 unset ledger_line ledger_field ledger_value ledger_entry ledger_missing
 unset ledger_valid ledger_in_subjects ledger_subject
+unset ledger_dup_line ledger_dup_index
 WAIVER_COUNT=${#WAIVER_PATHS[@]}
 
 # ---------------------------------------------------------------------------
@@ -1583,6 +1625,18 @@ echo
 #     run — because a waiver written for a different error is a waiver nobody
 #     re-read.
 #
+#     "BY ONE" IS ENFORCED HERE, NOT ASSUMED (round 501). Until then this
+#     sentence was FALSE: `SUBJECT_OUTCOME` is keyed by path and is never
+#     consumed, so two entries naming one failing path took `FAILED` down by
+#     TWO and the surplus cancelled a failure belonging to a subject nobody
+#     waived (measured at f30dfdc: `PASSED`, exit 0, `type failures 0`, over an
+#     unexcused TS2322). Step 8 now refuses a duplicate path as a hard ledger
+#     error, and the SECOND LAYER below refuses to issue a verdict if this loop
+#     ever discounts a path twice or if `FAILED` and `WAIVED` stop adding up to
+#     what the compile loop observed. Both layers are LOUD — a printed refusal
+#     and a non-zero exit. Neither is a skip: an entry quietly ignored is a
+#     ledger the author still believes says what they wrote.
+#
 #     WHAT A WAIVER CANNOT DO:
 #       * excuse a subject that compiled CLEAN. That is a FAILURE, in the exact
 #         words "waived but clean", naming the path. Stale waivers are how an
@@ -1604,6 +1658,14 @@ WAIVED=0
 WAIVED_CLEAN=0
 WAIVER_REPORT=""
 
+# The compile loop's OWN count, taken before any waiver acts on it, and the set
+# of paths this loop has already discounted. Together they are the second layer
+# described above: `FAILED` may only ever walk down from FAILED_OBSERVED, once
+# per path, and any other arithmetic is an internal inconsistency this gate
+# refuses to certify around.
+FAILED_OBSERVED="$FAILED"
+declare -A WAIVER_DISCOUNTED=()
+
 waiver_index=0
 while [ "$waiver_index" -lt "$WAIVER_COUNT" ]; do
   w_path="${WAIVER_PATHS[$waiver_index]}"
@@ -1623,6 +1685,22 @@ while [ "$waiver_index" -lt "$WAIVER_COUNT" ]; do
 
   case "$w_outcome" in
     fail)
+      # SECOND LAYER, and it is a refusal rather than a skip. Step 8 already
+      # made a duplicate path a ledger error and therefore INVALID, so this
+      # branch is unreachable today — exactly like the `*)` below, and kept for
+      # the same reason: the edit that removes step 8's uniqueness condition
+      # must not be able to restore the laundering path in silence.
+      if [ -n "${WAIVER_DISCOUNTED[$w_path]:-}" ]; then
+        echo "REFUSING TO CERTIFY: waiver '$w_path' (ledger line $w_line) would discount" >&2
+        echo "  a failure this run has ALREADY discounted for the same path. One subject," >&2
+        echo "  one waiver: a second discount cancels a failure belonging to a subject" >&2
+        echo "  nobody waived, which is how a ledger turns a type error into a PASS." >&2
+        echo "  Step 8's duplicate-path check should have made this entry INVALID before" >&2
+        echo "  step 11 ever saw it; that it did not means the two steps disagree about" >&2
+        echo "  what a valid waiver is, and this gate will not issue a verdict on that." >&2
+        exit 1
+      fi
+      WAIVER_DISCOUNTED[$w_path]=1
       FAILED=$((FAILED - 1))
       WAIVED=$((WAIVED + 1))
       WAIVER_REPORT+="  WAIVED  $w_path (ledger line $w_line)"$'\n'
@@ -1659,6 +1737,20 @@ while [ "$waiver_index" -lt "$WAIVER_COUNT" ]; do
   esac
 done
 unset waiver_index w_path w_line w_valid w_diag w_reason w_owner w_outcome w_observed
+
+# THE ARITHMETIC IDENTITY, asserted rather than trusted: every valid waiver on a
+# failing subject moved exactly one count from FAILED to WAIVED and nothing else
+# in this step touches either, so FAILED + WAIVED must still equal what the
+# compile loop counted. A future edit that decrements FAILED anywhere else in
+# step 11 — or twice — lands here instead of in a verdict.
+if [ "$(( FAILED + WAIVED ))" -ne "$FAILED_OBSERVED" ] || [ "$FAILED" -lt 0 ]; then
+  printf 'REFUSING TO CERTIFY: waiver reconciliation does not add up. The compile loop observed %d type failure(s); after reconciliation FAILED=%d and WAIVED=%d, which is %d.\n' \
+    "$FAILED_OBSERVED" "$FAILED" "$WAIVED" "$(( FAILED + WAIVED ))" >&2
+  echo "  A waiver may only move ONE observed failure into the excused column, and" >&2
+  echo "  only for its own path. Any other arithmetic means this run's verdict is" >&2
+  echo "  computed from a count no compilation produced, so no verdict is issued." >&2
+  exit 1
+fi
 
 echo "WAIVERS — every exclusion is printed here, on every run (R14, 02-architecture.md §4.6)"
 printf '  ledger: %s — %d entry/entries, %d error(s), %d waived, %d waived but clean\n' \

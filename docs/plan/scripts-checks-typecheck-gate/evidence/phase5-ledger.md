@@ -283,6 +283,17 @@ for nobody, and changed the verdict of an unchanged tree for nobody.**
 
 ## 2. V2 — PROVING THE LEDGER CAN FAIL
 
+> **THERE IS A FOURTH LEDGER CONTROL, AND IT IS THE ONE THAT FOUND A HOLE.**
+> Controls (a)–(c) below are the three this phase wrote, and all three still fire
+> unchanged — re-run at round 501 and reproduced verbatim in
+> [`phase6-ledger-c4.md`](phase6-ledger-c4.md) §4, because a new parse condition
+> is exactly the kind of edit that breaks its neighbours. **Control C4** —
+> *a path waived TWICE* — was written by the phase-5 gating review, not by this
+> phase, and at `229e084` it produced `PASSED`, exit 0 over an unexcused type
+> error. It is the fourth member of this set and its transcript, before and after
+> the round-501 fix, is [`phase6-ledger-c4.md`](phase6-ledger-c4.md) §2–§3. §7.1
+> row 2 of this file recorded the property C4 broke, and is corrected there.
+
 Three transient mutations. Each was **applied, run, and reverted**, and the
 revert proven with `cmp` against a byte-for-byte copy taken before the first
 mutation. **Each transcript below is complete and unedited** — the mutation, the
@@ -921,7 +932,7 @@ suppression scan and the fidelity scan. §1.3's diff is the proof.
 | Candidate | Why it cannot |
 |---|---|
 | **The ledger silently excluding a subject from the compile loop.** | The loop has no branch that consults the ledger — step 8 runs *after* enumeration and writes nothing into `SUBJECTS`, and step 11 runs *after* the loop. §1.3 measures it: 42 found, 42 compiled, before and after. |
-| **A waiver laundering a real type error into a green run.** | It cannot: a valid waiver moves one failure from `FAILED` to `WAIVED`, and the PASSED line then says `N WAIVED` instead of "compiled clean". `WAIVED` is only ever incremented for a subject the loop **observed failing**. |
+| **A waiver laundering a real type error into a green run.** | **THIS ROW WAS FALSE AS WRITTEN AT `229e084`, AND THE PHASE-5 GATING REVIEW MEASURED IT FALSE** (`phase5-gate.md` §5.5, control C4). It read: *"It cannot: a valid waiver moves one failure from `FAILED` to `WAIVED`…"* — true of **one** entry and false of **two**. `SUBJECT_OUTCOME` is keyed by path and never consumed, so N entries naming one failing path discounted `FAILED` N times, and the surplus cancelled the failure of a subject nobody waived: two broken subjects, one waived twice, printed both failures and then `type failures 0`, `PASSED`, exit 0. **What is true after round 501:** a path already present in the ledger is a HARD LEDGER ERROR at step 8 naming both line numbers, so a duplicate never becomes a valid entry; and step 11 refuses to issue any verdict if it would discount one path twice, or if `FAILED + WAIVED` stops equalling what the compile loop observed. Both are refusals with a printed reason and exit 1, never a skip and never a clamp. **Proven by control C4** — the same mutation run before the fix (`PASSED`, exit 0) and after it (`LEDGER ERROR at line 170: … ALREADY WAIVED at line 164`, `type failures 1`, exit 1) — and by **control C5**, which deletes step 8's condition to reach the second layer and gets `REFUSING TO CERTIFY`, exit 1. Both transcripts: [`phase6-ledger-c4.md`](phase6-ledger-c4.md). |
 | **An invalid entry excusing its subject anyway.** | Control (b) measures the opposite: `INVALID … excuses nothing`, `ledger error(s) 1`, exit 1. |
 | **The WAIVERS block silently disappearing** (a `if [ $count -gt 0 ]` around the whole block — the classic). | It prints unconditionally, and with zero entries prints `ok: 0 waivers — the ledger is empty`. A reviewer diffing two transcripts sees its absence. |
 | **The parser silently seeing nothing** — the failure mode that killed round 2's suppression grep. | Measured directly: `awk '/^# (path\|diagnostic\|reason\|owner)[[:space:]]*:/' scripts/checks/instrument-manifest.txt` returns **0 hits on the header alone** and **4 hits with a control entry appended**, and all three controls in §2 produced their expected failure. A parser that saw nothing would have made control (b) and control (c) pass. |

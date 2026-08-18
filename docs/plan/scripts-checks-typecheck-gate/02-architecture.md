@@ -381,13 +381,25 @@ Format — four required fields per entry:
 scripts/checks/check-example.ts
 ```
 
-Two properties make it safe:
+Three properties make it safe:
 
 1. **Every waiver is printed on every run**, in the transcript, above the
    verdict. A waiver cannot be quiet.
 2. **A waived file that compiles clean is a FAILURE** ("waived but clean"). Stale
    waivers are the mechanism by which an exclusion list outlives its reason, and
    this closes it.
+3. **One subject, one waiver — a path named twice is a LEDGER ERROR** naming both
+   line numbers. This is the third property and it was missing until round 501.
+   The gate discounts one observed failure per valid entry, so a second entry for
+   the same path discounts a failure it does not own: with two broken subjects and
+   one of them waived twice, the surplus decrement cancelled the *other* subject's
+   failure and the gate printed both failures, `type failures 0`, `PASSED`, exit 0
+   — a waiver laundering an unexcused type error into a green run, which is the
+   one thing properties 1 and 2 exist to make impossible. Measured at `f30dfdc`
+   and closed at round 501; the transcript, before and after, is
+   `evidence/phase6-ledger-c4.md`. The second entry is REFUSED, not skipped: a
+   silent skip repairs the arithmetic while leaving the author believing the
+   ledger says what they wrote.
 
 At completion the ledger holds zero entries and its header says so. It is kept
 rather than deleted because deleting it would make the *next* exclusion
@@ -418,6 +430,12 @@ only question worth asking of an instrument.
 | F13 | Two runs interfere | per-run temp dir | NF4 |
 | F14 | Gate passes because it never ran (`set -e` abort mid-loop) | `ERR` trap prints "ABORTED … NOT a pass"; final verdict line is the only pass signal | R22 |
 | F15 | Corpus keeps describing the old gate | phase 5 write_set carries all three documents; standing rule 2 | R31, R32 |
+| F16 | **A duplicate ledger entry launders another subject's failure into a pass** — the gate discounts one failure per valid entry, so N entries naming one failing path discount N failures and the surplus cancels a failure nobody waived | step 8 refuses a path already present in the ledger as a hard LEDGER ERROR naming both lines; step 11 additionally refuses to certify if it would discount one path twice, or if `FAILED + WAIVED` stops equalling what the compile loop observed — both LOUD, both exit 1, neither a skip | C4 in `evidence/phase6-ledger-c4.md`: `PASSED`/exit 0 before, `LEDGER ERROR at line 170 … ALREADY WAIVED at line 164` / exit 1 after; C5 reaches the second layer by deleting the first |
+
+F16 is the failure mode this table was written to catch and did not: F10 guards
+the excuse that outlives its error, F16 guards the excuse that was never anyone's
+to spend. Both layers are refusals rather than repairs, for the reason F14 gives —
+a guard that quietly corrects a count is a guard nobody can see stop working.
 
 F11 deserves its own sentence, because it is the only failure mode no script can
 detect. The cheapest way to satisfy a typecheck gate is to delete the assertion
