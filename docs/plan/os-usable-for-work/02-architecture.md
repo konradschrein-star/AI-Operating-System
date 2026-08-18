@@ -58,6 +58,52 @@ The harness, per the recipe already proven in this repo since phase 500
 Step 5 is the whole point. **Every browser task must assert it is past the wall before it believes
 anything it sees.** A harness that silently screenshots the login page is worse than no harness.
 
+#### THERE ARE TWO SALTS. Using the wrong one fails as a 307 that looks exactly like an expired token.
+
+The recipe above salts with `authjs.session-token`, which is correct **only** for the throwaway
+`next start` on a spare port, because that harness runs `AUTH_URL=http://…`. It is **rejected by
+production**.
+
+Production `AUTH_URL` is `https://os.schreinercontentsystems.com`, so auth.js v5 uses secure cookies:
+the session cookie is named `__Secure-authjs.session-token` **and in auth.js v5 the cookie name is also
+the JWE salt**. This applies to `http://127.0.0.1:7701` too — the port is not what decides it, the
+running server's `AUTH_URL` is. So any task reproducing against the **live** UI needs the other salt:
+
+```js
+// PRODUCTION / :7701 / the https host — mint AND name the cookie with the __Secure- prefix
+await encode({ token: {...}, secret: process.env.AUTH_SECRET,
+               salt: "__Secure-authjs.session-token", maxAge: 60*300 })
+// hand to Playwright/CDP as:
+{ name: "__Secure-authjs.session-token", domain: "127.0.0.1", secure: true }
+// `secure: false` with a __Secure- prefixed name is rejected by CDP with
+//   Protocol error (Storage.setCookies): Invalid cookie fields
+```
+
+| Target | `AUTH_URL` | salt **and** cookie name | `secure` |
+|---|---|---|---|
+| throwaway `next start` from this worktree | `http://127.0.0.1:<spare>` | `authjs.session-token` | `false` |
+| live UI (`:7701`, the https host) | `https://os.schreiner…` | `__Secure-authjs.session-token` | `true` |
+
+**Why this is called out here rather than left to be discovered:** the failure is a `307 → /signin`,
+which is indistinguishable from "your token expired" — and my own step-5 assertion reports it as *"the
+cookie did not take"*, steering the next agent toward `AUTH_SECRET` and `maxAge` instead of the salt.
+It has now cost this fleet at least two rounds (`docs/plan/artifacts/phase900/verification-904.md:366`;
+`docs/plan/operator-visibility/artifacts/phase1860/03-acceptance.md:40`, where all four plausible
+cookie names returned 307 with the wrong salt and 200 with the right one).
+
+**So the step-5 assertion must name the salt as the first suspect:**
+
+```js
+if (/\/signin\b/.test(page.url())) {
+  throw new Error(`auth wall: landed on ${page.url()}. FIRST SUSPECT IS THE SALT, not the secret: ` +
+    `an https AUTH_URL needs salt AND cookie name "__Secure-authjs.session-token" with secure:true; ` +
+    `a plain http harness needs "authjs.session-token". A wrong salt is a 307 that looks expired.`);
+}
+```
+
+Phases 5, 6 and 7 are the likely victims — Pipeline reproduction, the Projects-lag measurement and the
+deploy verification all want real data at real scale, which is the live UI.
+
 **Rejected:** a persistent logged-in Chrome profile via noVNC takeover — durable, but needs Konrad's
 hands once and blocks five lanes until he provides them. I stood one up, proved the wall, then tore it
 down when I found the cookie recipe.
