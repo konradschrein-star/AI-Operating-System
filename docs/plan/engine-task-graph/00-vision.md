@@ -73,24 +73,27 @@ the measurement that motivated the project and they are not edited.
 That last line is the whole justification. The latency was not compute, not the
 spawn cap, not the model, not the account. It was an integer.
 
-### 2.2 The recomputation — phase 7, `instrument-sha256` `f6828a68…`
+### 2.2 The recomputation — phase 7, re-run at `instrument-sha256` `6ec72b35…`
 
 Phase 7's acceptance criteria require the instrument to recompute §2.1 and, if
 the two disagree, **the script wins and this section is corrected in the same
 commit, with the discrepancy named**. It disagrees in exactly one cell. The
 recomputation, every number of it printed by `scripts/measure-schedule.ts` at
 `instrument-sha256`
-`f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2` over the
+`6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff` over the
 phase-1 fixture `sha256=e0cb69a5…`, is committed in full at
 `evidence/baseline-8ea0cc08.md`. Its tables, in summary:
 
-*(This heading named `80ef1123…` `[historical instrument]` until round 217.
-Round 215's phase-7 repairs edited the script, which moved its self-computed
-identity; round 217 re-ran all seven commands under the new bytes and **every
-number below reproduced unchanged**, so what moved is the identity and not the
-measurement. The re-run record is §1 of the baseline document, and
-`check-instrument-identity.py` now fails the universal gate if this heading and
-the disk ever disagree again.)*
+*(This heading has now named three identities. It named `80ef1123…` `[historical instrument]` until round 217,
+then `f6828a68…` `[historical instrument]` until round 802. Round 215's
+phase-7 repairs and round 802's `--exclude-task` each edited the script, which
+moved its self-computed identity; each time, all seven commands were re-run under
+the new bytes and **every number below reproduced unchanged**, so what moved is
+the identity and not the measurement. Round 802 verified that by string
+containment BOTH before its edit and after it. The two re-run records are §1 of
+the baseline document, and `check-instrument-identity.py` fails the universal
+gate if this heading and the disk ever disagree — which is how round 802 found
+these two lines rather than a reviewer finding them later.)*
 
 | round | §2.1 (03:04) | fixture rows created ≤ 03:04:00 | fixture, whole project |
 |---|---|---|---|

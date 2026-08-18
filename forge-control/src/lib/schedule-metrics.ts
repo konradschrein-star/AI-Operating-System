@@ -20,11 +20,12 @@
  * `db/projects.ts` or `db/runs.ts` opens a pg Pool in the test process.
  *
  * -------------------------------------------------------------------------
- * THE SEVEN SEMANTIC DECISIONS
+ * THE EIGHT SEMANTIC DECISIONS
  * -------------------------------------------------------------------------
  * Each is implemented below beside a doc-comment restating it and its reason.
- * They are decided in the phase-7a brief; they are recorded here because the
- * next reader of this file is the person tempted to change one.
+ * D1–D7 are decided in the phase-7a brief and D8 in the phase-8B brief (the
+ * operator's ruling, round 802); they are recorded here because the next reader
+ * of this file is the person tempted to change one.
  *
  *   D1  Sub-agent runs are excluded from every number.       → `scopeRuns()`
  *   D2  Archived runs are included, and disclosed.           → `scopeRuns()`
@@ -33,6 +34,8 @@
  *   D5  A still-running run is an error, not an estimate.    → `runIntervals()`
  *   D6  The R61 exit conditions.                             → `MeasurementError`
  *   D7  S3 comes from `depends_on` and from nothing else.    → `numberingStall()`
+ *   D8  A never-ran task leaves by id, with a reason, and    → `excludeNeverRanTasks()`
+ *       never by a blanket flag.
  *
  * -------------------------------------------------------------------------
  * NO SILENT FALLBACKS (`03-quality.md` §3.1 item 6)
@@ -131,6 +134,17 @@ export interface MetricInput {
 /** Options for `computeSchedule`. See D5 for `allowUnterminated`. */
 export interface ScheduleOptions {
   /**
+   * D8's input: task ids to drop from the measurement BEFORE D6 resolves runs,
+   * because they never ran and a human closed them. Reported back verbatim in
+   * `excluded.neverRan`. See `excludeNeverRanTasks()` for the three refusals
+   * that stop this being a blanket flag, and D8's doc-block for why the schema
+   * cannot tell "closed by a human, correctly" from "lost its run".
+   *
+   * Absent or empty, nothing is excluded and every number below is what it was
+   * before this option existed.
+   */
+  excludeTaskIds?: string[];
+  /**
    * D5's escape hatch. When `true`, runs that started and never terminated are
    * EXCLUDED from durations and concurrency and their ids are returned in
    * `excluded.unterminatedRunIds` instead of throwing. The default is `false`
@@ -208,6 +222,33 @@ export interface ScheduleOptions {
  *                        would report a perfectly parallel project.
  *   "span-too-long"      The measurement window exceeds `MAX_SPAN_MINUTES`.
  *                        See that constant.
+ *
+ * THREE MORE, ADDED ROUND 802 WITH D8, and all three are the SAME refusal read
+ * three ways: `--exclude-task` may only ever drop a row that never ran.
+ *
+ *   "excluded-task-has-run"
+ *                        D8 — an excluded id names a task that HAS a `run_id`.
+ *                        The whole guard: a genuinely lost run cannot be
+ *                        laundered out of the denominator by the flag that
+ *                        exists for rows a human closed. Refuses by id.
+ *   "excluded-task-unknown"
+ *                        D8 — an excluded id names no task in the measured set.
+ *                        A typo must not silently exclude nothing and then
+ *                        report a census three rows larger than the operator
+ *                        believes he asked for.
+ *   "excluded-task-duplicate"
+ *                        D8 — the same id was passed twice. `neverRan.length`
+ *                        is the number a reader subtracts from the census, and
+ *                        a repeated id would inflate it above the rows actually
+ *                        dropped.
+ *
+ * THIS LIST IS GATED, not remembered: `schedule-metrics.test.ts`'s
+ * `describe("the declared-refusal list is complete in BOTH directions")` reads
+ * this block and every `new MeasurementError(...)` in this file and asserts the
+ * two sets are equal. Round 214's phase-7 finding was that `unterminated-run`
+ * was thrown and not declared — "a list of refusals that is itself incomplete
+ * is the same defect one level up" — and the mirror defect, a declared reason
+ * this module can no longer throw, reads as authoritative and is wrong.
  */
 export class MeasurementError extends Error {
   readonly reason: string;
@@ -424,6 +465,18 @@ export interface ScheduleMetrics {
     /** D5 — runs that started and never terminated, dropped only under `allowUnterminated`. */
     unterminatedRunIds: string[];
     /**
+     * D8 — tasks dropped from the measurement by `options.excludeTaskIds`,
+     * in the order they were named. Every id here is a row that never ran and
+     * was closed by a human; `excludeNeverRanTasks()` refuses any other kind.
+     *
+     * A DISCLOSURE THAT MUST BE PRINTED WHERE THE NUMBERS ARE READ. These rows
+     * are absent from the round table, from the census and from D6's
+     * resolvability check, so a denominator computed without them differs from
+     * the project's task count by exactly `neverRan.length`. An exclusion a
+     * reader cannot see is a silent drop wearing a field name.
+     */
+    neverRan: string[];
+    /**
      * D4's disclosure: top-level runs in scope that were never claimed, so
      * `started_at` is null. A run parked behind `wake_after` lands here. It
      * contributes nothing to duration or concurrency, and the count says so
@@ -452,21 +505,40 @@ export function computeSchedule(
   options: ScheduleOptions = {},
 ): ScheduleMetrics {
   const allowUnterminated = options.allowUnterminated === true;
+  const requested = options.excludeTaskIds === undefined ? [] : options.excludeTaskIds;
 
-  // D6 — too-few-tasks. Checked first because it is the cheapest refusal and
-  // because a truncated fixture is the case `03-quality.md` §3.2's phase-7 gate
-  // has the reviewer run.
-  if (input.tasks.length < 5) {
+  // D8 — the exclusion, FIRST, and its own three refusals with it. It runs
+  // against the task set as handed in, because "names no task in the project"
+  // is only answerable there, and it runs before the floor below because the
+  // floor is a statement about the rows that will actually be measured.
+  const { kept, neverRan } = excludeNeverRanTasks(input.tasks, requested);
+  const measured: MetricInput = { project_id: input.project_id, tasks: kept, runs: input.runs };
+
+  // D6 — too-few-tasks, evaluated AFTER the exclusion. Checked before the joins
+  // because it is the cheapest refusal and because a truncated fixture is the
+  // case `03-quality.md` §3.2's phase-7 gate has the reviewer run. Ordering it
+  // after D8 is what stops `--exclude-task` smuggling a project under the
+  // floor: five rows minus three excluded is a two-row measurement, and R61's
+  // floor exists to say there is no schedule in two rows.
+  if (kept.length < 5) {
     throw new MeasurementError("too-few-tasks", [
-      `project ${input.project_id} has ${input.tasks.length} tasks, fewer than the 5 R61 requires`,
+      `project ${input.project_id} has ${kept.length} tasks, fewer than the 5 R61 requires`,
+      ...(neverRan.length > 0
+        ? [
+            `${input.tasks.length} rows were handed in and ${neverRan.length} were excluded by id ` +
+              `(${neverRan.join(", ")}); the floor is evaluated on what remains, never on what arrived`,
+          ]
+        : []),
     ]);
   }
 
   const runsById = new Map<string, MetricRun>();
   for (const run of input.runs) runsById.set(run.id, run);
 
-  // D6 — unresolvable-run.
-  assertRunsResolvable(input, runsById);
+  // D6 — unresolvable-run. Over `measured`, so an excluded row cannot reach it:
+  // that IS the point of D8, and a version of this line reading `input` would
+  // drop the row from the round table and still refuse on it here.
+  assertRunsResolvable(measured, runsById);
 
   const scoped = scopeRuns(input.runs);
   const { intervals, unterminatedRunIds, neverStartedRuns } = runIntervals(
@@ -507,13 +579,130 @@ export function computeSchedule(
     meanConcurrency: round2(liveTotal / concurrencySamples.length),
     peakConcurrency,
     parallelismRatio: round2(wallClockMs / sumMs),
-    numberingStall: numberingStall(input, runsById),
+    numberingStall: numberingStall(measured, runsById),
     excluded: {
       subagentRuns: input.runs.length - scoped.length,
       archivedRuns: scoped.filter((r) => r.archived === true).length,
       unterminatedRunIds,
       neverStartedRuns,
+      neverRan,
     },
+  };
+}
+
+/* -------------------------------------------------------------------------- *
+ * D8 — a never-ran task leaves by id, with a reason
+ * -------------------------------------------------------------------------- */
+
+/** What `excludeNeverRanTasks()` returns: the measured rows, and the dropped ids. */
+export interface TaskExclusion {
+  /** The task set the measurement runs on — input order preserved. */
+  kept: MetricTask[];
+  /** The ids actually dropped, in the order they were requested. */
+  neverRan: string[];
+}
+
+/**
+ * D8 — A TASK MAY LEAVE THE MEASUREMENT BY ID, WITH A REASON, AND NEVER BY A
+ * BLANKET FLAG. The operator's ruling, round 802; the measurement that forced
+ * it is at round 800.
+ *
+ * THE GAP IN THE SCHEMA THIS EXISTS FOR, stated first because it is not a
+ * defect in D6. `assertRunsResolvable()` refuses any task that is not `pending`
+ * and carries no `run_id`, on the reasoning that such a row either lost its run
+ * or is a project caught mid-flight. `operator-visibility` (8ea0cc08) is `done`
+ * with 159/159 tasks, zero unterminated runs, and exactly THREE rows of that
+ * shape — and none of the three is corruption. One is a planner duplicate
+ * marked `[VOID]`; one is a `planner` row closed without a run; and the
+ * interesting one is a task the OPERATOR created and then closed as superseded
+ * before it promoted, by hand, to stop two agents editing the same instrument
+ * files in one worktree. **A task can reach `done` without ever running,
+ * because a human closed it, and no column records that.** D6 cannot tell that
+ * from a lost run, and it should not try to guess.
+ *
+ * SO THE OPERATOR NAMES THE ROWS AND THE INSTRUMENT CHECKS HIS CLAIM. Three
+ * refusals, and they are the whole difference between this and the blanket flag
+ * the ruling forbids:
+ *
+ *   1. `excluded-task-has-run` — the named task HAS a `run_id`. Refused. This
+ *      is the guard that matters: the flag can only ever drop a row that never
+ *      ran, so a genuinely lost run — the case D6 exists to catch — cannot be
+ *      laundered through it into a smaller, prettier denominator. Note it keys
+ *      on `run_id` and NOT on `status`: a `done` row is exactly what the
+ *      operator is excluding, and refusing on status would refuse all three of
+ *      his rows.
+ *   2. `excluded-task-unknown` — the id names no task in the measured set. A
+ *      typo that silently excluded nothing would leave the operator reading a
+ *      census three rows larger than he asked for and believing he had been
+ *      obeyed. (Under a `--from`/`--to` window the caller hands in the WINDOWED
+ *      rows, so an id outside the window is unknown here — correctly: it is not
+ *      in the set being measured either.)
+ *   3. `excluded-task-duplicate` — the same id twice. `neverRan.length` is what
+ *      a reader subtracts from the census; a repeated id would inflate it past
+ *      the rows actually dropped.
+ *
+ * ALL THREE ARE DECIDED BEFORE ANY ROW IS DROPPED, so there is no state in
+ * which a partial exclusion has been applied and then refused — the same
+ * property `computeSchedule()` has for its own refusals.
+ *
+ * EXPORTED, and that is structural rather than convenient.
+ * `scripts/measure-schedule.ts` needs the same exclusion for its census, its
+ * header and its round table, in `rounds` mode where `computeSchedule()` is
+ * never called at all. Two implementations would be two definitions, and the
+ * failure they would produce is the one the brief names: a flag that drops a
+ * row from the ROUND TABLE but not from D6's check passes every happy-path test
+ * and refuses on the live read, mid-deploy. One function, called from both, is
+ * the answer; the wrapper asserts the two agree anyway.
+ *
+ * THE RUN SET IS NOT FILTERED, and cannot need to be: refusal 1 guarantees
+ * every excluded row has no `run_id`, so it names no run, so no run is orphaned
+ * by its departure and no duration or concurrency sample moves. That is why
+ * excluding these three rows changes S1 and S2 not at all while changing the
+ * round table by three — and why the census must print both.
+ */
+export function excludeNeverRanTasks(
+  tasks: MetricTask[],
+  excludeTaskIds: readonly string[],
+): TaskExclusion {
+  if (excludeTaskIds.length === 0) return { kept: tasks, neverRan: [] };
+
+  const byId = new Map<string, MetricTask>();
+  for (const task of tasks) byId.set(task.id, task);
+
+  const duplicates: string[] = [];
+  const unknown: string[] = [];
+  const hasRun: string[] = [];
+  const seen = new Set<string>();
+
+  for (const id of excludeTaskIds) {
+    if (seen.has(id)) {
+      duplicates.push(`task ${id} was named more than once by --exclude-task`);
+      continue;
+    }
+    seen.add(id);
+    const task = byId.get(id);
+    if (task === undefined) {
+      unknown.push(
+        `task ${id} was named by --exclude-task but is not one of the ${tasks.length} tasks in the measured set`,
+      );
+      continue;
+    }
+    const runId = runIdOf(task);
+    if (runId !== null) {
+      hasRun.push(
+        `task ${id} (status ${task.status}, round ${task.round}) names run ${runId}, so it RAN — ` +
+          "--exclude-task drops rows that never ran, and a lost run is a finding rather than an exclusion",
+      );
+    }
+  }
+
+  if (duplicates.length > 0) throw new MeasurementError("excluded-task-duplicate", duplicates);
+  if (unknown.length > 0) throw new MeasurementError("excluded-task-unknown", unknown);
+  if (hasRun.length > 0) throw new MeasurementError("excluded-task-has-run", hasRun);
+
+  return {
+    kept: tasks.filter((task) => !seen.has(task.id)),
+    neverRan: [...excludeTaskIds],
   };
 }
 

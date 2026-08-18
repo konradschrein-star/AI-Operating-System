@@ -54,9 +54,15 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+// Section 11 reads the module's own TEXT to check its declared-refusal list
+// against the reasons it can actually throw — a doc-comment is not reachable
+// any other way. One file read, no database: NF3 is untouched.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import {
   computeSchedule,
+  excludeNeverRanTasks,
   inputCensus,
   roundSummary,
   roundTable,
@@ -936,5 +942,265 @@ describe("R60 — inputCensus", () => {
     assert.equal(census.legacyRows + census.graphRows, census.tasks);
     // …and only then does the measurement itself refuse.
     expectMeasurementError(() => computeSchedule(broken), "unresolvable-run", ["run-vanished"]);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * 10. D8 — a never-ran task leaves by id, with a reason
+ * -------------------------------------------------------------------------- */
+
+describe("D8 — --exclude-task drops a never-ran row, and only a never-ran row", () => {
+  // Five rows that really ran, 10:00 → 10:05 each. This is the base the whole
+  // section is built on: it computes cleanly, so every refusal below is caused
+  // by the ONE row added to it and never by the base being malformed. (Guard 3
+  // of the module doc-comment: an R61 case that throws for the wrong reason.)
+  const ran5 = ["a", "b", "c", "d", "e"].map((id) => ran(id, "10:00", "10:05"));
+  const RAN_TASKS = ran5.map((r) => r.task);
+  const RAN_RUNS = ran5.map((r) => r.run);
+
+  /**
+   * The row the operator excludes: `done`, no run, at a round of its own so its
+   * departure is visible in the round table as a whole row rather than a
+   * decrement. This is the shape of all three 8ea0cc08 rows — a task a human
+   * closed without it ever promoting.
+   */
+  const ghost = mt("ghost-1350", { status: "done", run_id: null, round: 1350 });
+
+  const withGhost = input([...RAN_TASKS, ghost], RAN_RUNS);
+  const withoutGhost = input(RAN_TASKS, RAN_RUNS);
+
+  test("the D6 refusal still fires for a never-ran task that was NOT excluded", () => {
+    // The blocker measured at round 800, reproduced. Without this the whole
+    // flag would be solving a problem the test file never demonstrated.
+    expectMeasurementError(() => computeSchedule(withGhost), "unresolvable-run", [
+      "ghost-1350",
+      "status done",
+      "only a 'pending' task may have none",
+    ]);
+    // …and it still fires when the flag is present but names a DIFFERENT row.
+    const other = mt("ghost-101", { status: "done", run_id: null, round: 101 });
+    expectMeasurementError(
+      () =>
+        computeSchedule(input([...RAN_TASKS, ghost, other], RAN_RUNS), {
+          excludeTaskIds: ["ghost-101"],
+        }),
+      "unresolvable-run",
+      ["ghost-1350"],
+    );
+  });
+
+  test("excluding it changes the round table — and NOTHING else", () => {
+    const excluded = computeSchedule(withGhost, { excludeTaskIds: ["ghost-1350"] });
+    const never = computeSchedule(withoutGhost);
+
+    // The round table: round 1350 is gone, and the five ran rows are untouched.
+    assert.deepEqual(roundTable(RAN_TASKS.concat(ghost)), [
+      { round: 1, tasks: 5 },
+      { round: 1350, tasks: 1 },
+    ]);
+    assert.deepEqual(roundTable(RAN_TASKS), [{ round: 1, tasks: 5 }]);
+    assert.deepEqual(roundSummary(RAN_TASKS), { rounds: 1, tasks: 5, tasksPerRound: 5 });
+
+    // "and nothing else", asserted as a whole-object comparison rather than
+    // field by field: a new metric added later is covered by this line without
+    // anyone remembering to extend it. The ONLY permitted difference is the
+    // disclosure itself.
+    assert.deepEqual(
+      { ...excluded, excluded: { ...excluded.excluded, neverRan: [] } },
+      never,
+    );
+    // Stated positively too, so a reader does not have to decode the spread:
+    // an excluded row names no run, so no interval and no ratio can move.
+    assert.equal(excluded.runCount, 5);
+    assert.equal(excluded.sumRunMinutes, 25);
+    assert.equal(excluded.wallClockMinutes, 5);
+    assert.equal(excluded.meanConcurrency, 5);
+    assert.equal(excluded.parallelismRatio, 0.2);
+  });
+
+  test("excluded.neverRan is populated, in the order the ids were given", () => {
+    const second = mt("ghost-101", { status: "done", run_id: null, round: 101 });
+    const m = computeSchedule(input([...RAN_TASKS, ghost, second], RAN_RUNS), {
+      excludeTaskIds: ["ghost-1350", "ghost-101"],
+    });
+    assert.deepEqual(m.excluded.neverRan, ["ghost-1350", "ghost-101"]);
+    // Order is the operator's, not the task set's — `ghost-101` sits earlier in
+    // `tasks` and later in the disclosure, which is what makes this an echo of
+    // the request rather than a re-derivation of it.
+    const reversed = computeSchedule(input([...RAN_TASKS, ghost, second], RAN_RUNS), {
+      excludeTaskIds: ["ghost-101", "ghost-1350"],
+    });
+    assert.deepEqual(reversed.excluded.neverRan, ["ghost-101", "ghost-1350"]);
+  });
+
+  test("no ids given: neverRan is empty and every number is unchanged", () => {
+    const bare = computeSchedule(withoutGhost);
+    assert.deepEqual(bare.excluded.neverRan, []);
+    assert.deepEqual(computeSchedule(withoutGhost, { excludeTaskIds: [] }), bare);
+  });
+
+  test("excluding a task that HAS a run_id refuses, naming the id and its run", () => {
+    // THE GUARD, and the whole reason this is not a blanket flag: `a` really
+    // ran, so it may not be laundered out of the denominator.
+    expectMeasurementError(
+      () => computeSchedule(withGhost, { excludeTaskIds: ["a"] }),
+      "excluded-task-has-run",
+      ["task a", "run-a", "so it RAN"],
+    );
+    // …and it refuses even when a legitimate exclusion is passed beside it, so
+    // one good id cannot carry a bad one through.
+    expectMeasurementError(
+      () => computeSchedule(withGhost, { excludeTaskIds: ["ghost-1350", "a"] }),
+      "excluded-task-has-run",
+      ["task a"],
+    );
+  });
+
+  test("excluding an unknown id refuses — a typo must not exclude nothing quietly", () => {
+    expectMeasurementError(
+      () => computeSchedule(withGhost, { excludeTaskIds: ["ghost-1530"] }),
+      "excluded-task-unknown",
+      ["ghost-1530", "is not one of the 6 tasks in the measured set"],
+    );
+  });
+
+  test("a duplicate id refuses — neverRan.length is a count a reader subtracts", () => {
+    expectMeasurementError(
+      () => computeSchedule(withGhost, { excludeTaskIds: ["ghost-1350", "ghost-1350"] }),
+      "excluded-task-duplicate",
+      ["ghost-1350", "named more than once"],
+    );
+  });
+
+  test("too-few-tasks is evaluated AFTER the exclusion, never before", () => {
+    // Five rows clear R61's floor; excluding one leaves four, and there is no
+    // schedule in four rows. Were the floor checked first, the flag could
+    // smuggle a two-row project past it and report an S1 over two rows.
+    const five = input([...RAN_TASKS.slice(0, 4), ghost], RAN_RUNS.slice(0, 4));
+    assert.equal(five.tasks.length, 5);
+    computeSchedule(input([...RAN_TASKS, ghost], RAN_RUNS), { excludeTaskIds: ["ghost-1350"] });
+    expectMeasurementError(
+      () => computeSchedule(five, { excludeTaskIds: ["ghost-1350"] }),
+      "too-few-tasks",
+      ["4 tasks", "5 rows were handed in and 1 were excluded by id", "never on what arrived"],
+    );
+  });
+
+  test("it does not mutate the caller's array — the exclusion runs TWICE on it", () => {
+    // Load-bearing rather than tidy, and it is what makes the two-call-sites
+    // design safe. `scripts/measure-schedule.ts` excludes once for its census
+    // and round table, then hands computeSchedule() the SAME array plus the
+    // same ids so D6 excludes again. An in-place filter would leave the second
+    // call looking at a set the row had already left, and every id would come
+    // back `excluded-task-unknown` — on the live read, not here.
+    const tasks = [...RAN_TASKS, ghost];
+    const before = tasks.map((t) => t.id);
+
+    const first = excludeNeverRanTasks(tasks, ["ghost-1350"]);
+    assert.deepEqual(tasks.map((t) => t.id), before, "the input array was modified");
+
+    const second = excludeNeverRanTasks(tasks, ["ghost-1350"]);
+    assert.deepEqual(
+      second.kept.map((t) => t.id),
+      first.kept.map((t) => t.id),
+    );
+    // …and the whole pair, as the wrapper actually performs it.
+    const metrics = computeSchedule({ ...withGhost, tasks }, { excludeTaskIds: ["ghost-1350"] });
+    assert.deepEqual(metrics.excluded.neverRan, ["ghost-1350"]);
+  });
+
+  test("excludeNeverRanTasks is the one definition, and it preserves input order", () => {
+    // The wrapper calls this for its census and round table while
+    // computeSchedule() calls it for D6. Two implementations would be the
+    // failure the brief names; this asserts the exported one behaves as both
+    // callers need — kept rows in input order, ids echoed in request order.
+    const tasks = [...RAN_TASKS, ghost];
+    const { kept, neverRan } = excludeNeverRanTasks(tasks, ["ghost-1350"]);
+    assert.deepEqual(
+      kept.map((t) => t.id),
+      ["a", "b", "c", "d", "e"],
+    );
+    assert.deepEqual(neverRan, ["ghost-1350"]);
+    // The empty request is identity, and returns the very same array object —
+    // so the no-flag path cannot differ from the pre-D8 behaviour by a copy.
+    const untouched = excludeNeverRanTasks(tasks, []);
+    assert.equal(untouched.kept, tasks);
+    assert.deepEqual(untouched.neverRan, []);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ * 11. The declared-refusal list, checked against what the module can throw
+ * -------------------------------------------------------------------------- */
+
+describe("the declared-refusal list is complete in BOTH directions", () => {
+  // Round 214's phase-7 review found `unterminated-run` thrown and NOT declared
+  // in `MeasurementError`'s doc-block — "a list of refusals that is itself
+  // incomplete is the same defect one level up". Round 802 adds three more
+  // reasons, so the list is now checked rather than remembered.
+  //
+  // It reads the module's TEXT, which is the only way to see a doc-comment at
+  // all. NF3 is untouched: no database, no network, one file read.
+  const source = readFileSync(
+    fileURLToPath(new URL("./schedule-metrics.ts", import.meta.url)),
+    "utf8",
+  );
+
+  /** The block between `R61's carrier` and the class it documents. */
+  function declaredBlock(): string {
+    const start = source.indexOf("R61's carrier");
+    const end = source.indexOf("export class MeasurementError");
+    assert.ok(start > 0, "the MeasurementError doc-block no longer opens with \"R61's carrier\"");
+    assert.ok(end > start, "the MeasurementError class no longer follows its doc-block");
+    return source.slice(start, end);
+  }
+
+  /** Reasons DECLARED: a doc-comment line whose only content is a quoted name. */
+  function declaredReasons(): Set<string> {
+    return new Set(
+      [...declaredBlock().matchAll(/^\s*\*\s+"([a-z-]+)"/gm)].map((m) => m[1]),
+    );
+  }
+
+  /** Reasons THROWN: every `new MeasurementError("…")` literal in the module. */
+  function thrownReasons(): Set<string> {
+    return new Set(
+      [...source.matchAll(/new MeasurementError\(\s*"([a-z-]+)"/g)].map((m) => m[1]),
+    );
+  }
+
+  test("the probes are not vacuous — both sets are non-trivially populated", () => {
+    // `00-vision.md` §7 rule 2: a sweep whose probes miss must fail, not
+    // certify itself. Two regexes over one file is exactly the instrument that
+    // reports a clean pass when its pattern stops matching.
+    assert.ok(declaredReasons().size >= 10, `declared: ${[...declaredReasons()].join(", ")}`);
+    assert.ok(thrownReasons().size >= 10, `thrown: ${[...thrownReasons()].join(", ")}`);
+  });
+
+  test("every reason the module throws is declared", () => {
+    const declared = declaredReasons();
+    const undeclared = [...thrownReasons()].filter((r) => !declared.has(r)).sort();
+    assert.deepEqual(undeclared, []);
+  });
+
+  test("every declared reason is one the module can actually throw", () => {
+    // The mirror defect, and the one nobody looks for: a declared reason that
+    // no line can produce reads as authoritative and is wrong.
+    const thrown = thrownReasons();
+    const unthrowable = [...declaredReasons()].filter((r) => !thrown.has(r)).sort();
+    assert.deepEqual(unthrowable, []);
+  });
+
+  test("D8's three reasons are in the list by name", () => {
+    // Named individually so a regex that silently stopped matching them cannot
+    // pass by leaving both sets equally empty.
+    const declared = declaredReasons();
+    for (const reason of [
+      "excluded-task-has-run",
+      "excluded-task-unknown",
+      "excluded-task-duplicate",
+    ]) {
+      assert.ok(declared.has(reason), `"${reason}" is thrown but not declared`);
+    }
   });
 });

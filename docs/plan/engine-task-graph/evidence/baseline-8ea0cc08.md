@@ -16,6 +16,50 @@ COMPUTED** here, for a cause recorded in §3, and phase 8 completes them by
 appending to this same file with this same instrument. See erratum **E-3** in
 `04-phases.md` §12 and the amended R62 in `01-requirements.md` §H.
 
+### Re-run record — round 802: the instrument moved again, and part 1 moved with it
+
+**Round 802 added `--exclude-task` and re-ran all seven commands under the moved
+instrument, in the commit that moved it.** Phase 8B (D8) gave
+`scripts/measure-schedule.ts` a repeatable `--exclude-task <uuid>` and
+`schedule-metrics.ts` an `options.excludeTaskIds`, so the script's self-computed
+`instrument-sha256` moved from `f6828a68…` `[historical instrument]` to
+`6ec72b35…`. That is E-3's stated trigger — *"if the instrument has moved since
+round 217, re-run part 1's seven commands and replace their headers IN THE SAME
+COMMIT"* — and this is that re-run. No commit in between leaves
+`check-instrument-identity.py` red, because there is no commit in between.
+
+**What was re-run, and what moved.** All seven commands of §1's table, verbatim,
+from this worktree. Exit codes unchanged (0 ×6, **1** for C). Every round/task
+table in §2 and the refusal text in §3 reproduce **byte for byte** — verified by
+string containment against the pasted blocks **twice**: once under the OLD
+instrument before a line of it was edited, and again under the new one before
+these headers were replaced. The first of those two is what makes the second
+worth anything; a containment check run only afterwards cannot tell "reproduced"
+from "regenerated". **No measurement in this document moved.** Exactly three
+header fields changed, and all three are identity or disclosure rather than
+measurement:
+
+| field | was | is | why |
+|---|---|---|---|
+| `instrument-sha256` | `f6828a68…` `[historical instrument]` | `6ec72b35…` | round 802 added D8's `--exclude-task` |
+| `git-head` | `34268e9…` | `3dd39b4… -dirty` | the tree the re-run happened in |
+| `excluded-tasks:` | no such field | `none (--exclude-task not given)` | round 802 added D8's disclosure to the header |
+
+**`-dirty` is honest and is not a defect.** Round 802 runs three builders
+concurrently in ONE shared worktree (8B here, 8C on the requirement corpus, and a
+third on `scripts/deploy/`), so the tree cannot be clean at the instant any of
+them measures anything. The header says in its own words which field to believe:
+`git-head` names the TREE at run time, `instrument-sha256` names the bytes that
+ran, and the second is unaffected by anyone else's uncommitted work. A `-dirty`
+marker that were suppressed to make the paste look tidier is precisely the
+instrument lie this document exists to catalogue.
+
+**`excluded-tasks: none` prints on all seven runs, and that is the point.** None
+of them passes `--exclude-task`, so the field could have been omitted when empty
+— and then a reader could not tell a run with no exclusions from a run by an
+older instrument that could not exclude at all. See D8 in
+`forge-control/src/lib/schedule-metrics.ts` and `evidence/phase8-instrument.md`.
+
 ### Re-run record — round 217, and why this document has one at all
 
 **Round 215 moved the instrument. Round 217 re-ran part 1 under the moved
@@ -88,9 +132,9 @@ the record rather than quietly replaced.
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
@@ -99,6 +143,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            full project (no --from/--to given)
 census:            tasks=131 legacy-rows=131 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no concurrency result.
 ```
 
@@ -106,9 +151,9 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
@@ -117,6 +162,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            2026-08-16T20:51:00Z .. 2026-08-17T01:04:00Z (inclusive, on project_tasks.created_at)
 census:            tasks=23 legacy-rows=23 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no concurrency result.
 ```
 
@@ -124,9 +170,9 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              full
@@ -135,15 +181,16 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            full project (no --from/--to given)
 census:            tasks=131 legacy-rows=131 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 ```
 
 ### Run D header — cut at `03:04:00Z`, the measurement instant as §4.2 reads it
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
@@ -152,6 +199,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            (open) .. 2026-08-17T03:04:00Z (inclusive, on project_tasks.created_at)
 census:            tasks=123 legacy-rows=123 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no concurrency result.
 ```
 
@@ -159,9 +207,9 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
@@ -170,6 +218,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            2026-08-17T03:04:00Z .. (open) (inclusive, on project_tasks.created_at)
 census:            tasks=8 legacy-rows=8 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no concurrency result.
 ```
 
@@ -177,9 +226,9 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
@@ -188,6 +237,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            2026-08-16T22:51:00Z .. 2026-08-17T03:04:00Z (inclusive, on project_tasks.created_at)
 census:            tasks=29 legacy-rows=29 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no concurrency result.
 ```
 
@@ -195,9 +245,9 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
@@ -206,6 +256,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            (open) .. 2026-08-17T01:04:00Z (inclusive, on project_tasks.created_at)
 census:            tasks=108 legacy-rows=108 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and claims no concurrency result.
 ```
 
@@ -217,10 +268,12 @@ invocations of one file inside one commit — and it is a claim a reader can now
 check rather than take, because `check-instrument-identity.py` reads these eight
 pasted blocks and compares them to the file on disk.
 
-**Read the re-run record above before comparing this section to an older copy of
-it.** These headers were produced by round 217; the ones round 213 pasted named
-`80ef1123…` `[historical instrument]`, the identity round 215's edits retired.
-The tables under them are unchanged.
+**Read the re-run records above before comparing this section to an older copy of
+it.** These headers were produced by **round 802**; round 217's pasted
+`f6828a68…` and round 213's pasted `80ef1123…` — both `[historical instrument]` —
+are the identities that round 802's and round 215's edits retired in turn. The
+tables under them are unchanged across all three, which is the claim R62 actually
+needs and the one this file now has two independent containment checks for.
 
 ---
 
@@ -569,9 +622,9 @@ output, header and refusal:
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
+instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
                    sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          34268e904ed943a858873f538c74ee8bd7f10bbe
+git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
                    names the working TREE at run time, NOT the bytes that ran; committing this file moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              full
@@ -580,6 +633,7 @@ project:           (none — a bare-array fixture declares no project_id)
 depends_on:        absent (0/131 fixture rows carry a depends_on key)
 window:            full project (no --from/--to given)
 census:            tasks=131 legacy-rows=131 graph-rows=0 closure-shaped-rows=0 runs=not-read top-level=not-read sub-agent=not-read archived=not-read tasks-without-run=not-read
+excluded-tasks:    none (--exclude-task not given)
 
 MEASUREMENT FAILED: fixture-has-no-runs
   - fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7 declares no 'runs' key, so it is a task-only fixture
@@ -846,15 +900,23 @@ and the header's `instrument-sha256` is independently re-derivable —
 
 ```
 $ sha256sum scripts/measure-schedule.ts forge-control/src/lib/fixtures/replay-operator-visibility.json
-f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2  scripts/measure-schedule.ts
+6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff  scripts/measure-schedule.ts
 e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7  forge-control/src/lib/fixtures/replay-operator-visibility.json
 ```
 
-`f6828a68…` is the value all seven headers printed, computed by the running
+**EXECUTED in round 802, not transcribed.** Round 216 found this exact block
+naming an identity the disk no longer had, and round 216's own re-review found
+thirteen further places where a `sha256sum` had been *pasted* rather than *run*.
+It was re-run here, from the repo root, after the last edit to the instrument and
+before this line was written.
+
+`6ec72b35…` is the value all seven headers printed, computed by the running
 process from `import.meta.url`, and `sha256sum` over the committed path agrees.
-Note also that `git-head` reads `34268e9…`, the round-215 commit — this commit
-will move it and leave `instrument-sha256` unchanged, which is the property that
-made a self-hash the right identity to trust.
+Note also that `git-head` reads `3dd39b4… -dirty`, the round-801 merge commit
+plus round 802's three concurrent builders — this commit will move it and leave
+`instrument-sha256` unchanged, which is the property that made a self-hash the
+right identity to trust, and the `-dirty` marker is the same property observed
+from the other side.
 
 **Why this re-derivation is worth more than it was when round 213 wrote it.** As
 written it was a command a reader had to think to run. It went stale on the very
@@ -934,7 +996,8 @@ where it is quoted whole. Everything else is below.
 
 | number(s) | where it appears | source |
 |---|---|---|
-| `f6828a68…`, `34268e9…` | §1, §5(3) | printed by every run's header; re-derived by `sha256sum` in §5(3); machine-compared to the disk by `check-instrument-identity.py` |
+| `6ec72b35…`, `3dd39b4…` | §1, §5(3) | printed by every run's header; re-derived by `sha256sum` in §5(3), executed round 802; machine-compared to the disk by `check-instrument-identity.py` |
+| `f6828a68…`, `34268e9…` `[historical instrument]` | §1 re-run records, §5(3) | the identity round 217's runs printed, retired by round 802's `--exclude-task`; quoted only to record the drift, and every such line carries the marker the checker keys on |
 | `80ef1123…` `[historical instrument]` | §1 re-run record, §1 closing, §5(3) | the identity round 213's runs printed, retired by round 215's edits to the script; quoted only to record the drift, and every such line carries the marker the checker keys on |
 | `e0cb69a5…` | §1 headers, §5(4) | printed by every run's header; capture record §1; `sha256sum` in §5(3) |
 | 131 / 87 rounds / 1.51 | §2.1, §3 table, §5(5) | run A footer and census |

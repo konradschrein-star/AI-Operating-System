@@ -123,6 +123,50 @@
  *                      §2.3).
  *   --from <iso>       inclusive lower bound on `project_tasks.created_at`.
  *   --to <iso>         inclusive upper bound on `project_tasks.created_at`.
+ *   --exclude-task <uuid>
+ *                      repeatable. Drop this task from the measurement because
+ *                      it never ran. See EXCLUDING A NEVER-RAN TASK below.
+ *
+ * -------------------------------------------------------------------------
+ * EXCLUDING A NEVER-RAN TASK (D8, round 802)
+ * -------------------------------------------------------------------------
+ * `schedule-metrics.ts`'s D6 refuses any task that is not `pending` and carries
+ * no `run_id`. `operator-visibility` (8ea0cc08) is `done` with 159/159 tasks and
+ * zero unterminated runs, and holds exactly three such rows — none of them
+ * corruption. The interesting one is a task the OPERATOR created and closed as
+ * superseded before it promoted: **a task can reach `done` without ever running,
+ * because a human closed it**, and no column records that. `--exclude-task` is
+ * how the operator states which rows those are, BY ID, so the instrument can
+ * check his claim rather than take it.
+ *
+ * IT IS NOT A BLANKET FLAG, and the difference is enforced rather than intended.
+ * `excludeNeverRanTasks()` refuses — `MeasurementError`, exit 1, naming the id —
+ * when a named task actually HAS a `run_id` (`excluded-task-has-run`), when the
+ * id names no task in the measured set (`excluded-task-unknown`), or when the
+ * same id is passed twice (`excluded-task-duplicate`). A genuinely lost run
+ * cannot be laundered out of the denominator by it.
+ *
+ * THE EXCLUSION IS APPLIED ONCE, HERE, and passed to `computeSchedule()` as
+ * `options.excludeTaskIds` so the metrics module performs the same exclusion for
+ * D6. Both calls go through the one exported function, and `main()` asserts the
+ * two agree (`exclusion-disagreement`): a flag that dropped a row from the round
+ * table but not from D6's check would pass every happy-path test here and refuse
+ * on the live read, mid-deploy.
+ *
+ * IT IS DISCLOSED WHERE THE NUMBERS ARE READ. The `excluded-tasks:` header line
+ * prints in EVERY mode on EVERY run, naming the count and the ids; the round
+ * table repeats them beneath its footer; and `full` mode lists them among the
+ * disclosures. Three rows absent from a 159-task denominator change the census,
+ * every per-round count they sat in, and what R61's five-row floor is evaluated
+ * against — so a reader must not have to infer them.
+ *
+ * WHAT IT DOES **NOT** CHANGE, stated because the ruling's own rationale reads
+ * the other way and a reader will compare the two. S1 and S2 are computed from
+ * run intervals, and refusal 1 guarantees every excluded row names no run — so
+ * no interval, no concurrency sample and no ratio moves by a single millisecond.
+ * The flag's effect on S1 and S2 is categorical rather than arithmetic: without
+ * it D6 refuses and there are no S1 and S2 at all. Recorded as a finding in
+ * `evidence/phase8-instrument.md` rather than quietly restated either way.
  *
  * Both window flags are optional; absent, the header reads `window: full
  * project`. They exist because `00-vision.md` §2's numbers describe a window
@@ -161,6 +205,7 @@ import { fileURLToPath } from "node:url";
 import {
   MeasurementError,
   computeSchedule,
+  excludeNeverRanTasks,
   inputCensus,
   roundSummary,
   roundTable,
@@ -206,7 +251,7 @@ const EXIT_USAGE = 2;
  * handler prints both identically. Its reasons: `fixture-unreadable`,
  * `fixture-not-json`, `fixture-shape`, `fixture-has-no-runs`, `bad-row`,
  * `bad-window`, `project-id-mismatch`, `unidentified-project`, `self-unreadable`,
- * `git-unavailable`.
+ * `git-unavailable`, `exclusion-disagreement`.
  */
 class InstrumentError extends Error {
   readonly reason: string;
@@ -263,9 +308,13 @@ interface Args {
   project: string | null;
   from: string | null;
   to: string | null;
+  /** D8 — repeatable `--exclude-task`, in the order given. Never de-duplicated
+   *  here: a repeat is `excludeNeverRanTasks()`'s refusal, and swallowing it
+   *  here would be this file deciding what the metrics module declared. */
+  excludeTaskIds: string[];
 }
 
-const USAGE = `usage: measure-schedule.ts <full|rounds> (--fixture <path> | --project <uuid>) [--from <iso>] [--to <iso>]
+const USAGE = `usage: measure-schedule.ts <full|rounds> (--fixture <path> | --project <uuid>) [--from <iso>] [--to <iso>] [--exclude-task <uuid>]...
 
   full     round table, run count, mean duration, wall clock, per-minute
            concurrency, S1, S2, S3. Requires run data. Exits non-zero if it
@@ -279,6 +328,12 @@ const USAGE = `usage: measure-schedule.ts <full|rounds> (--fixture <path> | --pr
   --project <uuid>  the live database, via DATABASE_URL.
   --from <iso>      inclusive lower bound on project_tasks.created_at.
   --to <iso>        inclusive upper bound on project_tasks.created_at.
+  --exclude-task <uuid>
+                    repeatable. Drop a task that NEVER RAN from the measurement
+                    — a row a human closed by hand. Refuses, naming the id, if
+                    the task has a run_id, if the id names no task in the set,
+                    or if it is given twice. The ids and their count are printed
+                    in the header in every mode.
 
   With no subcommand the mode is 'full'.`;
 
@@ -295,7 +350,7 @@ function parseArgs(argv: string[]): Args {
     cursor = 1;
   }
 
-  const args: Args = { mode, fixture: null, project: null, from: null, to: null };
+  const args: Args = { mode, fixture: null, project: null, from: null, to: null, excludeTaskIds: [] };
 
   while (cursor < argv.length) {
     const flag = argv[cursor];
@@ -315,6 +370,9 @@ function parseArgs(argv: string[]): Args {
         break;
       case "--to":
         args.to = value;
+        break;
+      case "--exclude-task":
+        args.excludeTaskIds.push(value);
         break;
       default:
         throw new UsageError(`unknown flag '${flag}'`);
@@ -667,6 +725,7 @@ function printHeader(
   input: LoadedInput,
   window: Window,
   census: InputCensus,
+  neverRan: string[],
 ): void {
   const lines = [
     "== measure-schedule — instrument identity (R60) ==",
@@ -681,6 +740,7 @@ function printHeader(
     `depends_on:        ${input.rowsWithDependsOnKey > 0 ? "present" : "absent"} (${input.schemaEvidence})`,
     `window:            ${window.label}`,
     `census:            ${renderCensus(census, input.runs !== null)}`,
+    `excluded-tasks:    ${renderExcludedTasks(neverRan)}`,
   ];
   if (mode === "rounds") lines.push(`disclaimer:        ${ROUNDS_MODE_DISCLAIMER}`);
   if (input.runs !== null && !windowIsOpen(window)) {
@@ -724,11 +784,32 @@ function renderCensus(census: InputCensus, runsRead: boolean): string {
   );
 }
 
+/**
+ * D8's header field, printed in EVERY mode on EVERY run — including the runs
+ * where nothing was excluded, which is the case that matters. A disclosure that
+ * appears only when it is non-empty teaches a reader that its absence means
+ * nothing, and the reader then cannot tell a run with no exclusions from a run
+ * by an older instrument that could not exclude at all.
+ */
+function renderExcludedTasks(neverRan: string[]): string {
+  if (neverRan.length === 0) return "none (--exclude-task not given)";
+  return (
+    `${neverRan.length} never-ran task(s) removed by --exclude-task, and absent from every count above: ` +
+    neverRan.join(", ")
+  );
+}
+
 /* -------------------------------------------------------------------------- *
  * The two modes
  * -------------------------------------------------------------------------- */
 
-function printRoundTable(tasks: MetricTask[]): void {
+/**
+ * `tasks` is the KEPT set — D8's exclusion is already applied by `main()`, so
+ * the per-round counts and the footer describe the same rows the census does.
+ * The excluded ids are restated below the footer rather than left to the
+ * header, because the round table is where the numbers that moved are read.
+ */
+function printRoundTable(tasks: MetricTask[], neverRan: string[]): void {
   const table = roundTable(tasks);
   const summary = roundSummary(tasks);
   out("-- round / task table (00-vision.md §2) --");
@@ -737,6 +818,10 @@ function printRoundTable(tasks: MetricTask[]): void {
     out(`  ${String(row.round).padStart(5)}   ${String(row.tasks).padStart(5)}`);
   }
   out(`  ${summary.rounds} rounds, ${summary.tasks} tasks, ${summary.tasksPerRound} tasks per round`);
+  if (neverRan.length > 0) {
+    out(`  ${neverRan.length} never-ran task(s) excluded by id and NOT counted above:`);
+    for (const id of neverRan) out(`    ${id}`);
+  }
 }
 
 function printFull(metrics: ScheduleMetrics): void {
@@ -769,11 +854,13 @@ function printFull(metrics: ScheduleMetrics): void {
     out(`     reason: ${stall.reason}`);
   }
   out("");
-  out("-- disclosures (schedule-metrics.ts D1, D2, D4, D5) --");
+  out("-- disclosures (schedule-metrics.ts D1, D2, D4, D5, D8) --");
   out(`  sub-agent runs, EXCLUDED              ${metrics.excluded.subagentRuns}`);
   out(`  archived top-level runs, INCLUDED     ${metrics.excluded.archivedRuns}`);
   out(`  runs never started (no started_at)    ${metrics.excluded.neverStartedRuns}`);
   out(`  runs started and never terminated     ${metrics.excluded.unterminatedRunIds.length}`);
+  out(`  never-ran tasks, EXCLUDED by id (D8)  ${metrics.excluded.neverRan.length}`);
+  for (const id of metrics.excluded.neverRan) out(`    ${id}`);
   out("");
   out("-- per-minute concurrency (every sample, uncapped) --");
   for (const sample of metrics.concurrencySamples) {
@@ -798,15 +885,27 @@ async function main(argv: string[]): Promise<void> {
   const self = selfIdentity();
   const input = await loadInput(args, window);
 
+  // D8 — the exclusion, decided BEFORE the census, because the census is the
+  // number a reader subtracts from. Its three refusals fire here, before any
+  // output: an `--exclude-task` that named a task with a run, an unknown id or
+  // a duplicate is a bad measurement request, and R60's "header before any
+  // NUMBER" is satisfied by printing nothing at all, exactly as `bad-window`
+  // and `bad-row` already do.
+  const exclusion = excludeNeverRanTasks(input.tasks, args.excludeTaskIds);
+
   // The census is computed over whatever was loaded and never throws (its own
   // contract), so the header prints even for a project computeSchedule() will
   // refuse. `runs: []` here is not a claim: in `rounds` mode renderCensus()
   // prints every run-derived field as `not-read`.
-  const census = inputCensus({ project_id: input.project_id, tasks: input.tasks, runs: input.runs ?? [] });
-  printHeader(self, args.mode, input, window, census);
+  const census = inputCensus({
+    project_id: input.project_id,
+    tasks: exclusion.kept,
+    runs: input.runs ?? [],
+  });
+  printHeader(self, args.mode, input, window, census, exclusion.neverRan);
 
   if (args.mode === "rounds") {
-    printRoundTable(input.tasks);
+    printRoundTable(exclusion.kept, exclusion.neverRan);
     return;
   }
 
@@ -823,6 +922,13 @@ async function main(argv: string[]): Promise<void> {
   }
   assertIdentifiedProject(input);
 
+  // The FULL task set, deliberately — `computeSchedule()` is handed the ids and
+  // performs D8's exclusion itself, through the same exported function this
+  // file called above. Handing it `exclusion.kept` AND the ids would make every
+  // id `excluded-task-unknown`; handing it `exclusion.kept` and no ids would
+  // leave `excluded.neverRan` empty and the exclusion undisclosed in `full`
+  // mode. One set of ids, one function, two call sites — and the assertion
+  // below is what proves the two call sites agreed.
   const measured: MetricInput = {
     project_id: input.project_id,
     tasks: input.tasks,
@@ -833,9 +939,33 @@ async function main(argv: string[]): Promise<void> {
   // refuses still emits the table `rounds` mode emits, i.e. `full` degrading to
   // `rounds` and announcing the degradation only in its exit status. Nothing
   // below the header is written unless every number exists.
-  const metrics = computeSchedule(measured);
-  printRoundTable(input.tasks);
+  const metrics = computeSchedule(measured, { excludeTaskIds: args.excludeTaskIds });
+  assertExclusionAgrees(exclusion.neverRan, metrics.excluded.neverRan);
+  printRoundTable(exclusion.kept, exclusion.neverRan);
   printFull(metrics);
+}
+
+/**
+ * The round table and D6's resolvability check must have seen the SAME
+ * exclusion. They do by construction — one exported `excludeNeverRanTasks()`,
+ * called from both — and this asserts it anyway, because "by construction" is a
+ * claim about today's code and the failure it would hide is the one the phase-8B
+ * brief names: a flag that drops a row from the round table but not from D6's
+ * check passes every happy-path test in this worktree and refuses on the live
+ * read at round 810, mid-deploy.
+ *
+ * Unreachable as written, in the same sense and for the same reason as
+ * `assertIdentifiedProject()` above.
+ */
+function assertExclusionAgrees(here: string[], there: string[]): void {
+  const same = here.length === there.length && here.every((id, i) => id === there[i]);
+  if (!same) {
+    throw new InstrumentError("exclusion-disagreement", [
+      `this wrapper excluded [${here.join(", ")}] from the census and the round table`,
+      `computeSchedule() reported excluded.neverRan = [${there.join(", ")}]`,
+      "the round table and D6's resolvability check must be computed over one task set; they were not",
+    ]);
+  }
 }
 
 /**
