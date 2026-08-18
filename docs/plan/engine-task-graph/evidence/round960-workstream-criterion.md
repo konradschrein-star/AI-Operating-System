@@ -84,6 +84,42 @@ narrated — `project-tick.test.ts`'s NF7 block carries round 960 as its own
 ledger row and the suite fails with the arithmetic in the message otherwise
 (§4, M6).
 
+### 1.1a The after-figure, re-derived at the COMMITTED sha
+
+§1.1's 12246 comes from the NF7 block's own arithmetic against the working tree.
+Re-derived after the commit by the same harness, over an exported
+`git archive` of it — so the number belongs to bytes that exist in history and
+not to an editor buffer:
+
+```text
+--- HEAD (5d0e0c0) -------------------------------------------------
+    sha256(project-tick.ts) : ed206ab9af093fbb
+    exports GRAPH_GUIDE     : yes (static and runtime agree — shadow-tree control passed)
+    policy blocks present   : WORKTREE_POLICY,ESCALATION_POLICY,MANAGER_COMMS,GITHUB_PUSH_GUIDE
+    policy blocks ABSENT    : -
+    id occurrences in prompt: 1
+    MEASURED length         : 12246
+  ok    HEAD: shadow-tree control (static == runtime GRAPH_GUIDE)
+  ok    HEAD: maximal path (all four policy blocks present)
+  controls passed : 2   failures : 0
+```
+
+`ed206ab9af093fbb` is the same digest §0 records for the edited file and §3's
+check prints for the module it imported: one file, measured three ways.
+
+And the manifest guard, re-run after the commit so it is no longer vacuous —
+before the commit it reported *"this branch touched no scripts/checks/\*.ts"*,
+because it derives its list from `main..HEAD`:
+
+```text
+MANIFEST GUARD — every scripts/checks/*.ts this branch touched must be manifested
+  touched by this branch:
+    scripts/checks/check-workstream-claim.ts
+  ok: every touched instrument is manifested
+CENSUS
+  entries declared 8   entries compiled 8   failures 0   unmanifested 0
+```
+
 ### 1.2 Why this wording, and what was rejected
 
 The brief's instruction was explicit: do not trim the clause into something that
