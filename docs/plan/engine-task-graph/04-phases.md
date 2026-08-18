@@ -944,8 +944,32 @@ sets and each declines the others' files by name.
 | **8C** — corpus repairs and the gates phase 8 must amend | 802 | `01-requirements.md`, `03-quality.md`, `04-phases.md`, `evidence/phase4-workstreams.md`, `evidence/phase8-corpus.md` |
 | **8D** — deploy tooling and the instrument gate | 802 | `scripts/deploy/await-and-seed.sh`, `scripts/deploy/payload-verify.json`, `scripts/deploy/payload-report.json`, **`scripts/deploy/payload-review.json`** (a fourth payload, observed on disk at round 802 and recorded here rather than left to archaeology — 8D states its own reason), `scripts/checks/check-await-seed.sh`, `scripts/checks/check-instrument-typecheck.sh`, `scripts/checks/instrument-manifest.txt`, `evidence/phase8-tooling.md` |
 | **the deploy task** | 810 | `evidence/baseline-8ea0cc08.md` (part 2 **append**), `evidence/phase8-deploy.md` |
-| **the merge-to-`main` task** | 811 | `evidence/phase8-deploy.md` (**append**) |
+| **the deploy task, RE-RUN** | 816 | `evidence/phase8-deploy-rerun.md` (**new**), `evidence/baseline-8ea0cc08.md` (part 2 **append** — the row above, discharged here), `evidence/baseline-8ea0cc08-part2-raw.txt` (**new**), this table row |
+| **the merge-to-`main` task** | 811 → **820** | `evidence/phase8-deploy.md` (**append**) |
 | **the watcher-seeded tasks** | after the restart | `evidence/phase8-verify.md`, `evidence/after-<project-id>.md` |
+
+**Round 816's write-set, declared in the commit that makes it — and why it is a
+row of its own rather than a second use of round 810's.** Round 810 failed at
+step 2b and wrote only `evidence/phase8-deploy.md`; the part-2 append was
+deliberately not taken, because a half-read pasted into that file would have been
+worse than an absent one. Round 816 re-ran the whole interlock against a working
+instrument and took the read, so its transcript is a **new** file rather than an
+edit of round 810's — that document is the record of a refusal and rewriting it
+would destroy the most valuable thing round 810 produced. Two consequences worth
+declaring where the audit looks:
+
+- **`evidence/baseline-8ea0cc08-part2-raw.txt` is a fourth file nobody planned
+  for.** The read's stdout is 18,058 lines, of which 17,910 are the per-minute
+  concurrency block the instrument emits *uncapped and untruncated by design*
+  (`schedule-metrics.ts`: *"a module that silently dropped samples would be
+  reporting a mean over a window it did not disclose"*). Pasting them into the
+  markdown would bury part 1; eliding them would make S1 quotable but not
+  re-derivable. The whole stdout is therefore committed verbatim beside the
+  document, with its sha256 and line count printed in the prose that points at
+  it. Relocated, not elided.
+- **Round 811's row now reads 811 → 820.** The merge-to-`main` task moved when
+  the operator re-planned off round 810's manager report; the row is corrected
+  here rather than left naming a round that became the uuid-cast fix.
 
 **Phase 7's files, written by phase 8 — the one cross-phase row, and it is
 deliberate.** 8B writes `scripts/measure-schedule.ts`, `schedule-metrics.ts`,

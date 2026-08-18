@@ -1106,3 +1106,366 @@ where it is quoted whole. Everything else is below.
 | 0 disagreements | §5(2) | the audit's own output |
 
 No number appears in this document's prose that is not in this table.
+
+---
+
+# Part 2 — the live pre-0040 read (round 816, phase 8E re-run)
+
+**This is the append E-3 and R62 have been owing since round 213, and it is the
+first one taken.** Round 810 reached this point and could not take it: the half
+of the instrument that opens the database bound `$1` in two type contexts in one
+statement and died with `operator does not exist: uuid = text` on every project.
+Round 811 cast the arm, round 812 reviewed it and found three things, round 813
+fixed them, round 814 passed. Round 816 re-ran the WHOLE interlock — steps 1, 1b
+and 2 as well as 2b, because the tree had moved and a partial re-run would
+certify a tree nobody measured — and then took this read. The interlock
+transcript is `evidence/phase8-deploy-rerun.md`; this file carries only the read.
+
+**§7's closing sentence — "no number appears in this document's prose that is not
+in this table" — is scoped to part 1, which was written when part 1 was the whole
+file. Part 2 carries its own ledger at §12** and part 1 is not edited: no table,
+no disproof and no ledger row above this line has been changed by this round.
+
+## 8. Provenance and the preconditions, asked before the read and not after
+
+Host clock `+02:00`. Every stamp below is the wall-clock time the command was
+issued; the ordering is the gate (`03-quality.md` §3.2, phase 8).
+
+| `2026-08-18` | what was established | answer |
+|---|---|---|
+| `06:59:36` | 8ea0cc08 has no running and no pending task (R63) | `done`, `Counter({'done': 159})` |
+| `06:59:39` | the rest of the fleet the restart waits for | 15 projects: 11 `done`, 3 `paused`, **1 `active` — this project** |
+| `07:00:49` | `check-instrument-identity.py` **before** any append | exit 0 — 11 headers / 3 files / 27 manifest lines |
+| `07:00:49` | the composite re-derived by hand from the disk, not pasted from round 811 | `sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts \| sha256sum` → `fb5a6434…` |
+| `07:02:09` | the never-ran set of 8ea0cc08, from SQL | exactly **3**, matched by round/role/title |
+| `07:02:13` | **migration 0040 has NOT run** | `information_schema.columns` returns **0 rows** for `depends_on`, `workstream`, `write_set`, `graph_frozen` on `project_tasks` |
+| `07:02:20` | negative control — `--exclude-task` on an id that HAS a run | refused: `excluded-task-has-run`, exit 1 |
+| `07:02:26` | negative control — an id not in the measured set | refused: `excluded-task-unknown`, exit 1 |
+| `07:02:30` | D6 with no exclusions at all | refused: `unresolvable-run`, naming the same three ids unprompted, exit 1 |
+| `07:02:39` | **the read** | exit **0** |
+
+**The three excluded ids, each with the operator's reason, printed beside the
+numbers because three tasks absent from a 159-task denominator changes what the
+round table says.** `excluded.neverRan` = **3**, and the instrument's own D8
+disclosure block repeats all three ids at the foot of the output.
+
+| id | round / role | why it never ran |
+|---|---|---|
+| `420f1be6-fb92-4bcb-a444-8a42fa58c72b` | 101 `builder` | `[VOID]` duplicate of `3943ac51` — created twice by the planner's POST; voided 2026-08-05, never ran |
+| `701075e2-eb4a-4a37-b68f-ac1578ba171d` | 1350 `builder` | "Instrument repair: honest hover assertion, harness freshness, real build…" — created by the operator 2026-08-17, closed as superseded before it promoted; the reviewer-consolidation fix cycle had already done the work |
+| `9f5462c7-c529-4369-9773-4d9d731443f4` | 1500 `planner` | "Plan phase 5: deploy to production + verification" — closed 2026-08-05 without a run |
+
+`run_id IS NULL` and `run_id IS NULL AND status <> 'pending'` are the same 3
+because 8ea0cc08 has **no `pending` rows at all** (159 total, 0 pending, 0
+running). The set has not changed since the operator verified it, and it is the
+same set round 810 found — re-derived here from the database rather than carried
+forward from that document.
+
+## 9. The read, as the instrument emitted it
+
+```
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/measure-schedule.ts full \
+    --project 8ea0cc08-28d9-4301-9f28-c98e1c5d6838 \
+    --exclude-task 420f1be6-fb92-4bcb-a444-8a42fa58c72b \
+    --exclude-task 701075e2-eb4a-4a37-b68f-ac1578ba171d \
+    --exclude-task 9f5462c7-c529-4369-9773-4d9d731443f4
+```
+
+**Lines 1–147 of the instrument's stdout, verbatim and unedited.** The complete
+stdout is **18,058 lines**; the 17,910 lines below the ones shown are the
+`-- per-minute concurrency (every sample, uncapped) --` block, one row per
+sampled minute. It is **not elided, it is relocated**: the whole stdout is
+committed beside this file as
+`evidence/baseline-8ea0cc08-part2-raw.txt`, sha256
+`e6239ef1d27bd6f7c0da49af81bb6937082c877cf090683afc5e5e7fa40d976d`, 542,194
+bytes, first sample `2026-08-05T06:46:00.000Z 0`, last sample
+`2026-08-17T17:15:00.000Z 1`. That artifact is what makes S1 re-derivable by a
+reader instead of merely quotable, and §10 re-derives it from the database
+independently of both.
+
+```
+== measure-schedule — instrument identity (R60) ==
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          ff85fad63f0721ca544f0bd77ca4c44683432027
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
+                   git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
+mode:              full
+source:            db:8ea0cc08-28d9-4301-9f28-c98e1c5d6838
+project:           8ea0cc08-28d9-4301-9f28-c98e1c5d6838
+depends_on:        absent (information_schema.columns has no project_tasks.depends_on — pre-0040 schema)
+window:            full project (no --from/--to given)
+census:            tasks=156 runs=164 top-level=164 sub-agent=0 archived=0 tasks-without-run=0 legacy-rows=156 graph-rows=0 closure-shaped-rows=0
+excluded-tasks:    3 never-ran task(s) removed by --exclude-task, and absent from every count above: 420f1be6-fb92-4bcb-a444-8a42fa58c72b, 701075e2-eb4a-4a37-b68f-ac1578ba171d, 9f5462c7-c529-4369-9773-4d9d731443f4
+
+-- round / task table (00-vision.md §2) --
+  round   tasks
+      0       1
+    100       1
+    101       1
+    102       1
+    103       1
+    200       1
+    201       1
+    202       1
+    203       1
+    250       1
+    299       1
+    300       1
+    301       1
+    302       1
+    303       4
+    304       1
+    305       1
+    306       1
+    307       1
+    308       1
+    309       1
+    400       1
+    401       2
+    402       1
+    403       1
+    405       1
+    500       1
+    501       2
+    502       1
+    503       1
+    504       1
+    505       1
+    506       1
+    507       1
+    599       1
+    600       1
+    601       2
+    602       1
+    603       1
+    604       1
+    605       1
+    606       1
+    607       1
+    700       1
+    701       2
+    702       2
+    703       1
+    704       1
+    705       1
+    706       1
+    800       1
+    801       3
+    802       1
+    803       1
+    804       1
+    806       1
+    807       1
+    808       6
+    809       1
+    900       1
+    901       1
+    902       1
+    903       1
+    904       1
+    905       1
+    906       1
+    950       1
+   1250       1
+   1290       1
+   1291       3
+   1292       2
+   1293       1
+   1300       1
+   1301       2
+   1302       3
+   1303       1
+   1304       2
+   1305       1
+   1306       1
+   1350      23
+   1352       1
+   1353       3
+   1354       3
+   1355       4
+   1356       2
+   1357       2
+   1358       1
+   1860       1
+   1861       1
+   1862       1
+   1863       2
+   1864       1
+   1865       1
+   1870       1
+   1871       1
+   1872       1
+   1873       1
+   1874       1
+   1875       3
+   1876       1
+  100 rounds, 156 tasks, 1.56 tasks per round
+  3 never-ran task(s) excluded by id and NOT counted above:
+    420f1be6-fb92-4bcb-a444-8a42fa58c72b
+    701075e2-eb4a-4a37-b68f-ac1578ba171d
+    9f5462c7-c529-4369-9773-4d9d731443f4
+
+-- run and wall-clock totals --
+  runs measured (top-level, in scope)   164
+  mean run duration (min)               32.12
+  summed run time (min)                 5267.84
+  wall clock (min)                      17908.55
+
+-- S1 / S2 / S3 (00-vision.md §4) --
+  S1 mean concurrency                   0.29 (peak 6, over 17910 per-minute samples)
+  S2 parallelism ratio                  3.4 (wall clock ÷ summed run time; lower is more parallel)
+  S3 max numbering stall (min)          NOT COMPUTABLE (156 legacy rows, 0 closure-shaped rows)
+     reason: 156 of 156 tasks carry depends_on = NULL, the pre-0040 sentinel. Their real dependency set was never recorded — the round integer conflated ordering, file contention and narrative phase, and no column says which. Substituting the backfilled closure would make every legacy stall compute to exactly 0, i.e. the instrument would report no numbering stall for the project whose numbering stall motivated this work.
+
+-- disclosures (schedule-metrics.ts D1, D2, D4, D5, D8) --
+  sub-agent runs, EXCLUDED              0
+  archived top-level runs, INCLUDED     0
+  runs never started (no started_at)    0
+  runs started and never terminated     0
+  never-ran tasks, EXCLUDED by id (D8)  3
+    420f1be6-fb92-4bcb-a444-8a42fa58c72b
+    701075e2-eb4a-4a37-b68f-ac1578ba171d
+    9f5462c7-c529-4369-9773-4d9d731443f4
+
+```
+```
+exit=0
+```
+
+**Read the S3 line by its counts, which is what `03-quality.md` §3.2 makes the
+gate.** `S3 … NOT COMPUTABLE (156 legacy rows, 0 closure-shaped rows)` is the
+**PASS**: the read happened before the migration and the refusal names the
+legacy sentinel. The failing shapes are the other two — `legacy-rows=0` with N
+closure-shaped rows would mean the backfill had already run, and any S3 *number*
+at all for 8ea0cc08 would mean the tautological closure had been substituted for
+a dependency set that was never recorded. Neither printed. `depends_on: absent
+(information_schema.columns has no project_tasks.depends_on — pre-0040 schema)`
+in the header says the same thing from the schema's side, and §8's `07:02:13`
+row asked `information_schema` directly, before the read rather than after it.
+
+**What part 2 owes and now discharges (R62).** Part 1 §3 recorded S1, S2 and S3
+as **NOT COMPUTED** and §6 closed with *"the round half is measured; the
+concurrency half is owed"*. The concurrency half is now paid: **S1 = 0.29 (peak
+6), S2 = 3.4, 164 runs, mean run 32.12 min, wall clock 17,908.55 min**. S3 is
+**refused for cause** and that refusal is the finding this project rests on — it
+is not a missing number, it is the measurement that the round integer never
+recorded a dependency set at all.
+
+## 10. Independent corroboration — every number re-derived from SQL, by a different path
+
+Standing rule: instruments lie before code does. The instrument reads through
+`readProjectRows()` → `schedule-metrics.ts`; the queries below go straight to
+`content_forge` and share no code with it. They mirror the instrument's scope
+rule (`RUNS_SQL`: `metadata->>'project_id' = $1 OR id IN (SELECT run_id FROM
+project_tasks WHERE project_id = $1::uuid …)`) and D1's top-level filter
+(`parent_run_id IS NULL`).
+
+`07:03:37` — totals:
+
+```
+ all_runs | top_level | sub_agent | archived_top | never_started | unterminated | summed_min | mean_min | wall_min
+----------+-----------+-----------+--------------+---------------+--------------+------------+----------+----------
+      164 |       164 |         0 |            0 |             0 |            0 |    5267.84 |    32.12 | 17908.55
+```
+
+`07:04:19` — the task side, with the three exclusions applied in SQL:
+
+```
+ tasks | rounds | tasks_per_round
+-------+--------+-----------------
+   156 |    100 |            1.56
+```
+
+`07:04:08` — S1, mirroring `sampleConcurrency()` exactly: grid starts at the
+minute containing the earliest start, steps by one minute while `t < maxEnd`,
+and a run is live at instant `t` iff `started_at <= t < completed_at` (D3's
+half-open interval):
+
+```
+ samples | s1_mean | peak
+---------+---------+------
+   17910 |    0.29 |    6
+```
+
+**Nine independent totals, nine exact matches**, plus S2 = 17908.55 ÷ 5267.84 =
+3.4 by arithmetic. The instrument is not certifying itself.
+
+### 10.1 A disclosure the after-measurement must inherit: the sampling convention is load-bearing
+
+`07:03:44` — the same query under the *other* obvious convention, counting a run
+as live in minute `m` if its interval overlaps any part of `[m, m+1)` rather
+than containing the instant `m`:
+
+```
+ samples | s1_mean | peak
+---------+---------+------
+   17910 |    0.30 |    7
+```
+
+**0.30 with a peak of 7, from the same rows.** Neither convention is wrong;
+they answer slightly different questions, and the difference is large enough to
+matter at a peak of 6 versus 7. This is recorded because DoD-6 compares this
+baseline against an after-measurement, and a comparison across two conventions
+would manufacture or hide an improvement without either side being mistaken.
+The after-measurement is taken with **this same instrument**, so it inherits
+D3's half-open instant sampling by construction — the disclosure exists so that
+a reader who recomputes S1 by hand and gets 0.30 knows why, rather than filing a
+finding against a number that is correct.
+
+## 11. What would have made this read report a pass wrongly
+
+**(a) A read taken after the migration.** It would print a plausible `S3 … 0` —
+every term 0 by construction under the backfilled closure — with a header no
+longer saying the rows were legacy. Disproved twice, ahead of the read and
+inside it: `07:02:13` asked `information_schema` and got **0 rows** for all four
+graph columns, and the pasted header carries `depends_on: absent (… pre-0040
+schema)` with `legacy-rows=156 · graph-rows=0 · closure-shaped-rows=0`.
+
+**(b) An `--exclude-task` that silently swallowed a live run** would shrink the
+159-task denominator invisibly. Disproved by firing both refusal arms *before*
+the measurement, at `07:02:20` and `07:02:26`: `excluded-task-has-run` names the
+task **and the run it holds**, `excluded-task-unknown` names the id that is not
+in the set. Running the controls first is also how round 810 found the SQL
+defect with a control rather than halfway through interpreting a number.
+
+**(c) An instrument identity that does not cover the bytes that ran.** This is
+round 810's own live finding (its §6(d)), closed by round 811 and *tested here*:
+the header names `fb5a6434…`, a composite of both halves, and the value was
+**re-derived from the disk at `07:00:49`** rather than pasted from round 811's
+document. Round 813 touched `schedule-source.test.ts` — not
+`schedule-source.ts` — so the composite legitimately did not move, and that was
+established by reading `git show --stat` for both of round 813's commits, not by
+assuming.
+
+**(d) A self-certifying denominator.** The header's `over 17910 per-minute
+samples` is not taken on trust: the committed raw artifact contains exactly
+**17,910** sample rows, and the SQL grid in §10 produced exactly **17,910**
+samples. Three counts, three sources, one number.
+
+## 12. Digit ledger — part 2
+
+Same discipline as §7 and the same four exempt classes (requirement and erratum
+ids; section references; round numbers used as labels; the literal characters of
+a sha256 or short-SHA quoted whole).
+
+| number(s) | where it appears | source |
+|---|---|---|
+| `fb5a6434…`, `39dee069…`, `c00fd096…`, `ff85fad…` | §9 header, §11(c) | printed by the run's own header; the composite independently re-derived by `sha256sum … \| sha256sum` at `07:00:49`; machine-compared to disk by `check-instrument-identity.py` checks 1 and 1b |
+| 156 tasks / 164 runs / 0 sub-agent / 0 archived / 0 never-started / 0 unterminated | §9 census and disclosures, §10 | the pasted header and footer; re-derived by the SQL in §10 |
+| 100 rounds / 1.56 tasks per round | §9 round-table footer, §10 | the pasted footer; re-derived by the SQL in §10 |
+| 32.12 / 5267.84 / 17908.55 | §9 totals, §10 | the pasted totals; re-derived by the SQL in §10 |
+| 0.29, peak 6, 17910 samples, 3.4 | §9 S1/S2 block, §10, §11(d) | the pasted S1/S2 block; S1 and the sample count re-derived by the SQL in §10; S2 also 17908.55 ÷ 5267.84 by arithmetic |
+| 0.30, peak 7 | §10.1 | the same SQL under the overlap convention, run as a control |
+| 156 legacy rows / 0 graph rows / 0 closure-shaped rows | §9 census and S3 line | the pasted header |
+| 159 total tasks, 3 excluded, 0 pending, 0 running | §8 | `select count(*) …` on `project_tasks` at `07:02:09` |
+| 0 rows for the four graph columns | §8, §11(a) | `information_schema.columns` at `07:02:13` |
+| 15 projects, 11 done, 3 paused, 1 active | §8 | `GET /api/projects` at `06:59:39` |
+| 11 headers / 3 files / 27 manifest lines | §8 | `check-instrument-identity.py` output at `07:00:49` |
+| 18,058 lines / 17,910 sample rows / 542,194 bytes / `e6239ef1…` | §9, §11(d) | `wc -l`, `ls -l` and `sha256sum` over `evidence/baseline-8ea0cc08-part2-raw.txt` |
+| exit 0 for the read; exit 1 for each of the three refusals | §8, §9, §11(b) | the `echo "exit=$?"` appended to each invocation |
+
+No number appears in part 2's prose that is not in this table.
