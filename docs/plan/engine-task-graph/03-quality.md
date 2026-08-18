@@ -267,6 +267,29 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
    Enumeration is reconciled against an independent `find`, and zero subjects is
    a refusal, not a pass.
 
+   **It needs BOTH dependency trees installed, and it now refuses for each of
+   them separately** (round 600, phase 6 A6.1/NF5). `forge-control-web` supplies
+   `tsc`, React and the app types; `forge-control` supplies `pg`, `hono`,
+   `@hono/node-server` and `lz-string` — which the subjects reach directly and,
+   more often, through the `forge-control/src/…` modules they import. Both are
+   gitignored, so a fresh clone has neither:
+
+   ```bash
+   cd forge-control-web && pnpm install --frozen-lockfile --prefer-offline --prod=false
+   cd forge-control     && pnpm install --frozen-lockfile --prefer-offline --prod=false
+   ```
+
+   Until round 600 the gate named only the first. Measured on a cold clone of
+   the merged tree: that line run verbatim left the run at **13 type failures
+   and 423 fidelity violations**, and because every one of those diagnostics
+   sits outside `scripts/checks/`, the fidelity guard printed *"THE PROFILE IS
+   WRONG, NOT THE APP"* — sending the reader to edit
+   `tsconfig.checks-instruments.json` over an install they had never run. The
+   second refusal carries two sentinels: `pg` absent means no install at all,
+   `@types/pg` absent while `pg` is present means the devDependencies were
+   pruned by `NODE_ENV=production`, which is the same `--prod=false` trap in a
+   costume.
+
    **`scripts/checks/instrument-manifest.txt` is a WAIVER LEDGER, not an
    inclusion list, and the manifest guard is retired.** Nothing in that file can
    add a subject or remove one: it names instruments whose failure is EXCUSED,
@@ -920,6 +943,15 @@ python3 scripts/checks/check-r20-census.py
 # hard ledger error naming both lines, because a duplicate entry discounts a
 # failure it does not own and turned a real type error into PASSED/exit 0 at
 # f30dfdc (scripts-checks-typecheck-gate/evidence/phase6-ledger-c4.md).
+# It needs BOTH dependency trees and refuses, separately, for each (round 600).
+# forge-control-web supplies tsc and the app types; forge-control supplies pg,
+# hono and lz-string, which the subjects reach through forge-control/src. On a
+# cold clone, installing only the first leaves 13 type failures and 423 fidelity
+# violations that blame the PROFILE for a missing install. --prod=false is
+# load-bearing in both: NODE_ENV=production drops @types/pg, tsx and typescript
+# and exits 0.
+( cd forge-control-web && pnpm install --frozen-lockfile --prefer-offline --prod=false )
+( cd forge-control     && pnpm install --frozen-lockfile --prefer-offline --prod=false )
 # ~150s for 42 subjects; do not background it and read the verdict line.
 bash scripts/checks/check-instrument-typecheck.sh
 # §3.1 item 10 — shell lint. Exits 0, or names the *.sh this branch touched that

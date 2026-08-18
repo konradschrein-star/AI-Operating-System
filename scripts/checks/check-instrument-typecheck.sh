@@ -333,6 +333,10 @@ TS_EXTENSIONS=( ts tsx mts cts )
 
 WEB="$REPO_ROOT/forge-control-web"
 TSC="$WEB/node_modules/.bin/tsc"
+# The OTHER dependency tree the subjects need. `$TSC` and the app types come out
+# of `$WEB`; `pg`, `hono`, `@hono/node-server` and `lz-string` come out of this
+# one, and step 3a refuses without it. See the refusal for the measurement.
+FC="$REPO_ROOT/forge-control"
 # The compiler's own parser, used by the suppression scan of step 10b. It is
 # the same installation `$TSC` runs out of, so the scan and the compile cannot
 # disagree about what a directive is.
@@ -510,6 +514,81 @@ they are devDependencies. The install looks clean and the compiler is gone.
 Never npm: \`npm\` here has resolved differently from the lockfile and bricked
 the executor. Keep --frozen-lockfile: it is what holds NF8's
 \`git diff main -- forge-control-web/package.json\` empty.
+EOF
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 3a. THE SECOND DEPENDENCY TREE — added at round 600 (phase 6, A6.1/NF5) after
+#     the cold-clone test caught this gate telling a fresh checkout only half of
+#     what it needs.
+#
+#     MEASURED on a genuinely cold `git clone` of the merged tree: the refusal
+#     above fired, its line was run VERBATIM, and the gate then reported
+#     `13 type failure(s), 423 fidelity violation(s)` — because
+#     `forge-control/node_modules` is gitignored too and nothing had installed
+#     it. 86 × `Cannot find module 'pg'`, 42 × `'hono'`, 10 × `'hono/streaming'`,
+#     6 × `'lz-string'`, plus the two explicit specifiers in `serve-sse-808.ts`.
+#
+#     Two ways in: a subject may name that tree outright (`serve-sse-808.ts`
+#     imports `../../forge-control/node_modules/hono`), or — the common case —
+#     it imports `forge-control/src/…`, and TypeScript resolves THAT file's bare
+#     `pg`/`hono` specifiers by walking up from `forge-control/src`, which lands
+#     in `forge-control/node_modules` and nowhere else. `04-phases.md` §7 has
+#     said "both packages are needed" since round 0; only this script did not.
+#
+#     Why this is a REFUSAL and not 13 honest failures: the missing tree does
+#     not present as "a dependency is absent". Every one of those diagnostics is
+#     located OUTSIDE `scripts/checks/`, so the profile-fidelity guard fires 423
+#     times and prints "THE PROFILE IS WRONG, NOT THE APP" — sending the next
+#     reader to edit `tsconfig.checks-instruments.json`, which is correct, over
+#     an install they never ran. A gate that misdiagnoses this loudly is worse
+#     than one that refuses quietly.
+#
+#     Two sentinels, because there are two failure modes and they need different
+#     sentences. `pg` is a regular dependency and proves an install happened at
+#     all; `@types/pg` is a devDependency and proves it was NOT pruned — under
+#     the `NODE_ENV=production` this environment exports, an install without
+#     `--prod=false` leaves `pg` on disk and takes its types away, which reads
+#     as a type error in the app rather than as a missing install.
+# ---------------------------------------------------------------------------
+if [ ! -d "$FC/node_modules/pg" ]; then
+  cat >&2 <<EOF
+REFUSING TO RUN: no dependency tree at $FC/node_modules
+
+The compiler is here — \`$TSC\`
+resolved — but the SUBJECTS are not compilable yet.
+They import \`pg\`, \`hono\`, \`hono/streaming\`, \`@hono/node-server\` and
+\`lz-string\`, some directly and most through \`forge-control/src/…\`, and every
+one of those resolves out of forge-control's own node_modules. It is gitignored,
+exactly like forge-control-web's, so a fresh clone has neither. Fix it with
+exactly this line, then re-run:
+
+  cd forge-control && pnpm install --frozen-lockfile --prefer-offline --prod=false
+
+BOTH packages are required and this gate needs both installed — 04-phases.md §7:
+"forge-control-web supplies tsc, React and the app types; forge-control supplies
+tsx, pg and hono." Measured cold at round 600: with only forge-control-web
+installed this run reports 13 type failures and 423 fidelity violations, and
+those violations say THE PROFILE IS WRONG when the profile is fine.
+EOF
+  exit 1
+fi
+
+if [ ! -d "$FC/node_modules/@types/pg" ]; then
+  cat >&2 <<EOF
+REFUSING TO RUN: $FC/node_modules exists but its devDependencies were PRUNED
+  (\`pg\` is present, \`@types/pg\` is not)
+
+This is the \`--prod=false\` failure wearing a disguise. NODE_ENV is currently
+'${NODE_ENV:-unset}'. Under \`production\`, an install without that flag keeps
+\`pg\` — a regular dependency — and drops \`@types/pg\`, \`tsx\` and \`typescript\`,
+which are devDependencies. pnpm says so in one quiet line, "devDependencies:
+skipped because NODE_ENV is set to production", and EXITS 0. The subjects then
+fail with "Could not find a declaration file for module 'pg'", which reads like
+the app's bug and is not. Re-run the install with the flag:
+
+  cd forge-control && pnpm install --frozen-lockfile --prefer-offline --prod=false
 EOF
   exit 1
 fi
