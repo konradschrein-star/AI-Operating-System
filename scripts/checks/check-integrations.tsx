@@ -55,6 +55,15 @@ const storeDir = join(sandbox, "store");
 const tokenPath = join(sandbox, "google_token.json");
 process.env.SECRET_STORE_DIR = storeDir;
 process.env.GOOGLE_TOKEN_PATH = tokenPath;
+// Added in phase 4/B4b, and NOT optional. POST /google/test now PERSISTS its
+// verdict (R48) to `FORGE_CONNECTION_STATUS_DIR`, default
+// /opt/ai-os/.secrets/status. Every upstream call in this file is stubbed, so
+// without this line a run of this check would write a FABRICATED
+// {"ok":true,…} record into the production store, and live forge-control would
+// then read it back and render Google as CONNECTED on the strength of a test
+// double. That is the exact lie phase 4 exists to delete, arriving through the
+// check that is supposed to catch it.
+process.env.FORGE_CONNECTION_STATUS_DIR = join(sandbox, "status");
 delete process.env.DATABASE_URL; // §3 wants the "cannot tell" branch
 
 const FAKE_REFRESH = "1//fake-refresh-token-value-0000";
