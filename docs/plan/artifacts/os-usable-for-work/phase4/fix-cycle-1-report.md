@@ -217,7 +217,7 @@ after this fix        ALL PASS — 914 tracked files
 | `check-secret-scan.ts` | **ALL PASS**, from 8 red at the tip this cycle started on |
 | `browser-harness-phase4.cjs b4c-after` @ `/settings` | 12/12 PASS |
 | `browser-harness-phase4.cjs b4c-unknown` @ `/settings` | 10/10 PASS |
-| `gates-808.sh --strict` | see §4 |
+| `gates-808.sh --strict` @ `dc7bd5a` | **25 gates, 23 executed, 2 skipped by design, RED: 0** — transcript at `phase4/gates-round4.txt` |
 
 Mutation kills, all in `/tmp` shadow trees, never in the worktree, all restored by hash:
 
@@ -229,6 +229,33 @@ Mutation kills, all in `/tmp` shadow trees, never in the worktree, all restored 
 | `installed: null` folded into "not installed" | `connection-status.test.ts` | 1 further suite red |
 
 ---
+
+### One red seen, and why it is not this commit's
+
+The first full-suite run at `dc7bd5a` reported **gate 18 red** (`check-usage-fold.ts`,
+`1 FAILURE(S)`). It is a shared-resource collision, not a defect here, and the evidence is in
+the transcript itself:
+
+```
+NOTICE:  relation "runs" already exists, skipping          ← another process built it first
+NOTICE:  relation "spend_log" already exists, skipping
+1 FAILURE(S) — usage fold (scratch db: r1354_sampler)
+```
+
+`check-usage-fold.ts:106` defaults to the **fixed** name `r1354_sampler` and `TRUNCATE`s
+`runs`/`spend_log`/`usage_hourly` between fixtures, so two lanes running the suite at once wipe
+each other mid-assertion. That default was fixed to a per-process, self-dropping name in
+`f283d5b` — on the **phase-3 lane**, which this workstream branched before:
+
+```
+$ git merge-base --is-ancestor f283d5b HEAD ; echo $?
+1        # NOT an ancestor — this branch still has the shared name
+```
+
+Re-run serially at the same commit, with no sibling suite in flight: **gate 18 ALL PASS, RED: 0**.
+The committed transcript is the serial run. The contended one is not committed, because a
+transcript of a contaminated run is worse than none — but it is described here rather than
+quietly dropped. The integrator will pick up `f283d5b` and the collision disappears.
 
 ## 4. WHAT IS LEFT
 
