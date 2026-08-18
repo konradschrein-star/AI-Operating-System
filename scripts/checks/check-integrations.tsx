@@ -136,7 +136,7 @@ async function main(): Promise<void> {
    * surface mounts each card under its own row, so the cards themselves are
    * what this check renders. Rendering them side by side is exactly what the
    * wrapper did. */
-  const { GeminiCard, GoogleCard } = await import(
+  const { GeminiCard, GoogleCard, AgyCard, GitHubCard } = await import(
     "../../forge-control-web/app/desktop/settings/integrationCards.tsx"
   );
 
@@ -380,11 +380,20 @@ async function main(): Promise<void> {
   /* ── §5 the panel ────────────────────────────────────────────────────────── */
 
   console.log("§5 the panel: tokens only, no invented claims");
+  /* Phase 4 / B4c added two more cards to this file, so all four render here.
+   * A card that is exported and never rendered by this check is a card whose
+   * colour literals and honesty rules nothing enforces. */
   const markup =
-    renderToStaticMarkup(<GeminiCard />) + renderToStaticMarkup(<GoogleCard />);
+    renderToStaticMarkup(<GeminiCard />) +
+    renderToStaticMarkup(<GoogleCard />) +
+    renderToStaticMarkup(<AgyCard />) +
+    renderToStaticMarkup(<GitHubCard />);
   ok(
-    "both cards mark themselves",
-    markup.includes("data-gemini-card") && markup.includes("data-google-card"),
+    "all four cards mark themselves",
+    markup.includes("data-gemini-card") &&
+      markup.includes("data-google-card") &&
+      markup.includes("data-agy-card") &&
+      markup.includes("data-github-card"),
   );
   ok("body only — no viewport claim", !/100dvh|100vh/.test(markup));
   ok("body only — no links out of the shell", !/<a /.test(markup));
@@ -424,6 +433,65 @@ async function main(): Promise<void> {
     !/width:\s*`?\$\{[^}]*(pct|percent|utilization)/i.test(code),
   );
   ok("the pool is named as the default path", source.includes("Gemini Pool stays the default"));
+
+  /* ── §6 the two cards phase 4 added (R52–R57) ──────────────────────────── */
+
+  console.log("\n§6 agy and GitHub: the affordances that must NOT exist");
+
+  /* `agy` — R54's permitted outcome, asserted as an outcome rather than as a
+   * good intention. There is no Connect button and no paste-a-code input,
+   * because a browser cannot reach the stdin of the process holding the
+   * single-use challenge, and its window is 60 seconds. What there IS: the
+   * verbatim command, the verbatim prompt, and a Verify that runs the real
+   * probe. Reasoning committed at phase4/agy-flow-affordance.md. */
+  const agyMarkup = renderToStaticMarkup(<AgyCard />);
+  ok(
+    "agy: no Connect/Sign-in BUTTON — that flow cannot be finished from a browser",
+    !/<button[^>]*>[^<]*(connect|sign in|log in|authorize)/i.test(agyMarkup),
+    /<button[^>]*>[^<]*(connect|sign in|log in|authorize)[^<]*/i.exec(agyMarkup)?.[0],
+  );
+  ok(
+    "agy: no paste-a-code input either — the code goes to the CLI's own stdin",
+    !/<input[^>]*(authoriz|auth.?code|paste)/i.test(agyMarkup),
+  );
+  ok("agy: it offers Verify, which runs the real probe", agyMarkup.includes("data-agy-verify"));
+  ok(
+    "agy: no bare `agy` spawn anywhere in this file — the path is absolute (R52)",
+    !/["'`]agy\s+models["'`]/.test(code),
+  );
+
+  /* GitHub — R55. The value is write-only from the browser's point of view. */
+  const githubMarkup = renderToStaticMarkup(<GitHubCard />);
+  ok(
+    "github: the token field is a password field",
+    /data-github-token[^>]*type="password"|type="password"[^>]*data-github-token/.test(
+      githubMarkup,
+    ),
+  );
+  ok(
+    "github: …rendered empty — nothing puts a stored token back into the DOM",
+    !/data-github-token[^>]*value="[^"]+"/.test(githubMarkup),
+  );
+  ok(
+    "github: the token never travels in a URL or a query string",
+    !/\?[^"'`\s]*(token|pat|secret)=/i.test(code),
+    /\?[^"'`\s]*(token|pat|secret)=/i.exec(code)?.[0],
+  );
+  ok("github: no 'token present' chip — storage is not authorisation (R56)", !/token present/i.test(code));
+  ok(
+    "github: storing and probing are separate acts",
+    githubMarkup.includes("data-github-save") && githubMarkup.includes("data-github-probe"),
+  );
+
+  /* R57 across all four, at the level this check can see it: none of these
+   * cards has loaded a status — every upstream call is stubbed and the render
+   * is synchronous — so any card showing the connected word is showing it with
+   * no `checked_at` behind it, which is precisely the invariant. */
+  ok(
+    "R57: a card with no loaded status renders no connected word",
+    !/\bCONNECTED\b/.test(markup),
+    /.{0,60}CONNECTED.{0,60}/.exec(markup)?.[0],
+  );
 
   rmSync(sandbox, { recursive: true, force: true });
 }

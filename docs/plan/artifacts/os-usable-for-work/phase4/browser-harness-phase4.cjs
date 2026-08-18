@@ -1,8 +1,14 @@
 /**
- * browser-harness-phase4.cjs — phase 4 / B4a's authenticated browser harness.
+ * browser-harness-phase4.cjs — phase 4's authenticated browser harness.
  *
- * Owned by B4a. Phase 1 owns the shared harness DOC in another worktree; this
- * file is the runnable recipe rebuilt from `docs/plan/artifacts/phase1871/README.md:306`,
+ * Written by B4a; EXTENDED BY B4c with three more modes (`b4c-before`,
+ * `b4c-after`, `b4c-unknown`) at the bottom. B4c's brief names this exact path
+ * as its own deliverable and B4a had already committed it — same workstream,
+ * same worktree, so extending it is the only non-colliding move. Declared as an
+ * undeclared write in B4c's final report rather than quietly done.
+ *
+ * Phase 1 owns the shared harness DOC in another worktree; this file is the
+ * runnable recipe rebuilt from `docs/plan/artifacts/phase1871/README.md:306`,
  * which is committed HERE, so the two cannot collide at integration.
  *
  * ── WHAT IT PROVES ───────────────────────────────────────────────────────
@@ -68,6 +74,29 @@
  *   node docs/plan/artifacts/os-usable-for-work/phase4/browser-harness-phase4.cjs after
  *   node docs/plan/artifacts/os-usable-for-work/phase4/browser-harness-phase4.cjs add-flow
  *
+ * ── B4c'S THREE MODES, AND THEIR DIFFERENT STACK ─────────────────────────
+ * B4c drives the OUTSIDE-SERVICE cards (Google, agy, GitHub), which are served
+ * by `routes/integrations.ts`, not `routes/accounts.ts`. Its API harness is
+ * /tmp/b4c-serve.ts: the integrations router from THIS worktree, with every
+ * store redirected to a /tmp fixture directory —
+ *
+ *   FORGE_CONNECTION_STATUS_DIR=/tmp/b4c-status        (the probe sidecars)
+ *   GOOGLE_TOKEN_PATH=/tmp/b4c-fixture/google_token.json  (shape only, no token)
+ *   SECRET_STORE_DIR=/tmp/b4c-secrets
+ *
+ * — and /api/accounts proxied to :7700 GET-ONLY, any other verb refused with a
+ * 405, so the Claude rows render real while the live registry on 5434 cannot be
+ * touched. /tmp/b4c-serve.ts refuses to boot if any of those three env vars is
+ * unset or is not a /tmp/b4c-* path.
+ *
+ *   node …/browser-harness-phase4.cjs b4c-before     # before any edit
+ *   node …/browser-harness-phase4.cjs b4c-after      # seeded fresh records
+ *   node …/browser-harness-phase4.cjs b4c-unknown    # empty status dir → amber
+ *
+ * The fixtures for b4c-after/b4c-unknown are written by the harness itself into
+ * FORGE_CONNECTION_STATUS_DIR (env `B4C_STATUS_DIR`), so the state under test is
+ * created by the run that asserts it, not by a step someone has to remember.
+ *
  * Screenshots land in /opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png and
  * are then copied into this directory and committed (N7) — /opt/ai-os/uploads
  * is not permanent.
@@ -80,8 +109,9 @@ const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
 /* ---------------------------------------------------------------- config -- */
 
 const MODE = process.argv[2];
-if (!["before", "after", "add-flow"].includes(MODE || "")) {
-  throw new Error(`usage: browser-harness-phase4.cjs <before|after|add-flow>; got ${JSON.stringify(MODE)}`);
+const MODES = ["before", "after", "add-flow", "b4c-before", "b4c-after", "b4c-unknown"];
+if (!MODES.includes(MODE || "")) {
+  throw new Error(`usage: browser-harness-phase4.cjs <${MODES.join("|")}>; got ${JSON.stringify(MODE)}`);
 }
 
 const BASE = process.env.B4A_BASE_URL || "http://127.0.0.1:7743";
@@ -101,6 +131,46 @@ if (!COOKIE) throw new Error(`${COOKIE_FILE} is empty — mint the cookie first 
 
 function stamp() {
   return new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+}
+
+/* ── B4c fixture stores ──────────────────────────────────────────────────────
+ * The same two directories /tmp/b4c-serve.ts was booted against. Hardcoding a
+ * different pair here would let the harness seed a record the API never reads
+ * and then report a green surface it did not cause, so both are env-driven and
+ * both are asserted to be /tmp/b4c-* fixtures before anything is written. */
+const STATUS_DIR = process.env.B4C_STATUS_DIR || "/tmp/b4c-status";
+const SECRET_DIR = process.env.B4C_SECRET_DIR || "/tmp/b4c-secrets";
+
+function assertFixtureDir(name, dir) {
+  if (!dir.startsWith("/tmp/b4c-")) {
+    throw new Error(
+      `${name}=${dir} is not a /tmp/b4c-* fixture path. This harness WRITES to it; ` +
+        `pointed at /opt/ai-os/.secrets it would forge the real system's connection status.`,
+    );
+  }
+}
+
+function seedStatus(id, record) {
+  assertFixtureDir("B4C_STATUS_DIR", STATUS_DIR);
+  fs.mkdirSync(STATUS_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(STATUS_DIR, `${id}.json`), `${JSON.stringify(record, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  console.log(`  seed ${id}.json ok=${record.ok} checked_at=${record.checked_at}`);
+}
+
+/** Delete every sidecar, so every connection is back to "nobody has ever
+ *  asked" — the R57 fixture. Only ever `<id>.json` under the asserted fixture
+ *  directory; this never removes a directory. */
+function clearStatus() {
+  assertFixtureDir("B4C_STATUS_DIR", STATUS_DIR);
+  fs.mkdirSync(STATUS_DIR, { recursive: true, mode: 0o700 });
+  for (const f of fs.readdirSync(STATUS_DIR)) {
+    if (f.endsWith(".json")) {
+      fs.unlinkSync(path.join(STATUS_DIR, f));
+      console.log(`  clear ${f}`);
+    }
+  }
 }
 
 const results = [];
@@ -222,6 +292,13 @@ async function api(pathSuffix, init) {
   const rowState = (slug) =>
     page.locator(`[data-connection-row="claude:${slug}"]`).getAttribute("data-connection-state");
   const rowText = (slug) => page.locator(`[data-connection-row="claude:${slug}"]`).innerText();
+
+  /* B4c reads rows by their FULL id (`google`, `agy`, `github`), not by a
+   * Claude slug, so it needs its own two accessors rather than reusing the
+   * `claude:`-prefixing pair above. */
+  const stateOf = (id) =>
+    page.locator(`[data-connection-row="${id}"]`).getAttribute("data-connection-state");
+  const rowTextById = (id) => page.locator(`[data-connection-row="${id}"]`).innerText();
 
   try {
     if (MODE === "before") {
@@ -387,6 +464,241 @@ async function api(pathSuffix, init) {
         `data-connection-state=${await rowState(slug)}`,
       );
       console.log(`\nscreenshot: ${shotFile}`);
+    }
+
+    /* ══════════════════════════════════════════════════════════════════════
+     * B4c — the three OUTSIDE-SERVICE cards. See the header block for the
+     * different stack these modes need (/tmp/b4c-serve.ts, fixture stores).
+     * ════════════════════════════════════════════════════════════════════ */
+
+    if (MODE.startsWith("b4c-")) {
+      /* The fixtures are written by the run that asserts them. Any other
+       * arrangement means the state under test is whatever the last person
+       * left in a directory. */
+      if (MODE === "b4c-after") {
+        seedStatus("google", {
+          ok: true,
+          identity: "konrad.schrein@gmail.com",
+          detail:
+            "Gmail answered for konrad.schrein@gmail.com.\n\nUPSTREAM HTTP 200: {\"emailAddress\":\"konrad.schrein@gmail.com\",\"messagesTotal\":48211}",
+          checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
+        });
+        seedStatus("agy", {
+          ok: true,
+          identity: "the Google account signed in to the Antigravity CLI",
+          detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
+          checked_at: new Date(Date.now() - 90_000).toISOString(),
+        });
+        seedStatus("github", {
+          ok: true,
+          identity: "konradschreiner",
+          detail:
+            "GET https://api.github.com/user answered 200 for konradschreiner. Scopes from x-oauth-scopes: repo, read:org.",
+          checked_at: new Date(Date.now() - 11 * 60_000).toISOString(),
+        });
+        // "Token present" is storage, not authorisation — but WITHOUT a stored
+        // secret the GitHub card is ABSENT and never reaches the state under
+        // test. Fixture value, never a real token.
+        fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(path.join(SECRET_DIR, "github-pat"), "FIXTURE-NOT-A-REAL-TOKEN", { mode: 0o600 });
+      }
+      if (MODE === "b4c-unknown") {
+        clearStatus();
+        fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(path.join(SECRET_DIR, "github-pat"), "FIXTURE-NOT-A-REAL-TOKEN", { mode: 0o600 });
+      }
+
+      /* THE SURFACE UNDER TEST. Defaults to /settings, which is what Konrad
+       * clicks. B4c also drives a throwaway proof mount (see the BLOCKER note
+       * below), and parameterising the path is what lets ONE committed harness
+       * cover both without a second copy of every assertion. */
+      const SURFACE = process.env.B4C_SURFACE || "/settings";
+      const onPanel = SURFACE === "/settings";
+
+      if (onPanel) {
+        await openConnections();
+      } else {
+        await page.goto(`${BASE}${SURFACE}`, { waitUntil: "networkidle" });
+        assertPastTheWall(page, SURFACE);
+        await page.waitForSelector("[data-google-card]", { timeout: 15000 });
+        assertPastTheWall(page, `${SURFACE} cards`);
+      }
+
+      const panel = await page.locator(onPanel ? "[data-connections-panel]" : "body").innerText();
+      const ids = onPanel
+        ? await page.$$eval("[data-connection-row]", (els) =>
+            els.map((e) => e.getAttribute("data-connection-row")),
+          )
+        : [];
+      const cards = await page.$$eval("[data-google-card],[data-agy-card],[data-github-card]", (els) =>
+        els.map((e) =>
+          e.hasAttribute("data-google-card") ? "google" : e.hasAttribute("data-agy-card") ? "agy" : "github",
+        ),
+      );
+      console.log(`\n--- surface ${SURFACE} ---\nrows:  ${ids.join(", ") || "(none)"}\ncards: ${cards.join(", ") || "(none)"}\n`);
+
+      /**
+       * A RECORDED BLOCKER, not a silent skip and not a crash.
+       *
+       * `AgyCard` and `GitHubCard` are exported from integrationCards.tsx and
+       * have NO MOUNT POINT: `ConnectionsPanel.tsx` belongs to B4a and B4c may
+       * not write it. Reporting that as a passing assertion would be the exact
+       * class of lie this phase deletes; crashing on it (which the first run of
+       * this harness did) hides every OTHER assertion behind a timeout. So it
+       * is counted, printed, and it fails the run.
+       */
+      function blocker(label, detail) {
+        results.push({ label, ok: false, detail });
+        console.log(`  BLOCKED ${label} — ${detail}`);
+      }
+
+      const has = (id) => (onPanel ? ids.includes(id) : cards.includes(id));
+
+      if (MODE === "b4c-before") {
+        const shotFile = await shot(page, "b4c-before-integrations");
+        ok(
+          "DEFECT REPRODUCED: there is no agy connection row on the Connections surface",
+          !ids.includes("agy"),
+          ids.join(", "),
+        );
+        ok(
+          "DEFECT REPRODUCED: there is no GitHub connection row on the Connections surface",
+          !ids.includes("github"),
+          ids.join(", "),
+        );
+        const google = await rowTextById("google");
+        ok(
+          "DEFECT REPRODUCED: the Google row states no age for its check",
+          !/checked|verified/i.test(google) || !/\d+\s*(s|min|h|d)\b/.test(google),
+          JSON.stringify(google.replace(/\n/g, " | ").slice(0, 300)),
+        );
+        console.log(`\nscreenshot: ${shotFile}`);
+      }
+
+      if (MODE === "b4c-after") {
+        for (const id of ["google", "agy", "github"]) {
+          if (has(id)) {
+            ok(`R49/R53/R56: the ${id} connection is on screen at ${SURFACE}`, true);
+          } else {
+            blocker(
+              `the ${id} connection is on screen at ${SURFACE}`,
+              onPanel
+                ? "no mount point — ConnectionsPanel.tsx belongs to B4a and B4c may not write it. " +
+                  "The card is exported; it needs one <Row summary={...}><Card/></Row> block."
+                : `no [data-${id}-card] on this page`,
+            );
+          }
+        }
+        if (onPanel) {
+          ok(
+            "…and at least one Claude account row is beside them",
+            ids.some((i) => i && i.startsWith("claude:")),
+            ids.join(", "),
+          );
+        }
+        const shotFile = await shot(page, "b4c-after-four-connections");
+
+        /* The identity and the age, per connection, wherever that connection
+         * actually rendered — a row on the panel, a card on the proof mount. */
+        for (const [id, identity] of [
+          ["google", "konrad.schrein@gmail.com"],
+          ["github", "konradschreiner"],
+        ]) {
+          if (!has(id)) continue;
+          const text = onPanel
+            ? await rowTextById(id)
+            : await page.locator(`[data-${id}-card]`).innerText();
+          ok(
+            `${id}: shows the identity the PROBE returned`,
+            text.includes(identity),
+            JSON.stringify(text.replace(/\n/g, " | ").slice(0, 260)),
+          );
+          ok(
+            `${id}: states the AGE of that check`,
+            /(verified|checked|probed)[^|]*\b\d+\s*(s|min|h|d|minutes|hours|days)\b/i.test(text),
+            JSON.stringify(text.replace(/\n/g, " | ").slice(0, 260)),
+          );
+        }
+        if (has("agy")) {
+          const agyText = await page
+            .locator(onPanel ? '[data-connection-row="agy"]' : "[data-agy-card]")
+            .innerText();
+          ok(
+            "R54: the agy card states ON SCREEN that the login cannot be finished here",
+            /cannot be completed from this browser/i.test(agyText),
+            JSON.stringify(agyText.replace(/\n/g, " | ").slice(0, 220)),
+          );
+          ok(
+            "R54: …and prints the verbatim paste prompt the CLI will show",
+            agyText.includes("Or, paste the authorization code here and press Enter:"),
+          );
+        }
+        ok("no row anywhere renders NaN", !/NaN/.test(panel), /.{0,40}NaN.{0,40}/.exec(panel)?.[0]);
+        ok(
+          "R55: the GitHub PAT itself appears NOWHERE on the surface",
+          !panel.includes("FIXTURE-NOT-A-REAL-TOKEN"),
+        );
+        console.log(`\nscreenshot: ${shotFile}`);
+      }
+
+      if (MODE === "b4c-unknown") {
+        const shotFile = await shot(page, "b4c-unknown-amber");
+        /* The token the amber chip must be painted in, read from the live
+         * stylesheet rather than hardcoded — a hex literal here would fail
+         * `no-raw-colours.cjs` AND would stop tracking the design system. */
+        const warn = await page.evaluate(() =>
+          getComputedStyle(document.documentElement).getPropertyValue("--fg-warn").trim(),
+        );
+        ok("the --fg-warn token resolves to a colour", /\S/.test(warn), JSON.stringify(warn));
+        const warnColour = await page.evaluate((c) => {
+          const probe = document.createElement("span");
+          probe.style.color = c;
+          document.body.appendChild(probe);
+          const out = getComputedStyle(probe).color;
+          probe.remove();
+          return out;
+        }, warn);
+
+        for (const id of ["google", "agy", "github"]) {
+          if (!has(id)) {
+            blocker(
+              `R57: ${id} renders its unknown state somewhere`,
+              onPanel
+                ? "no mount point in ConnectionsPanel.tsx (B4a's file)"
+                : `no [data-${id}-card] on this page`,
+            );
+            continue;
+          }
+          const scope = onPanel ? `[data-connection-row="${id}"]` : `[data-${id}-card]`;
+          const chipSel = onPanel
+            ? `${scope} [data-connection-chip]`
+            : `${scope} [data-${id}-state] span`;
+
+          if (onPanel) {
+            ok(
+              `R57: ${id} with checked_at=null renders UNKNOWN`,
+              (await stateOf(id)) === "unknown",
+              String(await stateOf(id)),
+            );
+          }
+          const chipColour = await page.evaluate((sel) => {
+            const el = document.querySelector(sel);
+            return el ? getComputedStyle(el).color : null;
+          }, chipSel);
+          ok(
+            `R57: ${id}'s chip is painted in the AMBER token, not the green one`,
+            chipColour !== null && chipColour === warnColour,
+            `chip=${chipColour} --fg-warn=${warnColour}`,
+          );
+          const text = await page.locator(scope).innerText();
+          ok(
+            `R57: ${id} never says the connected word`,
+            !/\bCONNECTED\b/.test(text),
+            JSON.stringify(text.replace(/\n/g, " | ").slice(0, 220)),
+          );
+        }
+        console.log(`\nscreenshot: ${shotFile}`);
+      }
     }
   } finally {
     await browser.close();

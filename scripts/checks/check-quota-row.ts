@@ -230,15 +230,30 @@ ok("the Gemini item draws no track", !/width: TRACK_W/.test(gemBlock) && !/borde
 
 console.log("\n§3 every connection answers the same five questions");
 
+/**
+ * WIDENED IN PHASE 4. Five fields were added to `Account` by B4a
+ * (`login_email_source`, `stored_health`, `health_downgraded`, `probe_age_ms`,
+ * `measured_at`) and this fixture did not grow with them, which left THIS FILE
+ * RED under the instrument typecheck gate at HEAD 343a65e — `tsx` strips types
+ * without checking them, so the check went on printing ALL PASS while
+ * `tsc -p tsconfig.checks-instruments.json` reported TS2739 on this literal.
+ * The fixture is the never-probed one, so the two new measurement fields are
+ * null here on purpose.
+ */
 const ACCOUNT: Account = {
   slug: "konrad-max",
   config_dir: "/root/.claude",
   login_email: null,
+  login_email_source: "configuration",
   plan_label: "Max 20x",
   priority: 1,
   enabled: true,
   health: "unknown",
   health_detail: null,
+  stored_health: "unknown",
+  health_downgraded: false,
+  probe_age_ms: null,
+  measured_at: "2026-08-18T20:00:00.000Z",
   has_refresh: null,
   access_expires_at: null,
   last_probed_at: null,
@@ -247,6 +262,16 @@ const ACCOUNT: Account = {
   reauth_command: "CLAUDE_CONFIG_DIR=/root/.claude claude /login",
 };
 
+/** A probe that happened 4 minutes ago, against the SERVER's clock. Phase 4
+ *  made this the difference between a green row and an amber one: a positive
+ *  health word with no measurement behind it is now demoted by
+ *  `claudeConnection()` itself (R57 layer three), so the "healthy" fixtures
+ *  below must carry a probe or they are no longer healthy. */
+const PROBED_4_MIN = {
+  probe_age_ms: 4 * 60_000,
+  last_probed_at: "2026-08-18T19:56:00.000Z",
+} as const;
+
 const unprobed = claudeConnection(ACCOUNT, false);
 ok("an unprobed account is UNKNOWN, never connected", unprobed.state === "unknown", unprobed.state);
 ok("…and its chip says why", unprobed.stateLabel === "UNKNOWN — NOT PROBED", unprobed.stateLabel);
@@ -254,50 +279,159 @@ ok("…and the health line refuses to imply it works", unprobed.health.includes(
 ok("…and the action is the probe", unprobed.action.includes("Probe now"));
 
 const healthy = claudeConnection(
-  { ...ACCOUNT, health: "healthy", health_detail: "confirmed by a run 4m ago", login_email: "k@example.com" },
+  {
+    ...ACCOUNT,
+    ...PROBED_4_MIN,
+    health: "healthy",
+    stored_health: "healthy",
+    health_detail: "confirmed by a run 4m ago",
+    login_email: "k@example.com",
+  },
   true,
 );
 ok("a healthy serving account says so", healthy.state === "connected" && healthy.stateLabel === "SERVING RUNS");
-ok("…and shows the identity", healthy.identity === "k@example.com");
+ok(
+  // PHASE 4 / R50: it is still the address on the row, and it is now LABELLED.
+  // A Claude probe reads the credential file's presence and never learns whose
+  // it is, so this address is configuration and now says so on screen. The
+  // equality assertion this replaces would have gone on passing while the row
+  // implied a verified account — which is exactly the lie R50 names.
+  "…and shows the identity, labelled as configuration rather than as a probe result",
+  healthy.identity.includes("k@example.com") && healthy.identity.includes("CONFIGURED, not verified"),
+  healthy.identity,
+);
+ok(
+  // R45: the health word never travels without its clock.
+  "…and the health line leads with the age of the probe behind it",
+  healthy.health.startsWith("probed 4 min ago."),
+  healthy.health,
+);
 
-const brokenAcct = claudeConnection({ ...ACCOUNT, health: "broken", health_detail: "invalid_grant" }, false);
+/* PHASE 4 / R57, LAYER THREE. The same fixture WITHOUT a probe is not healthy,
+ * whatever the registry stores. This is the row photographed on 2026-08-18 at
+ * phase4/b4c-before-integrations.png — a green SERVING RUNS chip beside the
+ * words "never probed" — and it is asserted here as well as in
+ * check-connection-states.ts because this file is the one that already owns
+ * "an unprobed Claude account is UNKNOWN in amber, never green". */
+const storedGreen = claudeConnection(
+  { ...ACCOUNT, health: "healthy", stored_health: "healthy", health_detail: "healthy" },
+  true,
+);
+ok(
+  "a stored 'healthy' with NO probe age is UNKNOWN, even for the SERVING account",
+  storedGreen.state === "unknown" && storedGreen.stateLabel !== "SERVING RUNS",
+  `state=${storedGreen.state} stateLabel=${storedGreen.stateLabel}`,
+);
+
+const brokenAcct = claudeConnection(
+  {
+    ...ACCOUNT,
+    ...PROBED_4_MIN,
+    health: "broken",
+    stored_health: "broken",
+    health_detail: "invalid_grant",
+  },
+  false,
+);
 ok("a broken account is BROKEN", brokenAcct.state === "broken");
 ok("…and its action is the exact re-auth command", brokenAcct.action.includes("claude /login"));
 
-const noGoogle = googleConnection({
-  hasAccount: false,
-  hasRefreshToken: false,
-  email: null,
-  scopeCount: 0,
-  checkOk: null,
-  checkMessage: null,
-  reauthCommand: "python3 /opt/ai-os/google-setup/setup.py",
-});
+/* PHASE 4 / B4c: `GoogleFacts` no longer carries `email`, `checkOk` or
+ * `checkMessage`. All three are now one field, `status` — the PERSISTED probe
+ * record, which survives a `pm2 restart forge-control` (R48) and carries the
+ * `checked_at` that R57 turns on. Losing `email` from this shape is the point:
+ * there is now no parameter through which a configured address could be handed
+ * to the row and rendered as if a probe had returned it (R50).
+ *
+ * The state matrix in full — four integrations × four states, plus the
+ * inert-assertion control — lives in `scripts/checks/check-connection-states.ts`.
+ * What stays here is only the wording this file has always owned. */
+const GOOGLE_REAUTH = "python3 /opt/ai-os/google-setup/setup.py";
+const GOOGLE_NOW = Date.parse("2026-08-18T20:00:00.000Z");
+
+const noGoogle = googleConnection(
+  {
+    status: {
+      state: "absent",
+      identity: null,
+      checked_at: null,
+      detail: "No credential file at /root/.config/hermes/google_token.json.",
+      action: `Run \`${GOOGLE_REAUTH}\` at a terminal and complete the consent in a browser.`,
+    },
+    hasAccount: false,
+    hasRefreshToken: false,
+    scopeCount: 0,
+    reauthCommand: GOOGLE_REAUTH,
+    recheckIntervalMs: 900_000,
+  },
+  GOOGLE_NOW,
+);
 ok("no Google credential is NOT CONNECTED", noGoogle.state === "absent");
 ok("…and the action is the interactive command, not a button", noGoogle.action.includes("setup.py"));
 
-const googleUnverified = googleConnection({
-  hasAccount: true,
-  hasRefreshToken: true,
-  email: null,
-  scopeCount: 9,
-  checkOk: null,
-  checkMessage: null,
-  reauthCommand: "python3 /opt/ai-os/google-setup/setup.py",
-});
-ok("a credential nobody checked is UNVERIFIED, not connected", googleUnverified.state === "unknown" && googleUnverified.stateLabel === "UNVERIFIED");
-ok("…and says it is unverified rather than healthy", googleUnverified.health.includes("unverified rather than healthy"));
+const googleUnverified = googleConnection(
+  {
+    status: {
+      // The adversarial shape: the server insisting on "connected" while
+      // carrying no timestamp. A credential file proves storage, not
+      // authorisation, and R57 is what stands between the two.
+      state: "connected",
+      identity: "konrad.schrein@gmail.com",
+      checked_at: null,
+      detail: "the credential file is present with a refresh token",
+      action: "Press Test connection to run a real token refresh plus a Gmail profile call.",
+    },
+    hasAccount: true,
+    hasRefreshToken: true,
+    scopeCount: 9,
+    reauthCommand: GOOGLE_REAUTH,
+    recheckIntervalMs: 900_000,
+  },
+  GOOGLE_NOW,
+);
+ok(
+  "a credential nobody checked is UNVERIFIED, not connected",
+  googleUnverified.state === "unknown" && googleUnverified.stateLabel === "UNVERIFIED",
+  `${googleUnverified.state}/${googleUnverified.stateLabel}`,
+);
+ok(
+  "…and says so, rather than implying health",
+  googleUnverified.health.includes("Never checked") &&
+    googleUnverified.health.includes("amber and not green"),
+  googleUnverified.health,
+);
+ok(
+  "…and does NOT render the address the server tried to hand it",
+  !googleUnverified.identity.includes("konrad.schrein@gmail.com"),
+  googleUnverified.identity,
+);
 
-const googleLive = googleConnection({
-  hasAccount: true,
-  hasRefreshToken: true,
-  email: "konrad.schrein@gmail.com",
-  scopeCount: 9,
-  checkOk: true,
-  checkMessage: "Gmail answered for konrad.schrein@gmail.com.",
-  reauthCommand: "python3 /opt/ai-os/google-setup/setup.py",
-});
-ok("a live-checked credential is CONNECTED with its identity", googleLive.state === "connected" && googleLive.identity.includes("@"));
+const googleLive = googleConnection(
+  {
+    status: {
+      state: "connected",
+      identity: "konrad.schrein@gmail.com",
+      checked_at: "2026-08-18T19:56:00.000Z",
+      detail: "Gmail answered for konrad.schrein@gmail.com.",
+      action: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+    },
+    hasAccount: true,
+    hasRefreshToken: true,
+    scopeCount: 9,
+    reauthCommand: GOOGLE_REAUTH,
+    recheckIntervalMs: 900_000,
+  },
+  GOOGLE_NOW,
+);
+ok(
+  "a live-checked credential is CONNECTED with its identity",
+  googleLive.state === "connected" && googleLive.identity.includes("@"),
+);
+ok(
+  "…and states how old that check is",
+  googleLive.health.startsWith("probed 4 min ago."),
+  googleLive.health,
+);
 
 ok("no stored Gemini key is NOT CONNECTED", geminiKeyConnection(false, null, null).state === "absent");
 ok("a stored, untested key is UNTESTED — not healthy", geminiKeyConnection(true, "…aB4z", null).stateLabel === "UNTESTED");
