@@ -26,6 +26,7 @@ import {
   RESEARCH_INSTRUMENTS,
   ESCALATION_POLICY,
   BROWSER_FIRST,
+  SCREENSHOT_CONVENTION,
   parseRoleFile,
   roleFilePaths,
   readRoleFile,
@@ -575,8 +576,10 @@ describe("T14 parseRoleFile robustness — BOM, CRLF, malformed header", () => {
  *
  * The researcher prompt used to say only "use every research surface you have",
  * which in practice meant WebFetch: an agent does not discover three CLIs by
- * hoping. RESEARCH_INSTRUMENTS names them, states the screenshot convention and
- * the login-wall protocol.
+ * hoping. RESEARCH_INSTRUMENTS names them, states the research-doc citation
+ * rule and the login-wall protocol. The on-disk screenshot DIRECTORY itself
+ * moved to SCREENSHOT_CONVENTION at round 900, delivered through withPolicy()
+ * to every browser-driving role rather than owned by this block alone.
  *
  * The interesting half of this suite is the anti-drift half. A prompt that
  * quotes invented invocations is worse than one that quotes none, so every
@@ -636,9 +639,20 @@ describe("T16 researcher browser lane", () => {
   });
 
   test("screenshot convention: uploads path, FORGE_RUN_ID, and the servable URL form", () => {
+    // Round 900: the on-disk DIRECTORY moved out of RESEARCH_INSTRUMENTS and
+    // into SCREENSHOT_CONVENTION, delivered to the researcher (and every other
+    // browser-driving role) through withPolicy() rather than hand-pasted here —
+    // so the directory claim is checked against the BUILT prompt, which is what
+    // a researcher actually receives, not against RESEARCH_INSTRUMENTS alone.
+    const researcherPrompt = buildPrompt(task({ role: "researcher" }), project({ repo: "ai-os" }));
     assert.ok(
-      RESEARCH_INSTRUMENTS.includes("/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png"),
+      SCREENSHOT_CONVENTION.includes("/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png"),
       "the on-disk screenshot convention must be stated literally",
+    );
+    assert.ok(
+      researcherPrompt.includes(SCREENSHOT_CONVENTION),
+      "the researcher's built prompt does not carry SCREENSHOT_CONVENTION — withPolicy() attaches it " +
+        "wherever RESEARCH_INSTRUMENTS is, and the researcher's body always carries RESEARCH_INSTRUMENTS",
     );
     assert.ok(
       RESEARCH_INSTRUMENTS.includes("/api/uploads/$FORGE_RUN_ID/<name>"),
@@ -2453,7 +2467,19 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * RESEARCH_INSTRUMENTS — the planner is none of them. Round 242's 26 is the two
    * research role literals in GRAPH_GUIDE's FAN-OUT sentence and nothing else:
    * its other two fixes are a non-goal architect branch (a different role, not in
-   * this measurement) and this file. */
+   * this measurement) and this file.
+   *
+   * ROUND 900 adds the sentence GRAPH_GUIDE's own doc-comment documents at the
+   * "write_set" bullet (round 244's follow-up, re-routed here). MEASURED, not
+   * argued: maximalPlannerPrompt() before this round's edit is 12121 (the number
+   * above); after it, 12227. 12227 - 12121 = 106, which is also the sentence's
+   * own `.length` — a one-sentence addition to a string already in the planner
+   * prompt cannot cost anything else, so the two matching is the positive
+   * control that nothing but the sentence moved. Round 900 does NOT touch
+   * SCREENSHOT_CONVENTION or BROWSER_CONTROL_SAFETY's cost: both ride
+   * `drivesBrowser`, which the planner branch never satisfies (neither
+   * BROWSER_FIRST nor RESEARCH_INSTRUMENTS appears in it), exactly as B4 cost
+   * this measurement nothing at round 240. Headroom after: 12271 - 12227 = 44. */
   const FIVE_A_TIP = 11619;
   const LEDGER = [
     {
@@ -2467,6 +2493,14 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       what: 'GRAPH_GUIDE names the two research role literals in FAN-OUT (fix cycle 1, finding 3)',
       spent: 26,
       reserved: 176,
+    },
+    {
+      round: 900,
+      what: 'GRAPH_GUIDE\'s "write_set" bullet: "if a round moves a constant the corpus quotes, the ' +
+        'documents quoting it belong in that round\'s write_set" (round 244\'s follow-up, placed at ' +
+        "the definition rather than the COMPANION FILES prose)",
+      spent: 106,
+      reserved: 106,
     },
   ] as const;
 
@@ -2531,6 +2565,14 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
       "NF7 (round 242's row): GRAPH_GUIDE carries the charge but is not in the planner prompt " +
         "at all, so the clause above was asserted against a constant nobody receives",
     );
+    assert.ok(
+      GRAPH_GUIDE.includes(
+        "If a round moves a constant the corpus quotes, the documents quoting it belong in that " +
+          "round's write_set.",
+      ),
+      "NF7 (round 900's row): the ledger charges 106 characters to the write_set-definition " +
+        "sentence, and GRAPH_GUIDE no longer contains it verbatim",
+    );
   });
 });
 
@@ -2590,18 +2632,25 @@ import {
   BROWSER_CONTROL_SAFETY,
 } from "./project-tick.ts";
 
-/** The four constants and the budget each was written to. The budget is in the
+/** The constants and the budget each was written to. The budget is in the
  *  failure message because a builder who trips this needs the number, not the
  *  fact — and because a budget that lives only in a doc-comment is a budget
- *  nobody enforces. */
+ *  nobody enforces.
+ *
+ *  ROUND 900 adds SCREENSHOT_CONVENTION, riding `drivesBrowser` exactly as
+ *  BROWSER_CONTROL_SAFETY does (see its own doc-comment). Kept in this same
+ *  array rather than a parallel one — it is the same shape of claim, and a
+ *  second array is exactly the kind of "hand-written list" this project's
+ *  standing rules keep finding rot in. */
 const B5_BUDGETS = [
   ["DEP_INSTALL_NOTE", DEP_INSTALL_NOTE, 500],
   ["REVIEWER_TIP_DISCIPLINE", REVIEWER_TIP_DISCIPLINE, 1300],
   ["REVIEWER_GATE_SUITE", REVIEWER_GATE_SUITE, 1250],
   ["BROWSER_CONTROL_SAFETY", BROWSER_CONTROL_SAFETY, 900],
+  ["SCREENSHOT_CONVENTION", SCREENSHOT_CONVENTION, 650],
 ] as const;
 
-describe("phase 5B — the four constants stay inside their stated budgets", () => {
+describe("phase 5B — the constants stay inside their stated budgets", () => {
   test("each constant is within budget", () => {
     for (const [name, text, budget] of B5_BUDGETS) {
       assert.ok(
@@ -2908,6 +2957,94 @@ describe("B4 the browser rules reach exactly the derived role set", () => {
         `B4: BROWSER_CONTROL_SAFETY no longer states ${what} (looked for "${needle}")`,
       );
     }
+  });
+});
+
+describe("round 900 — SCREENSHOT_CONVENTION reaches exactly the same derived role set as B4", () => {
+  /* operator-visibility phase 6's OPEN ITEM (docs/plan/artifacts/phase1350/
+   * browser-visibility.md §3): only the researcher was ever told where to put
+   * a screenshot so the Console can render it, so every builder/reviewer
+   * screenshot taken with the playwright-skill went to /tmp and every
+   * operator screenshot went wherever its own tool defaulted — both
+   * unservable and both invisible to Konrad. Fixed by riding the SAME
+   * `drivesBrowser` predicate B4 already computes (see withPolicy()'s own
+   * comment), not a second hand-written list — so this suite reuses B4's
+   * EXPECTED_BROWSER_ROLES rather than declaring its own, on the same
+   * argument (d) in this file's header makes: a role-set test that only
+   * checks presence would pass even if the two blocks silently diverged. */
+  const proj = project({ repo: "ai-os" });
+  const EXPECTED_SCREENSHOT_ROLES = ["builder", "researcher", "scout", "tester"] as const;
+
+  test("the role set is identical to B4's — one predicate, two blocks", () => {
+    const carriesABrowserBlock = ALL_TASK_ROLES.filter((role) => {
+      const prompt = buildPrompt(task({ role }), proj);
+      return prompt.includes(BROWSER_FIRST) || prompt.includes(RESEARCH_INSTRUMENTS);
+    });
+    assert.deepEqual(
+      [...carriesABrowserBlock].sort(),
+      [...EXPECTED_SCREENSHOT_ROLES].sort(),
+      "round 900: the derived browser-driving role set no longer matches B4's — SCREENSHOT_CONVENTION " +
+        "and BROWSER_CONTROL_SAFETY ride the same predicate and must always agree",
+    );
+  });
+
+  test("every role in the set receives SCREENSHOT_CONVENTION", () => {
+    for (const role of EXPECTED_SCREENSHOT_ROLES) {
+      assert.ok(
+        buildPrompt(task({ role }), proj).includes(SCREENSHOT_CONVENTION),
+        `round 900: role ${role} drives a browser and is missing the screenshot directory convention — ` +
+          "its shots would go wherever its own tool defaults, unservable to the Console",
+      );
+    }
+  });
+
+  test("no other role receives it — the complement, computed", () => {
+    for (const role of ALL_TASK_ROLES.filter(
+      (r) => !(EXPECTED_SCREENSHOT_ROLES as readonly string[]).includes(r),
+    )) {
+      assert.ok(
+        !buildPrompt(task({ role }), proj).includes(SCREENSHOT_CONVENTION),
+        `round 900: role ${role} carries the screenshot convention but drives no browser — prompt ` +
+          "bloat with no matching behaviour",
+      );
+    }
+  });
+
+  test("a scratch project's browser roles keep the convention", () => {
+    const scratch = project({ repo: "scratch" });
+    for (const role of EXPECTED_SCREENSHOT_ROLES) {
+      assert.ok(
+        buildPrompt(task({ role }), scratch).includes(SCREENSHOT_CONVENTION),
+        `round 900: scratch ${role} lost the screenshot convention — a scratch project's browser is ` +
+          "the same one, uploads directory included",
+      );
+    }
+  });
+
+  test("the directory, FORGE_RUN_ID, and the reason are all stated", () => {
+    for (const [what, needle] of [
+      ["the literal on-disk pattern", "/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png"],
+      ["never /tmp", "never /tmp"],
+      ["the playwright-skill's own default is named", "playwright-skill's own default"],
+      ["the reason: shots outside the directory are unservable", "invisible to Konrad and gone at the next reboot"],
+    ] as const) {
+      assert.ok(
+        SCREENSHOT_CONVENTION.includes(needle),
+        `round 900: SCREENSHOT_CONVENTION no longer states ${what} (looked for "${needle}")`,
+      );
+    }
+  });
+
+  test("SCREENSHOT_CONVENTION is delivered alongside BROWSER_CONTROL_SAFETY, before ESCALATION_POLICY", () => {
+    const prompt = buildPrompt(task({ role: "builder" }), project({ repo: "ai-os", metadata: {} }));
+    assert.ok(
+      prompt.indexOf(BROWSER_CONTROL_SAFETY) < prompt.indexOf(SCREENSHOT_CONVENTION),
+      "round 900: SCREENSHOT_CONVENTION must follow BROWSER_CONTROL_SAFETY, matching withPolicy()'s order",
+    );
+    assert.ok(
+      prompt.indexOf(SCREENSHOT_CONVENTION) < prompt.indexOf(ESCALATION_POLICY),
+      "round 900: SCREENSHOT_CONVENTION must precede ESCALATION_POLICY, like every other withPolicy() rider",
+    );
   });
 });
 

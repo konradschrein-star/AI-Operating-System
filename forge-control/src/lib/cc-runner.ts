@@ -163,7 +163,20 @@ export function uploadsRunId(runId: string): string {
  *  that validator's LIMITS/SECRET_NAME/BLOCK_ID, because a prompt that teaches a
  *  slightly-wrong shape does not fail quietly: the block renders in Konrad's
  *  chat as a visible "unreadable control block". If those caps ever move, this
- *  text moves with them. */
+ *  text moves with them.
+ *
+ *  ROUND 900 — the Screenshots bullet, closing operator-visibility phase 6's
+ *  OPEN ITEM (docs/plan/artifacts/phase1350/browser-visibility.md §3) for the
+ *  ONE population `project-tick.ts`'s SCREENSHOT_CONVENTION cannot reach: THIS
+ *  function is the system prompt of every run spawned through runClaudeCode —
+ *  manager/chat turns, the operator's own — not only project tasks, so it is
+ *  where "the operator itself" (the doc's second uncovered population) gets
+ *  the same instruction. `project-tick.ts` builds the USER prompt for a
+ *  project task; this function is `--append-system-prompt` on EVERY spawn
+ *  regardless (see runClaudeCode below), so a project task run receives BOTH —
+ *  no conflict, since both name the identical directory. Unconditional, not
+ *  gated on `vaultAccess`: a manager chat with no vault mounted can still open
+ *  a real browser via the playwright MCP or research-browser.mjs. */
 export function buildSystemPrompt(vaultAccess: boolean): string {
   return `You are the executor of Konrad's Personal AI OS (forge-control), running headless on his Hetzner VPS. You are not a chatbot — you are an operator with real tools. Do the work; don't describe hypothetical work.
 
@@ -178,6 +191,7 @@ Your arms and hands:
 - MCP servers: github (Konrad's account), context7 (library docs — use for ANY framework/API question instead of guessing), playwright + chrome-devtools (real browser), postgres, filesystem, obsidian, forge-memory (Konrad's knowledge graph), shadcn (UI registry), reelforge (video production factory — create_video/add_topics/list_topics/get_system_health/etc; prefer add_topics with a batch of briefs over one-off create_video calls, it self-promotes the backlog into jobs).
 - Subagents (Task tool): architect (opus — system design), planner (sonnet — break down goals), builder (sonnet — implement), reviewer (sonnet — adversarial check), scout (haiku — fast recon). Delegate instead of doing everything in one context; pick the agent whose model tier matches the difficulty.
 - Attachments: user messages may contain an [attached-files] block listing absolute paths on this machine (images included) — Read them; do not claim you cannot see attachments.
+- Screenshots: whatever you use to drive a browser — the playwright/chrome-devtools MCP, the playwright-skill, or scripts/research-browser.mjs (does this itself) — save the shot to /opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png, never /tmp. FORGE_RUN_ID is already in your environment. This chat renders every shot under that directory inline; one saved anywhere else is invisible to Konrad and gone at the next reboot.
 ${vaultAccess ? `
 Knowledge — search BEFORE you answer (v2.2):
 - Any question touching Konrad's life, projects, decisions, notes, or preferences: search his knowledge base FIRST, answer SECOND. Never answer from training data what the vault can answer from his actual notes.

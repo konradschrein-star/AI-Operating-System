@@ -160,3 +160,47 @@ describe("T17 the executor passes the run id it claimed", () => {
     );
   });
 });
+
+describe("round 900 — the operator's own runs get the screenshot convention too", () => {
+  /* project-tick.ts's SCREENSHOT_CONVENTION (round 900) reaches every
+   * browser-driving PROJECT TASK role, but a manager/chat run — including the
+   * operator's own turns — never goes through buildPrompt() at all; its
+   * whole prompt is buildSystemPrompt() plus whatever Konrad typed. That is
+   * the "operator itself" population docs/plan/artifacts/phase1350/
+   * browser-visibility.md §3 names as uncovered. Asserted here as a plain
+   * substring against buildSystemPrompt()'s OWN return value — there is no
+   * buildPrompt()-style role branching in this function to build a delivery
+   * pair against, so the positive claim is the whole test. */
+  test("the system prompt states the on-disk directory, FORGE_RUN_ID, and never /tmp", async () => {
+    const { buildSystemPrompt } = await import("./cc-runner.ts");
+    for (const vaultAccess of [true, false]) {
+      const prompt = buildSystemPrompt(vaultAccess);
+      assert.ok(
+        prompt.includes("/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png"),
+        `buildSystemPrompt(${vaultAccess}) is missing the literal on-disk screenshot pattern`,
+      );
+      assert.ok(
+        prompt.includes("never /tmp"),
+        `buildSystemPrompt(${vaultAccess}) no longer tells the operator not to use /tmp`,
+      );
+    }
+  });
+
+  test("the directory matches project-tick.ts's SCREENSHOT_CONVENTION verbatim — one convention, two prompts", async () => {
+    // The two files independently name the same directory; this is the
+    // control that keeps them from drifting apart the way the researcher's
+    // own bullet and research-browser.mjs's --help were cross-checked (T16).
+    const { buildSystemPrompt } = await import("./cc-runner.ts");
+    const { SCREENSHOT_CONVENTION } = await import("./project-tick.ts");
+    assert.match(
+      SCREENSHOT_CONVENTION,
+      /\/opt\/ai-os\/uploads\/\$FORGE_RUN_ID\/<stamp>-<label>\.png/,
+      "positive control: SCREENSHOT_CONVENTION itself no longer states the pattern this test compares against",
+    );
+    assert.ok(
+      buildSystemPrompt(true).includes("/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png"),
+      "the operator's system prompt states a different on-disk pattern than project-tick.ts's " +
+        "SCREENSHOT_CONVENTION — a project task and a manager chat would file screenshots differently",
+    );
+  });
+});

@@ -370,7 +370,23 @@ export const IDEMPOTENCY_NOTE =
  *  (round 242 finding 1) and the planner branch — the three roles that create
  *  tasks. It is as dense as it is because NF7 budgets the planner prompt: the
  *  reasoning lives in doc-comments, which cost the prompt nothing, and only the
- *  rules a planner must act on are in the string. */
+ *  rules a planner must act on are in the string.
+ *
+ *  ROUND 900 adds one sentence to the "write_set" bullet — round 244's own
+ *  follow-up finding, re-routed here because round 242 already had a
+ *  concurrent writer to this file. Round 244's root cause, verbatim: round
+ *  242's write_set was two code files, the two documents quoting its moved
+ *  constants were owned by nobody, so the constants moved and the corpus did
+ *  not — and three consecutive reviews read the stale numbers as fresh,
+ *  because a stale pin looks exactly like a live one. Round 244's own
+ *  follow-up diagnosed WHY: the prompt asks for "every file it will write",
+ *  and a planner reads that as source files. The fix therefore belongs at the
+ *  definition of "write_set" itself, where a planner writing one meets it —
+ *  not buried in the COMPANION FILES prose three paragraphs later, which is
+ *  a record a planner may never open (the same failure round 244 diagnosed in
+ *  its own evidence file). MEASURED at 106 characters through the maximal
+ *  planner path against the round-244 baseline (12121, headroom 150) — see
+ *  NF7's LEDGER below, row "round 900". */
 export const GRAPH_GUIDE =
   `SCHEDULING IS A GRAPH, NOT A ROUND NUMBER. Every task you create declares three fields and never a round:\n` +
   `- "depends_on": ids of the tasks it waits for, as your earlier curls returned them ([] = starts at once). ` +
@@ -383,7 +399,8 @@ export const GRAPH_GUIDE =
   `when two teams truly need one file concurrently.\n` +
   `- "write_set": every repo-relative path the task writes (max 200) — the contention input. No two builders ` +
   `in ONE workstream may declare the same file; where a split is impossible, one builder writes that file ` +
-  `twice rather than two builders serialising on it.\n` +
+  `twice rather than two builders serialising on it. If a round moves a constant the corpus quotes, the ` +
+  `documents quoting it belong in that round's write_set.\n` +
   `FAN-OUT: RESEARCH wide and early — independent questions share no files and have no ordering, the ` +
   `cheapest parallelism there is — one "researcher" (or "scout") task each, depends_on []. ` +
   `BUILDERS by FILE OWNERSHIP, one write_set ` +
@@ -598,10 +615,17 @@ export const GITHUB_PUSH_GUIDE =
  *  This text is prepended to EVERY researcher run, so it stays terse: three
  *  invocations that actually exist (quoted from the shipped `--help` of
  *  scripts/research-browser.mjs, perplexity.mjs and gemini-qa.mjs), the
- *  screenshot convention, and the one rule that keeps the lane safe — a login
- *  wall is Konrad's job, never the agent's. The old branch said only "use every
- *  research surface you have", which in practice meant WebFetch and nothing
- *  else: an agent does not discover a 78k-line CLI by hoping.
+ *  research-doc citation rule, and the one rule that keeps the lane safe — a
+ *  login wall is Konrad's job, never the agent's. The old branch said only
+ *  "use every research surface you have", which in practice meant WebFetch and
+ *  nothing else: an agent does not discover a 78k-line CLI by hoping.
+ *
+ *  ROUND 900 — the on-disk screenshot DIRECTORY moved out of this block and
+ *  into SCREENSHOT_CONVENTION below, delivered through `withPolicy()` to every
+ *  role that can drive a browser, not hand-pasted into this one. Only the
+ *  researcher-specific half stays here: citing the shot in the committed
+ *  research doc, which no other role produces. See SCREENSHOT_CONVENTION's own
+ *  comment for the incident this closes.
  *
  *  Lives here rather than in agents/researcher.md for the same reason as
  *  WORKTREE_POLICY: that file is shared with the interactive Task-tool
@@ -621,10 +645,10 @@ export const RESEARCH_INSTRUMENTS =
   `say so and move on.\n` +
   `- scripts/gemini-qa.mjs — video QA: \`gemini-qa.mjs <local-video.mp4>\` on the local Gemini Pool ` +
   `(default backend, free, no key); \`--backend api\` is billed and needs GEMINI_API_KEY.\n` +
-  `SCREENSHOTS: every browser surface you looked at gets one, at ` +
-  `/opt/ai-os/uploads/$FORGE_RUN_ID/<timestamp>-<label>.png (FORGE_RUN_ID is in your environment; the tools ` +
-  `write there themselves). Cite each one in your research doc as its URL, /api/uploads/$FORGE_RUN_ID/<name>, ` +
-  `so the Console renders it. An uncited browser session is an unverifiable claim.\n` +
+  `SCREENSHOTS: the tools above write theirs to your uploads directory themselves (see the screenshot ` +
+  `convention elsewhere in this prompt) — cite each one in your research doc as its URL, ` +
+  `/api/uploads/$FORGE_RUN_ID/<name>, so the Console renders it there too. An uncited browser session is an ` +
+  `unverifiable claim.\n` +
   `LOGIN WALL = STOP. Exit 4 from research-browser or perplexity means a login is required: the tool has ` +
   `already screenshotted the wall, queued Konrad a reminder and left the browser up for him to log in ONCE ` +
   `by hand over noVNC. Report it, carry on with the sources you can reach, and NEVER attempt credentials — ` +
@@ -646,6 +670,56 @@ export const BROWSER_FIRST =
   `interaction if you hold the Skill tool. A login wall is the one thing you do NOT solve yourself — the ` +
   `tool screenshots it and queues Konrad; never attempt credentials. An unverified guess costs more than ` +
   `the five minutes of browsing you skipped.`;
+
+/** Round 900 (operator-visibility phase 6's OPEN ITEM, docs/plan/artifacts/
+ *  phase1350/browser-visibility.md §3, re-routed to this project because
+ *  closing it means editing project-tick.ts/cc-runner.ts — engine internals
+ *  this project owns this cycle) — the screenshot DIRECTORY convention,
+ *  delivered to every role that can drive a browser instead of hand-pasted
+ *  into one more branch.
+ *
+ *  THE GAP. operator-visibility phase 6 shipped the UI that renders a
+ *  screenshot inline the moment it lands under
+ *  `/opt/ai-os/uploads/$FORGE_RUN_ID/` — matched off the actual Bash
+ *  tool_result / Read tool_call in the transcript, nothing markdown, nothing
+ *  new to serve. But until this round ONLY `scripts/research-browser.mjs`
+ *  (reached from the researcher's RESEARCH_INSTRUMENTS block) wrote there.
+ *  Every other population — a builder or reviewer driving the
+ *  `playwright-skill`, which writes its scripts and screenshots to `/tmp` by
+ *  design, and the operator's own ad-hoc browser sessions — took shots nobody
+ *  could ever see: `/tmp` is unreachable from the Console and
+ *  garbage-collected before Konrad can look. The UI was not the missing
+ *  half; the instruction was.
+ *
+ *  WHY THE FUNNEL, NOT ONE MORE BRANCH. Rides the SAME `drivesBrowser`
+ *  predicate `withPolicy()` already computes for BROWSER_CONTROL_SAFETY (B4)
+ *  — a role's prompt carries this constant iff its body already carries
+ *  BROWSER_FIRST or RESEARCH_INSTRUMENTS. No second hand-written role list:
+ *  the day a role gains a browser it gains this with it, which is the exact
+ *  argument B4's own comment makes, applied to a second block riding the same
+ *  gate. `project-tick.test.ts` asserts the two blocks reach the identical
+ *  role set for that reason — a divergence there would mean one of them
+ *  stopped being derived.
+ *
+ *  THE DIRECTORY IS NOT A NEW API. `/opt/ai-os/uploads/$FORGE_RUN_ID/` and
+ *  `/api/uploads/$FORGE_RUN_ID/<name>` already exist (R703, `routes/uploads.ts`);
+ *  this constant only tells more roles to use them. Scope holds the line
+ *  operator-visibility drew: no change to how uploads are served, no change to
+ *  `rehype-forge-allowlist.ts` (markdown images stay inert — a closed beacon
+ *  hole).
+ *
+ *  MEASURED at 555 characters. Reaches only {builder, researcher, scout,
+ *  tester} — the roles `drivesBrowser` already selects — so it costs the NF7
+ *  planner-prompt budget nothing: the planner branch carries neither
+ *  BROWSER_FIRST nor RESEARCH_INSTRUMENTS, exactly as B4 costs it nothing
+ *  today. Own budget 650, asserted in project-tick.test.ts alongside B4's. */
+export const SCREENSHOT_CONVENTION =
+  `SCREENSHOTS LAND WHERE KONRAD CAN SEE THEM. Whatever tool takes one — research-browser.mjs (does this ` +
+  `itself), the playwright-skill, or an MCP browser — save it at ` +
+  `/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png, never /tmp. FORGE_RUN_ID is already in your ` +
+  `environment. The desktop chat renders every shot under that directory inline; one saved anywhere else ` +
+  `(the playwright-skill's own default) is invisible to Konrad and gone at the next reboot — every ` +
+  `Playwright verification screenshot this fleet took before this rule existed went exactly there.`;
 
 /** B4 (round 1873's incident, 2026-08-17 14:08:58 UTC, delivered round 240) —
  *  the row under your cursor changes state between runs.
@@ -953,9 +1027,19 @@ export function buildPrompt(
   //    added later loses the block — the same failure this wrapper was built to
   //    prevent, one level in. Matched against the constants' whole text, not a
   //    generic substring, so nothing else can accidentally satisfy it.
+  //
+  //  - SCREENSHOT_CONVENTION (round 900) rides the SAME `drivesBrowser` test as
+  //    B4, for the same reason: the researcher's own instructions used to be
+  //    the only place a screenshot's on-disk destination was taught, so every
+  //    other browser-driving role wrote theirs to /tmp, where the Console
+  //    shipped by operator-visibility phase 6 cannot see them. Deriving it from
+  //    the same predicate B4 already computes means a role added tomorrow that
+  //    gains a browser gains this too, with nothing to remember.
   const withPolicy = (body: string): string => {
     const drivesBrowser = body.includes(BROWSER_FIRST) || body.includes(RESEARCH_INSTRUMENTS);
-    const briefed = drivesBrowser ? `${body}\n\n${BROWSER_CONTROL_SAFETY}` : body;
+    const briefed = drivesBrowser
+      ? `${body}\n\n${BROWSER_CONTROL_SAFETY}\n\n${SCREENSHOT_CONVENTION}`
+      : body;
     const policed = live
       ? `${briefed}\n\n${WORKTREE_POLICY(live)}\n\n${DEP_INSTALL_NOTE}\n\n${ESCALATION_POLICY}`
       : `${briefed}\n\n${ESCALATION_POLICY}`;
