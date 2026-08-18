@@ -193,11 +193,15 @@ recommends against it.** Three measured reasons:
    every write was declared — the two artefacts disagreeing, with the machine-readable one wrong.
 
 This is a policy call about how audit ledgers are corrected, and everything downstream inherits it,
-so it was **escalated to Konrad rather than decided unilaterally** (manager chat, run `bfd1283a`),
-with the default applied meanwhile: keep the rows as written, keep the disclosure.
+so it was **escalated rather than decided unilaterally** (manager chat, run `bfd1283a`), with the
+default applied meanwhile: keep the rows as written, keep the disclosure.
 
-**RULED 2026-08-19, before this report was filed** — `AI OS/Operator Decisions.md`, *"A ledger you
-may edit after the fact stops being evidence"*. The refusal is upheld, on a sharper argument than
+**RULED BY THE OPERATOR, 2026-08-19, before this report was filed** — `AI OS/Operator Decisions.md`,
+*"A ledger you may edit after the fact stops being evidence"*. **Attribution matters here and an
+earlier draft got it wrong by naming Konrad personally:** that file is the operator's standing-rules
+file and these calls are delegated to it. "The operator ruled, and can be overruled" is a different
+weight of authority from "Konrad decided this himself", and the fleet reads that file. The refusal is
+upheld, on a sharper argument than
 the three above:
 
 > `write_set` records what a task **declared**; the commit records what it **wrote**. Those are two
@@ -255,14 +259,30 @@ This terminates rather than regressing forever: the figure above is measured on 
 commit that precedes this sentence's own commit, and the final tip is re-scanned once more after it
 lands, with the result reported to the operator rather than written back into the corpus.
 
-**A design-time question left open, deliberately.** The same ruling says *"any checker that scans
-text will eventually scan a description of itself — decide at design time whether it distinguishes
-use from mention, and close the class, not the instance."* `check-secret-scan.ts` currently does
-**not** distinguish them, which is why this cycle hit it three times. Closing that class properly
-means teaching it a use/mention rule (a fenced-block or explicit-marker convention it can trust) —
-a change to a security instrument, outside this fix cycle's blockers and outside its write-set.
-**Recorded as a recommendation, not smuggled in**; the prose discipline above is the interim
-mitigation and it is not a substitute.
+**`check-secret-scan.ts` is CORRECT and must not be softened — an earlier draft of this section had
+the polarity backwards.** That draft cited the standing rule *"any checker that scans text will
+eventually scan a description of itself — close the class, not the instance"* and recommended
+teaching this scanner a use/mention rule. **Overruled, and rightly.** Two different shapes were
+being filed under one label:
+
+- A checker whose subject is **prose** — an R66 grep matching its own enforcement command, an
+  identity checker firing on its own transcript — has a real defect. Describing a pattern is not
+  committing it, and the check cannot tell. Those should be closed.
+- A checker whose subject is **a credential-shaped string in a tracked file has no mention case at
+  all.** A live-looking DSN in a committed document *is* the thing being prevented, whatever the
+  author meant by it. Repos get cloned, mirrored and grepped by people who never read the
+  surrounding paragraph.
+
+So the scanner tripping on this fix cycle's own reports **was the guard working, not a false
+positive**, all three times. The round that recorded it as a blocker had the polarity backwards; the
+correct response was the one eventually taken — change the prose, never the guard. The only
+legitimate exemption is the one already in the file: the source that *defines* the patterns skips
+itself (`SELF_PATH`).
+
+The practical rule, stated so nobody re-derives the wrong version: **never widen `SAFE_MARKERS` to
+accommodate an evidence document, and never scope an exemption to a file or a directory.** The two
+markers this cycle did add are anchored to exact tokens — a segment that is nothing but asterisks, a
+bare shell-variable reference — and a real credential elsewhere in those same files still fails.
 
 **An operator error worth recording**, because it looks exactly like a broken instrument: run without
 the gate's `--tsconfig ../tsconfig.checks.json`, both `.tsx` checks die with
@@ -284,8 +304,10 @@ is not optional. Nothing was wrong with the checks.
 - **The `agy` sidecar still does not exist on the live box**, so after deploy every connection reads
   UNKNOWN until the first re-check tick. That is the correct first state, and it is the second
   screenshot.
-- **The task-row amendment in §4 was Konrad's call, and he has made it**: refusal upheld, PATCH
-  endpoint rejected, rows stay as written. Nothing is outstanding on this blocker.
-- **The use/mention hole in `check-secret-scan.ts` is open** (§6). It is a real defect of the class
-  the operator log calls "close the class, not the instance", and it belongs to whoever owns that
-  instrument — not to a fix cycle whose write-set is documentation.
+- **The task-row amendment in §4 is ruled and closed**: refusal upheld, PATCH endpoint rejected,
+  rows stay as written. Ruled by the operator, not by Konrad personally. Nothing outstanding.
+- **Nothing is open against `check-secret-scan.ts`** (§6). An earlier draft of this report left a
+  recommendation there to teach it a use/mention rule; that recommendation was **overruled and is
+  withdrawn**, because a credential-shaped string in a tracked file has no mention case — the
+  scanner tripping on this cycle's own reports was the guard working. No change to that instrument
+  is wanted, and the prose discipline is the whole of the fix.
