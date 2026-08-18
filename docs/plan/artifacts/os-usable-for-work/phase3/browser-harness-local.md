@@ -155,8 +155,29 @@ If phase 1's `browser-harness.md` lands without these, it is a regression agains
 
 ---
 
-## 6. Shutting down
+## 6. Shutting down — and the stale-build trap that follows
 
-The 7783 server is a throwaway started by this task. It holds no state and writes nothing. Stop it
-with `pkill -f 'next start -p 7783'` when the phase is done; leaving it running costs a port that
-another workstream may want.
+B3a stopped its 7783 server when it finished. That is deliberate, and B3b should understand why
+before restarting one.
+
+**`next start` serves the build that was on disk when `pnpm build` ran.** It does not watch files.
+So after B3b edits `DesktopApp.tsx` and `nav-items.ts`, a still-running server from B3a's build keeps
+serving the OLD bundle — the harness would report `hasNotBuilt=false`, `EXPECT_NOT_BUILT=1` would
+still exit 1, and the obvious reading is "my change didn't work" when in fact it was never compiled.
+Leaving a server up across a code change is a worse hazard than a busy port.
+
+**So: `pnpm build` first, then start the server, then run the harness. Every time.**
+
+```bash
+# Kill by LISTENING SOCKET, not by command-line pattern.
+# `pkill -f 'next start -p 7783'` matches the argv of the very shell running it —
+# the agent harness wraps commands in `bash -c '<your command>'`, so the pattern
+# finds itself and the shell dies with exit 144 before the rest of the line runs.
+# That happened here. This does not have that failure mode:
+ss -ltnp | awk '$4 ~ /:7783$/ {print}' | grep -o 'pid=[0-9]*' | cut -d= -f2 | xargs -r kill
+
+cd forge-control-web && pnpm build && cat .next/BUILD_ID   # must differ from fKeri3s5ko0R6OK2C4Uf2
+# …then §1 step 4 to restart, and re-mint the cookie if more than 4h has passed (maxAge 14400).
+```
+
+The server holds no state and writes nothing, so stopping it costs nothing but the rebuild.
