@@ -103,6 +103,112 @@ export function classifyCredential(
 }
 
 /* ------------------------------------------------------------------------- *
+ * Probe age — the display-side invariant (R57).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * What the registry stored, and when it was last measured.
+ *
+ * `health` here is the `claude_accounts.health` COLUMN, not a live probe.
+ * `lastProbedAt` is `claude_accounts.last_probed_at` — null means the column
+ * was written by hand (or by `createAccount()`) and nothing has ever
+ * re-derived it from the credential file.
+ */
+export interface StoredHealthRecord {
+  health: Health;
+  detail: string | null;
+  /** Epoch ms of the last probe, or null if the account has never been probed. */
+  lastProbedAt: number | null;
+}
+
+export interface EffectiveHealth extends HealthVerdict {
+  /** Age of the last probe in ms, or null when there has never been one. */
+  probeAgeMs: number | null;
+  /** True when the stored word was demoted because nothing measured it recently. */
+  downgraded: boolean;
+  /** The stored column, kept so a surface can show both without a second query. */
+  storedHealth: Health;
+}
+
+/**
+ * THE INVARIANT THIS PHASE EXISTS FOR (R57).
+ *
+ *   No connection renders a positive state without a `checked_at`.
+ *   `last_probed_at === null` renders UNKNOWN, in amber, ALWAYS.
+ *
+ * `claude_accounts.health` is a STORED column. `markSuccess()` writes
+ * `'healthy'` and never touches `last_probed_at`; a row can also be seeded by
+ * hand. So a `healthy` word can outlive — or entirely precede — any
+ * measurement, and the surface has no way to tell. Live proof, 2026-08-18:
+ * a fixture row with `health='healthy'` and `last_probed_at=NULL` rendered
+ * CONNECTED in green (`phase4/b4a-before-connections.png`).
+ *
+ * This function is the single place that demotion happens, so the API, the row
+ * chips and the account card cannot disagree about it.
+ *
+ * TWO RULES, AND THE ASYMMETRY IS DELIBERATE:
+ *
+ *  1. It only ever DOWNGRADES. `healthy` becomes `unknown` when unmeasured or
+ *     stale; `unknown` and `broken` pass through untouched. Promoting anything
+ *     here would be inventing confidence out of the absence of a measurement.
+ *
+ *  2. `broken` is NOT demoted to `unknown` when it has never been probed.
+ *     `unknown` is the weaker statement ("nobody knows"), and a row that says
+ *     "token expired 2026-06-03; not re-authenticated by choice" is operator
+ *     knowledge worth more than that. `broken` is also not a positive state, so
+ *     R57 has nothing to say about it.
+ *
+ * SELECTION IS UNAFFECTED. `rankAccounts()`/`pickAccount()` read the raw column
+ * via `toSelectable()`; this is a DISPLAY function called from `shape()` in
+ * routes/accounts.ts. A demotion here changes what Konrad is told, never which
+ * account serves a run.
+ *
+ * The staleness window is `DEFAULT_UNEXERCISED_MS` — the same 7 days after
+ * which `classifyCredential()` stops believing a `lastOkAt`. One number, one
+ * meaning: how long this system is willing to trust a measurement it did not
+ * just take.
+ */
+export function effectiveHealth(
+  rec: StoredHealthRecord,
+  opts: { now: number; staleAfterMs?: number },
+): EffectiveHealth {
+  const stored = rec.health;
+  const detail = rec.detail ?? "";
+
+  if (rec.lastProbedAt === null) {
+    if (stored === "healthy") {
+      return {
+        health: "unknown",
+        detail:
+          `never probed — the stored verdict "${detail || stored}" has no measurement behind it. ` +
+          `Press Probe now to find out.`,
+        probeAgeMs: null,
+        downgraded: true,
+        storedHealth: stored,
+      };
+    }
+    return { health: stored, detail, probeAgeMs: null, downgraded: false, storedHealth: stored };
+  }
+
+  const probeAgeMs = opts.now - rec.lastProbedAt;
+  const window = opts.staleAfterMs ?? DEFAULT_UNEXERCISED_MS;
+  if (stored === "healthy" && probeAgeMs > window) {
+    const days = Math.floor(probeAgeMs / 86_400_000);
+    return {
+      health: "unknown",
+      detail:
+        `last probed ${days} days ago — beyond the ${Math.floor(window / 86_400_000)}-day ` +
+        `confidence window, so "${detail || stored}" is no longer evidence. Press Probe now.`,
+      probeAgeMs,
+      downgraded: true,
+      storedHealth: stored,
+    };
+  }
+
+  return { health: stored, detail, probeAgeMs, downgraded: false, storedHealth: stored };
+}
+
+/* ------------------------------------------------------------------------- *
  * Error classification — the safety-critical function.
  * ------------------------------------------------------------------------- */
 

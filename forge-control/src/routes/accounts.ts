@@ -23,6 +23,7 @@ import {
   ping,
 } from "../db/claude-accounts.ts";
 import { probeAll, probeAccount, readCredentialSnapshot } from "../lib/accounts.ts";
+import { effectiveHealth, rankAccounts } from "../lib/account-health.ts";
 
 const r = new Hono();
 
@@ -39,16 +40,56 @@ function dbError(e: unknown) {
   };
 }
 
+/**
+ * One registry row, as the surface sees it.
+ *
+ * ── `health` HERE IS THE EFFECTIVE HEALTH, NOT THE RAW COLUMN (R45, R57) ──
+ * `claude_accounts.health` is stored, and `markSuccess()` writes `'healthy'`
+ * without ever touching `last_probed_at`, so the column can say `healthy` about
+ * an account nothing has ever measured. Applying `effectiveHealth()` HERE, at
+ * the one place the registry becomes JSON, means every consumer — the row
+ * chips, the account card, `settings/connections.ts`, anything written later —
+ * inherits the invariant instead of each re-deriving it and one of them getting
+ * it wrong. That is exactly what happened before this round: a fixture row with
+ * `health='healthy'` and `last_probed_at=NULL` rendered CONNECTED in green
+ * (`docs/plan/artifacts/os-usable-for-work/phase4/b4a-before-connections.png`).
+ *
+ * The raw column is still published as `stored_health`, and `health_downgraded`
+ * says whether the two differ, so nothing is hidden — a demotion is visible AND
+ * explained rather than silently swapped.
+ *
+ * `measured_at` is this server's clock at the moment of the response. The UI
+ * renders probe age against it rather than the browser's clock, which may be
+ * minutes off and would then invent or erase staleness.
+ */
 function shape(a: Awaited<ReturnType<typeof listAccounts>>[number]) {
+  const eff = effectiveHealth(
+    {
+      health: a.health,
+      detail: a.healthDetail,
+      lastProbedAt: a.lastProbedAt ? a.lastProbedAt.getTime() : null,
+    },
+    { now: Date.now() },
+  );
   return {
     slug: a.slug,
     config_dir: a.configDir,
+    // CONFIGURATION, not a probe result. The cheap-tier probe reads the
+    // credential file for PRESENCE only (lib/accounts.ts:42-80) and never
+    // learns an address, so this value was typed in via PATCH login_email. The
+    // surface must label it as configured; presenting it as verified is the
+    // same lie in a smaller font (02-architecture.md §3).
     login_email: a.loginEmail,
+    login_email_source: "configuration" as const,
     plan_label: a.planLabel,
     priority: a.priority,
     enabled: a.enabled,
-    health: a.health,
-    health_detail: a.healthDetail,
+    health: eff.health,
+    health_detail: eff.detail,
+    stored_health: eff.storedHealth,
+    health_downgraded: eff.downgraded,
+    probe_age_ms: eff.probeAgeMs,
+    measured_at: new Date().toISOString(),
     has_refresh: a.hasRefresh,
     // Exposed for display only. This is an ~8h token that the refresh token
     // renews continuously; it is NOT a health signal and the UI must not
@@ -68,17 +109,37 @@ function shape(a: Awaited<ReturnType<typeof listAccounts>>[number]) {
 r.get("/", async (c) => {
   try {
     const accounts = await listAccounts();
-    const usable = accounts.filter((a) => a.enabled && a.health !== "broken");
+    const shaped = accounts.map(shape);
+    // Counts are derived from the SHAPED rows so the summary and the rows
+    // cannot disagree: a demoted `healthy` must be counted as unknown, or the
+    // header says "2 usable of 3" beside a row that reads UNKNOWN.
+    const usable = shaped.filter((a) => a.enabled && a.health !== "broken");
+    // `serving` is the account that will ACTUALLY serve the next run, so it is
+    // computed by the same ranking the executor uses (rankAccounts → best
+    // health, then priority, then slug) against the RAW column, not by taking
+    // the first row of a priority-ordered list. Those differ whenever a
+    // lower-priority account is healthy and a higher-priority one is not.
+    const serving =
+      rankAccounts(
+        accounts.map((a) => ({
+          slug: a.slug,
+          configDir: a.configDir,
+          enabled: a.enabled,
+          health: a.health,
+          priority: a.priority,
+          healthDetail: a.healthDetail,
+        })),
+      )[0]?.slug ?? null;
     return c.json({
-      accounts: accounts.map(shape),
+      accounts: shaped,
       summary: {
-        total: accounts.length,
-        enabled: accounts.filter((a) => a.enabled).length,
-        healthy: accounts.filter((a) => a.health === "healthy").length,
-        unknown: accounts.filter((a) => a.health === "unknown").length,
-        broken: accounts.filter((a) => a.health === "broken").length,
+        total: shaped.length,
+        enabled: shaped.filter((a) => a.enabled).length,
+        healthy: shaped.filter((a) => a.health === "healthy").length,
+        unknown: shaped.filter((a) => a.health === "unknown").length,
+        broken: shaped.filter((a) => a.health === "broken").length,
         usable: usable.length,
-        serving: usable[0]?.slug ?? null,
+        serving,
       },
       policy: {
         mode: "health-failover-only",
@@ -177,11 +238,43 @@ r.post("/", async (c) => {
       planLabel: body.plan_label ?? null,
       priority: body.priority,
     });
-    // Probe immediately so a newly added account never sits at a bare
-    // "unknown" with no explanation of why.
-    await probeAccount(created).catch(() => {});
+
+    // R46's fail condition is "accepts a directory without probing it", and
+    // until this round that is exactly what happened on the unhappy path: the
+    // probe ran behind `.catch(() => {})`, so a probe that threw left the row
+    // at the bare INSERT default — health `unknown`, detail "created — awaiting
+    // first probe" — with the registration reported as a clean 201. A silently
+    // swallowed probe is indistinguishable from an account that has simply not
+    // been probed yet, which is precisely the confusion this phase exists to
+    // end (N1: no catch returning a default).
+    //
+    // So the probe failure is now REPORTED, verbatim, and the caller is told
+    // the row exists but is unverified. 201 remains correct — the registration
+    // DID happen and the row must not be silently rolled back — and
+    // `probe_error` is how the UI knows not to present it as a fresh reading.
+    let probeError: string | null = null;
+    try {
+      await probeAccount(created);
+    } catch (e) {
+      probeError = e instanceof Error ? e.message : String(e);
+      console.error(`[accounts] registered "${slug}" but the probe failed: ${probeError}`);
+    }
+
     const fresh = await getAccount(slug);
-    return c.json(shape(fresh ?? created), 201);
+    if (!fresh) {
+      // The row was inserted a moment ago; if it cannot be read back, the
+      // registry is lying to us and a 201 would be a fabrication.
+      return c.json(
+        {
+          error: `registered "${slug}" but it could not be read back from the registry`,
+          detail:
+            "createAccount() returned a row and the immediately following getAccount() found none. " +
+            "The registry is inconsistent; do not trust the account list until this is explained.",
+        },
+        500,
+      );
+    }
+    return c.json({ ...shape(fresh), probe_error: probeError }, 201);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (/duplicate key/i.test(msg)) {
