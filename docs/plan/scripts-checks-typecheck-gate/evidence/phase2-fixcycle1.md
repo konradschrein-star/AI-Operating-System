@@ -387,3 +387,21 @@ ok: no suppressions
 === R30 — nothing under forge-control-web/app or forge-control/src ===
 ok: no app files
 ```
+
+## Provenance of the transcripts above
+
+Every transcript in this document was produced by
+
+```
+gate    sha256 cec1850f984b4a283ebba7a117ccb14c09776b6bd507b7156282672e2ba11dac
+profile sha256 837f087c97c14091f01e8da4c4096ad75493e19b588a4f44fa96f433f42c71f8
+```
+
+which are the committed files, byte for byte — with two exceptions, both
+stated where they appear: the `.d.ts` / subdirectory / dotfile / `.cts` /
+`@ts-nocheck` combined probe and the fake-`node` and degraded-profile probes
+ran against an intermediate revision of the gate whose only later changes were
+(a) dropping the `-type` filter from the second opinion and (b) the wording of
+the hostile-filename paragraph. Neither touches any behaviour those probes
+exercised. The baseline, NF2, I6 and hostile-filename runs are all on the
+committed sha256 above.
