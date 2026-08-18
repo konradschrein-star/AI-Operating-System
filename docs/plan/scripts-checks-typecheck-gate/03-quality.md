@@ -177,7 +177,10 @@ bash scripts/checks/check-instrument-typecheck.sh ; echo "exit=$?"
 # expect: exit 1, 42 subjects found, 42 compiled, 6 failures — phase 3 has not run yet
 #         and, since round 2 fix cycle 1: uncovered 0, suppressions 0, and a
 #         SELF-TEST block whose canaries all say ok before any subject runs
-#         (FOUR canaries since round 3 — the fourth is the suppression scanner)
+#         (FIVE canaries since round 3 — the fifth is the suppression scanner,
+#          which must print `ok: the suppression scanner works — 5 comment
+#          shapes seen, 1 string decoy ignored`; a canary that is silent on
+#          success is a canary nobody notices has stopped singing)
 # the six red-team breaches, each re-planted and each now caught (round 2):
 #   .d.ts / subdirectory / dotfile / .cts / @ts-nocheck — see
 #   evidence/phase2-fixcycle1.md for the transcripts and the exact commands
@@ -189,6 +192,9 @@ bash scripts/checks/check-instrument-typecheck.sh ; echo "exit=$?"
 #   refuse, naming the file AND the symlink); and the §7 extension edit
 #   `SUBJECT_GLOBS += scripts/*.ts` (must enumerate 44 and compile them, not
 #   wedge on a doubled `find` count)
+# round 4 re-measured all four INDEPENDENTLY of the process that wrote them,
+#   including a 15-probe cross-tabulation of the scanner against the compiler
+#   (0 disagreements, both directions) — evidence/phase2-fixcycle2.md
 git status --porcelain                      # empty (NF3)
 ls /tmp | wc -l                             # before/after: no leaked temp dirs
 bash scripts/checks/check-instrument-typecheck.sh > /tmp/a 2>&1; bash scripts/checks/check-instrument-typecheck.sh > /tmp/b 2>&1

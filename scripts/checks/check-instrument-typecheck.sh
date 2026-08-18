@@ -117,7 +117,7 @@
 #      way an approximation cannot be: THE COMPILER'S OWN PARSER decides.
 #      `ts.createSourceFile` is asked for `commentDirectives` (what tsc honours
 #      as `@ts-ignore`/`@ts-expect-error`, in comment position only) and
-#      `checkJsDirective` (`@ts-nocheck`). Step 9b's fourth canary makes that
+#      `checkJsDirective` (`@ts-nocheck`). Step 9c's fifth canary makes that
 #      parser prove itself on all five shapes plus a string-literal decoy
 #      before any subject is scanned, because a scanner that silently returns
 #      nothing is exactly the failure this replaced.
@@ -994,7 +994,7 @@ fi
 echo "  ok: noEmit is in effect                   — 0 files emitted beside the canaries"
 
 # ---------------------------------------------------------------------------
-# 9c. THE FOURTH CANARY — THE SUPPRESSION SCANNER MUST PROVE ITSELF.
+# 9c. THE FIFTH CANARY — THE SUPPRESSION SCANNER MUST PROVE ITSELF.
 #
 #     Round 2 scanned for suppression directives with a grep that APPROXIMATED
 #     tsc's two directive regexes, and the approximation leaked in both
