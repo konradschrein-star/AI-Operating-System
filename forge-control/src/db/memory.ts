@@ -23,6 +23,17 @@ import {
   type NoteKind,
   type RankExplain,
 } from "../lib/memory-ranking.ts";
+import {
+  reconcile,
+  countByReason,
+  folderCounts,
+  folderRule,
+  EXCLUDED_EXTENSION,
+  type IndexHealth,
+  type DiskFile,
+  type MemoryCounts,
+  type ReconcileInput,
+} from "../lib/index-health.ts";
 
 const { Pool } = pg;
 
@@ -343,29 +354,233 @@ export async function listMemoryPage(
   return { notes, hasMore };
 }
 
-/** True per-category totals, scoped to one source (or both if omitted) and
- *  independent of the paged list above — cheap (topic+tags only, no
- *  embeddings preview join) so the category rail's counts stay correct no
- *  matter how far the user has paged. */
-export async function noteCounts(
-  source?: NoteSource,
-): Promise<Record<NoteCategory | "all", number>> {
-  const where = sourceWhere(source);
-  const r = await hcp.query<{ topic: string; tags: string[] }>(
-    `SELECT topic, tags FROM knowledge_note WHERE ${where.value !== null ? where.clause.replace("$SOURCE", "$1") : where.clause}`,
-    where.value !== null ? [where.value] : [],
+/* ============================================================================
+ * Index health — the three-way reconciliation (02-architecture.md §1.4,
+ * R12–R14). Pure classification lives in lib/index-health.ts; this half does
+ * the I/O and NOTHING ELSE, so the rules stay testable without a database.
+ *
+ * NOTE ON THE FAMOUS "67-FILE GAP": it never existed. It was manufactured by
+ * comparing 326 (a `find` over the vault that INCLUDED the 42 `.md` files in
+ * `.trash`) against 259 (a `content_forge.knowledge_embeddings` figure). The
+ * scan below excludes dot-directory segments exactly as syncVaultNotes() does
+ * — that exclusion is what makes the honest number 284 rather than 326 — and
+ * `.trash` is reported separately as `disk.excluded_trash`, never mixed into
+ * the total.
+ *
+ * Every query here propagates its error. There is no `?? 0`, no `|| []` and no
+ * catch that returns a default (R20/N1): a partial reconciliation reads as a
+ * real gap and sends someone hunting a phantom for an afternoon, which is
+ * precisely the failure this endpoint exists to end.
+ * ========================================================================== */
+
+interface IndexMeasurement {
+  input: ReconcileInput;
+  health: IndexHealth;
+  /** `vault_path` of the non-`vault-sync` rows — a self-declared label rather
+   *  than a path on disk (see NoteSource), kept for the folder rail. */
+  agentPaths: string[];
+}
+
+/** Walk the vault, both registries and the embeddings store once, and fold the
+ *  result. Shared by indexHealth() and noteCounts() so a single request never
+ *  measures the same vault twice and never reports two different totals. */
+async function measureIndex(): Promise<IndexMeasurement> {
+  const measured_at = new Date().toISOString();
+
+  // --- hcp.knowledge_note: one pass, split by author. vault_path carries a
+  // UNIQUE constraint (see syncVaultNotes' ON CONFLICT), so path-set size and
+  // row count are the same number by construction.
+  const reg = await hcp.query<{ vault_path: string; created_by: string }>(
+    `SELECT vault_path, created_by FROM knowledge_note`,
   );
-  const out: Record<NoteCategory | "all", number> = {
-    all: r.rows.length,
-    rule: 0,
-    pref: 0,
-    fact: 0,
-    person: 0,
-    project: 0,
-    note: 0,
+  const vaultSyncPaths: string[] = [];
+  const agentPaths: string[] = [];
+  for (const row of reg.rows) {
+    if (row.created_by === VAULT_SYNC_AUTHOR) vaultSyncPaths.push(row.vault_path);
+    else agentPaths.push(row.vault_path);
+  }
+
+  // --- content_forge.knowledge_embeddings, scoped to real vault notes.
+  // indexAgentMessages() also writes chunks under `worker-task://…` and
+  // `agent-message://…` pseudo-URIs; counting those as "embedded vault files"
+  // is how an index reports coverage it does not have.
+  const embPaths = await cf.query<{ source_path: string }>(
+    `SELECT DISTINCT source_path
+       FROM knowledge_embeddings
+       WHERE ${VAULT_SOURCE_PATH_SQL("source_path")}`,
+  );
+  const embChunks = await cf.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+       FROM knowledge_embeddings
+       WHERE ${VAULT_SOURCE_PATH_SQL("source_path")}`,
+  );
+  const chunkCountRaw = embChunks.rows[0]?.count;
+  if (chunkCountRaw === undefined) {
+    throw new Error(
+      "index-health: COUNT(*) over content_forge.knowledge_embeddings returned " +
+        "no row — the query shape changed and a chunk total cannot be reported",
+    );
+  }
+  const embeddingSet = new Set(embPaths.rows.map((r) => r.source_path));
+
+  // --- disk. Same walk and the same dot-segment rule as syncVaultNotes(), so
+  // `md_files` and `vault_sync_rows` are comparable numbers rather than two
+  // different definitions of "the vault".
+  const entries = await readdir(VAULT_DIR, {
+    withFileTypes: true,
+    recursive: true,
+  });
+  const relPaths: string[] = [];
+  let excludedTrash = 0;
+  const excludedOtherDot: string[] = [];
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.toLowerCase().endsWith(".md")) continue;
+    // Node >=20.12 exposes parentPath; older releases used `path`.
+    const parentAbs =
+      (e as unknown as { parentPath?: string; path?: string }).parentPath ??
+      (e as unknown as { path?: string }).path ??
+      VAULT_DIR;
+    const abs = path.join(parentAbs, e.name);
+    const rel = path.relative(VAULT_DIR, abs).split(path.sep).join("/");
+    const segments = rel.split("/");
+    if (segments.some((seg) => seg.startsWith("."))) {
+      if (segments.includes(".trash")) excludedTrash++;
+      else excludedOtherDot.push(rel);
+      continue;
+    }
+    relPaths.push(rel);
+  }
+  if (excludedOtherDot.length > 0) {
+    // The envelope shape (02-architecture.md §1.4) has exactly one field for
+    // dot-excluded files and it names `.trash`. Anything else excluded is
+    // therefore uncounted, so it is named in the log rather than vanishing.
+    console.warn(
+      `[index-health] ${excludedOtherDot.length} .md file(s) excluded from a ` +
+        `dot-directory other than .trash and reported in no field: ` +
+        excludedOtherDot.slice(0, 10).join(", "),
+    );
+  }
+
+  // Read the body only for the files that need the frontmatter_only decision:
+  // on disk, absent from the embeddings index, non-empty, not a drawing. That
+  // is a couple of dozen files, not 284 — the rest get `hasBody: null` and
+  // reconcile() throws rather than guessing if it ever needs one.
+  const files: DiskFile[] = [];
+  for (const rel of relPaths) {
+    const abs = path.join(VAULT_DIR, rel);
+    const st = await stat(abs);
+    const bytes = st.size;
+    const needsBody =
+      !embeddingSet.has(rel) &&
+      bytes > 0 &&
+      !rel.toLowerCase().endsWith(EXCLUDED_EXTENSION);
+    const hasBody = needsBody
+      ? extractFrontmatter(await readFile(abs, "utf8")).body.trim().length > 0
+      : null;
+    files.push({ path: rel, bytes, hasBody });
+  }
+
+  const input: ReconcileInput = {
+    measured_at,
+    disk: { files, excluded_trash: excludedTrash },
+    registry: { vault_sync_paths: vaultSyncPaths, agent_rows: agentPaths.length },
+    embeddings: {
+      paths: [...embeddingSet],
+      chunks: Number(chunkCountRaw),
+    },
   };
-  for (const row of r.rows) out[inferCategory(row.topic, row.tags ?? [])]++;
-  return out;
+  return { input, health: reconcile(input), agentPaths };
+}
+
+/** GET /api/memory/index-health. Throws on any store failure — never a
+ *  partial or zeroed payload (R20). */
+export async function indexHealth(): Promise<IndexHealth> {
+  return (await measureIndex()).health;
+}
+
+/**
+ * Delete embedding rows for the exact `source_path`s handed in — nothing else,
+ * ever. Called from exactly ONE place: `POST /api/memory/index-health/prune`,
+ * behind an explicit `{"confirm": true}`. Never from a tick, never on read,
+ * never at startup (R14): an index that deletes its own rows on a schedule is
+ * one bad mount away from deleting all of them.
+ *
+ * `pruned` = the distinct source_paths that actually had rows.
+ * `count`   = embedding CHUNK rows removed (a file has many).
+ */
+export async function pruneStaleEmbeddingRows(
+  paths: string[],
+): Promise<{ pruned: string[]; count: number }> {
+  if (paths.length === 0) return { pruned: [], count: 0 };
+  const r = await cf.query<{ source_path: string }>(
+    `DELETE FROM knowledge_embeddings
+       WHERE source_path = ANY($1::text[])
+       RETURNING source_path`,
+    [paths],
+  );
+  return {
+    pruned: [...new Set(r.rows.map((row) => row.source_path))].sort(),
+    count: r.rows.length,
+  };
+}
+
+/**
+ * GET /api/memory/counts — the labelled envelope of 02-architecture.md §1.5
+ * (R15–R17). Every top-level integer name states its unit and its source.
+ *
+ * The bare `all: 482` is GONE and is not replaced by a union: R15 requires
+ * every top-level integer key to match /^(vault|agent|embedded|excluded|stale)_/
+ * and `notes_all_sources` would violate it. The vault/agent split (284 real
+ * files against 198 worker briefs) is the honest presentation.
+ *
+ * The five category chips are gone too. `inferCategory()` matches frontmatter
+ * tags named rule/pref/person/project/fact; the vault's real tags are
+ * `recurring`, `wasted-lease`, `inbox_triage`, `gmail`, `mcp`, `oauth-scope`,
+ * and only 65 of 284 notes carry any tag at all — so five of six chips were
+ * structurally incapable of a non-zero number, and a filter that always
+ * returns zero teaches the operator his vault is empty. `folder_counts`
+ * replaces them, with `folder_rule` stating the derivation in the response.
+ * `inferCategory()` itself stays: listMemoryPage() still returns a per-note
+ * `category` the web list uses. Only this rail loses it.
+ *
+ * `source` scopes `folder_counts` only — the totals above it are absolute and
+ * already labelled by source, so they never move.
+ */
+export async function noteCounts(source?: NoteSource): Promise<MemoryCounts> {
+  const { input, health, agentPaths } = await measureIndex();
+
+  const scope: MemoryCounts["source"] = source ?? "all";
+  const folderPaths =
+    scope === "vault"
+      ? input.registry.vault_sync_paths
+      : scope === "agent"
+        ? agentPaths
+        : [...input.registry.vault_sync_paths, ...agentPaths];
+  const scopeLabel =
+    scope === "vault"
+      ? "hcp.knowledge_note rows where created_by = 'vault-sync'"
+      : scope === "agent"
+        ? "hcp.knowledge_note rows where created_by <> 'vault-sync' (worker " +
+          "briefs — vault_path is a self-declared label, not a path on disk)"
+        : "all hcp.knowledge_note rows (vault-sync files and worker briefs)";
+
+  return {
+    vault_files_on_disk: health.disk.md_files,
+    vault_notes_indexed: health.registry.vault_sync_rows,
+    agent_notes: health.registry.agent_rows,
+    embedded_files: health.embeddings.files,
+    embedded_chunks: health.embeddings.chunks,
+    excluded: {
+      excalidraw: countByReason(health, "excluded_extension"),
+      empty: countByReason(health, "empty_file"),
+      frontmatter_only: countByReason(health, "frontmatter_only"),
+    },
+    stale_embedding_rows: countByReason(health, "stale_row_file_missing"),
+    measured_at: health.measured_at,
+    source: scope,
+    folder_counts: folderCounts(folderPaths),
+    folder_rule: folderRule(scopeLabel),
+  };
 }
 
 async function notesWithPreview(
