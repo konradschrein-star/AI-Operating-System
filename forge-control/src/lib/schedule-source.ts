@@ -29,17 +29,45 @@
  * connection one stray import away from the unit suite, and NF3 says no test
  * opens a database connection.
  *
- * NOT EXERCISED IN PHASE 7. Written, typechecked and left unrun: live reads
- * belong to phase 8. The DSN comes from `DATABASE_URL` and from nowhere else —
- * never a hardcoded fallback (unlike `db/projects.ts`'s `CONTENT_URL`, which is
- * that module's own decision and not one an instrument may inherit), and never
- * echoed into output.
+ * WRITTEN IN PHASE 7, FIRST EXECUTED IN ROUND 810, FIXED IN ROUND 811. The
+ * paragraph that used to stand here said "written, typechecked and left unrun:
+ * live reads belong to phase 8", and round 215 left the SQL untested as "phase
+ * 8's business". Round 810's dry run was this module's first execution and it
+ * died on EVERY project, before reading a row, with `operator does not exist:
+ * uuid = text`. The cause is stated at `RUNS_SQL` below. Two lessons are now
+ * load-bearing rather than remembered:
+ *
+ *   1. `tsc` cannot see a parameter-type conflict. The query is a string
+ *      literal; the type resolution that fails happens inside Postgres, at
+ *      parse/analyze time, before a row is touched. Only EXECUTING the
+ *      statement can catch it — which is why the three statements are exported
+ *      below and `schedule-source.test.ts` §4 PREPAREs them against a throwaway
+ *      cluster, and keeps the UNCAST form as a permanent negative control.
+ *   2. "Left unrun, it is the next phase's business" is how an untested path
+ *      reaches the one task that has no worktree fallback.
+ *
+ * The DSN comes from `DATABASE_URL` and from nowhere else — never a hardcoded
+ * fallback (unlike `db/projects.ts`'s `CONTENT_URL`, which is that module's own
+ * decision and not one an instrument may inherit), and never echoed into output.
  *
  * QUERY SHAPES are the scout's, `docs/research/round-100-e7548096.md` §2 and §4:
  * a project's tasks are `project_tasks WHERE project_id = $1`; a task's run is
  * `project_tasks.run_id`; and the project's other runs — the sub-agent census D1
  * excludes, and any earlier run of a retried task — are found by
  * `runs.metadata->>'project_id' = $1`.
+ *
+ * THE STATEMENTS ARE EXPORTED CONSTANTS, not literals inlined at the call site.
+ * A test that retypes the SQL tests a copy of the SQL; the copy and the shipped
+ * statement then drift, and the drift is invisible precisely in the case the
+ * test exists for. `readProjectRows()` and `schedule-source.test.ts` name the
+ * same three strings.
+ *
+ * THIS MODULE IS HALF OF THE MEASUREMENT INSTRUMENT'S IDENTITY. `R60`'s
+ * `instrument-sha256`, printed by `scripts/measure-schedule.ts`, hashes a
+ * manifest of BOTH files (round 811; before it, only the script). Changing the
+ * bytes below moves that digest and invalidates every header pasted in
+ * `docs/plan/engine-task-graph/`; `check-instrument-identity.py` enforces it and
+ * will name this file when it does.
  */
 
 import pg from "pg";
@@ -77,6 +105,63 @@ export interface ProjectRows {
   hasDependsOnColumn: boolean;
 }
 
+/* -------------------------------------------------------------------------- *
+ * The three statements, exported so the test PREPAREs the bytes that ship
+ * -------------------------------------------------------------------------- */
+
+/**
+ * R60's schema question, asked of `information_schema` rather than inferred
+ * from the rows. Binds no parameter, so it has no parameter type to resolve.
+ */
+export const DEPENDS_ON_COLUMN_SQL = `SELECT column_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'project_tasks'
+          AND column_name = 'depends_on'`;
+
+/**
+ * `$1` appears once, against a `uuid` column, so Postgres infers `uuid` and
+ * there is nothing to disambiguate. Templated on the column list because
+ * `depends_on` exists only after migration 0040 — the list is built from a
+ * closed set of literals here, never from caller input.
+ */
+export function tasksSql(hasDependsOnColumn: boolean): string {
+  const columns = hasDependsOnColumn
+    ? "id, project_id, round, role, title, status, created_at, run_id, depends_on"
+    : "id, project_id, round, role, title, status, created_at, run_id";
+  return `SELECT ${columns} FROM project_tasks WHERE project_id = $1 ORDER BY round, created_at`;
+}
+
+/**
+ * THE STATEMENT ROUND 810 DIED ON, and the six characters that fix it.
+ *
+ * `$1` appears TWICE here, in two contexts that force two different types:
+ *
+ *   metadata->>'project_id' = $1   — `->>` yields `text`, so this arm forces `$1` to `text`
+ *   project_tasks.project_id = $1  — a `uuid` column, so this arm forces `$1` to `uuid`
+ *
+ * Postgres types a parameter ONCE per statement. Sent with no declared type (as
+ * node-postgres sends it), the first arm resolves `$1` to `text` and the second
+ * then has no `uuid = text` operator to use, so the statement fails at
+ * parse/analyze time — on EVERY project, with or without `--exclude-task`,
+ * before a row is read:
+ *
+ *     error: operator does not exist: uuid = text
+ *     HINT:  No operator matches the given name and argument types.
+ *
+ * `$1::uuid` on the uuid arm resolves it: `$1` stays `text`, and the cast is
+ * applied to that text before the comparison. The cast goes on the uuid arm and
+ * NOT on the json arm because `->>` cannot be made to yield a uuid without
+ * casting the column expression on every row, which would also discard the
+ * index. A malformed project id now fails loudly at the cast (`22P02 invalid
+ * input syntax for type uuid`) rather than silently matching nothing —
+ * asserted in `schedule-source.test.ts` §4.
+ */
+export const RUNS_SQL = `SELECT id, parent_run_id, status, created_at, started_at, completed_at, updated_at, archived, wake_after
+         FROM runs
+        WHERE metadata->>'project_id' = $1
+           OR id IN (SELECT run_id FROM project_tasks WHERE project_id = $1::uuid AND run_id IS NOT NULL)
+        ORDER BY created_at`;
+
 export async function readProjectRows(projectId: string): Promise<ProjectRows> {
   const dsn = process.env.DATABASE_URL;
   if (dsn === undefined || dsn === "") {
@@ -88,30 +173,14 @@ export async function readProjectRows(projectId: string): Promise<ProjectRows> {
 
   const pool = new pg.Pool({ connectionString: dsn, max: 2, connectionTimeoutMillis: 5_000 });
   try {
-    const columns = await pool.query<{ column_name: string }>(
-      `SELECT column_name FROM information_schema.columns
-        WHERE table_schema = current_schema()
-          AND table_name = 'project_tasks'
-          AND column_name = 'depends_on'`,
-    );
+    const columns = await pool.query<{ column_name: string }>(DEPENDS_ON_COLUMN_SQL);
     const hasDependsOnColumn = columns.rows.length === 1;
 
-    const taskColumns = hasDependsOnColumn
-      ? "id, project_id, round, role, title, status, created_at, run_id, depends_on"
-      : "id, project_id, round, role, title, status, created_at, run_id";
-    const taskRows = await pool.query<Record<string, unknown>>(
-      `SELECT ${taskColumns} FROM project_tasks WHERE project_id = $1 ORDER BY round, created_at`,
-      [projectId],
-    );
+    const taskRows = await pool.query<Record<string, unknown>>(tasksSql(hasDependsOnColumn), [
+      projectId,
+    ]);
 
-    const runRows = await pool.query<Record<string, unknown>>(
-      `SELECT id, parent_run_id, status, created_at, started_at, completed_at, updated_at, archived, wake_after
-         FROM runs
-        WHERE metadata->>'project_id' = $1
-           OR id IN (SELECT run_id FROM project_tasks WHERE project_id = $1 AND run_id IS NOT NULL)
-        ORDER BY created_at`,
-      [projectId],
-    );
+    const runRows = await pool.query<Record<string, unknown>>(RUNS_SQL, [projectId]);
 
     return {
       tasks: taskRows.rows.map((row, i) => taskRow(row, i, hasDependsOnColumn, projectId)),

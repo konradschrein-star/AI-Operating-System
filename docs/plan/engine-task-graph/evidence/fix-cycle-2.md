@@ -271,6 +271,9 @@ does not repeat it.
 
 ## Gate run, at HEAD of this commit
 
+Every instrument identity in the block below is retired: `[historical instrument]`
+(round 802 and then round 811 each moved it; this is the value that ran here.)
+
 ```
 $ cd forge-control && npx tsc --noEmit                     → exit 0, no diagnostics
 $ npx tsx --test src/lib/*.test.ts

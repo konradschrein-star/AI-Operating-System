@@ -200,21 +200,38 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
 6. **Silent-fallback audit (NF1).** List every `catch`, `?? default`,
    `|| fallback` and `.catch(() => {})` the phase added, and state for each why
    it is not a swallowed error.
-7. **Instrument-identity check (round 217, round 216's finding 1).**
+7. **Instrument-identity check (round 217, round 216's finding 1;
+   **the one-file clause retired round 811**).**
    `check-instrument-identity.py` exits 0. It asserts that every
-   `instrument-sha256:` header pasted anywhere in this corpus equals
-   `sha256sum scripts/measure-schedule.ts` on disk, and that no retired identity
-   is quoted without the literal marker `[historical instrument]` on the line.
+   `instrument-sha256:` header pasted anywhere in this corpus equals the
+   **composite of BOTH instrument files** on disk, that every pasted
+   `instrument-files:` manifest line equals the current digest of the half it
+   names, and that no retired identity — composite or per-file — is quoted
+   without the literal marker `[historical instrument]` on the line.
+   *Re-derive the composite with:*
+   `sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum`
+   **What was retired and why it had to be.** This clause said the header equals
+   `sha256sum scripts/measure-schedule.ts` — ONE file. That command no longer
+   produces the header's value, so the clause is not merely weaker, it is
+   **unsatisfiable**, and standing rule 4 forbids leaving it standing beside the
+   change. It was also wrong before it was unsatisfiable: `schedule-source.ts`
+   holds every line of the instrument's SQL and its whole `pg` lifecycle, and
+   could be rewritten without this gate moving a bit. Round 810 proved that in
+   the field — its patched dry run printed the shipped instrument's identity
+   unchanged, which is round 213's *"a sha naming the tree rather than the
+   build"* one file over. Retired here, in the same commit as the checker that
+   enforces the replacement, as `01-requirements.md` §H R62 and `04-phases.md`
+   §12 E-3.
    **Why it is a universal gate and not a phase-7 one:** round 215 edited the
    script from a phase-3 fix cycle, which moved the identity under eight pasted
    headers, a section heading, a ledger row and a `sha256sum` block the document
    offers as an *independent* re-derivation — and two reviewers read past it,
    because agreeing with a document is not the same as agreeing with the disk.
-   Any phase can move the instrument, so every phase checks it.
-   It carries its own positive controls: fewer than 8 headers found, or none
-   found in `evidence/baseline-8ea0cc08.md`, is a **failure** and not a clean
-   run, so a glob that matches nothing cannot certify itself
-   (`00-vision.md` §7 rule 2).
+   Any phase can move either half of the instrument, so every phase checks it.
+   It carries its own positive controls: fewer than 8 live headers found, fewer
+   than 8 manifest lines found, or no header found in
+   `evidence/baseline-8ea0cc08.md`, is a **failure** and not a clean run, so a
+   glob that matches nothing cannot certify itself (`00-vision.md` §7 rule 2).
 
 8. **R20 census (round 242, on round 223's recommendation).**
    `scripts/checks/check-r20-census.py` exits 0. It re-measures every `round`
@@ -716,11 +733,14 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
   migration either way.
 - **Instrument identity, before the append.**
   `python3 docs/plan/engine-task-graph/check-instrument-identity.py` must exit 0
-  *before* part 2 is appended to `evidence/baseline-8ea0cc08.md`. If the
-  instrument has moved since round 217, part 1's seven commands are re-run and
-  their headers replaced **in the same commit** that appends part 2 — see
-  `04-phases.md` §12, E-3, and the re-run record in §1 of that file. A part 2
-  whose header disagrees with part 1's breaks R62's one-instrument guarantee.
+  *before* part 2 is appended to `evidence/baseline-8ea0cc08.md`. If **either
+  half** of the instrument has moved since part 1 was written, part 1's seven
+  commands are re-run and their headers replaced **in the same commit** that
+  appends part 2 — see `04-phases.md` §12, E-3, and the re-run record in §1 of
+  that file. A part 2 whose header disagrees with part 1's breaks R62's
+  one-instrument guarantee. *Round 811 discharged this in advance: both halves
+  moved, and part 1 was re-run then rather than deferred to the append, because
+  deferring would have left this gate red across the intervening rounds.*
 - **R31 must not reach production ahead of R47–R53.** R31 (`strict_write_sets`
   → a `builder`/`tester` task with no `write_set` is a `400`) is enforced from
   phase 3; the behaviour that satisfies it — planner, architect and builder

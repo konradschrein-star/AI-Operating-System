@@ -58,6 +58,12 @@ than trust that it was:**
 **The surviving formulation it now carries** (round 217's, from R62's body): *every
 header pasted in that file names the same `instrument-sha256`, and that value
 equals `sha256sum scripts/measure-schedule.ts` on the commit it ships in.*
+*(**Superseded round 811**, which widened the command to both instrument files —
+`sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts |
+sha256sum` — and retired the one-file form in the same commit as the checker.
+The reasoning below is unchanged and is what round 811 applied one file over:
+a clause that compares a header to the wrong bytes, or to only some of them, is
+satisfied by a header that is wrong.)*
 
 **Why the difference is not cosmetic.** "Its header names the script's
 self-computed sha" is satisfied by a header naming a sha **the script no longer
@@ -119,7 +125,7 @@ by an operator **reading**, and they were verified by me the same way:
 3. Diffed the two formulations **by hand, word for word**, and asked the one
    question that matters: *name a tree that satisfies the old wording and is
    wrong.* For R62's bullet: a file whose header names `f6828a68…` while the   [historical instrument]
-   script on disk hashes to `6ec72b35…`. For R68: the same, plus a comparison
+   script on disk hashes to `6ec72b35…`. For R68: the same, plus a comparison   [historical instrument]
    table with an S3 column the baseline can never fill.
    **Both answers are concrete, and the first one came true during this task —
    see §7.**
@@ -363,6 +369,8 @@ behaviour was wrong in any of the three. What went wrong each time was the
 **`check-instrument-identity.py` exited 0 at the start of this task and exited 1
 an hour later, without my having touched an instrument.**
 
+Both identities in the block below are retired: `[historical instrument]`
+
 ```
 $ python3 docs/plan/engine-task-graph/check-instrument-identity.py      # at task start
 OK — 8 pasted header(s) across 1 file(s) name f6828a68…   [historical instrument]
@@ -522,6 +530,8 @@ check-corpus-map.py
 OK — R1..R71 and NF1..NF7 complete, all three statements of the map agree.
 exit=0
 ```
+
+Every identity in the block below is retired: `[historical instrument]`
 
 ```
 $ python3 docs/plan/engine-task-graph/check-instrument-identity.py

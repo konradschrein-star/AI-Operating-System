@@ -73,27 +73,39 @@ the measurement that motivated the project and they are not edited.
 That last line is the whole justification. The latency was not compute, not the
 spawn cap, not the model, not the account. It was an integer.
 
-### 2.2 The recomputation — phase 7, re-run at `instrument-sha256` `6ec72b35…`
+### 2.2 The recomputation — phase 7, re-run at `instrument-sha256` `fb5a6434…`
 
 Phase 7's acceptance criteria require the instrument to recompute §2.1 and, if
 the two disagree, **the script wins and this section is corrected in the same
 commit, with the discrepancy named**. It disagrees in exactly one cell. The
 recomputation, every number of it printed by `scripts/measure-schedule.ts` at
 `instrument-sha256`
-`6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff` over the
+`fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b` over the
 phase-1 fixture `sha256=e0cb69a5…`, is committed in full at
 `evidence/baseline-8ea0cc08.md`. Its tables, in summary:
 
-*(This heading has now named three identities. It named `80ef1123…` `[historical instrument]` until round 217,
-then `f6828a68…` `[historical instrument]` until round 802. Round 215's
-phase-7 repairs and round 802's `--exclude-task` each edited the script, which
-moved its self-computed identity; each time, all seven commands were re-run under
-the new bytes and **every number below reproduced unchanged**, so what moved is
-the identity and not the measurement. Round 802 verified that by string
-containment BOTH before its edit and after it. The two re-run records are §1 of
-the baseline document, and `check-instrument-identity.py` fails the universal
-gate if this heading and the disk ever disagree — which is how round 802 found
-these two lines rather than a reviewer finding them later.)*
+*(This heading has now named four identities. It named `80ef1123…` `[historical instrument]` until round 217,
+then `f6828a68…` `[historical instrument]` until round 802, then `6ec72b35…` `[historical instrument]`
+until round 811. Round 215's phase-7 repairs, round 802's `--exclude-task`, and
+round 811's two-file manifest each moved the instrument's self-computed identity;
+each time, all seven commands were re-run under the new bytes and **every number
+below reproduced unchanged**, so what moved is the identity and not the
+measurement. Round 802 verified that by string containment BOTH before its edit
+and after it; round 811 verified it mechanically — its re-derivation script
+refuses to substitute a header unless every line below `mode:` reproduces byte
+for byte, and it printed that all ten did. The re-run records are §1 of the
+baseline document, and `check-instrument-identity.py` fails the universal gate if
+this heading and the disk ever disagree — which is how round 802 found these two
+lines rather than a reviewer finding them later.*
+
+***Round 811 changed what the identity COVERS, not just its value.** It is now
+the digest of a two-file manifest — `scripts/measure-schedule.ts` **and**
+`forge-control/src/lib/schedule-source.ts`, the half holding the SQL. Round 810
+patched the second half in a scratch tree and its dry run printed the shipped
+instrument's identity unchanged, which is the round-213 failure (a sha naming the
+tree rather than the build) one file over. Both the header and
+`check-instrument-identity.py` now hash both halves, and the checker names WHICH
+half moved.)*
 
 | round | §2.1 (03:04) | fixture rows created ≤ 03:04:00 | fixture, whole project |
 |---|---|---|---|

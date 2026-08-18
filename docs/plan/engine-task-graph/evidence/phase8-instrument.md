@@ -53,10 +53,13 @@ generator is pasted in §3.0 so a reviewer reproduces it in one command.
 ```
 $ cd forge-control && ./node_modules/.bin/tsx ../scripts/measure-schedule.ts full --fixture /tmp/d8-demo.json
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          e54be104ff35a12c9a6e080d9654d1ba1ab7d299 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              full
 source:            fixture:/tmp/d8-demo.json sha256=0eb6bc18266b6e4977762380ccf88bcde8a11a186464d7bebc4c64e128f62633
@@ -224,10 +227,13 @@ which every run below prints in its own header.
 $ cd forge-control && ./node_modules/.bin/tsx ../scripts/measure-schedule.ts full \
     --fixture /tmp/d8-demo.json --exclude-task 00000000-0000-4000-8000-00000000cfff
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          e54be104ff35a12c9a6e080d9654d1ba1ab7d299 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              full
 source:            fixture:/tmp/d8-demo.json sha256=0eb6bc18266b6e4977762380ccf88bcde8a11a186464d7bebc4c64e128f62633
@@ -320,8 +326,11 @@ exit=0
 `assertExclusionAgrees()` is unreachable in the shipped file, so it was proved by
 breaking the coupling it guards — three ways, each applied to a clean tree, run
 against the fixture, and restored by the harness's `finally`. `sha256sum
-scripts/measure-schedule.ts` reads `6ec72b35…` after all three, and §5.4's
-checker run is the independent confirmation.
+scripts/measure-schedule.ts` read `6ec72b35…` `[historical instrument]` after all
+three — the value that file had in round 802 — and §5.4's checker run is the
+independent confirmation. *(Round 811 retired that identity: the digest now
+covers both instrument files and the composite is `fb5a6434…`. The restoration
+claim above is unaffected — it is a statement about round 802's tree.)*
 
 **W1 — the wrapper stops passing the ids to `computeSchedule()`.** The round
 table excludes; D6 does not. This is the brief's named hazard, verbatim.
@@ -523,11 +532,11 @@ rather than reporting seven silent passes.
 ### 5.2 What moved: three fields, on all seven runs, and nothing else
 
 `diff` of the pre-edit capture against the post-edit capture, per run — identical
-on all seven:
+on all seven. Both identities in it are retired: `[historical instrument]`
 
 ```
 2c2
-< instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2   [historical instrument]
+< instrument-sha256: f6828a684e5ffc39361d061097ef4f0097ad010f289a9d177907487e47d5bac2
 ---
 > instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
 4c4
@@ -563,7 +572,8 @@ marker to make the paste look tidier is the instrument lie this file catalogues.
 - **§5(3)'s `sha256sum` block re-EXECUTED, not re-typed.** Round 216 found that
   exact block naming bytes the disk no longer had, and thirteen further places
   where a `sha256sum` had been pasted rather than run. It was executed from the
-  repo root after the final edit to the instrument:
+  repo root after the final edit to the instrument. The block round 802 executed
+  is preserved below; every digest in it is retired: `[historical instrument]`
 
 ```
 $ sha256sum scripts/measure-schedule.ts forge-control/src/lib/fixtures/replay-operator-visibility.json
@@ -573,12 +583,16 @@ e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7  forge-control/
 
   The fixture hash is **unchanged** — `e0cb69a5…`, the value the capture record
   recorded before this instrument existed — which is the independent statement
-  that the tables reproduce because the input did not move.
-- **§7's digit ledger** gains a row for `6ec72b35…`/`3dd39b4…` and demotes the
+  that the tables reproduce because the input did not move. *(Round 811 re-ran
+  that block in `baseline-8ea0cc08.md` §5(3) under the two-file manifest, where
+  it now names `39dee069…`, `c00fd096…` and the composite `fb5a6434…`. This copy
+  is round 802's record and is left as round 802 printed it.)*
+- **§7's digit ledger** gains a row for `6ec72b35…` `[historical instrument]` /`3dd39b4…` and demotes the
   `f6828a68…`/`34268e9…` row to a marked historical one. `[historical instrument]`
-- **`00-vision.md` §2.2's heading and its parenthetical** name `6ec72b35…`, with
+- **`00-vision.md` §2.2's heading and its parenthetical** name `6ec72b35…` `[historical instrument]`, with
   both retired identities marked. **§2.2's table of numbers was not touched** —
   it is not mine, and nothing in it moved.
+  *(Round 811 moved that heading again, to `fb5a6434…`.)*
 
 ### 5.4 The gate, green
 
@@ -633,16 +647,23 @@ retired it under them, mid-round, in files I do not own and cannot fix.
 
 I reverted the second edit rather than hand builder 8C a red universal gate they
 did not cause. The comment's content lives in §3.4 of this file instead, where it
-is longer and better evidenced. `sha256sum scripts/measure-schedule.ts` reads
-`6ec72b35…` — the value 8C's paste, 8C's prose, `04-phases.md` §12.6 and my eight
-re-run headers all name.
+is longer and better evidenced. At the end of round 802 `sha256sum
+scripts/measure-schedule.ts` read `6ec72b35…` `[historical instrument]` — the
+value 8C's paste, 8C's prose, `04-phases.md` §12.6 and my eight re-run headers
+all named.
 
 **The general lesson, for round 803 and for the manager:** in a shared worktree,
 the instrument's identity is a value OTHER builders paste, so moving it twice in
 one round breaks their work retroactively. It should move **once per round, as
 early as possible**, and then be frozen — which is what happened here, but by
 correction rather than by design. `04-phases.md` §12.6 and 8C's evidence both
-name `6ec72b35…`; they remain correct.
+named `6ec72b35…` at the time; `[historical instrument]`
+
+***Round 811 applied that lesson by design.*** It moved the identity once — to
+the two-file manifest `fb5a6434…` — before writing a single document, then froze
+it and re-derived all ten pasted headers by re-running the instrument. Every
+value this section calls correct is now correct-as-of-round-802 and carries the
+marker; the live value is `fb5a6434…` everywhere it is claimed to be live.
 
 ---
 

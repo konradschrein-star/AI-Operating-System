@@ -1191,11 +1191,18 @@ with the reason rather than printing a smaller, prettier table.
 **R62.** A baseline run against `operator-visibility` (8ea0cc08) is committed at
 `docs/plan/engine-task-graph/evidence/baseline-8ea0cc08.md`, produced by the same
 script, so the before and after are measured by one instrument.
-*How proved, amended round 217 (round 216's finding 1):*
+*How proved, amended round 217 (round 216's finding 1) and again round 811:*
 `python3 docs/plan/engine-task-graph/check-instrument-identity.py` exits 0 —
 every `instrument-sha256:` header pasted in that file equals
-`sha256sum scripts/measure-schedule.ts` on disk, and no retired identity is
-quoted anywhere in the corpus without the marker `[historical instrument]`. The
+`sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum`
+on disk, every pasted `instrument-files:` line equals the current digest of the
+half it names, and no retired identity is
+quoted anywhere in the corpus without the marker `[historical instrument]`.
+*Round 811 retired the one-file form of this clause* — it named
+`sha256sum scripts/measure-schedule.ts` alone, which no longer produces the
+header's value and therefore could not be satisfied at all, and which never
+covered `schedule-source.ts`, the half holding the SQL. Retired here, in the
+commit that changed the checker, per standing rule 4. The
 old wording — *"the file exists and its header names the script's SHA"* — was
 satisfiable by a file naming a SHA the script no longer has, and for two rounds
 that is exactly what it was satisfied by. It is replaced rather than supplemented
@@ -1212,8 +1219,12 @@ appends to one file:
   `00-vision.md` §2, whole-project and windowed, plus the correction of §2 and
   the discrepancy analysis. **Landed** — every header pasted in that file names
   the same `instrument-sha256`, and that value equals
-  `sha256sum scripts/measure-schedule.ts` on the commit it ships in, which is
+  `sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum`
+  on the commit it ships in, which is
   what *How proved* above asks for and is satisfiable without a database.
+  *Round 811 widened the command from one file to both, for the reason given in
+  How proved; the bullet is amended here rather than left to be found later,
+  which is the failure the paragraph below records.*
   *Bullet corrected round 802 (phase 8C), where the retired wording was still
   enforced.* This bullet ended **"the file exists and its header names the
   script's self-computed `instrument-sha256`"** — the exact formulation round
@@ -1283,10 +1294,15 @@ changing what R62 requires.**
    table and the run-C refusal reproduced byte for byte**, so no measurement
    moved. "One instrument" is therefore restated as something a living instrument
    can promise and a script can check: *every header pasted in that file, part 1
-   and part 2, names the same `instrument-sha256`, and that value equals the file
-   on disk in the commit it ships in.* If the instrument moves again before phase
+   and part 2, names the same `instrument-sha256`, and that value equals the
+   instrument on disk in the commit it ships in.* **Round 811: "the instrument"
+   is BOTH files** — `scripts/measure-schedule.ts` and
+   `forge-control/src/lib/schedule-source.ts` — composited in that order. If
+   either half moves again before phase
    8 appends part 2, part 1 is re-run **in the same commit as the append**
-   (`04-phases.md` §12, E-3; `03-quality.md` §3.2's phase-8 gate).
+   (`04-phases.md` §12, E-3; `03-quality.md` §3.2's phase-8 gate). *Round 811
+   moved both halves and re-ran part 1 at once rather than at the append, which
+   §1 of that file records; the obligation is discharged, not waived.*
 2. **Step 2b yields a refusal, not a number (finding 2).** The round-215
    amendment below is correct about the ordering and overstated what it buys.
    Before migration 0040 the `depends_on` column does not exist, so every row is
@@ -1396,8 +1412,9 @@ disk with the expected branches.
 
 **R68.** The DoD-6 measurement is produced for a project scheduled by the new
 engine and committed beside the baseline, with the comparison table.
-*How proved, amended round 802 (phase 8C), in the round that discharges it:*
-the file exists; **its pasted identity MATCHES `sha256sum` of the instrument on
+*How proved, amended round 802 (phase 8C), in the round that discharges it, and
+round 811:* the file exists; **its pasted identity MATCHES the composite
+`sha256sum` of BOTH instrument files on
 disk**, checked by `check-instrument-identity.py` (`03-quality.md` §3.1 item 7);
 and the before-file and the after-file **share one instrument** — the same
 `instrument-sha256` in every header of both, per R62's surviving formulation.

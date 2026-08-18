@@ -42,21 +42,25 @@
  * executing. It is never hand-copied into a document; a report that quotes an
  * identity this script did not itself emit is a finding.
  *
- * `instrument-sha256` is a hash of THIS FILE, read off disk at startup via
- * `import.meta.url`. It is the field that matters. Three separate identity
- * failures are already on this project's record, and each came from an identity
- * recorded at a different moment from the one the instrument ran in: a SHA
- * naming the worktree rather than the build; a generated region stamped with
- * `git HEAD` so that COMMITTING it moved HEAD and made the region wrong on the
- * very commit that created it (`03-quality.md` §3.2, phase 2, mutation 5); and a
- * transcript attributing results to a sha256 naming bytes in no commit at all. A
- * self-hash of the executing file has none of those gaps: it is stable across
- * the commit that lands the file, and it changes if and only if the bytes that
- * ran changed.
+ * `instrument-sha256` is a hash of BOTH FILES THE INSTRUMENT IS MADE OF — this
+ * script and `forge-control/src/lib/schedule-source.ts` — read off disk at
+ * startup, relative to `import.meta.url`. See `INSTRUMENT_FILES` for the
+ * manifest and for the one-line coreutils command that re-derives it. It is the
+ * field that matters. FOUR separate identity failures are on this project's
+ * record, each from an identity recorded at a different moment from the one the
+ * instrument ran in: a SHA naming the worktree rather than the build; a
+ * generated region stamped with `git HEAD` so that COMMITTING it moved HEAD and
+ * made the region wrong on the very commit that created it (`03-quality.md`
+ * §3.2, phase 2, mutation 5); a transcript attributing results to a sha256
+ * naming bytes in no commit at all; and round 810's — a digest that covered
+ * only the half of the instrument that was NOT patched, so a patched dry run
+ * printed the shipped instrument's identity. A self-hash of both executing
+ * halves has none of those gaps: it is stable across the commit that lands
+ * them, and it changes if and only if the bytes that ran changed.
  *
  * `git-head` is printed too, and is labelled in the header line itself as naming
  * the TREE rather than the bytes that ran. The two fields disagreeing is normal
- * and informative — commit this file and `git-head` moves while
+ * and informative — commit these files and `git-head` moves while
  * `instrument-sha256` does not.
  *
  * -------------------------------------------------------------------------
@@ -199,7 +203,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -674,31 +678,86 @@ async function readFromDatabase(projectId: string, window: Window): Promise<Load
 const SELF_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = dirname(dirname(SELF_PATH));
 
+/**
+ * BOTH HALVES OF THE INSTRUMENT, in this order — round 811.
+ *
+ * Until round 811 `instrument-sha256` hashed this file alone. That left a hole
+ * exactly where the instrument reads a database: `schedule-source.ts` holds
+ * every line of SQL and the whole `pg` lifecycle, and it could be rewritten
+ * without the digest moving a bit. Round 810 walked into it — its patched dry
+ * run printed the IDENTICAL `instrument-sha256` as the shipped instrument, and
+ * only `git-head` disclosed that the bytes reading the database were different
+ * ones. That is round 213's failure again (a sha naming the tree rather than
+ * the build), one file over.
+ *
+ * So the digest names a MANIFEST of both files rather than one file's bytes.
+ * The manifest is byte-for-byte what `sha256sum` prints for these two paths, in
+ * this order, from the repo root — two spaces between digest and path, one
+ * trailing newline each — so a reader re-derives the header independently with
+ * stock coreutils and no knowledge of this file:
+ *
+ *     sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+ *
+ * READING THOSE BYTES IS NOT IMPORTING THEM. `pg` stays out of the module graph
+ * of a fixture-mode run: this reads the file with `readFileSync` and hashes it.
+ * The dynamic `await import()` in `readFromDatabase()` remains the only way the
+ * module is ever loaded.
+ */
+const INSTRUMENT_FILES = [
+  "scripts/measure-schedule.ts",
+  "forge-control/src/lib/schedule-source.ts",
+] as const;
+
+interface InstrumentFile {
+  rel: string;
+  sha256: string;
+}
+
 interface SelfIdentity {
-  path: string;
+  /** Each half, with its own digest, in `INSTRUMENT_FILES` order. */
+  files: InstrumentFile[];
+  /** The composite: sha256 of the manifest of `files`. */
   sha256: string;
   gitHead: string;
   dirty: boolean;
 }
 
 /**
- * The instrument hashing the bytes that are executing. Read off disk through
- * `import.meta.url`, at startup, every run — never a constant, never a value
+ * The instrument hashing the bytes that are executing. Read off disk relative
+ * to `import.meta.url`, at startup, every run — never a constant, never a value
  * carried in from a build step, never a git object id standing in for a file.
  */
 function selfIdentity(): SelfIdentity {
-  let bytes: Buffer;
-  try {
-    bytes = readFileSync(SELF_PATH);
-  } catch (err) {
-    throw new InstrumentError("self-unreadable", [
-      `cannot read ${SELF_PATH} to hash it: ${messageOf(err)}`,
-      "R60's identity is a hash of the executing file; without it there is no measurement to report.",
+  // The paths below are resolved against REPO_ROOT, which is derived from this
+  // file's own location. If this file is not where it says it is, that
+  // derivation is wrong and every digest under it would name bytes chosen by
+  // accident — so refuse rather than hash whatever happens to be there.
+  const selfRel = relative(REPO_ROOT, SELF_PATH).split(sep).join("/");
+  if (selfRel !== INSTRUMENT_FILES[0]) {
+    throw new InstrumentError("self-misplaced", [
+      `this file is running as ${selfRel} relative to ${REPO_ROOT}, but the instrument manifest names it as ${INSTRUMENT_FILES[0]}`,
+      "R60's identity is resolved from this file's own location; from the wrong location it would name the wrong bytes.",
     ]);
   }
+
+  const files = INSTRUMENT_FILES.map((rel): InstrumentFile => {
+    const absolute = join(REPO_ROOT, rel);
+    let bytes: Buffer;
+    try {
+      bytes = readFileSync(absolute);
+    } catch (err) {
+      throw new InstrumentError("self-unreadable", [
+        `cannot read ${absolute} to hash it: ${messageOf(err)}`,
+        "R60's identity is a hash of BOTH halves of the executing instrument; missing one, there is no measurement to report.",
+      ]);
+    }
+    return { rel, sha256: createHash("sha256").update(bytes).digest("hex") };
+  });
+
+  const manifest = files.map((file) => `${file.sha256}  ${file.rel}\n`).join("");
   return {
-    path: relative(REPO_ROOT, SELF_PATH),
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    files,
+    sha256: createHash("sha256").update(manifest).digest("hex"),
     gitHead: git(["rev-parse", "HEAD"]),
     dirty: git(["status", "--porcelain"]).length > 0,
   };
@@ -730,9 +789,13 @@ function printHeader(
   const lines = [
     "== measure-schedule — instrument identity (R60) ==",
     `instrument-sha256: ${self.sha256}`,
-    `                   sha256 of ${self.path}, hashed from disk at startup — THIS names the bytes that ran.`,
+    "                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the",
+    `                   bytes that ran. Re-derive it from the repo root with: sha256sum ${INSTRUMENT_FILES.join(" ")} | sha256sum`,
+    ...self.files.map(
+      (file, i) => `${i === 0 ? "instrument-files: " : "                  "} ${file.sha256}  ${file.rel}`,
+    ),
     `git-head:          ${self.gitHead}${self.dirty ? " -dirty" : ""}`,
-    "                   names the working TREE at run time, NOT the bytes that ran; committing this file moves",
+    "                   names the working TREE at run time, NOT the bytes that ran; committing these files moves",
     "                   git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.",
     `mode:              ${mode}`,
     `source:            ${input.sourceLabel}`,

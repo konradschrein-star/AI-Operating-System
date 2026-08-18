@@ -1144,7 +1144,17 @@ be stated as something a living instrument can actually promise:
 
 > **Every header pasted in `baseline-8ea0cc08.md`, part 1 and part 2, names the
 > same `instrument-sha256`, and that value equals `sha256sum
-> scripts/measure-schedule.ts` on the commit the file ships in.**
+> scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts |
+> sha256sum` on the commit the file ships in.**
+
+**Widened round 811, and the one-file form retired with it.** The sentence above
+named ONE file until round 811. That command no longer produces the header's
+value — so the clause had become unsatisfiable, not merely loose — and it never
+covered `forge-control/src/lib/schedule-source.ts`, which holds every line of
+the instrument's SQL. Round 810 walked into the gap: a dry run from a copy with a
+patched `schedule-source.ts` printed the shipped instrument's identity unchanged.
+Retired here in the commit that changed the checker, together with
+`01-requirements.md` §H R62 and `03-quality.md` §3.1 item 7.
 
 Phase 8 therefore has a concrete obligation and not a hope. Before appending part
 2, run `python3 docs/plan/engine-task-graph/check-instrument-identity.py`. If it

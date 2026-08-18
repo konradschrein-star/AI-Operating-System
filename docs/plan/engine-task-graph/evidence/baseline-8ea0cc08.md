@@ -16,6 +16,39 @@ COMPUTED** here, for a cause recorded in §3, and phase 8 completes them by
 appending to this same file with this same instrument. See erratum **E-3** in
 `04-phases.md` §12 and the amended R62 in `01-requirements.md` §H.
 
+### Re-run record — round 811: the identity now covers BOTH halves of the instrument
+
+**Round 811 fixed the SQL in `forge-control/src/lib/schedule-source.ts`, made
+`instrument-sha256` hash that file too, and re-ran all seven commands under the
+moved instrument, in the commit that moved it.** Two things happened at once and
+they must not be conflated:
+
+1. **A defect, in the half that reads the database.** `readProjectRows()` bound
+   `$1` in two irreconcilable type contexts in one statement and died on every
+   project with `operator does not exist: uuid = text`. `project_id = $1::uuid`
+   resolves it. **This changes nothing in this document** — every number here
+   comes from a FIXTURE, and the fixture path never touches that module.
+2. **A gate amendment.** `instrument-sha256` hashed `scripts/measure-schedule.ts`
+   alone, so the module holding all the SQL could be rewritten without the digest
+   moving. Round 810 proved it live: its patched dry run printed the shipped
+   instrument's identity. The digest now names a manifest of both files, and
+   `check-instrument-identity.py` was amended in the same commit — including a
+   new check 1b that names WHICH half moved.
+
+The identity moved from `6ec72b35…` `[historical instrument]` (one file) to
+`fb5a6434…` (the two-file manifest). All ten pasted headers in this corpus were
+**re-derived by re-running the instrument**, never by hand-editing a digest, and
+the re-derivation script refused to substitute any header whose body below
+`mode:` did not reproduce byte for byte. All ten reproduced.
+
+**§0's own obligation, discharged rather than deferred.** The paragraph below
+said part 1 would be re-run "in the same commit that appends part 2" if the
+instrument moved first. It moved first, and waiting would have left
+`check-instrument-identity.py` red across the intervening rounds — teaching
+exactly the disclose-and-proceed habit the standing rules forbid. Part 1 is
+therefore re-run **here**, and part 2 (round 813's live read) appends under an
+instrument that already matches the disk.
+
 ### Re-run record — round 802: the instrument moved again, and part 1 moved with it
 
 **Round 802 added `--exclude-task` and re-ran all seven commands under the moved
@@ -23,7 +56,7 @@ instrument, in the commit that moved it.** Phase 8B (D8) gave
 `scripts/measure-schedule.ts` a repeatable `--exclude-task <uuid>` and
 `schedule-metrics.ts` an `options.excludeTaskIds`, so the script's self-computed
 `instrument-sha256` moved from `f6828a68…` `[historical instrument]` to
-`6ec72b35…`. That is E-3's stated trigger — *"if the instrument has moved since
+`6ec72b35…` `[historical instrument]`. That is E-3's stated trigger — *"if the instrument has moved since
 round 217, re-run part 1's seven commands and replace their headers IN THE SAME
 COMMIT"* — and this is that re-run. No commit in between leaves
 `check-instrument-identity.py` red, because there is no commit in between.
@@ -41,9 +74,18 @@ measurement:
 
 | field | was | is | why |
 |---|---|---|---|
-| `instrument-sha256` | `f6828a68…` `[historical instrument]` | `6ec72b35…` | round 802 added D8's `--exclude-task` |
+| `instrument-sha256` | `f6828a68…` `[historical instrument]` | `6ec72b35…` `[historical instrument]` | round 802 added D8's `--exclude-task` |
 | `git-head` | `34268e9…` | `3dd39b4… -dirty` | the tree the re-run happened in |
 | `excluded-tasks:` | no such field | `none (--exclude-task not given)` | round 802 added D8's disclosure to the header |
+
+Round 811 then moved three more, all identity and none measurement — the headers
+above are round 811's, not round 802's:
+
+| field | was (round 802) | is (round 811) | why |
+|---|---|---|---|
+| `instrument-sha256` | `6ec72b35…` `[historical instrument]` | `fb5a6434…` | the digest now hashes a manifest of BOTH instrument files |
+| `instrument-files:` | no such field | two lines, one digest per half | so the checker can name which half moved, not merely that one did |
+| `git-head` | `3dd39b4… -dirty` | `1e4ecda… -dirty` | the tree round 811's re-run happened in |
 
 **`-dirty` is honest and is not a defect.** Round 802 runs three builders
 concurrently in ONE shared worktree (8B here, 8C on the requirement corpus, and a
@@ -132,10 +174,13 @@ the record rather than quietly replaced.
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -151,10 +196,13 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -170,10 +218,13 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              full
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -188,10 +239,13 @@ excluded-tasks:    none (--exclude-task not given)
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -207,10 +261,13 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -226,10 +283,13 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -245,10 +305,13 @@ disclaimer:        S1, S2, S3 NOT COMPUTED — this mode reads no run data and c
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              rounds
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -622,10 +685,13 @@ output, header and refusal:
 
 ```
 == measure-schedule — instrument identity (R60) ==
-instrument-sha256: 6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff
-                   sha256 of scripts/measure-schedule.ts, hashed from disk at startup — THIS names the bytes that ran.
-git-head:          3dd39b4939cfbefec76f2ef184a601676b796d76 -dirty
-                   names the working TREE at run time, NOT the bytes that ran; committing this file moves
+instrument-sha256: fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b
+                   sha256 of the manifest of BOTH halves below, hashed from disk at startup — THIS names the
+                   bytes that ran. Re-derive it from the repo root with: sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+instrument-files:  39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+                   c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
+git-head:          1e4ecda09f5012bcc24324d5a0473913acb1066c -dirty
+                   names the working TREE at run time, NOT the bytes that ran; committing these files moves
                    git-head and leaves instrument-sha256 unchanged. Where they disagree, believe the sha256.
 mode:              full
 source:            fixture:src/lib/fixtures/replay-operator-visibility.json sha256=e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7
@@ -899,24 +965,32 @@ inlined into this file by a generator, so no human hand touched the characters;
 and the header's `instrument-sha256` is independently re-derivable —
 
 ```
-$ sha256sum scripts/measure-schedule.ts forge-control/src/lib/fixtures/replay-operator-visibility.json
-6ec72b35374d619f3f383cecca716e3f3d9b668e98a8cd08162b77a39ff622ff  scripts/measure-schedule.ts
+$ sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts forge-control/src/lib/fixtures/replay-operator-visibility.json
+39dee069b52c53ab75098b663dec01e1a92b8491e088644ff6cda61605ac1d03  scripts/measure-schedule.ts
+c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5  forge-control/src/lib/schedule-source.ts
 e0cb69a5c5d05bdf96aab8a8a61409fede7337b609831f2404d0cf04e26f19b7  forge-control/src/lib/fixtures/replay-operator-visibility.json
+
+$ sha256sum scripts/measure-schedule.ts forge-control/src/lib/schedule-source.ts | sha256sum
+fb5a64345109bcdf3d083706b789b5c5a34b1234be4288fd359351c57803cf0b  -
 ```
 
-**EXECUTED in round 802, not transcribed.** Round 216 found this exact block
+**EXECUTED in round 811, not transcribed.** Round 216 found this exact block
 naming an identity the disk no longer had, and round 216's own re-review found
 thirteen further places where a `sha256sum` had been *pasted* rather than *run*.
-It was re-run here, from the repo root, after the last edit to the instrument and
-before this line was written.
+It was re-run here, from the repo root, after the last edit to either instrument
+file and before this line was written.
 
-`6ec72b35…` is the value all seven headers printed, computed by the running
-process from `import.meta.url`, and `sha256sum` over the committed path agrees.
-Note also that `git-head` reads `3dd39b4… -dirty`, the round-801 merge commit
-plus round 802's three concurrent builders — this commit will move it and leave
-`instrument-sha256` unchanged, which is the property that made a self-hash the
-right identity to trust, and the `-dirty` marker is the same property observed
-from the other side.
+**The second command is the whole re-derivation now.** Round 811 made
+`instrument-sha256` the digest of a two-file MANIFEST, and the manifest is
+byte-for-byte what `sha256sum` prints for those two paths in that order — so a
+reader reproduces the header's identity with stock coreutils, knowing nothing
+about either program. `fb5a6434…` is the value all seven headers printed,
+computed by the running process from `import.meta.url`, and the pipeline above
+agrees with it. Note also that `git-head` reads `1e4ecda… -dirty`, round 810's
+last commit plus round 811's own uncommitted work — this commit will move it and
+leave `instrument-sha256` unchanged, which is the property that made a self-hash
+the right identity to trust, and the `-dirty` marker is the same property
+observed from the other side.
 
 **Why this re-derivation is worth more than it was when round 213 wrote it.** As
 written it was a command a reader had to think to run. It went stale on the very
@@ -996,7 +1070,8 @@ where it is quoted whole. Everything else is below.
 
 | number(s) | where it appears | source |
 |---|---|---|
-| `6ec72b35…`, `3dd39b4…` | §1, §5(3) | printed by every run's header; re-derived by `sha256sum` in §5(3), executed round 802; machine-compared to the disk by `check-instrument-identity.py` |
+| `fb5a6434…`, `39dee069…`, `c00fd096…`, `1e4ecda…` | §1, §5(3) | printed by every run's header (the composite and its two per-file halves); re-derived by `sha256sum … \| sha256sum` in §5(3), executed round 811; machine-compared to the disk by `check-instrument-identity.py`, checks 1 and 1b |
+| `6ec72b35…`, `3dd39b4…` `[historical instrument]` | round-811 re-run record, §5(3) prose | the identity round 802's runs printed, retired by round 811's two-file manifest; quoted only to record the drift, and every such line carries the marker the checker keys on |
 | `f6828a68…`, `34268e9…` `[historical instrument]` | §1 re-run records, §5(3) | the identity round 217's runs printed, retired by round 802's `--exclude-task`; quoted only to record the drift, and every such line carries the marker the checker keys on |
 | `80ef1123…` `[historical instrument]` | §1 re-run record, §1 closing, §5(3) | the identity round 213's runs printed, retired by round 215's edits to the script; quoted only to record the drift, and every such line carries the marker the checker keys on |
 | `e0cb69a5…` | §1 headers, §5(4) | printed by every run's header; capture record §1; `sha256sum` in §5(3) |

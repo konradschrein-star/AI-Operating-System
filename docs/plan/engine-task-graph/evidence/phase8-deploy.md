@@ -213,6 +213,10 @@ exit=0
 
 ### 3.6 `05:41:55` — `check-instrument-identity.py` (run BEFORE any append, per E-3)
 
+Round 811 replaced the one-file digest with a two-file manifest, and this
+checker's own output format with it, so every identity in the block below is
+retired: `[historical instrument]`
+
 ```
 this script:       f8c6088fb4932add17ae0219ad227db1182c52419f57fb5bf7f22465f83414e9
 instrument:        scripts/measure-schedule.ts
@@ -589,8 +593,10 @@ HEAD and reports on code you never changed. Both halves were then measured
 rather than asserted:
 
 - **Copies verified identical before patching** —
-  `6ec72b35…` for `measure-schedule.ts`, `367c48fb…` for `schedule-source.ts`,
-  equal to the worktree's.
+  `6ec72b35…` for `measure-schedule.ts`, `367c48fb…` for `schedule-source.ts`,   [historical instrument]
+  equal to the worktree's. *(Both retired by round 811, which fixed the SQL in
+  the second file and made the digest cover both: the halves are now `39dee069…`
+  and `c00fd096…`, compositing to `fb5a6434…`.)*
 - **The scratch refused to run at all until it had a git identity** —
   `MEASUREMENT FAILED: git-unavailable — git rev-parse HEAD failed in
   /tmp/p8e/dryrun`. The instrument declines to measure without naming its own
@@ -602,6 +608,14 @@ rather than asserted:
   worktree.
 
 ### 5.5 `05:45:42` — patched, no exclusions: the read works and refuses for the right reason
+
+**This header CANNOT be re-derived and is marked rather than re-run.** It was
+printed by a patched copy at `cc646b1`, reading the live database — a tree that
+no longer exists and a read this phase is not authorised to repeat. Round 811
+re-derived the ten headers it could re-run and marked the two it could not; this
+is one of them. Read it together with §6(d): the identity it prints is the
+SHIPPED instrument's, which is precisely the hole round 811 closed — so the
+identity below is retired: `[historical instrument]`
 
 ```
 == measure-schedule — instrument identity (R60) ==
@@ -710,9 +724,10 @@ copy reproduces the identical failure, and the post-patch stack names
 had a git identity, which is a harness insisting on exposing its own build.
 
 **(d) — A LIVE FINDING, NOT A HAZARD AVOIDED. `instrument-sha256` does not cover
-the half of the instrument that holds the SQL.** The header hashes
+the half of the instrument that holds the SQL.** *(CLOSED BY ROUND 811 — see the
+note under this section.)* The header hashes
 `scripts/measure-schedule.ts` alone. My patched dry run changed
-`schedule-source.ts` and printed **the identical `6ec72b35…`** as the shipping
+`schedule-source.ts` and printed **the identical `6ec72b35…`** as the shipping   [historical instrument]
 instrument; only `git-head` differed (`cc646b1` vs `cf52541`), and `git-head`
 names the working tree, not the bytes that ran — the header says so itself.
 
@@ -728,6 +743,22 @@ and the §3.1 item 7 clause that enforces it are both outside this task's
 write-set, and a gate amendment belongs in the commit that changes the gate,
 reviewed. It is in the manager report and it is the third item recommended to
 the fix round in §9.
+
+> **CLOSED — round 811, in the commit that changed the gate.**
+> `instrument-sha256` now hashes a manifest of BOTH files, in a fixed order, and
+> the header prints an `instrument-files:` block naming each half's digest
+> separately. `check-instrument-identity.py` computes the same manifest, gained a
+> **check 1b** that verifies each pasted manifest line against its own file, and
+> now treats a retired PER-FILE digest as a retired identity in its own right.
+> The composite is `fb5a6434…`; the halves are `39dee069…` and `c00fd096…`.
+>
+> **What this means for the paragraph above:** the failure it names is now
+> mechanically impossible in the same way, not merely remembered. Patch
+> `schedule-source.ts` and the digest moves; paste a header from a patched copy
+> and the checker names *which half* disagrees. Round 811's own fix landed in
+> exactly the file this hole covered, which is why it moved the sha once, first,
+> before writing a document — the discipline §5.3 of `phase8-instrument.md`
+> arrived at by correction.
 
 ---
 
@@ -785,7 +816,7 @@ whoever finds it later.
 ## 8. `05:51:21+02:00` — the tree after, and the gate re-run over this file
 
 Every corpus checker re-run **after** this document existed, because a document
-is part of the corpus it describes:
+is part of the corpus it describes. The identity in it is retired: `[historical instrument]`
 
 ```
 $ python3 docs/plan/engine-task-graph/check-instrument-identity.py
@@ -803,10 +834,13 @@ $ git status --porcelain                                           # the worktre
 
 11 headers became 12 across 3 files became 4 — this file's §5.5/§5.6 headers.
 **Read that increment against §6(d):** those headers were emitted by the
-*patched* copy at `cc646b1`, and the checker counts them as conforming because they
-name `6ec72b35…`, which is true and which is the whole problem — the identity
-does not cover the file that was patched. The hole is not theoretical; this
-document is an instance of it, labelled as one.
+*patched* copy at `cc646b1`, and the checker counted them as conforming because
+they named `6ec72b35…`, which was true and which was the whole problem — the   [historical instrument]
+identity did not cover the file that was patched. The hole is not theoretical;
+this document is an instance of it, labelled as one. *(Round 811 closed it, and
+under the amended checker this §5.5 header no longer counts toward that total at
+all: it is marked historical, so the count is a count of headers that name the
+live instrument.)*
 
 The worktree carries one new file, this one, which is half of the declared
 write-set; the other half is deliberately unwritten for the reason in §5.6.
