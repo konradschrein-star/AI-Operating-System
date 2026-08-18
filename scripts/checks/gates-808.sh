@@ -192,16 +192,25 @@ gate_sh "verify-notification-gap-pins.mjs — fenced quotes + prose pins" \
 # statement against the one named in DATABASE_URL — but with no DSN at all there
 # is nothing to connect to, so it is SKIPPED rather than reported as passing.
 #
-# A PRIVATE scratch database per gate run (`os-usable-for-work` round-4 review,
-# finding F4). The check's own default is the fixed name `r1354_sampler`; this
-# suite is run by five concurrent lanes in that project, and two runs sharing
-# one scratch database `TRUNCATE` the same three tables and deadlock — a RED
-# with nothing to say about the code. `$$` is THIS script's pid, so the name is
-# unique per run, and `USAGE_FOLD_DROP=1` makes the check drop what it created
-# rather than leave a database per run on the server.
+# DO NOT SET `USAGE_FOLD_DB` HERE, and this is the reason.
+#
+# `os-usable-for-work` round-4 review, finding F4: the check used to default its
+# scratch database to the fixed name `r1354_sampler`. Five lanes run this suite
+# concurrently, and two runs sharing one scratch database `TRUNCATE` the same
+# three tables mid-assertion — a RED with nothing to say about the code, or
+# worse, silently wrong arithmetic. Round 3's first attempt fixed it HERE, by
+# exporting `USAGE_FOLD_DB=r1354_sampler_$$`. That protects this caller and
+# nobody else: the check's own header tells operators to run it directly with no
+# such variable, and an override cannot fix a default.
+#
+# So the check now names its own database per process (`r1354_sampler_p<pid>_
+# <rand>`) and drops it on both exit paths whenever it chose the name itself.
+# Passing a name from here would pin that guarantee to this one call site again
+# AND stop this gate from ever exercising the default — the very thing that has
+# to stay right. Left unset on purpose, so this gate is the default's canary.
 if [ -n "${DATABASE_URL:-}" ]; then
   gate_sh "check-usage-fold.ts — hourly token fold, against a real Postgres" \
-    "cd forge-control && USAGE_FOLD_DB=r1354_sampler_$$ USAGE_FOLD_DROP=1 ./node_modules/.bin/tsx ../scripts/checks/check-usage-fold.ts | tail -3"
+    "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-usage-fold.ts | tail -3"
 else
   skip "check-usage-fold.ts — hourly token fold" \
     "DATABASE_URL is unset; this gate needs a Postgres server to build its scratch db on"
