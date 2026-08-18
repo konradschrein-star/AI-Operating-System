@@ -339,6 +339,10 @@ moved to the border; the text colours are recorded.
 
 - **U31 has a BEFORE and no AFTER.** The canvas open-cost fix is unlanded and
   unmeasured. [§5.1](#51-round-803-did-not-land--the-tree-round-804-measured).
+  **CLOSED 2026-08-17 by operator decision** (`docs/plan/operator-visibility/15-ui-v3-phases.md`,
+  "OPERATOR DECISION — canvas first-open cost"): Konrad accepts ~190 ms once per page load.
+  No AFTER is owed. Transcript virtualisation and a hidden always-mounted editor are both
+  ruled out as fixes for this. Do not re-open it as a finding.
 - **Hover performance was not re-measured.** That is phase 700's `hover-700.cjs`
   and the project brief's item 3; nothing in round 804's four protocols touches
   it, and no before/after hover number is produced here.

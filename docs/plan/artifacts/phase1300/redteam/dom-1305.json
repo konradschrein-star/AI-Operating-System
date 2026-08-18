@@ -1,0 +1,245 @@
+{
+  "rig": {
+    "web": "http://127.0.0.1:7799",
+    "api": "http://127.0.0.1:7796",
+    "chat": "bfd1283a-b71b-4f35-b577-7d09aad803f2"
+  },
+  "nodeCount": 114,
+  "results": [
+    {
+      "id": "A1",
+      "label": "every /team node has a DOM row (no windowing, no lost rows)",
+      "ok": true,
+      "got": 114,
+      "want": 114
+    },
+    {
+      "id": "A1",
+      "label": "no duplicate node ids in the DOM",
+      "ok": true,
+      "got": 114,
+      "want": 114
+    },
+    {
+      "id": "A2",
+      "label": "row count survives a fast scroll to the bottom",
+      "ok": true,
+      "got": 114,
+      "want": 114
+    },
+    {
+      "id": "A2",
+      "label": "row count survives the scroll back to the top",
+      "ok": true,
+      "got": 114,
+      "want": 114
+    },
+    {
+      "id": "A2",
+      "label": "indentation depth is identical before and after scrolling",
+      "ok": true,
+      "got": "0,1,2,2,1,1,1,1,1,1,1,1,1,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1",
+      "want": "0,1,2,2,1,1,1,1,1,1,1,1,1,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1"
+    },
+    {
+      "id": "A2",
+      "label": "scroll thumb reflects the whole list (scrollHeight > clientHeight)",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "A2",
+      "label": "scroll metrics",
+      "ok": true,
+      "got": {
+        "scrollTop": 4431,
+        "scrollHeight": 4902,
+        "clientHeight": 471
+      },
+      "want": "informational"
+    },
+    {
+      "id": "A3",
+      "label": "a rewritten description reaches the DOM (memo did not freeze the row)",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "A3",
+      "label": "the row did not keep its old text",
+      "ok": true,
+      "got": false,
+      "want": false
+    },
+    {
+      "id": "A3",
+      "label": "row text before → after",
+      "ok": true,
+      "got": {
+        "before": "session\narchitect\nfable-5\n⏸\n✕\nPlan: operator-visibility\n866k\n15m 49s",
+        "after": "session\narchitect\nfable-5\n⏸\n✕\nREDTEAM-1305-TITLE\n1.64M\n15m 49s",
+        "statusAttr": "completed"
+      },
+      "want": "informational"
+    },
+    {
+      "id": "A3",
+      "label": "removing the rewrite restores the real text (no sticky stale row)",
+      "ok": true,
+      "got": false,
+      "want": false
+    },
+    {
+      "id": "A4",
+      "label": "ready",
+      "ok": true,
+      "got": "ready",
+      "want": "ready"
+    },
+    {
+      "id": "A4",
+      "label": "empty (no workers) is a distinguishable state, not a blank panel",
+      "ok": true,
+      "got": "empty",
+      "want": "empty"
+    },
+    {
+      "id": "A4",
+      "label": "empty state says something",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "A4",
+      "label": "unlinked payload → state",
+      "ok": true,
+      "got": "unlinked",
+      "want": "informational"
+    },
+    {
+      "id": "A4",
+      "label": "back to ready after the rewrites stop",
+      "ok": true,
+      "got": "ready",
+      "want": "ready"
+    },
+    {
+      "id": "A5",
+      "label": "at least one row has an enabled ✕",
+      "ok": true,
+      "got": "string",
+      "want": "string"
+    },
+    {
+      "id": "A5",
+      "label": "✕ of the last DISMISSABLE row is focusable and revealed by :focus-within",
+      "ok": true,
+      "got": {
+        "focused": "1",
+        "isFocused": true
+      },
+      "want": {
+        "focused": "1",
+        "isFocused": true
+      }
+    },
+    {
+      "id": "A5",
+      "label": "✕ reveal detail",
+      "ok": true,
+      "got": {
+        "idle": "0",
+        "focused": "1",
+        "isFocused": true,
+        "tag": "BUTTON",
+        "disabled": false
+      },
+      "want": "informational"
+    },
+    {
+      "id": "A5",
+      "label": "✕ revealed under keyboard focus in light theme",
+      "ok": true,
+      "got": "1",
+      "want": "1"
+    },
+    {
+      "id": "A5",
+      "label": "✕ revealed under keyboard focus in dark theme",
+      "ok": true,
+      "got": "1",
+      "want": "1"
+    },
+    {
+      "id": "A6",
+      "label": "a sweep over team-row centres does hover team rows",
+      "ok": false,
+      "got": false,
+      "want": true
+    },
+    {
+      "id": "A6",
+      "label": "probes",
+      "ok": true,
+      "got": [
+        {
+          "box": 0,
+          "teamRowHovered": false,
+          "deepestTag": "DIV",
+          "pass": true
+        },
+        {
+          "box": 6,
+          "teamRowHovered": true,
+          "deepestTag": "DIV",
+          "pass": true
+        },
+        {
+          "box": 11,
+          "teamRowHovered": true,
+          "deepestTag": "DIV",
+          "pass": true
+        }
+      ],
+      "want": "informational"
+    },
+    {
+      "id": "A7",
+      "label": "dismissing a row removes it from the DOM",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "A7",
+      "label": "hiddenCount counts the dismissal, not windowed-out rows",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "id": "A7",
+      "label": "restore brings every row back",
+      "ok": true,
+      "got": 114,
+      "want": 114
+    },
+    {
+      "id": "A7",
+      "label": "the restored row keeps its indentation depth",
+      "ok": true,
+      "got": "1",
+      "want": "1"
+    },
+    {
+      "id": "A7",
+      "label": "restore button text",
+      "ok": true,
+      "got": "1 hidden · show",
+      "want": "informational"
+    }
+  ]
+}

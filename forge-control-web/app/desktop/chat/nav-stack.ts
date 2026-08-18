@@ -30,11 +30,14 @@
  * rollup), and an invalid restored frame is a worse lie than a reset.
  *
  * ── Pure on purpose ───────────────────────────────────────────────────────
- * No React, no JSX, no imports. Every function is total and returns a new
- * (or the same) frozen array; `scripts/checks/check-nav-stack.ts` exercises
- * the invariants with plain tsx, which only works because this file has no
- * component in it.
+ * No React, no JSX. Every function is total and returns a new (or the same)
+ * frozen array; `scripts/checks/check-nav-stack.ts` exercises the invariants
+ * with plain tsx, which only works because this file has no component in it.
+ * Its one import (round 1875) is another such module — `../short-id`, which is
+ * this file's own id rule moved somewhere the row tooltips can reach it.
  */
+
+import { discriminatingId } from "../short-id";
 
 /** One level of drill-in.
  *
@@ -51,8 +54,40 @@
  *  a phase card's `doc_path` or the flat `docs[]` list. The U6 doc endpoint it
  *  reads (`GET /api/chat/:id/plan/doc?name=`) shipped in phase 300. */
 export type NavFrame =
-  | { kind: "agent"; runId: string; subagentId?: string }
-  | { kind: "plandoc"; name: string };
+  | {
+      kind: "agent";
+      runId: string;
+      subagentId?: string;
+      /** What to CALL this frame in the crumb trail, when the caller knows.
+       *
+       *  Round 1871: the breadcrumb read `manager chat › sub-agent toolu_01`,
+       *  which names nothing — every Anthropic tool_use_id begins `toolu_01`,
+       *  so eight characters of one is a constant. The team row that opens a
+       *  node already holds its description ("Recon: what timing data the runs
+       *  take"), so it passes it here instead of leaving the trail to guess
+       *  from an id.
+       *
+       *  IDENTITY DOES NOT INCLUDE IT. `sameFrame` and `frameKey` ignore this
+       *  field on purpose: two frames for the same sub-agent are the same
+       *  place whether or not one of them was opened from a surface that knew
+       *  its name, and letting a label split them would break the idempotent
+       *  re-click and replay the drill-in animation for nothing. */
+      label?: string;
+    }
+  | {
+      kind: "plandoc";
+      name: string;
+      /** Which of the chat's projects this document belongs to (round 1871).
+       *  Absent = the server's ranked default, which is every case except a
+       *  chat that started more than one project and had its team panel
+       *  switched. Without it, switching to project B and clicking B's
+       *  document would read A's corpus — a silent wrong answer, which is
+       *  the class of bug this whole surface exists to remove.
+       *
+       *  Part of identity, unlike `label`: the same file NAME can exist in two
+       *  corpora, and those are two different documents. */
+      projectId?: string;
+    };
 
 /** Immutable by contract — every function here returns a fresh array and the
  *  caller stores it in React state. Nothing mutates a stack in place. */
@@ -71,7 +106,11 @@ export function sameFrame(a: NavFrame, b: NavFrame): boolean {
   if (a.kind === "agent" && b.kind === "agent") {
     return a.runId === b.runId && (a.subagentId ?? null) === (b.subagentId ?? null);
   }
-  if (a.kind === "plandoc" && b.kind === "plandoc") return a.name === b.name;
+  if (a.kind === "plandoc" && b.kind === "plandoc") {
+    return (
+      a.name === b.name && (a.projectId ?? null) === (b.projectId ?? null)
+    );
+  }
   return false;
 }
 
@@ -127,9 +166,32 @@ export interface NavCrumb {
 }
 
 /** First 8 chars of a uuid — long enough to grep the database with, short
- *  enough to sit in a 260-wide header. Same convention as TeamRow's `short`. */
+ *  enough to sit in a 260-wide header. Same convention as TeamRow's `short`.
+ *
+ *  ROUND 1875: this and `shortSubagentId` below are now two names for
+ *  `discriminatingId` (../short-id), which is the rule this file invented in
+ *  round 1873 and kept to itself while two panels' tooltips went on printing
+ *  `toolu_01`. The names stay because the CALL SITES read better for them. */
 function shortId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
+  return discriminatingId(id);
+}
+
+/** The discriminating part of a Task `tool_use_id`.
+ *
+ *  `toolu_01AeuQskZPyHpsYrHayvrqrT` → `AeuQskZP`. A plain 8-char truncation
+ *  gave `toolu_01` for every sub-agent that has ever run, because that prefix
+ *  is a constant of the Anthropic API — the crumb was literally the same eight
+ *  characters on every descent. */
+function shortSubagentId(id: string): string {
+  return discriminatingId(id);
+}
+
+/** A caller-supplied label, cleaned up for a 260px header, or null. */
+function tidyLabel(label: string | undefined): string | null {
+  if (typeof label !== "string") return null;
+  const flat = label.replace(/\s+/g, " ").trim();
+  if (flat === "") return null;
+  return flat.length > 42 ? `${flat.slice(0, 41)}…` : flat;
 }
 
 /** The whole stack as a readable trail, manager first. Always at least one
@@ -143,12 +205,13 @@ export function crumbs(stack: NavStack): NavCrumb[] {
       out.push({ depth: i + 1, kind: "plandoc", id: frame.name, label: frame.name });
       return;
     }
+    const given = tidyLabel(frame.label);
     if (frame.subagentId !== undefined) {
       out.push({
         depth: i + 1,
         kind: "subagent",
         id: frame.subagentId,
-        label: `sub-agent ${shortId(frame.subagentId)}`,
+        label: given ?? `sub-agent ${shortSubagentId(frame.subagentId)}`,
       });
       return;
     }
@@ -156,10 +219,42 @@ export function crumbs(stack: NavStack): NavCrumb[] {
       depth: i + 1,
       kind: "agent",
       id: frame.runId,
-      label: `session ${shortId(frame.runId)}`,
+      label: given ?? `session ${shortId(frame.runId)}`,
     });
   });
   return out;
+}
+
+/**
+ * What the frame you are LOOKING AT is called — round 1873, finding 5.
+ *
+ * `crumbs()` above can only name a frame from the stack; this is the same
+ * question asked by the view, which has also loaded the thing and may know more.
+ * The order is the finding:
+ *
+ *   1. THE LABEL THE CLICK CARRIED. The team row said "Recon chat Bash block
+ *      rendering", so that is the name the customer expects to see at the top of
+ *      what it opened. Round 1871 put this label on the frame and then rendered
+ *      `sub-agent ${id.slice(0, 8)}` anyway (AgentChatView.tsx:463) — so the
+ *      crumb still read `manager chat › sub-agent toolu_01`, character for
+ *      character the string finding 10 quoted, while the data to fix it sat
+ *      unread on the frame.
+ *   2. WHAT THE VIEW LEARNED — the sub-agent's spawn description, or the run's
+ *      title. Covers a frame pushed from somewhere that had no label.
+ *   3. The id, shortened, and for a sub-agent with the `toolu_01` prefix
+ *      dropped, because that prefix is a constant of the Anthropic API and
+ *      eight characters of it name nothing.
+ *
+ * Never the raw id, and never a guess about the other kind: a session that
+ * cannot be named says "session", a sub-agent says "sub-agent".
+ */
+export function currentFrameLabel(frame: NavFrame, learned: string | null): string {
+  if (frame.kind === "plandoc") return frame.name;
+  const given = tidyLabel(frame.label) ?? tidyLabel(learned ?? undefined);
+  if (given !== null) return given;
+  return frame.subagentId !== undefined
+    ? `sub-agent ${shortSubagentId(frame.subagentId)}`
+    : `session ${shortId(frame.runId)}`;
 }
 
 /** A stable React key for the frame on top. Drives the drill-in animation:

@@ -40,10 +40,43 @@
  *  ── What counts as destructive ────────────────────────────────────────────
  *  X on a RUNNING row is terminate: it would kill work in flight, and it gets
  *  the two-click confirm. X on a SETTLED row is a local dismissal — hidden,
- *  never deleted, reversible from the panel's own "N hidden · show"
- *  affordance (see ./dismissals) — so it fires on a single click. A confirm
- *  step in front of a reversible action trains people to click through
- *  confirms, which is how the irreversible one eventually gets clicked too.
+ *  never deleted, reversible — so a dismissal that hides ONLY THE ROW YOU
+ *  CLICKED fires on a single click, with an undo in the toast it raises. A
+ *  confirm step in front of a one-row, reversible, undoable action trains
+ *  people to click through confirms, which is how the irreversible one
+ *  eventually gets clicked too.
+ *
+ *  ── The blast radius decides, not the verb (round 1873, finding 2) ────────
+ *  That reasoning held for a leaf and was wrong at the top of the tree. A
+ *  dismissal CASCADES: the server hides everything settled under the target,
+ *  and for an operator chat its project's finished workers too
+ *  (`resolveCascade`). Round 1872's tester clicked one ✕ on the manager row and
+ *  hid 174 nodes — 165 of 166 rows on screen — with no confirm, no undo toast
+ *  and only the fleet-wide "restore all" as a way back. Meanwhile that harmless
+ *  direction took two clicks. The guard was on the wrong control.
+ *
+ *  So `decideXClick` now takes `hidesRows` — how many rows the panel will
+ *  actually lose (`cascadeRowCount` in ./teamRows) — and the SIZE of the gesture
+ *  decides whether it needs confirming:
+ *
+ *    hidesRows <= 1   one click. The cheap, common, single-row hide, undoable
+ *                     from the toast it raises.
+ *    hidesRows >  1   the same two-click machine terminate uses, on the same two
+ *                     constants, with the count in the button label — "hide 165?"
+ *                     is a sentence the operator can refuse.
+ *
+ *  Restore-all keeps ITS confirm (`decideRestoreAllClick`), and that is not the
+ *  asymmetry the tester read it as. It is not the reverse of one dismissal; it
+ *  deletes EVERY dismissal on the machine, across both panels and every project,
+ *  and the set of forty individual decisions it destroys cannot be
+ *  reconstructed. The reverse of one dismissal is the undo in its own toast, and
+ *  that now costs one click. The guarded directions are the ones that lose
+ *  something.
+ *
+ *  RESTORE ALL is the third destructive control, added to this file in round
+ *  1355 — see `decideRestoreAllClick` at the bottom. It destroys no run, but it
+ *  destroys STATE the operator cannot reconstruct: which forty rows they had
+ *  hidden, across every project and both panels.
  */
 
 /** How long an armed button stays armed before it disarms itself. U17: "first
@@ -100,12 +133,44 @@ export interface XClickInput {
   nodeId: string;
   /** From `TeamNode.settled` — settled means dismiss, running means terminate. */
   settled: boolean;
+  /** `TeamRow.hidesRows` — how many rows this click takes off the panel, the
+   *  clicked row included. 1 is a leaf; anything more is a cascade and gets the
+   *  confirm step (see the header). Values below 1 are treated as 1: a
+   *  dismissal always hides at least the row it was aimed at. */
+  hidesRows: number;
   /** The panel's single armed slot, or null. */
   armed: ArmedState | null;
   /** `Date.now()` at the click. */
   nowMs: number;
   /** `capabilities.control_plane.terminate`. False everywhere today. */
   canTerminate: boolean;
+}
+
+/** What one ✕ is about to cost, as both surfaces describe it.
+ *
+ *  `widerReach` is the /live panel's honest caveat and is false everywhere in
+ *  the team panel. That panel holds a whole org chart and can therefore COUNT
+ *  what a cascade takes; `/api/agents` is a flat list that says which project a
+ *  worker belongs to but not which chat STARTED that project, so dismissing an
+ *  operator row there hides finished workers the panel cannot enumerate in
+ *  advance. Naming the gap is the difference between an estimate and a lie. */
+export interface DismissScope {
+  settled: boolean;
+  /** Rows this panel can SEE going, the clicked row included. Never below 1. */
+  hidesRows: number;
+  widerReach?: boolean;
+}
+
+/** Does this click fire straight away, or does it have to be confirmed?
+ *
+ *  Exported because four places must agree about it and only one of them is a
+ *  click: the decision below, the button's LABEL (a row whose ✕ will ask for a
+ *  confirm says so in its tooltip before it is touched), the /live panel's own
+ *  ✕, and the check script. */
+export function needsConfirm(i: DismissScope): boolean {
+  if (!i.settled) return true; // terminate — always
+  if (i.widerReach === true) return true; // hides rows it cannot count
+  return i.hidesRows > 1; // a cascade of hides
 }
 
 /**
@@ -121,8 +186,10 @@ export interface XClickInput {
  * fire is refused.
  */
 export function decideXClick(i: XClickInput): XDecision {
-  // 1. Settled row: dismiss. Reversible, so no confirm (see header).
-  if (i.settled) return { action: "dismiss", id: i.nodeId };
+  // 1. A settled row that hides ONLY ITSELF: dismiss. Reversible, undoable from
+  //    the toast, one row — no confirm (see header). Everything else, dismissal
+  //    or terminate, goes through the same two-click machine below.
+  if (!needsConfirm(i)) return { action: "dismiss", id: i.nodeId };
 
   // 2. Nothing armed, or a different row is armed → this click arms this row.
   //    Arming a different row is what disarms the previous one: there is one
@@ -149,12 +216,146 @@ export function decideXClick(i: XClickInput): XDecision {
   //    substitute for clicking twice deliberately (round 505 finding #1).
   if (sinceArm < MIN_CONFIRM_MS) return { action: "rearm", id: i.nodeId };
 
-  // 5. The capability gate — the guard the reviewer will try to walk around by
+  // 5. A CONFIRMED CASCADE. The row is settled, so nothing is killed — but 165
+  //    rows are about to leave the panel, and the operator has now said so
+  //    twice. There is no capability gate on this path: hiding rows is the
+  //    client's own business and the engine has no verb in it.
+  if (i.settled) return { action: "dismiss", id: i.nodeId };
+
+  // 6. The capability gate — the guard the reviewer will try to walk around by
   //    deleting the `disabled` attribute. It lives in the decision, not in the
   //    markup, so deleting markup does not reach it.
   if (!i.canTerminate) return { action: "blocked", reason: "capability" };
 
   return { action: "terminate", id: i.nodeId };
+}
+
+/* ── What the ✕ says, at each of its three jobs ───────────────────────────
+ *
+ * The words are here rather than inline in the row for the same reason the
+ * decisions are: the label and the behaviour must be two readings of one fact.
+ * A row whose click will ask for a confirm says so in its tooltip BEFORE it is
+ * touched — round 1872's tester clicked a ✕ that promised "reversible from N
+ * dismissed · show" and lost 165 rows, which the tooltip was technically not
+ * wrong about and practically useless for.
+ */
+
+/** The tooltip the ✕ wears on a settled row, given its blast radius. */
+export function dismissTitle(i: DismissScope): string {
+  const undo =
+    "Reversible: the toast offers an undo of exactly this gesture, and every " +
+    "hidden row stays listed under “N dismissed · show”.";
+  if (i.widerReach === true) {
+    return (
+      `Hide this row, everything settled under it, and — if this chat started a ` +
+      `project — that project's finished workers, which this panel cannot count ` +
+      `in advance. Click twice to confirm. ${undo}`
+    );
+  }
+  if (i.hidesRows > 1) {
+    return (
+      `Hide this row and the ${i.hidesRows - 1} settled row${i.hidesRows === 2 ? "" : "s"} ` +
+      `under it — ${i.hidesRows} in total. Click twice to confirm. ${undo} The server ` +
+      `may also hide finished runs of the same project that this tree is not listing.`
+    );
+  }
+  return `Hide this row. Nothing else goes with it. ${undo}`;
+}
+
+/** What the armed ✕ prints.
+ *
+ *  FIVE CHARACTERS, both of them, and that is a constraint rather than a
+ *  coincidence: `X_COL` in ./TeamRow reserves exactly the width of "sure?" so
+ *  that arming a row changes no rectangle (round 1355, finding #4). "hide 165?"
+ *  would have reflowed the row it is trying to warn about. The COUNT is where a
+ *  count belongs — on a line with room for a sentence, `confirmStripText`. */
+export function armedXLabel(i: DismissScope): string {
+  return i.settled ? "hide?" : "sure?";
+}
+
+/** How to call it off — round 1874, finding 3: "An armed ✕ can't be called
+ *  off. Pressed Escape — still armed. Clicked in the transcript — still armed.
+ *  Only a 3.09s timer disarms it."
+ *
+ *  The escape hatch existed (the window self-decays, `ARM_WINDOW_MS`) but was
+ *  unsayable: a customer who has changed their mind had no gesture. Both
+ *  panels now disarm on Escape and on a pointer landing anywhere else, and the
+ *  strip SAYS SO — an affordance nobody is told about is not one. Kept as a
+ *  constant because the two panels must print the same words and the check
+ *  script asserts them once. */
+export const CANCEL_HINT = "esc or click away cancels";
+
+/** The line an armed row grows, naming what the second click will cost — and
+ *  how to not pay it. It is the whole reason the confirm exists: "sure?" over
+ *  165 rows is not informed consent, and a tooltip you have to hover for is not
+ *  either. */
+export function confirmStripText(i: DismissScope): string {
+  if (!i.settled) {
+    return `terminate this running agent? ✕ again to confirm · ${CANCEL_HINT}`;
+  }
+  if (i.widerReach === true) {
+    return (
+      `hide ${i.hidesRows}+ rows — this one, everything settled under it, and any ` +
+      `project this chat started? ✕ again to confirm · ${CANCEL_HINT}`
+    );
+  }
+  return (
+    `hide ${i.hidesRows} rows — this one and the ${i.hidesRows - 1} settled ` +
+    `under it? ✕ again to confirm · ${CANCEL_HINT}`
+  );
+}
+
+/* ── What the toast says a gesture cost (round 1874, finding 2) ───────────
+ *
+ * "The toast and the tray report two different numbers for one gesture. The
+ * toast says '180 rows hidden'; the dismissed tray four inches above it says
+ * '21 dismissed · show'. Each is locally true (180 nodes fleet-wide, 21 rows
+ * gone from this tree) but side by side they read as a bug, and the customer
+ * cannot tell which number the 'show' link will restore."
+ *
+ * Both numbers are real and NEITHER may be dropped:
+ *
+ *   · the tray counts ROWS THIS PANEL WITHHELD — it is the way back to what
+ *     just left the screen, and inflating it to 180 would promise 180 rows
+ *     behind a link that has 21;
+ *   · the toast's undo restores the WHOLE cascade — 180 ids, most of them runs
+ *     that were never in this tree (other projects' finished workers, rows the
+ *     Live panel lists) — and shrinking it to 21 would understate what one
+ *     click did.
+ *
+ * So the toast states both and says which is which, in that order: what you
+ * just watched leave, then what was hidden in total. One sentence, no arithmetic
+ * left to the reader.
+ */
+
+/** What one confirmed ✕ actually cost, counted twice. */
+export interface HideOutcome {
+  /** Ids the SERVER hid — the cascade, fleet-wide. What "undo" restores. */
+  hidden: number;
+  /** How many of those were rows THIS PANEL was showing — the number the
+   *  "N dismissed · show" tray grows by. Never above `hidden`. */
+  here: number;
+}
+
+/** The toast's text. Pure, so `check-r1875-fixes.ts` can assert that the two
+ *  numbers can never contradict the tray again. */
+export function hideToastText(o: HideOutcome): string {
+  const here = Math.max(0, Math.min(o.here, o.hidden));
+  const rows = (n: number) => `${n} row${n === 1 ? "" : "s"}`;
+  if (o.hidden <= 1) return "row hidden";
+  if (here === o.hidden) {
+    return `${rows(o.hidden)} hidden — this row and everything settled under it`;
+  }
+  if (here === 0) {
+    return (
+      `${rows(o.hidden)} hidden — all of them elsewhere in the fleet; ` +
+      `undo restores every one`
+    );
+  }
+  return (
+    `${rows(here)} hidden here · ${o.hidden} in total, the rest this project's ` +
+    `finished runs on other panels — undo restores all ${o.hidden}`
+  );
 }
 
 /** One raw activation of a button, reduced to the two fields that decide
@@ -221,6 +422,33 @@ export function decideStopClick(i: {
   return { action: "stop", id: i.nodeId };
 }
 
+/**
+ * Why the ⏸ is disabled, or `null` when it is not.
+ *
+ * This is `decideStopClick` with the id dropped, and it is a separate export
+ * rather than a second predicate BECAUSE it is the same predicate: the button's
+ * `disabled` and the handler's decision are now two readings of one function,
+ * so a row cannot look clickable and act settled.
+ *
+ * Round 1353 shipped `disabled={!canStop}` — capability only. While
+ * `capabilities.stop` was false that was indistinguishable from the truth;
+ * the moment the flag flipped, every COMPLETED row grew an enabled ⏸ with
+ * `cursor: pointer` and the title "Stop this agent", whose click reached
+ * `{action:"blocked", reason:"settled"}` and died there. Zero requests, zero
+ * toasts — precisely the silent no-op NFU6 forbids.
+ */
+export function stopBlockReason(i: {
+  settled: boolean;
+  canStop: boolean;
+}): "capability" | "settled" | null {
+  const d = decideStopClick({ nodeId: "", settled: i.settled, canStop: i.canStop });
+  return d.action === "blocked" ? d.reason : null;
+}
+
+/** The tooltip a ⏸ wears when the row has nothing left to stop. Says what is
+ *  true rather than blaming the engine — the capability may well be present. */
+export const SETTLED_STOP_TITLE = "Run has already settled — nothing to stop";
+
 /** The exact tooltip a capability-gated control wears (NFU6: disabled with a
  *  reason, never hidden, never a silent no-op). The flag name is in the text
  *  on purpose — it is the string to grep for in
@@ -228,4 +456,43 @@ export function decideStopClick(i: {
  *  dead. */
 export function capabilityTitle(flag: "stop" | "terminate"): string {
   return `engine support pending (control plane contract: ${flag})`;
+}
+
+export type RestoreAllDecision =
+  | { action: "arm" }
+  | { action: "rearm" }
+  | { action: "restore-all" };
+
+/**
+ * The restore-all machine — round 1354's review, A4.
+ *
+ * `restoreAll` issues `DELETE /api/agents/dismissals`, which drops EVERY
+ * dismissal on the machine: other projects' rows, the Live panel's rows, rows
+ * hidden a week ago. Nothing is destroyed in the engine — `runs` is never
+ * touched — but the *set* is gone, and the operator cannot reconstruct it: it
+ * is forty individual decisions, not one. That is the definition of an
+ * irreversible action, so it takes the same two-click confirm the terminate
+ * path takes, on the same two constants, and for the same reason.
+ *
+ * Note what this function does NOT gate. It is not capability-gated (there is
+ * no engine verb behind it), and it has no "settled" notion (a dismissal has no
+ * status). The whole machine is the confirm — which is exactly the thing the
+ * shipped control was missing, so it is expressed here as a value that
+ * `check-team-confirm.ts` asserts rather than as a `useState` a reviewer would
+ * have to reach through a browser.
+ *
+ * `armedAt` is `Date.now()` at the arming click, or null when nothing is armed.
+ * Rules 2–4 of `decideXClick`, verbatim in intent: a stale arming re-arms
+ * rather than firing, and a too-fast second click RE-STAMPS the window instead
+ * of accumulating separation, so a click stream can never confirm itself.
+ */
+export function decideRestoreAllClick(i: {
+  armedAt: number | null;
+  nowMs: number;
+}): RestoreAllDecision {
+  if (i.armedAt === null) return { action: "arm" };
+  const sinceArm = i.nowMs - i.armedAt;
+  if (sinceArm > ARM_WINDOW_MS) return { action: "arm" };
+  if (sinceArm < MIN_CONFIRM_MS) return { action: "rearm" };
+  return { action: "restore-all" };
 }

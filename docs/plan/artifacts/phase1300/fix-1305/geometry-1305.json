@@ -1,0 +1,224 @@
+{
+  "script": "docs/plan/artifacts/phase1300/fix-1305/geometry-1305.cjs",
+  "round": 1305,
+  "base": "http://127.0.0.1:7792",
+  "finishedAt": "2026-08-17T02:38:55.645Z",
+  "note": "One instant on a live-served worktree build. Red dots in the PNG are coordinates round 1291's viewport rule would have swept that do not resolve to a row; green dots are round 1305's targets.",
+  "rowsInDom": 115,
+  "viewport": {
+    "width": 1600,
+    "height": 1000
+  },
+  "scrollBox": {
+    "top": 85,
+    "bottom": 616,
+    "height": 531
+  },
+  "scrollState": {
+    "scrollTop": 0,
+    "scrollHeight": 4945,
+    "clientHeight": 531
+  },
+  "viewportRule": [
+    {
+      "x": 1470,
+      "y": 107
+    },
+    {
+      "x": 1470,
+      "y": 150
+    },
+    {
+      "x": 1470,
+      "y": 193
+    },
+    {
+      "x": 1470,
+      "y": 236
+    },
+    {
+      "x": 1470,
+      "y": 279
+    },
+    {
+      "x": 1470,
+      "y": 322
+    },
+    {
+      "x": 1470,
+      "y": 365
+    },
+    {
+      "x": 1470,
+      "y": 408
+    },
+    {
+      "x": 1470,
+      "y": 451
+    },
+    {
+      "x": 1470,
+      "y": 494
+    },
+    {
+      "x": 1470,
+      "y": 537
+    },
+    {
+      "x": 1470,
+      "y": 580
+    },
+    {
+      "x": 1470,
+      "y": 623
+    },
+    {
+      "x": 1470,
+      "y": 666
+    },
+    {
+      "x": 1470,
+      "y": 709
+    },
+    {
+      "x": 1470,
+      "y": 752
+    },
+    {
+      "x": 1470,
+      "y": 795
+    },
+    {
+      "x": 1470,
+      "y": 838
+    },
+    {
+      "x": 1470,
+      "y": 881
+    },
+    {
+      "x": 1470,
+      "y": 924
+    },
+    {
+      "x": 1470,
+      "y": 967
+    }
+  ],
+  "offList": [
+    {
+      "x": 1470,
+      "y": 623,
+      "onRow": false,
+      "landsOn": "PLAN101/111"
+    },
+    {
+      "x": 1470,
+      "y": 666,
+      "onRow": false,
+      "landsOn": "Plan: operator-visibility"
+    },
+    {
+      "x": 1470,
+      "y": 709,
+      "onRow": false,
+      "landsOn": "100Plan phase 1: time truth (frozen settled durations)5/5100"
+    },
+    {
+      "x": 1470,
+      "y": 752,
+      "onRow": false,
+      "landsOn": "101builderPhase 1a — server: settled-aware elapsed_ms, settl"
+    },
+    {
+      "x": 1470,
+      "y": 795,
+      "onRow": false,
+      "landsOn": "Phase 1b — client: one duration-helper pair; settled rows an"
+    },
+    {
+      "x": 1470,
+      "y": 838,
+      "onRow": false,
+      "landsOn": "Plan phase 2: kind truth (row classification, model, lineage"
+    },
+    {
+      "x": 1470,
+      "y": 881,
+      "onRow": false,
+      "landsOn": "Phase 2a — server: agent_kind classification + role/project_"
+    },
+    {
+      "x": 1470,
+      "y": 924,
+      "onRow": false,
+      "landsOn": "Phase 2 review — kind truth (R7-R11): gate, stranger test, t"
+    },
+    {
+      "x": 1470,
+      "y": 967,
+      "onRow": false,
+      "landsOn": "200Plan phase 2: kind truth (row classification, model, line"
+    }
+  ],
+  "clippedRule": [
+    {
+      "x": 1470,
+      "y": 107
+    },
+    {
+      "x": 1470,
+      "y": 150
+    },
+    {
+      "x": 1470,
+      "y": 193
+    },
+    {
+      "x": 1470,
+      "y": 236
+    },
+    {
+      "x": 1470,
+      "y": 279
+    },
+    {
+      "x": 1470,
+      "y": 322
+    },
+    {
+      "x": 1470,
+      "y": 365
+    },
+    {
+      "x": 1470,
+      "y": 408
+    },
+    {
+      "x": 1470,
+      "y": 451
+    },
+    {
+      "x": 1470,
+      "y": 494
+    },
+    {
+      "x": 1470,
+      "y": 537
+    },
+    {
+      "x": 1470,
+      "y": 580
+    },
+    {
+      "x": 1470,
+      "y": 609
+    }
+  ],
+  "counts": {
+    "rowsInDom": 115,
+    "viewportRuleTargets": 21,
+    "clippedRuleTargets": 13,
+    "viewportRuleTargetsNotOnAnyRow": 9
+  }
+}

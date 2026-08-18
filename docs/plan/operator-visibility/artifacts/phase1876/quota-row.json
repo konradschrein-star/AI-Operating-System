@@ -1,0 +1,210 @@
+{
+  "census": {
+    "rows": 1,
+    "rowText": "5h 41% 7d 12% gem not signed in ⟳ just now",
+    "bars": [
+      "5h",
+      "7d"
+    ],
+    "fiveHourBars": 1,
+    "sevenDayBars": 1,
+    "gemText": "gem not signed in",
+    "gemTitle": "gemini — Antigravity CLI (agy) is not installed on this box, so the Ultra subscription has never been signed in here. To connect: install the Antigravity CLI, then run `agy` once to sign in. Google publishes no quota endpoint for an AI Ultra subscription — no denominator exists, so this is our own count, not a share of a limit.",
+    "gemTone": "unsigned",
+    "ctxPresent": false,
+    "ctxPct": null
+  },
+  "conns": [
+    {
+      "id": "claude:konrad-max",
+      "state": "connected",
+      "chip": "SERVING RUNS",
+      "action": "Nothing to do. Use “Probe now” to re-confirm at any time."
+    },
+    {
+      "id": "claude:konrad-pro",
+      "state": "unknown",
+      "chip": "UNKNOWN — NOT PROBED",
+      "action": "Press “Probe now” below to find out whether this login still works."
+    },
+    {
+      "id": "google",
+      "state": "unknown",
+      "chip": "UNVERIFIED",
+      "action": "Press “Check connection” below — it calls Gmail and reports what Google answers."
+    },
+    {
+      "id": "gemini-key",
+      "state": "absent",
+      "chip": "NOT CONNECTED",
+      "action": "Paste a key from aistudio.google.com into the field below and press Save."
+    },
+    {
+      "id": "gemini-ultra",
+      "state": "absent",
+      "chip": "NOT CONNECTED",
+      "action": "On the VPS: install the Antigravity CLI, then run `agy` once to sign in"
+    }
+  ],
+  "counted": {
+    "text": "gem 12.4k tok/5h",
+    "title": "gemini — our own count: 12,400 tokens across 4 call(s) in 5h, 208,000 tokens across 31 call(s) in 7d. agy has a local profile; the session lives in the OS keyring and cannot be read from here, so this is still our own count. Google publishes no quota endpoint for an AI Ultra subscription — no denominator exists, so this is our own count, not a share of a limit.",
+    "tone": "counted"
+  },
+  "hits": {
+    "uptime_ms": 206156,
+    "quota_requests": 4,
+    "quota_at_ms": [
+      4705,
+      46639,
+      166651,
+      193191
+    ],
+    "gaps_ms": [
+      41934,
+      120012,
+      26540
+    ],
+    "all": {
+      "/api/usage/quota": 4,
+      "/api/today": 3,
+      "/api/inbox": 3,
+      "/api/live": 3,
+      "/api/control": 3,
+      "/api/chat": 2,
+      "/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/plan": 2,
+      "/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team": 2,
+      "/api/capabilities": 2,
+      "/api/agents/dismissals": 2,
+      "/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2": 2,
+      "/api/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/linkage": 2,
+      "/__gemini": 2,
+      "/__hits": 9,
+      "/api/integrations/google": 1,
+      "/api/integrations/gemini": 1,
+      "/api/accounts": 5,
+      "/api/integrations/gemini/usage": 1
+    }
+  },
+  "clientCalls": [
+    {
+      "url": "http://127.0.0.1:7798/api/proxy/usage/quota",
+      "t": 1786985007592
+    },
+    {
+      "url": "http://127.0.0.1:7798/api/proxy/usage/quota",
+      "t": 1786985127613
+    },
+    {
+      "url": "http://127.0.0.1:7798/api/proxy/usage/quota",
+      "t": 1786985154159
+    }
+  ],
+  "results": [
+    {
+      "label": "exactly one indicator row on screen",
+      "ok": true,
+      "detail": "rows=1"
+    },
+    {
+      "label": "the 5h bar appears once",
+      "ok": true,
+      "detail": "count=1"
+    },
+    {
+      "label": "the 7d bar appears once",
+      "ok": true,
+      "detail": "count=1"
+    },
+    {
+      "label": "the Gemini line is in the row",
+      "ok": true,
+      "detail": "gem not signed in"
+    },
+    {
+      "label": "…and says it is not signed in rather than 0%",
+      "ok": true,
+      "detail": "gem not signed in"
+    },
+    {
+      "label": "…with the missing denominator in its tooltip",
+      "ok": true,
+      "detail": "gemini — Antigravity CLI (agy) is not installed on this box, so the Ultra subscription has never been signed in here. To"
+    },
+    {
+      "label": "no context gauge on a surface with no chat (absent, not 0%)",
+      "ok": true,
+      "detail": "ctxPct=null"
+    },
+    {
+      "label": "one quota request for the whole row on first paint",
+      "ok": true,
+      "detail": "server saw 1, browser sent 1"
+    },
+    {
+      "label": "opening the settings surface adds no quota request",
+      "ok": true,
+      "detail": "2 → 2"
+    },
+    {
+      "label": "one poll — not two — in a 135s idle window with both observers mounted",
+      "ok": true,
+      "detail": "1 request(s); gaps=[41934,120012]"
+    },
+    {
+      "label": "every account type is a row",
+      "ok": true,
+      "detail": "[\"claude:konrad-max\",\"claude:konrad-pro\",\"google\",\"gemini-key\",\"gemini-ultra\"]"
+    },
+    {
+      "label": "an unprobed Claude account is UNKNOWN, never green",
+      "ok": true,
+      "detail": "unknown / UNKNOWN — NOT PROBED"
+    },
+    {
+      "label": "every row states its connect/repair action",
+      "ok": true,
+      "detail": "claude:konrad-max: Nothing to do. Use “Probe now” to re-con | claude:konrad-pro: Press “Probe now” below to find out whet | google: Press “Check connection” below — it call | gemini-key: Paste a key from aistudio.google.com int | gemini-ultra: On the VPS: install the Antigravity CLI,"
+    },
+    {
+      "label": "…and the UNKNOWN chip is amber, not green",
+      "ok": true,
+      "detail": "{\"colour\":\"rgb(216, 194, 74)\",\"background\":\"rgb(20, 14, 8)\"}"
+    },
+    {
+      "label": "an authenticated, counted Gemini shows tokens and no percentage",
+      "ok": true,
+      "detail": "gem 12.4k tok/5h"
+    },
+    {
+      "label": "…and still says the limit is unpublished",
+      "ok": true,
+      "detail": "gemini — our own count: 12,400 tokens across 4 call(s) in 5h, 208,000 tokens across 31 call(s) in 7d. agy has a local profile; the session l"
+    },
+    {
+      "label": "still exactly one row with a chat open",
+      "ok": true,
+      "detail": "rows=1"
+    },
+    {
+      "label": "…and the composer above it carries no second copy of the bars",
+      "ok": true,
+      "detail": "5h bars on screen: 1 · row: 5h 41% 7d 12% gem 12.4k tok/5h ⟳ just now"
+    },
+    {
+      "label": "opening a chat costs no quota request",
+      "ok": true,
+      "detail": "4 → 4"
+    },
+    {
+      "label": "the whole session stayed inside one-request-per-interval",
+      "ok": true,
+      "detail": "3 requests in 160s (budget 4 = 2 page loads + 2 interval(s)); gaps=[41934,120012,26540]"
+    },
+    {
+      "label": "server count and browser count agree",
+      "ok": true,
+      "detail": "server=3 browser=3"
+    }
+  ]
+}

@@ -50,6 +50,13 @@
  * `.team-row` rules in app/globals.css. They sit in a fixed-width slot, so the
  * reveal changes opacity and nothing else — no reflow, no re-render.
  *
+ * ── The peeked variant (round 1355) ───────────────────────────────────────
+ * A row can also be rendered as part of the DISMISSED group: faded, marked
+ * `data-team-peeked`, and carrying ↺ instead of ⏸/✕. It is still this
+ * component — one row model, one set of columns, one lineage tooltip — because
+ * the alternative was a second row component that would drift. The props union
+ * below makes the two states mutually exclusive at compile time.
+ *
  * ARMING moves no pixels either, which is a separate claim and was false until
  * round 506: the armed ✕ grew a 1px border, which grew line 1, which pushed
  * every row below it down 2px mid-gesture — and a pointer that had been over
@@ -59,8 +66,9 @@
  * and nothing else (round 505 finding #4).
  */
 
-import { memo, type CSSProperties } from "react";
+import { createContext, memo, useContext, type CSSProperties } from "react";
 import { tokens, dot } from "../../tokens";
+import { RunShotsIndicator } from "../chat/BrowserShots";
 import {
   isModelAlias,
   modelDisplay,
@@ -68,9 +76,32 @@ import {
   roleTokenName,
   type RoleTokenName,
 } from "../live/agentsApi";
-import { capabilityTitle, isSpuriousActivation } from "./confirm";
-import { fmtTokens, fmtWorkingTime, type TeamNode } from "./teamApi";
+import {
+  SETTLED_STOP_TITLE,
+  armedXLabel,
+  capabilityTitle,
+  confirmStripText,
+  dismissTitle,
+  isSpuriousActivation,
+  needsConfirm,
+  stopBlockReason,
+  type DismissScope,
+} from "./confirm";
+import {
+  HIDDEN_WITH_PARENT_MARK,
+  HIDDEN_WITH_PARENT_TITLE,
+  PEEK_OPACITY,
+  RESTORE_ROW_TITLE,
+} from "./peek";
+import {
+  fmtTokens,
+  fmtWorkingTime,
+  tokensMeasured,
+  NOT_RECORDED,
+  type TeamNode,
+} from "./teamApi";
 import { interpolatedWorkingMs, type TeamRow } from "./teamRows";
+import { shortNodeId } from "../short-id";
 import { useTick } from "./tickStore";
 
 const EM_DASH = "—";
@@ -154,10 +185,12 @@ function modelColor(model: string | null): string {
   return isModelAlias(model) ? tokens.textGhost : tokens.textFaint;
 }
 
-/** First 8 chars of a uuid — enough to grep the database with, short enough to
- *  read inside a native tooltip. */
+/** Eight characters that identify the node — a uuid's first eight, or a
+ *  sub-agent id's first eight AFTER the constant `toolu_01` prefix (round 1874,
+ *  finding 4: all seven sub-agent tooltips read `id toolu_01`, which named the
+ *  API's id format and no sub-agent at all). One rule, in ../short-id. */
 function short(id: string | null): string {
-  return id ? id.slice(0, 8) : "none";
+  return shortNodeId(id, "none");
 }
 
 /**
@@ -237,6 +270,30 @@ function FrozenTime({ ms, prefix, title }: TimeCellProps) {
   );
 }
 
+/**
+ * The server clock at response time (`responseNowMs(res)`), as a context
+ * rather than a prop — round 1302, L1.
+ *
+ * It used to be a prop on every row, and it is a NEW NUMBER on every poll, so
+ * it defeated `memo(TeamRowView)` on its own: round 1301 measured `responseNow`
+ * differing on 432 of 432 compares, and `bailoutsIfRowWereTheOnlyProp` = 0 —
+ * fixing wrapper identity alone would have changed nothing, because every row
+ * still had a changed prop.
+ *
+ * A settled row has no business hearing about it at all: `interpolatedWorkingMs`
+ * returns the frozen base and never reads `responseNow` when `node.settled`
+ * (U16). So the value goes to the ONE component that actually interpolates.
+ * React propagates a context change to consumers even through a memo bail-out,
+ * which is exactly the routing wanted: the poll re-renders the live rows' time
+ * spans and nothing else.
+ *
+ * Default `NaN` — the same "cannot interpolate" value the panel passes while
+ * there is no response, which `interpolatedWorkingMs` already handles by
+ * rendering the frozen base rather than a guess. A `LiveTime` mounted outside
+ * a provider therefore shows an honest number, not a NaN.
+ */
+export const ResponseNowContext = createContext<number>(Number.NaN);
+
 interface LiveTimeProps {
   /** The row, for `interpolatedWorkingMs` — the single place client-side time
    *  policy lives (teamRows.ts). The brief named this component's props
@@ -246,19 +303,19 @@ interface LiveTimeProps {
    *  second source of truth round 501 built `interpolatedWorkingMs` to
    *  prevent. */
   row: TeamRow;
-  /** The server clock at response time, from `responseNowMs(res)`. */
-  responseNow: number;
   prefix: string;
   title: string;
 }
 
 /**
- * A running row's time. The ONLY subscriber to the 1s tick in this panel:
- * a tick re-renders this `<span>`, not the row, not the controls, not the
- * native title (13 §6).
+ * A running row's time. The ONLY subscriber to the 1s tick in this panel, and
+ * since round 1302 the only reader of `ResponseNowContext`: a tick or a poll
+ * re-renders this `<span>`, not the row, not the controls, not the native
+ * title (13 §6).
  */
-function LiveTime({ row, responseNow, prefix, title }: LiveTimeProps) {
+function LiveTime({ row, prefix, title }: LiveTimeProps) {
   const nowMs = useTick();
+  const responseNow = useContext(ResponseNowContext);
   return (
     <span
       data-working-cell
@@ -332,10 +389,8 @@ const X_STYLE: CSSProperties = {
 
 /* ── The row ─────────────────────────────────────────────────────────────── */
 
-export interface TeamRowProps {
+interface TeamRowBaseProps {
   row: TeamRow;
-  /** `responseNowMs(res)` — the anchor every interpolation measures from. */
-  responseNow: number;
   /** Is THIS row's X currently armed? A boolean, so arming re-renders exactly
    *  two rows (the one losing it and the one gaining it) instead of the list. */
   armed: boolean;
@@ -361,12 +416,42 @@ export interface TeamRowProps {
    *  node map this design avoids. */
   onOpenNode: (node: TeamNode) => void;
   onStop: (nodeId: string, settled: boolean) => void;
-  onX: (nodeId: string, settled: boolean) => void;
+  /** `hidesRows` and `widerReach` travel WITH the click rather than being looked
+   *  up: the handler in ChatTeamPanel is dependency-free by design (one identity
+   *  for the life of the panel, so every memoized row keeps its prop), and it
+   *  therefore has no tree to consult. Same argument as `settled` beside it. */
+  onX: (
+    nodeId: string,
+    settled: boolean,
+    hidesRows: number,
+    widerReach: boolean,
+  ) => void;
 }
+
+/**
+ * The peek half, as a discriminated union rather than three loose optionals.
+ *
+ * A peeked row is one the panel is HIDING and the operator asked to see anyway
+ * (round 1354 review, A4). It never carries ⏸ or ✕ — its only verb is the way
+ * back — so the two states cannot both be half-configured: `peeked: true`
+ * REQUIRES `restorable` and `onRestore` at the type level, and a normal row
+ * cannot accidentally be handed a restore callback that nothing will render.
+ * No runtime fallback, no defaulted no-op.
+ */
+export type TeamRowProps = TeamRowBaseProps &
+  (
+    | { peeked?: false; restorable?: never; onRestore?: never }
+    | {
+        peeked: true;
+        /** `HiddenTeamRow.restorable` — false for a row hidden only because an
+         *  ancestor was, which gets a stated reason instead of a control. */
+        restorable: boolean;
+        onRestore: (nodeId: string) => void;
+      }
+  );
 
 function TeamRowViewImpl({
   row,
-  responseNow,
   armed,
   canStop,
   canTerminate,
@@ -375,6 +460,9 @@ function TeamRowViewImpl({
   onOpenNode,
   onStop,
   onX,
+  peeked = false,
+  restorable = false,
+  onRestore,
 }: TeamRowProps) {
   const n = row.node;
   const settled = n.settled;
@@ -391,7 +479,27 @@ function TeamRowViewImpl({
    * clickable. */
   const clickable = n.kind === "worker" || n.kind === "subagent";
 
+  /* Why the ⏸ is dead, or null when it is not — derived from the SAME predicate
+   * the click handler runs, so the two cannot disagree about a row (round 1353
+   * review, finding 1: they did, and the result was an enabled button that sent
+   * nothing). `stopBlockReason` is `decideStopClick` with the id dropped. */
+  const stopBlock = stopBlockReason({ settled, canStop });
+
   const sourceNote = workingSourceNote(n);
+
+  /* ── What this row's ✕ costs (round 1873, finding 2) ─────────────────────
+   *
+   * `hidesRows` is this row and its visible sub-agents, counted by
+   * `cascadeRowCount`. `widerReach` is the manager's extra clause: dismissing an
+   * OPERATOR row also hides the settled runs of any project this chat started —
+   * including finished ones this tree never listed — so the number is a floor and
+   * the words say so. Every operator row therefore takes the confirm, whatever
+   * its subtree size. */
+  const scope: DismissScope = {
+    settled,
+    hidesRows: row.hidesRows,
+    widerReach: n.kind === "operator",
+  };
 
   /* U15a / DoD #1, stated once and with no exception: every row shows its
    * working time. The only thing that suppresses the number is the server
@@ -409,6 +517,7 @@ function TeamRowViewImpl({
       : `working time, still running${sourceNote ? ` (${sourceNote})` : ""}`;
 
   const description = n.description ?? (degradedTasks ? EM_DASH : "(no description)");
+  const measured = tokensMeasured(n);
 
   return (
     <div
@@ -420,6 +529,7 @@ function TeamRowViewImpl({
       data-settled={settled ? "true" : "false"}
       data-status={n.status}
       data-role={n.role ?? "-"}
+      data-team-peeked={peeked ? "true" : undefined}
       title={lineageTitle(row)}
       onClick={clickable ? () => onOpenNode(n) : undefined}
       style={{
@@ -428,6 +538,10 @@ function TeamRowViewImpl({
         borderBottom: `1px solid ${tokens.borderDivider}`,
         cursor: clickable ? "pointer" : "default",
         fontSize: 11,
+        /* The fade is the whole visual statement, and it is an OPACITY, not a
+           colour — the row keeps every token it renders with, so it stays
+           legible in both themes (NFU1). Same constant the /live peek uses. */
+        ...(peeked ? { opacity: PEEK_OPACITY } : {}),
       }}
     >
       {/* line 1 — what this is: dot, kind, role, model … controls */}
@@ -467,11 +581,26 @@ function TeamRowViewImpl({
         >
           {roleLabel(n.role)}
         </span>
+        {/* Round 1871: a bare "—" here answered nothing. When the model was
+            never recorded the cell says so in words and the tooltip says WHY —
+            an unpinned Task sub-agent's model is chosen inside the CLI process
+            and never reaches this run's thread. Borrowing the parent's model
+            would be a guess presented as a fact, which is the one thing this
+            panel does not do. */}
         <span
           data-model-cell
+          data-model-known={n.model === null ? "false" : "true"}
           className="mono"
+          title={
+            n.model !== null
+              ? n.model
+              : n.kind === "subagent"
+                ? "model not recorded — this sub-agent's spawn call pinned no model, " +
+                  "and the one the CLI chose for it was never written to the transcript"
+                : "model not recorded for this run"
+          }
           style={{
-            color: modelColor(n.model),
+            color: n.model === null ? tokens.textGhost : modelColor(n.model),
             flex: 1,
             minWidth: 0,
             overflow: "hidden",
@@ -480,14 +609,19 @@ function TeamRowViewImpl({
             fontSize: 9.5,
           }}
         >
-          {modelDisplay(n.model)}
+          {n.model === null ? "model n/a" : modelDisplay(n.model)}
         </span>
 
         {/* Always mounted, revealed by CSS only (.team-row rules in
             globals.css). Fixed width at all times so the reveal cannot move a
-            pixel of the row. */}
+            pixel of the row.
+
+            A PEEKED row is the exception to the hover-gating, not to the fixed
+            width: it lives in a list the operator explicitly summoned, and a
+            way back you have to discover by hovering inside that list is a
+            puzzle, not an affordance. Same call the /live peek made. */}
         <span
-          className="team-row-controls"
+          className={peeked ? undefined : "team-row-controls"}
           style={{
             flex: "none",
             minWidth: CONTROLS_COL,
@@ -496,11 +630,64 @@ function TeamRowViewImpl({
             gap: 2,
           }}
         >
+          {peeked ? (
+            restorable ? (
+              <button
+                data-team-restore={n.id}
+                type="button"
+                title={RESTORE_ROW_TITLE}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  /* Non-null by the props union: `peeked: true` requires it. */
+                  onRestore?.(n.id);
+                }}
+                className="mono"
+                style={{ ...X_STYLE, color: tokens.textMuted, cursor: "pointer" }}
+              >
+                ↺
+              </button>
+            ) : (
+              /* Not a disabled button: there is no verb here at all. A control
+                 that exists only to refuse would read as "restore is broken"
+                 rather than "this row belongs to the one above it". */
+              <span
+                data-team-hidden-with-parent
+                title={HIDDEN_WITH_PARENT_TITLE}
+                className="mono"
+                style={{
+                  ...X_STYLE,
+                  color: tokens.textGhost,
+                  cursor: "default",
+                  display: "inline-block",
+                }}
+              >
+                {HIDDEN_WITH_PARENT_MARK}
+              </span>
+            )
+          ) : (
+            <>
+          {/* Two independent reasons this button can be dead, and BOTH have to
+              reach `disabled` — `canStop` alone is a capability answer, and a
+              capability answer says nothing about whether THIS row still has a
+              process to stop. While capabilities were all-false the two were
+              indistinguishable; round 1353 flipped `stop` to true and the gap
+              became a settled row wearing an enabled ⏸ that fired
+              `decideStopClick` → `{blocked, "settled"}` → nothing. NFU6 forbids
+              a silent no-op, so the settled case is disabled here and named in
+              the title. `stopBlock` keeps the three-way choice in one
+              place so the title, the colour and the cursor cannot drift apart. */}
           <button
             data-team-stop
             type="button"
-            disabled={!canStop}
-            title={canStop ? "Stop this agent" : capabilityTitle("stop")}
+            data-stop-blocked={stopBlock ?? "none"}
+            disabled={stopBlock !== null}
+            title={
+              stopBlock === null
+                ? "Stop this agent"
+                : stopBlock === "settled"
+                  ? SETTLED_STOP_TITLE
+                  : capabilityTitle("stop")
+            }
             onClick={(e) => {
               e.stopPropagation();
               onStop(n.id, settled);
@@ -508,8 +695,8 @@ function TeamRowViewImpl({
             className="mono"
             style={{
               ...BTN_STYLE,
-              color: canStop ? tokens.warn : tokens.textGhost,
-              cursor: canStop ? "pointer" : "not-allowed",
+              color: stopBlock === null ? tokens.warn : tokens.textGhost,
+              cursor: stopBlock === null ? "pointer" : "not-allowed",
             }}
           >
             ⏸
@@ -517,13 +704,21 @@ function TeamRowViewImpl({
           <button
             data-team-x
             data-confirm={armed ? "armed" : "idle"}
+            /* The blast radius, on the element, before anything is clicked —
+               round 1873, finding 2. A reviewer can read what one ✕ would cost
+               without taking the tooltip's word for it, and the check harness
+               can assert that the guarded rows are exactly the ones that hide
+               more than themselves. */
+            data-x-hides={row.hidesRows}
+            data-x-wider-reach={scope.widerReach ? "true" : undefined}
+            data-x-confirms={needsConfirm(scope)}
             type="button"
             /* Settled X is a local, reversible dismissal — always available.
                Running X is terminate, and terminate is capability-gated. */
             disabled={!settled && !canTerminate}
             title={
               settled
-                ? "Hide this row — reversible from “N hidden · show” below"
+                ? dismissTitle(scope)
                 : canTerminate
                   ? "Terminate this agent — click again to confirm"
                   : capabilityTitle("terminate")
@@ -543,7 +738,7 @@ function TeamRowViewImpl({
               // browser telling us this was one gesture, not two decisions.
               // Keyboard activation reports detail 0 and passes through.
               if (isSpuriousActivation({ detail: e.detail, repeat: false })) return;
-              onX(n.id, settled);
+              onX(n.id, settled, row.hidesRows, scope.widerReach === true);
             }}
             className="mono"
             style={{
@@ -559,8 +754,10 @@ function TeamRowViewImpl({
                 : {}),
             }}
           >
-            {armed ? "sure?" : "✕"}
+            {armed ? armedXLabel(scope) : "✕"}
           </button>
+            </>
+          )}
         </span>
       </div>
 
@@ -587,17 +784,27 @@ function TeamRowViewImpl({
         >
           {description}
         </span>
+        {/* U15a's sibling for tokens (round 1871). `0` on an unmeasured row is
+            the same class of lie as a ticking settled clock: it asserts a
+            measurement that was never taken. `tokens_measured: false` means no
+            thread entry was ever attributed to this sub-agent, so the cell says
+            "n/a" and the tooltip says why. */}
         <span
           data-tokens-cell
+          data-tokens-measured={measured ? "true" : "false"}
           className="mono"
           title={
-            `${n.tokens.total.toLocaleString()} tokens total — ` +
-            `in ${n.tokens.input.toLocaleString()}, out ${n.tokens.output.toLocaleString()}, ` +
-            `cache read ${n.tokens.cache_read.toLocaleString()}, ` +
-            `cache write ${n.tokens.cache_creation.toLocaleString()}`
+            measured
+              ? `${n.tokens.total.toLocaleString()} tokens total — ` +
+                `in ${n.tokens.input.toLocaleString()}, out ${n.tokens.output.toLocaleString()}, ` +
+                `cache read ${n.tokens.cache_read.toLocaleString()}, ` +
+                `cache write ${n.tokens.cache_creation.toLocaleString()}`
+              : "token spend was never recorded for this sub-agent — none of this " +
+                "run's thread entries carry its parent_tool_use_id, so there is " +
+                "nothing to count. Not zero: unknown."
           }
           style={{
-            color: tokens.textFaint,
+            color: measured ? tokens.textFaint : tokens.textGhost,
             minWidth: TOKENS_COL,
             textAlign: "right",
             flex: "none",
@@ -605,7 +812,7 @@ function TeamRowViewImpl({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {fmtTokens(n.tokens.total)}
+          {measured ? fmtTokens(n.tokens.total) : NOT_RECORDED}
         </span>
         {/* The structural half of U16: settled rows get a component that has
             no access to the clock at all. A running row whose working time the
@@ -615,19 +822,54 @@ function TeamRowViewImpl({
         {settled || degradedTime ? (
           <FrozenTime ms={timeMs} prefix={prefix} title={timeTitle} />
         ) : (
-          <LiveTime
-            row={row}
-            responseNow={responseNow}
-            prefix={prefix}
-            title={timeTitle}
-          />
+          <LiveTime row={row} prefix={prefix} title={timeTitle} />
         )}
       </div>
+
+      {/* line 3 — what it LOOKED at, when it looked at anything (round 1350).
+          Renders nothing at all for a run with no screenshots, which is most
+          of them, so the row keeps its two-line shape.
+
+          Opens on CLICK, never on hover: hover cost is a gate on this project
+          (NFU2 / DoD #3) and this file's whole design is that a pointer moving
+          across the list changes no state and mounts nothing. A sub-agent gets
+          `null` — its node id is a `tool_use_id`, and its screenshots land in
+          its parent's run directory because it inherits that process's
+          FORGE_RUN_ID. */}
+      <RunShotsIndicator runId={n.kind === "subagent" ? null : n.id} paddingLeft={13} />
+
+      {/* line 4 — the armed confirm, and ONLY while armed (round 1873, finding
+          2). The ✕'s own label cannot carry a number without reflowing the row
+          (see `armedXLabel`), so the number lives here, where there is room for
+          the sentence: "hide 165 rows — this one and the 164 settled under it?".
+          It renders for both armed jobs, terminate included, because the same
+          argument applies to a running row: "sure?" is not a statement of what
+          is about to happen. */}
+      {armed && (
+        <div
+          data-team-confirm-strip
+          className="mono"
+          style={{
+            marginTop: 3,
+            paddingLeft: 13,
+            fontSize: 9.5,
+            lineHeight: 1.5,
+            color: tokens.bleed,
+            whiteSpace: "normal",
+          }}
+        >
+          {confirmStripText(scope)}
+        </div>
+      )}
     </div>
   );
 }
 
 /** Memoized on a shallow prop compare. Hover changes no prop — it is CSS — so
  *  a hover sweep across the list commits nothing (NFU2). A poll replaces
- *  `row`, which is the only thing that should re-render a row. */
+ *  `row` for the rows whose data actually moved, and only for those: since
+ *  round 1302 `flattenTeam` reuses the previous wrapper when nothing about a
+ *  row changed, and the per-poll clock left the props entirely for
+ *  `ResponseNowContext`. Both were required — round 1301 measured 0 bail-outs
+ *  in 432 compares with either one still in place. */
 export const TeamRowView = memo(TeamRowViewImpl);

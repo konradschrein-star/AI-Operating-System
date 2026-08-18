@@ -1,7 +1,8 @@
 "use client";
 
-import Link from "next/link";
-
+/* `next/link` is gone from this file on purpose (round 1350): the SETTINGS
+ * rail entry was its last user, and it now opens a surface instead of
+ * navigating away. Nothing in the OS shell unmounts the OS any more. */
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot, applyTheme } from "../tokens";
@@ -20,7 +21,6 @@ import {
 } from "../data";
 import {
   fetchToday,
-  fetchQuota,
   fetchInbox,
   fetchInboxPreview,
   fetchLive,
@@ -41,67 +41,34 @@ import { PipelineSurface } from "./PipelineSurface";
 import { AutonomySurface } from "./AutonomySurface";
 import { AutomationSurface } from "./AutomationSurface";
 import { MoneySurface } from "./MoneySurface";
+import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { AgentActivity } from "./live/AgentActivity";
-import { ResizeHandle, useResizablePanel } from "./_ui/ResizableSplit";
+import { QuotaRow } from "./quota/QuotaRow";
+import {
+  ResizeHandle,
+  useResizablePanel,
+  usePersistentState,
+  useNarrowViewport,
+} from "./_ui/ResizableSplit";
 import {
   SurfaceErrorBoundary,
   ErrorPanel,
   errorDetail,
 } from "./_ui/SurfaceErrorBoundary";
 import { ToastHost, toastError } from "./_ui/Toasts";
+import {
+  MOBILE_NAV_GROUPS,
+  NAV,
+  isSurface,
+  type NavItem,
+  type Surface,
+} from "./nav-items";
 
-/* ----------------------------------------------------------------------------
- * Surface keys — match the design's surface routing
- * -------------------------------------------------------------------------- */
-type Surface =
-  | "today"
-  | "inbox"
-  | "chat"
-  | "tasks"
-  | "pipeline"
-  | "library"
-  | "money"
-  | "businesses"
-  | "skills"
-  | "memory"
-  | "live"
-  | "control"
-  | "autonomy"
-  | "automation"
-  | "goals"
-  | "journal"
-  | "map"
-  | "search"
-  | "settings";
-
-interface NavItem {
-  key: Surface;
-  label: string;
-  badge?: string;
-  group: "operator" | "work" | "ai" | "recall";
-}
-
-const NAV: NavItem[] = [
-  { key: "today", label: "TODAY", group: "operator" },
-  { key: "inbox", label: "INBOX", group: "operator" },
-  { key: "chat", label: "CHAT", group: "operator" },
-  { key: "tasks", label: "PROJECTS", group: "work" },
-  { key: "pipeline", label: "PIPELINE", group: "work" },
-  { key: "library", label: "LIBRARY", group: "work" },
-  { key: "money", label: "MONEY", group: "work" },
-  { key: "businesses", label: "BUSINESSES", group: "work" },
-  { key: "skills", label: "SKILLS", group: "ai" },
-  { key: "memory", label: "MEMORY", group: "ai" },
-  { key: "live", label: "LIVE", group: "ai" },
-  { key: "control", label: "CONTROL", group: "ai" },
-  { key: "autonomy", label: "AUTONOMY", group: "ai" },
-  { key: "automation", label: "AUTOMATION", group: "ai" },
-  { key: "goals", label: "GOALS", group: "recall" },
-  { key: "journal", label: "JOURNAL", group: "recall" },
-  { key: "map", label: "MAP", group: "recall" },
-];
+/* Surfaces and the navigation model moved to ./nav-items in round 1873 — the
+ * phone sheet below is a third consumer of the same list, and a list with three
+ * readers does not live inside one of them. */
 
 const PLACEHOLDER_SURFACES: Record<
   string,
@@ -269,9 +236,15 @@ const actionStyle = (variant: InboxAction["variant"]): CSSProperties => {
  * Root
  * -------------------------------------------------------------------------- */
 export function DesktopApp() {
-  const [surface, setSurface] = useState<Surface>("today");
+  const [surface, setSurface] = usePersistentState<Surface>(
+    "forge.desktop.surface",
+    "today",
+    isSurface,
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQ, setPaletteQ] = useState("");
+  /** Phone-width, or a narrow window on a desktop. See `useNarrowViewport`. */
+  const narrow = useNarrowViewport();
 
   // Nav rail width — draggable and remembered. 120 still shows the labels;
   // 360 is as wide as this rail can be without stealing the surface.
@@ -363,6 +336,7 @@ export function DesktopApp() {
     >
       <TopNav
         surface={surface}
+        narrow={narrow}
         onNav={setSurface}
         onPalette={() => {
           setPaletteOpen(true);
@@ -371,13 +345,24 @@ export function DesktopApp() {
         badges={inboxBadges}
       />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <LeftRail
-          surface={surface}
-          onNav={setSurface}
-          badges={inboxBadges}
-          width={navRail.size}
-        />
-        <ResizeHandle {...navRail.handleProps} title="Resize navigation · double-click to reset" />
+        {/* Round 1871, finding 8: below 900px the nav rail and its handle are
+            184 + 5 of the 390 pixels a phone has, and TopNav already carries
+            every destination the rail does. So the rail goes and the surface
+            gets the width. Nothing becomes unreachable — that was the bug. */}
+        {!narrow && (
+          <>
+            <LeftRail
+              surface={surface}
+              onNav={setSurface}
+              badges={inboxBadges}
+              width={navRail.size}
+            />
+            <ResizeHandle
+              {...navRail.handleProps}
+              title="Resize navigation · double-click to reset"
+            />
+          </>
+        )}
         <div
           style={{
             flex: 1,
@@ -487,6 +472,7 @@ export function DesktopApp() {
           {surface === "autonomy" && <AutonomySurface />}
           {surface === "automation" && <AutomationSurface />}
           {surface === "money" && <MoneySurface />}
+          {surface === "settings" && <SettingsSurface />}
           {surface === "businesses" && <BusinessesSurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
@@ -535,12 +521,17 @@ function TopNav({
   onNav,
   onPalette,
   badges,
+  narrow,
 }: {
   surface: Surface;
   onNav: (s: Surface) => void;
   onPalette: () => void;
   badges: Record<string, string>;
+  /** Phone width. Below it the horizontal strip cannot hold the destinations
+   *  and is replaced by one button that opens all of them — see `MobileNav`. */
+  narrow: boolean;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const navStyle = (key: Surface): CSSProperties => ({
     display: "flex",
     alignItems: "center",
@@ -569,7 +560,8 @@ function TopNav({
           display: "flex",
           alignItems: "center",
           gap: 9,
-          paddingRight: 20,
+          paddingRight: narrow ? 10 : 20,
+          minWidth: 0,
         }}
       >
         <div
@@ -578,6 +570,7 @@ function TopNav({
             height: 15,
             background: tokens.accent,
             borderRadius: 2,
+            flex: "none",
           }}
         />
         <span
@@ -591,8 +584,44 @@ function TopNav({
         >
           forge
         </span>
+        {/* On a phone the strip below is gone, so the only thing that says where
+            you ARE is this. It is the destination name, not a decoration. */}
+        {narrow && (
+          <span
+            data-nav-current
+            className="mono"
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.06em",
+              color: tokens.textMuted,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+            }}
+          >
+            {NAV.find((n) => n.key === surface)?.label ?? surface.toUpperCase()}
+          </span>
+        )}
       </div>
-      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+      {/* ROUND 1873, FINDING 3. This strip is 1,138px of destinations. At 390px
+          it used to render anyway, inside a container with no scroll and no
+          overflow affordance: TODAY, CHAT and PROJECTS were inside the viewport
+          and the other eleven — LIVE, the panel this project is about, at x=914 —
+          could not be reached by swipe, wheel or `window.scrollX`, because the
+          shell root is `overflow: hidden` and the strip's `scrollWidth` equalled
+          its `clientWidth`. Three of fourteen destinations reachable on a phone.
+          Below 900px the strip is now replaced by one button that opens ALL of
+          them, the four rail groups included — the rail is hidden at this width
+          too (round 1871, finding 8), so a menu that only mirrored this strip
+          would still have stranded GOALS, JOURNAL, MAP and SETTINGS. */}
+      <div
+        style={{
+          display: narrow ? "none" : "flex",
+          alignItems: "stretch",
+          height: "100%",
+        }}
+      >
         {groups.map((g, gi) => (
           <Group key={g} divider={gi > 0}>
             {NAV.filter((n) => n.group === g).map((n) => (
@@ -634,26 +663,238 @@ function TopNav({
           borderRadius: 7,
           padding: "6px 10px",
           cursor: "pointer",
-          minWidth: 172,
+          /* On a phone the words and the ⌘K hint go and the affordance becomes
+             the icon: 172px of search box next to a menu button is how the strip
+             ran out of room in the first place. */
+          minWidth: narrow ? 0 : 172,
         }}
       >
         <span className="ms" style={{ fontSize: 14, color: tokens.textFaint }}>
           search
         </span>
-        <span style={{ color: tokens.textMuted2 }}>search everything</span>
-        <span style={{ flex: 1 }} />
-        <span
-          style={{
-            color: tokens.textGhost,
-            border: `1px solid ${tokens.borderEmphasis}`,
-            borderRadius: 4,
-            padding: "0 4px",
-          }}
-        >
-          ⌘K
-        </span>
+        {!narrow && (
+          <>
+            <span style={{ color: tokens.textMuted2 }}>search everything</span>
+            <span style={{ flex: 1 }} />
+            <span
+              style={{
+                color: tokens.textGhost,
+                border: `1px solid ${tokens.borderEmphasis}`,
+                borderRadius: 4,
+                padding: "0 4px",
+              }}
+            >
+              ⌘K
+            </span>
+          </>
+        )}
       </div>
       <ThemeToggle />
+      {narrow && (
+        <button
+          data-nav-menu
+          type="button"
+          aria-label="Open navigation menu"
+          aria-expanded={menuOpen}
+          aria-controls="forge-mobile-nav"
+          title="All destinations"
+          onClick={() => setMenuOpen((v) => !v)}
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginLeft: 8,
+            /* 44×44 — round 1874, finding 5: "The phone's menu button is smaller
+               than everything it opens. The button is 34×34 while all 18
+               destinations inside the sheet are a correct 44px." The one control
+               that has to be hit before any of them can be was the only one
+               below the thumb target. It fits: the bar is 46px and this button
+               has no vertical margin. */
+            width: 44,
+            height: 44,
+            flex: "none",
+            borderRadius: 8,
+            cursor: "pointer",
+            color: menuOpen ? tokens.accent : tokens.textMuted,
+            background: menuOpen ? tokens.primaryActionBg : "transparent",
+            border: `1px solid ${menuOpen ? tokens.accent : tokens.borderEmphasis}`,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 18 }}>
+            {menuOpen ? "close" : "menu"}
+          </span>
+        </button>
+      )}
+      {narrow && menuOpen && (
+        <MobileNav
+          surface={surface}
+          badges={badges}
+          onNav={(s) => {
+            onNav(s);
+            setMenuOpen(false);
+          }}
+          onClose={() => setMenuOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Every destination, on a phone — round 1873, finding 3.
+ *
+ * A sheet under the top bar rather than a slide-out drawer: the shell is
+ * `overflow: hidden` and 390px wide, so there is nothing to slide over and a
+ * transform would only buy an animation. It lists the FOUR rail groups plus
+ * SETTINGS — 18 destinations — because at this width the left rail is hidden
+ * too, and a menu that mirrored only the top strip would have left GOALS,
+ * JOURNAL, MAP and SETTINGS unreachable, which is the same bug one row down.
+ *
+ * Closes on Escape, on the backdrop, and on any choice. It does NOT trap focus:
+ * that needs a focus-scope this app has no primitive for, and half a trap is
+ * worse than none — the list is a flat set of buttons in DOM order, so a phone's
+ * screen reader and a keyboard both walk it top to bottom.
+ */
+function MobileNav({
+  surface,
+  badges,
+  onNav,
+  onClose,
+}: {
+  surface: Surface;
+  badges: Record<string, string>;
+  onNav: (s: Surface) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  /* From the model, not from a copy of it: `mobileNavDestinations()` in
+     ./nav-items is the same walk, and the check script compares its output
+     against `NAV` so a fifth group cannot be added without landing here. */
+  const groups = MOBILE_NAV_GROUPS.map((g) => ({
+    label: g.label,
+    items: NAV.filter((n) => n.group === g.group),
+  }));
+
+  return (
+    <div
+      data-nav-menu-backdrop
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        top: 46,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 900,
+        background: tokens.bgBody,
+        overflowY: "auto",
+      }}
+    >
+      <nav
+        id="forge-mobile-nav"
+        data-nav-menu-panel
+        aria-label="All destinations"
+        /* The sheet IS the backdrop's child and swallows the click that would
+           close it — a tap on a destination must not also register as "close by
+           backdrop" and race the navigation. */
+        onClick={(e) => e.stopPropagation()}
+        style={{ padding: "6px 0 40px" }}
+      >
+        {groups.map((g) => (
+          <div key={g.label}>
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.1em",
+                color: tokens.textGhost,
+                padding: "12px 18px 4px",
+              }}
+            >
+              {g.label}
+            </div>
+            {g.items.map((n) => (
+              <button
+                key={n.key}
+                data-nav-menu-item={n.key}
+                type="button"
+                aria-current={surface === n.key ? "page" : undefined}
+                onClick={() => onNav(n.key)}
+                className="mono"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  width: "100%",
+                  /* 44px: a thumb target, not a mouse target. Every row in this
+                     sheet is tappable at arm's length on a moving train, which
+                     is where Konrad reads this thing. */
+                  minHeight: 44,
+                  padding: "0 18px",
+                  fontSize: 13,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  color: surface === n.key ? tokens.text : tokens.textMuted,
+                  background: surface === n.key ? tokens.selectedBg : "transparent",
+                  border: "none",
+                  borderLeft: `2px solid ${surface === n.key ? tokens.accent : "transparent"}`,
+                }}
+              >
+                {n.label}
+                <span style={{ flex: 1 }} />
+                {badges[n.key] && (
+                  <span style={{ fontSize: 11, color: tokens.textFaint }}>
+                    {badges[n.key]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        ))}
+        <div
+          style={{
+            height: 1,
+            background: tokens.borderDivider,
+            margin: "14px 18px 0",
+          }}
+        />
+        {/* Not in NAV — it never was; the desktop reaches it from the rail's
+            own footer entry, which does not exist at this width. */}
+        <button
+          data-nav-menu-item="settings"
+          type="button"
+          aria-current={surface === "settings" ? "page" : undefined}
+          onClick={() => onNav("settings")}
+          className="mono"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            minHeight: 44,
+            padding: "0 18px",
+            fontSize: 13,
+            textAlign: "left",
+            cursor: "pointer",
+            color: surface === "settings" ? tokens.text : tokens.textMuted,
+            background: surface === "settings" ? tokens.selectedBg : "transparent",
+            border: "none",
+            borderLeft: `2px solid ${surface === "settings" ? tokens.accent : "transparent"}`,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 15 }}>
+            settings
+          </span>
+          SETTINGS
+        </button>
+      </nav>
     </div>
   );
 }
@@ -812,23 +1053,21 @@ function LeftRail({
             margin: "9px 16px",
           }}
         />
-        {/* A real route, not a surface toggle: /settings is its own page.
-            Every other entry in this rail is still client-side tab state. */}
-        <Link
-          href="/settings"
-          style={{
-            ...railStyle("settings"),
-            textDecoration: "none",
-            color: "inherit",
-          }}
-        >
+        {/* Round 1350: a surface, not a route. This was a `next/link` to
+            /settings, which unmounted the entire OS — rail, live panel, open
+            chat — to show a centred document with a "back to OS" link where
+            the app had been. Konrad: settings must open without losing the
+            shell. It is now the same button every other NAV entry is, and
+            /settings survives only as a bookmarkable wrapper around the same
+            ConnectionsPanel the surface mounts. */}
+        <div onClick={() => onNav("settings")} style={railStyle("settings")}>
           <span className="ms" style={{ fontSize: 15, marginRight: 8 }}>
             settings
           </span>
           <span className="mono" style={{ fontSize: 11.5 }}>
             SETTINGS
           </span>
-        </Link>
+        </div>
         {/* Businesses used to be its own /businesses route with a Link here.
             Konrad's 2026-08-04 feedback: unmounting the whole OS to reach
             it was jarring. It's now a surface (WORK group in NAV), and this
@@ -920,7 +1159,10 @@ function StatusBar({
         hermes <span style={{ color: tokens.ok }}>●</span>
       </span>
       <span style={{ flex: 1 }} />
-      <QuotaBars />
+      {/* THE indicator row — 5h, 7d, the open chat's context, and the Gemini
+          tally. Exactly one of these exists in the app (round 1876); the copy
+          that used to sit above the composer is gone. */}
+      <QuotaRow />
       <Sep />
       <span
         onClick={() => onNav("autonomy")}
@@ -971,117 +1213,6 @@ function StatusBar({
     </div>
   );
 }
-/** Subscription quota gauges — the 5-hour and 7-day windows, measured (not
- *  guessed) from Anthropic's OAuth usage endpoint.
- *
- *  Deliberately NOT live: it polls slowly and shows how old the reading is,
- *  with a manual refresh — Konrad's own framing ("it doesn't even have to be
- *  live, just add a refresh button and say when it was last refreshed"). A
- *  gauge that silently goes stale is worse than one that admits its age. */
-function QuotaBars() {
-  const q = useQuery({
-    queryKey: ["usage", "quota"],
-    queryFn: () => fetchQuota(false),
-    refetchInterval: 120_000,
-    staleTime: 60_000,
-  });
-  const [refreshing, setRefreshing] = useState(false);
-  const qc = useQueryClient();
-
-  const refresh = async () => {
-    setRefreshing(true);
-    try {
-      const fresh = await fetchQuota(true);
-      qc.setQueryData(["usage", "quota"], fresh);
-    } finally {
-      setRefreshing(false);
-    }
-  };
-
-  // Re-render each minute so "3m ago" stays truthful between polls.
-  const [, tick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => tick((n) => n + 1), 60_000);
-    return () => clearInterval(t);
-  }, []);
-
-  const d = q.data;
-  if (!d) return null;
-
-  const age = (iso: string) => {
-    const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-    if (s < 60) return "just now";
-    const m = Math.floor(s / 60);
-    return m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ago`;
-  };
-  const resetIn = (iso: string | null) => {
-    if (!iso) return "";
-    const ms = new Date(iso).getTime() - Date.now();
-    if (ms <= 0) return "resetting";
-    const m = Math.round(ms / 60000);
-    return m < 60 ? `resets ${m}m` : `resets ${Math.round(m / 60)}h`;
-  };
-
-  const Bar = ({ label, w }: { label: string; w: { utilization: number | null; resets_at: string | null } }) => {
-    const pct = w.utilization ?? 0;
-    // Colour by pressure, not by brand — the point is to notice at a glance.
-    const color = pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : tokens.ok;
-    return (
-      <span
-        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-        title={`${label}: ${pct}% used${w.resets_at ? ` · ${resetIn(w.resets_at)}` : ""}`}
-      >
-        <span style={{ color: tokens.textFaint }}>{label}</span>
-        <span
-          style={{
-            width: 46,
-            height: 5,
-            borderRadius: 3,
-            background: tokens.borderEmphasis,
-            overflow: "hidden",
-            display: "inline-block",
-          }}
-        >
-          <span
-            style={{
-              display: "block",
-              width: `${Math.min(100, Math.max(0, pct))}%`,
-              height: "100%",
-              background: color,
-            }}
-          />
-        </span>
-        <span style={{ color }}>{w.utilization == null ? "—" : `${Math.round(pct)}%`}</span>
-      </span>
-    );
-  };
-
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-      <Bar label="5h" w={d.five_hour} />
-      <Bar label="7d" w={d.seven_day} />
-      {/* The refresh control is ALWAYS rendered, including on error. It used
-          to be swallowed by the failure state, so a single 429 left the bars
-          stuck on "last refresh failed" with nothing to click. */}
-      <span
-        onClick={() => void refresh()}
-        title={
-          d.error
-            ? `${d.error} — click to try again`
-            : `quota updated ${age(d.fetched_at)} — click to refresh`
-        }
-        style={{
-          cursor: refreshing ? "wait" : "pointer",
-          color: d.error ? tokens.warn : tokens.textGhost,
-          opacity: refreshing ? 0.5 : 1,
-        }}
-      >
-        {refreshing ? "⟳ …" : d.error ? "⟳ retry" : `⟳ ${age(d.fetched_at)}`}
-      </span>
-    </span>
-  );
-}
-
 function Sep() {
   return (
     <span style={{ color: tokens.borderEmphasis, margin: "0 12px" }}>·</span>

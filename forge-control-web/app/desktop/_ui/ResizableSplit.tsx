@@ -262,6 +262,49 @@ export function ResizeHandle({
   );
 }
 
+/* ── Narrow viewports (round 1871, finding 8) ────────────────────────────────
+ *
+ * "At 390×844 the chat surface and team panel are entirely unreachable
+ * (clipped, no horizontal scroll)."
+ *
+ * WHAT WAS ACTUALLY HAPPENING. `app/page.tsx` picks `MobileApp` from the
+ * User-Agent, so a real phone was never in this state — but `/desktop` is an
+ * explicit route that renders the desktop shell whatever the device, and that
+ * shell is three fixed columns: a 184px nav rail, a ~200px chat rail and a
+ * 260px side panel. At 390px the first two consume the whole width and the
+ * transcript is laid out past the right edge of a container with
+ * `overflow: hidden`. Nothing was scrollable to, so nothing was reachable.
+ *
+ * THE FIX IS TO DROP COLUMNS, NOT TO ADD SCROLL. A horizontally scrolling
+ * console is a worse answer than one that shows you a single column at a time,
+ * and the shell already has the vocabulary for it: the nav rail collapses, the
+ * side panel collapses, and the chat surface already knows how to show a list
+ * and a thread. Below the breakpoint it shows ONE of them.
+ *
+ * NOT A MEDIA QUERY, because every layout decision in this app is a JS value
+ * (widths come from `useResizablePanel`, panels from `usePersistentState`) and
+ * a CSS breakpoint could not reach them. `matchMedia` is the same information
+ * on the same clock, delivered where the decisions are.
+ *
+ * SSR: `false` on the server and on the first client paint, then corrected in
+ * a layout effect before the browser paints. The desktop layout is the safe
+ * default to be briefly wrong about — it is what every existing session gets.
+ */
+export const NARROW_MAX_PX = 900;
+
+export function useNarrowViewport(maxPx: number = NARROW_MAX_PX): boolean {
+  const [narrow, setNarrow] = useState(false);
+  useLayoutEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia(`(max-width: ${maxPx}px)`);
+    const apply = () => setNarrow(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [maxPx]);
+  return narrow;
+}
+
 /**
  * localStorage-backed useState for small layout flags (panel collapsed,
  * active tab). Same SSR discipline as useResizablePanel: default on the

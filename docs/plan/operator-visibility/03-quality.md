@@ -56,14 +56,43 @@ Every phase gate includes, without exception:
 1. Launch chromium headless, viewport 1440×900, open `http://127.0.0.1:7799/desktop`, wait for the chat rail + Live panel to be populated (network idle + selector waits).
 2. Settle 5s (let initial polls land).
 3. Start tracing (categories: `devtools.timeline`, `disabled-by-default-devtools.timeline`, `blink.user_timing`).
-4. For 10 seconds, dispatch `mousemove`/`mouseenter`/`mouseleave` sweeps up and down the chat-rail rows at ~60 events/s (Playwright `mouse.move` along the rail's bounding boxes), covering ≥ 8 rows repeatedly.
+4. For one measurement window, dispatch `mousemove`/`mouseenter`/`mouseleave` sweeps up and down the chat-rail rows at ~60 events/s (Playwright `mouse.move` along the rail's bounding boxes), covering **every row the surface actually renders**, repeatedly.
+   - *Window length:* not 10 s — see the measurement-window rule in §4 below, which supersedes the literal figure written here. (Amended 2026-08-17, operator, after round 1306 disclosed the 10 s window as a standing violation for the third round running.)
+   - *Row count:* the original text demanded **≥ 8 rows**. The chat rail has **7** visible rows, so that threshold was never satisfiable — rounds 1291 → 1306 each disclosed it honestly and proceeded, which is exactly how a gate rots into noise. The requirement is now *complete coverage of the rows that exist*, which is measurable and which the sweep already achieves. A future surface with more rows raises the count by itself.
+   - *Row membership is mandatory (round 1305):* a sweep must assert that each probe landed on a row of the surface under test (`[data-team-row]` / `.chat-row`), clipping candidates to the scroll container, **not** the viewport. A sweep whose probes miss must exit non-zero as `SWEEP INVALID` rather than certify itself. See `docs/plan/artifacts/phase1300/fix-1305/`.
 5. Stop tracing; save `trace-<label>-<n>.json`.
 6. Repeat ×3; report per-run and median of: total main-thread scripting ms during the 10s window; count of tasks > 50ms; longest task ms; and (from user timing if present) React commit count. Record `uptime`/`nproc`/load average alongside (busy-VPS honesty).
 
 **Baseline (R12):** run the sweep on the worktree build at phase-3 start (pre-fix). Label `baseline`. Optionally also against production :7701 for context (label `prod-ref`) — informative, not the gate, since phases 1–2 changed the Live panel.
 **After (R14):** identical script post-fix. Label `after`.
 
-**Numeric gate:** `after` median shows (a) **zero tasks > 50ms** during the sweep window that the trace attributes to script/hover handling (GC and unrelated poll work must be called out explicitly if present), and (b) total scripting ms reduced **≥ 50%** vs baseline *if* baseline total ≥ 120ms; if baseline is already < 120ms total (i.e., the lag lives elsewhere than the swept surface), the phase must instead identify where the felt lag comes from (widen the sweep: sidebar = SidePanel? Managers? DesktopApp nav rail?), measure *that*, fix *that*, and apply the same gate there. Konrad said "the sidebar" — the phase planner must not assume which sidebar until the baseline says so. Sweep both candidates (chat rail + right SidePanel/Live rows) in the baseline.
+### Numeric gate
+
+**Clause (a) — STANDING, unchanged.** `after` median shows **zero tasks > 50ms** during the sweep window that the trace attributes to script/hover handling. **GC and unrelated poll work must be called out explicitly if present** — a verdict that saw poll work and did not name it is not a verdict.
+
+**Clause (b) — RETIRED 2026-08-17 by operator decision (Konrad), round 1300.** The clause is kept here verbatim so that a reader in three months can see what it demanded and why it no longer binds. **Do not evaluate it. Do not cite it as an open gate.**
+
+> ~~**(b)** total scripting ms reduced **≥ 50%** vs baseline *if* baseline total ≥ 120ms; if baseline is already < 120ms total (i.e., the lag lives elsewhere than the swept surface), the phase must instead identify where the felt lag comes from (widen the sweep: sidebar = SidePanel? Managers? DesktopApp nav rail?), measure *that*, fix *that*, and apply the same gate there.~~ — **RETIRED.**
+
+*Why it was retired.* The required reduction is **uncomputable against the only baseline that exists**. `docs/plan/artifacts/phase400/hover-cost-before.json` captured React commits and DOM mutations and **no scripting ms at all**; no instrument on this project measured scripting ms until round 1291, which ran *after* the fix. A "≥ 50 % vs baseline" figure therefore cannot be produced by any round, now or later. Evidence: `docs/plan/artifacts/phase1290/hover/README.md` §3.1 — the baseline file's complete key list, and the finding that the clause is *not evaluable* rather than failed; `docs/plan/perf/after.md` §3.1 — the gate table's verdict and what is offered in its place, explicitly not as a pass.
+
+*Who retired it, and when.* **Konrad, 2026-08-17**, in the round-1300 brief, answering round 1291's §8 item 3: *"RETIRE IT. I am not re-baselining."* Re-baselining would mean checking out a pinned pre-fix commit, building it, and running an instrument that did not exist at the time — real cost for a metric since superseded by strictly better ones. It is retired deliberately, not deleted and not silently.
+
+**Clauses (b1) and (b2) — STANDING from 2026-08-17, replacing (b).** These are the criteria this project actually measures. Each is stated with its instrument, its protocol, and the honesty caveat that must travel with any number quoted from it.
+
+**(b1) Invalidation records over a fixed crossing sweep.**
+- *Instrument:* `docs/plan/artifacts/phase1290/invalidation/pseudo-invalidation.cjs`.
+- *Protocol:* a **30-crossing** sweep over the surface under test, reported as a **before/after record delta on the same build recipe** — same page, same Chrome, same trace-category set, the only difference being the change under test. A delta across two different build recipes is not a result.
+- *Caveat that must appear wherever a (b1) number is quoted:* **this instrument counts `StyleRecalcInvalidation` RECORDS, not milliseconds.** A record delta is evidence of *mechanism* — that a selector does or does not drag work into the invalidation set — and is **never** a claim about what a user feels. Quoting an ms figure out of this instrument is quoting the wrong instrument.
+
+**(b2) Attributable long tasks > 50 ms against a STATED ambient floor.**
+- *Instrument:* `docs/plan/artifacts/phase1290/hover/hover-1291.cjs`.
+- *Protocol:* **≥ 5 interleaved idle/hover pairs per surface**, median reported, and the **parked-pointer idle floor printed beside the verdict**.
+- *Caveat that must appear wherever a (b2) verdict is given:* **a verdict that omits the floor is not a verdict.** This VPS emits ambient **50–60 ms** long tasks with the pointer provably parked; a lone 55 ms task under hover means nothing until the reader can see what parking produced over the same window.
+
+**Measurement-window rule (earned by round 1291, binding on both clauses):** the measurement window must be an **integer multiple of the poll period** of whatever polls the surface. A 10 s window over a 6.29 s poll makes every aggregate bimodal — whether one poll or two lands inside the window is a coin flip — and that alone is what fired the > 2× spread rule in round 1291. At `TEAM_POLL_MS = 6_000` (observed period 6.28–6.29 s), use 12.6 s or 25.2 s, not 10 s.
+
+**Which surfaces to sweep (standing planner note).** Konrad said "the sidebar" — the phase planner must not assume *which* sidebar. Sweep both candidates, chat rail **and** right SidePanel/Live rows, on every measurement round. Rounds 1290–1291 did; keep doing it.
 
 **Honesty rules:** no cadence slowing to pass the gate; no removing hover affordances to pass (the ✕ must survive, R15); traces committed raw; if the 3 runs disagree wildly (>2× spread), note VPS load and re-run rather than cherry-picking.
 

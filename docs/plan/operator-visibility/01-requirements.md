@@ -2,6 +2,14 @@
 
 Every requirement is numbered and testable. **Verify** is the exact check a reviewer runs. **Phase** maps each requirement to exactly one phase (`04-phases.md`). File references are to the worktree.
 
+> **Citation rule — standing, added 2026-08-17 by the operator after the third consecutive round found rotted line pins.**
+> A bare `file.ts:170–188` pin is a **claim with an expiry date**. This corpus has now produced three of them that silently came to point at unrelated code: R15's `01-requirements.md:75`, R19's `cc-runner.ts:170–188` (today: `buildSystemPrompt` text) and `:417–429` (today: the idle-timeout kill). A reader who trusts a rotted pin is not reading stale information — they are reading *different* information that looks authoritative.
+> Therefore, when you cite code:
+> 1. **Anchor to something stable** — a symbol name, a requirement id, a `grep`-able string. `the CcEvent union in cc-runner.ts` survives every edit above it; `cc-runner.ts:234` does not.
+> 2. **If a line number genuinely helps, pin it to a recorded SHA** and write the SHA next to it. A pin without a SHA is unfalsifiable.
+> 3. **A pin you cannot resolve is a finding, not a footnote.** Say so in your report; do not quietly re-derive what the author probably meant.
+> 4. **Retire a requirement and its gate clause together, in one commit, explicitly.** A requirement whose subject no longer exists must not leave an orphaned gate behind for a later round to fail against.
+
 ## A. Time truth (Phase 1)
 
 **R1 — Server-side settled duration.**
@@ -70,6 +78,7 @@ The phase's fix PR/commit message and `docs/plan/perf/findings.md` name the mech
 
 **R14 — Fix meets the numeric gate.**
 After the fix, the scripted hover sweep (03-quality §4) shows: zero main-thread tasks > 50ms attributable to hover handling, and total scripting time during the sweep reduced vs baseline (target ≥ 50% if baseline shows a storm; if baseline is already < 60ms total, the gate is "no regression + cause documented elsewhere"). Numbers recorded in `docs/plan/perf/after.md`.
+> **The "≥ 50%" scripting-ms target above is clause (b) of the numeric gate, and clause (b) was RETIRED 2026-08-17 by operator decision (Konrad), round 1300.** The binding text is `03-quality.md` §4 — clause (a) stands, and clauses (b1) invalidation records / (b2) attributable long tasks against a stated idle floor replace it. This line is kept as written for history; read §4 before evaluating R14.
 *Verify:* reviewer re-runs the sweep script and reproduces within ±20%.
 
 **R15 — No behavior regressions from the perf fix.**
@@ -95,7 +104,9 @@ Parts carrying `parentToolUseId` render with a visible sub-agent marker (indent/
 *Verify:* fixture test + screenshot of run `3853c154-…` where sub-agent Bash calls show the marker.
 
 **R19 — Notification gap documented, not plumbed.**
-`docs/plan/notification-gap.md`: exactly what is missing (agent completion payloads never reach `runs.thread`), where it dies (`cc-runner.ts:417–429`, closed `CcEvent` union at :170–188), what a fix would take (new event type + `ThreadEntry.kind` + mapping branch), and why it is out of scope here (engine files owned by engine-v2-research-lane). No code change for this item.
+`docs/plan/notification-gap.md`: exactly what is missing (the harness's **async task-completion notification** — narrowed round 1350, see below), where it dies (`cc-runner.ts:502–514`, closed `CcEvent` union at :234–235), what a fix would take (new event type + `ThreadEntry.kind` + mapping branch), and why it is out of scope here (engine files owned by engine-v2-research-lane). No code change for this item. **Status: OPEN.**
+*Pins drifted:* the original `:417–429` / `:170–188` were written against an older `cc-runner.ts` and now point at the idle-timeout kill logic and `buildSystemPrompt` respectively; corrected above against `b02aa62`.
+*Claim narrowed (round 1350):* "agent completion payloads never reach `runs.thread`" was over-broad and is **false** for synchronous sub-agent results, for async sub-agents' own inline entries (`meta.parent_tool_use_id`), and for peer traffic via `POST /api/runs/:id/message` (`kind: "comms"`). Only the async completion notification is genuinely uncovered.
 *Verify:* doc exists, claims match the quoted code, and no diff touches `cc-runner.ts`.
 
 **R20 — No silent drops in the transcript.**

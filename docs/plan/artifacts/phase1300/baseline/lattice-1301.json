@@ -1,0 +1,507 @@
+{
+  "schema": "hover-1291/v1",
+  "runs": {
+    "control": {
+      "script": "docs/plan/artifacts/phase1290/hover/hover-1291.cjs",
+      "round": 1291,
+      "runLabel": "control",
+      "base": "http://127.0.0.1:7831",
+      "note": "five interleaved idle/hover pairs per surface against a WORKTREE build on :7790 talking to the :7798 API harness — not production. Every long task is emitted with its TaskAttributionTiming and its gap to the nearest pointer crossing.",
+      "config": {
+        "pairs": 5,
+        "windowMs": 10000,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "crossingDwellMs": 40
+      },
+      "env": {
+        "startedAt": "2026-08-17T00:49:08.800Z",
+        "buildShaUnderTest": "8bbc4ee4a9752382983b49d6506daa5c90077b99",
+        "shaNote": "git rev-parse HEAD of the worktree that was rsynced and built; not a hash of the build output",
+        "uptimeLine": "02:49:08 up 25 days,  7:22,  5 users,  load average: 3.33, 2.90, 2.41",
+        "osStart": {
+          "loadavg": [
+            3.33,
+            2.9,
+            2.41
+          ],
+          "cpus": 16,
+          "procUptimeSec": 2186579.85,
+          "procIdleSec": 23213789.04
+        },
+        "osEnd": {
+          "loadavg": [
+            3.1,
+            2.93,
+            2.45
+          ],
+          "cpus": 16,
+          "procUptimeSec": 2186636.16,
+          "procIdleSec": 23214535.1
+        },
+        "finishedAt": "2026-08-17T00:50:05.112Z"
+      },
+      "surfaces": {},
+      "errors": [],
+      "control": {
+        "note": "pointer never moved in either window. `blank` isolates the machine from the page; `app` aligns each long task to the /team poll response that preceded it.",
+        "windowMs": 10000,
+        "blank": {
+          "url": "about:blank",
+          "windowMs": 10007,
+          "longTasks": 0,
+          "maxLongTaskMs": 0,
+          "longTaskDetail": [],
+          "cdpAggregate": {
+            "note": "Chrome renderer-wide cumulative counters (Performance.getMetrics), NOT a trace attribution to hover handling. Includes the app's own polls, React, GC and browser work.",
+            "before": {
+              "ScriptDuration": 0,
+              "RecalcStyleDuration": 0.1,
+              "LayoutDuration": 0.07,
+              "TaskDuration": 4.55
+            },
+            "after": {
+              "ScriptDuration": 0,
+              "RecalcStyleDuration": 0.1,
+              "LayoutDuration": 0.07,
+              "TaskDuration": 7.9
+            },
+            "ScriptDurationMs": 0,
+            "RecalcStyleDurationMs": 0,
+            "LayoutDurationMs": 0,
+            "TaskDurationMs": 3.35
+          }
+        },
+        "app": {
+          "url": "http://127.0.0.1:7831/desktop → Okay when I click the file section",
+          "windowMs": 30004,
+          "longTasks": 3,
+          "maxLongTaskMs": 59,
+          "cdpAggregate": {
+            "note": "Chrome renderer-wide cumulative counters (Performance.getMetrics), NOT a trace attribution to hover handling. Includes the app's own polls, React, GC and browser work.",
+            "before": {
+              "ScriptDuration": 944.56,
+              "RecalcStyleDuration": 55.67,
+              "LayoutDuration": 214.66,
+              "TaskDuration": 1879.32
+            },
+            "after": {
+              "ScriptDuration": 1850.53,
+              "RecalcStyleDuration": 116.63,
+              "LayoutDuration": 229.17,
+              "TaskDuration": 3915.02
+            },
+            "ScriptDurationMs": 905.97,
+            "RecalcStyleDurationMs": 60.96,
+            "LayoutDurationMs": 14.51,
+            "TaskDurationMs": 2035.7
+          },
+          "teamPolls": [
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 18020.8,
+              "responseEnd": 18348,
+              "durationMs": 327.2,
+              "transferSize": 14427,
+              "decodedBodySize": 65261
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 24350,
+              "responseEnd": 24657.8,
+              "durationMs": 307.8,
+              "transferSize": 14425,
+              "decodedBodySize": 65261
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 30660.5,
+              "responseEnd": 30967.2,
+              "durationMs": 306.7,
+              "transferSize": 14425,
+              "decodedBodySize": 65258
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 36970.4,
+              "responseEnd": 37268.9,
+              "durationMs": 298.5,
+              "transferSize": 14408,
+              "decodedBodySize": 65245
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 43270.8,
+              "responseEnd": 43580.1,
+              "durationMs": 309.3,
+              "transferSize": 14407,
+              "decodedBodySize": 65245
+            }
+          ],
+          "teamPollIntervalsMs": [
+            6309.8,
+            6309.4,
+            6301.7,
+            6311.2
+          ],
+          "longTasksAlignedToPolls": [
+            {
+              "startTime": 24660.1,
+              "duration": 52,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 24657.8,
+                "pollDurationMs": 307.8,
+                "decodedBodySize": 65261,
+                "gapFromResponseEndMs": 2.3
+              }
+            },
+            {
+              "startTime": 30969.9,
+              "duration": 59,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 30967.2,
+                "pollDurationMs": 306.7,
+                "decodedBodySize": 65258,
+                "gapFromResponseEndMs": 2.7
+              }
+            },
+            {
+              "startTime": 43583.3,
+              "duration": 52,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 43580.1,
+                "pollDurationMs": 309.3,
+                "decodedBodySize": 65245,
+                "gapFromResponseEndMs": 3.2
+              }
+            }
+          ],
+          "gapFromPollResponseEndMs": {
+            "note": "long task startTime minus the responseEnd of the nearest /team poll, ms. A small positive number means the long task is the work that follows the poll landing.",
+            "values": [
+              2.3,
+              2.7,
+              3.2
+            ],
+            "median": 2.7,
+            "allWithin250ms": true
+          }
+        }
+      },
+      "longTaskCadence": {
+        "fits": null,
+        "note": "control run — no sweep, no surfaces; see report.control"
+      }
+    },
+    "control-long": {
+      "script": "docs/plan/artifacts/phase1290/hover/hover-1291.cjs",
+      "round": 1291,
+      "runLabel": "control-long",
+      "base": "http://127.0.0.1:7831",
+      "note": "five interleaved idle/hover pairs per surface against a WORKTREE build on :7790 talking to the :7798 API harness — not production. Every long task is emitted with its TaskAttributionTiming and its gap to the nearest pointer crossing.",
+      "config": {
+        "pairs": 5,
+        "windowMs": 25200,
+        "viewport": {
+          "width": 1600,
+          "height": 1000
+        },
+        "crossingDwellMs": 40
+      },
+      "env": {
+        "startedAt": "2026-08-17T00:50:37.306Z",
+        "buildShaUnderTest": "8bbc4ee4a9752382983b49d6506daa5c90077b99",
+        "shaNote": "git rev-parse HEAD of the worktree that was rsynced and built; not a hash of the build output",
+        "uptimeLine": "02:50:37 up 25 days,  7:24,  5 users,  load average: 2.58, 2.81, 2.43",
+        "osStart": {
+          "loadavg": [
+            2.58,
+            2.81,
+            2.43
+          ],
+          "cpus": 16,
+          "procUptimeSec": 2186668.36,
+          "procIdleSec": 23214989.68
+        },
+        "osEnd": {
+          "loadavg": [
+            2.43,
+            2.62,
+            2.4
+          ],
+          "cpus": 16,
+          "procUptimeSec": 2186785.49,
+          "procIdleSec": 23216586.22
+        },
+        "finishedAt": "2026-08-17T00:52:34.441Z"
+      },
+      "surfaces": {},
+      "errors": [],
+      "control": {
+        "note": "pointer never moved in either window. `blank` isolates the machine from the page; `app` aligns each long task to the /team poll response that preceded it.",
+        "windowMs": 25200,
+        "blank": {
+          "url": "about:blank",
+          "windowMs": 25207,
+          "longTasks": 0,
+          "maxLongTaskMs": 0,
+          "longTaskDetail": [],
+          "cdpAggregate": {
+            "note": "Chrome renderer-wide cumulative counters (Performance.getMetrics), NOT a trace attribution to hover handling. Includes the app's own polls, React, GC and browser work.",
+            "before": {
+              "ScriptDuration": 0,
+              "RecalcStyleDuration": 0.08,
+              "LayoutDuration": 0.06,
+              "TaskDuration": 3.85
+            },
+            "after": {
+              "ScriptDuration": 0,
+              "RecalcStyleDuration": 0.08,
+              "LayoutDuration": 0.06,
+              "TaskDuration": 8.3
+            },
+            "ScriptDurationMs": 0,
+            "RecalcStyleDurationMs": 0,
+            "LayoutDurationMs": 0,
+            "TaskDurationMs": 4.45
+          }
+        },
+        "app": {
+          "url": "http://127.0.0.1:7831/desktop → Okay when I click the file section",
+          "windowMs": 75605,
+          "longTasks": 6,
+          "maxLongTaskMs": 67,
+          "cdpAggregate": {
+            "note": "Chrome renderer-wide cumulative counters (Performance.getMetrics), NOT a trace attribution to hover handling. Includes the app's own polls, React, GC and browser work.",
+            "before": {
+              "ScriptDuration": 759.63,
+              "RecalcStyleDuration": 47.21,
+              "LayoutDuration": 195.28,
+              "TaskDuration": 1716.81
+            },
+            "after": {
+              "ScriptDuration": 1771.35,
+              "RecalcStyleDuration": 122.83,
+              "LayoutDuration": 218.82,
+              "TaskDuration": 4946.65
+            },
+            "ScriptDurationMs": 1011.72,
+            "RecalcStyleDurationMs": 75.62,
+            "LayoutDurationMs": 23.54,
+            "TaskDurationMs": 3229.84
+          },
+          "teamPolls": [
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 17961.6,
+              "responseEnd": 18271.1,
+              "durationMs": 309.5,
+              "transferSize": 14415,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 24273,
+              "responseEnd": 24576.5,
+              "durationMs": 303.5,
+              "transferSize": 14417,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 30579.6,
+              "responseEnd": 30883,
+              "durationMs": 303.4,
+              "transferSize": 14416,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 36885.7,
+              "responseEnd": 37194.2,
+              "durationMs": 308.5,
+              "transferSize": 14415,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 43196.7,
+              "responseEnd": 43506.8,
+              "durationMs": 310.1,
+              "transferSize": 14413,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 49509,
+              "responseEnd": 49834.6,
+              "durationMs": 325.6,
+              "transferSize": 14416,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 55836.5,
+              "responseEnd": 56131.4,
+              "durationMs": 294.9,
+              "transferSize": 14415,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 62133.2,
+              "responseEnd": 62450.3,
+              "durationMs": 317.1,
+              "transferSize": 14415,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 68452.9,
+              "responseEnd": 68758.5,
+              "durationMs": 305.6,
+              "transferSize": 14414,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 74761,
+              "responseEnd": 75071.1,
+              "durationMs": 310.1,
+              "transferSize": 14416,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 81073.7,
+              "responseEnd": 81388.3,
+              "durationMs": 314.6,
+              "transferSize": 14415,
+              "decodedBodySize": 65259
+            },
+            {
+              "name": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+              "startTime": 87390,
+              "responseEnd": 87685.2,
+              "durationMs": 295.2,
+              "transferSize": 14410,
+              "decodedBodySize": 65259
+            }
+          ],
+          "teamPollIntervalsMs": [
+            6305.4,
+            6306.5,
+            6311.2,
+            6312.6,
+            6327.8,
+            6296.8,
+            6318.9,
+            6308.2,
+            6312.6,
+            6317.2,
+            6296.9
+          ],
+          "longTasksAlignedToPolls": [
+            {
+              "startTime": 24579.2,
+              "duration": 67,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 24576.5,
+                "pollDurationMs": 303.5,
+                "decodedBodySize": 65259,
+                "gapFromResponseEndMs": 2.7
+              }
+            },
+            {
+              "startTime": 30885.3,
+              "duration": 59,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 30883,
+                "pollDurationMs": 303.4,
+                "decodedBodySize": 65259,
+                "gapFromResponseEndMs": 2.3
+              }
+            },
+            {
+              "startTime": 37196.3,
+              "duration": 62,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 37194.2,
+                "pollDurationMs": 308.5,
+                "decodedBodySize": 65259,
+                "gapFromResponseEndMs": 2.1
+              }
+            },
+            {
+              "startTime": 62452.5,
+              "duration": 60,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 62450.3,
+                "pollDurationMs": 317.1,
+                "decodedBodySize": 65259,
+                "gapFromResponseEndMs": 2.2
+              }
+            },
+            {
+              "startTime": 68760.6,
+              "duration": 54,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 68758.5,
+                "pollDurationMs": 305.6,
+                "decodedBodySize": 65259,
+                "gapFromResponseEndMs": 2.1
+              }
+            },
+            {
+              "startTime": 75073.1,
+              "duration": 55,
+              "name": "self",
+              "nearestTeamPoll": {
+                "poll": "http://127.0.0.1:7831/api/proxy/chat/bfd1283a-b71b-4f35-b577-7d09aad803f2/team",
+                "pollResponseEnd": 75071.1,
+                "pollDurationMs": 310.1,
+                "decodedBodySize": 65259,
+                "gapFromResponseEndMs": 2
+              }
+            }
+          ],
+          "gapFromPollResponseEndMs": {
+            "note": "long task startTime minus the responseEnd of the nearest /team poll, ms. A small positive number means the long task is the work that follows the poll landing.",
+            "values": [
+              2.7,
+              2.3,
+              2.1,
+              2.2,
+              2.1,
+              2
+            ],
+            "median": 2.2,
+            "allWithin250ms": true
+          }
+        }
+      },
+      "longTaskCadence": {
+        "fits": null,
+        "note": "control run — no sweep, no surfaces; see report.control"
+      }
+    }
+  }
+}

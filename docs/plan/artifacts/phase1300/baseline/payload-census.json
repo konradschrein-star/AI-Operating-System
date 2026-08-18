@@ -1,0 +1,140 @@
+{
+  "source": "/tmp/phase1301-team-raw.json",
+  "wire_bytes": 65257,
+  "reserialised_bytes": 65257,
+  "reserialisation_is_byte_identical": true,
+  "nodes": {
+    "total": 108,
+    "manager": 1,
+    "workers": 101,
+    "subagents": 6
+  },
+  "settled_nodes": 106,
+  "groups": {
+    "tokens": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 55318,
+      "bytes_attributable": 9939,
+      "pct_of_payload": 15.23
+    },
+    "task": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 93,
+      "bytes_with": 65257,
+      "bytes_without": 48460,
+      "bytes_attributable": 16797,
+      "pct_of_payload": 25.74
+    },
+    "description": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 55804,
+      "bytes_attributable": 9453,
+      "pct_of_payload": 14.49
+    },
+    "working_ms_source": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 62125,
+      "bytes_attributable": 3132,
+      "pct_of_payload": 4.8
+    },
+    "parent_id": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 6,
+      "bytes_with": 65257,
+      "bytes_without": 63217,
+      "bytes_attributable": 2040,
+      "pct_of_payload": 3.13
+    },
+    "model": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 62585,
+      "bytes_attributable": 2672,
+      "pct_of_payload": 4.09
+    },
+    "role": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 107,
+      "bytes_with": 65257,
+      "bytes_without": 63416,
+      "bytes_attributable": 1841,
+      "pct_of_payload": 2.82
+    },
+    "started_at": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 60434,
+      "bytes_attributable": 4823,
+      "pct_of_payload": 7.39
+    },
+    "status": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 63047,
+      "bytes_attributable": 2210,
+      "pct_of_payload": 3.39
+    },
+    "settled": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 63635,
+      "bytes_attributable": 1622,
+      "pct_of_payload": 2.49
+    },
+    "working_ms": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 63076,
+      "bytes_attributable": 2181,
+      "pct_of_payload": 3.34
+    },
+    "id": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 60541,
+      "bytes_attributable": 4716,
+      "pct_of_payload": 7.23
+    },
+    "kind": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 63515,
+      "bytes_attributable": 1742,
+      "pct_of_payload": 2.67
+    },
+    "subagents": {
+      "present_on_nodes": 108,
+      "non_null_on_nodes": 108,
+      "bytes_with": 65257,
+      "bytes_without": 61093,
+      "bytes_attributable": 4164,
+      "pct_of_payload": 6.38
+    }
+  },
+  "duplication": {
+    "what": "description === task.title (forge-control/src/routes/chat.ts teamNodeFromRun)",
+    "nodes_shipping_the_same_string_twice": 93,
+    "bytes_of_the_duplicate_copies": 6636,
+    "pct_of_payload": 10.17
+  },
+  "settled_share": {
+    "what": "bytes that belong to rows whose values can never change again",
+    "bytes_all_rows": 65257,
+    "bytes_unsettled_rows_only": 2062,
+    "bytes_attributable_to_settled_rows": 63195,
+    "pct_of_payload": 96.84
+  }
+}

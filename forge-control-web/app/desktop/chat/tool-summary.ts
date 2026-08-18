@@ -98,6 +98,21 @@ const OUTCOME_MAX = 64;
 const SCALAR_MAX = 32;
 /** Shown instead of an outcome while no tool_result has arrived yet. */
 const PENDING_OUTCOME = "running…";
+/**
+ * Shown instead of a gist when the payload collapses to nothing — `""`,
+ * whitespace only, or absent. A blank gist is the one failure mode a summary
+ * row must not have: the row still draws (dot, label, outcome, chevron), so an
+ * empty string reads as "this call had no arguments worth showing" when the
+ * truth is "the executor wrote us nothing". Say which.
+ *
+ * Not reachable through the live engine — `executor.ts` writes
+ * `JSON.stringify(e.toolInput ?? {})`, so `meta.input` is at minimum `"{}"`,
+ * and `thread-mapping.ts` falls back to the entry `content` when `meta.input`
+ * is absent. It is reachable from a hand-built fixture, a future writer that
+ * does not go through the executor, and any caller of the exported
+ * `summarizeTool`. Guarded here, once, rather than per row.
+ */
+const EMPTY_GIST = "no arguments";
 
 /* ── Small pure helpers ───────────────────────────────────────────────────── */
 
@@ -254,10 +269,12 @@ function arr(
 
 /**
  * The gist when a row's expected argument key is missing: the raw payload,
- * collapsed and clipped. Honest — you see what actually arrived.
+ * collapsed and clipped. Honest — you see what actually arrived. When what
+ * arrived collapses to nothing, say so rather than rendering a blank cell.
  */
 function rawGist(input: FormatterInput): string {
-  return clip(collapse(input.argsText), GIST_MAX);
+  const text = collapse(input.argsText);
+  return text === "" ? EMPTY_GIST : clip(text, GIST_MAX);
 }
 
 /** `N chars` for result bodies whose shape we cannot count meaningfully. */
@@ -284,14 +301,19 @@ function errorOutcome(result: string | null): string {
  * verbatim (case-sensitive, as the executor writes it); "Fallback" is the
  * reserved row `summarizeTool` falls back to and is NOT a real tool name. */
 
-const bash: Formatter = (input) => ({
-  label: "bash",
-  gist: clip(collapse(str(input.args, "command") ?? input.argsText), GIST_MAX),
-  outcome:
-    input.result === null || lineCount(input.result) === 0
-      ? "no output"
-      : plural(lineCount(input.result), "line"),
-});
+const bash: Formatter = (input) => {
+  const command = str(input.args, "command");
+  return {
+    label: "bash",
+    // via rawGist, not a bare `?? input.argsText`, so the empty-payload
+    // placeholder is the table's behaviour and not one row's.
+    gist: command === null ? rawGist(input) : clip(collapse(command), GIST_MAX),
+    outcome:
+      input.result === null || lineCount(input.result) === 0
+        ? "no output"
+        : plural(lineCount(input.result), "line"),
+  };
+};
 
 const read: Formatter = (input) => {
   const path = str(input.args, "file_path");
@@ -406,6 +428,34 @@ const spawn: Formatter = (input) => {
   };
 };
 
+/**
+ * SendMessage — the operator's own outbound line to a sub-agent or fellow
+ * session. The CLI duplicates both ends of the call (`to`/`recipient` name
+ * the recipient, `message`/`content` carry the body); prefer the primary
+ * name and fall back to the duplicate so a payload carrying only one pair
+ * still renders.
+ */
+const sendMessage: Formatter = (input) => {
+  const to = str(input.args, "to") ?? str(input.args, "recipient");
+  const message = str(input.args, "message") ?? str(input.args, "content");
+  let gist: string;
+  if (to === null && message === null) {
+    gist = rawGist(input);
+  } else {
+    const raw =
+      to === null ? (message ?? "") : message === null ? `-> ${to}` : `-> ${to} · ${message}`;
+    gist = clip(collapse(raw), GIST_MAX);
+  }
+  return {
+    label: "send",
+    gist,
+    outcome:
+      input.result === null || input.result.trim() === ""
+        ? "no reply"
+        : clip(collapse(firstNonEmptyLine(input.result)), OUTCOME_MAX),
+  };
+};
+
 const skill: Formatter = (input) => {
   const name = str(input.args, "skill") ?? str(input.args, "name");
   const skillArgs = str(input.args, "args");
@@ -420,11 +470,14 @@ const skill: Formatter = (input) => {
   };
 };
 
-const webFetch: Formatter = (input) => ({
-  label: "fetch",
-  gist: clip(collapse(str(input.args, "url") ?? input.argsText), GIST_MAX),
-  outcome: sizeOutcome(input.result),
-});
+const webFetch: Formatter = (input) => {
+  const url = str(input.args, "url");
+  return {
+    label: "fetch",
+    gist: url === null ? rawGist(input) : clip(collapse(url), GIST_MAX),
+    outcome: sizeOutcome(input.result),
+  };
+};
 
 const webSearch: Formatter = (input) => {
   const query = str(input.args, "query");
@@ -479,7 +532,7 @@ const fallback: Formatter = (input) => {
   }
   return {
     label: "tool",
-    gist: clip(pairs.length > 0 ? pairs.join(" ") : collapse(input.argsText), GIST_MAX),
+    gist: pairs.length > 0 ? clip(pairs.join(" "), GIST_MAX) : rawGist(input),
     outcome: sizeOutcome(input.result),
   };
 };
@@ -497,6 +550,7 @@ export const TOOL_FORMATTERS: Record<string, Formatter> = {
   Glob: glob,
   Task: spawn,
   Agent: spawn,
+  SendMessage: sendMessage,
   Skill: skill,
   WebFetch: webFetch,
   WebSearch: webSearch,

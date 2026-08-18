@@ -1,0 +1,222 @@
+{
+  "schema": "dom-census/1301",
+  "runs": {
+    "dom-clean": {
+      "label": "dom-clean",
+      "base": "http://127.0.0.1:7831",
+      "startedAt": "2026-08-17T00:53:51.171Z",
+      "buildSha": "8bbc4ee4a9752382983b49d6506daa5c90077b99",
+      "uptime": "02:53:50 up 25 days,  7:27,  5 users,  load average: 2.63, 2.65, 2.43",
+      "osBefore": {
+        "loadavg": [
+          2.63,
+          2.65,
+          2.43
+        ],
+        "nproc": 16,
+        "procUptime": 2186862.22,
+        "wallClock": "2026-08-17T00:53:51.172Z"
+      },
+      "errors": [],
+      "census": {
+        "documentElements": 6237,
+        "teamRows": 108,
+        "elementsInsideTeamRows": 1404,
+        "meanElementsPerRow": 13,
+        "minElementsPerRow": 13,
+        "medianElementsPerRow": 13,
+        "maxElementsPerRow": 13,
+        "teamRowsShareOfDocumentPct": 22.51,
+        "scroller": {
+          "found": true,
+          "heightPx": 531,
+          "rowsIntersectingViewport": 13,
+          "rowsFullyInsideViewport": 12,
+          "scrollHeightPx": 4644
+        },
+        "rowsPassingRound1291WindowFilter": 21,
+        "rowHeightPx": 43,
+        "viewport": {
+          "w": 1600,
+          "h": 1000
+        },
+        "teamRowKinds": {
+          "operator": 1,
+          "worker": 101,
+          "subagent": 6
+        }
+      },
+      "osAfter": {
+        "loadavg": [
+          3.36,
+          2.82,
+          2.49
+        ],
+        "nproc": 16,
+        "procUptime": 2186879.17,
+        "wallClock": "2026-08-17T00:54:08.121Z"
+      },
+      "finishedAt": "2026-08-17T00:54:08.121Z"
+    },
+    "render-inst": {
+      "label": "render-inst",
+      "base": "http://127.0.0.1:7832",
+      "startedAt": "2026-08-17T00:57:08.223Z",
+      "buildSha": "8bbc4ee4a9752382983b49d6506daa5c90077b99",
+      "uptime": "02:57:07 up 25 days,  7:30,  5 users,  load average: 2.94, 2.74, 2.50",
+      "osBefore": {
+        "loadavg": [
+          2.94,
+          2.74,
+          2.5
+        ],
+        "nproc": 16,
+        "procUptime": 2187059.28,
+        "wallClock": "2026-08-17T00:57:08.224Z"
+      },
+      "errors": [],
+      "census": {
+        "documentElements": 6236,
+        "teamRows": 108,
+        "elementsInsideTeamRows": 1404,
+        "meanElementsPerRow": 13,
+        "minElementsPerRow": 13,
+        "medianElementsPerRow": 13,
+        "maxElementsPerRow": 13,
+        "teamRowsShareOfDocumentPct": 22.51,
+        "scroller": {
+          "found": true,
+          "heightPx": 531,
+          "rowsIntersectingViewport": 13,
+          "rowsFullyInsideViewport": 12,
+          "scrollHeightPx": 4644
+        },
+        "rowsPassingRound1291WindowFilter": 21,
+        "rowHeightPx": 43,
+        "viewport": {
+          "w": 1600,
+          "h": 1000
+        },
+        "teamRowKinds": {
+          "operator": 1,
+          "worker": 101,
+          "subagent": 6
+        }
+      },
+      "render": {
+        "compares": 432,
+        "memoBailouts": 0,
+        "bodyRenders": 432,
+        "propDiffs": {
+          "row": 432,
+          "responseNow": 432
+        },
+        "wrapperIdentityStable": 0,
+        "nodeIdentityStable": 428,
+        "bailoutsIfRowWereTheOnlyProp": 0,
+        "bailoutsIfNodeIdentityDecided": 428,
+        "distinctRowsRendered": 108,
+        "flatten": {
+          "calls": 4,
+          "nodesInResponse": 432,
+          "nodesIdenticalToPrevious": 428,
+          "nodesCompared": 432
+        },
+        "instrumented": true,
+        "observedMs": 25203,
+        "pointerMoved": false
+      },
+      "osAfter": {
+        "loadavg": [
+          3.13,
+          2.79,
+          2.53
+        ],
+        "nproc": 16,
+        "procUptime": 2187101.42,
+        "wallClock": "2026-08-17T00:57:50.373Z"
+      },
+      "finishedAt": "2026-08-17T00:57:50.373Z"
+    },
+    "render-inst-2": {
+      "label": "render-inst-2",
+      "base": "http://127.0.0.1:7832",
+      "startedAt": "2026-08-17T00:58:02.420Z",
+      "buildSha": "8bbc4ee4a9752382983b49d6506daa5c90077b99",
+      "uptime": "02:58:02 up 25 days,  7:31,  5 users,  load average: 2.59, 2.68, 2.50",
+      "osBefore": {
+        "loadavg": [
+          2.59,
+          2.68,
+          2.5
+        ],
+        "nproc": 16,
+        "procUptime": 2187113.47,
+        "wallClock": "2026-08-17T00:58:02.421Z"
+      },
+      "errors": [],
+      "census": {
+        "documentElements": 6234,
+        "teamRows": 108,
+        "elementsInsideTeamRows": 1404,
+        "meanElementsPerRow": 13,
+        "minElementsPerRow": 13,
+        "medianElementsPerRow": 13,
+        "maxElementsPerRow": 13,
+        "teamRowsShareOfDocumentPct": 22.52,
+        "scroller": {
+          "found": true,
+          "heightPx": 531,
+          "rowsIntersectingViewport": 13,
+          "rowsFullyInsideViewport": 12,
+          "scrollHeightPx": 4644
+        },
+        "rowsPassingRound1291WindowFilter": 21,
+        "rowHeightPx": 43,
+        "viewport": {
+          "w": 1600,
+          "h": 1000
+        },
+        "teamRowKinds": {
+          "operator": 1,
+          "worker": 101,
+          "subagent": 6
+        }
+      },
+      "render": {
+        "compares": 432,
+        "memoBailouts": 0,
+        "bodyRenders": 432,
+        "propDiffs": {
+          "row": 432,
+          "responseNow": 432
+        },
+        "wrapperIdentityStable": 0,
+        "nodeIdentityStable": 428,
+        "bailoutsIfRowWereTheOnlyProp": 0,
+        "bailoutsIfNodeIdentityDecided": 428,
+        "distinctRowsRendered": 108,
+        "flatten": {
+          "calls": 4,
+          "nodesInResponse": 432,
+          "nodesIdenticalToPrevious": 428,
+          "nodesCompared": 432
+        },
+        "instrumented": true,
+        "observedMs": 25204,
+        "pointerMoved": false
+      },
+      "osAfter": {
+        "loadavg": [
+          3.13,
+          2.83,
+          2.56
+        ],
+        "nproc": 16,
+        "procUptime": 2187155.64,
+        "wallClock": "2026-08-17T00:58:44.591Z"
+      },
+      "finishedAt": "2026-08-17T00:58:44.591Z"
+    }
+  }
+}

@@ -24,8 +24,14 @@
  * a `peers` map built from the team panel's ALREADY-POLLED `["chat-team", id]`
  * cache (AssistantThread → ChatSurface). That map is a fallback, never a
  * source of truth that outranks the stamp, and when neither has an answer the
- * row says `unknown role` rather than guessing one. No fetch is added by any
- * of this — see AssistantThread's `peers` prop.
+ * row says `unknown role` rather than guessing one.
+ *
+ * ROUND 1875 adds a THIRD source under those two, for the case both miss: a
+ * sender whose run is older than the team tree's window, or belongs to the
+ * other project this chat started. `ManagerThread` looks those ids up once
+ * through `./peersApi` (`GET /api/agents/peers`) and merges the answer BELOW
+ * the tree. The ordering is unchanged where it matters — stamp, then tree, then
+ * lookup, then `unknown role` — and none of the three adds a poll.
  *
  * Pure, React-free, dependency-free: `scripts/checks/check-chat-rich.ts`
  * imports it directly under tsx.
@@ -33,6 +39,7 @@
 
 import { tokens } from "../../tokens";
 import { roleTokenName, type RoleTokenName } from "../live/agentsApi";
+import { shortNodeId } from "../short-id";
 
 /** Who sent it, in the server's vocabulary (`COMMS_FROM`). */
 export type CommsFrom = "konrad" | "manager" | "worker";
@@ -234,14 +241,69 @@ export function stripCommsPrefix(content: string): StrippedContent {
   return { prefix: m[0].trimEnd(), body: content.slice(m[0].length) };
 }
 
-/** First 8 characters of a run uuid — the id every log line, every `[message
- *  from …]` label and the team panel already print. Null in, em dash out. */
+/** Eight identifying characters of a peer id — what every log line, every
+ *  `[message from …]` label and the team panel already print. Null in, em dash
+ *  out. A relay addressed at a sub-agent carries a `tool_use_id`, whose first
+ *  eight characters are the same on every sub-agent ever spawned, so the rule
+ *  is ../short-id's rather than a bare slice (round 1874, finding 4). */
 export function shortRunId(id: string | null | undefined): string {
-  if (typeof id !== "string" || id === "") return "—";
-  return id.slice(0, 8);
+  return shortNodeId(id, "—");
+}
+
+/* ── The one-line preview (round 1871) ────────────────────────────────────
+ *
+ * The customer test, on 117 of these cards: "a wall of text … 0 collapse
+ * controls … full payload always expanded — directly above Bash rows that
+ * collapse to one line with `done ▸`". The card needs the same grammar the
+ * tool row has: a line you can skim, and a payload you ask for.
+ *
+ * This is that line. It is derived from the SAME body string the expanded card
+ * renders — no second source, nothing fetched — and it is deliberately dumb
+ * about markdown: the first line of prose, with the syntax that would render as
+ * decoration stripped so a report beginning `## Phase 800 planned` previews as
+ * `Phase 800 planned` rather than as two hashes.
+ */
+
+/** Markdown that is structure rather than words, at the START of a line. */
+const LEADING_SYNTAX = /^\s*(?:[#>]+\s*|[-*+]\s+|\d+[.)]\s+|```[\w-]*\s*)/;
+
+export const COMMS_PREVIEW_CHARS = 120;
+
+/**
+ * The collapsed card's one-liner.
+ *
+ * Takes the first line that has words in it, so a report that opens with a
+ * fence or a blank line still previews its actual first sentence. Truncation is
+ * on a character budget with a real ellipsis; the full text is one click away
+ * and is never modified by this function.
+ *
+ * Pure and total: any input, including an empty body, produces a string.
+ */
+export function commsPreview(body: string, limit = COMMS_PREVIEW_CHARS): string {
+  if (typeof body !== "string") return "(empty)";
+  for (const raw of body.split("\n")) {
+    const line = raw.replace(LEADING_SYNTAX, "").trim();
+    if (line === "") continue;
+    // Inline emphasis is noise in a 120-character skim line, and stripping the
+    // markers never changes which WORDS appear.
+    const flat = line.replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+    if (flat === "") continue;
+    return flat.length > limit ? `${flat.slice(0, limit - 1)}…` : flat;
+  }
+  return "(empty)";
 }
 
 /* ── The header line ──────────────────────────────────────────────────────── */
+
+/** What the caller knows about a peer run, beyond its role. Supplied from the
+ *  team panel's already-polled cache; never fetched by this module. */
+export interface PeerFacts {
+  role: string | null;
+  /** The worker's task title — "Fix cycle 1", "Phase 1 gating review". This is
+   *  the NAME a human would use for that agent, and round 1871 puts it in the
+   *  card header in place of eight hex characters. */
+  description: string | null;
+}
 
 export interface CommsHeader {
   /** `◂` received, `▸` sent. A glyph, not an icon dependency (NFU8). */
@@ -254,6 +316,12 @@ export interface CommsHeader {
   role: string;
   /** 8-char peer run id, or the em dash. */
   peer: string;
+  /** WHO this is, in as many words as anybody could supply: the peer's task
+   *  title when the team cache knows it, else its role, else its short id,
+   *  else the actor word. Round 1871 — the collapsed card leads with this, and
+   *  `peer` moves to the tooltip, because "c8bc5ffa · unknown role" is not a
+   *  name and Konrad said so. Never empty. */
+  name: string;
   /** Set when this line is a relay addressed at a sub-agent. */
   subagent: string | null;
   identity: RoleIdentity;
@@ -272,18 +340,41 @@ export interface CommsHeader {
  */
 export function commsHeader(
   facts: CommsFacts,
-  resolvedRole?: string | null,
+  resolved?: string | PeerFacts | null,
 ): CommsHeader {
-  const role = facts.peerRole ?? resolvedRole ?? null;
+  /* The fallback used to be a bare role string and several callers still pass
+   * one. Both shapes are accepted rather than forcing a migration on a check
+   * script that only ever knew about roles. */
+  const peerFacts: PeerFacts =
+    typeof resolved === "string"
+      ? { role: resolved, description: null }
+      : (resolved ?? { role: null, description: null });
+  const role = facts.peerRole ?? peerFacts.role ?? null;
   const identity = roleIdentity(facts.from === "konrad" ? null : role);
   const arrow = facts.direction === "in" ? "◂" : "▸";
   const preposition = facts.direction === "in" ? "from" : "to";
   const peer = shortRunId(facts.peerRunId);
-  /* "◂ from worker · builder · c8bc5ffa" — actor, role, id, in that order,
-   * because that is the order the eye needs them: what it is, what it does,
-   * which one it was. Konrad gets no role segment; he is not an agent. */
+  /* Best available name, in descending order of how much it tells a reader.
+   * Konrad is named by the one word that is always right for him. */
+  const name =
+    facts.from === "konrad"
+      ? "konrad"
+      : (peerFacts.description ??
+        (identity.role !== null ? identity.label : null) ??
+        (peer !== "—" ? peer : facts.from));
+  /* "◂ from worker · Fix cycle 3 · builder · c8bc5ffa" — actor, name, role, id,
+   * in that order, because that is the order the eye needs them: what it is,
+   * WHICH ONE, what it does, which row of the table. Konrad gets no role
+   * segment; he is not an agent.
+   *
+   * The name segment appears only when it says something the other two do not:
+   * a card whose only name IS its role, or its own short id, would otherwise
+   * print that word twice in one tooltip. It is the FULL name here — the header
+   * line ellipsises at 190px, and this is where the rest of a long task title
+   * is meant to be readable. */
   const summary = [
     `${arrow} ${preposition} ${facts.from}`,
+    name !== identity.label && name !== peer && name !== facts.from ? name : null,
     facts.from === "konrad" ? null : identity.label,
     peer === "—" ? null : peer,
     facts.subagentId ? `→ sub-agent ${facts.subagentId}` : null,
@@ -296,8 +387,101 @@ export function commsHeader(
     actor: facts.from,
     role: identity.label,
     peer,
+    name,
     subagent: facts.subagentId,
     identity,
     summary,
   };
+}
+
+/* ── The ledger: what THIS transcript holds of the traffic ────────────────────
+ *
+ * Round 1873, finding 6. DoD 4 asks for "messages the operator sends to agents
+ * and results it receives back" as first-class blocks. Round 1871 shipped the
+ * card; the tester then counted 119 cards in the operator chat and found every
+ * single one `direction="in"`, which is not a rendering bug — it is what the
+ * data says. The reciprocal records exist, on the WORKERS' threads, because of
+ * where `commsEntries` writes them (forge-control/src/lib/run-control-rules.ts):
+ *
+ *   · the RECEIVER's thread always gets the `in` entry;
+ *   · the SENDER's thread gets the `out` echo ONLY IF the sender is a run —
+ *     `if (!senderRunId) return { receiver, echo: null }`.
+ *
+ * A worker reports up with `sender_run_id=$FORGE_RUN_UUID`, so it keeps an `out`
+ * echo of its own report and the manager holds the matching `in`. The operator
+ * chat's own traffic downward is not written through that route at all — it
+ * starts projects (`POST /api/projects`) and the engine seeds the tasks — so
+ * there is no `out` entry to render here, and there is no client fix for that:
+ * the payload does not exist. Measured on 2026-08-17 against the live `runs`
+ * table: 123 `out` entries across 103 runs fleet-wide, 0 of them on chat
+ * `bfd1283a`, whose 120 comms entries are all `in`.
+ *
+ * The brief's instruction for exactly this case is "document exactly what is
+ * missing instead of building new plumbing". The census below is that
+ * documentation, rendered in the transcript where the reader is counting cards
+ * rather than in a file nobody opens.
+ */
+
+/** How many relayed messages this thread holds, by direction. */
+export interface CommsCensus {
+  in: number;
+  out: number;
+}
+
+const NO_COMMS: CommsCensus = { in: 0, out: 0 };
+
+/**
+ * Count the comms entries in a thread.
+ *
+ * Total over `unknown[]`: it reads the same `meta.comms` the cards do, through
+ * the same `readComms` validator, so a card that renders and an entry that
+ * counts are the same set by construction — a census derived from a looser test
+ * would eventually disagree with the cards it is describing.
+ */
+export function commsCensus(
+  thread: readonly { meta?: unknown }[] | null | undefined,
+): CommsCensus {
+  if (!thread || thread.length === 0) return NO_COMMS;
+  let inbound = 0;
+  let outbound = 0;
+  for (const entry of thread) {
+    const facts = readComms(entry.meta);
+    if (facts === null) continue;
+    if (facts.direction === "in") inbound += 1;
+    else outbound += 1;
+  }
+  return inbound === 0 && outbound === 0 ? NO_COMMS : { in: inbound, out: outbound };
+}
+
+/** The one line the transcript prints, or null when there is no traffic to
+ *  describe (most runs) and therefore nothing to say. */
+export function commsLedgerLine(c: CommsCensus): string | null {
+  if (c.in === 0 && c.out === 0) return null;
+  const parts = [`${c.in} received`, `${c.out} sent`];
+  if (c.out === 0) {
+    parts.push("this run holds no outbound records — see the tooltip");
+  }
+  return `AGENT COMMS · ${parts.join(" · ")}`;
+}
+
+/** The long form, on hover. States the mechanism rather than the symptom, so a
+ *  reader who wants to check it knows where to look. */
+export function commsLedgerTitle(c: CommsCensus): string {
+  const counted =
+    `This transcript holds ${c.in} inbound and ${c.out} outbound relayed ` +
+    `message${c.out === 1 ? "" : "s"}, each rendered as one collapsible card.`;
+  if (c.out > 0) {
+    return (
+      `${counted} “received” is a message this run was sent; “sent” is the echo ` +
+      `of one it sent to someone else.`
+    );
+  }
+  return (
+    `${counted} There is no outbound half to show, and that is a property of the ` +
+    `DATA, not of this view: an echo is only written to a sender that has a run ` +
+    `of its own (commsEntries in forge-control/src/lib/run-control-rules.ts). ` +
+    `Messages this operator sent DOWN to an agent are recorded on that agent's ` +
+    `own thread — open the worker from the team panel and its transcript shows ` +
+    `them as “sent” cards. Nothing is being hidden here; nothing was written.`
+  );
 }

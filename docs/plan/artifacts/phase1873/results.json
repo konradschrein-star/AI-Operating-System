@@ -1,0 +1,275 @@
+{
+  "base": "http://127.0.0.1:7823",
+  "chat": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+  "writes": [
+    {
+      "kind": "dismiss",
+      "id": "3853c154-e07b-4378-9313-2b34f4a33342",
+      "dismissed": [
+        "3853c154-e07b-4378-9313-2b34f4a33342",
+        "3853c154-e07b-4378-9313-2b34f4a33342-cascade-1",
+        "3853c154-e07b-4378-9313-2b34f4a33342-cascade-2"
+      ]
+    },
+    {
+      "kind": "restore",
+      "ids": [
+        "3853c154-e07b-4378-9313-2b34f4a33342",
+        "3853c154-e07b-4378-9313-2b34f4a33342-cascade-1",
+        "3853c154-e07b-4378-9313-2b34f4a33342-cascade-2"
+      ]
+    }
+  ],
+  "results": [
+    {
+      "label": "F1 the switcher offers both projects",
+      "ok": true,
+      "detail": "[{\"id\":\"8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4\",\"pressed\":\"true\",\"text\":\"engine-task-graph · active\"},{\"id\":\"8ea0cc08-28d9-4301-9f28-c98e1c5d6838\",\"pressed\":\"false\",\"text\":\"operator-visibility · active\"}]"
+    },
+    {
+      "label": "F1 the chip acknowledges in one frame (15ms)",
+      "ok": true,
+      "detail": "{\"pressed\":\"true\",\"pending\":\"true\",\"chipText\":\"operator-visibility · loading…\",\"state\":\"switching\",\"busy\":\"true\",\"dimmed\":\"0.45\",\"note\":true}"
+    },
+    {
+      "label": "F1 the panel says \"switching\"",
+      "ok": true,
+      "detail": "switching"
+    },
+    {
+      "label": "F1 the rows dim while the previous project is still on screen",
+      "ok": true,
+      "detail": "opacity 0.45, aria-busy true"
+    },
+    {
+      "label": "F1 …and it says so in words",
+      "ok": true,
+      "detail": "note rendered: true"
+    },
+    {
+      "label": "F1 the new team lands on the click's own fetch (746ms, was 6828ms)",
+      "ok": true,
+      "detail": "21 rows → 167 rows"
+    },
+    {
+      "label": "F1 the pressed chip is the one clicked",
+      "ok": true,
+      "detail": "8ea0cc08-28d9-4301-9f28-c98e1c5d6838"
+    },
+    {
+      "label": "F1 the pending marker is gone once it landed",
+      "ok": true,
+      "detail": "0"
+    },
+    {
+      "label": "F2 every ✕ declares its blast radius",
+      "ok": true,
+      "detail": "167 controls"
+    },
+    {
+      "label": "F2 the manager's ✕ — the one that hid 165 rows — requires a confirm",
+      "ok": true,
+      "detail": "{\"node\":\"bfd1283a-b71b-4f35-b577-7d09aad803f2\",\"kind\":\"operator\",\"settled\":\"true\",\"hides\":\"1\",\"confirms\":\"true\",\"wider\":\"true\",\"title\":\"Hide this row, everything settled under it, and — if this chat started a project — that project's finished workers, which this panel cannot count in advance. Click twice to confirm. Reversible: the toast offers an undo of exactly this gesture, and every hidden row stays listed under “N dismissed · show”.\"}"
+    },
+    {
+      "label": "F2 …and its tooltip matches its actual job (settled=true)",
+      "ok": true,
+      "detail": "Hide this row, everything settled under it, and — if this chat started a project — that pr"
+    },
+    {
+      "label": "F2 a settled leaf still goes in one click (the cheap gesture is not taxed)",
+      "ok": true,
+      "detail": "162 leaves, all one-click"
+    },
+    {
+      "label": "F2 driving the confirm on a settled row (worker, hides 3)",
+      "ok": true,
+      "detail": "3853c154-e07b-4378-9313-2b34f4a33342"
+    },
+    {
+      "label": "F2 the first click arms instead of hiding",
+      "ok": true,
+      "detail": "167 → 167 rows"
+    },
+    {
+      "label": "F2 the armed ✕ asks a question",
+      "ok": true,
+      "detail": "“hide?”"
+    },
+    {
+      "label": "F2 …and a strip states the cost in words",
+      "ok": true,
+      "detail": "“hide 3 rows — this one and the 2 settled under it? ✕ again to confirm”"
+    },
+    {
+      "label": "F2 no write left the browser on the first click",
+      "ok": true,
+      "detail": "0 writes"
+    },
+    {
+      "label": "F2 arming does not move the ✕ out from under the pointer (round 1355 #4)",
+      "ok": true,
+      "detail": "1560x187x32x18 → 1560x187x32x18"
+    },
+    {
+      "label": "F2 the confirmed click hides the row",
+      "ok": true,
+      "detail": "167 → 164 rows"
+    },
+    {
+      "label": "F2 the toast offers an undo",
+      "ok": true,
+      "detail": "[\"3 rows hidden — this row and everything settled under it undo\"]"
+    },
+    {
+      "label": "F2 the dismiss POST cascaded (server's answer adopted)",
+      "ok": true,
+      "detail": "[{\"kind\":\"dismiss\",\"id\":\"3853c154-e07b-4378-9313-2b34f4a33342\",\"dismissed\":[\"3853c154-e07b-4378-9313-2b34f4a33342\",\"3853c154-e07b-4378-9313-2b34f4a33342-cascade-1\",\"3853c154-e07b-4378-9313-2b34f4a33342-cascade-2\"]}]"
+    },
+    {
+      "label": "F2 undo brings the rows back",
+      "ok": true,
+      "detail": "164 → 167 rows"
+    },
+    {
+      "label": "F2 …by restoring exactly the ids the gesture hid, not everything",
+      "ok": true,
+      "detail": "{\"kind\":\"restore\",\"ids\":[\"3853c154-e07b-4378-9313-2b34f4a33342\",\"3853c154-e07b-4378-9313-2b34f4a33342-cascade-1\",\"3853c154-e07b-4378-9313-2b34f4a33342-cascade-2\"]}"
+    },
+    {
+      "label": "F6 the ledger line is rendered",
+      "ok": true,
+      "detail": "\"AGENT COMMS · 124 received · 0 sent · this run holds no outbound records — see the tooltip\""
+    },
+    {
+      "label": "F6 its count matches the cards exactly",
+      "ok": true,
+      "detail": "ledger 124/0 vs cards 124/0"
+    },
+    {
+      "label": "F6 the absent direction is named, not silently zero",
+      "ok": true,
+      "detail": "AGENT COMMS · 124 received · 0 sent · this run holds no outbound records — see the tooltip"
+    },
+    {
+      "label": "F6 the tooltip says WHERE those records live",
+      "ok": true,
+      "detail": "This transcript holds 124 inbound and 0 outbound relayed messages, each rendered as one collapsible card. There is no ou"
+    },
+    {
+      "label": "F5 the crumb no longer reads `sub-agent toolu_01`",
+      "ok": true,
+      "detail": "manager chat › Recon chat Bash block rendering"
+    },
+    {
+      "label": "F5 it reads the name the row showed",
+      "ok": true,
+      "detail": "row “sub-agent Explore opus-5 ⏸ ✕ Recon chat Bash block rendering” → crumb “manager chat › Recon chat Bash block rendering”"
+    },
+    {
+      "label": "F5 the id is still reachable, in the tooltip",
+      "ok": true,
+      "detail": "manager chat  ›  Recon chat Bash block rendering (toolu_014raMUrJcAiXV61BerokrjN)"
+    },
+    {
+      "label": "F4 the drill-in survives F5",
+      "ok": true,
+      "detail": "{\"drilled\":true,\"subagent\":\"toolu_014raMUrJcAiXV61BerokrjN\",\"depth\":\"1\",\"back\":\"← manager chat\",\"crumbs\":\"manager chat › Recon chat Bash block rendering\"}"
+    },
+    {
+      "label": "F4 …on the same sub-agent",
+      "ok": true,
+      "detail": "toolu_014raMUrJcAiXV61BerokrjN"
+    },
+    {
+      "label": "F4 …with the way back still there",
+      "ok": true,
+      "detail": "← manager chat"
+    },
+    {
+      "label": "F4 the stored stack is what it was restored from",
+      "ok": true,
+      "detail": "{\"chatId\":\"bfd1283a-b71b-4f35-b577-7d09aad803f2\",\"frames\":[{\"kind\":\"agent\",\"runId\":\"3853c154-e07b-4378-9313-2b34f4a33342"
+    },
+    {
+      "label": "F4 …still there 15s after the reload",
+      "ok": true,
+      "detail": "drilled: true"
+    },
+    {
+      "label": "F3 a menu button exists on the phone",
+      "ok": true,
+      "detail": "aria-label “Open navigation menu”"
+    },
+    {
+      "label": "F3 the bar says where you are",
+      "ok": true,
+      "detail": "CHAT"
+    },
+    {
+      "label": "F3 no horizontal page overflow",
+      "ok": true,
+      "detail": "0px"
+    },
+    {
+      "label": "F3 the sheet lists 18 destinations",
+      "ok": true,
+      "detail": "18: today,inbox,chat,tasks,pipeline,library,money,businesses,skills,memory,live,control,autonomy,automation,goals,journal,map,settings"
+    },
+    {
+      "label": "F3 every one fits the 390px viewport",
+      "ok": true,
+      "detail": "18/18"
+    },
+    {
+      "label": "F3 every one is a 44px thumb target",
+      "ok": true,
+      "detail": "18/18"
+    },
+    {
+      "label": "F3 LIVE is in the list",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "F3 tapping LIVE closes the sheet and opens the panel",
+      "ok": true,
+      "detail": "{\"sheetClosed\":true,\"current\":\"LIVE\",\"liveRows\":14,\"overflowX\":0}"
+    },
+    {
+      "label": "F3 the LIVE panel actually renders rows on the phone",
+      "ok": true,
+      "detail": "14 rows"
+    },
+    {
+      "label": "F3 …with no horizontal overflow",
+      "ok": true,
+      "detail": "0px"
+    },
+    {
+      "label": "F2 the /live ✕ declares the same scope",
+      "ok": true,
+      "detail": "{\"hides\":1,\"confirms\":\"false\",\"wider\":null,\"title\":\"Hide this row. Nothing else goes with it. Reversible: the toast offers an undo of exactly this gesture, and every hidden row stays listed under “N dismissed · show”.\"}"
+    },
+    {
+      "label": "F2 …and guards the cascading ones there too",
+      "ok": true,
+      "detail": "1 cascading rows, 1 guarded"
+    },
+    {
+      "label": "F2 …while a /live leaf still goes in one click",
+      "ok": true,
+      "detail": "11 leaves"
+    },
+    {
+      "label": "NFU1 dark: the armed row and its strip render",
+      "ok": true,
+      "detail": "bfd1283a-b71b-4f35-b577-7d09aad803f2 — “hide 1+ rows — this one, everything settled under it, and any project this chat started? ✕ again to confirm”"
+    },
+    {
+      "label": "NFU1 light: the armed row and its strip render",
+      "ok": true,
+      "detail": "bfd1283a-b71b-4f35-b577-7d09aad803f2 — “hide 1+ rows — this one, everything settled under it, and any project this chat started? ✕ again to confirm”"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+ "trials": {
+  "idle": [
+   [
+    75,
+    66
+   ],
+   [
+    75,
+    64
+   ],
+   []
+  ],
+  "teamHover": [
+   [],
+   [],
+   [
+    61,
+    61
+   ]
+  ]
+ },
+ "lat": [
+  0.3,
+  0,
+  0.1,
+  0,
+  0,
+  0.1,
+  0,
+  0.1,
+  0,
+  0.1,
+  0,
+  0
+ ],
+ "typed": {
+  "n": 70,
+  "avg": 4.56,
+  "p95": 12
+ },
+ "moved": [],
+ "kinds": 169,
+ "light": {
+  "theme": "light",
+  "bg": "rgb(247, 247, 245)",
+  "cards": 131,
+  "cardInk": "rgb(28, 115, 133)"
+ },
+ "results": [
+  {
+   "label": "DoD3 hovering adds no long tasks beyond the idle page",
+   "ok": true,
+   "detail": "idle 4 | team 2 per 3×2.6s"
+  },
+  {
+   "label": "DoD3 a hover event is handled in under 8ms",
+   "ok": true,
+   "detail": "avg 0.06ms, max 0.3ms over 12 rows"
+  },
+  {
+   "label": "Composer the draft can be cleared (nothing left behind)",
+   "ok": true,
+   "detail": "\"\""
+  },
+  {
+   "label": "Composer typing stays under 20 ms/key (round 1874's own threshold)",
+   "ok": true,
+   "detail": "4.56 ms/key avg, p95 12 ms over 70 keys"
+  },
+  {
+   "label": "DoD1 every settled team duration is byte-identical after the run",
+   "ok": true,
+   "detail": "168 settled rows compared; moved 0"
+  },
+  {
+   "label": "DoD2 every row is classified and carries a lineage tooltip",
+   "ok": true,
+   "detail": "169 rows, 169 with a tooltip"
+  },
+  {
+   "label": "Both themes render the comms cards",
+   "ok": true,
+   "detail": "theme=light bg=rgb(247, 247, 245) cards=131 ink=rgb(28, 115, 133)"
+  }
+ ]
+}

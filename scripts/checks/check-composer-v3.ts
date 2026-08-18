@@ -183,9 +183,9 @@ check(
   [...ENGINE_EFFORT_CHOICES],
 );
 check(
-  "ramp order is low < medium < high < xhigh (calm → hot)",
+  "ramp order is low < medium < high < xhigh < max (calm → hot)",
   [...EFFORT_RAMP_ORDER],
-  ["low", "medium", "high", "xhigh"],
+  ["low", "medium", "high", "xhigh", "max"],
 );
 
 const rampKeys = Object.keys(EFFORT_RAMP);
@@ -215,16 +215,63 @@ for (const level of ENGINE_EFFORT_CHOICES) {
   check(`effortRamp("${level}") returns that entry`, effortRamp(level), entry);
 }
 
-// Distinctness: a ramp whose rungs share a colour is not a ramp.
+/* ── Distinctness, restated for five rungs (round 1871) ─────────────────────
+ *
+ * This used to be "every rung has a distinct fg", which was satisfiable with
+ * four rungs and four hue tokens. `max` is the fifth, and there is no token
+ * hotter than `bleed` — the only candidates left are `stuck` (purple) and
+ * `decide` (violet), and neither reads as hotter than red. Inventing a sixth
+ * hue would mean a new token in both themes and a new contrast pair to prove,
+ * for a distinction the WORD on the chip already makes.
+ *
+ * So `xhigh` and `max` share the hot end, and the rule the ramp actually has
+ * to keep is stated directly instead:
+ *
+ *   (a) MONOTONIC — the ramp never cools as it goes right;
+ *   (b) the calm end and the hot end are far apart, i.e. at least four of the
+ *       five rungs are visually distinct;
+ *   (c) no two ADJACENT rungs below the hot end share a colour.
+ *
+ * A ramp that satisfies these still does its one job: a reader who knows
+ * nothing about the engine can tell which end is expensive.
+ */
+const HOTNESS = [
+  "var(--fg-textMuted)",
+  "var(--fg-info)",
+  "var(--fg-warn)",
+  "var(--fg-bleed)",
+];
 const fgs = ENGINE_EFFORT_CHOICES.map((e) => effortRamp(e).fg);
-check("every rung has a distinct fg", new Set(fgs).size, ENGINE_EFFORT_CHOICES.length);
+check(
+  "(a) the ramp never cools going right",
+  fgs.every((fg, i) => i === 0 || HOTNESS.indexOf(fg) >= HOTNESS.indexOf(fgs[i - 1]!)),
+  true,
+);
+check("(a) every rung's fg is on the hotness scale", fgs.every((fg) => HOTNESS.includes(fg)), true);
+check("(b) at least four distinct fg values across the ramp", new Set(fgs).size >= 4, true);
 const bgs = ENGINE_EFFORT_CHOICES.map((e) => effortRamp(e).bg);
-check("every rung has a distinct selected fill", new Set(bgs).size, ENGINE_EFFORT_CHOICES.length);
+check("(b) at least four distinct selected fills", new Set(bgs).size >= 4, true);
+check(
+  "(c) only the top of the ramp repeats a colour",
+  fgs.filter((fg, i) => i > 0 && fg === fgs[i - 1]).length,
+  1,
+);
+check(
+  "(c) and the repeat is at the hot end, not the calm one",
+  fgs[fgs.length - 1],
+  "var(--fg-bleed)",
+);
 
-// "max" exists in the engine but is deliberately not offered in the UI; if a
-// run carries it, the picker must still render rather than throw mid-paint.
-check("effortRamp('max') falls to the calm rung", effortRamp("max"), EFFORT_RAMP.low);
+/* `max` IS offered now (round 1871 — the engine has always accepted it; see
+ * EFFORT_LEVELS in cc-runner.ts). What must still degrade gracefully is a
+ * level this UI has never heard of. */
+check("effortRamp('max') is the hot rung, not the fallback", effortRamp("max"), EFFORT_RAMP.max);
 check("effortRamp('') falls to the calm rung", effortRamp(""), EFFORT_RAMP.low);
+check(
+  "an unknown level still falls to the calm rung rather than throwing",
+  effortRamp("ludicrous"),
+  EFFORT_RAMP.low,
+);
 
 console.log(
   failures === 0

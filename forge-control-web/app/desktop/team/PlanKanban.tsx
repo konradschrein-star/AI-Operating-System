@@ -45,19 +45,26 @@
  * the same discipline ChatTeamPanel.tsx documents for its row handlers.
  *
  * ── Why there is a flat `docs[]` list and not only phase links (U26) ──────
- * The server links a block to a document only when a digit run in the
- * filename equals the block's round number (routes/chat.ts:`matchPhaseDoc`,
- * which refuses to guess). THIS corpus is numbered by document position
- * (`00-`…`16-`), so not one of its 16 blocks carries `doc_path` — measured,
- * all 16, in docs/plan/artifacts/phase700/linkage-701.md §6. Two consequences
- * are designed in here: a card shows a doc affordance ONLY when `doc_path` is
- * actually present (a dead click that opens nothing is worse than no click),
- * and the corpus is ALSO exposed as a plain clickable list at the bottom of
- * the zone, so U26's click-through is reachable on the real data instead of
- * being hidden behind a match that this project can never make.
+ * The server links a block to a document only when the filename says so, and
+ * it refuses to guess (routes/chat.ts:`matchPhaseDoc`). Until round 1871 the
+ * only rule was "a digit run in the filename equals the round number", which
+ * no corpus in this database satisfies — measured across all 16 blocks in
+ * docs/plan/artifacts/phase700/linkage-701.md §6. Round 1871 added the second
+ * rule, the corpus's actual convention: block `N*100` is the document whose
+ * LEADING number is `N`, so `04-phases.md` is block 400. On engine-task-graph
+ * that links five of ten blocks and, correctly, none of 500-900.
+ *
+ * Two consequences are still designed in here. A card shows the `↳ doc`
+ * affordance ONLY when `doc_path` is actually present — a dead click that
+ * opens nothing is worse than no click — and a card WITHOUT one is no longer
+ * inert either: round 1871 made the header expand and say, in words, that this
+ * block has no document (finding 4, "the spec journey 'click a phase → read
+ * its plan' does not exist"). The corpus also stays exposed as a plain
+ * clickable list at the bottom of the zone, which is what makes U26's
+ * click-through reachable for every block the convention cannot reach.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import { fetchChatPlan, type PlanResponse } from "./planApi";
@@ -112,10 +119,14 @@ export interface PlanKanbanProps {
    *  not build the frame — where the middle surface goes is ChatSurface's
    *  business, and this callback's whole contract is "this document was
    *  clicked". */
-  onOpenDoc: (name: string) => void;
+  onOpenDoc: (name: string, projectId?: string) => void;
   /** False when the Team tab is closed or the side panel is collapsed. Gates
    *  the poll. */
   visible: boolean;
+  /** Which of the chat's projects to show, when it started more than one
+   *  (round 1871). Null = the server's ranked default. Supplied by
+   *  ChatTeamPanel's switcher so the board and the tree cannot disagree. */
+  projectId?: string | null;
 }
 
 /** One muted line — the zone's whole vocabulary for "a fact that is not a
@@ -196,18 +207,66 @@ interface PhaseCardProps {
   onOpenDoc: (name: string) => void;
 }
 
+/* ── What a click on a phase and a click on a task DO (round 1871) ───────────
+ *
+ * The customer test: "Clicked phase `100` and a task row: nothing.
+ * `[data-plan-phase]` and `[data-plan-task]` have `cursor:auto` and no handler;
+ * markdown is reachable only from a separate PLAN DOCS list below the board.
+ * The spec journey 'click a phase → read its plan' does not exist."
+ *
+ * It does now, and the two clicks do DIFFERENT things because the two objects
+ * are different:
+ *
+ *   • A PHASE has a document when the corpus has one for it (see
+ *     `matchPhaseDoc` in forge-control/src/routes/chat.ts, which round 1871
+ *     also taught the corpus's real numbering). Clicking the header opens it.
+ *     When the corpus has none, the header EXPANDS instead of doing nothing,
+ *     and the expansion says in words that this block has no document and
+ *     where the corpus is. A header that opened a neighbouring block's document
+ *     to avoid an empty click would be the invention this panel refuses.
+ *
+ *   • A TASK has no document, ever. There is no per-task markdown in any
+ *     corpus in this database, so a task click that opened one would have to
+ *     invent it. Clicking a task expands the task: its full title, which the
+ *     260px line always truncates, plus round, role, tier, status and how many
+ *     tasks it waits on. That is every field the wire carries about it.
+ */
+
 function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
   const doc = group.doc_path;
+  const [open, setOpen] = useState(false);
+  const [openTask, setOpenTask] = useState<string | null>(null);
+  const headerTitle =
+    doc !== undefined
+      ? `Open ${doc} — the corpus document for block ${group.round_base}`
+      : `No corpus document is numbered for block ${group.round_base}. ` +
+        `Click to expand this block; the project's documents are listed under PLAN DOCS.`;
   return (
     <div
       data-plan-phase={group.round_base}
       data-plan-phase-progress={`${group.done}/${group.total}`}
+      data-plan-phase-open={open ? "true" : "false"}
       style={{
         padding: "7px 10px",
         borderBottom: `1px solid ${tokens.borderDivider}`,
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+      <div
+        data-plan-phase-header
+        role="button"
+        tabIndex={0}
+        aria-expanded={doc === undefined ? open : undefined}
+        title={headerTitle}
+        className="plan-phase-header"
+        onClick={() => (doc !== undefined ? onOpenDoc(doc) : setOpen((v) => !v))}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          if (doc !== undefined) onOpenDoc(doc);
+          else setOpen((v) => !v);
+        }}
+        style={{ display: "flex", alignItems: "baseline", gap: 6, cursor: "pointer" }}
+      >
         {/* The block number carries the honesty note about its own membership
             rule (R42's round-221 amendment, handed to phase 6 by phase 4B).
             The alternative — regrouping a fix chain under the group that
@@ -259,16 +318,40 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
         >
           {group.done}/{group.total}
         </span>
+        <span
+          className="mono"
+          aria-hidden
+          style={{ flex: "none", fontSize: 9, color: tokens.textGhost }}
+        >
+          {doc !== undefined ? "↳" : open ? "▾" : "▸"}
+        </span>
       </div>
 
       <div style={{ marginTop: 4 }}>
         <ProgressBar done={group.done} total={group.total} height={2} />
       </div>
 
-      {/* Only when the server actually matched a document to this block. On
-          this corpus that is never (see the header comment) — and an affordance
-          that renders anyway, opening nothing, is the failure this branch
-          exists to avoid. */}
+      {/* The honest empty case, stated only when the reader asked for it by
+          expanding. Silence here is what made the click feel broken. */}
+      {doc === undefined && open && (
+        <div
+          data-plan-phase-nodoc
+          className="mono"
+          style={{
+            marginTop: 5,
+            fontSize: 9.5,
+            lineHeight: 1.5,
+            color: tokens.textMuted,
+          }}
+        >
+          No document in this project&apos;s corpus is numbered for block{" "}
+          {group.round_base}. The corpus is listed under PLAN DOCS below; the{" "}
+          {group.total} task{group.total === 1 ? "" : "s"} of this block are the
+          plan for it.
+        </div>
+      )}
+
+      {/* Only when the server actually matched a document to this block. */}
       {doc !== undefined && (
         <button
           type="button"
@@ -299,8 +382,8 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
              — no chip, no placeholder, no dash. */
           const workstream = workstreamLabel(node);
           return (
+          <div key={node.id}>
           <div
-            key={node.id}
             data-plan-task={node.id}
             data-status={node.status}
             /* Only when it is not `main`, and only ever the raw value — a
@@ -308,7 +391,18 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
                attribute selector instead of reading styles. Same convention as
                `data-plan-task` / `data-status` above. */
             {...(workstream !== undefined ? { "data-plan-workstream": workstream } : {})}
+            data-plan-task-open={openTask === node.id ? "true" : "false"}
+            role="button"
+            tabIndex={0}
+            aria-expanded={openTask === node.id}
             title={chipTitle(node)}
+            className="plan-task-chip"
+            onClick={() => setOpenTask((cur) => (cur === node.id ? null : node.id))}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              setOpenTask((cur) => (cur === node.id ? null : node.id));
+            }}
             style={{
               display: "flex",
               alignItems: "center",
@@ -316,6 +410,7 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
               padding: "2px 5px",
               borderRadius: 4,
               background: tokens.toolBg,
+              cursor: "pointer",
             }}
           >
             <span
@@ -391,6 +486,31 @@ function PhaseCardImpl({ group, onOpenDoc }: PhaseCardProps) {
               </span>
             )}
           </div>
+          {openTask === node.id && (
+            <div
+              data-plan-task-detail={node.id}
+              style={{
+                padding: "5px 7px 6px 32px",
+                fontSize: 10,
+                lineHeight: 1.55,
+                color: tokens.textSecondary,
+              }}
+            >
+              {/* The full title, which the chip above always truncates. This is
+                  the whole reason a task is worth clicking. */}
+              <div style={{ color: tokens.textLabel, marginBottom: 3 }}>{node.title}</div>
+              <div className="mono" style={{ fontSize: 9, color: tokens.textMuted }}>
+                round {node.round} · {node.role} · {node.status} · tier{" "}
+                {node.meta.tier ?? "engine default"}
+                {node.deps.length > 0
+                  ? ` · waits on ${node.deps.length} earlier task${
+                      node.deps.length === 1 ? "" : "s"
+                    }`
+                  : " · no prerequisites"}
+              </div>
+            </div>
+          )}
+          </div>
           );
         })}
       </div>
@@ -405,12 +525,21 @@ const PhaseCard = memo(PhaseCardImpl);
 
 /* ── The zone ─────────────────────────────────────────────────────────────── */
 
-export function PlanKanban({ chatId, onOpenDoc, visible }: PlanKanbanProps) {
+export function PlanKanban({
+  chatId,
+  onOpenDoc,
+  visible,
+  projectId = null,
+}: PlanKanbanProps) {
   const enabled = visible && Boolean(chatId);
 
+  /* Round 1871: the board follows the team panel's project switcher. Unlike the
+   * team query, this key CAN carry the project — nothing else subscribes to
+   * `["chat-plan", …]`, so there is no cache contract to preserve, and a key
+   * that names its input is the better default when it is available. */
   const plan = useQuery<PlanResponse, Error>({
-    queryKey: ["chat-plan", chatId],
-    queryFn: () => fetchChatPlan(chatId),
+    queryKey: ["chat-plan", chatId, projectId],
+    queryFn: () => fetchChatPlan(chatId, projectId),
     refetchInterval: PLAN_POLL_MS,
     enabled,
     refetchOnWindowFocus: false,
@@ -422,6 +551,8 @@ export function PlanKanban({ chatId, onOpenDoc, visible }: PlanKanbanProps) {
     retry: 0,
   });
 
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
   const onOpenDocRef = useRef(onOpenDoc);
   /* Written in an effect, not during render: a ref mutated in the render body
    * is a side effect React is free to run twice (StrictMode is on — see
@@ -432,8 +563,11 @@ export function PlanKanban({ chatId, onOpenDoc, visible }: PlanKanbanProps) {
   /* Empty deps: the identity handed to every memoized card must survive a
    * ChatSurface re-render, or the cards re-render with it. The ref above is
    * what carries the current callback through. */
+  /* The project travels with the name (round 1871). `projectIdRef` rather than
+   * a dependency: this callback's identity must survive a re-render or every
+   * memoized phase card re-renders with it. */
   const handleOpenDoc = useCallback((name: string) => {
-    onOpenDocRef.current(name);
+    onOpenDocRef.current(name, projectIdRef.current ?? undefined);
   }, []);
 
   const data = plan.data;
@@ -530,8 +664,19 @@ export function PlanKanban({ chatId, onOpenDoc, visible }: PlanKanbanProps) {
               independent facts on one response, so this is a warn line BESIDE
               the cards, not an error state instead of them (planApi.ts:
               `PlanResponse.error`). */}
+          {/* ROUND 1871, finding 6: this printed the server's stringified Node
+              error — "plan docs unreadable at /opt/ai-os/…/docs/plan: ENOENT:
+              no such file or directory, scandir '…'" — into the panel. The
+              server now sends a sentence in `error` and keeps the fs text in
+              `error_detail`; the sentence is the line, the detail is a
+              tooltip. Nothing is hidden, and nothing that reads like a crash
+              is put in front of Konrad. */}
           {data?.error !== undefined && (
-            <Note color={tokens.warn}>plan docs unreadable — {data.error}</Note>
+            <Note color={tokens.warn}>
+              <span data-plan-docs-error title={data.error_detail ?? undefined}>
+                {data.error}
+              </span>
+            </Note>
           )}
 
           {state === "loading" && <Note>{enabled ? "loading plan…" : "no chat open"}</Note>}

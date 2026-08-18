@@ -36,9 +36,15 @@ export type TeamNodeKind = AgentKind | "subagent";
  *  null `working_ms` means: not measured at all. */
 export type WorkingMsSource = "thread" | "rollup";
 
-/** The project task a worker run was spawned for. */
+/** The project task a worker run was spawned for.
+ *
+ *  No `id` since round 1302: the server stopped shipping one because nothing
+ *  in this repo read it (`grep -rn "task\.id" app/` → no hits). Rows are keyed
+ *  and navigated by RUN id; the task block is here to say which round and role
+ *  of the plan a run is executing. Every field below has a reader —
+ *  `title` in ../chat/OrientationStrip.tsx and (via `description`) in
+ *  ./TeamRow.tsx, `round`/`role`/`status` in both. */
 export interface TeamTask {
-  id: string;
   round: number;
   role: string;
   title: string;
@@ -64,6 +70,17 @@ export interface TeamNode {
   model: string | null;
   status: string;
   tokens: TeamTokens;
+  /** False when the zeros in `tokens` are IGNORANCE rather than measurement
+   *  (round 1871). A spawn-only sub-agent — one whose individual steps were
+   *  never stamped with its `parent_tool_use_id` — has no token record at all,
+   *  and printing `0` for it asserts "this agent burned nothing", which is
+   *  false for an architect that ran for four minutes. The row prints "n/a".
+   *
+   *  Optional on the type, not on the wire: a client running against a
+   *  pre-1871 API sees `undefined`, and `tokensMeasured()` reads that as the
+   *  old behaviour rather than as "unmeasured" — the panel must not start
+   *  claiming ignorance about every run because the server is older. */
+  tokens_measured?: boolean;
   /** Milliseconds of attributed work, or `null` when it is NOT MEASURABLE —
    *  the working-time query failed, or a sub-agent has no independent end
    *  stamp. Never 0-as-unknown: 0 means measured, and it was zero. A client
@@ -80,9 +97,23 @@ export interface TeamNode {
   description: string | null;
   /** Lineage: the run this node hangs under. Null for the manager. */
   parent_id: string | null;
+  /** When this node was dismissed (round 1350, `ui_dismissals`), else null.
+   *  Carried on every node INCLUDING sub-agents; the tree is never filtered by
+   *  it server-side. The panel hides by the shared set from
+   *  `GET /api/agents/dismissals` and uses this field only to seed the frames
+   *  before that GET answers — see `seededDismissals` in ./dismissals. */
+  dismissed_at: string | null;
   /** Present on run nodes; always empty on sub-agents (they do not nest). */
   subagents: TeamNode[];
   task: TeamTask | null;
+}
+
+/** One project that claims this chat. Mirrors `ChatProjectCandidate` in
+ *  forge-control/src/routes/chat-linkage.ts. */
+export interface ChatProjectCandidate {
+  id: string;
+  name: string | null;
+  status: string;
 }
 
 /** A named failure of one enrichment step. The tree still renders; the panel
@@ -103,6 +134,11 @@ export interface TeamResponse {
    *  the panel marks it "linked heuristically" (U2/NFU6). */
   link_source: "metadata" | "thread_scan" | null;
   link_ambiguous: boolean;
+  /** Every project this chat started, best first (round 1871). More than one
+   *  entry means the chat is ambiguous and the panel offers the choice instead
+   *  of only labelling the problem. Optional so a pre-1871 server degrades to
+   *  "no switcher" rather than to a crash. */
+  candidates?: ChatProjectCandidate[];
   manager: TeamNode;
   workers: TeamNode[];
   /** False when any enrichment failed. A panel that shows numbers must check
@@ -133,8 +169,15 @@ export interface CapabilitiesResponse {
  * the thrown error; the panel renders it inline.
  */
 
-export const fetchChatTeam = async (chatId: string): Promise<TeamResponse> => {
-  const r = await fetch(`${ROOT}/chat/${encodeURIComponent(chatId)}/team`, {
+/** `projectId` overrides the server's ranked default (round 1871). The server
+ *  validates it against this chat's own candidates and 400s anything else, so
+ *  the panel cannot be pointed at an unrelated project by a stale value. */
+export const fetchChatTeam = async (
+  chatId: string,
+  projectId?: string | null,
+): Promise<TeamResponse> => {
+  const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+  const r = await fetch(`${ROOT}/chat/${encodeURIComponent(chatId)}/team${q}`, {
     headers: { accept: "application/json" },
   });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /chat/:id/team`);
@@ -148,6 +191,76 @@ export const fetchCapabilities = async (): Promise<CapabilitiesResponse> => {
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /capabilities`);
   return (await r.json()) as CapabilitiesResponse;
 };
+
+/* ── Control-plane POSTs ──────────────────────────────────────────────────
+ *
+ * `POST /api/runs/:id/stop` and `POST /api/runs/:id/terminate`, the two verbs
+ * of forge-control/src/routes/run-control.ts §3/§4. Same bare-fetch idiom as
+ * the two GETs above, with one addition that is the whole point of these two
+ * functions: THE SERVER'S REASON IS THE MESSAGE.
+ *
+ * That route file answers every refusal with `{ error: "<reason>" }` — 404
+ * "unknown run", 409 "run is already cancelled", 409 raceReason(...) — and its
+ * own header calls those strings "a `reason` string the UI renders verbatim in
+ * a toast". A client that replaced them with "409 Conflict" would throw away
+ * the only sentence that tells an operator what actually happened, and a client
+ * that resolved on a 4xx would report a stop that never happened (NFU6). So:
+ * parse the body, prefer its words, never swallow.
+ *
+ * `reason` is tried before `error` because the contract note names the field
+ * `reason` while the route emits `error`; both are accepted so a later rename
+ * on either side cannot silently degrade the toast to a status line.
+ */
+
+/** The one place a non-2xx becomes an Error. Always throws. */
+async function throwRunControlError(res: Response, path: string): Promise<never> {
+  // `.text()` first, then JSON.parse: a 502 from the proxy or an HTML error
+  // page is not JSON, and `res.json()` on it throws a SyntaxError whose message
+  // ("Unexpected token <") tells an operator nothing about their run.
+  const raw = await res.text().catch(() => "");
+  let body: unknown = null;
+  try {
+    body = raw ? (JSON.parse(raw) as unknown) : null;
+  } catch {
+    body = null;
+  }
+  const field = (key: string): string | null => {
+    if (typeof body !== "object" || body === null) return null;
+    const v = (body as Record<string, unknown>)[key];
+    return typeof v === "string" && v.trim() !== "" ? v : null;
+  };
+  const statusLine = `${res.status} ${res.statusText}`.trim();
+  throw new Error(
+    field("reason") ?? field("error") ?? (statusLine || `HTTP ${res.status} on ${path}`),
+  );
+}
+
+async function postRunControl<T>(path: string): Promise<T> {
+  const res = await fetch(`${ROOT}${path}`, {
+    method: "POST",
+    headers: { accept: "application/json" },
+  });
+  if (!res.ok) await throwRunControlError(res, path);
+  const raw = await res.text();
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    // A 202 whose body is not JSON means the proxy, not the engine, answered.
+    // Reporting it as success would claim a verb was accepted on no evidence.
+    throw new Error(`${res.status} on ${path} returned a non-JSON body`);
+  }
+}
+
+/** Graceful stop → `paused`. 202 `{stopping:true}`; every refusal throws with
+ *  the engine's own reason. */
+export const postRunStop = async (runId: string): Promise<{ stopping?: boolean }> =>
+  postRunControl(`/runs/${encodeURIComponent(runId)}/stop`);
+
+/** Hard stop → `cancelled`. 202 `{terminating:true}`; refusals throw as above. */
+export const postRunTerminate = async (
+  runId: string,
+): Promise<{ terminating?: boolean }> =>
+  postRunControl(`/runs/${encodeURIComponent(runId)}/terminate`);
 
 /* ── Formatters ───────────────────────────────────────────────────────────
  *
@@ -193,4 +306,19 @@ export function fmtTokens(n: number): string {
   }
   const M = n / 1_000_000;
   return `${M < 10 ? M.toFixed(2) : M.toFixed(1)}M`;
+}
+
+/** What an unmeasured cell prints. Three characters, so it fits the same fixed
+ *  column the numbers do and the reveal still moves no pixel. */
+export const NOT_RECORDED = "n/a";
+
+/**
+ * Did anybody count this node's tokens? (round 1871)
+ *
+ * `undefined` — a pre-1871 server — reads as YES, because that is what the
+ * panel assumed before the field existed and a newer client must not start
+ * printing "n/a" against every row of an older API.
+ */
+export function tokensMeasured(node: TeamNode): boolean {
+  return node.tokens_measured !== false;
 }

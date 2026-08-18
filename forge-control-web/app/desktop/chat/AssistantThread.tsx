@@ -48,11 +48,19 @@ import type { RunDetail } from "../../api";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { RichActionsProvider, RichMessage, type RichActions } from "./RichMessage";
 import {
+  commsCensus,
   commsHeader,
+  commsLedgerLine,
+  commsLedgerTitle,
+  commsPreview,
   stripCommsPrefix,
   type CommsFacts,
+  type PeerFacts,
 } from "./comms-identity";
+import { readControlEnvelope, type ControlEnvelope } from "./machinery";
 import { summarizeTool, type ToolTone } from "./tool-summary";
+import { extractBrowserShots } from "./browser-shots";
+import { BrowserShots } from "./BrowserShots";
 import {
   mapThreadToMessages,
   type SubagentFold,
@@ -66,16 +74,19 @@ export type ToolRenderMode = "raw" | "summary";
 const ToolRenderModeContext = createContext<ToolRenderMode>("raw");
 
 /**
- * peer run id → that run's `metadata.role`, for comms entries written before
- * round 808 started stamping `peer_role` server-side.
+ * peer run id → what is known about that run: its `metadata.role`, for comms
+ * entries written before round 808 started stamping `peer_role` server-side,
+ * and (round 1871) its task title, which is what the collapsed card leads with
+ * instead of eight hex characters.
  *
  * NO FETCH BACKS THIS. ChatSurface fills it from the team panel's already
  * polled `["chat-team", chatId]` cache; an empty map is the normal state when
- * that panel has never been opened, and the header then says "unknown role"
- * rather than inventing one. The context exists because message components are
- * mounted by assistant-ui, which passes its own props and nothing of ours.
+ * that panel has never been opened, and the header then falls back through
+ * role → short id rather than inventing anything. The context exists because
+ * message components are mounted by assistant-ui, which passes its own props
+ * and nothing of ours.
  */
-const PeerRolesContext = createContext<ReadonlyMap<string, string>>(new Map());
+const PeerRolesContext = createContext<ReadonlyMap<string, PeerFacts>>(new Map());
 
 /** The `meta.comms` a message carries, when it is relayed traffic. */
 function useCommsFacts(): CommsFacts | null {
@@ -146,60 +157,147 @@ function RoleLabel({
  */
 function CommsMessage({ facts }: { facts: CommsFacts }) {
   const peers = useContext(PeerRolesContext);
-  const fallbackRole = facts.peerRunId ? (peers.get(facts.peerRunId) ?? null) : null;
-  const header = commsHeader(facts, fallbackRole);
+  const peer = facts.peerRunId ? (peers.get(facts.peerRunId) ?? null) : null;
+  const header = commsHeader(facts, peer);
   const { identity } = header;
+  /* Round 1871 — COLLAPSED BY DEFAULT, exactly like a Bash row.
+   *
+   * The customer test counted 117 of these cards with every payload fully
+   * expanded and not one collapse control, sitting directly above tool rows
+   * that fold to `done ▸`. Konrad's own words for what he wanted are "something
+   * similar to the bash command, where I can see that you sent them a message
+   * and that you received a message from them" — a LINE, that opens.
+   *
+   * `useMessage` supplies the body: the same text the expanded card renders,
+   * read once for the preview. Nothing is fetched and nothing is derived twice.
+   */
+  const [open, setOpen] = useState(false);
+  const body = useMessage((m) => {
+    const first = m.content.find((p) => p.type === "text");
+    return first && first.type === "text" ? first.text : "";
+  });
+  const preview = useMemo(() => commsPreview(stripCommsPrefix(body).body), [body]);
+
   return (
     <MessagePrimitive.Root
       data-comms-direction={facts.direction}
       data-comms-role={identity.role ?? ""}
       data-comms-peer={facts.peerRunId ?? ""}
+      data-comms-open={open ? "true" : "false"}
+      /* The same sentence the header line carries, on the CARD — while it is
+         collapsed, when the card and the line are the same rectangle. Round
+         1874's tester read `title` off this element, found "", and reported the
+         cards as having "no tooltip at all"; they had one, on the child. It is
+         dropped when the card opens, where a native tooltip following the
+         pointer across a paragraph of report prose is noise. */
+      title={open ? undefined : header.summary}
       style={{ display: "flex", flexDirection: "column", gap: 4 }}
     >
       <div
-        title={header.summary}
         style={{
-          background: identity.bg,
-          border: `1px solid ${tokens.border}`,
+          background: open ? identity.bg : "transparent",
+          border: `1px solid ${open ? tokens.border : "transparent"}`,
           borderLeft: `3px solid ${identity.ink}`,
           borderRadius: 10,
-          padding: "9px 13px",
           minWidth: 0,
           overflowWrap: "anywhere",
         }}
       >
+        {/* The one line. Direction glyph, who, one-sentence gist, age, caret —
+            the same reading order and the same caret glyph ToolCallRow uses,
+            so the two block types are one grammar rather than two. */}
         <div
+          data-comms-toggle
+          role="button"
+          tabIndex={0}
+          aria-expanded={open}
+          title={header.summary}
+          onClick={() => setOpen((v) => !v)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setOpen((v) => !v);
+            }
+          }}
           className="mono"
           style={{
             display: "flex",
             alignItems: "center",
             gap: 7,
-            flexWrap: "wrap",
-            fontSize: 9.5,
-            letterSpacing: "0.07em",
-            textTransform: "uppercase",
-            color: identity.ink,
-            marginBottom: 6,
+            padding: "6px 11px",
+            cursor: "pointer",
+            userSelect: "none",
+            fontSize: 10.5,
           }}
         >
-          <span aria-hidden>{header.arrow}</span>
-          <span>
-            {header.preposition} {header.actor}
+          <span aria-hidden style={{ flex: "none", color: identity.ink }}>
+            {header.arrow}
           </span>
-          {facts.from !== "konrad" && (
-            <span style={{ fontWeight: 600 }}>{header.role}</span>
-          )}
-          <span style={{ color: tokens.textMuted, textTransform: "none" }}>
-            {header.peer}
+          <span
+            style={{
+              flex: "none",
+              color: identity.ink,
+              fontWeight: 600,
+              maxWidth: 190,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {header.name}
           </span>
-          {header.subagent !== null && (
-            <span style={{ color: tokens.textMuted, textTransform: "none" }}>
-              → sub-agent {header.subagent}
-            </span>
+          {/* The role, only when it adds something the name did not already
+              say — a card headed "Fix cycle 1 · builder" is informative, one
+              headed "builder · builder" is noise. */}
+          {facts.from !== "konrad" && header.role !== header.name && (
+            <span style={{ flex: "none", color: tokens.textMuted2 }}>{header.role}</span>
           )}
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              color: tokens.textMuted2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              textTransform: "none",
+            }}
+          >
+            {preview}
+          </span>
           <CommsAge />
+          <span style={{ flex: "none", color: tokens.textGhost }}>{open ? "▾" : "▸"}</span>
         </div>
-        <MessagePrimitive.Parts components={{ Text: CommsText }} />
+        {open && (
+          <div
+            style={{
+              borderTop: `1px solid ${tokens.borderDivider}`,
+              padding: "9px 13px",
+            }}
+          >
+            {/* Where the id lives now: visible on the expanded card, out of the
+                skim line. `→ sub-agent …` keeps its place beside it. */}
+            <div
+              className="mono"
+              style={{
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                fontSize: 9,
+                letterSpacing: "0.07em",
+                color: tokens.textFaint,
+                marginBottom: 7,
+              }}
+            >
+              <span>
+                {header.preposition} {header.actor}
+              </span>
+              <span>{header.peer}</span>
+              {header.subagent !== null && <span>→ sub-agent {header.subagent}</span>}
+            </div>
+            <MessagePrimitive.Parts components={{ Text: CommsText }} />
+          </div>
+        )}
       </div>
     </MessagePrimitive.Root>
   );
@@ -307,6 +405,14 @@ function AssistantMessage() {
 }
 
 function AssistantText({ text }: { text: string }) {
+  /* Round 1871, finding 10. Some "assistant messages" are control-plane
+     receipts that were appended to the thread verbatim — `{"queued":true,
+     "delivery":"next-turn","echo":true}` rendered as a prose card, which
+     is the machine's plumbing wearing the machine's voice. `machinery.ts`
+     recognises the closed envelope vocabulary and nothing else; anything it
+     does not recognise takes the identical path it took before. */
+  const envelope = useMemo(() => readControlEnvelope(text), [text]);
+  if (envelope) return <ControlReceipt envelope={envelope} />;
   return (
     <div
       style={{
@@ -325,6 +431,79 @@ function AssistantText({ text }: { text: string }) {
           no control block takes the identical path it took before — see
           RichMessage's single-segment shortcut. */}
       <RichMessage source={text} />
+    </div>
+  );
+}
+
+/** A receipt, not a sentence the machine said. Same collapsed-line grammar as
+ *  a tool row and a comms card; the raw envelope is verbatim behind the caret,
+ *  because "the transcript shows what is in the thread" outranks tidiness. */
+function ControlReceipt({ envelope }: { envelope: ControlEnvelope }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      data-control-receipt
+      style={{
+        border: `1px solid ${tokens.borderDivider}`,
+        borderLeft: `2px solid ${tokens.textMuted}`,
+        borderRadius: 8,
+        background: "transparent",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          setOpen((v) => !v);
+        }}
+        className="mono"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "6px 10px",
+          cursor: "pointer",
+          userSelect: "none",
+          fontSize: 10.5,
+          color: tokens.textMuted,
+        }}
+      >
+        <span style={{ flex: "none", color: tokens.textFaint }}>receipt</span>
+        <span
+          style={{
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {envelope.label}
+        </span>
+        <span style={{ flex: "none", color: tokens.textGhost }}>{open ? "▾" : "▸"}</span>
+      </div>
+      {open && (
+        <pre
+          style={{
+            margin: 0,
+            padding: "8px 10px",
+            borderTop: `1px solid ${tokens.borderDivider}`,
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: tokens.textBody,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+          }}
+        >
+          {envelope.raw}
+        </pre>
+      )}
     </div>
   );
 }
@@ -404,6 +583,16 @@ function ToolCallRow({
     [mode, toolName, argsText, resultText, isError],
   );
 
+  /* Round 1350: screenshots this call took (research-browser via Bash) or
+   * opened (Read of /opt/ai-os/uploads/<12hex>/…). Derived from the SAME two
+   * strings the row already renders — no new fetch, no new pipeline, and the
+   * extractor never throws. Memoized on them because this runs for every tool
+   * row of a 300-entry transcript on every poll. */
+  const shots = useMemo(
+    () => extractBrowserShots({ toolName, argsText, result: resultText }),
+    [toolName, argsText, resultText],
+  );
+
   const color = summary
     ? TONE_COLOR[summary.tone]
     : isError
@@ -431,7 +620,7 @@ function ToolCallRow({
    * Expanding restores the panel, because a payload needs a container. */
   const quiet = summary !== null && !open;
 
-  return (
+  const row = (
     <div
       data-tool-row={mode}
       style={{
@@ -543,6 +732,20 @@ function ToolCallRow({
       )}
     </div>
   );
+
+  /* The screenshot block is a SIBLING of the row, not a child: the parts
+   * container is already a 6px-gap column (AssistantMessage), so it lands
+   * directly under the call it belongs to while keeping its own card. Nesting
+   * it inside would put two tone rules on one border-left. Rows with no
+   * screenshots — nearly all of them — return exactly what they returned
+   * before this round, down to the DOM. */
+  if (shots.length === 0) return row;
+  return (
+    <>
+      {row}
+      <BrowserShots refs={shots} />
+    </>
+  );
 }
 
 const SYSTEM_KIND_COLOR: Record<string, string> = {
@@ -627,11 +830,51 @@ function ActivityStrip({ run }: { run: RunDetail }) {
   );
 }
 
+/**
+ * The comms ledger — one line above the transcript, when there is traffic in it.
+ *
+ * Round 1873, finding 6: 119 inbound cards and zero outbound ones is the honest
+ * rendering of this thread, and the panel said nothing about it, so a customer
+ * reading it concludes the operator never speaks to its agents. This line states
+ * the count in both directions and, when one of them is empty, says why and
+ * where those records actually live (`commsLedgerTitle`).
+ *
+ * ABOVE the viewport rather than inside it, deliberately: assistant-ui scrolls
+ * its viewport to the bottom, so a note at the top of a 460-entry transcript is
+ * a note nobody sees. It is `flex: none` and 9.5px — the same register as the
+ * other structural lines on this surface, not a banner.
+ */
+function CommsLedger({ thread }: { thread: RunDetail["thread"] }) {
+  const census = useMemo(() => commsCensus(thread), [thread]);
+  const line = commsLedgerLine(census);
+  if (line === null) return null;
+  return (
+    <div
+      data-comms-ledger
+      data-comms-in={census.in}
+      data-comms-out={census.out}
+      className="mono"
+      title={commsLedgerTitle(census)}
+      style={{
+        flex: "none",
+        padding: "6px 28px",
+        fontSize: 9.5,
+        letterSpacing: "0.04em",
+        lineHeight: 1.5,
+        color: census.out === 0 ? tokens.warn : tokens.textFaint,
+        borderBottom: `1px solid ${tokens.borderDivider}`,
+      }}
+    >
+      {line}
+    </div>
+  );
+}
+
 /** Nothing is actionable unless a caller says so. A drilled worker view has no
  *  composer, and its controls must render disabled-with-a-reason rather than
  *  appear live and do nothing (RichMessage.tsx). */
 const NO_ACTIONS: RichActions = {};
-const NO_PEERS: ReadonlyMap<string, string> = new Map();
+const NO_PEERS: ReadonlyMap<string, PeerFacts> = new Map();
 
 export interface AssistantThreadProps {
   run: RunDetail;
@@ -643,9 +886,10 @@ export interface AssistantThreadProps {
   /** What an agent-emitted control may do here (round 808). Omitted → the
    *  controls render disabled and say why. */
   actions?: RichActions;
-  /** peer run id → role, for comms entries that predate the `peer_role`
-   *  stamp. Read-only, never fetched by this component. */
-  peers?: ReadonlyMap<string, string>;
+  /** peer run id → role + task title, for comms entries that predate the
+   *  `peer_role` stamp and for the card's display name. Read-only, never
+   *  fetched by this component. */
+  peers?: ReadonlyMap<string, PeerFacts>;
 }
 
 export function AssistantThread({
@@ -692,6 +936,7 @@ export function AssistantThread({
             <ThreadPrimitive.Root
               style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
             >
+              <CommsLedger thread={run.thread} />
               <ThreadPrimitive.Viewport
                 className="scroll-tinted"
                 style={{

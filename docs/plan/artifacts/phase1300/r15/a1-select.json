@@ -1,0 +1,43 @@
+{
+  "meta": {
+    "round": 1303,
+    "requirement": "R15",
+    "build_sha": "92aeb0ff953efca5f67bc9d6146c5d2db3b95a9b",
+    "base_url": "http://127.0.0.1:7793",
+    "api_url": "http://127.0.0.1:7798",
+    "viewport": "1440x900",
+    "generated_at": "2026-08-17T01:53:07.765Z"
+  },
+  "assertion": "A1 — clicking a .chat-row changes which chat the app has open",
+  "observable": "the id in the requests the app fires for the open chat: SidePanel's GET /api/proxy/chat/:id/team (chatId={selId}) and ChatSurface's GET /api/proxy/chat/:id detail fetch (queryKey ['chat','run',selId]). Both are keyed on selId, so a change in the id proves selId moved.",
+  "rail_order_source": "http://127.0.0.1:7798/api/chat?limit=30 — runs[].id, same query the rail renders",
+  "rail_ids": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "e178d084-0a9d-4da7-a625-7c8b59da8364",
+    "a86cf7b3-9283-4315-a389-ab60bd2ea4df",
+    "ece63bdb-884c-4d2c-9680-deca13cf2dda",
+    "11dd264b-f173-44d7-ada4-f1eb39fb4abd",
+    "da286217-340c-4c11-bee3-5304fa346df4",
+    "05187ada-069c-479f-9236-e8a58b0fde68"
+  ],
+  "clicked_row_index": 1,
+  "clicked_row_expected_id": "e178d084-0a9d-4da7-a625-7c8b59da8364",
+  "clicked_row_title": "190 ms is ok",
+  "open_chat_before": "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+  "open_chat_after": "e178d084-0a9d-4da7-a625-7c8b59da8364",
+  "team_requests_seen": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "e178d084-0a9d-4da7-a625-7c8b59da8364"
+  ],
+  "detail_requests_seen": [
+    "bfd1283a-b71b-4f35-b577-7d09aad803f2",
+    "e178d084-0a9d-4da7-a625-7c8b59da8364"
+  ],
+  "middle_surface_text_before": null,
+  "middle_surface_text_after": null,
+  "screenshots": {
+    "light": "a1-select-light.png",
+    "dark": "a1-select-dark.png"
+  },
+  "verdict": "PASS — open chat moved from bfd1283a-b71b-4f35-b577-7d09aad803f2 to e178d084-0a9d-4da7-a625-7c8b59da8364"
+}

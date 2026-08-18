@@ -20,11 +20,35 @@ import { tokens } from "../../tokens";
 
 export type ToastTone = "error" | "info" | "ok";
 
+/** One button on a toast — the reversal of the thing the toast is announcing.
+ *
+ *  Added in round 1873 for the dismissal undo (finding 2): hiding a row is a
+ *  gesture with a blast radius, and the honest place for "put that back" is the
+ *  moment it happened, not a footer control three clicks away. Deliberately ONE
+ *  action and no dismiss-callback: a toast is not a dialogue, and anything that
+ *  needs two answers needs a real control in the surface. */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 export interface Toast {
   id: number;
   message: string;
   tone: ToastTone;
   detail?: string;
+  action?: ToastAction;
+  /** How long this toast lives, overriding the per-tone default. An undo has to
+   *  outlast a surprise, which is longer than the 4s an `info` gets. */
+  ttlMs?: number;
+}
+
+/** Everything past `tone`, so the two optional fields cannot be passed in the
+ *  wrong order the way a fourth positional argument invites. */
+export interface ToastOptions {
+  detail?: string;
+  action?: ToastAction;
+  ttlMs?: number;
 }
 
 type Listener = (t: Toast) => void;
@@ -36,8 +60,16 @@ export function toast(
   message: string,
   tone: ToastTone = "info",
   detail?: string,
+  options?: ToastOptions,
 ): void {
-  const t: Toast = { id: nextId++, message, tone, detail };
+  const t: Toast = {
+    id: nextId++,
+    message,
+    tone,
+    detail: detail ?? options?.detail,
+    action: options?.action,
+    ttlMs: options?.ttlMs,
+  };
   for (const l of listeners) l(t);
 }
 
@@ -68,7 +100,7 @@ export function ToastHost() {
       setItems((prev) => [...prev.slice(-4), t]);
       window.setTimeout(
         () => setItems((prev) => prev.filter((x) => x.id !== t.id)),
-        TTL_MS[t.tone],
+        t.ttlMs ?? TTL_MS[t.tone],
       );
     };
     listeners.add(onToast);
@@ -108,7 +140,40 @@ export function ToastHost() {
             boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
           }}
         >
-          <div style={{ fontSize: 12, color: tokens.text }}>{t.message}</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: tokens.text }}>
+              {t.message}
+            </div>
+            {t.action && (
+              /* Stops the card's own dismiss-on-click from swallowing the
+                 gesture, then dismisses deliberately — an undo you have to
+                 click twice because the first click closed the toast is not an
+                 undo. */
+              <button
+                data-toast-action
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  t.action?.onClick();
+                  setItems((prev) => prev.filter((x) => x.id !== t.id));
+                }}
+                className="mono"
+                style={{
+                  flex: "none",
+                  fontSize: 10.5,
+                  letterSpacing: "0.06em",
+                  padding: "2px 8px",
+                  borderRadius: 5,
+                  cursor: "pointer",
+                  color: tokens.accent,
+                  background: tokens.primaryActionBg,
+                  border: `1px solid ${tokens.accent}`,
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
+          </div>
           {t.detail && (
             <div
               className="mono"

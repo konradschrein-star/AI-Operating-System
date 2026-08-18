@@ -25,7 +25,29 @@
  *   • two queries (team, capabilities) and nothing else that talks to the net
  *   • `armedId` — WHICH row's destructive X is armed, as one string; rows get
  *     a boolean, so arming re-renders two rows instead of the list
- *   • dismissals, via ./dismissals (localStorage today, server-backed in 1600)
+ *   • dismissals, via ./dismissals — server-backed and GLOBAL since round 1350
+ *     (`ui_dismissals`); the panel still hides the dismissed node's whole
+ *     subtree locally so the gesture lands in one frame
+ *   • `peek` — one boolean for the whole panel, not a flag per row, so
+ *     revealing the DISMISSED group costs one render of the list and nothing
+ *     on hover
+ *
+ * ── The way back, and why it is three controls (round 1354 review, A4) ────
+ * Until round 1355 the footer held ONE control, labelled "N hidden · show",
+ * whose onClick was `restoreAll` — `DELETE /api/agents/dismissals`, every
+ * dismissal on the machine. Round 1350 had just widened dismissals from a
+ * per-chat localStorage key to a global table, so a label promising to reveal
+ * this panel's hidden rows now wiped the Live panel's too. The reviewer clicked
+ * it and lost eleven unrelated dismissals.
+ *
+ * The affordance is now the /live one (AgentActivity.tsx), sharing its words
+ * through ./peek:
+ *   1. "N dismissed · show" TOGGLES a peek. It writes nothing.
+ *   2. Each peeked row carries its own ↺ — the way back is per row, because
+ *      the way out was.
+ *   3. "restore all" is a separate control, visible only while peeking, which
+ *      names the global count it will delete and takes two clicks
+ *      (`decideRestoreAllClick` in ./confirm).
  *
  * It does NOT own hover. There is no pointer-enter handler, no pointer-leave
  * handler and no hover state anywhere in this directory; the controls are mounted in every
@@ -46,36 +68,80 @@
  * ── One deviation from the round-501b evidence harness, stated here ───────
  * `docs/plan/artifacts/phase500/capture-team.cjs` shoots its "armed" case by
  * clicking the FIRST `[data-team-x]` once and waiting for
- * `data-confirm="armed"`. Under the rules this round implements, that click
- * arms only on a RUNNING row, and a running row's X is `disabled` today
- * (terminate is capability-gated). On a settled row the same click dismisses
- * in one go, because a dismissal is reversible and a confirm step in front of
- * a reversible action is how people learn to click through confirms. So round
- * 504 must reach the armed screenshot the way the reviewer reaches it: strip
- * the `disabled` attribute in the page, then click a running row's X. The
- * second click is what dead-ends in the guard — which is exactly the property
- * worth photographing.
+ * `data-confirm="armed"`. Under the rules this file implements, that click arms
+ * on a running row (whose X is `disabled` today — terminate is
+ * capability-gated) and, since round 1873, on any row whose ✕ would take other
+ * rows with it. It still dismisses in one go on a SETTLED LEAF, which is the
+ * cheap reversible gesture the confirm is deliberately kept out of. So the
+ * armed screenshot is reachable two ways now: strip `disabled` and click a
+ * running row's X, or click the ✕ of a row that owns sub-agents and read the
+ * count in `[data-team-confirm-strip]`.
+ *
+ * ── What ✕ costs, and where that is decided (round 1873, finding 2) ───────
+ * Round 1872's tester clicked one ✕ on the manager row and hid 174 nodes — 165
+ * of the 166 rows on screen — with no confirm, no undo toast, and only the
+ * fleet-wide "restore all" as a way back. Three changes, none of them a dialog:
+ *   1. the guard is PROPORTIONAL. `needsConfirm` in ./confirm arms any click
+ *      that hides more than the row it was aimed at; a leaf still goes in one.
+ *   2. the row SAYS THE NUMBER before the second click
+ *      (`[data-team-confirm-strip]`, `dismissTitle`).
+ *   3. the toast carries a real UNDO of exactly that gesture — `restoreMany`
+ *      over the id list the server cascaded, not `restore` on the row, which
+ *      would have left its 173 companions hidden.
+ * The manager row is the one case the tree cannot count (its cascade reaches
+ * finished runs of its project that this response never listed), so it declares
+ * `widerReach`: always confirmed, and described in words instead of a number.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
 import {
   ARM_WINDOW_MS,
+  SETTLED_STOP_TITLE,
+  capabilityTitle,
+  decideRestoreAllClick,
   decideStopClick,
   decideXClick,
+  hideToastText,
+  isSpuriousActivation,
   type ArmedState,
 } from "./confirm";
-import { useDismissals } from "./dismissals";
+import { seededDismissals, useDismissals, useDismissalsLoaded } from "./dismissals";
+import {
+  DISMISSAL_SURFACES,
+  DISMISSED_GROUP_LABEL,
+  RESTORE_ALL_LABEL,
+  dismissedToggleLabel,
+  dismissedToggleTitle,
+  restoreAllArmedLabel,
+  restoreAllTitle,
+} from "./peek";
 import {
   fetchCapabilities,
   fetchChatTeam,
+  postRunStop,
+  postRunTerminate,
   type CapabilitiesResponse,
   type TeamNode,
   type TeamResponse,
 } from "./teamApi";
-import { flattenTeam, responseNowMs, type FlatTeam } from "./teamRows";
-import { TeamRowView } from "./TeamRow";
+import { toast, toastError } from "../_ui/Toasts";
+import {
+  createTeamRowCache,
+  flattenTeam,
+  responseNowMs,
+  rowsHiddenBy,
+  type FlatTeam,
+} from "./teamRows";
+import { ResponseNowContext, TeamRowView } from "./TeamRow";
 import { PlanKanban } from "./PlanKanban";
 
 /** NFU3: one poll, 6s, paused whenever the panel is not visible.
@@ -106,13 +172,64 @@ const ALL_FALSE: CapabilitiesResponse["control_plane"] = {
 
 /** The "no response yet" tree. One frozen object so the `rows` memo returns a
  *  stable identity while loading and the row list never re-renders for it. */
-const NO_TEAM: FlatTeam = { rows: [], hiddenCount: 0 };
+const NO_TEAM: FlatTeam = { rows: [], hiddenCount: 0, hiddenRows: [] };
+
+/** Nothing flagged — one frozen array, so the seed memo below keeps its
+ *  identity on every poll of a tree with no dismissals in it. */
+const NO_PAYLOAD_DISMISSALS: readonly string[] = [];
+
+/** The node ids this RESPONSE says are hidden (`dismissed_at`), sub-agents
+ *  included.
+ *
+ *  It is a SEED, not the authority: `GET /api/agents/dismissals` is, because
+ *  it is the only source that also knows about ids outside this tree and that
+ *  a restore just happened. Reading the payload after that GET has landed
+ *  would re-hide a row for up to one 6s poll after "show" un-hid it — see
+ *  `seededDismissals`, which is where the switch-over lives. */
+function payloadDismissedIds(res: TeamResponse | undefined): readonly string[] {
+  if (!res) return NO_PAYLOAD_DISMISSALS;
+  const ids: string[] = [];
+  const walk = (node: TeamNode): void => {
+    if (node.dismissed_at !== null) ids.push(node.id);
+    for (const sub of node.subagents) walk(sub);
+  };
+  walk(res.manager);
+  for (const worker of res.workers) walk(worker);
+  return ids.length > 0 ? ids : NO_PAYLOAD_DISMISSALS;
+}
+
+/** The footer controls — the peek toggle and, beside it, restore-all. Shared so
+ *  the two read as one row of quiet text rather than as a button and a link,
+ *  and so `color` is the only thing either of them varies. `nowrap` because
+ *  restore-all's armed label is longer than its idle one and a 260px panel
+ *  would otherwise wrap it mid-gesture. */
+const FOOTER_BTN_STYLE: CSSProperties = {
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  fontSize: 9.5,
+  fontFamily: "inherit",
+  color: tokens.textMuted,
+  cursor: "pointer",
+  whiteSpace: "nowrap",
+};
 
 /** The five states of the panel, on `data-team-state` at the root. Every one
  *  of them is a deliberate render — there is no sixth "blank" case where the
  *  panel shows nothing and leaves you guessing which of the five you are in
  *  (NFU6, U19). */
-type TeamState = "loading" | "error" | "empty" | "unlinked" | "ready";
+type TeamState =
+  | "loading"
+  | "error"
+  | "empty"
+  | "unlinked"
+  | "ready"
+  /** A project switch is in flight: the rows are the PREVIOUS project's and are
+   *  dimmed, the chip the operator clicked is pressed, and the panel says so on
+   *  this attribute (round 1873, finding 1). Transient by construction — the
+   *  response clears it, and it is only reachable on a chat that started more
+   *  than one project. */
+  | "switching";
 
 export interface ChatTeamPanelProps {
   chatId: string;
@@ -158,9 +275,62 @@ export function ChatTeamPanel({
 }: ChatTeamPanelProps) {
   const enabled = visible && Boolean(chatId);
 
+  /* ── Which project's team, when the chat started more than one ────────────
+   *
+   * Round 1871, finding 3: chat `bfd1283a` owns operator-visibility (active)
+   * and engine-task-graph (paused), and the panel showed the paused one's
+   * seventeen workers with a nine-pixel "linkage ambiguous" as the only
+   * disclosure. The server now RANKS (live before dormant, newest as the
+   * tie-break) and ships every candidate; this is the other half — the
+   * operator can pick.
+   *
+   * THE QUERY KEY DELIBERATELY DOES NOT CHANGE. `["chat-team", chatId]` is a
+   * contract: `ManagerThread` subscribes to that exact entry with
+   * `enabled: false` to name the transcript's comms peers without issuing a
+   * request of its own. Adding the project to the key would leave that
+   * subscription reading an entry nobody fills. So the override travels in a
+   * ref and the switch forces a refetch — the cache entry keeps its name and
+   * always holds "the team currently on screen", which is precisely what the
+   * transcript wants for peer names.
+   *
+   * Reset on chat change: a project id from the previous chat is not one of
+   * this chat's candidates and the server would 400 it. */
+  const [projectOverride, setProjectOverride] = useState<string | null>(null);
+  const projectOverrideRef = useRef<string | null>(null);
+  projectOverrideRef.current = projectOverride;
+
+  /* ── The switch has to ANSWER IN THE SAME FRAME (round 1873, finding 1) ────
+   *
+   * Round 1872's tester clicked `engine-task-graph` and waited 6,828ms — no
+   * pressed state, no dimming, `data-team-state` still "ready" — then all 17
+   * rows appeared at once. Two separate defects, both here:
+   *
+   *   1. THE REFETCH FETCHED THE OLD PROJECT. `projectOverrideRef` was assigned
+   *      DURING RENDER, and `team.refetch()` was called from the click handler —
+   *      i.e. before that render happened. So the queryFn read the previous
+   *      value, the response was identical to what was on screen, and the switch
+   *      only landed on the next 6s poll. The handler now writes the ref itself;
+   *      the render-time assignment stays as the backstop for a poll that fires
+   *      in between.
+   *   2. NOTHING SAID IT WAS WORKING. `aria-pressed` was derived from the
+   *      RESPONSE, which by definition had not arrived yet. `switchingTo` is the
+   *      operator's own answer to "which one did I ask for", available in the
+   *      same tick as the click, and it is what the chips and the panel state
+   *      render from until the server agrees.
+   *
+   * It clears when the response names the project we asked for, or on an error —
+   * never on a timer. A pending marker that expires while the request is still
+   * in flight is the "looks dead" bug again, one layer down. */
+  const [switchingTo, setSwitchingTo] = useState<string | null>(null);
+
+  useEffect(() => {
+    setProjectOverride(null);
+    setSwitchingTo(null);
+  }, [chatId]);
+
   const team = useQuery<TeamResponse, Error>({
     queryKey: ["chat-team", chatId],
-    queryFn: () => fetchChatTeam(chatId),
+    queryFn: () => fetchChatTeam(chatId, projectOverrideRef.current),
     refetchInterval: TEAM_POLL_MS,
     enabled,
     refetchOnWindowFocus: false,
@@ -175,6 +345,18 @@ export function ChatTeamPanel({
     retry: 0,
   });
 
+  /* The switch is over when the server says which project it answered with — or
+   * when it fails, which is not a pending state either. Both readings come from
+   * the query itself; nothing here guesses. */
+  useEffect(() => {
+    if (switchingTo === null) return;
+    if (team.isError) {
+      setSwitchingTo(null);
+      return;
+    }
+    if (team.data?.project?.id === switchingTo) setSwitchingTo(null);
+  }, [switchingTo, team.data, team.isError]);
+
   const capabilities = useQuery<CapabilitiesResponse, Error>({
     queryKey: ["capabilities"],
     queryFn: fetchCapabilities,
@@ -188,8 +370,22 @@ export function ChatTeamPanel({
 
   /* No count comes out of this hook on purpose: the number of dismissed IDS is
    * not the number of hidden ROWS. `flattenTeam` reports the one the label
-   * needs (see FlatTeam.hiddenCount). */
-  const { dismissed, dismiss, restoreAll } = useDismissals(chatId || null);
+   * needs (see FlatTeam.hiddenCount).
+   *
+   * `chatId` is passed for the call site's sake only — dismissals are global
+   * since round 1350 and the hook does not read it. */
+  const { dismissed, dismiss, restore, restoreMany, restoreAll } = useDismissals(
+    chatId || null,
+  );
+  const dismissalsLoaded = useDismissalsLoaded();
+
+  /** Is the DISMISSED group open? Panel state, one boolean — see the header. */
+  const [peek, setPeek] = useState(false);
+
+  /** `Date.now()` at the first click on "restore all", or null. A value rather
+   *  than a boolean because `decideRestoreAllClick` needs the clock to refuse a
+   *  stream of fast clicks; the render only reads whether it is null. */
+  const [restoreAllArmedAt, setRestoreAllArmedAt] = useState<number | null>(null);
 
   /* ── Armed state ───────────────────────────────────────────────────────
    * `armedId` renders (as a boolean prop per row); `armedRef` is what the
@@ -200,9 +396,25 @@ export function ChatTeamPanel({
   const [armedId, setArmedId] = useState<string | null>(null);
   const armedRef = useRef<ArmedState | null>(null);
 
+  /* The tree the dismiss toast counts against — written in an EFFECT below,
+   * never during render (round 1873, finding 1 was a ref assigned during render
+   * and read by a handler that ran first). Effects commit before any click can
+   * arrive, so the toast callback always sees the tree that was on screen when
+   * the ✕ was pressed. Null until the first response: no tree, nothing to
+   * count, and the toast falls back to the server's own number. */
+  const treeRef = useRef<{
+    data: TeamResponse;
+    hiddenBy: ReadonlySet<string>;
+  } | null>(null);
+
   const capsRef = useRef(caps);
   const openNodeRef = useRef(onOpenNode);
   const dismissRef = useRef(dismiss);
+  const restoreRef = useRef(restore);
+  /** The undo verb, behind the same ref discipline as the rest — the toast's
+   *  button outlives the render that created it, and a stale closure over a
+   *  react-query mutation is how an undo silently stops working. */
+  const restoreManyRef = useRef(restoreMany);
   useEffect(() => {
     capsRef.current = caps;
   }, [caps]);
@@ -212,6 +424,22 @@ export function ChatTeamPanel({
   useEffect(() => {
     dismissRef.current = dismiss;
   }, [dismiss]);
+  useEffect(() => {
+    restoreRef.current = restore;
+  }, [restore]);
+  useEffect(() => {
+    restoreManyRef.current = restoreMany;
+  }, [restoreMany]);
+
+  /* The team query's own refetch, reachable from the two dependency-free
+   * handlers below. Same ref discipline as `capsRef`/`openNodeRef` above and
+   * for the same reason: a `team` (or a queryClient) in those dep arrays gives
+   * `handleStop`/`handleX` a new identity on every poll, every memo(TeamRowView)
+   * bails out no longer, and NFU2's zero-re-render hover claim dies with it. */
+  const refetchTeamRef = useRef(team.refetch);
+  useEffect(() => {
+    refetchTeamRef.current = team.refetch;
+  }, [team.refetch]);
 
   /** U17's auto-disarm. `decideXClick` treats a stale arming as expired on its
    *  own, so this timer is the VISUAL disarm — the machine stays correct in a
@@ -225,6 +453,84 @@ export function ChatTeamPanel({
     return () => clearTimeout(t);
   }, [armedId]);
 
+  /* ── Changing your mind (round 1874, finding 3) ───────────────────────────
+   *
+   * "Pressed Escape — still `armed`. Clicked in the transcript — still `armed`.
+   * Only a 3.09s timer disarms it. The gesture is safe … but a customer who
+   * wants out has no way to say so."
+   *
+   * Escape, and a pointer landing anywhere that is not a ✕. Both listeners
+   * exist ONLY while something is armed — this is not a permanent document
+   * listener on a surface whose hover cost is the project's DoD 3 — and both
+   * are capture-phase so nothing can stop them on the way down.
+   *
+   * A pointerdown ON a ✕ is left alone deliberately: that click is a decision
+   * the machine already reads correctly. The same ✕ confirms; a different row's
+   * ✕ moves the arming (`decideXClick` rule 2), which is the disarm anyway.
+   * Disarming here first would make the second case take three clicks.
+   *
+   * `CANCEL_HINT` in ./confirm is the sentence the armed strip prints, so the
+   * affordance is stated rather than left to be discovered. */
+  useEffect(() => {
+    if (armedId === null) return;
+    const disarm = () => {
+      armedRef.current = null;
+      setArmedId(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") disarm();
+    };
+    const onPointer = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest("[data-team-x]")) return;
+      disarm();
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [armedId]);
+
+  /** The restore-all confirm's own auto-disarm, the twin of `armedId`'s above
+   *  and for the same reason: `decideRestoreAllClick` treats a stale arming as
+   *  expired on its own, so this timer is only the VISUAL disarm. */
+  useEffect(() => {
+    if (restoreAllArmedAt === null) return;
+    const t = setTimeout(() => setRestoreAllArmedAt(null), ARM_WINDOW_MS);
+    return () => clearTimeout(t);
+  }, [restoreAllArmedAt]);
+
+  /** …and the same way out. An armed control the operator cannot call off is
+   *  the same finding whichever control it is (round 1874, finding 3), and
+   *  restore-all is the one that destroys state nothing can rebuild. */
+  useEffect(() => {
+    if (restoreAllArmedAt === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setRestoreAllArmedAt(null);
+    };
+    const onPointer = (e: Event) => {
+      const t = e.target;
+      if (t instanceof Element && t.closest("[data-team-restore-all]")) return;
+      setRestoreAllArmedAt(null);
+    };
+    document.addEventListener("keydown", onKey, true);
+    document.addEventListener("pointerdown", onPointer, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      document.removeEventListener("pointerdown", onPointer, true);
+    };
+  }, [restoreAllArmedAt]);
+
+  /* Closing the peek disarms it. An armed "sure?" left behind a collapsed group
+   * would be a loaded control the operator can no longer see the consequences
+   * of — and the whole point of putting restore-all inside the peek is that it
+   * is only reachable while what it destroys is on screen. */
+  useEffect(() => {
+    if (!peek) setRestoreAllArmedAt(null);
+  }, [peek]);
+
   /* Ref-stable, empty deps — the identity handed to every memoized row must
    * not change when ChatSurface re-renders with a fresh arrow, or every row
    * re-renders and NFU2's zero-re-render hover claim dies with it. The ref
@@ -233,71 +539,200 @@ export function ChatTeamPanel({
     openNodeRef.current(node);
   }, []);
 
+  /** One row back. Same ref discipline as the rest — peeked rows are memoized
+   *  `TeamRowView`s too. */
+  const handleRestore = useCallback((nodeId: string) => {
+    restoreRef.current(nodeId);
+  }, []);
+
   const handleStop = useCallback((nodeId: string, settled: boolean) => {
     const decision = decideStopClick({
       nodeId,
       settled,
       canStop: capsRef.current.stop,
     });
-    if (decision.action !== "stop") return;
+    if (decision.action !== "stop") {
+      /* The button is disabled for both blocked reasons (`stopBlockReason` in
+       * confirm.ts drives `disabled` off this very decision), so a pointer
+       * cannot get here. A reviewer who strips `disabled` in devtools CAN —
+       * and dropping their click on the floor is the silent no-op NFU6
+       * forbids, at one remove. It says why instead. */
+      toast(
+        decision.reason === "settled"
+          ? SETTLED_STOP_TITLE
+          : capabilityTitle("stop"),
+        "info",
+      );
+      return;
+    }
     // GUARD (redundant with the decision above, and deliberately so — the
     // reviewer strips `disabled` in devtools and clicks).
     if (!capsRef.current.stop) return;
-    // CONTRACT: engine-v2-research-lane ships POST /api/runs/:id/stop and
-    // flips capabilities.control_plane.stop. Until then there is nothing to
-    // call, and this file contains no fetch that could be made to fire.
+    /* The 202 is reflected as AN IMMEDIATE REFETCH of the team query, not as a
+     * per-row pending ghost. That is a DECISION, not an omission: a pending
+     * flag would have to reach the row as a new prop, and a changing prop is
+     * exactly what stops `memo(TeamRowView)` from bailing out — the bail-out
+     * round 1302 measured is what makes hovering 108 rows cost zero renders.
+     * The engine moves the row to `paused` within one 6s poll anyway; this
+     * refetch just fetches that poll now. Do not "improve" it into row state.
+     *
+     * The catch is the only place the operator learns the verb was refused:
+     * `postRunStop` throws the engine's own reason string (409 "run is already
+     * cancelled", 404 "unknown run") and the toast prints it verbatim. */
+    void postRunStop(nodeId)
+      .then(() => {
+        toast(`stop sent — ${nodeId.slice(0, 8)}`, "ok");
+        void refetchTeamRef.current();
+      })
+      .catch((e: unknown) => toastError("Stop failed", e));
   }, []);
 
-  const handleX = useCallback((nodeId: string, settled: boolean) => {
-    const nowMs = Date.now();
-    const decision = decideXClick({
-      nodeId,
-      settled,
-      armed: armedRef.current,
-      nowMs,
-      canTerminate: capsRef.current.terminate,
-    });
-    switch (decision.action) {
-      case "dismiss":
-        armedRef.current = null;
-        setArmedId(null);
-        dismissRef.current(decision.id);
-        return;
-      case "arm":
-      case "rearm":
-        // Same write for both. `rearm` is a too-fast click PUSHING THE WINDOW
-        // BACK to its own clock, which is what stops a click stream from
-        // accumulating 150ms of separation and firing on its own (round 505
-        // finding #1). `setArmedId` with an unchanged id is a React bail-out,
-        // so the visual disarm timer keeps running from the FIRST arm — it
-        // disarms earlier than the ref would, which is the safe direction.
-        armedRef.current = { id: decision.id, at: nowMs };
-        setArmedId(decision.id);
-        return;
-      case "blocked":
-        // The capability dead end. Says nothing to the network, and leaves the
-        // arming alone — the user may still be mid-confirm.
-        return;
-      case "terminate":
-        // GUARD (redundant, deliberate — see handleStop).
-        if (!capsRef.current.terminate) return;
-        armedRef.current = null;
-        setArmedId(null);
-        // CONTRACT: engine-v2-research-lane ships POST /api/runs/:id/terminate
-        // and flips capabilities.control_plane.terminate. Unreachable today:
-        // with an all-false capabilities response `decideXClick` never returns
-        // this action, and no request exists to issue if it did.
-        return;
-    }
-  }, []);
+  const handleX = useCallback(
+    (nodeId: string, settled: boolean, hidesRows: number, widerReach: boolean) => {
+      const nowMs = Date.now();
+      const decision = decideXClick({
+        nodeId,
+        settled,
+        /* An operator row's cascade reaches its whole project, including finished
+         * runs this tree never listed, so the count it carries is a floor. Passing
+         * the floor here would let a 1-row operator chat dismiss on a single click;
+         * `MAX_SAFE_INTEGER` says "more than one, and unknown", which is the truth
+         * and lands on the confirm. The WORDS come from `widerReach` (TeamRow's
+         * `scope`), which is why both travel. */
+        hidesRows: widerReach ? Number.MAX_SAFE_INTEGER : hidesRows,
+        armed: armedRef.current,
+        nowMs,
+        canTerminate: capsRef.current.terminate,
+      });
+      switch (decision.action) {
+        case "dismiss":
+          armedRef.current = null;
+          setArmedId(null);
+          /* Round 1873, finding 2 — THE UNDO.
+           *
+           * Round 1871 answered "one click, no confirm" with a toast naming the
+           * footer control. Round 1872's tester then lost 165 of 166 rows to one
+           * click and found that footer control could only give them back by
+           * wiping every dismissal on the machine. Two things changed:
+           *
+           *   · a click that hides more than its own row now has to be confirmed
+           *     (`decideXClick`, and the strip in TeamRow says how many);
+           *   · the toast carries a REAL undo of exactly this gesture, built from
+           *     the id list the server cascaded — `restoreMany`, not `restore`,
+           *     because restoring the clicked row alone would leave its
+           *     descendants hidden.
+           *
+           * The toast is raised from the callback rather than here, so it names
+           * the count the SERVER hid rather than the count we predicted, and so
+           * the undo button cannot exist before the ids it would restore do. */
+          /* TWO NUMBERS, BOTH TRUE (round 1874, finding 2). `ids` is the
+           * server's cascade — fleet-wide, and exactly what "undo" restores.
+           * `rowsHiddenBy` is what THIS tree lost, computed by the same walk
+           * the "N dismissed · show" tray counts with, so the toast and the
+           * tray can no longer report one gesture as two numbers with nothing
+           * to reconcile them.
+           *
+           * SNAPSHOTTED HERE, not read in the callback. `useDismissals` hides
+           * the row OPTIMISTICALLY, so by the time the server answers the ref
+           * already holds a tree with this id hidden and the difference is
+           * zero — measured: the toast said "180 rows hidden — all of them
+           * elsewhere in the fleet" beside a tray that had just grown by one.
+           * The click handler runs before that optimistic write; this is the
+           * tree the operator was looking at when they pressed ✕. */
+          const before = treeRef.current;
+          dismissRef.current(decision.id, (ids) => {
+            const here =
+              before === null
+                ? ids.length
+                : rowsHiddenBy(before.data, before.hiddenBy, ids);
+            toast(
+              hideToastText({ hidden: ids.length, here }),
+              "info",
+              undefined,
+              {
+                action: { label: "undo", onClick: () => restoreManyRef.current(ids) },
+                /* Long enough to notice 165 rows leaving and reach for the undo;
+                   the peek below is the durable way back after that. */
+                ttlMs: 12_000,
+              },
+            );
+          });
+          return;
+        case "arm":
+        case "rearm":
+          // Same write for both. `rearm` is a too-fast click PUSHING THE WINDOW
+          // BACK to its own clock, which is what stops a click stream from
+          // accumulating 150ms of separation and firing on its own (round 505
+          // finding #1). `setArmedId` with an unchanged id is a React bail-out,
+          // so the visual disarm timer keeps running from the FIRST arm — it
+          // disarms earlier than the ref would, which is the safe direction.
+          armedRef.current = { id: decision.id, at: nowMs };
+          setArmedId(decision.id);
+          return;
+        case "blocked":
+          // The capability dead end. Says nothing to the network, and leaves the
+          // arming alone — the user may still be mid-confirm.
+          return;
+        case "terminate":
+          // GUARD (redundant, deliberate — see handleStop).
+          if (!capsRef.current.terminate) return;
+          armedRef.current = null;
+          setArmedId(null);
+          /* Refetch, not a per-row pending flag — the same decision as
+           * `handleStop` above, taken for the same memo-bail-out reason; the
+           * long form is written out there.
+           *
+           * LIVE since round 1353 (8ec83cc flipped `terminate` in
+           * capabilities.ts): this path is reached whenever the engine answers
+           * `terminate:true`, and it was driven end to end in a browser —
+           * armed ✕, confirmed, 202 `{"terminating":true}`. It stays
+           * capability-gated on that flag, so an engine that withdraws it puts
+           * the row straight back to a disabled button with a stated reason. */
+          void postRunTerminate(decision.id)
+            .then(() => {
+              toast(`terminate sent — ${decision.id.slice(0, 8)}`, "ok");
+              void refetchTeamRef.current();
+            })
+            .catch((e: unknown) => toastError("Terminate failed", e));
+          return;
+      }
+    },
+    [],
+  );
 
   const data = team.data;
 
-  const { rows, hiddenCount } = useMemo(
-    () => (data ? flattenTeam(data, dismissed) : NO_TEAM),
-    [data, dismissed],
+  /* The wrapper cache that makes `memo(TeamRowView)` able to bail out (round
+   * 1302, L1). One per mounted panel, in a ref rather than in module scope so
+   * two panels — or a remount — never share or inherit each other's rows.
+   *
+   * `useMemo` may legitimately re-run for reasons other than a new response
+   * (a changed `dismissed` set, a Strict Mode double-invoke). Feeding the same
+   * cache is correct in every one of those cases: an unchanged node yields the
+   * previous wrapper, so re-running the memo is idempotent rather than a
+   * silent 108-row re-render. */
+  const rowCache = useRef(createTeamRowCache());
+
+  /* The set the tree is actually hidden by: the server's, seeded from this
+   * response's own `dismissed_at` flags until the GET has answered. Once it
+   * has, `seededDismissals` returns `dismissed` UNCHANGED — same object — so
+   * this memo stops producing new sets and `flattenTeam` keeps handing back
+   * the cached row wrappers that let `memo(TeamRowView)` bail out. */
+  const payloadDismissed = useMemo(() => payloadDismissedIds(data), [data]);
+  const hiddenBy = useMemo(
+    () => seededDismissals(dismissalsLoaded, dismissed, payloadDismissed),
+    [dismissalsLoaded, dismissed, payloadDismissed],
+  );
+
+  const { rows, hiddenCount, hiddenRows } = useMemo(
+    () => (data ? flattenTeam(data, hiddenBy, rowCache.current) : NO_TEAM),
+    [data, hiddenBy],
   );
   const responseNow = useMemo(() => (data ? responseNowMs(data) : Number.NaN), [data]);
+
+  useEffect(() => {
+    treeRef.current = data ? { data, hiddenBy } : null;
+  }, [data, hiddenBy]);
 
   /* Which enrichment steps failed. Passed to rows as booleans so a degraded
    * response shows "—" (never 0) in the cells it actually touched, instead of
@@ -311,7 +746,9 @@ export function ChatTeamPanel({
     [data],
   );
 
-  const state: TeamState = team.isError
+  /** What the tree ON SCREEN is. Drives the notes below — a switch must not
+   *  turn "no project linked" into a spinner. */
+  const dataState: TeamState = team.isError
     ? "error"
     : !data
       ? "loading"
@@ -320,6 +757,11 @@ export function ChatTeamPanel({
         : data.workers.length === 0
           ? "empty"
           : "ready";
+
+  /** What the PANEL is doing, which is what `data-team-state` reports. A switch
+   *  in flight is its own state: the rows below still belong to the previous
+   *  project and saying "ready" over them was finding 1's silence. */
+  const state: TeamState = switchingTo !== null && !team.isError ? "switching" : dataState;
 
   /* Two zones, one panel (13 §1: ChatTeamPanel = TeamTree + PlanKanban).
    * The team tree keeps `flex: 1, minHeight: 0` and therefore keeps every
@@ -341,7 +783,7 @@ export function ChatTeamPanel({
           borderBottom: `1px solid ${tokens.borderSoft}`,
         }}
       >
-        {state === "error" ? (
+        {dataState === "error" ? (
           /* NFU6: the cached tree is NOT rendered next to this. Stale rows beside
            * an error read as fresh rows, which is the exact failure the whole
            * project exists to remove. */
@@ -374,7 +816,102 @@ export function ChatTeamPanel({
                 </span>
               </div>
             )}
-            {data?.link_ambiguous && (
+            {/* ROUND 1871, finding 3. This used to be a nine-pixel
+                "linkage ambiguous" and nothing else — a confession with no
+                remedy, beside seventeen workers belonging to a project the
+                reader had not asked for. A chat that started two projects
+                gets a real choice instead. One project: nothing renders, as
+                before. */}
+            {(data?.candidates?.length ?? 0) > 1 && (
+              <div
+                data-project-switcher
+                style={{
+                  padding: "6px 10px",
+                  borderBottom: `1px solid ${tokens.borderDivider}`,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <span
+                  className="mono"
+                  title={
+                    "This chat started more than one project. The panel opens on " +
+                    "the liveliest one; pick another to see its team and its board."
+                  }
+                  style={{
+                    fontSize: 9,
+                    color: tokens.textFaint,
+                    letterSpacing: "0.08em",
+                    marginRight: 2,
+                  }}
+                >
+                  PROJECT
+                </span>
+                {data?.candidates?.map((p) => {
+                  /* WHAT THE OPERATOR ASKED FOR, not what has arrived: the chip
+                     goes pressed in the tick of the click and stays pressed while
+                     the fetch runs. `switchingTo` is cleared by the response, so
+                     a server that ranks differently than we asked still has the
+                     last word — it just does not get to leave the button looking
+                     unclicked for six seconds first. */
+                  const on = p.id === (switchingTo ?? data.project?.id);
+                  const pending = switchingTo === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      data-project-choice={p.id}
+                      data-project-pending={pending ? "true" : undefined}
+                      aria-pressed={on}
+                      aria-busy={pending || undefined}
+                      title={`${p.name ?? p.id} — ${p.status} · ${p.id}`}
+                      onClick={() => {
+                        if (on) return;
+                        /* THE REF FIRST, and from the handler rather than from
+                           the next render: `queryFn` reads it, and `refetch()`
+                           below reads it before React has re-rendered. This one
+                           line is finding 1's actual bug — without it the switch
+                           refetched the project already on screen and the new one
+                           arrived on the next 6s poll. */
+                        projectOverrideRef.current = p.id;
+                        setProjectOverride(p.id);
+                        setSwitchingTo(p.id);
+                        /* The key is unchanged by design (see the query
+                           above), so the switch has to ask for the refetch
+                           itself. Awaiting is pointless — `switchingTo` is the
+                           pending state and the response clears it. */
+                        void team.refetch();
+                      }}
+                      className="mono"
+                      style={{
+                        fontSize: 9.5,
+                        maxWidth: 150,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: on ? tokens.accent : tokens.textMuted,
+                        background: on ? tokens.primaryActionBg : "transparent",
+                        border: `1px solid ${on ? tokens.accent : tokens.border}`,
+                        borderRadius: 5,
+                        padding: "2px 7px",
+                        cursor: on ? "default" : "pointer",
+                      }}
+                    >
+                      {p.name ?? p.id.slice(0, 8)}
+                      <span style={{ color: tokens.textFaint }}>
+                        {" "}
+                        · {pending ? "loading…" : p.status}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* Kept for the case the switcher cannot serve: a scan that found
+                several ids of which only one survived validation still says
+                the link was contested. */}
+            {data?.link_ambiguous && (data.candidates?.length ?? 0) <= 1 && (
               <div style={{ padding: "6px 10px 0" }}>
                 <span
                   data-link-marker="ambiguous"
@@ -401,59 +938,190 @@ export function ChatTeamPanel({
               </Note>
             )}
 
-            <div data-team-scroll style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-              {rows.map((row) => (
-                <TeamRowView
-                  key={row.node.id}
-                  row={row}
-                  responseNow={responseNow}
-                  armed={armedId === row.node.id}
-                  canStop={caps.stop}
-                  canTerminate={caps.terminate}
-                  degradedTime={degradedTime}
-                  degradedTasks={degradedTasks}
-                  onOpenNode={handleOpenNode}
-                  onStop={handleStop}
-                  onX={handleX}
-                />
-              ))}
+            {/* The rows below this line belong to the project we are LEAVING.
+                Saying so costs one muted line and is the difference between a
+                switch that is working and a button that looks broken. */}
+            {switchingTo !== null && (
+              <Note>
+                switching to{" "}
+                {data?.candidates?.find((p) => p.id === switchingTo)?.name ??
+                  switchingTo.slice(0, 8)}
+                … — the rows below are still the previous project’s
+              </Note>
+            )}
 
-              {state === "loading" && (
+            <div
+              data-team-scroll
+              aria-busy={switchingTo !== null || undefined}
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                /* Dimmed, not emptied: the previous tree is still true until the
+                   response lands, and blanking it would trade one silence for
+                   another. Pointer events stay ON — a click that opens a worker
+                   of the project you are leaving still opens that worker. */
+                ...(switchingTo !== null ? { opacity: 0.45 } : {}),
+              }}
+            >
+              {/* The response clock reaches the live rows' time cells THROUGH
+                  this provider, never as a row prop (round 1302, L1). It is a
+                  new number every poll; as a prop it re-rendered all 108 rows
+                  to move the two that are running. React delivers a context
+                  change to its consumers even where `memo` bailed the row out,
+                  so the routing is exact: `LiveTime` re-renders, its row does
+                  not. */}
+              <ResponseNowContext.Provider value={responseNow}>
+                {rows.map((row) => (
+                  <TeamRowView
+                    key={row.node.id}
+                    row={row}
+                    armed={armedId === row.node.id}
+                    canStop={caps.stop}
+                    canTerminate={caps.terminate}
+                    degradedTime={degradedTime}
+                    degradedTasks={degradedTasks}
+                    onOpenNode={handleOpenNode}
+                    onStop={handleStop}
+                    onX={handleX}
+                  />
+                ))}
+
+              {dataState === "loading" && (
                 <Note>{enabled ? "loading team…" : "no chat open"}</Note>
               )}
-              {state === "unlinked" && <Note>no project linked to this chat</Note>}
-              {state === "empty" && <Note>no agents yet</Note>}
+              {dataState === "unlinked" && <Note>no project linked to this chat</Note>}
+              {dataState === "empty" && <Note>no agents yet</Note>}
+
+              {/* The peek. Below everything, behind its own heading, visibly
+                  quieter: these rows ARE hidden and the panel says so rather
+                  than mixing them back into the tree. `hiddenRows` comes out of
+                  the same walk that produced `hiddenCount`, so the list and the
+                  label cannot disagree — and each row carries its own way back
+                  (or, for a row hidden with its parent, says so). */}
+              {peek && hiddenRows.length > 0 && (
+                <>
+                  <div
+                    data-team-dismissed-group
+                    className="mono"
+                    style={{
+                      fontSize: 9,
+                      color: tokens.textGhost,
+                      letterSpacing: "0.08em",
+                      padding: "10px 8px 4px",
+                    }}
+                  >
+                    {DISMISSED_GROUP_LABEL}
+                  </div>
+                  {hiddenRows.map((hidden) => (
+                    <TeamRowView
+                      key={hidden.row.node.id}
+                      row={hidden.row}
+                      armed={false}
+                      canStop={caps.stop}
+                      canTerminate={caps.terminate}
+                      degradedTime={degradedTime}
+                      degradedTasks={degradedTasks}
+                      onOpenNode={handleOpenNode}
+                      onStop={handleStop}
+                      onX={handleX}
+                      peeked
+                      restorable={hidden.restorable}
+                      onRestore={handleRestore}
+                    />
+                  ))}
+                </>
+              )}
+              </ResponseNowContext.Provider>
             </div>
 
             {/* Driven by rows actually withheld from THIS tree, so the label
-                cannot claim hidden rows that do not exist (junk in localStorage)
-                nor undercount a dismissed parent's sub-agents. */}
+                cannot claim hidden rows that do not exist (the dismissal set
+                is global and holds ids from every project) nor undercount a
+                dismissed parent's sub-agents. */}
             {hiddenCount > 0 && (
-              <div style={{ padding: "4px 10px", borderTop: `1px solid ${tokens.borderDivider}` }}>
+              <div
+                style={{
+                  padding: "4px 10px",
+                  borderTop: `1px solid ${tokens.borderDivider}`,
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 10,
+                }}
+              >
                 <button
-                  data-team-restore
+                  data-team-dismissed-toggle
                   type="button"
-                  onClick={restoreAll}
-                  title="Bring every hidden row back. Dismissing hides rows; it never deletes anything."
+                  onClick={() => setPeek((v) => !v)}
+                  /* The OTHER surface: this IS the chat team panel, so the
+                     sentence names /live. */
+                  title={dismissedToggleTitle(DISMISSAL_SURFACES.live)}
                   className="mono"
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    padding: 0,
-                    fontSize: 9.5,
-                    fontFamily: "inherit",
-                    color: tokens.textMuted,
-                    cursor: "pointer",
-                  }}
+                  style={FOOTER_BTN_STYLE}
                 >
-                  {hiddenCount} hidden · show
+                  {dismissedToggleLabel(hiddenCount, peek)}
                 </button>
+                {/* Only while peeking, so it cannot be reached without the
+                    rows it affects being on screen — and only when the server
+                    set has actually been read, because the count it names comes
+                    from that set. Two clicks: `decideRestoreAllClick`. */}
+                {peek && dismissed.size > 0 && (
+                  <button
+                    data-team-restore-all
+                    data-confirm={restoreAllArmedAt === null ? "idle" : "armed"}
+                    type="button"
+                    onClick={() => {
+                      const nowMs = Date.now();
+                      const decision = decideRestoreAllClick({
+                        armedAt: restoreAllArmedAt,
+                        nowMs,
+                      });
+                      switch (decision.action) {
+                        case "arm":
+                        case "rearm":
+                          // One write for both, exactly as the ✕ machine does
+                          // it: a `rearm` pushes the window back to THIS click
+                          // so a click stream can never confirm itself.
+                          setRestoreAllArmedAt(nowMs);
+                          return;
+                        case "restore-all":
+                          setRestoreAllArmedAt(null);
+                          restoreAll();
+                          return;
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (isSpuriousActivation({ detail: 0, repeat: e.repeat })) {
+                        e.preventDefault();
+                      }
+                    }}
+                    title={restoreAllTitle(dismissed.size)}
+                    className="mono"
+                    style={{
+                      ...FOOTER_BTN_STYLE,
+                      color: restoreAllArmedAt === null ? tokens.textGhost : tokens.bleed,
+                    }}
+                  >
+                    {restoreAllArmedAt === null
+                      ? RESTORE_ALL_LABEL
+                      : restoreAllArmedLabel(dismissed.size)}
+                  </button>
+                )}
               </div>
             )}
           </>
         )}
       </div>
-      <PlanKanban chatId={chatId} onOpenDoc={onOpenDoc} visible={visible} />
+      {/* The board follows the switcher above. `data.project.id` rather than
+          `projectOverride`: the server had the last word on which project this
+          is (it validates the override and ranks the default), and the two
+          zones must agree with the SERVER, not with each other. */}
+      <PlanKanban
+        chatId={chatId}
+        onOpenDoc={onOpenDoc}
+        visible={visible}
+        projectId={data?.project?.id ?? null}
+      />
     </div>
   );
 }

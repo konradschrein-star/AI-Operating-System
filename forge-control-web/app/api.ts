@@ -134,28 +134,15 @@ export const createCanvas = (input: { name: string; folder?: string }) =>
   );
 
 /* ----------------------------------------------------------------------------
- * Subscription quota — the real 5-hour / 7-day windows.
+ * Subscription quota — deliberately NOT here.
  *
- * Anthropic exposes actual utilisation at /api/oauth/usage using the same
- * OAuth token the CLI holds, so this is measured, not inferred. (The older
- * LimitHit comment below says no such API exists — it was wrong; limit-hits
- * remain useful as a record of ceilings actually struck.)
+ * Anthropic exposes actual utilisation at /api/oauth/usage, and forge-control
+ * serves it at /usage/quota. This module used to hold a `fetchQuota` beside a
+ * second copy in settings/usageApi.ts, which is how three components ended up
+ * polling one endpoint on their own timers and showing Konrad two indicators
+ * that disagreed. Round 1876 moved the key, the intervals and the fetcher into
+ * `desktop/quota/quotaQuery.ts` and left nothing here to import by accident.
  * -------------------------------------------------------------------------- */
-export interface QuotaWindow {
-  utilization: number | null;
-  resets_at: string | null;
-}
-export interface QuotaSnapshot {
-  five_hour: QuotaWindow;
-  seven_day: QuotaWindow;
-  seven_day_opus: QuotaWindow | null;
-  fetched_at: string;
-  cached?: boolean;
-  error?: string;
-}
-/** `fresh` bypasses the server's 60s cache — wired to the refresh button. */
-export const fetchQuota = (fresh = false) =>
-  getJson<QuotaSnapshot>(`/usage/quota${fresh ? "?fresh=1" : ""}`);
 
 /* ----------------------------------------------------------------------------
  * Today
@@ -733,7 +720,13 @@ export const DEFAULT_ENGINE_MODEL = "claude-opus-5";
 
 /** Effort choices offered in the web UI. "xhigh" is exposed here (it was
  *  API/Telegram-only); "max" still stays off the UI. */
-export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh"] as const;
+/** ROUND 1871: `max` joins the list. It was always accepted by the engine —
+ *  `EFFORT_LEVELS` in forge-control/src/lib/cc-runner.ts has held all five
+ *  since it was written — and it was reachable from the API and from Telegram,
+ *  but the UI offered four. The customer test found the gap ("No 'max' offered
+ *  in either"), and a setting Konrad can reach from his phone but not from his
+ *  own console is an omission, not a policy. */
+export const ENGINE_EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "max"] as const;
 
 export const setChatEffort = async (id: string, effort: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/effort`, { effort });

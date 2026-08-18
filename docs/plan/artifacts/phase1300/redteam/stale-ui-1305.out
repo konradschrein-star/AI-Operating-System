@@ -1,0 +1,70 @@
+tree: 114 nodes, 107 workers, complete=true
+
+target: e35c2287-c014-4033-b813-f2ed7279741f status=running settled=false subagents=0
+sub:    toolu_014raMUrJcAiXV61BerokrjN kind=subagent parent=3853c154-e07b-4378-9313-2b34f4a33342
+
+── one field moves; does its row's wrapper move with it? ──────
+PASS  status running → completed → mutated row is a NEW wrapper
+PASS  status running → completed → the new wrapper carries the mutation
+PASS  status running → completed → every UNRELATED wrapper reused
+PASS  task title changed → mutated row is a NEW wrapper
+PASS  task title changed → the new wrapper carries the mutation
+PASS  task title changed → every UNRELATED wrapper reused
+PASS  task status changed → mutated row is a NEW wrapper
+PASS  task status changed → the new wrapper carries the mutation
+PASS  task status changed → every UNRELATED wrapper reused
+PASS  task round changed → mutated row is a NEW wrapper
+PASS  task round changed → the new wrapper carries the mutation
+PASS  task round changed → every UNRELATED wrapper reused
+PASS  task role changed → mutated row is a NEW wrapper
+PASS  task role changed → the new wrapper carries the mutation
+PASS  task role changed → every UNRELATED wrapper reused
+PASS  token count moved → mutated row is a NEW wrapper
+PASS  token count moved → the new wrapper carries the mutation
+PASS  token count moved → every UNRELATED wrapper reused
+PASS  working_ms advanced → mutated row is a NEW wrapper
+PASS  working_ms advanced → the new wrapper carries the mutation
+PASS  working_ms advanced → every UNRELATED wrapper reused
+PASS  working_ms_source thread → rollup → mutated row is a NEW wrapper
+PASS  working_ms_source thread → rollup → the new wrapper carries the mutation
+PASS  working_ms_source thread → rollup → every UNRELATED wrapper reused
+PASS  model changed → mutated row is a NEW wrapper
+PASS  model changed → the new wrapper carries the mutation
+PASS  model changed → every UNRELATED wrapper reused
+PASS  description changed → mutated row is a NEW wrapper
+PASS  description changed → the new wrapper carries the mutation
+PASS  description changed → every UNRELATED wrapper reused
+PASS  role changed → mutated row is a NEW wrapper
+PASS  role changed → the new wrapper carries the mutation
+PASS  role changed → every UNRELATED wrapper reused
+PASS  kind changed → mutated row is a NEW wrapper
+PASS  kind changed → the new wrapper carries the mutation
+PASS  kind changed → every UNRELATED wrapper reused
+PASS  started_at changed → mutated row is a NEW wrapper
+PASS  started_at changed → the new wrapper carries the mutation
+PASS  started_at changed → every UNRELATED wrapper reused
+PASS  settled flipped → mutated row is a NEW wrapper
+PASS  settled flipped → the new wrapper carries the mutation
+PASS  settled flipped → every UNRELATED wrapper reused
+PASS  subagent row: working_ms advanced → mutated row is a NEW wrapper
+PASS  subagent row: working_ms advanced → the new wrapper carries the mutation
+PASS  subagent row: working_ms advanced → every UNRELATED wrapper reused
+PASS  subagent row: status changed → mutated row is a NEW wrapper
+PASS  subagent row: status changed → the new wrapper carries the mutation
+PASS  subagent row: status changed → every UNRELATED wrapper reused
+
+── structural change: a worker appears / disappears ───────────
+PASS  worker removed → row count drops
+PASS  worker removed → no wrapper of the removed subtree survives
+PASS  worker reappears → row count restored
+PASS  worker reappears → it renders (fresh wrapper, not a ghost)
+
+── the cache does not survive a moved row ─────────────────────
+PASS  re-parented rows all render at their NEW depth
+PASS  no re-parented row kept its old wrapper
+
+── degraded response after a good one (complete:false) ────────
+PASS  degraded manager row is a NEW wrapper
+PASS  degraded manager row carries the null working_ms
+
+HELD — no stale wrapper found

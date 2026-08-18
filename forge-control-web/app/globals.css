@@ -121,6 +121,20 @@ body {
   opacity: 1;
 }
 
+/* round 1350 (NFU2): the Live panel's dismissal ✕, revealed the same way and
+ * for the same reason as `.chat-row` and `.team-row` above. The button is
+ * mounted in every settled row at all times inside a fixed-width slot, so the
+ * reveal is one opacity change: no React hover state, no re-render, no
+ * reflow. `:focus-within` keeps it reachable by keyboard. Opacity only —
+ * every colour still comes from app/tokens.ts (NFU1). */
+.live-row .live-row-controls {
+  opacity: 0;
+}
+.live-row:hover .live-row-controls,
+.live-row:focus-within .live-row-controls {
+  opacity: 1;
+}
+
 /* v3 phase 700 (U26/NFU2): plan-zone doc affordance, CSS-only — the same
  * bargain `.chat-row` and `.team-row` above make. A plan doc is a link, so it
  * behaves like one under the pointer and under keyboard focus; the change is
@@ -133,6 +147,25 @@ body {
 .plan-doc-link:hover,
 .plan-doc-link:focus-visible {
   text-decoration: underline;
+}
+
+/* round 1871: the phase header and the task chip became clickable, so they
+ * have to LOOK clickable — the customer test found both with `cursor:auto` and
+ * no handler and read them, correctly, as decoration. Same CSS-only bargain
+ * as everything above: `text-decoration` on the header's title text and a
+ * paint-only tint on the chip. No layout property, no React hover state, so
+ * NFU2's "hover mounts and measures nothing" survives the change. Colour comes
+ * from `currentColor`, so both themes are covered without a literal (NFU1). */
+.plan-phase-header:hover,
+.plan-phase-header:focus-visible {
+  text-decoration: underline;
+}
+.plan-task-chip {
+  outline-offset: -1px;
+}
+.plan-task-chip:hover,
+.plan-task-chip:focus-visible {
+  outline: 1px solid currentColor;
 }
 
 /* v3 phase 600 (U20/NFU8): in-chat drill-in navigation. CSS only — there is

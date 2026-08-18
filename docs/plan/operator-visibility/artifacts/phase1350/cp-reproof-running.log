@@ -1,0 +1,1638 @@
+verify-control-plane.sh - proving the manager control plane against http://127.0.0.1:7700
+(contract: /opt/obsidian-vault/AI OS/Contract - Manager Control Plane API.md §1/§3/§4)
+
+--- setup: creating scratch runs ---
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:13.602543+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  target run id: 59459708-f18a-4f11-9188-f8866a6321a6
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - sender",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:13.635717+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  sender run id: 8889d4ef-6b67-43e3-8a28-b145b403d44a
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:13.635717+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+
+=== step 1: message to fresh (queued) run -> 202, direction 'in' in comms ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/message' -H 'content-type: application/json' -d '{
+  "text": "step1 hello from konrad",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "queued": true,
+  "delivery": "next-turn"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/comms'
+  -> HTTP 200
+{
+  "run_id": "59459708-f18a-4f11-9188-f8866a6321a6",
+  "comms": [
+    {
+      "ts": "2026-08-17T03:08:13.695Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step1 hello from konrad"
+    }
+  ]
+}
+[32mPASS[0m step 1
+
+=== step 2: message with sender_run_id -> echo in sender comms (direction 'out'), sender status unchanged (C3) ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/message' -H 'content-type: application/json' -d '{
+  "text": "step2 hello from worker",
+  "from": "worker",
+  "sender_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+}'
+  -> HTTP 202
+{
+  "queued": true,
+  "delivery": "next-turn",
+  "echo": true
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/8889d4ef-6b67-43e3-8a28-b145b403d44a/comms'
+  -> HTTP 200
+{
+  "run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+  "comms": [
+    {
+      "ts": "2026-08-17T03:08:13.748Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "worker",
+          "direction": "out",
+          "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+        }
+      },
+      "role": "agent",
+      "content": "[to manager 59459708] step2 hello from worker"
+    }
+  ]
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:13.751291+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 2,
+    "last_message_preview": "[to manager 59459708] step2 hello from worker",
+    "last_role": "agent",
+    "archived": false
+  }
+}
+  sender status before echo: 'queued', after: 'queued'
+[32mPASS[0m step 2
+
+=== step 3: stop -> 202, status paused; second stop -> 409 ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/stop'
+  -> HTTP 202
+{
+  "stopping": true
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/59459708-f18a-4f11-9188-f8866a6321a6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "paused",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.695Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step1 hello from konrad"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "in",
+            "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+          }
+        },
+        "role": "user",
+        "content": "[message from worker 8889d4ef] step2 hello from worker"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:13.821661+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 3,
+    "last_message_preview": "[message from worker 8889d4ef] step2 hello from worker",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  status after stop: 'paused'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/stop'
+  -> HTTP 409
+{
+  "error": "run is already paused"
+}
+[32mPASS[0m step 3
+
+=== step 4: message to paused run -> 202, status back to queued ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/message' -H 'content-type: application/json' -d '{
+  "text": "step4 wake up",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "queued": true,
+  "delivery": "next-turn"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/59459708-f18a-4f11-9188-f8866a6321a6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.695Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step1 hello from konrad"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "in",
+            "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+          }
+        },
+        "role": "user",
+        "content": "[message from worker 8889d4ef] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.903Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step4 wake up"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:13.903268+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 4,
+    "last_message_preview": "[message from konrad] step4 wake up",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  status after message-to-paused: 'queued'
+[32mPASS[0m step 4
+
+=== step 5: terminate -> 202, status cancelled + completed_at stamped (§4 fix); second terminate -> 409 ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/terminate'
+  -> HTTP 202
+{
+  "terminating": true
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/59459708-f18a-4f11-9188-f8866a6321a6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "cancelled",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.695Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step1 hello from konrad"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "in",
+            "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+          }
+        },
+        "role": "user",
+        "content": "[message from worker 8889d4ef] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.903Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step4 wake up"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:13.980428+00",
+    "started_at": null,
+    "completed_at": "2026-08-17 03:08:13.980428+00",
+    "last_heartbeat_at": null,
+    "message_count": 4,
+    "last_message_preview": "[message from konrad] step4 wake up",
+    "last_role": "user",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/59459708-f18a-4f11-9188-f8866a6321a6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "cancelled",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.695Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step1 hello from konrad"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "in",
+            "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+          }
+        },
+        "role": "user",
+        "content": "[message from worker 8889d4ef] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.903Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step4 wake up"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:13.980428+00",
+    "started_at": null,
+    "completed_at": "2026-08-17 03:08:13.980428+00",
+    "last_heartbeat_at": null,
+    "message_count": 4,
+    "last_message_preview": "[message from konrad] step4 wake up",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  status after terminate: 'cancelled', completed_at: '2026-08-17 03:08:13.980428+00'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/terminate'
+  -> HTTP 409
+{
+  "error": "run is already cancelled"
+}
+[32mPASS[0m step 5
+
+=== step 6: message to cancelled run -> 409 naming /resume-chat ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/message' -H 'content-type: application/json' -d '{
+  "text": "step6 are you there",
+  "from": "konrad"
+}'
+  -> HTTP 409
+{
+  "error": "run cancelled - use POST /api/runs/:id/resume-chat to reopen it"
+}
+[32mPASS[0m step 6
+
+=== step 6b: message to a completed run -> 202, status queued, completed_at cleared ===
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:13.751291+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 2,
+    "last_message_preview": "[to manager 59459708] step2 hello from worker",
+    "last_role": "agent",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "running",
+    "worker": "forge-executor",
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:14.950393+00",
+    "started_at": "2026-08-17 03:08:14.950393+00",
+    "completed_at": null,
+    "last_heartbeat_at": "2026-08-17 03:08:14.950393+00",
+    "message_count": 2,
+    "last_message_preview": "[to manager 59459708] step2 hello from worker",
+    "last_role": "agent",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "completed",
+    "worker": "forge-executor",
+    "budget_usd": "0.00",
+    "spent_usd": "0.21",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "text",
+        "meta": {
+          "model": "claude-opus-5",
+          "usage": {
+            "input_tokens": 2,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 22540,
+            "cache_creation_input_tokens": 20005
+          },
+          "provider": "claude-code"
+        },
+        "role": "assistant",
+        "content": "ack"
+      }
+    ],
+    "metadata": {
+      "engine": "claude-code",
+      "rollup_v1": "2026-08-17T03:08:19.383Z",
+      "subagents_v2": [],
+      "cc_session_id": "5036985f-502d-4d27-b307-7c77c78b4682",
+      "usage_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "model_resolved": "claude-opus-5",
+      "current_activity": {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "assistant_text",
+        "text": "ack",
+        "tool": null
+      },
+      "usage_total_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:19.870886+00",
+    "started_at": "2026-08-17 03:08:14.950393+00",
+    "completed_at": "2026-08-17 03:08:19.870886+00",
+    "last_heartbeat_at": "2026-08-17 03:08:19.870886+00",
+    "message_count": 3,
+    "last_message_preview": "ack",
+    "last_role": "assistant",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "completed",
+    "worker": "forge-executor",
+    "budget_usd": "0.00",
+    "spent_usd": "0.21",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "text",
+        "meta": {
+          "model": "claude-opus-5",
+          "usage": {
+            "input_tokens": 2,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 22540,
+            "cache_creation_input_tokens": 20005
+          },
+          "provider": "claude-code"
+        },
+        "role": "assistant",
+        "content": "ack"
+      }
+    ],
+    "metadata": {
+      "engine": "claude-code",
+      "rollup_v1": "2026-08-17T03:08:19.383Z",
+      "subagents_v2": [],
+      "cc_session_id": "5036985f-502d-4d27-b307-7c77c78b4682",
+      "usage_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "model_resolved": "claude-opus-5",
+      "current_activity": {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "assistant_text",
+        "text": "ack",
+        "tool": null
+      },
+      "usage_total_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:19.870886+00",
+    "started_at": "2026-08-17 03:08:14.950393+00",
+    "completed_at": "2026-08-17 03:08:19.870886+00",
+    "last_heartbeat_at": "2026-08-17 03:08:19.870886+00",
+    "message_count": 3,
+    "last_message_preview": "ack",
+    "last_role": "assistant",
+    "archived": false
+  }
+}
+  run B completed_at before the message: '2026-08-17 03:08:19.870886+00'
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/8889d4ef-6b67-43e3-8a28-b145b403d44a/message' -H 'content-type: application/json' -d '{
+  "text": "step6b one more thing",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "queued": true,
+  "delivery": "next-turn"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": "forge-executor",
+    "budget_usd": "0.00",
+    "spent_usd": "0.21",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "text",
+        "meta": {
+          "model": "claude-opus-5",
+          "usage": {
+            "input_tokens": 2,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 22540,
+            "cache_creation_input_tokens": 20005
+          },
+          "provider": "claude-code"
+        },
+        "role": "assistant",
+        "content": "ack"
+      },
+      {
+        "ts": "2026-08-17T03:08:20.187Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step6b one more thing"
+      }
+    ],
+    "metadata": {
+      "engine": "claude-code",
+      "rollup_v1": "2026-08-17T03:08:19.383Z",
+      "subagents_v2": [],
+      "cc_session_id": "5036985f-502d-4d27-b307-7c77c78b4682",
+      "usage_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "model_resolved": "claude-opus-5",
+      "current_activity": {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "assistant_text",
+        "text": "ack",
+        "tool": null
+      },
+      "usage_total_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:20.18776+00",
+    "started_at": "2026-08-17 03:08:14.950393+00",
+    "completed_at": null,
+    "last_heartbeat_at": "2026-08-17 03:08:19.870886+00",
+    "message_count": 4,
+    "last_message_preview": "[message from konrad] step6b one more thing",
+    "last_role": "user",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/8889d4ef-6b67-43e3-8a28-b145b403d44a'
+  -> HTTP 200
+{
+  "run": {
+    "id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+    "title": "control-plane verify - sender",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": "forge-executor",
+    "budget_usd": "0.00",
+    "spent_usd": "0.21",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.635Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "out",
+            "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+          }
+        },
+        "role": "agent",
+        "content": "[to manager 59459708] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "text",
+        "meta": {
+          "model": "claude-opus-5",
+          "usage": {
+            "input_tokens": 2,
+            "output_tokens": 4,
+            "cache_read_input_tokens": 22540,
+            "cache_creation_input_tokens": 20005
+          },
+          "provider": "claude-code"
+        },
+        "role": "assistant",
+        "content": "ack"
+      },
+      {
+        "ts": "2026-08-17T03:08:20.187Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step6b one more thing"
+      }
+    ],
+    "metadata": {
+      "engine": "claude-code",
+      "rollup_v1": "2026-08-17T03:08:19.383Z",
+      "subagents_v2": [],
+      "cc_session_id": "5036985f-502d-4d27-b307-7c77c78b4682",
+      "usage_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "model_resolved": "claude-opus-5",
+      "current_activity": {
+        "ts": "2026-08-17T03:08:19.383Z",
+        "kind": "assistant_text",
+        "text": "ack",
+        "tool": null
+      },
+      "usage_total_running": {
+        "input_tokens": 2,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 22540,
+        "cache_creation_input_tokens": 20005
+      },
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.635717+00",
+    "updated_at": "2026-08-17 03:08:20.18776+00",
+    "started_at": "2026-08-17 03:08:14.950393+00",
+    "completed_at": null,
+    "last_heartbeat_at": "2026-08-17 03:08:19.870886+00",
+    "message_count": 4,
+    "last_message_preview": "[message from konrad] step6b one more thing",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  run B after the message: status 'queued', completed_at ''
+[32mPASS[0m step 6b
+
+=== step 7: GET comms on both runs (evidence transcript) ===
+--- run A (59459708-f18a-4f11-9188-f8866a6321a6) comms ---
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/comms'
+  -> HTTP 200
+{
+  "run_id": "59459708-f18a-4f11-9188-f8866a6321a6",
+  "comms": [
+    {
+      "ts": "2026-08-17T03:08:13.695Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step1 hello from konrad"
+    },
+    {
+      "ts": "2026-08-17T03:08:13.748Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "worker",
+          "direction": "in",
+          "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+        }
+      },
+      "role": "user",
+      "content": "[message from worker 8889d4ef] step2 hello from worker"
+    },
+    {
+      "ts": "2026-08-17T03:08:13.903Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step4 wake up"
+    }
+  ]
+}
+--- run B (8889d4ef-6b67-43e3-8a28-b145b403d44a) comms ---
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/8889d4ef-6b67-43e3-8a28-b145b403d44a/comms'
+  -> HTTP 200
+{
+  "run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a",
+  "comms": [
+    {
+      "ts": "2026-08-17T03:08:13.748Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "worker",
+          "direction": "out",
+          "peer_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+        }
+      },
+      "role": "agent",
+      "content": "[to manager 59459708] step2 hello from worker"
+    },
+    {
+      "ts": "2026-08-17T03:08:20.187Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step6b one more thing"
+    }
+  ]
+}
+[32mPASS[0m step 7
+
+=== step 8: resume-chat on a cancelled run -> 202 in place, queued, completed_at cleared; second resume-chat while queued -> 409 naming /message ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/resume-chat' -H 'content-type: application/json' -d '{
+  "text": "step 8 resume follow-up",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "resumed_run_id": "59459708-f18a-4f11-9188-f8866a6321a6"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/59459708-f18a-4f11-9188-f8866a6321a6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.695Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step1 hello from konrad"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "in",
+            "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+          }
+        },
+        "role": "user",
+        "content": "[message from worker 8889d4ef] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.903Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step4 wake up"
+      },
+      {
+        "ts": "2026-08-17T03:08:20.310Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step 8 resume follow-up"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:20.310872+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 5,
+    "last_message_preview": "[message from konrad] step 8 resume follow-up",
+    "last_role": "user",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/59459708-f18a-4f11-9188-f8866a6321a6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "59459708-f18a-4f11-9188-f8866a6321a6",
+    "title": "control-plane verify - target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:13.602Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      },
+      {
+        "ts": "2026-08-17T03:08:13.695Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step1 hello from konrad"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.748Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "worker",
+            "direction": "in",
+            "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+          }
+        },
+        "role": "user",
+        "content": "[message from worker 8889d4ef] step2 hello from worker"
+      },
+      {
+        "ts": "2026-08-17T03:08:13.903Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step4 wake up"
+      },
+      {
+        "ts": "2026-08-17T03:08:20.310Z",
+        "kind": "comms",
+        "meta": {
+          "comms": {
+            "from": "konrad",
+            "direction": "in",
+            "peer_run_id": null
+          }
+        },
+        "role": "user",
+        "content": "[message from konrad] step 8 resume follow-up"
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:13.602543+00",
+    "updated_at": "2026-08-17 03:08:20.310872+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 5,
+    "last_message_preview": "[message from konrad] step 8 resume follow-up",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  status after resume-chat: 'queued', completed_at: ''
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/comms'
+  -> HTTP 200
+{
+  "run_id": "59459708-f18a-4f11-9188-f8866a6321a6",
+  "comms": [
+    {
+      "ts": "2026-08-17T03:08:13.695Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step1 hello from konrad"
+    },
+    {
+      "ts": "2026-08-17T03:08:13.748Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "worker",
+          "direction": "in",
+          "peer_run_id": "8889d4ef-6b67-43e3-8a28-b145b403d44a"
+        }
+      },
+      "role": "user",
+      "content": "[message from worker 8889d4ef] step2 hello from worker"
+    },
+    {
+      "ts": "2026-08-17T03:08:13.903Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step4 wake up"
+    },
+    {
+      "ts": "2026-08-17T03:08:20.310Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] step 8 resume follow-up"
+    }
+  ]
+}
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/59459708-f18a-4f11-9188-f8866a6321a6/resume-chat' -H 'content-type: application/json' -d '{
+  "text": "step 8 second resume attempt",
+  "from": "konrad"
+}'
+  -> HTTP 409
+{
+  "error": "run is queued and will start on its own - use POST /api/runs/:id/message to talk to it"
+}
+[32mPASS[0m step 8
+
+=== step 9: subagent-message with an unaddressable id -> 409; empty id -> 400; refused calls append nothing ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - subagent-parent",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "559af353-8963-4b11-9f0d-bb90bae1f0d2",
+    "title": "control-plane verify - subagent-parent",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:20.440Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:20.441099+00",
+    "updated_at": "2026-08-17 03:08:20.441099+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  subagent-parent run id: 559af353-8963-4b11-9f0d-bb90bae1f0d2
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/559af353-8963-4b11-9f0d-bb90bae1f0d2/subagent-message' -H 'content-type: application/json' -d '{
+  "subagent_id": "toolu_definitely_not_a_real_id",
+  "text": "step 9 relay"
+}'
+  -> HTTP 409
+{
+  "error": "subagent context not addressable"
+}
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/559af353-8963-4b11-9f0d-bb90bae1f0d2/subagent-message' -H 'content-type: application/json' -d '{
+  "subagent_id": "",
+  "text": "step 9 relay with empty id"
+}'
+  -> HTTP 400
+{
+  "error": "subagent_id required"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/559af353-8963-4b11-9f0d-bb90bae1f0d2/comms'
+  -> HTTP 200
+{
+  "run_id": "559af353-8963-4b11-9f0d-bb90bae1f0d2",
+  "comms": []
+}
+
+[33mstep 9 note (no silent skips): the ADDRESSABLE relay path -- a[0m
+[33msubagent_id present in metadata.subagents_v2 -- cannot be exercised here.[0m
+[33mA scratch run created via POST /api/chat has never spawned a sub-agent, so[0m
+[33mthere is no live id to address; fabricating metadata.subagents_v2 would mean[0m
+[33mwriting to the live DB behind the API, which this script never does. That[0m
+[33mpath IS proven: src/lib/run-control-rules.test.ts's 'subagentAddressable'[0m
+[33mtable tests cover the address-space matching itself, and[0m
+[33msrc/lib/run-control-surface.test.ts asserts the addressability-before-[0m
+[33meligibility ordering in the route source. Its live proof -- an actual relay[0m
+[33mdelivered to a real sub-agent -- belongs to CP4 against a real fleet run.[0m
+[33mThis note is not counted as a pass.[0m
+[32mPASS[0m step 9
+
+[33mnote (no silent skips): the C7 workspace-gone 409 (resume-chat against a[0m
+[33mrun whose metadata.workspace_dir no longer exists on disk) cannot be[0m
+[33mprovoked from HTTP -- a scratch run has no workspace_dir, and fabricating[0m
+[33mone means writing to the live DB behind the API, which this script never[0m
+[33mdoes. It IS proven: run-control-rules.test.ts's workspaceDirOf table tests[0m
+[33mplus run-control-surface.test.ts's pre-flight-before-write ordering[0m
+[33massertion. Not counted as a step or a pass.[0m
+
+[33m--running requested: exercising message-into-a-RUNNING-target.[0m
+[33mThis half of message_into_session only fully lands once the DETACHED[0m
+[33mforge-executor restart has run (07-control-plane-architecture.md §8's[0m
+[33mrestart matrix). A failure below, before that restart, is EXPECTED and[0m
+[33mmust NOT be read as a control-plane defect - it is still counted in the[0m
+[33mfinal tally below (no silent skips), tagged [EXPECTED PRE-RESTART].[0m
+
+=== step R1: wait for a scratch run to reach status=running, then message it ===
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/chat' -H 'content-type: application/json' -d '{
+  "title": "control-plane verify - running-target",
+  "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+  "budget_usd": 0,
+  "metadata": {
+    "verify_control_plane": true
+  }
+}'
+  -> HTTP 201
+{
+  "run": {
+    "id": "08ad3cfe-2d70-4a45-b041-f94c8cf14ec6",
+    "title": "control-plane verify - running-target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:20.542Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:20.542846+00",
+    "updated_at": "2026-08-17 03:08:20.542846+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+  running-target run id: 08ad3cfe-2d70-4a45-b041-f94c8cf14ec6
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/08ad3cfe-2d70-4a45-b041-f94c8cf14ec6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "08ad3cfe-2d70-4a45-b041-f94c8cf14ec6",
+    "title": "control-plane verify - running-target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "queued",
+    "worker": null,
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:20.542Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:20.542846+00",
+    "updated_at": "2026-08-17 03:08:20.542846+00",
+    "started_at": null,
+    "completed_at": null,
+    "last_heartbeat_at": null,
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/chat/08ad3cfe-2d70-4a45-b041-f94c8cf14ec6'
+  -> HTTP 200
+{
+  "run": {
+    "id": "08ad3cfe-2d70-4a45-b041-f94c8cf14ec6",
+    "title": "control-plane verify - running-target",
+    "prompt": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "status": "running",
+    "worker": "forge-executor",
+    "budget_usd": "0.00",
+    "spent_usd": "0.00",
+    "thread": [
+      {
+        "ts": "2026-08-17T03:08:20.542Z",
+        "kind": "text",
+        "role": "user",
+        "content": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop."
+      }
+    ],
+    "metadata": {
+      "verify_control_plane": true
+    },
+    "parent_run_id": null,
+    "stuck_signal": null,
+    "created_at": "2026-08-17 03:08:20.542846+00",
+    "updated_at": "2026-08-17 03:08:21.123968+00",
+    "started_at": "2026-08-17 03:08:21.123968+00",
+    "completed_at": null,
+    "last_heartbeat_at": "2026-08-17 03:08:21.123968+00",
+    "message_count": 1,
+    "last_message_preview": "Automated control-plane verification scratch run (scripts/checks/verify-control-plane.sh). Take no action; reply \"ack\" and stop.",
+    "last_role": "user",
+    "archived": false
+  }
+}
+$ curl -sS -X POST 'http://127.0.0.1:7700/api/runs/08ad3cfe-2d70-4a45-b041-f94c8cf14ec6/message' -H 'content-type: application/json' -d '{
+  "text": "R1 message into a running target",
+  "from": "konrad"
+}'
+  -> HTTP 202
+{
+  "queued": true,
+  "delivery": "next-turn"
+}
+$ curl -sS -X GET 'http://127.0.0.1:7700/api/runs/08ad3cfe-2d70-4a45-b041-f94c8cf14ec6/comms'
+  -> HTTP 200
+{
+  "run_id": "08ad3cfe-2d70-4a45-b041-f94c8cf14ec6",
+  "comms": [
+    {
+      "ts": "2026-08-17T03:08:22.620Z",
+      "kind": "comms",
+      "meta": {
+        "comms": {
+          "from": "konrad",
+          "direction": "in",
+          "peer_run_id": null
+        }
+      },
+      "role": "user",
+      "content": "[message from konrad] R1 message into a running target"
+    }
+  ]
+}
+[32mPASS[0m step R1
+
+[32mPASS 11/11 checks[0m

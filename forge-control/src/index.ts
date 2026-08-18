@@ -38,9 +38,11 @@ import files from "./routes/files.ts";
 import projects from "./routes/projects.ts";
 import capabilities from "./routes/capabilities.ts";
 import tasks from "./routes/tasks.ts";
+import integrations from "./routes/integrations.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
+import { startUsageSamplerTick } from "./lib/usage-sampler.ts";
 import mentor from "./routes/mentor.ts";
 import runControl from "./routes/run-control.ts";
 
@@ -57,7 +59,16 @@ app.use("*", async (c, next) => {
 // Permissive CORS for the local mobile UI on :7701 and Tailscale traffic.
 app.use("/api/*", async (c, next) => {
   c.res.headers.set("Access-Control-Allow-Origin", "*");
-  c.res.headers.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  // PUT is here for /api/usage/rate and DELETE for /api/integrations/gemini/key
+  // — without them the browser's preflight rejects the write and the setting is
+  // only changeable by curl. The web UI reaches the API through a same-origin
+  // Next rewrite and so never preflights, but any other origin (the :7701
+  // mobile UI, Tailscale) does, and a verb the router exposes must be a verb
+  // CORS admits.
+  c.res.headers.set(
+    "Access-Control-Allow-Methods",
+    "GET,POST,PUT,DELETE,OPTIONS",
+  );
   c.res.headers.set("Access-Control-Allow-Headers", "content-type");
   if (c.req.method === "OPTIONS") return c.body(null, 204);
   await next();
@@ -125,6 +136,9 @@ app.get("/", (c) =>
       "/api/projects/:id/unwedge",
       "/api/tasks/:id",
       "/api/tasks/:id/retry",
+      "/api/usage/quota",
+      "/api/usage/series",
+      "/api/usage/rate (GET, PUT)",
     ],
   }),
 );
@@ -192,6 +206,9 @@ app.route("/api/capabilities", capabilities);
 // because Step 11 of the execution-layer redesign grows /api/tasks into the
 // unified dispatch verb.
 app.route("/api/tasks", tasks);
+// Round 1350: outside services — the Gemini API key (secret store, never the
+// DB) and the existing Gmail/Calendar/Drive Google consent.
+app.route("/api/integrations", integrations);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);
@@ -218,3 +235,8 @@ startVaultSyncTick();
 // that would actually have prevented the 2026-08-02 outage — an account died in
 // June and nothing noticed until August.
 startProbeLoop();
+
+// Round 1350: close each past hour into `usage_hourly` so the usage panel
+// reads a pre-aggregated table instead of folding `runs` on every poll.
+// USAGE_SAMPLER=0 disables it; the endpoints then serve whatever is on record.
+startUsageSamplerTick();

@@ -1,0 +1,48 @@
+rail: 7 rows targeted
+  rail pair 1/5: idle lt=1 (max 53ms, script 246.1ms) | hover lt=0 (max 0ms, script 356.54ms, 148 crossings) | attributable lt=-1 | hoverProbes 5/5 on .chat-row | load 1.75
+  rail pair 2/5: idle lt=0 (max 0ms, script 446.16ms) | hover lt=0 (max 0ms, script 370.15ms, 147 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 2.18
+  rail pair 3/5: idle lt=0 (max 0ms, script 349.6ms) | hover lt=0 (max 0ms, script 282.26ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 1.92
+  rail pair 4/5: idle lt=0 (max 0ms, script 81.54ms) | hover lt=0 (max 0ms, script 219.68ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 2.07
+  rail pair 5/5: idle lt=0 (max 0ms, script 153.99ms) | hover lt=0 (max 0ms, script 158.36ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 2.44
+team: 13 rows targeted
+  team pair 1/5: idle lt=0 (max 0ms, script 133.82ms) | hover lt=0 (max 0ms, script 153.23ms, 150 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.55
+  team pair 2/5: idle lt=0 (max 0ms, script 85.96ms) | hover lt=0 (max 0ms, script 198.39ms, 148 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.43
+  team pair 3/5: idle lt=0 (max 0ms, script 96.52ms) | hover lt=0 (max 0ms, script 191.53ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.26
+  team pair 4/5: idle lt=0 (max 0ms, script 140.66ms) | hover lt=0 (max 0ms, script 118.79ms, 150 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.3
+  team pair 5/5: idle lt=0 (max 0ms, script 138.03ms) | hover lt=0 (max 0ms, script 203.4ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.13
+
+errors: 0
+rail: median attributable long tasks >50ms over 5 pairs = 0 (per pair [-1,0,0,0,0]; idle floor [1,0,0,0,0]; hover [0,0,0,0,0])
+rail: hover probes 25/25 passed on .chat-row (rowHovered 25/25)
+team: median attributable long tasks >50ms over 5 pairs = 0 (per pair [0,0,0,0,0]; idle floor [0,0,0,0,0]; hover [0,0,0,0,0])
+team: hover probes 25/25 passed on [data-team-row] (rowHovered 25/25)
+cadence: no fit — fewer than 3 long tasks in the session — no cadence to fit
+wrote run1 → /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase1300/fix-1305/hover-1291.json (runs now: run1)
+RUN1_EXIT=0
+rail: 7 rows targeted
+  rail pair 1/5: idle lt=1 (max 57ms, script 177.68ms) | hover lt=0 (max 0ms, script 160.29ms, 149 crossings) | attributable lt=-1 | hoverProbes 5/5 on .chat-row | load 1.93
+  rail pair 2/5: idle lt=0 (max 0ms, script 131.05ms) | hover lt=1 (max 52ms, script 160.77ms, 149 crossings) | attributable lt=1 | hoverProbes 5/5 on .chat-row | load 1.88
+  rail pair 3/5: idle lt=0 (max 0ms, script 80ms) | hover lt=0 (max 0ms, script 181.93ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 2.02
+  rail pair 4/5: idle lt=0 (max 0ms, script 77.84ms) | hover lt=0 (max 0ms, script 224.4ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 2.04
+  rail pair 5/5: idle lt=0 (max 0ms, script 135.75ms) | hover lt=0 (max 0ms, script 147.22ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on .chat-row | load 1.92
+team: 13 rows targeted
+  team pair 1/5: idle lt=0 (max 0ms, script 130.32ms) | hover lt=0 (max 0ms, script 124.8ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.01
+  team pair 2/5: idle lt=0 (max 0ms, script 63.76ms) | hover lt=0 (max 0ms, script 189.5ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 2.02
+  team pair 3/5: idle lt=0 (max 0ms, script 82.24ms) | hover lt=0 (max 0ms, script 188.26ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 1.98
+  team pair 4/5: idle lt=0 (max 0ms, script 129.46ms) | hover lt=0 (max 0ms, script 107.23ms, 149 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 1.99
+  team pair 5/5: idle lt=0 (max 0ms, script 137.23ms) | hover lt=0 (max 0ms, script 110.07ms, 150 crossings) | attributable lt=0 | hoverProbes 5/5 on [data-team-row] | load 1.93
+
+errors: 0
+rail: median attributable long tasks >50ms over 5 pairs = 0 (per pair [-1,1,0,0,0]; idle floor [1,0,0,0,0]; hover [0,1,0,0,0])
+rail: hover probes 25/25 passed on .chat-row (rowHovered 25/25)
+team: median attributable long tasks >50ms over 5 pairs = 0 (per pair [0,0,0,0,0]; idle floor [0,0,0,0,0]; hover [0,0,0,0,0])
+team: hover probes 25/25 passed on [data-team-row] (rowHovered 25/25)
+cadence: no fit — fewer than 3 long tasks in the session — no cadence to fit
+wrote run2 → /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase1300/fix-1305/hover-1291.json (runs now: run1, run2)
+RUN2_EXIT=0
+control: blank 0 long tasks in 10007ms | app 1 long tasks in 30004ms across 5 team polls (intervals [6335.6,6341.6,6313.6,6316.5])
+control: gaps from poll responseEnd = [2.8] (median 2.8ms)
+
+errors: 0
+wrote control → /opt/ai-os/workspace/projects/8ea0cc08-28d9-4301-9f28-c98e1c5d6838/docs/plan/artifacts/phase1300/fix-1305/hover-1291.json (runs now: run1, run2, control)
+CONTROL_EXIT=0

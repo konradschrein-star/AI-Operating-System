@@ -136,6 +136,34 @@ export interface ThreadView {
 
 const DEFAULT_SCOPE: ThreadScope = { kind: "all" };
 
+/**
+ * `role: "tool"` entries the walk skips ON PURPOSE, exhaustively listed.
+ *
+ * Everything else on that role — including a `kind` this client has never
+ * heard of — degrades to a visible text part instead of vanishing (R20). The
+ * list is the whitelist of deliberate silence; it is NOT "the kinds we know",
+ * and adding a new kind to `ThreadEntry["kind"]` must not add it here unless
+ * the intent really is to hide it.
+ *
+ *  - `heartbeat` / `continue_marker`: liveness and loop bookkeeping the
+ *    executor writes for itself. Never transcript.
+ *  - `error` / `stuck_notice`: the executor writes both on `role: "system"`,
+ *    which is rendered as its own message with `kind` in metadata. On a tool
+ *    role they are a duplicate of a system entry, so showing them would
+ *    double the error in the reader's face.
+ *  - `text`: prose belongs to an assistant/agent entry; on a tool role it is
+ *    the pre-`kind` legacy shape and has never rendered.
+ *  - `""`: a tool entry with no `kind` at all — the same legacy shape.
+ */
+const SILENT_TOOL_KINDS: ReadonlySet<string> = new Set([
+  "heartbeat",
+  "continue_marker",
+  "error",
+  "stuck_notice",
+  "text",
+  "",
+]);
+
 function entryDate(e: ThreadEntry): Date | undefined {
   const t = new Date(e.ts).getTime();
   return Number.isNaN(t) ? undefined : new Date(t);
@@ -324,9 +352,32 @@ export function mapThreadView(
       else silent++;
       return;
     }
-    // heartbeat / continue_marker / error carried on a "tool" role: the walk
-    // has never rendered these and this round does not change that.
-    silent++;
+    /* ── Round 1353: R20 holds for the tool role too ──────────────────────
+     * What used to be here was an unconditional `silent++` with the comment
+     * "the walk has never rendered these and this round does not change
+     * that". That was correct about the kinds it named and wrong as a
+     * catch-all: it also swallowed any kind the client has not heard of yet.
+     * `notification-gap.md` §3 prescribes exactly such a kind
+     * (`task_notification`) built beside `toolResultEntry`, which returns
+     * `role: "tool"` — so the payload the whole deliverable exists to surface
+     * would have landed in `runs.thread` and died here, silently.
+     *
+     * The distinction now drawn is deliberate-vs-unknown, not known-vs-all:
+     *   - a kind in SILENT_TOOL_KINDS is skipped ON PURPOSE (a heartbeat is
+     *     liveness, not transcript). Unchanged behaviour, and it is now a
+     *     list a reader can audit rather than a comment.
+     *   - anything else degrades to a visible text part, exactly as an
+     *     orphaned tool_result does twenty lines above. Empty content still
+     *     counts as silent: there is nothing to show.
+     * Every kind on the wire today is in one of those two sets, so output on
+     * all existing threads is byte-identical — asserted in
+     * check-thread-mapping.ts ("the default did not move"). */
+    if (SILENT_TOOL_KINDS.has(e.kind ?? "")) {
+      silent++;
+      return;
+    }
+    if (content.trim()) openParts.push({ type: "text", text: content });
+    else silent++;
   });
 
   closeOpen();

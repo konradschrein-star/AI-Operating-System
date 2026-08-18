@@ -60,7 +60,7 @@ import {
   subagentTranscript,
   type SubagentMeta,
 } from "./subagent-slice";
-import { crumbs, type NavFrame, type NavStack } from "./nav-stack";
+import { crumbs, currentFrameLabel, type NavFrame, type NavStack } from "./nav-stack";
 
 /** Statuses that can never change again. Drives the strip's "currently:" vs
  *  "ended:" — a settled agent must never be described in the present tense
@@ -213,11 +213,16 @@ function synthesizeSubagentRun(
   identity: { description: string | null; status: string | null },
   spawnDone: boolean,
   entries: ThreadEntry[],
+  /** What to call this thing when neither the rollup nor the spawn named it.
+   *  Comes from the nav frame — the row the operator clicked knew its name, and
+   *  a title of `sub-agent toolu_01` was half of round 1871's finding 10 and all
+   *  of round 1872's finding 5. */
+  fallbackTitle: string,
 ): RunDetail {
   return {
     ...parent,
     id: toolUseIdValue,
-    title: identity.description ?? `sub-agent ${toolUseIdValue.slice(0, 8)}`,
+    title: identity.description ?? fallbackTitle,
     status: subagentRunStatus(identity.status, spawnDone),
     thread: entries,
     message_count: entries.length,
@@ -267,9 +272,24 @@ export function BackButton({ label, onClick }: { label: string; onClick: () => v
  *  honestly enrich (see `crumbs`' doc comment). */
 function Crumbs({ stack, current }: { stack: NavStack; current: string }) {
   const trail = useMemo(() => crumbs(stack), [stack]);
+  /* The ids, kept reachable. Round 1873 replaced them in the VISIBLE trail with
+   * the names the rows carry — which is what the customer asked for — and an id
+   * is still the thing you paste into psql, so it moves to the tooltip rather
+   * than out of the product. */
+  const idTrail = useMemo(
+    () =>
+      trail
+        .map((c, i) => {
+          const label = i === trail.length - 1 ? current : c.label;
+          return c.id === null ? label : `${label} (${c.id})`;
+        })
+        .join("  ›  "),
+    [trail, current],
+  );
   return (
     <div
       data-nav-crumbs
+      title={idTrail}
       className="mono"
       style={{
         fontSize: 9.5,
@@ -431,8 +451,10 @@ export function AgentChatView({
       },
       spawn?.done ?? false,
       entries,
+      currentFrameLabel(frame, null),
     );
-  }, [run, subagentId, known, sub, spawn, entries]);
+    // `frame` joins the deps for its LABEL, which the fallback title reads.
+  }, [run, subagentId, known, sub, spawn, entries, frame]);
 
   /* Identity, resolved ONCE and here. A sub-agent's role/model/description come
    * from its rollup entry or, failing that, its spawn call; a session's come
@@ -458,10 +480,13 @@ export function AgentChatView({
     [isSubagent, sub, spawn, run],
   );
 
-  const currentCrumb =
-    subagentId !== undefined
-      ? `sub-agent ${subagentId.slice(0, 8)}`
-      : `session ${frame.runId.slice(0, 8)}`;
+  /* Round 1873, finding 5. This used to be `sub-agent ${id.slice(0, 8)}` —
+   * i.e. `sub-agent toolu_01` on every sub-agent that has ever run, because that
+   * prefix is a constant. The row that opened this view already passed its name
+   * down on the frame; `currentFrameLabel` prefers it, then what the fetch
+   * learned, and only then falls back to a shortened id with the constant
+   * prefix stripped. */
+  const currentCrumb = currentFrameLabel(frame, identity.description);
 
   return (
     <div

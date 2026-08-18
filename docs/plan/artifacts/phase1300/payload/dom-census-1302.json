@@ -1,0 +1,220 @@
+{
+  "schema": "dom-census/1301",
+  "runs": {
+    "render-inst-after": {
+      "label": "render-inst-after",
+      "base": "http://127.0.0.1:7842",
+      "startedAt": "2026-08-17T01:17:54.937Z",
+      "buildSha": null,
+      "uptime": null,
+      "osBefore": {
+        "loadavg": [
+          2.61,
+          2.71,
+          2.62
+        ],
+        "nproc": 16,
+        "procUptime": 2188305.99,
+        "wallClock": "2026-08-17T01:17:54.939Z"
+      },
+      "errors": [],
+      "census": {
+        "documentElements": 6402,
+        "teamRows": 111,
+        "elementsInsideTeamRows": 1443,
+        "meanElementsPerRow": 13,
+        "minElementsPerRow": 13,
+        "medianElementsPerRow": 13,
+        "maxElementsPerRow": 13,
+        "teamRowsShareOfDocumentPct": 22.54,
+        "scroller": {
+          "found": true,
+          "heightPx": 531,
+          "rowsIntersectingViewport": 13,
+          "rowsFullyInsideViewport": 12,
+          "scrollHeightPx": 4773
+        },
+        "rowsPassingRound1291WindowFilter": 21,
+        "rowHeightPx": 43,
+        "viewport": {
+          "w": 1600,
+          "h": 1000
+        },
+        "teamRowKinds": {
+          "operator": 1,
+          "worker": 104,
+          "subagent": 6
+        }
+      },
+      "render": {
+        "compares": 444,
+        "memoBailouts": 436,
+        "bodyRenders": 8,
+        "propDiffs": {
+          "row": 8
+        },
+        "wrapperIdentityStable": 436,
+        "nodeIdentityStable": 436,
+        "bailoutsIfRowWereTheOnlyProp": 8,
+        "bailoutsIfNodeIdentityDecided": 436,
+        "distinctRowsRendered": 2,
+        "flatten": {
+          "calls": 4,
+          "nodesInResponse": 444,
+          "nodesIdenticalToPrevious": 436,
+          "nodesCompared": 444
+        },
+        "instrumented": true,
+        "observedMs": 25204,
+        "pointerMoved": false
+      },
+      "osAfter": {
+        "loadavg": [
+          3.49,
+          2.86,
+          2.67
+        ],
+        "nproc": 16,
+        "procUptime": 2188348.14,
+        "wallClock": "2026-08-17T01:18:37.090Z"
+      },
+      "finishedAt": "2026-08-17T01:18:37.090Z"
+    },
+    "render-inst-after-2": {
+      "label": "render-inst-after-2",
+      "base": "http://127.0.0.1:7842",
+      "startedAt": "2026-08-17T01:18:47.136Z",
+      "buildSha": null,
+      "uptime": null,
+      "osBefore": {
+        "loadavg": [
+          3.25,
+          2.83,
+          2.67
+        ],
+        "nproc": 16,
+        "procUptime": 2188358.19,
+        "wallClock": "2026-08-17T01:18:47.138Z"
+      },
+      "errors": [],
+      "census": {
+        "documentElements": 6402,
+        "teamRows": 111,
+        "elementsInsideTeamRows": 1443,
+        "meanElementsPerRow": 13,
+        "minElementsPerRow": 13,
+        "medianElementsPerRow": 13,
+        "maxElementsPerRow": 13,
+        "teamRowsShareOfDocumentPct": 22.54,
+        "scroller": {
+          "found": true,
+          "heightPx": 531,
+          "rowsIntersectingViewport": 13,
+          "rowsFullyInsideViewport": 12,
+          "scrollHeightPx": 4773
+        },
+        "rowsPassingRound1291WindowFilter": 21,
+        "rowHeightPx": 43,
+        "viewport": {
+          "w": 1600,
+          "h": 1000
+        },
+        "teamRowKinds": {
+          "operator": 1,
+          "worker": 104,
+          "subagent": 6
+        }
+      },
+      "render": {
+        "compares": 444,
+        "memoBailouts": 436,
+        "bodyRenders": 8,
+        "propDiffs": {
+          "row": 8
+        },
+        "wrapperIdentityStable": 436,
+        "nodeIdentityStable": 436,
+        "bailoutsIfRowWereTheOnlyProp": 8,
+        "bailoutsIfNodeIdentityDecided": 436,
+        "distinctRowsRendered": 2,
+        "flatten": {
+          "calls": 4,
+          "nodesInResponse": 444,
+          "nodesIdenticalToPrevious": 436,
+          "nodesCompared": 444
+        },
+        "instrumented": true,
+        "observedMs": 25205,
+        "pointerMoved": false
+      },
+      "osAfter": {
+        "loadavg": [
+          3.32,
+          2.95,
+          2.72
+        ],
+        "nproc": 16,
+        "procUptime": 2188400.39,
+        "wallClock": "2026-08-17T01:19:29.334Z"
+      },
+      "finishedAt": "2026-08-17T01:19:29.334Z"
+    },
+    "dom-clean-after": {
+      "label": "dom-clean-after",
+      "base": "http://127.0.0.1:7841",
+      "startedAt": "2026-08-17T01:19:29.734Z",
+      "buildSha": null,
+      "uptime": null,
+      "osBefore": {
+        "loadavg": [
+          3.32,
+          2.95,
+          2.72
+        ],
+        "nproc": 16,
+        "procUptime": 2188400.79,
+        "wallClock": "2026-08-17T01:19:29.735Z"
+      },
+      "errors": [],
+      "census": {
+        "documentElements": 6402,
+        "teamRows": 111,
+        "elementsInsideTeamRows": 1443,
+        "meanElementsPerRow": 13,
+        "minElementsPerRow": 13,
+        "medianElementsPerRow": 13,
+        "maxElementsPerRow": 13,
+        "teamRowsShareOfDocumentPct": 22.54,
+        "scroller": {
+          "found": true,
+          "heightPx": 531,
+          "rowsIntersectingViewport": 13,
+          "rowsFullyInsideViewport": 12,
+          "scrollHeightPx": 4773
+        },
+        "rowsPassingRound1291WindowFilter": 21,
+        "rowHeightPx": 43,
+        "viewport": {
+          "w": 1600,
+          "h": 1000
+        },
+        "teamRowKinds": {
+          "operator": 1,
+          "worker": 104,
+          "subagent": 6
+        }
+      },
+      "osAfter": {
+        "loadavg": [
+          2.8,
+          2.85,
+          2.69
+        ],
+        "nproc": 16,
+        "procUptime": 2188417.71,
+        "wallClock": "2026-08-17T01:19:46.662Z"
+      },
+      "finishedAt": "2026-08-17T01:19:46.662Z"
+    }
+  }
+}

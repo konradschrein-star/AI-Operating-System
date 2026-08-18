@@ -1,0 +1,173 @@
+{
+ "subs": [
+  {
+   "id": "toolu_014raMUrJcAiXV61BerokrjN",
+   "title": "Recon chat Bash block rendering · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role Explore · model claude-opus-5 · id 4raMUrJc · child of \"Plan: operator-visibility\" (3853c154)",
+   "idSegment": "4raMUrJc"
+  },
+  {
+   "id": "toolu_012sWh2xagb6t8J11pTV5oMT",
+   "title": "Recon agents API and runs schema · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role Explore · model claude-opus-5 · id 2sWh2xag · child of \"Plan: operator-visibility\" (3853c154)",
+   "idSegment": "2sWh2xag"
+  },
+  {
+   "id": "toolu_01AeuQskZPyHpsYrHayvrqrT",
+   "title": "Recon forge-control-web UI · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role scout · model claude-haiku-4-5-20251001 · id AeuQskZP · child of \"Chat-Manager UI v3 — full rework per Konrad spec\" (ab331865)",
+   "idSegment": "AeuQskZP"
+  },
+  {
+   "id": "toolu_01CaVhCxZ9ysaCrPVKWv7YuX",
+   "title": "Recon forge-control API/data · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role scout · model claude-haiku-4-5-20251001 · id CaVhCxZ9 · child of \"Chat-Manager UI v3 — full rework per Konrad spec\" (ab331865)",
+   "idSegment": "CaVhCxZ9"
+  },
+  {
+   "id": "toolu_01U21ApZZJS2ykMCnDZ9tXM6",
+   "title": "Summarize existing plan corpus · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role scout · model claude-haiku-4-5-20251001 · id U21ApZZJ · child of \"Chat-Manager UI v3 — full rework per Konrad spec\" (ab331865)",
+   "idSegment": "U21ApZZJ"
+  },
+  {
+   "id": "toolu_014exr6WECYL3iKbP7Wh83bW",
+   "title": "Research agent task-graph UIs · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role scout · model claude-haiku-4-5-20251001 · id 4exr6WEC · child of \"Chat-Manager UI v3 — full rework per Konrad spec\" (ab331865)",
+   "idSegment": "4exr6WEC"
+  },
+  {
+   "id": "toolu_019chfnXfiuBjZAJTi5fkoL5",
+   "title": "Wire-shape probe subject · in-process sub-agent — a Task agent inside its parent's process, dies with it · status done · role scout · model claude-haiku-4-5-20251001 · id 9chfnXfi · child of \"R19 closed on live evidence or precisely open, and the pin verifier's blind spot\" (07e59e8e)",
+   "idSegment": "9chfnXfi"
+  }
+ ],
+ "segments": [
+  "4raMUrJc",
+  "2sWh2xag",
+  "AeuQskZP",
+  "CaVhCxZ9",
+  "U21ApZZJ",
+  "4exr6WEC",
+  "9chfnXfi"
+ ],
+ "btn": {
+  "w": 44,
+  "h": 44,
+  "label": "Open navigation menu"
+ },
+ "items": [
+  {
+   "key": "today",
+   "h": 44
+  },
+  {
+   "key": "inbox",
+   "h": 44
+  },
+  {
+   "key": "chat",
+   "h": 44
+  },
+  {
+   "key": "tasks",
+   "h": 44
+  },
+  {
+   "key": "pipeline",
+   "h": 44
+  },
+  {
+   "key": "library",
+   "h": 44
+  },
+  {
+   "key": "money",
+   "h": 44
+  },
+  {
+   "key": "businesses",
+   "h": 44
+  },
+  {
+   "key": "skills",
+   "h": 44
+  },
+  {
+   "key": "memory",
+   "h": 44
+  },
+  {
+   "key": "live",
+   "h": 44
+  },
+  {
+   "key": "control",
+   "h": 44
+  },
+  {
+   "key": "autonomy",
+   "h": 44
+  },
+  {
+   "key": "automation",
+   "h": 44
+  },
+  {
+   "key": "goals",
+   "h": 44
+  },
+  {
+   "key": "journal",
+   "h": 44
+  },
+  {
+   "key": "map",
+   "h": 44
+  },
+  {
+   "key": "settings",
+   "h": 44
+  }
+ ],
+ "bar": {
+  "barH": 46,
+  "overflow": false
+ },
+ "results": [
+  {
+   "label": "F4 every sub-agent row's tooltip carries an id segment",
+   "ok": true,
+   "detail": "7 sub-agent rows, 7 with an id in the tooltip"
+  },
+  {
+   "label": "F4 no tooltip says `toolu_01` — the constant the tester read on all 7",
+   "ok": true,
+   "detail": "[\"4raMUrJc\",\"2sWh2xag\",\"AeuQskZP\",\"CaVhCxZ9\",\"U21ApZZJ\",\"4exr6WEC\",\"9chfnXfi\"]"
+  },
+  {
+   "label": "F4 the ids are DISTINCT: two sub-agents can be told apart",
+   "ok": true,
+   "detail": "7 distinct segments across 7 rows"
+  },
+  {
+   "label": "F4 each segment is the discriminating part of its own id",
+   "ok": true,
+   "detail": "[{\"id\":\"toolu_014raMUrJcAiXV61BerokrjN\",\"seg\":\"4raMUrJc\"},{\"id\":\"toolu_012sWh2xagb6t8J11pTV5oMT\",\"seg\":\"2sWh2xag\"},{\"id\":\"toolu_01AeuQskZPyHpsYrHayvrqrT\",\"seg\":\"AeuQskZP\"}]"
+  },
+  {
+   "label": "F5 the menu button is a 44px thumb target",
+   "ok": true,
+   "detail": "44×44 (was 34×34)"
+  },
+  {
+   "label": "F5 the button is no smaller than the destinations it opens",
+   "ok": true,
+   "detail": "button 44px vs 18 items at 44px"
+  },
+  {
+   "label": "F5 …and the 46px bar did not grow or overflow to fit it",
+   "ok": true,
+   "detail": "bar 46px, horizontal overflow false"
+  },
+  {
+   "label": "F5 all 18 destinations are still there",
+   "ok": true,
+   "detail": "18 destinations in the sheet"
+  }
+ ]
+}

@@ -1,0 +1,369 @@
+{
+  "meta": {
+    "round": 1303,
+    "requirement": "R15",
+    "build_sha": "92aeb0ff953efca5f67bc9d6146c5d2db3b95a9b",
+    "base_url": "http://127.0.0.1:7793",
+    "api_url": "http://127.0.0.1:7798",
+    "viewport": "1440x900",
+    "generated_at": "2026-08-17T01:50:36.736Z"
+  },
+  "assertion": "A3/live — a rail row's status dot follows a REAL status transition: the running row carries the pulse treatment, the settled row does not, and the dot colour tracks the status text across the change",
+  "how_the_transition_was_produced": "round 1303's required manager report was posted to the manager chat (POST /api/runs/bfd1283a-b71b-4f35-b577-7d09aad803f2/message — the app's own endpoint, the same call every worker makes). The chat run went running and settled again on its own. NOTHING was written to the runs table by hand and no transition was simulated.",
+  "watch_window_ms": 39468,
+  "sample_interval_ms": 2000,
+  "distinct_states_captured": 3,
+  "transitions": [
+    {
+      "ms": 28095,
+      "row_index": 0,
+      "title": "Okay when I click the file section, things still",
+      "from": "completed",
+      "from_dot": {
+        "color": "rgb(87, 160, 107)",
+        "animation": "none"
+      },
+      "to": "running",
+      "to_dot": {
+        "color": "rgb(91, 141, 239)",
+        "animation": "pulse"
+      }
+    },
+    {
+      "ms": 39468,
+      "row_index": 0,
+      "title": "Okay when I click the file section, things still",
+      "from": "running",
+      "from_dot": {
+        "color": "rgb(91, 141, 239)",
+        "animation": "pulse"
+      },
+      "to": "completed",
+      "to_dot": {
+        "color": "rgb(87, 160, 107)",
+        "animation": "none"
+      }
+    }
+  ],
+  "running_observed": true,
+  "settled_after_running_observed": true,
+  "pulse_on_every_running_row": true,
+  "no_pulse_on_any_settled_row": true,
+  "dot_colour_tracks_status_text_in_every_sample": true,
+  "running_screenshots": {
+    "light": "a3-live-running-light.png",
+    "dark": "a3-live-running-dark.png"
+  },
+  "samples": [
+    {
+      "ms": 5,
+      "rows": [
+        {
+          "index": 0,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgb(87, 160, 107)",
+          "background_color": "rgb(16, 16, 19)",
+          "title_text": "Okay when I click the file section, things still",
+          "title_color": "rgb(237, 237, 238)"
+        },
+        {
+          "index": 1,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "190 ms is ok",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 2,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "let's make the AI operating system into a more c",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 3,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Execute AI OS/Specs/CRM Integration Plan (Twenty",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 4,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Okay this session is very important as I want to",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 5,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Really quick, where are all the videos from reel",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 6,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Directory",
+          "title_color": "rgb(202, 202, 208)"
+        }
+      ]
+    },
+    {
+      "ms": 28095,
+      "rows": [
+        {
+          "index": 0,
+          "status_text": "running",
+          "status_text_color": "rgb(91, 141, 239)",
+          "dot_background": "rgb(91, 141, 239)",
+          "dot_animation_name": "pulse",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgb(91, 141, 239)",
+          "background_color": "rgb(16, 16, 19)",
+          "title_text": "Okay when I click the file section, things still",
+          "title_color": "rgb(237, 237, 238)"
+        },
+        {
+          "index": 1,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "190 ms is ok",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 2,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "let's make the AI operating system into a more c",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 3,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Execute AI OS/Specs/CRM Integration Plan (Twenty",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 4,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Okay this session is very important as I want to",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 5,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Really quick, where are all the videos from reel",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 6,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Directory",
+          "title_color": "rgb(202, 202, 208)"
+        }
+      ]
+    },
+    {
+      "ms": 39468,
+      "rows": [
+        {
+          "index": 0,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgb(87, 160, 107)",
+          "background_color": "rgb(16, 16, 19)",
+          "title_text": "Okay when I click the file section, things still",
+          "title_color": "rgb(237, 237, 238)"
+        },
+        {
+          "index": 1,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "190 ms is ok",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 2,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "let's make the AI operating system into a more c",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 3,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Execute AI OS/Specs/CRM Integration Plan (Twenty",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 4,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Okay this session is very important as I want to",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 5,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Really quick, where are all the videos from reel",
+          "title_color": "rgb(202, 202, 208)"
+        },
+        {
+          "index": 6,
+          "status_text": "completed",
+          "status_text_color": "rgb(87, 160, 107)",
+          "dot_background": "rgb(87, 160, 107)",
+          "dot_animation_name": "none",
+          "dot_width": "7px",
+          "border_left_width": "2px",
+          "border_left_style": "solid",
+          "border_left_color": "rgba(0, 0, 0, 0)",
+          "background_color": "rgba(0, 0, 0, 0)",
+          "title_text": "Directory",
+          "title_color": "rgb(202, 202, 208)"
+        }
+      ]
+    }
+  ],
+  "verdict": "PASS — 2 real rail transition(s) observed; the running row's dot carried `animation: pulse`, settled rows carried none, colour tracked status throughout"
+}

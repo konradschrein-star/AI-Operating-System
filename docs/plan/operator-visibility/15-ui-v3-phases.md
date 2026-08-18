@@ -2,7 +2,30 @@
 
 Waterfall for the Chat-Manager UI v3 rework. Precedence: `10-ui-v3-spec.md` (law) → `12-ui-v3-requirements.md` → this doc. Rounds 300–999 belong to this rework; each phase owns its hundreds-block (planner at k00, builders/reviewers/fix-cycles within k01–k99). Rounds 1200+ are reserved (steward checkpoint 1250, deferred hover-perf 1300, operator-comms 1400, original deploy 1500, dismissal 1600, customer test 1900) — those run AFTER this rework, on top of the v3 layout.
 
-How the deferred phases interact with v3 (binding):
+## OPERATOR DECISION — 2026-08-17, canvas first-open cost (binding, Konrad)
+
+The r1250 steward escalated the canvas "190 ms on first open" to Konrad: Excalidraw registers
+~230 fonts on mount, and Blink answers by relaying the whole `/desktop` document (8,416 layout
+objects). Options offered: (a) keep the canvas editor mounted+hidden after first open,
+(c) virtualise/cap the chat transcript so the document is small, (d) accept the cost.
+
+**Konrad's answer: (d) — 190 ms once per page load is acceptable.**
+
+Consequences, binding on every later round:
+- **Option (c) is CLOSED.** No transcript virtualisation, capping, or windowing may be
+  undertaken to buy canvas-open time. The transcript is what Konrad reads every day; it is
+  not to be restructured for a 190 ms one-off. If virtualisation is ever proposed again it
+  needs a NEW justification and a fresh operator decision — not this one.
+- **Option (a) is CLOSED for this reason.** Keeping a hidden editor mounted is not to be
+  built as a canvas-open optimisation. (It may still be considered if some other requirement
+  independently demands it.)
+- **Round 1300 keeps only the hover work**: profile the v3 panel, confirm hover is clean, record
+  numbers. Canvas first-open is **not a defect** and must not be re-opened as one. Do not
+  regress it either — 190 ms first open is the accepted ceiling, not a licence to grow.
+- A measurement showing canvas-open cost is a *note*, not a finding. Reviewers must not raise it.
+
+## How the deferred phases interact with v3 (binding)
+
 - v3 must not regress hover performance (NFU2 gate per phase); the deep measurement protocol stays with round 1300 and will profile the NEW panel.
 - v3 keeps the thread-mapping layer (`AssistantThread` mapping) structurally intact so round 1400's Agent/SendMessage comms renderers slot into the same ToolCallRow-style pattern v3 extends in phase 600.
 - Frozen-time and kind-classification server logic from phases 1–2 is REUSED (imported), never reimplemented.
@@ -90,4 +113,4 @@ Acceptance: pm2 online, `/api/health` ok, web serves, executor untouched, U34 ar
 | 900 | U33 U34 |
 | cross-cutting, every phase | NFU1–NFU9 |
 
-All 34 U-requirements mapped exactly once. Deferred (rounds 1200+, NOT this rework): graph-view toggle, hover-perf deep instrumentation (1300), operator-comms blocks (1400), dismissal phase (1600), customer test (1900).
+All 34 U-requirements mapped exactly once. Deferred (rounds 1200+, NOT this rework): graph-view toggle, hover-perf deep instrumentation (1300 — hover only; canvas first-open is CLOSED by the operator decision at the top of this doc), operator-comms blocks (1400), dismissal phase (1600), customer test (1900).

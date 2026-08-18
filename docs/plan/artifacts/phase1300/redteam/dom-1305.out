@@ -1,0 +1,29 @@
+rig: web=http://127.0.0.1:7799 api=http://127.0.0.1:7796 | /team = 114 nodes, 107 workers
+api ships task.id? false
+
+PASS  [A1] every /team node has a DOM row (no windowing, no lost rows)
+PASS  [A1] no duplicate node ids in the DOM
+PASS  [A2] row count survives a fast scroll to the bottom
+PASS  [A2] row count survives the scroll back to the top
+PASS  [A2] indentation depth is identical before and after scrolling
+PASS  [A2] scroll thumb reflects the whole list (scrollHeight > clientHeight)
+PASS  [A3] a rewritten description reaches the DOM (memo did not freeze the row)
+PASS  [A3] the row did not keep its old text
+PASS  [A3] removing the rewrite restores the real text (no sticky stale row)
+PASS  [A4] ready
+PASS  [A4] empty (no workers) is a distinguishable state, not a blank panel
+PASS  [A4] empty state says something
+PASS  [A4] back to ready after the rewrites stop
+PASS  [A5] at least one row has an enabled ✕
+PASS  [A5] ✕ of the last DISMISSABLE row is focusable and revealed by :focus-within
+PASS  [A5] ✕ revealed under keyboard focus in light theme
+PASS  [A5] ✕ revealed under keyboard focus in dark theme
+FAIL  [A6] a sweep over team-row centres does hover team rows
+        got false
+        want true
+PASS  [A7] dismissing a row removes it from the DOM
+PASS  [A7] hiddenCount counts the dismissal, not windowed-out rows
+PASS  [A7] restore brings every row back
+PASS  [A7] the restored row keeps its indentation depth
+
+1 BREAK(S) — /tmp/rt1305-out/dom-1305.json

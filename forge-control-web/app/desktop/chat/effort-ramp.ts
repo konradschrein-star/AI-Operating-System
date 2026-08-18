@@ -38,7 +38,7 @@ export interface EffortRamp {
  * scripts/checks/check-composer-v3.ts asserts it still matches
  * `ENGINE_EFFORT_CHOICES` so the two cannot drift apart unnoticed.
  */
-export const EFFORT_RAMP_ORDER = ["low", "medium", "high", "xhigh"] as const;
+export const EFFORT_RAMP_ORDER = ["low", "medium", "high", "xhigh", "max"] as const;
 
 /** `Record<EffortLevel, …>` — adding a choice in api.ts fails tsc until it is
  *  given a rung on the ramp. That is deliberate: an uncoloured effort level
@@ -48,14 +48,25 @@ export const EFFORT_RAMP: Record<EffortLevel, EffortRamp> = {
   medium: { fg: tokens.info, border: tokens.info, bg: tokens.primaryActionBg },
   high: { fg: tokens.warn, border: tokens.warn, bg: tokens.freezeBgWarn },
   xhigh: { fg: tokens.bleed, border: tokens.bleed, bg: tokens.dangerActionBg },
+  /* Round 1871. `max` is the hottest rung, and there is no hotter token than
+   * `bleed` — so it SHARES the red with `xhigh` rather than inventing a
+   * colour, and the two are told apart by the word, by their order in the row
+   * and by the border weight the selected state already applies. Introducing a
+   * new hue for one rung would have meant a new token in both themes and a new
+   * contrast pair to prove; repeating the top of the ramp is the honest
+   * statement anyway — both ends of it are "expensive". */
+  max: { fg: tokens.bleed, border: tokens.bleed, bg: tokens.dangerActionBg },
 };
 
 /**
- * Ramp for an effort string. The run's stored effort is a plain string that can
- * hold values the UI never offers (`"max"` is API/Telegram-only), so unknown
+ * Ramp for an effort string. The run's stored effort is a plain string and the
+ * engine may one day accept a level this UI has not been taught, so unknown
  * values fall to the calm end rather than throwing inside a render — an
  * unrecognised effort is a display question, not a broken app. It is still
  * visible: the label shows the raw string next to a muted colour.
+ *
+ * (`"max"` used to be the example of an unoffered level. Round 1871 gave it a
+ * rung and a chip; the fallback stays for whatever comes next.)
  */
 export function effortRamp(effort: string): EffortRamp {
   return (EFFORT_RAMP as Record<string, EffortRamp | undefined>)[effort] ?? EFFORT_RAMP.low;

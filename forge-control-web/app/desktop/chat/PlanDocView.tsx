@@ -59,19 +59,31 @@ export interface PlanDocViewProps {
    *  resolution (and its `realpath` containment check) is a server concern
    *  (13 §3). */
   name: string;
+  /** Which of the chat's projects the document belongs to, when the team
+   *  panel's switcher chose one (round 1871). Undefined = the server's ranked
+   *  default. Carried on the frame rather than re-derived here: the same file
+   *  name can exist in two corpora, and reading the wrong one would be a
+   *  silent wrong answer. */
+  projectId?: string;
   /** The whole stack, for the lineage crumb. */
   stack: NavStack;
   onBack: () => void;
   backLabel: string;
 }
 
-export function PlanDocView({ name, stack, onBack, backLabel }: PlanDocViewProps) {
+export function PlanDocView({
+  name,
+  projectId,
+  stack,
+  onBack,
+  backLabel,
+}: PlanDocViewProps) {
   const trail = crumbs(stack);
   const chatId = useOpenChatId();
 
   const docQ = useQuery({
-    queryKey: ["plan-doc", chatId, name],
-    queryFn: () => fetchPlanDoc(chatId as string, name),
+    queryKey: ["plan-doc", chatId, name, projectId ?? null],
+    queryFn: () => fetchPlanDoc(chatId as string, name, projectId),
     enabled: chatId !== null,
     staleTime: 60_000,
     retry: 0,

@@ -43,6 +43,7 @@ import {
   ARM_WINDOW_MS,
   MIN_CONFIRM_MS,
   capabilityTitle,
+  decideRestoreAllClick,
   decideStopClick,
   decideXClick,
   isArmed,
@@ -76,10 +77,16 @@ const RUNNING = "worker-a";
 const OTHER = "worker-b";
 const SETTLED = "worker-done";
 
-/** The world as it is today: every control-plane flag false (U8). */
-const TODAY = { canTerminate: false } as const;
+/** The world as it is today: every control-plane flag false (U8).
+ *
+ *  ROUND 1873 folded `hidesRows: 1` in here, and the value is load-bearing: it
+ *  is the LEAF case — a row whose ✕ takes nothing but itself — which is the only
+ *  dismissal that still fires on one click. Every case below that means to
+ *  exercise a cascade says so explicitly, and the cascade section at the bottom
+ *  is where the new rule is asserted. */
+const TODAY = { canTerminate: false, hidesRows: 1 } as const;
 /** The world after engine-v2-research-lane ships the contract. */
-const LATER = { canTerminate: true } as const;
+const LATER = { canTerminate: true, hidesRows: 1 } as const;
 
 const armedAt = (id: string, at: number): ArmedState => ({ id, at });
 
@@ -427,12 +434,102 @@ console.log("\n── exhaustive sweep: nothing fires today ──────�
           armed,
           nowMs,
           canTerminate: false,
+          hidesRows: 1,
         });
         if (d.action === "terminate") terminates++;
       }
     }
   }
   check(`${total} combinations swept, terminates issued`, terminates, 0);
+}
+
+/* ── restore-all (round 1355, from round 1354's review A4) ─────────────────
+ *
+ * `restoreAll` deletes every dismissal on the machine. Round 1354's review
+ * clicked a control labelled "N hidden · show" and lost eleven dismissals it
+ * had made in a different panel — no peek, no confirm, no undo. The label is
+ * fixed in ./peek; the confirm is this machine, and it is asserted here for the
+ * same reason the ✕ machine is: a confirm step you can only attack through a
+ * browser is a confirm step nobody re-attacks.
+ */
+console.log("\n── restore-all: the two-click confirm ───────────────────────");
+{
+  check(
+    "first click can only ARM — a fresh control never restores",
+    decideRestoreAllClick({ armedAt: null, nowMs: T0 }).action,
+    "arm",
+  );
+  check(
+    "a second click after a real pause restores",
+    decideRestoreAllClick({ armedAt: T0, nowMs: T0 + MIN_CONFIRM_MS }).action,
+    "restore-all",
+  );
+  check(
+    "…and 1ms under the floor does not",
+    decideRestoreAllClick({ armedAt: T0, nowMs: T0 + MIN_CONFIRM_MS - 1 }).action,
+    "rearm",
+  );
+  check(
+    "a double-click's trailing half is swallowed",
+    decideRestoreAllClick({ armedAt: T0, nowMs: T0 }).action,
+    "rearm",
+  );
+  check(
+    "a stale arming re-arms rather than firing",
+    decideRestoreAllClick({ armedAt: T0, nowMs: T0 + ARM_WINDOW_MS + 1 }).action,
+    "arm",
+  );
+  check(
+    "exactly at the arm window, still a confirm",
+    decideRestoreAllClick({ armedAt: T0, nowMs: T0 + ARM_WINDOW_MS }).action,
+    "restore-all",
+  );
+  check(
+    "a clock that ran backwards lands on the safe side",
+    decideRestoreAllClick({ armedAt: T0, nowMs: T0 - 10_000 }).action,
+    "rearm",
+  );
+}
+{
+  /* The stream attack that beat the ✕ machine in round 505, replayed against
+   * this one: the panel's own reducer (arm/rearm both write `nowMs`), driven by
+   * bursts at every cadence a hand or a keyboard can produce. A `rearm` that
+   * failed to re-stamp the window would let separation accumulate and fire. */
+  const cadences = [0, 1, 20, 30, 33, 120, 350, 499];
+  let fired = 0;
+  let bursts = 0;
+  for (const gap of cadences) {
+    for (const clicks of [3, 10, 50, 200]) {
+      bursts++;
+      let armedAt: number | null = null;
+      for (let i = 0; i < clicks; i++) {
+        const nowMs = T0 + i * gap;
+        const d = decideRestoreAllClick({ armedAt, nowMs });
+        if (d.action === "restore-all") {
+          fired++;
+          armedAt = null;
+        } else {
+          armedAt = nowMs;
+        }
+      }
+    }
+  }
+  check(`${bursts} sub-floor click streams, restore-alls issued`, fired, 0);
+}
+{
+  // …and the gate still opens for a person. Two clicks, 800ms apart.
+  let armedAt: number | null = null;
+  let fired = 0;
+  for (const nowMs of [T0, T0 + 800]) {
+    const d = decideRestoreAllClick({ armedAt, nowMs });
+    if (d.action === "restore-all") {
+      fired++;
+      armedAt = null;
+    } else {
+      armedAt = nowMs;
+    }
+  }
+  check("two deliberate clicks restore exactly once", fired, 1);
 }
 
 console.log(

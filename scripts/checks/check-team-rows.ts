@@ -27,6 +27,7 @@ import {
 } from "../../forge-control-web/app/desktop/team/teamApi.ts";
 import {
   CLIENT_INTERPOLATION_CAP_MS,
+  createTeamRowCache,
   flattenTeam,
   interpolatedWorkingMs,
   responseNowMs,
@@ -58,6 +59,7 @@ function node(over: Partial<TeamNode> & { id: string }): TeamNode {
     settled: true,
     description: null,
     parent_id: null,
+    dismissed_at: null,
     subagents: [],
     task: null,
     ...over,
@@ -283,6 +285,222 @@ console.log("\n── flattenTeam: hiddenCount is ROWS, not ids (round 505 #3) �
     const flat = flattenTeam(TREE, new Set(["worker-b", "ghost-1", "ghost-2"]));
     check("junk beside a real dismissal does not inflate the count", flat.hiddenCount, 1);
   }
+}
+
+/* ── The peek list (round 1355, from round 1354's review A4) ───────────────
+ *
+ * The panel used to offer one way back: a control labelled "N hidden · show"
+ * that called `restoreAll` and deleted every dismissal on the machine. The
+ * fix is a peek, and a peek needs the rows — so the same walk that counts them
+ * now keeps them. These cases pin the two properties the affordance rests on:
+ * `hiddenRows.length === hiddenCount` (the label cannot promise rows the list
+ * does not have), and `restorable` marks exactly the nodes whose own
+ * `restore(id)` will actually un-hide something.
+ */
+console.log("\n── flattenTeam: hiddenRows, the peek list ───────────────────");
+{
+  const flat = flattenTeam(TREE, NONE);
+  check("nothing dismissed → no peek rows", flat.hiddenRows.length, 0);
+}
+{
+  const flat = flattenTeam(TREE, new Set(["worker-a"]));
+  check(
+    "a dismissed parent brings its whole subtree into the peek",
+    flat.hiddenRows.map((h) => h.row.node.id).join(","),
+    "worker-a,sub-a1,sub-a2",
+  );
+  check("…so the list matches the label exactly", flat.hiddenRows.length, flat.hiddenCount);
+  check(
+    "…at the depths they had in the tree",
+    flat.hiddenRows.map((h) => h.row.depth).join(","),
+    "1,2,2",
+  );
+  check(
+    "…only the dismissed node itself is restorable",
+    flat.hiddenRows.map((h) => (h.restorable ? "Y" : "n")).join(""),
+    "Ynn",
+  );
+  check(
+    "…and the peeked children carry their lineage",
+    flat.hiddenRows[1].row.parentDescription,
+    "build the team panel",
+  );
+}
+{
+  const flat = flattenTeam(TREE, new Set(["sub-a1"]));
+  check("a dismissed leaf is one restorable peek row", flat.hiddenRows.length, 1);
+  check("…and it is restorable", flat.hiddenRows[0].restorable, true);
+  check("…while its parent stays in the main list", flat.rows.some((r) => r.node.id === "worker-a"), true);
+}
+{
+  // A dismissal NESTED under a dismissed parent: the child is not separately
+  // restorable, because deleting its own row from `ui_dismissals` would leave
+  // it hidden under the parent — a control that changes nothing on screen.
+  const flat = flattenTeam(TREE, new Set(["worker-a", "sub-a2"]));
+  check("a nested dismissal does not add a second peek entry", flat.hiddenRows.length, 3);
+  check("…and stays non-restorable while its parent is hidden", flat.hiddenRows[2].restorable, false);
+  check("…count and list still agree", flat.hiddenRows.length, flat.hiddenCount);
+  // Restore the parent and the child reappears as a dismissed ROOT with its
+  // own ↺ — the nested dismissal was hidden, never lost.
+  const after = flattenTeam(TREE, new Set(["sub-a2"]));
+  check("restoring the parent surfaces the child's own dismissal", after.hiddenRows.length, 1);
+  check("…now restorable in its own right", after.hiddenRows[0].restorable, true);
+  check("…and it is the child", after.hiddenRows[0].row.node.id, "sub-a2");
+}
+{
+  const flat = flattenTeam(TREE, new Set(["manager", "worker-a", "worker-b"]));
+  check("everything dismissed → every node is peekable", flat.hiddenRows.length, 5);
+  check("…in tree order", flat.hiddenRows.map((h) => h.row.node.id).join(","), "manager,worker-a,sub-a1,sub-a2,worker-b");
+  check("…three of them restorable", flat.hiddenRows.filter((h) => h.restorable).length, 3);
+  check("…and nothing left in the main list", flat.rows.length, 0);
+}
+{
+  const flat = flattenTeam(TREE, new Set(["ghost-1", "ghost-2"]));
+  check("ids matching nothing produce no peek rows", flat.hiddenRows.length, 0);
+  check("…and no phantom count", flat.hiddenCount, 0);
+}
+{
+  // Peeking must not disturb the wrapper cache — its whole claim is "these are
+  // the rows the tree renders", and the memo bail-out measured in round 1302
+  // is written against exactly that set.
+  const cache = createTeamRowCache();
+  flattenTeam(TREE, NONE, cache);
+  const sizeAll = cache.byId.size;
+  const flat = flattenTeam(TREE, new Set(["worker-a"]), cache);
+  check("the cache holds only the rendered rows", cache.byId.size, 2);
+  check("…not the peeked ones", cache.byId.has("worker-a"), false);
+  check("…and the peek list is still complete", flat.hiddenRows.length, 3);
+  check("(sanity: the full tree cached five)", sizeAll, 5);
+}
+
+/* ── Row identity, the L1 half of round 1302 ───────────────────────────────
+ *
+ * The panel's `memo(TeamRowView)` can only bail out if the wrapper object it
+ * is handed is the SAME object as last poll. Round 1301 measured 0 bail-outs
+ * in 432 compares because `flattenTeam` allocated a fresh wrapper for every
+ * node on every response — even though react-query's structural sharing had
+ * kept 428 of those 432 inner `node` objects identity-stable.
+ *
+ * These cases assert the contract that fix rests on, in the same terms the
+ * measurement used: identity, with `===`, never deep equality. They simulate
+ * structural sharing the way react-query actually delivers it — a new response
+ * object whose unchanged children are the SAME objects, and whose one changed
+ * node is a new object.
+ */
+console.log("\n── flattenTeam: wrapper identity (round 1302 L1) ─────────────");
+{
+  const cache = createTeamRowCache();
+  const first = flattenTeam(TREE, NONE, cache).rows;
+  const second = flattenTeam(TREE, NONE, cache).rows;
+  check("same response twice → same row count", second.length, first.length);
+  check(
+    "same response twice → EVERY wrapper is the identical object",
+    first.every((rowA, i) => rowA === second[i]),
+    true,
+  );
+  check(
+    "…and the nodes inside them are untouched too",
+    first.every((rowA, i) => rowA.node === second[i].node),
+    true,
+  );
+}
+{
+  // Structural sharing, reproduced: one node replaced, every other node the
+  // same object. Exactly what a poll delivers when one worker's status moves.
+  const cache = createTeamRowCache();
+  const before = flattenTeam(TREE, NONE, cache).rows;
+  const movedWorkerB = node({
+    id: "worker-b",
+    role: "reviewer",
+    description: "review the team panel",
+    subagents: [],
+    working_ms: 30_000,
+    status: "running",
+    settled: false,
+  });
+  const nextTree = response({ manager, workers: [workerA, movedWorkerB] });
+  const after = flattenTeam(nextTree, NONE, cache).rows;
+
+  const fresh = after.filter((rowA, i) => rowA !== before[i]).map((r) => r.node.id);
+  check("one node changed → exactly one fresh wrapper", fresh.length, 1);
+  check("…and it is the node that changed", fresh[0], "worker-b");
+  check(
+    "…every other wrapper survives by identity",
+    after.filter((rowA, i) => rowA === before[i]).length,
+    before.length - 1,
+  );
+  check(
+    "the fresh wrapper carries the new node, not the stale one",
+    after[after.length - 1].node,
+    movedWorkerB,
+  );
+}
+{
+  // A row whose PARENT's description changes is a changed row even though its
+  // own node did not move: `parentDescription` is rendered in the lineage
+  // tooltip, so reusing the wrapper would show stale lineage.
+  const cache = createTeamRowCache();
+  const before = flattenTeam(TREE, NONE, cache).rows;
+  const renamedA = node({
+    id: "worker-a",
+    description: "build the team panel, again",
+    parent_id: null,
+    subagents: [subA1, subA2],
+    working_ms: 60_000,
+  });
+  const after = flattenTeam(
+    response({ manager, workers: [renamedA, workerB] }),
+    NONE,
+    cache,
+  ).rows;
+  const freshIds = after.filter((rowA, i) => rowA !== before[i]).map((r) => r.node.id);
+  check(
+    "a renamed parent refreshes itself AND its sub-agents' wrappers",
+    freshIds.join(","),
+    "worker-a,sub-a1,sub-a2",
+  );
+}
+{
+  // Without a cache the old behaviour is unchanged — every wrapper fresh. The
+  // cache is opt-in, so a caller that does not pass one cannot be surprised by
+  // an object it shares with a previous call.
+  const a = flattenTeam(TREE, NONE).rows;
+  const b = flattenTeam(TREE, NONE).rows;
+  check("no cache → no wrapper is shared", a.some((rowA, i) => rowA === b[i]), false);
+  check("…but the content is identical", a.length === b.length && a[0].node === b[0].node, true);
+}
+{
+  // Dismissing must not corrupt the cache: the surviving rows keep identity,
+  // the dismissed subtree's wrappers leave, and restoring builds fresh ones
+  // rather than resurrecting a wrapper whose depth may have changed.
+  const cache = createTeamRowCache();
+  const full = flattenTeam(TREE, NONE, cache).rows;
+  const pruned = flattenTeam(TREE, new Set(["worker-a"]), cache).rows;
+  check("dismissal removes the subtree's rows", pruned.map((r) => r.node.id).join(","), "manager,worker-b");
+  check(
+    "…and the survivors keep their identity across it",
+    pruned[0] === full[0] && pruned[1] === full[4],
+    true,
+  );
+  check("…the cache dropped the dismissed subtree", cache.byId.has("worker-a"), false);
+  check("…and kept exactly the rendered rows", cache.byId.size, 2);
+
+  const restored = flattenTeam(TREE, NONE, cache).rows;
+  check("restore brings every row back", restored.length, 5);
+  check("…the never-dismissed manager still keeps identity", restored[0] === full[0], true);
+  check("…the restored rows are fresh wrappers", restored[1] === full[1], false);
+}
+{
+  // The empty tree and the all-dismissed tree: no cache entries, no crash, and
+  // a stable `hiddenCount`.
+  const cache = createTeamRowCache();
+  const lone = response({ manager, workers: [] });
+  flattenTeam(lone, NONE, cache);
+  check("manager-only tree caches exactly one wrapper", cache.byId.size, 1);
+  const all = flattenTeam(TREE, new Set(["manager", "worker-a", "worker-b"]), cache);
+  check("everything dismissed → no rows", all.rows.length, 0);
+  check("…hiddenCount still counts ROWS, not ids", all.hiddenCount, 5);
+  check("…and the cache is empty, not stale", cache.byId.size, 0);
 }
 
 console.log("\n── interpolatedWorkingMs ─────────────────────────────────────");

@@ -1,0 +1,34 @@
+{
+ "refused": 2,
+ "withPanelOnOwnProject": {
+  "total": 131,
+  "bad": 0,
+  "badPeers": [],
+  "project": "operator-visibility · active"
+ },
+ "switched": {
+  "total": 131,
+  "bad": 28,
+  "badPeers": [
+   "c8bc5ffa",
+   "4e842cc8",
+   "e69ea9a8",
+   "f6a2ee75",
+   "f6a2ee75",
+   "f6a2ee75"
+  ],
+  "project": "engine-task-graph · blocked"
+ },
+ "results": [
+  {
+   "label": "F1 the transcript still renders when the lookup fails — no crash, no blank",
+   "ok": true,
+   "detail": "131 cards with the lookup refused 2×"
+  },
+  {
+   "label": "F1 …and the cards it would have named are exactly the ones that go unnamed",
+   "ok": true,
+   "detail": "28/131 unnamed without the lookup (f1.json records 0/131 with it) — peers [\"c8bc5ffa\",\"4e842cc8\",\"e69ea9a8\",\"f6a2ee75\",\"f6a2ee75\",\"f6a2ee75\"]"
+  }
+ ]
+}

@@ -113,7 +113,11 @@ export interface PlanResponse {
   /** Set when the docs listing failed. `docs: []` on its own would read as
    *  "this project has no plan corpus", which is a different fact from "the
    *  corpus could not be read, and here is why" (NFU6). The phases are
-   *  unaffected and still present when this is set. */
+   *  unaffected and still present when this is set.
+   *
+   *  ROUND 1871: this is PROSE and the panel prints it verbatim. It used to be
+   *  a stringified Node error — `plan docs unreadable at /opt/…: ENOENT: no
+   *  such file or directory, scandir '…'` — rendered into Konrad's panel. */
   error?: string;
   /** Set when the server's `taskDepth()` refused to order the stored graph — a
    *  cycle in `depends_on`. Carries the thrown message VERBATIM, ids and all,
@@ -125,6 +129,9 @@ export interface PlanResponse {
    *  indistinguishable to the reader who has to act on them. The phases are
    *  real and still drawn in both cases. */
   graph_error?: string;
+  /** The raw fs error behind `error`. Rendered as a disclosure, never as the
+   *  headline. Absent on a pre-1871 server. */
+  error_detail?: string;
 }
 
 /* ── Fetchers ─────────────────────────────────────────────────────────────
@@ -136,8 +143,14 @@ export interface PlanResponse {
  * error; the panel renders it inline.
  */
 
-export const fetchChatPlan = async (chatId: string): Promise<PlanResponse> => {
-  const r = await fetch(`${ROOT}/chat/${encodeURIComponent(chatId)}/plan`, {
+/** `projectId` mirrors `fetchChatTeam`'s (round 1871): the board and the team
+ *  tree sit in one panel and must never be looking at different projects. */
+export const fetchChatPlan = async (
+  chatId: string,
+  projectId?: string | null,
+): Promise<PlanResponse> => {
+  const q = projectId ? `?project_id=${encodeURIComponent(projectId)}` : "";
+  const r = await fetch(`${ROOT}/chat/${encodeURIComponent(chatId)}/plan${q}`, {
     headers: { accept: "application/json" },
   });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText} on /chat/:id/plan`);
@@ -174,9 +187,14 @@ async function planDocError(r: Response): Promise<string> {
 }
 
 /** One plan document, as raw markdown for `MessageMarkdown` (U26). */
-export const fetchPlanDoc = async (chatId: string, name: string): Promise<string> => {
+export const fetchPlanDoc = async (
+  chatId: string,
+  name: string,
+  projectId?: string | null,
+): Promise<string> => {
+  const project = projectId ? `&project_id=${encodeURIComponent(projectId)}` : "";
   const r = await fetch(
-    `${ROOT}/chat/${encodeURIComponent(chatId)}/plan/doc?name=${encodeURIComponent(name)}`,
+    `${ROOT}/chat/${encodeURIComponent(chatId)}/plan/doc?name=${encodeURIComponent(name)}${project}`,
     { headers: { accept: "text/markdown, application/json" } },
   );
   if (!r.ok) throw new Error(await planDocError(r));
