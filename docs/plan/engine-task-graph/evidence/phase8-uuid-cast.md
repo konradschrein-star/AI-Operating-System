@@ -598,3 +598,37 @@ is `00-vision.md` §7 rule 2 applied to the checker that enforces it.
 | `git -C /opt/forge-ai-os status --porcelain` | empty — this round wrote nothing outside the worktree |
 
 `project-reconcile.test.ts` is untouched by this round.
+
+### 9.5 Item 11 re-run on the COMMITTED tree, no `-dirty`
+
+§9.1's transcript was captured before the commit existed and said so. Re-run at
+`823a131`, the commit this round makes, with the tree clean:
+
+```
+$ bash scripts/check-schedule-sql.sh
+== check-schedule-sql — provenance ==
+repo:            /opt/ai-os/workspace/projects/8c591d6c-5642-4fd6-97ef-e0aeb2dbf2b4
+git-head:        823a1311068fa33255a9c1a6c8e37ce6e8ac4584
+statements from: forge-control/src/lib/schedule-source.ts
+                 c00fd096e0b8ddc57bad52d4bb6ef27dd17793aeda542603570ce3f454e861e5
+postgres:        postgres (PostgreSQL) 16.14 (Ubuntu 16.14-0ubuntu0.24.04.1)
+cluster:         /tmp/schedule-sql-check.1811151 (throwaway, unix socket only, no network listener)
+…
+# tests 40
+# pass 40
+# fail 0
+# skipped 0
+$ echo $?
+0
+```
+
+Same 40/40, same `c00fd096…` half digest, no `-dirty` marker. The two runs
+differ only in the commit they name, which is the point of printing it.
+
+**One consequence of this section, stated rather than left for a later round to
+trip over.** §9.2's identity block pastes a live manifest line — `c00fd096…
+forge-control/src/lib/schedule-source.ts` — so this document now joins the three
+that `check-instrument-identity.py` holds to the current digest. When a future
+round moves `schedule-source.ts`, this line must be re-derived or marked
+`[historical instrument]` with the rest. That is the mechanism working, not a
+debt: it is exactly what round 811 split the digest in two to get.
