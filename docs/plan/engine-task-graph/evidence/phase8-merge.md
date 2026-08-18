@@ -881,6 +881,28 @@ standing rule names: **a sha naming the worktree rather than the build.**
 So the provenance-stamped gates were re-run against the committed merge
 `05fc544`, on a worktree with zero modified paths.
 
+**Read `05fc544` in every transcript below as `12ecde9`.** The transcripts are
+verbatim and print the sha that existed when they ran, so they are left
+untouched rather than doctored. What happened after them: §12.6 records a gate
+this file tripped, fixing it required editing *this file*, and that fix was
+folded in with `git commit --amend` — which rewrote the merge commit
+`05fc544` → `12ecde9`. Both resolve; the amend touched **only this markdown
+file**, verified:
+
+```
+$ git diff --name-only 05fc544 12ecde9
+docs/plan/engine-task-graph/evidence/phase8-merge.md
+
+$ git diff --name-only 05fc544 12ecde9 -- '*.ts' '*.tsx' '*.sql'
+(empty)
+```
+
+So every code result below was measured against exactly the tree that shipped
+as `12ecde9`. This correction is a **separate follow-up commit**, deliberately:
+amending again would rewrite the sha again and rot the pin a second time. A pin
+you cannot resolve is a finding, not a footnote — this one is recorded rather
+than quietly reinterpreted.
+
 ```
 $ git rev-parse --short HEAD ; git status --porcelain | wc -l
 05fc544
