@@ -722,12 +722,20 @@ export const BROWSER_FIRST =
  *  playwright-skill through Bash, or `mcp__playwright__browser_take_screenshot`
  *  — produced NO inline ref at all; its shot reached Konrad only through
  *  `RunShotsIndicator`'s camera on a Team/Live row, a click away on another
- *  surface. EXECUTED at round 902, six payload shapes against the shipped
+ *  surface. EXECUTED at round 902, SEVEN payload shapes against the shipped
  *  extractor imported by ABSOLUTE worktree path (an import from a stale tree
- *  throws rather than answering): Read of the saved path → 1 ref; a JSON
- *  `"url"` member → 1 ref; a BARE `/api/uploads/...` line echoed in a Bash
- *  result → 0 refs; the playwright MCP call → 0 refs; a `cp` into the directory
- *  printing nothing → 0 refs. Transcript in
+ *  throws rather than answering). The count and the enumeration were BOTH wrong
+ *  here until round 950: this sentence said "six" while listing five, and the
+ *  instrument has declared and run seven since round 902. All seven, in the
+ *  table's own order — read them off `DECLARED_CASES` and the `CASES` table in
+ *  `scripts/checks/check-screenshot-render-shapes.ts`, never off this comment:
+ *  (A) a `Read` of the saved path → 1 ref; (B) a BARE `/api/uploads/...` line
+ *  echoed as text in a Bash result → 0 refs; (C) a Bash result carrying a JSON
+ *  `"url"` member → 1 ref; (D) the playwright MCP call straight to the
+ *  directory → 0 refs; (E) a `cp` into the directory printing nothing → 0 refs;
+ *  (F) a `Read` of a correctly-placed but UNSTAMPED name → 1 ref, with `ts:
+ *  null`, which is what the `<stamp>` clause is for; (G) prose merely
+ *  mentioning the directory → 0 refs, the negative control. Transcript in
  *  `docs/plan/engine-task-graph/evidence/round902-screenshot-convention-fixes.md`.
  *  The text now names the ACTION that makes the promise true — read the file
  *  back — and states the fallback surface honestly. NOTE the bare-URL case:

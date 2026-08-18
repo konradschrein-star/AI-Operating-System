@@ -30,7 +30,7 @@ they could not and why.
 `migrations.test.ts` is a **linter**, not a runner. It asserts every
 `CREATE TABLE` carries `IF NOT EXISTS`, every `CREATE (UNIQUE)? INDEX` carries
 it, every `ADD COLUMN` carries it, and it names `0039_reviewer_chain_key.sql`
-specifically. Phase 1 adds an equivalent named case for `0040_task_graph.sql`.
+specifically. Phase 1 adds an equivalent named case for `0042_task_graph.sql`.
 
 ---
 
@@ -135,7 +135,7 @@ ones (R43):
   workstreams yield two independent chains (R40).
 - `project-tick.test.ts` — prompt-content assertions for R47–R53, and the
   prompt-length budget (NF7).
-- `migrations.test.ts` — the named `0040_task_graph.sql` case (R2).
+- `migrations.test.ts` — the named `0042_task_graph.sql` case (R2).
 
 ### 2.2 Integration — `scripts/checks/*`, run explicitly, never in `pnpm test`
 
@@ -501,7 +501,7 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
 **Phase 1 — schema, fixture, replica harness**
 - `scripts/checks/check-migration-0040.sh` green, output pasted, including the
   "second application changed 0 rows" line.
-- `migrations.test.ts` names `0040_task_graph.sql`.
+- `migrations.test.ts` names `0042_task_graph.sql`.
 - The fixture exists, has > 100 rows, and contains **no brief text** — the
   reviewer greps it for `curl`, `http`, and any string over 500 chars.
   **Amended at capture (round 102).** The row count holds: the capture is 131

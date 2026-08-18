@@ -8,7 +8,7 @@
  * most important test in the project and must be findable
  * (`03-quality.md` §2.1).
  *
- * The claim it exists to prove: migration `0040_task_graph.sql` turns today's
+ * The claim it exists to prove: migration `0042_task_graph.sql` turns today's
  * round ordering into `depends_on` edges WITHOUT changing what the engine does.
  * The proof is a replay — the real task list of `operator-visibility` (the R9
  * fixture) driven through a simulated tick loop twice, once under
@@ -246,7 +246,7 @@ interface ClosureRow {
 }
 
 /**
- * The TypeScript MIRROR of `0040_task_graph.sql`'s backfill UPDATE, which is
+ * The TypeScript MIRROR of `0042_task_graph.sql`'s backfill UPDATE, which is
  * written out in `02-architecture.md` §3.3: for each task, the ids of every
  * task of the SAME PROJECT in a strictly lower round, ordered by
  * `(round, created_at, id)`.
@@ -262,7 +262,7 @@ interface ClosureRow {
  *
  * THREE IMPLEMENTATIONS OF ONE RULE ARE A DIVERGENCE RISK, and naming it is how
  * it stays honest: **phase 2's reviewer must diff this function against
- * `db/migrations/0040_task_graph.sql` and say in the review that it did.** If
+ * `db/migrations/0042_task_graph.sql` and say in the review that it did.** If
  * the SQL changes and this does not, the replay proves the wrong thing while
  * still reporting green. The third is the Python `expected` closure inside
  * `scripts/checks/check-migration-0040.sh` §5, which recomputes the same rule
@@ -361,7 +361,7 @@ function legacyInput(rows: readonly FixtureRow[]): GraphTask[] {
 
 interface GraphInputOptions {
   /**
-   * The ids that existed AT MIGRATION TIME — the rows `0040_task_graph.sql`'s
+   * The ids that existed AT MIGRATION TIME — the rows `0042_task_graph.sql`'s
    * backfill could see, and therefore the only rows any frozen closure can
    * name. Omitted means "every row was there", i.e. migrate-after-insert, which
    * is what cases (a)–(e) model.

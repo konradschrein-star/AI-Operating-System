@@ -28,7 +28,7 @@ the new columns without noticing them.
 
 ### Files this phase writes
 ```
-db/migrations/0040_task_graph.sql                                    (new)
+db/migrations/0042_task_graph.sql                                    (new)
 forge-control/src/lib/migrations.test.ts                             (append one case)
 forge-control/src/lib/fixtures/replay-operator-visibility.json       (new)
 forge-control/src/lib/task-graph.ts                                  (new, signatures + legacyRoundReady)
@@ -50,7 +50,7 @@ docs/plan/engine-task-graph/04-phases.md         (this list, phase 2 deliverable
 ```
 
 ### Deliverables
-1. **`0040_task_graph.sql`** — three `ADD COLUMN IF NOT EXISTS`, the workstream
+1. **`0042_task_graph.sql`** — three `ADD COLUMN IF NOT EXISTS`, the workstream
    CHECK in a `DO $$ … $$` guard, two `CREATE INDEX IF NOT EXISTS`, and the
    closure backfill guarded by `WHERE depends_on IS NULL`. Column comments state
    the NULL sentinel's meaning in the database itself.
@@ -73,7 +73,7 @@ docs/plan/engine-task-graph/04-phases.md         (this list, phase 2 deliverable
 ### Acceptance criteria
 - `pnpm typecheck`, `pnpm test` green (the replay cases may be `todo`, and the
   planner must say which are and why).
-- `migrations.test.ts` names `0040_task_graph.sql` explicitly.
+- `migrations.test.ts` names `0042_task_graph.sql` explicitly.
 - `check-migration-0040.sh` output pasted, including the zero-row second pass and
   the index existence checks.
 - The fixture has > 100 rows and no string longer than 500 characters.
@@ -665,7 +665,7 @@ own numbers move it further.
    verified that none of their tables exist yet in `content_forge`.
 
    ```
-   psql -U postgres -d content_forge -f db/migrations/0040_task_graph.sql     # ×2
+   psql -U postgres -d content_forge -f db/migrations/0042_task_graph.sql     # ×2
    psql -U postgres -d content_forge -f db/migrations/0040_usage_hourly.sql   # ×2
    psql -U postgres -d content_forge -f db/migrations/0041_ui_dismissals.sql  # ×2
    ```
@@ -674,22 +674,31 @@ own numbers move it further.
    re-runnability is demonstrated, not asserted). All three are additive and the
    running old engine ignores them (R8), which is why they go before the restart.
 
-   - **NEVER `for f in db/migrations/*.sql`.** `db/migrations` contains **two
-     files numbered 0040** — `0040_task_graph.sql` (ours) and
-     `0040_usage_hourly.sql` (main's). A glob sorts `task_graph` first and
-     thereby silently decides an order nobody chose. Name every file.
-   - **Two 0040s is EXPECTED, not a merge error, and is NOT fixed mid-deploy.**
-     Git merged them silently because the filenames differ and there was nothing
-     to conflict on. They are inert together — disjoint objects, no version
-     ledger to collide in, no boot-time runner, no `schema_migrations` and no
+   - **NEVER `for f in db/migrations/*.sql`.** This rule stands whatever the
+     numbers are, and it is the reason the collision below was survivable rather
+     than a corruption: a glob silently decides an order nobody chose, and this
+     repo has **no ledger table and no runner**, so the filename an operator
+     types IS the version control. Name every file. R70.
+   - **THE DUPLICATE 0040 IS RESOLVED — renumbered at round 950, post-deploy.**
+     *History, because the command block above no longer shows it:* round 801's
+     merge of `main` left `db/migrations` holding two files numbered 0040 —
+     `0040_task_graph.sql` (ours) and `0040_usage_hourly.sql` (main's). Git
+     merged them silently because the filenames differ and there was nothing to
+     conflict on. They were inert together — disjoint objects, no version ledger
+     to collide in, no boot-time runner, no `schema_migrations` and no
      `migrations` table (the operator verified both absent), and
-     `migrations.test.ts` sorts filenames without asserting unique numbering.
-     A future number-keyed runner would be ambiguous, so **renumbering is tracked
-     as a post-deploy task**, seeded by the operator. It is deliberately not done
-     here: round 802 runs three builders concurrently in one worktree and the
-     renumber touches six files two of them already own — the exact contention
-     that cost this project three evidence corrections on 2026-08-17. 8A's
-     judgement that renaming the migration this project exists to ship is a
+     `migrations.test.ts` sorts filenames without asserting unique numbering —
+     which is why the fix was deferred out of the deploy rather than rushed into
+     it. Round 802 ran three builders concurrently in one worktree and the
+     renumber touched files two of them already owned: the exact contention that
+     cost this project three evidence corrections on 2026-08-17.
+     **Round 950 executed it with the tree quiet:** `git mv` to
+     `0042_task_graph.sql` (0041 was already taken by `0041_ui_dismissals.sql`),
+     bytes unchanged, and **nothing re-applied** — the four `project_tasks`
+     columns were queried on `content_forge` before and after the rename and were
+     identical. The migration remains APPLIED UNDER ITS ORIGINAL NAME; that is a
+     fact about history, not a discrepancy to repair.
+     8A's judgement that renaming the migration this project exists to ship is a
      briefed decision rather than a merge side-effect is preserved.
    - **Why main's two files are this step's business at all.** The operator
      verified `usage_hourly`, `app_settings` and `ui_dismissals` are **ALL
@@ -709,7 +718,7 @@ own numbers move it further.
      plus the four `project_tasks` columns of R64/R71. Three rows, or the step
      is not done.
 
-   **After `0040_task_graph.sql` runs, 8ea0cc08's legacy sentinel is gone and
+   **After `0042_task_graph.sql` runs, 8ea0cc08's legacy sentinel is gone and
    with it the honest reason S3 refuses for** — see 2b, amended round 217. S3
    itself was never computable for this project; what the migration destroys is
    `legacy-rows`, the header field that says so. This is why step 2b's read is
@@ -871,7 +880,7 @@ against it.
 
 | File | Phases that write it |
 |---|---|
-| `db/migrations/0040_task_graph.sql` | 1 |
+| `db/migrations/0042_task_graph.sql` | 1 |
 | `forge-control/src/lib/task-graph.ts` | 1 (stubs), 2 (fill), 3 (validators) |
 | `forge-control/src/lib/task-graph.test.ts` | 2, 3 |
 | `forge-control/src/lib/task-graph-replay.test.ts` | 1, 2 |

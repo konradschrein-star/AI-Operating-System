@@ -25,6 +25,16 @@ import { fileURLToPath } from "node:url";
 /** src/lib → src → forge-control → repo root → db/migrations. */
 const MIGRATIONS_DIR = fileURLToPath(new URL("../../../db/migrations", import.meta.url));
 
+/** The task-graph migration's filename, in ONE place because it has already
+ *  moved once. It shipped as `0040_task_graph.sql` and was renumbered to 0042 at
+ *  round 950, after phase 8A's merge of `main` landed a second, unrelated
+ *  `0040_usage_hourly.sql` under the same number — two projects numbered a
+ *  migration independently and git raised no conflict, because the filenames
+ *  differ. Applying migrations BY GLOB would have silently picked an order
+ *  between them; applying them BY EXPLICIT FILENAME, which is this repo's rule,
+ *  did not. */
+const TASK_GRAPH_MIGRATION = "0042_task_graph.sql";
+
 /** Strip `--` line comments so a header paragraph that *describes* the DDL
  *  ("...a partial index...", "CREATE UNIQUE INDEX ... WHERE ...") is never
  *  mistaken for the DDL itself. Block comments are not used in this corpus. */
@@ -113,23 +123,34 @@ describe("db/migrations re-runnability", () => {
     assert.match(idx, /WHERE CHAIN_KEY IS NOT NULL/);
   });
 
-  // Named guard for 0040 (R1, R2). The generic lint above already proves every
-  // statement carries its IF NOT EXISTS; this case pins the *specific* shape the
-  // graph scheduler depends on, so that losing a piece of it reads as the bug it
-  // is rather than as a silently smaller migration.
-  test("0040 (task graph) adds four guarded columns, two named indexes, and a no-op-on-replay backfill", () => {
+  // Named guard for the task graph migration (R1, R2). The generic lint above
+  // already proves every statement carries its IF NOT EXISTS; this case pins the
+  // *specific* shape the graph scheduler depends on, so that losing a piece of it
+  // reads as the bug it is rather than as a silently smaller migration.
+  //
+  // RENUMBERED AT ROUND 950, and this file is the reason the rename is safe.
+  // The migration shipped as `0040_task_graph.sql`; phase 8A's merge of `main`
+  // brought in an unrelated `0040_usage_hourly.sql` claiming the same number, so
+  // ours became `0042_task_graph.sql` (pure `git mv`, bytes unchanged, nothing
+  // re-applied). The filename appears TWICE below — in the corpus assertion and
+  // in the readFileSync — so it is bound to a single constant. A rename that
+  // misses this file does not fail quietly: `FILES.includes()` goes false and
+  // `pnpm test` goes red with the corpus printed. That is the intended
+  // behaviour, and it is why this file belongs in any renumber's write-set.
+  test(`${TASK_GRAPH_MIGRATION} adds four guarded columns, two named indexes, and a no-op-on-replay backfill`, () => {
     // The generic per-file lint is driven by readdirSync + .endsWith(".sql").
-    // Assert 0040 is in that list rather than assuming it: a file this case
-    // reads directly by path but that FILES never enumerated would be linted by
-    // nothing, and this whole suite would report a pass over an unexamined
+    // Assert the migration is in that list rather than assuming it: a file this
+    // case reads directly by path but that FILES never enumerated would be linted
+    // by nothing, and this whole suite would report a pass over an unexamined
     // migration.
     assert.ok(
-      FILES.includes("0040_task_graph.sql"),
-      `0040_task_graph.sql is not in the enumerated corpus (${FILES.join(", ")}) — ` +
-        `the per-file lint never saw it, so its green result means nothing`,
+      FILES.includes(TASK_GRAPH_MIGRATION),
+      `${TASK_GRAPH_MIGRATION} is not in the enumerated corpus (${FILES.join(", ")}) — ` +
+        `the per-file lint never saw it, so its green result means nothing. ` +
+        `If this migration was renumbered, update TASK_GRAPH_MIGRATION in this file.`,
     );
 
-    const sql = readFileSync(`${MIGRATIONS_DIR}/0040_task_graph.sql`, "utf8");
+    const sql = readFileSync(`${MIGRATIONS_DIR}/${TASK_GRAPH_MIGRATION}`, "utf8");
     const stmts = statements(sql);
 
     // Select on the UNGUARDED pattern, so the selector cannot presuppose the
@@ -162,7 +183,7 @@ describe("db/migrations re-runnability", () => {
     assert.match(addFor("WORKSTREAM"), /ADD COLUMN IF NOT EXISTS WORKSTREAM TEXT NOT NULL DEFAULT 'MAIN'/);
     assert.match(addFor("WRITE_SET"), /ADD COLUMN IF NOT EXISTS WRITE_SET TEXT\[\] NOT NULL DEFAULT '\{\}'/);
     // R71. `NOT NULL DEFAULT false` is the whole of what makes this column
-    // additive: every row any engine ever wrote, before or after 0040 runs, is
+    // additive: every row any engine ever wrote, before or after 0042 runs, is
     // correctly not-frozen without being visited, so no behaviour changes for a
     // row the backfill never touched.
     assert.match(
@@ -191,13 +212,13 @@ describe("db/migrations re-runnability", () => {
       indexes.some((s) =>
         /CREATE INDEX IF NOT EXISTS PROJECT_TASKS_DEPENDS_ON_GIN ON PROJECT_TASKS USING GIN \(DEPENDS_ON\)/.test(s),
       ),
-      `0040 no longer creates project_tasks_depends_on_gin (R7). Indexes found: ${indexes.join(" | ")}`,
+      `${TASK_GRAPH_MIGRATION} no longer creates project_tasks_depends_on_gin (R7). Indexes found: ${indexes.join(" | ")}`,
     );
     assert.ok(
       indexes.some((s) =>
         /CREATE INDEX IF NOT EXISTS PROJECT_TASKS_WORKSTREAM_IDX ON PROJECT_TASKS \(PROJECT_ID, WORKSTREAM, STATUS\)/.test(s),
       ),
-      `0040 no longer creates project_tasks_workstream_idx (R7). Indexes found: ${indexes.join(" | ")}`,
+      `${TASK_GRAPH_MIGRATION} no longer creates project_tasks_workstream_idx (R7). Indexes found: ${indexes.join(" | ")}`,
     );
 
     // R2 + R6. The backfill is the migration's only non-DDL statement, and the

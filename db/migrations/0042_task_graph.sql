@@ -1,4 +1,4 @@
--- 0040: Task graph — concurrency computed, not hand-numbered (engine-task-graph,
+-- 0042: Task graph — concurrency computed, not hand-numbered (engine-task-graph,
 -- 2026-08-17). Three columns that turn `round` from the scheduler's input into a
 -- display label, and let two tasks that write the same file run at once in
 -- different workstreams.
@@ -18,6 +18,33 @@
 --                         computed. The provenance of `depends_on`, recorded at
 --                         the moment it is true by the process that makes it
 --                         true, rather than inferred afterwards. See below.
+--
+-- WHY THIS FILE IS 0042 AND NOT 0040 — AND WHAT WAS ACTUALLY APPLIED.
+-- This file shipped as `0040_task_graph.sql` and was APPLIED TO content_forge
+-- UNDER THAT NAME on 2026-08-18 (round 811's deploy, re-run at round 910 — see
+-- evidence/phase8-deploy.md). Phase 8A's merge of `main` then brought in
+-- `0040_usage_hourly.sql`, a second, unrelated file claiming the same number:
+-- two projects numbered a migration independently and git raised no conflict,
+-- because the filenames differ. Round 950 renumbered THIS file to 0042 —
+-- 0041_ui_dismissals.sql was already taken — as a pure `git mv` plus reference
+-- update. THE `git mv` CHANGED NO BYTES: sha256 read 5c0ad159911d10b6… both
+-- immediately before and immediately after it. The SAME COMMIT then edited
+-- comments — this paragraph, and the provenance sentence in the graph_frozen
+-- COMMENT ON below — so the file at that commit hashes differently
+-- (5a0c9d58cef400c7…) and a reader running sha256sum should expect the second
+-- number, not the first. NO DDL AND NO BACKFILL STATEMENT WAS TOUCHED: the two
+-- shas bracket a comment-only diff, which `check-migration-0040.sh` re-proved
+-- by applying this file twice against a scratch schema (44/44 assertions,
+-- second application `UPDATE 0`, snapshots byte-identical).
+-- NOTHING was re-applied to content_forge: `depends_on`, `workstream`,
+-- `write_set` and `graph_frozen` were
+-- already live and stayed live across the rename, verified by querying
+-- information_schema on content_forge before and after.
+-- THE RULE THIS COST US, twice now: APPLY MIGRATIONS BY EXPLICIT FILENAME,
+-- NEVER BY GLOB. `for f in db/migrations/*.sql` sorts `0040_task_graph.sql`
+-- before `0040_usage_hourly.sql` and thereby silently decides an order nobody
+-- chose. There is no ledger table and no runner in this repo, so the filename
+-- an operator types IS the version control. R70.
 --
 -- WHY depends_on IS NULLABLE WITH NO DEFAULT, against the project brief's
 -- `default '{}'`: NULL is a sentinel, not an absence. It means "this row was
@@ -90,7 +117,7 @@ COMMENT ON COLUMN project_tasks.workstream IS
   'Which workstream worktree this task runs in. Same workstream means the same worktree, serialized. Different workstreams are isolated directories that may write the same file and are merged back by an explicit integration task with a reviewer, never automatically. Constrained to ^[a-z0-9][a-z0-9-]{0,39}$ — the intersection of "safe in a git branch name", "safe in a directory name" and "readable in a Kanban chip". No semicolon appears in any comment body here on purpose: migrations.test.ts splits the file on semicolons, and a literal that straddles two fragments makes the lint reason about statements that do not exist.';
 
 COMMENT ON COLUMN project_tasks.graph_frozen IS
-  'TRUE on exactly the rows whose depends_on closure was written by migration 0040 backfill, FALSE on every row any engine wrote itself. It is the PROVENANCE of depends_on, recorded by the statement that makes it true rather than inferred afterwards. The scheduler uses it for one thing: a frozen row is held behind ANY non-done row of the same project in a strictly lower round, because its closure was computed against a snapshot and cannot name a row inserted later, while a non-frozen row is held only by the ids it actually declares. Four ways of inferring this fact after the event were built and measured in round 223 and all four failed — see 02-architecture.md section 9.3. Never written outside that backfill. R71, E4.';
+  'TRUE on exactly the rows whose depends_on closure was written by the backfill of db/migrations/0042_task_graph.sql (applied to this database under its original name 0040_task_graph.sql, before round 950 renumbered it off a collision with 0040_usage_hourly.sql, with the file bytes otherwise unchanged), FALSE on every row any engine wrote itself. It is the PROVENANCE of depends_on, recorded by the statement that makes it true rather than inferred afterwards. The scheduler uses it for one thing: a frozen row is held behind ANY non-done row of the same project in a strictly lower round, because its closure was computed against a snapshot and cannot name a row inserted later, while a non-frozen row is held only by the ids it actually declares. Four ways of inferring this fact after the event were built and measured in round 223 and all four failed — see 02-architecture.md section 9.3. Never written outside that backfill. R71, E4.';
 
 COMMENT ON COLUMN project_tasks.write_set IS
   'Repo-relative POSIX paths this task intends to write, declared by its planner. The input to computed contention: within one workstream the scheduler will not claim a task whose write_set intersects that of a running sibling. An empty array intersects nothing and is always claimable, which is exactly today behaviour and is what keeps the replay proof exact.';

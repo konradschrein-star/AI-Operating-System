@@ -2390,6 +2390,27 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    *   bought. What changed is the FRAME the budget is measured in, from a
    *   fixture no real project has to one shaped like every real project.
    *
+   * THE HARNESS IS NOW A COMMAND, NOT THIS PARAGRAPH (ruled round 244, DELIVERED
+   * ROUND 950). Re-derive every number in the table above with:
+   *
+   *     scripts/checks/measure-prompt-baseline.sh
+   *     scripts/checks/measure-prompt-baseline.sh --project-id p1   # the 2-char frame
+   *
+   * It exports each ref with `git archive`, symlinks node_modules and no source,
+   * prints sha256(project-tick.ts) per tree, and refuses to report a number
+   * unless the exported SOURCE TEXT and the LOADED MODULE agree on whether
+   * GRAPH_GUIDE exists — the shadow-tree control, generalised from the sha table
+   * below so it works at any ref. Verified at round 950 by reproducing this very
+   * table: 9221/11619/12095 at the uuid id and 9187/11585/12061 at "p1", the
+   * flat +34 included. Watch it go red with MPB_INJECT_SHADOW=<ref> (symlinked
+   * source) or MPB_INJECT_SWAP=<ref> (bytes swapped, which the GRAPH_GUIDE
+   * control CANNOT catch and the sha pin does).
+   *
+   * Between round 244 and round 950 this file cited that harness as committed
+   * and it had never existed in repo history; round 900 went looking for it and
+   * fell back to the harness below. A ruling is delivered when an artefact
+   * exists, not when a message is sent.
+   *
    * MEASURED at round 244 by a harness that prints its own build identity —
    * sha256(project-tick.ts) — and refuses to report a number unless the module
    * exports GRAPH_GUIDE:
@@ -3090,10 +3111,21 @@ describe("round 900 — SCREENSHOT_CONVENTION reaches exactly the same derived r
    *     away, or replaced by a shorter falsehood — fails the positive half.
    * (c) "The whole claim is asserted from the doc-comment rather than from the
    *     renderer." Closed OUTSIDE this file, because this package cannot import
-   *     forge-control-web: the six payload shapes were executed against the
-   *     shipped `extractBrowserShots` and the transcript, with its provenance,
-   *     is committed at docs/plan/engine-task-graph/evidence/
-   *     round902-screenshot-convention-fixes.md. */
+   *     forge-control-web: the SEVEN payload shapes (cases A–G) were executed
+   *     against the shipped `extractBrowserShots` and the transcript, with its
+   *     provenance, is committed at docs/plan/engine-task-graph/evidence/
+   *     round902-screenshot-convention-fixes.md.
+   *
+   *     "SEVEN" corrected at round 950 — this comment and the matching sentence
+   *     in project-tick.ts's SCREENSHOT_CONVENTION doc-comment both said "six",
+   *     while `scripts/checks/check-screenshot-render-shapes.ts` has declared
+   *     and run seven since round 902 (`DECLARED_CASES = 7`, cases A–G, and its
+   *     own census fails the run if the table holds a different number).
+   *     `03-quality.md` said seven and was right. Nothing enforced depended on
+   *     the two comments, which is exactly why they survived a PASS — and it is
+   *     the same doc-drift class the round they came from existed to fix. The
+   *     number was re-read off the instrument, and the instrument was RUN,
+   *     before either was edited; do not copy it from here either. */
   test("round 902 — the built prompt names the action that makes a shot render inline", () => {
     for (const repo of ["ai-os", "scratch"] as const) {
       const p = project({ repo });

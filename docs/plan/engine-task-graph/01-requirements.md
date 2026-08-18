@@ -15,7 +15,7 @@ runnable from the worktree; `review` = a reviewer must read and state it;
 
 ## A. Schema and migration — phase 1
 
-**R1.** A single new migration `db/migrations/0040_task_graph.sql` adds every
+**R1.** A single new migration `db/migrations/0042_task_graph.sql` adds every
 column, index and backfill this project needs. No second migration file.
 *How proved:* unit — `migrations.test.ts` lints it; `git ls-files db/migrations`
 shows exactly one new file.
@@ -26,7 +26,7 @@ predicate that makes a second application a zero-row no-op. There is no
 migration ledger and no runner in this repo — applying a migration is a manual
 `psql -f`, and the only defence against applying it twice is the statement
 itself. *How proved:* unit — a new case in `migrations.test.ts` naming
-`0040_task_graph.sql` explicitly, in the shape of the existing 0039 case.
+`0042_task_graph.sql` explicitly, in the shape of the existing 0039 case.
 
 **R3.** `project_tasks.depends_on uuid[]`, **nullable, default NULL**.
 `NULL` means *"this task was never graph-scheduled — apply the legacy round
@@ -1380,6 +1380,48 @@ the operator. Four clauses, binding on the deploy task:
    are `IF NOT EXISTS` and re-runnable, so applying them early is safe and
    **skipping them is not**. The order and the enforcement are in
    `04-phases.md` §Phase 8 step 3.
+
+**Resolved round 950 (post-deploy), and clause 3 retired with it.** The renumber
+that this amendment tracked as a post-deploy task has been done, with the tree
+quiet and both deploys landed: `git mv db/migrations/0040_task_graph.sql
+db/migrations/0042_task_graph.sql` (0041 was already `0041_ui_dismissals.sql`).
+The `git mv` itself changed no bytes — `sha256` read `5c0ad159911d10b6…`
+immediately before and immediately after it — though the same commit then edited
+the file's *comments* (a renumber-provenance paragraph and the `graph_frozen`
+`COMMENT ON` wording), so the committed file hashes `5a0c9d58cef400c7…`. **No DDL
+and no backfill statement was touched**, which `check-migration-0040.sh`
+re-proved rather than asserted: 44/44 assertions, second application `UPDATE 0`,
+both snapshots byte-identical. And **nothing was re-applied to `content_forge`**. This was a rename of a file, not a migration run: the four
+`project_tasks` columns (`depends_on`, `workstream`, `write_set`, `graph_frozen`)
+and both R7 indexes were read from `information_schema`/`pg_indexes` before the
+`git mv` and again after the whole change, and were identical. **The migration
+therefore remains applied under its ORIGINAL name `0040_task_graph.sql`**, which
+is a fact about history and not a discrepancy to repair; the live
+`COMMENT ON COLUMN project_tasks.graph_frozen` still carries the pre-rename
+wording for the same reason, and will only change if anyone ever re-applies the
+file.
+
+- **Clause 3 above ("Two 0040s on `main` is EXPECTED") is RETIRED**, together
+  with its enforcement in `04-phases.md` §Phase 8 step 3, in the same commit. It
+  was a *deploy-time* instruction not to fix the collision mid-flight. The deploy
+  is done and the collision is gone, so the clause now describes a repo state
+  that no longer exists. It is kept above, in place, as the record of why the
+  deploy proceeded with two 0040s rather than stopping.
+- **Clause 1 is NOT retired and never should be.** "Apply migrations by explicit
+  filename, never a glob" is the durable rule, and it is durable precisely
+  because renumbering removed the symptom without removing the cause: two
+  projects can still number a migration independently, and git will still merge
+  them without a conflict, because the filenames differ. This is the second time
+  it has happened.
+- **What the renumber touched.** Re-derived at round 950 with `grep -rn
+  "0040_task_graph"` and a second sweep for bare `0040` — **23 files**, not the
+  six that phase 8A enumerated. The gap is recorded as a finding in
+  `evidence/round950-renumber.md`; the most consequential miss was
+  `forge-control/src/lib/migrations.test.ts`, which reads the migration by
+  hard-coded filename and asserts it is in the enumerated corpus, so a renumber
+  that had trusted 8A's list would have gone red in `pnpm test`. Phase-evidence
+  files were deliberately **not** rewritten: they record what was executed under
+  the old name and rewriting them would falsify the record.
 
 **R65.** After merging, the deploy task runs **exactly**
 

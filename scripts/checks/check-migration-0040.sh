@@ -1,14 +1,43 @@
 #!/usr/bin/env bash
 #
 # check-migration-0040.sh — the behavioural proof that db/migrations/
-# 0040_task_graph.sql is re-runnable (R2), that its backfill is the FULL
+# 0042_task_graph.sql is re-runnable (R2), that its backfill is the FULL
 # TRANSITIVE CLOSURE of today's round rule (R6), and that both R7 indexes are
 # created by name.
+#
+# ###########################################################################
+# READ THIS BEFORE THE FILENAME MISLEADS YOU: THIS SCRIPT IS NAMED 0040 AND
+# ITS SUBJECT IS 0042.
+#
+# The migration under test shipped as `0040_task_graph.sql` and was applied to
+# content_forge under that name. Phase 8A's merge of `main` brought in a
+# SECOND, unrelated `0040_usage_hourly.sql`, so round 950 renumbered ours to
+# `db/migrations/0042_task_graph.sql` (a pure `git mv`: the bytes did not
+# change and nothing was re-applied). The SCRIPT was deliberately NOT renamed,
+# because `check-migration-0040.sh` is cited by NAME 60 times in 20 other
+# files (measured at round 950: `grep -rn check-migration-0040 --exclude-dir=
+# node_modules --exclude-dir=.git .`, minus this file's own 11 self-mentions).
+# 24 of those hits are in live files — 03-quality.md, 01-requirements.md,
+# 02-architecture.md, 04-phases.md, task-graph-replay.test.ts and the six
+# sibling instruments that copy its scratch-database guard — and 36 are in
+# nine phase-evidence files that record its past runs and MUST NOT be
+# rewritten. Renaming would rot all 60 pins to buy nothing this header does
+# not already say, and the brief for round 950 made the rename explicitly
+# optional for that reason.
+#
+# So: the FILENAME is a stable identifier, the SUBJECT is `$MIGRATION` below,
+# and `$MIGRATION` is the only thing that decides what gets applied. If you
+# came here from a grep for "0042", you are in the right file.
+#
+# The same reasoning covers `$SCHEMA` (`tg_check_0040`), which is a throwaway
+# schema name in a scratch database and identifies nothing outside this run.
+# ###########################################################################
 #
 # 03-quality.md §2.2 names this script and what it must prove:
 #   "Creates a throwaway schema in a local scratch database, seeds it from the
 #    replay fixture, applies 0040 twice, diffs the resulting project_tasks rows,
 #    asserts the second application changed zero rows and the indexes exist."
+#   (Read "0040" there as "the task-graph migration", now numbered 0042.)
 #
 # It is an INTEGRATION check, not a unit test: it needs a real Postgres, so it
 # lives here and never runs inside `pnpm test` (NF3 — the unit suite is
@@ -33,8 +62,8 @@
 # ---------------------------------------------------------------------------
 # HOW THE REAL project_tasks SHAPE IS BUILT — and which path was taken.
 #
-# PREFERRED path, taken: every db/migrations/*.sql below 0040 is applied in
-# lexical order into the throwaway schema, so 0040 is proven to compose with
+# PREFERRED path, taken: every db/migrations/*.sql EXCEPT the subject is applied
+# in lexical order into the throwaway schema, so 0042 is proven to compose with
 # the schema it will actually meet (0030's CREATE TABLE plus the ALTERs of
 # 0032, 0034, 0035, 0037, 0038 and 0039, verbatim, not a hand-simplified
 # replica).
@@ -85,7 +114,10 @@ set -euo pipefail
 trap 'rc=$?; [ $rc -ne 0 ] && echo "check-migration-0040.sh: ABORTED at line $LINENO (exit $rc) — NOT a pass" >&2' ERR
 
 SCHEMA='tg_check_0040'
-MIGRATION='db/migrations/0040_task_graph.sql'
+# THE SUBJECT. Renumbered from 0040_task_graph.sql at round 950 (see the banner
+# at the top of this file). This one assignment is what decides what is applied
+# twice below, and the loop in section 2 skips exactly this path.
+MIGRATION='db/migrations/0042_task_graph.sql'
 FIXTURE='forge-control/src/lib/fixtures/replay-operator-visibility.json'
 # The synthetic project the fixture rows hang off. Fixed, so reruns are
 # byte-comparable; it exists only inside the throwaway schema.
@@ -96,7 +128,11 @@ cd "$REPO_ROOT"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
-EXPECTED_ASSERTIONS=43
+# 44 since round 950: the renumber added 'the subject was globbed and skipped
+# exactly once'. This number is enforced in BOTH directions at the end of the
+# file (-lt = probes missed, -gt = an assertion was added without saying so), so
+# it moves in the same commit as the assertion it counts, never after it.
+EXPECTED_ASSERTIONS=44
 ASSERTIONS_RUN=0
 
 pass() {
@@ -210,8 +246,10 @@ echo "  sha256(fixture)    : $FIXTURE_SHA256"
 echo "  fixture rows       : $FIXTURE_ROWS"
 echo "  scratch database   : $DB_NAME (local; DSN never printed)"
 echo "  throwaway schema   : $SCHEMA"
-echo "  schema build path  : PREFERRED — every db/migrations/*.sql below 0040, in"
-echo "                       lexical order. One forced placeholder: content_jobs,"
+echo "  schema build path  : PREFERRED — every db/migrations/*.sql EXCEPT the"
+echo "                       subject above, in lexical order (that includes"
+echo "                       0040_usage_hourly.sql and 0041_ui_dismissals.sql)."
+echo "                       One forced placeholder: content_jobs,"
 echo "                       FK target of 0021_ai_os_tables.sql, created by no"
 echo "                       migration in this repo."
 echo "  expected assertions: $EXPECTED_ASSERTIONS"
@@ -237,18 +275,34 @@ psql "$SCRATCH_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 \
   -c "DROP SCHEMA IF EXISTS $SCHEMA CASCADE" -c "CREATE SCHEMA $SCHEMA"
 q "CREATE TABLE content_jobs (id uuid PRIMARY KEY)"   # the one forced placeholder; see header
 applied=0
+skipped=0
 for f in db/migrations/*.sql; do
-  case "$f" in *0040_task_graph.sql) continue ;; esac   # 0040 is the subject, applied later and twice
+  # Match $MIGRATION EXACTLY rather than a `*0040_task_graph.sql` suffix glob.
+  # Round 950 renumbered the subject and the old suffix pattern would have gone
+  # on matching nothing in silence: the subject would have been applied here as
+  # well as twice below, and the only thing standing between that and a green
+  # run was the pre-flight assertion two lines down. One source of truth.
+  case "$f" in "$MIGRATION") skipped=$((skipped + 1)); continue ;; esac
   psql_run -q -f "$f" >/dev/null
   applied=$((applied + 1))
 done
-echo "  applied $applied migrations below 0040 into $SCHEMA"
+# The subject must have been seen and skipped EXACTLY once. If $MIGRATION ever
+# names a path the glob does not produce — a renumber, a move, a typo — this
+# fails here with the reason, instead of further down as a confusing DDL error.
+assert_eq 'the subject was globbed and skipped exactly once' '1' "$skipped"
+# NOT "below 0040": the loop applies every migration in db/migrations EXCEPT the
+# subject, which since round 950 means it also applies 0040_usage_hourly.sql and
+# 0041_ui_dismissals.sql. That was true before the renumber too — those two
+# sort ABOVE the old 0040_task_graph.sql and were applied anyway — so the old
+# label "below 0040" was already describing something the loop did not do.
+# It says what it does now.
+echo "  applied $applied migrations (every db/migrations/*.sql except the subject) into $SCHEMA"
 assert_eq 'project_tasks exists' 'project_tasks' \
   "$(q "SELECT table_name FROM information_schema.tables WHERE table_schema='$SCHEMA' AND table_name='project_tasks'")"
 # Pre-flight (failure mode (b)): none of the four columns, neither index.
-assert_eq 'pre-0040: none of the 4 columns present' '0' \
+assert_eq 'pre-0042: none of the 4 columns present' '0' \
   "$(q "SELECT count(*) FROM information_schema.columns WHERE table_schema='$SCHEMA' AND table_name='project_tasks' AND column_name IN ('depends_on','workstream','write_set','graph_frozen')")"
-assert_eq 'pre-0040: neither R7 index present' '0' \
+assert_eq 'pre-0042: neither R7 index present' '0' \
   "$(q "SELECT count(*) FROM pg_indexes WHERE schemaname='$SCHEMA' AND indexname IN ('project_tasks_depends_on_gin','project_tasks_workstream_idx')")"
 echo
 
@@ -297,9 +351,9 @@ assert_eq 'seed: every row starts non-graph (depends_on absent)' '0' \
 echo
 
 # ---------------------------------------------------------------------------
-# 4. Apply 0040, pass 1.
+# 4. Apply 0042, pass 1.
 # ---------------------------------------------------------------------------
-echo '--- 4. apply 0040, pass 1 -----------------------------------------------------'
+echo '--- 4. apply 0042, pass 1 -----------------------------------------------------'
 psql_run -f "$MIGRATION" > "$WORK/pass1.out" 2> "$WORK/pass1.err" || fail 'pass 1 applies cleanly' "see $WORK/pass1.err"
 sed 's/^/  | /' "$WORK/pass1.out"
 [ -s "$WORK/pass1.err" ] && sed 's/^/  ! /' "$WORK/pass1.err"
@@ -468,10 +522,10 @@ assert_eq 'snapshot 1 has one line per seeded row' "$SEEDED" "$SNAP1_LINES"
 echo
 
 # ---------------------------------------------------------------------------
-# 7. Apply 0040, pass 2 — the re-runnability proof (R2). The backfill UPDATE
+# 7. Apply 0042, pass 2 — the re-runnability proof (R2). The backfill UPDATE
 #    must report ZERO rows and the snapshot must be byte-identical.
 # ---------------------------------------------------------------------------
-echo '--- 7. apply 0040, pass 2 (re-runnability, R2) --------------------------------'
+echo '--- 7. apply 0042, pass 2 (re-runnability, R2) --------------------------------'
 psql_run -f "$MIGRATION" > "$WORK/pass2.out" 2> "$WORK/pass2.err" || fail 'pass 2 applies cleanly' "see $WORK/pass2.err"
 sed 's/^/  | /' "$WORK/pass2.out"
 [ -s "$WORK/pass2.err" ] && sed 's/^/  ! /' "$WORK/pass2.err"
@@ -515,5 +569,5 @@ if [ "$ASSERTIONS_RUN" -gt "$EXPECTED_ASSERTIONS" ]; then
   exit 1
 fi
 echo
-echo "PASS — 0040 is re-runnable (R2), its backfill is the closure (R6), both indexes exist (R7)."
-echo "       git $HEAD_SHA · sha256(0040)=${MIGRATION_SHA256:0:16}… · db=$DB_NAME · schema=$SCHEMA"
+echo "PASS — 0042 is re-runnable (R2), its backfill is the closure (R6), both indexes exist (R7)."
+echo "       git $HEAD_SHA · sha256(0042)=${MIGRATION_SHA256:0:16}… · db=$DB_NAME · schema=$SCHEMA"

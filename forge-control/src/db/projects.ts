@@ -1,6 +1,6 @@
 /**
  * Coding projects — data access. Schema in migrations 0030_coding_projects.sql
- * and 0040_task_graph.sql.
+ * and 0042_task_graph.sql.
  *
  * A project is a git worktree (ai-os or content-forge) plus a brief. Round 0 is
  * always a single architect task. Each task, once ready, becomes exactly one
