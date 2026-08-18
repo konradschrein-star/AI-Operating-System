@@ -113,6 +113,15 @@ export function ConnectionsPanel(): JSX.Element {
   // poll. See desktop/quota/quotaQuery.ts.
   const quota = useQuotaSnapshot();
 
+  /* Rendered ONCE, and the verbatim-error box below is gated on the RENDERED
+   * state rather than on the server's. They differ exactly when the client's
+   * staleness rule demotes a stored failure to UNKNOWN (R51) — and a red
+   * upstream error box beside an amber chip is a row disagreeing with itself,
+   * which is the shape of defect this phase exists to remove. The failure text
+   * is not lost: `summary.health` carries it, prefixed with why it is stale. */
+  const agySummary = agyConnection(agy);
+  const githubSummary = githubConnection(github);
+
   const [open, setOpen] = useState<string | null>(null);
   const toggle = useCallback(
     (id: string) => setOpen((cur) => (cur === id ? null : id)),
@@ -256,10 +265,10 @@ export function ConnectionsPanel(): JSX.Element {
           Ultra row above reads the SAME `agy` state, so the two rows about one
           binary cannot contradict each other any more. */}
       <Row
-        summary={agyConnection(agy)}
+        summary={agySummary}
         open={open === "agy"}
         onToggle={toggle}
-        verbatimError={agy?.status.state === "broken" ? agy.status.detail : null}
+        verbatimError={agySummary.state === "broken" ? agy?.status.detail ?? null : null}
       >
         <AgyCard onFacts={setAgy} />
       </Row>
@@ -269,10 +278,10 @@ export function ConnectionsPanel(): JSX.Element {
         note="write-only from this browser · verified by a real GET /user"
       />
       <Row
-        summary={githubConnection(github)}
+        summary={githubSummary}
         open={open === "github"}
         onToggle={toggle}
-        verbatimError={github?.status.state === "broken" ? github.status.detail : null}
+        verbatimError={githubSummary.state === "broken" ? github?.status.detail ?? null : null}
       >
         <GitHubCard onFacts={setGithub} />
       </Row>
