@@ -1221,6 +1221,47 @@ manifest, and this is it.
 | `docs/plan/engine-task-graph/03-quality.md` | §4's reviewer block gains the new instrument. An instrument nobody is obliged to run rots; this one is a **gate** with no argument (it re-executes NF7's equality from outside the suite and asserts the single-occurrence property no other check asserts) and a **tool** with `--candidate`. Added where it is enforced, in the same commit as the instrument. |
 | `docs/plan/engine-task-graph/04-phases.md` | This table. No other section of this file is touched. |
 
+**Round 824's write-set (fix cycle 3 on round 823's re-review) — declared here
+in the commit that makes it, and EVERY file below is outside a declared set**,
+for the same structural reason the two rows above give: task
+`642fbcb9-ae9d-4986-a60a-fcd8a4ab4f56` was seeded with `write_set = []` because
+`fixChainGraphFields()` unions its GATING tasks' write-sets and its gating task
+is a reviewer, who declares none by R31's design. `03-quality.md` §3.1 item 4
+carries the audit shape for exactly this row; the honest form is a full
+manifest, and this is it. **Two of these files are new and two are `scripts/`
+rather than corpus, so read this table before the diff.**
+
+| file | why round 824 writes it |
+|---|---|
+| `scripts/checks/forbidden-file-diff.sh` | **New. Round 823's finding 1 — the blocker.** `gates-808.sh` gate 6 was UNSATISFIABLE for this project by construction: it banned any diff to `project-tick\|cc-runner\|executor.ts\|db/projects\|VaultFileList\|routes/files`, and this project's mandate is the first and the fourth, so `--strict` could not exit 0 at any sha and no PASS — including the deploy's — was reachable. The decision moves here so it can be **driven with fixtures**; its only input was previously whatever `main...HEAD` held, which is why four rounds could argue about it and none could test it. The ban pattern is unchanged and no project is named. |
+| `scripts/checks/check-forbidden-file-diff.sh` | **New.** The control, 14 cases, both directions — including that the empty-allow default still refuses (the property the operator ruling requires of every other project), that `VaultFileList`, `routes/files` and `cc-runner` are still refused *under this project's own allow list*, and the live-diff mutation that proves the list is load-bearing. It **found a defect in its own subject on its first run** (8 red): a final path with no trailing newline was silently dropped, so a producer emitting an unterminated list would have had a forbidden file read as clean. Fixed and pinned by case 14. |
+| `scripts/checks/gates-808.sh` | **The amendment, where it is enforced (standing rule 2), and the clause it retires, in the same commit (standing rule 4).** Gate 6 now pipes into the script above and is named for the variable it consults. The waiver comment's closing clause *"…as do all engine files"* is **retired by name** rather than edited away. **The shape is not mine**: operator ruling 2026-08-18, vault `AI OS/Operator Decisions.md` § "A gate that forbids touching a file cannot govern a project whose mandate is that file" — bind the ban to the DECLARED WRITE-SET via a caller-supplied `GATES_ENGINE_ALLOW`, defaulting to empty, never to a project name, because a name-based waiver rots the moment the project ends and nothing removes it. |
+| `docs/plan/engine-task-graph/03-quality.md` | **Universal gate item 12, new**, and the §4 reviewer block that runs it. Item 12 states the allow list, ties each entry to §10 above, and makes the REVIEWER'S obligation explicit: the list must equal the branch's banned-pattern diff and every entry must be declared, run both ways so the second output names what the list buys. Added in the same commit as the gate, in both places the gate is stated — round 805's rule that a gate stated twice rots if only one copy is fixed. |
+| `docs/plan/engine-task-graph/01-requirements.md` | **Round 823's finding 3.** §J closed with *"Reported to manager chat `bfd1283a` for a ruling"* — true when written, and now misleading: the ruling came back **CONFIRMED with a condition** (*any future NF7 increase must state in its own commit what was retired first and why it did not pay, with the measurement*). It lived only in a chat thread and one task brief, where round 964 would never find it. Recorded verbatim with the operator's three reasons and the sequence a fourth widening now owes. Not round 822's omission — the ruling postdates its commit. |
+| `docs/plan/engine-task-graph/evidence/round822-fix-cycle-2.md` | **Round 823's finding 2.** §3's second grep was **inert**: `grep -c "so open ONE PER LANE you want running at once"` returns `0` against the worktree too, because the source splits the phrase across concatenated template literals and it appears contiguously in no file. Round 822's block is kept as the record of what it ran, marked, and superseded by a new **§3.1** that measures both trees, names which half discriminates (`"truly need one file concurrently"`, 1 live / 0 worktree — it always carried the conclusion alone), supplies a contiguous replacement (`"ONE PER LANE"`, 0 live / 1 worktree) and the constant-level check. **The failure this closes is the deploy's**, which was to re-run those greps after `safe-restart.sh` and would have read `0` and called a working deploy failed. |
+| `scripts/checks/measure-graph-guide-budget.ts` | Round 823's **non-blocking note 1**. When a scalar fails to parse, `projectedHeadroom` is `NaN`, `NaN < 0` is false, and the instrument printed `VERDICT: FITS — NaN characters would remain under the cap`. It exited 1 and §5 voided every number, so rule 3's letter held — but the affirmative string is the one a grep or a pasted excerpt lifts, and a verdict line is read alone more often than in sequence. Guarded on `Number.isFinite`, with a refusal that names the cause. Reproduced by renaming `const BASELINE` and re-run: **0 occurrences of `VERDICT: FITS`, exit 1**; the test file restored and verified byte-identical by sha256. |
+| `forge-control/src/lib/project-tick.test.ts` | Round 823's **non-blocking note 2**, and **the one test body this round modifies** — an assertion MESSAGE only, no expression, no fixture, no count. The reservation audit read *"do NOT widen BUDGET … the one direction rule 2 does not license"* two hundred lines below a block that widened BUDGET. The message now separates the two cases it was conflating — raising a cap AFTER the fact to cover text already written (forbidden) from amending a gate measured unsatisfiable BEFORE the work (required by rule 2) — and a doc-comment above the test states the distinction and points at §J. `pnpm test` **1294/1294, unchanged**. No prompt constant is touched, so NF7's measurement is unmoved at 12246. |
+| `docs/plan/engine-task-graph/evidence/round824-fix-cycle-3.md` | **New.** This round's transcript: every gate re-run at this tip, the eight-case first run that found the subject's defect, the NaN mutation with its hash-verified restore, and the gate-6 before/after in both directions. |
+| `docs/plan/engine-task-graph/04-phases.md` | This table. No other section of this file is touched. |
+
+**What round 824 did NOT do, stated so the re-check does not go looking.** No
+migration, no scheduler code path, no prompt constant, no payload under
+`scripts/deploy/`, no `main` merge, and **no deploy** — `8ea0cc08` is live and
+the brief forbids it. Nothing under `/opt/forge-ai-os` was written; the two
+read-only `grep -c` measurements in `round822-fix-cycle-2.md` §3.1 are reads of
+a file on disk, the same act round 823's reviewer performed to re-verify the
+premise, and they touch no service, endpoint or database.
+
+**And note what this round's finding 1 is, because it is this project's own
+subject matter pointed at its own toolchain.** A gate that forbids touching a
+file cannot govern a project whose mandate is that file — and the reason it
+survived four rounds is not that four reviewers were careless. It is that gate 6
+had **one fixture**, `main...HEAD`, which no task on this branch was permitted to
+vary. An assertion nobody can drive in both directions degenerates into an
+opinion about whether it *should* be red, and an opinion is what gets disclosed
+and walked past. The fix that matters is not the allow list; it is that gate 6
+now has a control.
+
 ---
 
 ## 11. What "done" looks like from here

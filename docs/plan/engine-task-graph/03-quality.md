@@ -617,6 +617,77 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     deliberate — this repo reserves `rm -rf` for an explicit instruction — and
     is a disclosed cost, not an oversight.*
 
+12. **`gates-808.sh` gate 6, and the allow list it is run with (round 824,
+    closing round 823's finding 1).** `bash scripts/checks/gates-808.sh --strict`
+    exits 0 — and on this branch it does so **only** when the caller supplies
+    `GATES_ENGINE_ALLOW`. That is not a loophole; it is the check.
+
+    **What was wrong.** Gate 6 banned any diff to
+    `project-tick|cc-runner|executor.ts|db/projects|VaultFileList|routes/files`,
+    and this project's mandate is to change the first and the fourth. The suite
+    could not exit 0 on branch `project/8c591d6c` at **any** sha, so under the
+    reviewer rule *a nonzero exit blocks the PASS* this project could never have
+    reached a PASS, including its deploy task. Rounds 819, 820, 821 and 822 each
+    called it "structural, pre-existing" and proceeded — the disclose-and-proceed
+    habit `00-vision.md` §7 rule 2 exists to stop, and the habit that let a
+    self-certifying hover probe survive.
+
+    **The shape is the operator's ruling, 2026-08-18**, vault `AI OS/Operator
+    Decisions.md` § *"A gate that forbids touching a file cannot govern a project
+    whose mandate is that file"*: **bind the ban to the DECLARED WRITE-SET, never
+    to a project name.** The ban pattern is unchanged and no project is named;
+    the gate now asks whether a matching path was *declared*. With
+    `GATES_ENGINE_ALLOW` unset — every other branch in this repo — the verdict is
+    byte-for-byte the one the single-line grep gave, which is asserted by a
+    control rather than claimed (case 2 below). A name-based waiver would rot the
+    moment this project ended and nothing would remove it; an allow list supplied
+    per run is self-retiring.
+
+    **THE REVIEWER'S OBLIGATION, which is what makes this a check and not a
+    rubber stamp:** the list below must equal the set of banned-pattern paths in
+    `git diff --name-only main...HEAD`, and every one of them must appear in a
+    task's declared write-set or in `04-phases.md` §10. Run it *both* ways — with
+    the list and without — and read the second output: it names, by path, exactly
+    what the list is buying. A path in the list that is not in §10 is a finding.
+
+    ```bash
+    # The three banned-pattern paths this branch changes, all of them declared:
+    #   forge-control/src/db/projects.ts          — §10, phases 2/3/4
+    #   forge-control/src/lib/project-tick.ts     — §10, phases 4/5
+    #   forge-control/src/lib/project-tick.test.ts — §10, rounds 822 and 960 tables
+    # workspace.ts and executor.ts are in the mandate but match no ban pattern;
+    # listing them would be an INERT entry and the gate says so by name.
+    export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
+    bash scripts/checks/gates-808.sh --strict            # MUST exit 0
+    git diff --name-only main...HEAD | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
+    #   ^ the control read: exits 1 and names the three, which is what the list buys
+    bash scripts/checks/check-forbidden-file-diff.sh     # MUST exit 0 — 14 cases
+    ```
+
+    **The decision is tested, which it never was before.** Gate 6's only input
+    was whatever `main...HEAD` held that day — one fixture, unvarnishable without
+    committing a file the branch was forbidden to commit — so four rounds could
+    argue about it and none could drive it. It now lives in
+    `scripts/checks/forbidden-file-diff.sh`, and
+    `scripts/checks/check-forbidden-file-diff.sh` drives it through **14 cases in
+    both directions**: the empty-allow default still refuses (case 2); the
+    declared paths pass (3); a different engine file does not blanket (4);
+    `VaultFileList`, `routes/files` and `cc-runner` are still refused *under this
+    project's own list* (5-7); an entry the ban never matches is reported INERT
+    and grants nothing (8); matching is exact, so `db/projects.ts` does not
+    permit `db/projects.test.ts` (11); a failing producer is caught by the call
+    site's `pipefail` rather than by a clean verdict (12); and the live diff is
+    clean under the declared list but **refused with one entry removed** (13),
+    which is the mutation that proves the list is load-bearing. If a case stops
+    executing the run exits 1 rather than reporting a smaller clean sweep.
+
+    **It found a defect in its own subject on its first run** — eight cases red.
+    The subject's `while read` loop dropped a final path that carried no trailing
+    newline, so a producer emitting an unterminated list would have had its last
+    path silently unread and the gate would have reported clean on a forbidden
+    file. `git diff --name-only` terminates its last line, which is precisely why
+    this would never have been noticed. Fixed, and pinned by case 14.
+
 ### 3.2 Phase gates
 
 **Phase 1 — schema, fixture, replica harness**
@@ -1060,6 +1131,16 @@ bash scripts/check-schedule-sql.sh
 # prints the net delta and the LEDGER row that edit must declare, BEFORE the
 # edit is written. Round 962 runs it that way; see 01-requirements.md §J.
 (cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/measure-graph-guide-budget.ts)
+# §3.1 item 12 — the universal suite, and the allow list it must be run with on
+# THIS branch. Read item 12 before running it: the export is not a convenience,
+# it is the declaration the reviewer is obliged to check against 04-phases.md
+# §10, and the second command is the control read that shows what it buys.
+# gate 6 was unsatisfiable on this branch for four rounds; it is now bound to the
+# declared write-set (operator ruling, 2026-08-18) and it is TESTED.
+export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
+bash scripts/checks/gates-808.sh --strict
+git diff --name-only main...HEAD | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
+bash scripts/checks/check-forbidden-file-diff.sh
 # plus this phase's scripts/checks/* from 03-quality.md §3.2
 ```
 

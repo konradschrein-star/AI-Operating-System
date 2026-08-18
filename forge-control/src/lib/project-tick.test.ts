@@ -2707,14 +2707,37 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
     );
   });
 
+  /* The message below says "do NOT widen ... to fit it", roughly two hundred
+   * lines beneath a block in which round 822 DID widen BUDGET. Round 823's
+   * non-blocking note 2: the narrow reading is coherent, but the sentence reads
+   * against its own file and will mislead someone. Stated precisely at round
+   * 824 rather than softened — the distinction is the whole of rule 2:
+   *
+   *   FORBIDDEN: raising BUDGET or a reservation AFTER the fact, to cover text
+   *   already written. That is a gate edited to match the tree, and it is the
+   *   one direction 00-vision.md §7 rule 2 does not license.
+   *
+   *   PERMITTED, and what round 822 did: finding a gate UNSATISFIABLE BEFORE
+   *   the work — 564 characters of mandated text against 25 of headroom, with
+   *   shrinking measured and shown not to pay — and amending it where it is
+   *   enforced, in the same commit as the requirement text, saying plainly that
+   *   it is a widening, and reporting it for a ruling. Rule 2 requires exactly
+   *   that of an unsatisfiable gate.
+   *
+   * This assertion is untouched by either: it compares a round's spend against
+   * its OWN reservation, so widening BUDGET buys no row any slack. The operator
+   * ruling confirming 3700 attached a condition that binds the next round to
+   * come, not this test — 01-requirements.md §J carries it. */
   test("no round spent more of the prompt budget than its brief reserved", () => {
     for (const row of LEDGER) {
       assert.ok(
         row.spent <= row.reserved,
         `NF7: round ${row.round} consumed ${row.spent} characters of the ${row.reserved} ` +
-          `reserved for it (${row.what}). Shrink the text; do NOT widen BUDGET or the ` +
-          "reservation to fit it — that is the one direction 00-vision.md §7 rule 2 does not " +
-          "license.",
+          `reserved for it (${row.what}). Shrink the text; do NOT raise BUDGET or this row's ` +
+          "reservation AFTER THE FACT to cover text you have already written — that is the " +
+          "one direction 00-vision.md §7 rule 2 does not license. (A gate measured " +
+          "unsatisfiable BEFORE the work is a different case, and rule 2 requires amending " +
+          "it; see 01-requirements.md §J.)",
       );
     }
   });

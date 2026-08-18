@@ -336,6 +336,23 @@ if (candidate !== null) {
         `${BUDGET - projectedHeadroom} is the minimum that admits it, with no headroom left ` +
         `over for the round after yours.`,
     );
+  } else if (!Number.isFinite(projectedHeadroom)) {
+    /* Round 823's non-blocking note 1, closed at round 824. `scalar()` returns
+     * NaN when a constant cannot be parsed out of the gate — the correct
+     * refusal — but `NaN < 0` is FALSE, so control flow fell into the `else`
+     * and printed `VERDICT: FITS — NaN characters would remain under the cap`.
+     * The run still exited 1 and §5 still voided every number, so the letter of
+     * `00-vision.md` §7 rule 3 held; what did not hold is that the affirmative
+     * string is the one a grep, a skim or a pasted excerpt lifts. A verdict line
+     * is read on its own far more often than in sequence. Reproduced by
+     * renaming `const BASELINE` in project-tick.test.ts; re-run after this
+     * change, the same mutation prints the refusal below and no FITS anywhere. */
+    fail(
+      `NO VERDICT IS AVAILABLE: the projected headroom is ${projectedHeadroom} (cap ${cap}, ` +
+        `projected ${projected}). A scalar above failed to parse out of ` +
+        "project-tick.test.ts, so there is no cap to judge this candidate against — and a " +
+        "candidate cannot be called fitting against a number that was never read.",
+    );
   } else {
     console.log(`  VERDICT: FITS — ${projectedHeadroom} characters would remain under the cap.`);
   }

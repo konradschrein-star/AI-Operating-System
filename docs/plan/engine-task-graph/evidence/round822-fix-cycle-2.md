@@ -269,14 +269,57 @@ Round 821: "the corrected `GRAPH_GUIDE` clause landed at `5d0e0c0`;
 `/opt/forge-ai-os` still runs the pre-960 text." **Measured here, read-only, no
 service touched:**
 
+> **CORRECTED AT ROUND 824 — round 823's finding 2. The second grep in the
+> block below was INERT: it returns `0` against the WORKTREE too, where the
+> clause demonstrably is present.** The original text is kept because it is what
+> round 822 really ran, and the correction is stated rather than substituted.
+> Superseded by §3.1 immediately after it; read that block, not this one.
+
 ```
 $ grep -c "truly need one file concurrently" \
     /opt/forge-ai-os/forge-control/src/lib/project-tick.ts
 1                                              <- the RETIRED criterion, live
-$ grep -c "so open ONE PER LANE you want running at once" \
+$ grep -c "so open ONE PER LANE you want running at once" \   <- INERT, see §3.1
     /opt/forge-ai-os/forge-control/src/lib/project-tick.ts
 0                                              <- the corrected clause, absent
 ```
+
+### 3.1 The correction — which half discriminates, and which half never could
+
+Measured at round 824, read-only, no service touched, both trees:
+
+```
+                                                          worktree   live
+grep -c "truly need one file concurrently"                       0      1
+grep -c "ONE PER LANE"                                           1      0
+grep -c "so open ONE PER LANE you want running at once"          0      0   <- INERT
+```
+
+**Why the third line is inert, and why it looked authoritative.** `GRAPH_GUIDE`
+is built from concatenated template literals, and the phrase straddles a join:
+the source spells it `… so open ONE PER LANE ` + `you want running at once, …`,
+so the sentence never appears contiguously in any source file and no `grep` for
+it can return anything but `0`. The *evaluated* constant does contain it —
+`GRAPH_GUIDE.includes("so open ONE PER LANE you want running at once")` is
+`true` in the worktree at exactly one occurrence, which is the check the source
+grep was standing in for and could not perform.
+
+**Which half did the work.** The FIRST grep — the retired criterion, `1` live
+and `0` in the worktree — is a valid discriminator and carries §3's conclusion
+by itself. The second added nothing and could not have: a control that returns
+the same value on both sides of the comparison it is asked to make is not
+evidence, it is decoration that reads as evidence.
+
+**The replacement, for anyone re-running this.** `grep -c "ONE PER LANE"` is
+contiguous in the source, and separates the trees `1` to `0`. Where the
+evaluated constant is what matters, ask the constant rather than its source:
+`cd forge-control && ./node_modules/.bin/tsx -e 'import { GRAPH_GUIDE } from
+"./src/lib/project-tick.ts"; console.log(GRAPH_GUIDE.includes("<clause>"))'`.
+
+**The failure this closes** is not in §3's conclusion, which was and is correct.
+It is in the deploy: that task was to re-run these greps after `safe-restart.sh`
+to confirm the new prompt shipped. Run as written it would have read `0`,
+concluded the deploy had failed, and been wrong about a deploy that worked.
 
 **Premise confirmed.** Every project the fleet has planned since round 960
 committed was planned under the criterion round 960 retired. DoD-6 cannot be

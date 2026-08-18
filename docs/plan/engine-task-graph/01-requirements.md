@@ -1652,6 +1652,41 @@ for unwritten text fails immediately — round 962 adds
 it, exactly as round 239 reserved 652 and builder 5B added the row at round 240.
 Reported to manager chat `bfd1283a` for a ruling rather than taken silently.*
 
+***THE RULING CAME BACK, AND IT CAME BACK WITH A CONDITION — recorded here at
+round 824, because a paragraph saying a ruling was REQUESTED reads, to the round
+that needs it, exactly like a ruling that never arrived.*** *Round 822 could not
+have written this: the ruling postdates its commit. Operator, 2026-08-18, in
+manager chat `bfd1283a`, arithmetic re-checked independently before agreeing
+(`9221 + 3700 = 12921`; live 12246; 675 new headroom, 650 reserved; projected
+12810 fits):*
+
+> ***OPERATOR RULING — NF7 BUDGET 3700 is CONFIRMED. Round 822's default
+> stands.*** *Confirmed against the operator's own standing rule that a budget
+> which rises whenever it binds is a comment and not a budget, for three stated
+> reasons: **(1) it trimmed first** — round 960 spent the last retirable clause
+> and 822's wording retires a second, so the round-902 precondition* trim first,
+> raise second *was met rather than skipped; **(2) unsatisfiable by 22× is not
+> "binding", it is impossible** — 564 needed against 25 available, and this
+> project has ruled ten times that an unsatisfiable gate is a defect in the gate;
+> **(3) the three rules are engine facts a planner cannot work without**, and
+> compressing them into text that passes `.includes()` while misleading a planner
+> is the failure this project has refused nine times.*
+>
+> ***THE CONDITION, and it is the point of confirming rather than
+> rubber-stamping: this is the LAST widening that gets to be routine.*** *NF7 has
+> now moved three times in one project — 1500 → 3050 → 3700. **Any future NF7
+> increase must state, in its own commit, WHAT WAS RETIRED FIRST AND WHY IT DID
+> NOT PAY, with the measurement.** A budget whose every breach is answered by
+> raising it has stopped measuring anything.*
+
+*So the sequence a round 964 owes, before it may propose a fourth number: name
+the clause it retired, measure what that retirement bought with
+`measure-graph-guide-budget.ts --candidate`, and show the shortfall that
+survives — in the commit, not in a report. The instrument exists precisely so
+that "shrinking cannot pay" is a measurement rather than an assertion; round 822
+made that claim and backed it, and the condition is that every successor does
+the same.*
+
 *How proved:* unit — a length assertion on the built planner prompt, with the
 budget written into the assertion message.
 

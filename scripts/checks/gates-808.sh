@@ -139,10 +139,41 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # impossible without touching it. The operator authorised the exact approach (extract
 # FilePreview verbatim + two-line panel edit) BEFORE it was written; landed in fc842d3.
 # Scope of the waiver: FileExplorerPanel.tsx ONLY. VaultFileList* and routes/files
-# remain forbidden, as do all engine files.
-gate_sh "forbidden-file diff — three-dot main...HEAD" \
-  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects|VaultFileList|routes/files' \
-   && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }"
+# remain forbidden.
+#
+# AMENDED 2026-08-18 (engine-task-graph round 824), AND THE CLAUSE IT RETIRES IS
+# NAMED: this comment used to end "…remain forbidden, AS DO ALL ENGINE FILES."
+# That clause is retired here, in the commit that changes the gate — a
+# requirement and its gate clause move together, or the next reader inherits a
+# rule the code no longer enforces.
+#
+# WHY. "All engine files, always" made this gate UNSATISFIABLE BY CONSTRUCTION
+# for project engine-task-graph, whose mandate is to change project-tick.ts and
+# db/projects.ts. Rounds 819-822 each disclosed it as "structural, pre-existing"
+# and proceeded; round 823's reviewer blocked on it instead, correctly — under
+# the reviewer rule "a nonzero exit BLOCKS the PASS", that branch could not have
+# reached a PASS at any sha, including its own deploy task.
+#
+# THE FIX IS NOT A WIDENING AND NOT A PROJECT EXEMPTION. Operator ruling
+# 2026-08-18, vault `AI OS/Operator Decisions.md` § "A gate that forbids
+# touching a file cannot govern a project whose mandate is that file":
+#
+#   "Bind such a ban to the DECLARED WRITE-SET, never to a project name. An
+#    allow list supplied by the caller (GATES_ENGINE_ALLOW=...), defaulting to
+#    empty so every other project is unaffected: an engine file may differ only
+#    if it was declared. A name-based waiver rots the moment the project ends
+#    and nothing removes it; a write-set-bound gate is self-retiring."
+#
+# So: THE BAN PATTERN IS UNCHANGED, no project is named, and with
+# GATES_ENGINE_ALLOW unset — every other branch in this repo — the verdict is
+# byte-for-byte the one the single-line grep gave. That equivalence is asserted
+# by `check-forbidden-file-diff.sh` case 2, not claimed here.
+#
+# The decision moved into `scripts/checks/forbidden-file-diff.sh` so it can be
+# driven with fixtures: its only input used to be whatever `main...HEAD` held,
+# which is why four rounds could argue about it and none could test it.
+gate_sh "forbidden-file diff — three-dot main...HEAD, checked against GATES_ENGINE_ALLOW" \
+  "git diff --name-only main...HEAD | bash scripts/checks/forbidden-file-diff.sh"
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
   "changed=\$(git diff --name-only 7b961b5..HEAD -- forge-control/ | wc -l); \
