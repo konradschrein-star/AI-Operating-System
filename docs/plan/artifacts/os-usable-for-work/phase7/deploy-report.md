@@ -245,3 +245,52 @@ second bug.
 Declared: `docs/plan/artifacts/os-usable-for-work/phase7/deploy-report.md`,
 `docs/plan/artifacts/os-usable-for-work/phase7/build-ids.txt`.
 Written: exactly those two files. **No undeclared write.**
+
+---
+
+## APPENDED CORRECTION — 2026-08-20, same run, after the report above was committed
+
+**§7's central claim is now FALSE, and this note exists so no reviewer chases a closed gap.**
+
+Section 7 said: *"Step 3 does not exist... If nobody creates it, `6d92b80e` will run against a
+live host still serving `TsvXpNcIwjauqnJDJB2dy`."* Between committing that (`d1b1811`) and
+re-reading the graph, **the manager seeded it.** Measured, not assumed:
+
+```
+$ curl -s http://127.0.0.1:7700/api/projects/7851068b-.../ | (tasks, round >= 14)
+14 done    reviewer main 4b9e9a75 deps=[999c250d]           Phase 7 pre-deploy gate
+15 running builder  main fe3749e0 deps=[4b9e9a75]           Deploy phase 7            <- this task
+15 pending builder  main 8802e61a deps=[4b9e9a75, fe3749e0] Fix cycle 1        chain=fix:14:1
+16 pending reviewer main ea8360e4 deps=[8802e61a]           Re-review          chain=rereview:14:1
+17 pending builder  main d4561713 deps=[ea8360e4]           Deploy phase 7 (re-seeded)
+18 pending reviewer main 6d92b80e deps=[d4561713]           Phase 7 GATE — R83-R90, BUILD_ID
+```
+
+Two changes from the graph §7 describes:
+
+1. **`d4561713` exists** — "Deploy phase 7 (re-seeded) — merge to main, rebuild, prove the
+   BUILD_ID moved", round 17, `depends_on = [ea8360e4]`, workstream `main`, `write_set` = the
+   same two artefact paths as this task.
+2. **The phase gate moved from round 16 to round 18** and now depends on `d4561713`. That was
+   the second half of the ordering problem §7 raised, and it is fixed at the edge rather than
+   by round arithmetic.
+
+The row is well-formed on the axes that have wedged this project before: it has a real
+`depends_on` (not `NULL`, which is a project-wide barrier), it declares a workstream, and it is
+a builder row so no `consolidateVerdictGroup` demands a verdict from it.
+`/opt/ai-os/scripts/stalled-projects.sh` reports **clear** — no wedge, no zombie, no legacy
+barrier, no failed row with a pending successor.
+
+**So the standing ruling "A CORRECT REFUSAL MUST LEAVE A SUCCESSOR"
+(`AI OS/Operator Decisions.md`) is satisfied for this refusal.** The successor is
+`d4561713-4eaa-42a2-bdc6-cd7cd347838c`, and it owns the deploy. This report's §7 should be read
+as the diagnosis that produced that row, not as an open gap.
+
+**One consequence worth stating plainly:** `d4561713` declares *these same two files*. When it
+runs it will overwrite this report with the real deploy's evidence — correctly, because a
+deployed phase should not ship a stop-report as its deploy record. This refusal survives in git
+as commit `d1b1811` regardless of what later overwrites the working file, which is where a
+reviewer auditing round 15 should look.
+
+Nothing else in this document changes: no merge, no rebuild, no restart, and
+`pm2 restart forge-executor` still never run.
