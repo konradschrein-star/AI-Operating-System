@@ -400,3 +400,97 @@ disclosed (round 13…)" per standing rule 5.**
 | `docs/plan/artifacts/phase400/dollar-allowlist.md` | The per-line table the allowlist's own header names as its companion; the business lane kept it in sync at its round 4 and leaving it stale would make the authoritative table wrong. |
 | `docs/plan/artifacts/os-usable-for-work/phase7/goals-proof-r13.cjs` | The browser harness for §4.5. The brief ordered the render proof; a proof whose instrument is not committed is not re-runnable. |
 | `phase7/r13-desktop-initial.png`, `r13-goals-open.png`, `r13-unbuilt-surface.png` | The brief: *"screenshot into the phase artefacts"*. Also written to `/opt/ai-os/uploads/caa62c8f9433/`, which does not survive a reboot. |
+
+---
+
+## 7. C5 went PASS → FAIL on the vault merge, and it was the checker, not the code
+
+Found by re-running the preflight on the finished tree. It is the only thing in this task that the
+per-step universal block did not catch, because `preflight-deploy.sh` is not part of that block.
+
+```
+FAIL — C5 — could not analyze field names: could not find a typed
+            "Promise<Record<X, number>>" return for noteCounts in …/db/memory.ts
+```
+
+**Two independent defects, both in the checker.**
+
+**(a) The return shape changed by design.** Phase 1's B1c replaced
+
+```
+export async function noteCounts(source?: NoteSource): Promise<Record<NoteCategory | "all", number>>
+```
+
+with `Promise<MemoryCounts>` — one labelled field per figure, declared in `lib/index-health.ts`.
+That IS requirement R15 ("every top-level integer key must state its unit and its source"), and
+removing the bare `all` key is what fixed Konrad's *"it's zero and not eight"*. C5 understood exactly
+one shape and correctly refused to guess. **It failed loudly rather than passing vacuously**, which is
+the right failure and the reason this was findable at all.
+
+**(b) The surface now documents the bug C5 watches for, and C5 was reading the documentation as
+code.** `MemorySurface.tsx` carries, in a JSX comment and a doc block:
+
+```
+Until 2026-08-19 this rendered `${counts.all ?? 0} notes`.
+They read `counts[c.key] ?? 0` against an envelope whose keys were …
+```
+
+`extractAccessedFields` did not strip comments. So even after fixing (a), C5 would have reported a
+violation on **`all`** — the very key R15 removed — and then bailed trying to resolve `counts[c.key]`
+against an array literal that no longer exists. *A check that fails because someone explained the bug
+it was watching for is a check nobody will keep.* I hit this same false positive with my own first
+grep before writing the fix, which is how it was caught.
+
+### The property was verified INDEPENDENTLY before the checker was touched
+
+Deliberately, so the fix could not be shaped to make a green light appear. A separate comparator,
+written fresh, stripping comments, with its own self-test:
+
+```
+accessed: agent_notes, embedded_chunks, embedded_files, excluded, folder_counts,
+          folder_rule, measured_at, stale_embedding_rows, vault_files_on_disk, vault_notes_indexed
+emitted : … the same ten, plus `source`
+PASS — every field MemorySurface reads is emitted by MemoryCounts
+self-test (a bogus field must be caught): ok
+```
+
+The repaired C5 then produced **the same two sets**. The property held throughout; only the
+instrument was broken.
+
+### What changed in `preflight-deploy.sh`
+
+- `extractEmittedFields` gains a `Promise<SomeInterface>` branch, tried FIRST, following the import to
+  the declaring module (`MemoryCounts` lives in `lib/index-health.ts`, not `db/memory.ts`). Top-level
+  members only — exactly two spaces of indent — so `excluded`'s nested `{ excalidraw, empty,
+  frontmatter_only }` do NOT become fields of `counts`; admitting them would excuse
+  `counts.excalidraw`. An unresolvable interface **bails**; it never degrades to an empty set, because
+  an empty `emitted` makes every access a violation and an empty `accessed` makes C5 vacuously green.
+- `stripComments()` removes `/* … */` blocks and whole-line `//` comments before accesses are read.
+  A *trailing* `//` is deliberately left alone: stripping it safely needs a real lexer, and getting it
+  wrong would silently eat a `//` inside a string literal and a genuine access with it.
+- The existing inline self-test is untouched and still runs on every invocation.
+
+### FORCED FAILURES — the new branch can fail, measured, not asserted
+
+Both mutations applied to the worktree and restored from pre-mutation copies (never `git checkout --`,
+which reverts to HEAD rather than to the pre-mutation content), with `sha256sum` identical before and
+after and `git status` clean for both files afterwards:
+
+| control | mutation | result |
+|---|---|---|
+| **A — a field the surface reads is removed from the interface** | deleted `vault_files_on_disk: number;` from `MemoryCounts` | `FAIL — C5 — … reads field(s) routes/memory.ts does not emit: vault_files_on_disk` |
+| **B — a genuine bogus access in real code** (does `stripComments` blind it?) | inserted `const __ctl = counts.__notAField__;` beside `const counts = countsQ.data;` | `FAIL — C5 — … : __notAField__` |
+
+Control B is the one that matters: comment-stripping did **not** make a real access invisible. The
+built-in self-test asserts the same property on every single run.
+
+### Disclosure
+
+`scripts/checks/preflight-deploy.sh` is an **undeclared write**, and it is the gate that judges this
+task's own output — so it is stated as loudly as it can be. Mitigations, all of them measured above:
+the property was verified by an independent comparator *before* the checker was touched; the two sets
+agree; the self-test is intact; and both new failure paths are demonstrated firing. It is repaired to
+understand a shape the project itself introduced, never widened to accept a shape it should reject.
+
+**C5 is PASS at the final tip.** The preflight's remaining FAIL is C1 alone, for the circular reason
+in §1.

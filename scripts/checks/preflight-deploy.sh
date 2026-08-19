@@ -253,12 +253,68 @@ function extractEmittedFields(routesSrc, routesDir) {
   if (!fs.existsSync(modFile)) bail(`resolved module ${modFile} does not exist`);
   const modSrc = fs.readFileSync(modFile, "utf8");
 
+  /* ── SHAPE 2, added round 13: Promise<SomeInterface> ──────────────────────
+   *
+   * Phase 1's B1c replaced `Promise<Record<NoteCategory | "all", number>>` with
+   * a named interface carrying one labelled field per figure — that IS
+   * requirement R15 ("every top-level integer key must state its unit and its
+   * source"), and it is what removed the bare `all` key behind Konrad's "it's
+   * zero and not eight". So the union shape below is not wrong, it is simply no
+   * longer the only shape this route can legitimately have.
+   *
+   * Tried FIRST, because a `Record<…>` return also matches `Promise<X>` if you
+   * are careless with the pattern. The interface may live in another module —
+   * `MemoryCounts` is declared in lib/index-health.ts and imported into
+   * db/memory.ts — so the import is followed the same way `fnName`'s was.
+   * Anything ambiguous BAILS; a field set this cannot resolve must never
+   * degrade into an empty set, because an empty `emitted` makes every access a
+   * violation and an empty `accessed` makes the check vacuously green. */
+  const ifaceRe = new RegExp(
+    `function\\s+${fnName}\\s*\\([^)]*?\\)\\s*:\\s*Promise<\\s*([A-Za-z_]\\w*)\\s*>`,
+    "s",
+  );
+  const ifaceMatch = modSrc.match(ifaceRe);
+  if (ifaceMatch) {
+    const ifaceName = ifaceMatch[1];
+    let ifaceSrc = modSrc;
+    if (!new RegExp(`(?:export\\s+)?interface\\s+${ifaceName}\\s*{`).test(modSrc)) {
+      let ifaceSpec = null;
+      const impRe = /import\s*{([^}]*)}\s*from\s*["']([^"']+)["']/gs;
+      let im;
+      while ((im = impRe.exec(modSrc))) {
+        const names = im[1]
+          .split(",")
+          .map((s) => s.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0])
+          .filter(Boolean);
+        if (names.includes(ifaceName)) {
+          ifaceSpec = im[2];
+          break;
+        }
+      }
+      if (!ifaceSpec) bail(`${fnName} returns Promise<${ifaceName}>, but ${ifaceName} is neither declared in ${modFile} nor imported into it`);
+      const ifaceFile = path.resolve(path.dirname(modFile), ifaceSpec);
+      if (!fs.existsSync(ifaceFile)) bail(`resolved module ${ifaceFile} for ${ifaceName} does not exist`);
+      ifaceSrc = fs.readFileSync(ifaceFile, "utf8");
+    }
+    const bodyRe = new RegExp(`(?:export\\s+)?interface\\s+${ifaceName}\\s*{([\\s\\S]*?)\\n}`);
+    const bodyMatch = ifaceSrc.match(bodyRe);
+    if (!bodyMatch) bail(`could not read the body of interface ${ifaceName}`);
+    /* TOP-LEVEL members only — exactly two spaces of indent. `excluded: {
+     * excalidraw: number; … }` nests its own keys at four, and those are NOT
+     * fields of `counts`; admitting them would excuse `counts.excalidraw`. */
+    const ifaceFields = new Set(
+      [...bodyMatch[1].matchAll(/^ {2}([A-Za-z_]\w*)\??\s*:/gm)].map((x) => x[1]),
+    );
+    if (ifaceFields.size === 0) bail(`interface ${ifaceName} yielded no top-level fields — the parse is wrong, refusing to report an empty emitted set`);
+    return ifaceFields;
+  }
+
   const fnRe = new RegExp(
     `function\\s+${fnName}\\s*\\([^)]*\\)\\s*:\\s*Promise<Record<([^,]+),\\s*number>>`,
     "s",
   );
   const fnMatch = modSrc.match(fnRe);
-  if (!fnMatch) bail(`could not find a typed "Promise<Record<X, number>>" return for ${fnName} in ${modFile}`);
+  if (!fnMatch) bail(`could not find a typed "Promise<Record<X, number>>" or "Promise<SomeInterface>" return for ${fnName} in ${modFile}`);
   const unionExpr = fnMatch[1].trim();
 
   const fields = new Set();
@@ -278,7 +334,31 @@ function extractEmittedFields(routesSrc, routesDir) {
   return fields;
 }
 
-function extractAccessedFields(surfaceSrc) {
+/**
+ * Strip comments before looking for accesses. Round 13, and this one is not
+ * cosmetic: phase 2 documented the fixed defect IN THE SURFACE, so
+ * MemorySurface.tsx now contains the sentences
+ *
+ *     Until 2026-08-19 this rendered `${counts.all ?? 0} notes`.
+ *     They read `counts[c.key] ?? 0` against an envelope whose keys were …
+ *
+ * inside a JSX comment and a doc block. Read as code they make C5 report a
+ * violation on `all` — the very key R15 removed — and then BAIL trying to
+ * resolve `counts[c.key]` against an array literal that no longer exists. A
+ * check that fails because someone explained the bug it was watching for is a
+ * check nobody will keep.
+ *
+ * Only `/* … *\/` blocks and whole-line `//` comments are removed. A trailing
+ * `//` is deliberately NOT stripped, because that cannot be done safely without
+ * a real lexer and the failure would be silent — it could eat a `//` inside a
+ * string literal and with it a genuine access.
+ */
+function stripComments(src) {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+}
+
+function extractAccessedFields(surfaceSrcRaw) {
+  const surfaceSrc = stripComments(surfaceSrcRaw);
   const fields = new Set();
   for (const m of surfaceSrc.matchAll(/\bcounts\.(\w+)/g)) fields.add(m[1]);
 
