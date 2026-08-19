@@ -1,37 +1,59 @@
-# Phase 7 deploy — STOPPED on precondition 1 and 2
+# Phase 7 deploy — DEPLOYED (round 17, re-seeded)
 
-**Task:** `fe3749e0` — "Deploy phase 7 — merge to main, rebuild, and prove it with a moved
-BUILD_ID in served HTML", round 15, workstream `main`, run `70bfc0d3-e9db-4a56-833a-b40bffa5e723`.
-**Date:** 2026-08-20.
-**Outcome: NO DEPLOY.** Nothing was merged into `main`, nothing was rebuilt, nothing was
-restarted, and `/opt/forge-ai-os` is byte-for-byte as this task found it.
+**Task** `d4561713` · **run** `3d5c6e98-5b92-4637-9edf-684c4b2c4e8b` · **2026-08-19 UTC**
+**Worktree** `/opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a`, branch `project/7851068b` at `818425a`
+**Live checkout** `/opt/forge-ai-os`, `main` `9c3f63a` → **`457f101`**
 
-The brief's own instruction is the one being obeyed here, verbatim:
+**BUILD_ID `TsvXpNcIwjauqnJDJB2dy` → `s5xDVZg4vNWFK40pXIcf6`, and the new one is what the host
+serves.** Full evidence in [`build-ids.txt`](./build-ids.txt).
 
-> `bash scripts/checks/preflight-deploy.sh` → **exit 0**. Paste the full output. If it fails,
-> STOP and report; you may not deploy over an open verdict, a dirty live checkout or an
-> unmerged lane.
-
-It failed. And the second precondition — that the phase-7 pre-deploy gate issued
-`VERDICT: PASS` — is **false as written in the brief**. The gate issued `NEEDS_FIXES`.
+Round 15's deploy (`fe3749e0`) refused, correctly, on two independent preconditions. Both are now
+closed — not waived. This report shows how each was closed and what was measured after.
 
 ---
 
-## 1. Precondition 1 — the preflight gate: **FAIL (exit 1)**
+## 1. Preconditions
 
-Full output, unedited:
+### 1.1 The gate verdict — read from `runs.thread`, not from an artefact
+
+The brief's precondition said the phase-7 pre-deploy gate `4b9e9a75` issued `VERDICT: PASS`.
+**It did not.** That claim was written at seeding time, before the gate ran, and it is a prediction
+rather than a measurement. Read from the runs database, joining on `metadata->>'task_id'` and taking
+the **last** assistant message carrying the marker (a whole-column regex classifies every reviewer as
+both verdicts, because the brief itself contains both strings):
+
+| Task | Round | Run | Run status | Verdict |
+|---|---|---|---|---|
+| `4b9e9a75` pre-deploy gate | 14 | `704942f2` | completed | **`VERDICT: NEEDS_FIXES`** |
+| `ea8360e4` re-review after fix cycle 1 | 16 | `8c8c4332` | completed | **`VERDICT: PASS`** |
+
+The round-14 `NEEDS_FIXES` is the blocker that fix cycle `8802e61a` (`818425a`) was seeded to close;
+the round-16 re-review is the row that closes it, and it is the newest reviewer for `main` that has
+run. Quoting its own words:
+
+> **FIXED.** `scripts/checks/preflight-deploy.sh:180-232`. […] The preflight still exits 1, and that
+> is the correct answer at this tip […] **This verdict is what closes that row and turns C1 green for
+> round 17.**
+
+So the precondition is satisfied by `ea8360e4`, not by `4b9e9a75`. Deploying on the strength of the
+brief's assertion alone would have deployed over an open `NEEDS_FIXES`.
+
+### 1.2 `preflight-deploy.sh` → exit 0
+
+Run unmodified, before the merge. **The script was not edited by this task** — a deploy that clears
+its own gate is exactly what the gate exists to prevent.
 
 ```
-$ bash scripts/checks/preflight-deploy.sh
-----------------------------------------
 ### C1 — every lane's final verdict is PASS ###
+  (caller run 3d5c6e98-5b92-4637-9edf-684c4b2c4e8b — reviewer rows pointing at it are skipped, never judged)
   vault: PASS (round 12, task 938740f4-9939-4d8a-926f-98ca3f2c8259)
   surfaces: PASS (round 4, task da6385eb-a845-4a01-930e-7555271a0282)
   connections: PASS (round 6, task 2c112799-7d19-4099-b784-a7a90886d42e)
   business: PASS (round 5, task 8e2da884-c94d-410b-9ae4-76cda0b06936)
   perf: PASS (round 3, task 98cbb26e-ce88-4588-810c-b22dfa27db62)
-  main: highest reviewer is round 16 (task ea8360e4-e880-4c57-b028-50d5edb2b7b1, status=pending) — no run_id yet, so no verdict exists ('Re-review after fix cycle 1')
-FAIL — C1 — every lane's final verdict is PASS: main=not-yet-run
+  main: SKIP round 18 (task 6d92b80e-0b93-4ed8-8fad-270d6a078abf, status=pending) — never run, no run_id ('Phase 7 GATE — R83-R90, the baseline diff, and the BUILD_ID fetched from the live host')
+  main: PASS (round 16, task ea8360e4-e880-4c57-b028-50d5edb2b7b1)
+PASS — C1 — every lane's final verdict is PASS (vault surfaces connections business perf main); 1 reviewer row(s) skipped as not-yet-run/in-flight/self, listed above — this is NOT 'every row checked'
 ----------------------------------------
 ### C2 — live checkout (/opt/forge-ai-os) is clean ###
 PASS — C2 — /opt/forge-ai-os is clean at main=9c3f63a
@@ -45,8 +67,8 @@ PASS — C2 — /opt/forge-ai-os is clean at main=9c3f63a
 PASS — C3 — no lane branch has unmerged work
 ----------------------------------------
 ### C4 — merge-tree probe: main <- project/7851068b ###
-  4c94920cc356ce6c67e7207ce12fb634b5dfc4bc
-PASS — C4 — merge-tree probe is conflict-free (tree 4c94920cc356ce6c67e7207ce12fb634b5dfc4bc)
+  9d88f3c2b6427895e651e17b4221b8bca0b60edf
+PASS — C4 — merge-tree probe is conflict-free (tree 9d88f3c2b6427895e651e17b4221b8bca0b60edf)
 ----------------------------------------
 ### C5 — MemorySurface reads no field routes/memory.ts does not emit ###
   emitted (routes/memory.ts -> noteCounts): agent_notes, embedded_chunks, embedded_files, excluded, folder_counts, folder_rule, measured_at, source, stale_embedding_rows, vault_files_on_disk, vault_notes_indexed
@@ -54,243 +76,262 @@ PASS — C4 — merge-tree probe is conflict-free (tree 4c94920cc356ce6c67e7207c
   self-test (bogus field __bogusField99__ must be caught): selfTestOk=true
 PASS — C5 — MemorySurface.tsx reads no field routes/memory.ts does not emit, and the comparator's self-test passed
 ----------------------------------------
-SUMMARY: 5 checks — 4 PASS, 1 FAIL
+SUMMARY: 5 checks — 5 PASS, 0 FAIL
 ----------------------------------------
-PREFLIGHT: FAIL — phase 7 may NOT deploy
-EXIT=1
+PREFLIGHT: PASS — phase 7 may deploy
 ```
 
-Four of five checks are green. **C1 is red**, and it is red for exactly the reason round 14's
-gate wrote down: `check_c1` (`scripts/checks/preflight-deploy.sh:85-89`) selects each
-workstream's reviewer by `sort_by(.round) | last`, and for workstream `main` that resolves to
-round **16** — a reviewer that has not run and cannot have run, because it is downstream of
-this task. The script asserts the future.
+**`=== PREFLIGHT EXIT: 0 ===`**
 
-The failure is **not** a lane verdict. All five lanes are PASS.
+C1 went green exactly as the fix cycle predicted, and the predicted mechanism is visible in the
+output: round 18 is skipped as never-run, round 16 is judged and is `PASS`. C4's tree is
+`9d88f3c2`, not the `4c94920c` the brief recorded — the branch tip moved to `818425a` (the fix
+cycle) after that measurement, so a different tree is expected.
 
-## 2. Precondition 2 — the pre-deploy gate's verdict: **NEEDS_FIXES, not PASS**
+Re-run **after** the merge it still exits 0, with `C2 — /opt/forge-ai-os is clean at main=457f101`.
 
-The brief states the gate "issued `VERDICT: PASS`". It did not. Read from `runs.thread` rather
-than from the artefact, as the brief itself instructs:
-
-```
-$ psql -h 127.0.0.1 -p 5432 -U postgres -d content_forge -Atc "
-    select o, substring(e->>'content' from 'VERDICT: [A-Z_]+')
-      from runs r, jsonb_array_elements(r.thread) with ordinality a(e,o)
-     where (r.metadata->>'task_id')='4b9e9a75-4261-4f7d-b84a-1b040fe74194'
-       and e->>'role'='assistant' and e->>'content' ~ 'VERDICT: '
-     order by o desc limit 5;"
-146|VERDICT: NEEDS_FIXES
-```
-
-One `VERDICT:` line in the whole run, at message 146, and it is the last assistant message.
-Task `4b9e9a75-4261-4f7d-b84a-1b040fe74194` = "Phase 7 pre-deploy gate", round 14, status
-`done`, run `704942f2-1e50-4a1c-baf5-6efa44201e3d`. Tail of that final message:
-
-> **Fix:** ignore reviewer rows that have never run (`run_id == null`), judge the highest-round
-> reviewer that has one, still FAIL a workstream with no completed reviewer, and print every
-> skipped row so a green C1 is not read as "all rows checked" — that keeps the teeth, because an
-> unrun re-review after a `NEEDS_FIXES` leaves the `NEEDS_FIXES` row as the newest run one. Ship
-> a forced-failure fixture for the new selection; this is the gate that judges its own author.
->
-> Everything else is green — nothing in the integrated tree needs to change for this to clear,
-> one script does.
->
-> VERDICT: NEEDS_FIXES
-
-The verdict artefact `docs/plan/artifacts/os-usable-for-work/phase7/pre-deploy-gate.md` (commit
-`c50a4c7`, 490 lines) agrees with the thread. Both sources say NEEDS_FIXES; the brief's claim of
-PASS is the only thing that says otherwise.
-
-**N9 — nothing reaches the live checkout without a gating reviewer's PASS — is therefore
-dispositive on its own, independently of the preflight exit code.**
-
-## 3. Precondition 3 — the live checkout: **CLEAN, re-read now**
+### 1.3 The live checkout was clean, re-read at run time
 
 ```
 $ git -C /opt/forge-ai-os status --porcelain
-(no output)
-$ git -C /opt/forge-ai-os rev-parse --abbrev-ref HEAD
-main
-$ git -C /opt/forge-ai-os log --oneline -3
-9c3f63a merge: cheaper verification — review only what can break, Sonnet by default
-de7b603 feat(prompt): review only what can break, and stop defaulting every task to Opus
-553fa38 feat(daily): Goals/Tasks daily surface — commit the work that was already live
-```
-
-Confirmed clean at `main = 9c3f63a`, exactly as the phase-7 planner measured on 2026-08-19.
-Konrad's Goals work is present as `553fa38`. No preservation patch was needed and none was
-taken. Nothing in `/opt/forge-ai-os` was written, checked out, reset or cleaned by this task.
-
-## 4. The BUILD_ID baseline, recorded before anything was touched
-
-```
-$ cat /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
-TsvXpNcIwjauqnJDJB2dy
-
-$ curl -s -L -m 10 http://127.0.0.1:7701/signin | grep -c TsvXpNcIwjauqnJDJB2dy
-1
-```
-
-The verbatim served-HTML fragment carrying it:
-
-```
-0:{\"P\":null,\"b\":\"TsvXpNcIwjauqnJDJB2dy\"
-```
-
-(inside `<script>self.__next_f.push([1,"0:{\"P\":null,\"b\":\"TsvXpNcIwjauqnJDJB2dy\",\"p\":\"\",\"c\":[\"\",\"signin\"],...`)
-
-Listener check — `pm2 online` is not `listening`:
-
-```
-$ ss -lntp | grep 7701
-LISTEN 0 511 *:7701 *:* users:(("next-server (v1",pid=1901687,fd=23))
-```
-
-See `build-ids.txt` for the ledger.
-
-## Why there is no second id
-
-Producing a second BUILD_ID requires merging `project/7851068b` into `main` in the live
-checkout and rebuilding there. That is precisely the action both failed preconditions forbid.
-A moved BUILD_ID obtained by deploying over an open `NEEDS_FIXES` would be a *proof of a
-violation*, not a proof of a deploy.
-
-## 5. Branch topology at the moment of the stop (the merge is ready, only ungated)
-
-```
-$ git rev-parse --abbrev-ref HEAD          # worktree
-project/7851068b
-$ git rev-parse HEAD
-c50a4c7f53489c8f195de825ac7d0b746ca5d5fc
-$ git rev-parse main
+$ git -C /opt/forge-ai-os rev-parse HEAD
 9c3f63aa161a29b844699fcf537e9c8ae22f374d
-$ git rev-list --count main..project/7851068b
-92
-$ git rev-list --count project/7851068b..main
-0
-$ git status --porcelain
-(no output)
 ```
 
-`main` has **not** moved since integration, so the briefed `git merge --no-ff main` into the
-work branch is a no-op — there is nothing to merge down. The 92 commits are ready to go up, and
-C4's `git merge-tree --write-tree` probe already resolved them against `main` conflict-free
-(tree `4c94920cc356ce6c67e7207ce12fb634b5dfc4bc`). **The tree is deployable; the gate is not
-satisfied.** That distinction is the whole content of this report.
-
-## 6. What the round-14 gate actually found, and what already exists to clear it
-
-The gate's blocker is the deploy gate script itself, not the integrated work. Its recorded
-measurements of the tree: 1645/1645 unit tests pass, both typechecks exit 0, `gates-808.sh
---strict` gives 22 executed-green / 2 skipped-by-design / 1 red with that red (gate 6,
-forbidden-file diff on `forge-control/src/db/projects.ts`, the perf lane's declared R73/R75
-column projection) adjudicated in writing against a `RED:0` baseline. Six of seven merges are
-byte-identical to `git merge-tree --write-tree` of their own parents. No lane's work is
-reversed.
-
-The remedy is seeded and waiting:
-
-| task | round | role | status | title |
-|---|---|---|---|---|
-| `4b9e9a75` | 14 | reviewer | done | Phase 7 pre-deploy gate → **NEEDS_FIXES** |
-| `fe3749e0` | 15 | builder | running | **this task** — Deploy phase 7 |
-| `8802e61a` | 15 | builder | **pending** | Fix cycle 1 (carries the C1 feedback verbatim) |
-| `6d92b80e` | 16 | reviewer | pending | Phase 7 GATE — R83–R90, BUILD_ID from the live host |
-| `ea8360e4` | 16 | reviewer | pending | Re-review after fix cycle 1 |
-
-`8802e61a` is briefed with the gate's full feedback, so the C1 fix has an owner. This task did
-**not** pre-empt it: repairing `scripts/checks/preflight-deploy.sh` here would be an undeclared
-write into a file another pending round-15 builder is about to edit in this same shared
-worktree, and — more to the point — a deploy task that repairs its own gate and then declares
-itself cleared is the exact failure mode the gate exists to prevent.
-
-## 7. THE STRUCTURAL PROBLEM THE MANAGER MUST RESOLVE
-
-**This deploy task will end `done`, and nothing re-seeds it.** The ordering that phase 7 now
-needs is:
-
-1. `8802e61a` fix cycle 1 → repair C1 (skip never-run reviewer rows; print the skipped ones;
-   ship a forced-failure fixture)
-2. `ea8360e4` re-review → `VERDICT: PASS`
-3. **a NEW deploy task** — merge, rebuild, restart, prove the moved BUILD_ID
-4. `6d92b80e` phase-7 gate → checks R83–R90 including the moved BUILD_ID
-
-Step 3 does not exist. A refused task is `done`, and this fleet has already measured that a
-correctly-refused integration is never re-seeded. If nobody creates it, `6d92b80e` will run
-against a live host still serving `TsvXpNcIwjauqnJDJB2dy` and fail on R89/S14 — "the deploy did
-not prove itself" — for a deploy that was never attempted. This was reported to the manager
-chat (`bfd1283a-b71b-4f35-b577-7d09aad803f2`) at the time of the stop.
-
-Note also that C1, once repaired as the gate prescribes, will read `main`'s newest **run**
-reviewer — which after step 2 is `ea8360e4`'s PASS. Until step 2 completes it is `4b9e9a75`'s
-`NEEDS_FIXES`, and the preflight will correctly keep refusing. That is the teeth working, not a
-second bug.
-
-## 8. Statement of what was and was not run
-
-- **`pm2 restart forge-executor` was NEVER run** by this task — not to deploy, not to test, not
-  once. (Quoting the forbidden string as evidence is a use, not a violation.)
-- `safe-restart.sh` was not launched: there is nothing to restart for, since nothing merged.
-- `pm2 restart forge-control` / `pm2 restart forge-control-web` were not run.
-- `pnpm install`, `pnpm build`, `git merge`, `git push` were not run.
-- `/opt/forge-ai-os` was accessed **read-only**: `git status`, `git rev-parse`, `git log`,
-  `cat .next/BUILD_ID`, and HTTP GETs against `127.0.0.1:7701`.
-- No screenshot was taken: the post-deploy memory-surface verification is downstream of a
-  deploy that did not happen, and screenshotting the *old* build would produce an image that
-  looks like proof of this round's work and is not.
-
-## 9. Write-set
-
-Declared: `docs/plan/artifacts/os-usable-for-work/phase7/deploy-report.md`,
-`docs/plan/artifacts/os-usable-for-work/phase7/build-ids.txt`.
-Written: exactly those two files. **No undeclared write.**
+No output. Re-read immediately before the merge and again after: still no output. Nothing was
+preserved, discarded or escalated, because there was nothing there. `git reflog show main` showed no
+prior merge of `project/7851068b` — this was not a retry over a partially-completed deploy.
 
 ---
 
-## APPENDED CORRECTION — 2026-08-20, same run, after the report above was committed
+## 2. The merge
 
-**§7's central claim is now FALSE, and this note exists so no reviewer chases a closed gap.**
-
-Section 7 said: *"Step 3 does not exist... If nobody creates it, `6d92b80e` will run against a
-live host still serving `TsvXpNcIwjauqnJDJB2dy`."* Between committing that (`d1b1811`) and
-re-reading the graph, **the manager seeded it.** Measured, not assumed:
+`main` is the deliverable; the project brief does not ask for a PR (R17). No PR was opened.
 
 ```
-$ curl -s http://127.0.0.1:7700/api/projects/7851068b-.../ | (tasks, round >= 14)
-14 done    reviewer main 4b9e9a75 deps=[999c250d]           Phase 7 pre-deploy gate
-15 running builder  main fe3749e0 deps=[4b9e9a75]           Deploy phase 7            <- this task
-15 pending builder  main 8802e61a deps=[4b9e9a75, fe3749e0] Fix cycle 1        chain=fix:14:1
-16 pending reviewer main ea8360e4 deps=[8802e61a]           Re-review          chain=rereview:14:1
-17 pending builder  main d4561713 deps=[ea8360e4]           Deploy phase 7 (re-seeded)
-18 pending reviewer main 6d92b80e deps=[d4561713]           Phase 7 GATE — R83-R90, BUILD_ID
+$ cd <worktree> && git merge --no-ff main
+Already up to date.
 ```
 
-Two changes from the graph §7 describes:
+`main` had not moved: `rev-list --count project/7851068b..main` = 0. The tip stayed
+`818425aeffa2a8966c67645619c9d6c41d814b05` — byte-for-byte the tip the round-16 reviewer passed, so
+the re-run below measures what was reviewed and nothing else.
 
-1. **`d4561713` exists** — "Deploy phase 7 (re-seeded) — merge to main, rebuild, prove the
-   BUILD_ID moved", round 17, `depends_on = [ea8360e4]`, workstream `main`, `write_set` = the
-   same two artefact paths as this task.
-2. **The phase gate moved from round 16 to round 18** and now depends on `d4561713`. That was
-   the second half of the ordering problem §7 raised, and it is fixed at the edge rather than
-   by round arithmetic.
+Re-run in the worktree after that no-op merge:
 
-The row is well-formed on the axes that have wedged this project before: it has a real
-`depends_on` (not `NULL`, which is a project-wide barrier), it declares a workstream, and it is
-a builder row so no `consolidateVerdictGroup` demands a verdict from it.
-`/opt/ai-os/scripts/stalled-projects.sh` reports **clear** — no wedge, no zombie, no legacy
-barrier, no failed row with a pending successor.
+| Check | Result |
+|---|---|
+| `forge-control` install `--frozen-lockfile --prod=false` | `Already up to date`, tsc **5.9.3**, tsx **4.22.4** present |
+| `forge-control` `tsc --noEmit` | **exit 0** |
+| `forge-control-web` install `--frozen-lockfile --prod=false` | `Already up to date`, tsc **5.7.2** present |
+| `forge-control-web` `tsc --noEmit` | **exit 0** |
+| `pnpm test` | **1645 tests, 1645 pass, 0 fail**, 308 suites |
 
-**So the standing ruling "A CORRECT REFUSAL MUST LEAVE A SUCCESSOR"
-(`AI OS/Operator Decisions.md`) is satisfied for this refusal.** The successor is
-`d4561713-4eaa-42a2-bdc6-cd7cd347838c`, and it owns the deploy. This report's §7 should be read
-as the diagnosis that produced that row, not as an open gap.
+Then, in the live checkout:
 
-**One consequence worth stating plainly:** `d4561713` declares *these same two files*. When it
-runs it will overwrite this report with the real deploy's evidence — correctly, because a
-deployed phase should not ship a stop-report as its deploy record. This refusal survives in git
-as commit `d1b1811` regardless of what later overwrites the working file, which is where a
-reviewer auditing round 15 should look.
+```
+$ git -C /opt/forge-ai-os merge --no-ff project/7851068b -m "merge(os-usable-for-work): phase 7 deploy — …"
+merge exit=0
+$ git -C /opt/forge-ai-os rev-parse HEAD
+457f1011f42118ecd31fe35dcaa01be2a3f9e4f1
+$ git -C /opt/forge-ai-os status --porcelain      # empty
+```
 
-Nothing else in this document changes: no merge, no rebuild, no restart, and
-`pm2 restart forge-executor` still never run.
+**No conflicts at either step.** 96 commits, 233 files, +81 683 / −1 344.
+
+---
+
+## 3. Install and rebuild — `NODE_ENV=production`, so `--prod=false` everywhere
+
+```
+$ echo $NODE_ENV
+production
+
+$ cd /opt/forge-ai-os/forge-control && pnpm install --frozen-lockfile --prod=false
+Lockfile is up to date, resolution step is skipped
+Already up to date
+Done in 700ms using pnpm v9.15.9
+$ ls -d node_modules/typescript node_modules/tsx
+node_modules/tsx
+node_modules/typescript
+$ ./node_modules/.bin/tsc --version && ./node_modules/.bin/tsx --version
+Version 5.9.3
+tsx v4.22.4
+
+$ cd /opt/forge-ai-os/forge-control-web && pnpm install --frozen-lockfile --prod=false
+Lockfile is up to date, resolution step is skipped
+Already up to date
+Done in 1s using pnpm v9.15.9
+$ ls -d node_modules/typescript node_modules/next && ./node_modules/.bin/tsc --version
+node_modules/next
+node_modules/typescript
+Version 5.7.2
+```
+
+**On the `+ typescript` requirement.** The brief asks for a transcript showing `+ typescript` rather
+than `- typescript` (R84 — a bare `--frozen-lockfile` under `NODE_ENV=production` exits 0, says
+`Already up to date`, and silently *removes* typescript). Both installs were already correct, so
+pnpm printed neither line: `Already up to date` emits no `+`/`−` at all. A missing `+ typescript` is
+therefore not evidence of anything, in either direction. What settles it is the state of the tree
+after the install, which is why the `ls -d` and `--version` calls above are in the transcript:
+typescript and tsx are **present and executable in both packages after the install ran**. That is the
+property `+ typescript` is a proxy for, measured directly. `pnpm` was used throughout; `npm` was
+never invoked.
+
+```
+$ cd /opt/forge-ai-os/forge-control-web && pnpm build
+   ▲ Next.js 15.1.3
+ ✓ Compiled successfully
+   Linting and checking validity of types ...
+ ✓ Generating static pages (10/10)
+=== build exit=0 ===
+```
+
+---
+
+## 4. The restarts
+
+```
+$ pm2 restart forge-control-web
+$ pm2 restart forge-control
+$ ss -lntp | grep -E '770[01]'
+LISTEN 0  511  127.0.0.1:7700  0.0.0.0:*  users:(("node /opt/forge",pid=2965204,fd=31))
+LISTEN 0  511          *:7701        *:*  users:(("next-server (v1",pid=2965178,fd=23))
+```
+
+Both on new PIDs (7701 was `1901687`), both **listening** — checked with `ss`, not with pm2, because
+a pm2 process can be `online` and have lost its socket.
+
+### `pm2 restart forge-executor` WAS NEVER RUN
+
+Stated explicitly, as the brief requires. It was not run to deploy, not to test, not once. The
+executor's restart counter is unchanged at **3** across this whole task. The diff does touch
+executor-loaded code — `forge-control/src/db/memory.ts`, `db/pipeline.ts`, `db/projects.ts`,
+`db/reminders.ts` — so a plain restart would have killed every run in flight including this one.
+The restart is delegated to the detached procedure, launched at the very end of this run and never
+waited on, polled, or tailed:
+
+```
+setsid nohup /opt/ai-os/scripts/safe-restart.sh forge-executor 43200 45 >> /tmp/safe-restart.log 2>&1 &
+```
+
+It waits for the fleet to go idle and restarts then. **Until it fires, the running executor still
+holds the pre-merge code** — the API and the web UI are deployed, the executor picks the new code up
+at the next idle window.
+
+---
+
+## 5. The self-proof (R89, S14)
+
+| | |
+|---|---|
+| Pre-deploy `BUILD_ID` | `TsvXpNcIwjauqnJDJB2dy` |
+| Post-deploy `BUILD_ID` | `s5xDVZg4vNWFK40pXIcf6` |
+
+Verbatim from what the live host serves:
+
+```
+$ curl -s -L -m 10 http://127.0.0.1:7701/signin | grep -o 'self.__next_f.push(\[1,"0:{\\"P\\":null,\\"b\\":\\"[A-Za-z0-9_-]*\\"'
+self.__next_f.push([1,"0:{\"P\":null,\"b\":\"s5xDVZg4vNWFK40pXIcf6\"
+```
+
+New id: **1 occurrence**. Old id: **0 occurrences**. `/` → 307 → `/signin` → **200**.
+
+---
+
+## 6. The two preconditions that motivated the project, verified against the LIVE index
+
+### 6.1 The memory surface does not lie
+
+`GET http://127.0.0.1:7700/api/memory/counts` against the live index, `measured_at`
+`2026-08-19T22:58:05Z` — a fresh measurement taken during this run, not a cached one:
+
+```json
+{"vault_files_on_disk":288,"vault_notes_indexed":288,"agent_notes":198,
+ "embedded_files":263,"embedded_chunks":2224,
+ "excluded":{"excalidraw":15,"empty":10,"frontmatter_only":1},
+ "stale_embedding_rows":1,"source":"all"}
+```
+
+And what the browser actually rendered — scraped from `document.body.innerText`, never quoted from
+the source, so a component that renders nothing cannot pass this:
+
+```
+288 vault notes indexed
+198 agent briefs (no file on disk)
+288 .md files on disk
+263 files embedded · 2,224 chunks embedded
+excluded: 15 excalidraw · 10 empty · 1 frontmatter-only
+1 stale embedding rows
+measured at 2026-08-19T22:58:05.000Z
+```
+
+**Every number carries a unit.** The defect this replaces — `counts.all` removed from the API while
+`MemorySurface` still read `counts.all ?? 0`, rendering "0 notes" for a full vault — cannot recur
+silently: preflight C5 compares the emitted field set against the accessed one on every deploy, and
+self-tests its own comparator against a fabricated field first.
+
+Screenshot: `/opt/ai-os/uploads/3d5c6e985b92/20260819T225804Z-r17-memory-surface-live.png`, Read back
+into the transcript. Driven at `--viewport 1600x2200` rather than `--full-page` (the desktop shell
+scrolls internally, so a full-page shot equals the viewport), `waitUntil: "commit"` (Next 15 here
+hangs the full timeout on `networkidle` and `domcontentloaded`), session minted and the `/signin`
+assertion cleared by `phase1/browser-harness.mjs` (`ok: true`, `status: 200`,
+`salt: __Secure-authjs.session-token`) before anything was believed.
+
+Also visible in that shot, live: the note list populated, the **Open in Obsidian** control present
+with its honest caveat ("only works on a machine running Obsidian with a vault named
+`obsidian-vault` — this server does not run Obsidian"), **Copy vault path** beside it, the `edit`
+affordance on the note, the folder census, and `LIBRARY`/`JOURNAL`/`MAP` carrying explicit
+**UNBUILT** badges instead of rendering empty.
+
+### 6.2 A discrepancy checked rather than assumed
+
+`find /opt/obsidian-vault -name '*.md' -type f | wc -l` returns **330**, against the surface's 288.
+Not a defect: the difference is **entirely `.trash`**.
+
+```
+all .md:            330
+excluding dotdirs:  288
+.md under dot-directories:   42  .trash
+```
+
+288 = 330 − 42 exactly. The surface is right to count live notes and not deleted ones.
+
+---
+
+## 7. GitHub push — succeeded
+
+```
+$ bash scripts/git-sync-branch.sh /opt/ai-os/workspace/projects/7851068b-…
+git-sync-branch.sh: pushing project/7851068b to git@github.com:konradschrein-star/AI-Operating-System.git
+To github.com:konradschrein-star/AI-Operating-System.git
+   818425a..2ad7c63  HEAD -> project/7851068b
+pushed-branch: project/7851068b
+sync exit=0
+```
+
+Plain push. No `--force`, no `--force-with-lease`, no rewritten history.
+
+---
+
+## 8. Write-set
+
+Declared: `deploy-report.md`, `build-ids.txt` — **both**, and nothing else. This task wrote no
+source file, edited no gate, and touched `/opt/forge-ai-os` only through `git merge`, `pnpm
+install`, `pnpm build` and the two allowed `pm2 restart`s.
+
+The one file written outside the repo is `/tmp/r17-memory-drive.mjs`, the throwaway surface driver
+for §6.1 — untracked, outside every worktree, not part of any commit. It mints no credential: it
+consumes the token `browser-harness.mjs --cookie-out` already minted and re-asserts `/signin`
+itself (exit 2, no screenshot written, on a wall). It exists because `browser-harness.mjs` evaluates
+`--eval` *after* its screenshot and so cannot select a surface held behind
+`localStorage["forge.desktop.surface"]` (`DesktopApp.tsx:253`) before it shoots — the improvement
+already filed against the harness in phase 2. The harness itself was not forked or edited.
+
+## 9. Final state of `main`
+
+The deploy merge landed at `457f101`, which is the commit that was built and is being served. This
+report and `build-ids.txt` were written **after** that build, so they arrive on `main` in a second,
+docs-only merge on top of it. That merge changes no code and therefore does **not** move the
+`BUILD_ID` — `s5xDVZg4vNWFK40pXIcf6` remains what the host serves, and the §5 proof stands. The
+final `main` tip is recorded in the task's report.
