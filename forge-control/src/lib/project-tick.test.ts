@@ -2414,7 +2414,7 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * longer name and work_branch at fe14a7e; this 12121 is a uuid alone at
    * fe14a7e plus round 242's own 26. Neither corroborates the other. */
   const BASELINE = 9221;
-  const BUDGET = 3050;
+  const BUDGET = 3597; // 3050 + 547, round 974 — see the LEDGER row for the arithmetic
 
   test("G5 — the maximal planner prompt stays inside the amended budget", () => {
     const measured = maximalPlannerPrompt().length;
@@ -2501,6 +2501,32 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
         "the definition rather than the COMPANION FILES prose)",
       spent: 106,
       reserved: 106,
+    },
+    {
+      round: 974,
+      what:
+        "REVIEW_ECONOMY (new) reaching BOTH planner branches, plus TIER_GUIDE rewritten to make " +
+        '"junior" the default and to name re-checks explicitly. Konrad, 2026-08-19, after a 5h ' +
+        'usage window hit 82%: "review only code, never docs or evidence", "we shouldn\'t instruct ' +
+        'the reviewers to have to find issues because if there are no issues then there are no ' +
+        'issues". THIS IS A WIDENING and it is licensed by the arithmetic, not by preference: ' +
+        "measured over 7 days, verification is 43% of ALL fleet tokens (fix cycles 25%, first-pass " +
+        "reviews 12%, re-reviews 6%) and 510 of 574 sessions ran Opus because TIER_GUIDE called " +
+        "Opus right for \"most implementation and review work\". 547 characters on the planner " +
+        "prompt is paid once per PLANNER spawn (32 in 7 days); the reviewer tiering and the " +
+        "no-review-for-docs rule are paid back on every reviewer and fix cycle the planner does " +
+        "NOT seed. RETIREMENT WAS ATTEMPTED FIRST and is why this is 547 and not 1780: TIER_GUIDE " +
+        "and REVIEW_ECONOMY were rewritten twice, shedding 1233 characters. A further 326 were " +
+        "available by compressing COMPANION FILES and the one-reviewer clause, and were NOT taken " +
+        "— both are pinned by .includes() assertions in this file and in cp3-linkage.test.ts, so " +
+        "the saving cost more in test churn than the characters were worth. Recorded rather than " +
+        "hidden, per the standing condition that a widening states what it retired. TWO NUMBERS, " +
+        "kept distinct: the block SPENDS 591 characters, of which 44 came from headroom that " +
+        "already existed and only 547 required BUDGET to move (3050 -> 3597). The ledger measures " +
+        "spend since the 5A tip; the cap measures the widening. Conflating them is how a widening " +
+        "hides inside a spend.",
+      spent: 591,
+      reserved: 591,
     },
   ] as const;
 
