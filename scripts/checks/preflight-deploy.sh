@@ -13,7 +13,9 @@
 # Exit 0 only if C1-C5 all PASS. Both the deploy task and the phase-7 gating
 # reviewer run this; a non-zero exit means the deploy does not happen.
 #
-# C1 — every lane's final verdict is PASS (reads runs.thread in content_forge)
+# C1 — every lane's final verdict is PASS (reads runs.thread in content_forge),
+#      judged on the highest-round reviewer that has ACTUALLY RUN — see the
+#      selection note above check_c1
 # C2 — the live checkout (/opt/forge-ai-os) is clean
 # C3 — no lane branch has unmerged work into project/7851068b
 # C4 — the merge (main <- project/7851068b) is conflict-free (probe only)
@@ -37,6 +39,15 @@ PG_PORT="${PGPORT:-5432}"
 PG_USER="${PGUSER:-postgres}"
 PG_DB="${PGDATABASE:-content_forge}"
 PG_PASSWORD="${PGPASSWORD:-90d4iBxMYP6m3DYrsP1fjSSU7uWDVE}"
+
+# The run this script is executing inside, if any. Every forge run exports it.
+# C1 refuses to read a verdict out of its OWN caller's run — see check_c1.
+SELF_RUN_ID="${FORGE_RUN_UUID:-}"
+
+# Run statuses that mean "this reviewer has not finished speaking yet". Anything
+# outside this set is terminal: a reviewer that ended without a VERDICT line is
+# a real fault and must FAIL C1, never be skipped.
+C1_IN_FLIGHT_RE='^(queued|running|pending|starting|resuming)$'
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -71,6 +82,66 @@ c1_fetch_verdict() {
   echo "$out"
 }
 
+# The lifecycle status of the run a reviewer row points at. Used ONLY to tell a
+# reviewer that has not spoken yet from one that ended without speaking.
+c1_run_status() {
+  local run_id="$1"
+  if [[ ! "$run_id" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+    echo "BAD_RUN_ID"
+    return 0
+  fi
+  local out
+  if ! out="$(PGPASSWORD="$PG_PASSWORD" psql -h "$PG_HOST" -p "$PG_PORT" -U "$PG_USER" -d "$PG_DB" -Atc \
+      "select status from runs where id='${run_id}'" 2>"$TMPDIR/c1-psql-err.log")"; then
+    echo "DB_ERROR: $(cat "$TMPDIR/c1-psql-err.log")"
+    return 0
+  fi
+  if [ -z "$out" ]; then
+    echo "NO_SUCH_RUN"
+  else
+    echo "$out"
+  fi
+}
+
+# ── C1's selection, rewritten at round 15 (fix cycle 1) ──────────────────────
+#
+# The original took `sort_by(.round) | last` over each workstream's live
+# reviewer rows. For the `main` workstream that is ALWAYS a reviewer scheduled
+# strictly AFTER whoever is running this script — phase 7 is
+# builder(13) → pre-deploy gate(14) → fix cycle(15) → re-review(16) → deploy →
+# post-deploy GATE(18) — so C1 asserted the future and could not be satisfied at
+# any of the three points the script is meant to run:
+#
+#   at the pre-deploy gate  — the later gate is `pending`, run_id null  → FAIL
+#   at the deploy task      — same row, still pending                   → FAIL
+#   at the post-deploy gate — it has a run_id but, being the caller, has
+#                             emitted no `VERDICT:` assistant message, so the
+#                             verdict query returns no rows              → FAIL
+#
+# The rule now: walk each workstream's reviewer rows from the highest round
+# down, SKIP the ones that cannot possibly hold a verdict yet, and judge the
+# first round-band that can. Every skip is printed with its reason, and the
+# number of skipped rows rides along on a green C1, so a PASS is never read as
+# "every reviewer row was checked".
+#
+# Three skip reasons, and nothing else is ever skipped:
+#   1. run_id is null           — the row has never run
+#   2. run_id == FORGE_RUN_UUID — it is THIS script's own caller; a gate that
+#                                 reads its own verdict judges itself
+#   3. no verdict yet AND the run is still in flight (see C1_IN_FLIGHT_RE)
+#
+# What this deliberately does NOT do:
+#   • a reviewer whose run has ENDED without a `VERDICT:` line is judged, and
+#     fails as `unparseable` — a crashed reviewer must still block a deploy
+#   • a workstream where every row was skipped fails as `no-completed-reviewer`
+#   • the whole round-band is judged, not one arbitrary row of it: `main` really
+#     does carry two round-6 reviewers, and `sort_by | last` picked between them
+#     on nothing better than array order
+#
+# The teeth are intact: an unrun re-review seeded after a NEEDS_FIXES is skipped
+# by rule 1, which leaves that NEEDS_FIXES row as the newest RUN one, so it
+# still blocks. Forced-failure fixture for all of it:
+# scripts/checks/fixtures/preflight-c1-fixture.sh
 check_c1() {
   echo "### C1 — every lane's final verdict is PASS ###"
   local project_json="$TMPDIR/project.json"
@@ -78,58 +149,103 @@ check_c1() {
     fail_check "C1 — could not fetch $API_BASE/api/projects/$PROJECT_ID (project tasks)"
     return
   fi
+  if [ -n "$SELF_RUN_ID" ]; then
+    echo "  (caller run $SELF_RUN_ID — reviewer rows pointing at it are skipped, never judged)"
+  else
+    echo "  (FORGE_RUN_UUID is unset — no caller run to exclude)"
+  fi
 
   local bad_lanes=()
-  local ws task task_id round title status run_id verdict
+  local skipped_total=0
+  local ws rows row task_id round title status run_id verdict run_status
+  local judged_round judged_any
   for ws in "${ALL_WORKSTREAMS[@]}"; do
-    task="$(jq --arg ws "$ws" '
+    rows="$(jq -c --arg ws "$ws" '
       [.tasks[] | select(.workstream == $ws and .role == "reviewer")
-       | select(((.title | startswith("[MERGED")) or (.title | startswith("[FOLDED")) or (.title | startswith("[RETIRED"))) | not)]
-      | sort_by(.round) | last
+       | select(((.title | startswith("[MERGED")) or (.title | startswith("[FOLDED")) or (.title | startswith("[RETIRED"))) | not)
+       | {id, round, title, status, run_id}]
+      | sort_by(.round) | reverse | .[]
     ' "$project_json")"
 
-    if [ "$task" = "null" ]; then
+    if [ -z "$rows" ]; then
       echo "  $ws: no reviewer task (every reviewer row is [MERGED]/[FOLDED]/[RETIRED], or none exists)"
       bad_lanes+=("$ws=no-reviewer")
       continue
     fi
 
-    task_id="$(jq -r '.id' <<<"$task")"
-    round="$(jq -r '.round' <<<"$task")"
-    title="$(jq -r '.title' <<<"$task")"
-    status="$(jq -r '.status' <<<"$task")"
-    run_id="$(jq -r '.run_id' <<<"$task")"
+    judged_round=""
+    judged_any=0
+    while IFS= read -r row; do
+      [ -z "$row" ] && continue
+      task_id="$(jq -r '.id' <<<"$row")"
+      round="$(jq -r '.round' <<<"$row")"
+      title="$(jq -r '.title' <<<"$row")"
+      status="$(jq -r '.status' <<<"$row")"
+      run_id="$(jq -r '.run_id' <<<"$row")"
 
-    if [ "$run_id" = "null" ] || [ -z "$run_id" ]; then
-      echo "  $ws: highest reviewer is round $round (task $task_id, status=$status) — no run_id yet, so no verdict exists ('$title')"
-      bad_lanes+=("$ws=not-yet-run")
-      continue
-    fi
+      # Judge one whole round-band, then stop descending.
+      if [ "$judged_any" -eq 1 ] && [ "$round" != "$judged_round" ]; then
+        break
+      fi
 
-    verdict="$(c1_fetch_verdict "$task_id")"
-    case "$verdict" in
-      "VERDICT: PASS")
-        echo "  $ws: PASS (round $round, task $task_id)"
-        ;;
-      "VERDICT: NEEDS_FIXES")
-        echo "  $ws: NEEDS_FIXES (round $round, task $task_id, '$title')"
-        bad_lanes+=("$ws=NEEDS_FIXES")
-        ;;
-      DB_ERROR:*)
-        echo "  $ws: could not read the runs DB for task $task_id — $verdict"
-        bad_lanes+=("$ws=db-error")
-        ;;
-      *)
-        echo "  $ws: no parseable VERDICT in run for task $task_id (round $round) — got '$verdict'"
+      if [ "$run_id" = "null" ] || [ -z "$run_id" ]; then
+        echo "  $ws: SKIP round $round (task $task_id, status=$status) — never run, no run_id ('$title')"
+        skipped_total=$((skipped_total + 1))
+        continue
+      fi
+
+      if [ -n "$SELF_RUN_ID" ] && [ "$run_id" = "$SELF_RUN_ID" ]; then
+        echo "  $ws: SKIP round $round (task $task_id, run $run_id) — this is the caller's own run, C1 does not judge itself ('$title')"
+        skipped_total=$((skipped_total + 1))
+        continue
+      fi
+
+      verdict="$(c1_fetch_verdict "$task_id")"
+      if [ -z "$verdict" ]; then
+        run_status="$(c1_run_status "$run_id")"
+        if [[ "$run_status" =~ $C1_IN_FLIGHT_RE ]]; then
+          echo "  $ws: SKIP round $round (task $task_id, run $run_id) — reviewer still in flight (run status=$run_status), no VERDICT yet ('$title')"
+          skipped_total=$((skipped_total + 1))
+          continue
+        fi
+        echo "  $ws: no VERDICT in a run that is no longer in flight (round $round, task $task_id, run status=$run_status) — a reviewer that ended without a verdict blocks the deploy ('$title')"
         bad_lanes+=("$ws=unparseable")
-        ;;
-    esac
+        judged_round="$round"
+        judged_any=1
+        continue
+      fi
+
+      judged_round="$round"
+      judged_any=1
+      case "$verdict" in
+        "VERDICT: PASS")
+          echo "  $ws: PASS (round $round, task $task_id)"
+          ;;
+        "VERDICT: NEEDS_FIXES")
+          echo "  $ws: NEEDS_FIXES (round $round, task $task_id, '$title')"
+          bad_lanes+=("$ws=NEEDS_FIXES")
+          ;;
+        DB_ERROR:*)
+          echo "  $ws: could not read the runs DB for task $task_id — $verdict"
+          bad_lanes+=("$ws=db-error")
+          ;;
+        *)
+          echo "  $ws: no parseable VERDICT in run for task $task_id (round $round) — got '$verdict'"
+          bad_lanes+=("$ws=unparseable")
+          ;;
+      esac
+    done <<<"$rows"
+
+    if [ "$judged_any" -eq 0 ]; then
+      echo "  $ws: every reviewer row was skipped — no reviewer has ever produced a verdict for this workstream"
+      bad_lanes+=("$ws=no-completed-reviewer")
+    fi
   done
 
   if [ ${#bad_lanes[@]} -eq 0 ]; then
-    pass_check "C1 — every lane's final verdict is PASS (${ALL_WORKSTREAMS[*]})"
+    pass_check "C1 — every lane's final verdict is PASS (${ALL_WORKSTREAMS[*]}); $skipped_total reviewer row(s) skipped as not-yet-run/in-flight/self, listed above — this is NOT 'every row checked'"
   else
-    fail_check "C1 — every lane's final verdict is PASS: ${bad_lanes[*]}"
+    fail_check "C1 — every lane's final verdict is PASS: ${bad_lanes[*]} ($skipped_total row(s) skipped)"
   fi
 }
 
@@ -464,4 +580,12 @@ main() {
   fi
 }
 
-main "$@"
+# Run the gate when EXECUTED; only define the functions when SOURCED. The
+# fixture harness sources this file so it can drive check_c1 in isolation
+# against THE REAL SCRIPT rather than a patched copy — a shadow copy of a gate
+# is a gate nobody has tested. The condition is deliberately BASH_SOURCE vs $0
+# and not an environment variable: no env var can make an executed
+# preflight-deploy.sh exit 0 without running its checks.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

@@ -488,3 +488,191 @@ No `done` row's `write_set` was amended by this review, and no PATCH was propose
 
 Everything else in §§2–6 is green. Nothing in the integrated tree needs to change for this verdict to
 clear; one script does.
+
+---
+
+# Fix cycle 1 (round 15) — the response
+
+Appended by the fix-cycle builder. **Nothing above this line was altered**; the round-14 verdict,
+its evidence and its blocker text stand as written. This section records what was done about the one
+blocker and how it was proved.
+
+**Tree at the start of this fix cycle** `6958f5f63d9e4ee8529de224643cd0ae2d674d4a`
+(worktree `/opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a`, branch
+`project/7851068b`). `/opt/forge-ai-os` was not touched: this is a build task, and C2 is the check
+that would notice.
+
+## 1. What changed
+
+| File | Change |
+|---|---|
+| `scripts/checks/preflight-deploy.sh` | `check_c1`'s selection rewritten; `c1_run_status()` added; `SELF_RUN_ID` / `C1_IN_FLIGHT_RE` added; the trailing `main "$@"` guarded so the file can be sourced |
+| `scripts/checks/fixtures/preflight-c1-fixture.sh` | **new** — eight-case forced-failure fixture for the new selection |
+| `docs/plan/os-usable-for-work/04-phases.md` §10 | the undeclared-write disclosure for the two above |
+| `docs/plan/artifacts/os-usable-for-work/phase7/preflight-evidence.md` | one paragraph marking §2's C1 demo superseded |
+
+## 2. The new selection, and why it is wider than the fix the gate prescribed
+
+The gate prescribed: ignore rows with `run_id == null`, judge the highest-round reviewer that has
+one, still fail a workstream with no completed reviewer, print every skipped row. That is
+implemented. It is **not sufficient on its own**, and the gate's own §"blocker" says why: it lists
+three unsatisfiable points, and rule 1 only fixes two of them. At round 16 the post-deploy gate has a
+`run_id` — its own, still running — so under the prescribed rule it selects itself, finds no
+`VERDICT:` assistant message, and lands in `unparseable`. The third point survives the prescribed
+fix. So C1 now walks each workstream's reviewer rows from the highest round **down** and skips for
+exactly three reasons:
+
+1. `run_id` is null — the row has never run.
+2. `run_id == $FORGE_RUN_UUID` — it is the caller's own run. **A gate must not read its own verdict.**
+3. There is no verdict yet **and** the run is still in flight (`queued|running|pending|starting|resuming`).
+
+The first round-band that is not entirely skipped is judged — the whole band, not one row of it,
+because `main` genuinely carries two round-6 reviewers and `sort_by(.round) | last` chose between
+them on array order alone.
+
+What was deliberately **not** loosened:
+
+- A reviewer whose run has **ended** without a `VERDICT:` line is judged, and fails as `unparseable`.
+  This is the load-bearing distinction: rule 3 turns on the run's lifecycle status, not on the
+  absence of a verdict, so a reviewer that crashed still blocks the deploy. Case 5 below is that
+  control, and mutation C shows the check going green without it.
+- A workstream where every row was skipped fails as `no-completed-reviewer`, never falls through.
+- The `[MERGED`/`[FOLDED`/`[RETIRED` filter, the DB-error branch, and the "no reviewer at all"
+  branch are unchanged.
+
+The teeth the gate was worried about are intact by construction: an unrun re-review seeded above a
+`NEEDS_FIXES` is skipped by rule 1, which leaves that `NEEDS_FIXES` as the newest **run** row, so it
+still blocks. That is case 1 of the fixture, and it is also the live situation right now.
+
+Every skip is printed with its round, task id, status and title, and a green C1 carries the count:
+
+```
+PASS — C1 — every lane's final verdict is PASS (vault surfaces …); 1 reviewer row(s) skipped as
+not-yet-run/in-flight/self, listed above — this is NOT 'every row checked'
+```
+
+## 3. The sourcing guard, and why it is not an env-var test hook
+
+The fixture drives **the real script**, sourced out of `scripts/checks/`, never a patched copy — a
+shadow copy of a gate is a gate nobody has tested. That needed the trailing entrypoint guarded:
+
+```bash
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi
+```
+
+`BASH_SOURCE` vs `$0`, deliberately, and **not** an environment variable: no env var can make an
+executed `preflight-deploy.sh` skip its checks and exit 0. Executed, `$0` is the script path and the
+gate runs; sourced, `$0` is the caller and only the functions are defined. Verified both ways — the
+live run in §4 is the executed path, all eight fixture cases are the sourced path.
+
+## 4. The live run — C1 now fails for the true reason
+
+`bash scripts/checks/preflight-deploy.sh` at `6958f5f`, C1 section verbatim:
+
+```
+### C1 — every lane's final verdict is PASS ###
+  (caller run 66325073-9579-47e6-ade7-a1ae033efbdd — reviewer rows pointing at it are skipped, never judged)
+  vault: PASS (round 12, task 938740f4-9939-4d8a-926f-98ca3f2c8259)
+  surfaces: PASS (round 4, task da6385eb-a845-4a01-930e-7555271a0282)
+  connections: PASS (round 6, task 2c112799-7d19-4099-b784-a7a90886d42e)
+  business: PASS (round 5, task 8e2da884-c94d-410b-9ae4-76cda0b06936)
+  perf: PASS (round 3, task 98cbb26e-ce88-4588-810c-b22dfa27db62)
+  main: SKIP round 18 (task 6d92b80e-…, status=pending) — never run, no run_id ('Phase 7 GATE — …')
+  main: SKIP round 16 (task ea8360e4-…, status=pending) — never run, no run_id ('Re-review after fix cycle 1')
+  main: NEEDS_FIXES (round 14, task 4b9e9a75-…, 'Phase 7 pre-deploy gate — …')
+FAIL — C1 — every lane's final verdict is PASS: main=NEEDS_FIXES (2 row(s) skipped)
+```
+
+C2/C3/C4/C5 are PASS; the script exits 1 on C1 alone.
+
+**Read this carefully, because it is the point.** The preflight still exits 1 — and that is now
+*correct*, not broken. It no longer says `main=not-yet-run` about a gate scheduled two rounds in the
+future; it says `main=NEEDS_FIXES` about the round-14 verdict this very fix cycle exists to close.
+The row it names is real, open, and at the top of this file. When the round-16 re-review runs and
+returns PASS, that row becomes the newest run one and C1 goes green with round 18 skipped — which is
+fixture case 2, run and asserted below. **No task should read this exit 1 as "the fix did not
+land".**
+
+## 5. The forced-failure fixture
+
+`scripts/checks/fixtures/preflight-c1-fixture.sh`, no arguments, ~20s. Isolation: a per-run scratch
+Postgres database named `preflight_c1_fixture_<pid>_<epoch>` (created, then dropped at exit, and only
+ever by that prefix — the script aborts if the name resolves to `content_forge`), and a throwaway
+`python3 -m http.server` on a free port serving the fixture task graph at
+`/api/projects/<the real project id>`, with `FORGE_CONTROL_API` pointed at it. The live forge-control
+API and the live `content_forge` DB are never read. Nothing is written to the repo or
+`/opt/forge-ai-os`.
+
+Five of the eight cases are failures. Verbatim:
+
+```
+fixture subject : …/scripts/checks/preflight-deploy.sh
+subject sha256  : 5afa546acfc86352e38e332e3bbaad53a24a152ab44c93bf354ae84006323329
+scratch database: preflight_c1_fixture_2892207_1787178932
+fixture API     : http://127.0.0.1:33223
+
+── the eight cases ──────────────────────────────────────────────────────
+  ok   — unrun re-review does not launder a NEEDS_FIXES (C1 FAIL, as expected)
+  ok   — cleared blocker + pending post-deploy gate passes (C1 PASS, as expected)
+  ok   — post-deploy gate running its own preflight (C1 PASS, as expected)
+  ok   — a foreign reviewer still in flight is skipped (C1 PASS, as expected)
+  ok   — a reviewer that ended without a VERDICT blocks (C1 FAIL, as expected)
+  ok   — no reviewer has ever run for a workstream (C1 FAIL, as expected)
+  ok   — a NEEDS_FIXES sibling at the same round still blocks (C1 FAIL, as expected)
+  ok   — every reviewer row [MERGED] is still no-reviewer (C1 FAIL, as expected)
+
+────────────────────────────────────────────────────────────────────────
+FIXTURE: 8 cases — 8 as expected, 0 wrong
+FIXTURE: PASS
+```
+
+Cases 2, 3 and 4 are the three points the gate named as unsatisfiable, each asserted to PASS now.
+Cases 1, 5, 6, 7 and 8 are the teeth. Every case asserts on **needle strings in C1's output**, not
+only on the pass/fail bit — a case that reaches the right verdict by the wrong route is reported
+`BAD`, which is what makes §6 discriminating.
+
+## 6. Mutation controls — the fixture is not inert
+
+A fixture that only ever runs against the fixed script proves nothing. Each of the four rules above
+was removed in turn, in a scratch copy of the tree (the worktree file's sha256 was re-checked
+afterwards and is unchanged), and the fixture re-run against the mutant:
+
+| Mutation | Cases that go `BAD` |
+|---|---|
+| **A** — rule 1 removed (never-run rows are judged) | 1, 2, 6, 7 → `4 wrong` |
+| **B** — rule 2 removed (the caller judges itself) | 3 → `1 wrong` |
+| **C** — the in-flight skip made unconditional | 5 → `1 wrong` |
+| **D** — the round-band collapsed back to a single row | 1, 2, 3, 4, 7 → `5 wrong` |
+
+Each mutation was verified to have actually applied (a mutation that does not change the file aborts
+the control) and to change exactly one line. Note that under A, D and B several cases keep the right
+pass/fail bit and are still reported `BAD` — the needle assertions catch the wrong reason. Mutation C
+is the important one: without the lifecycle-status condition, "a reviewer that ended without a
+VERDICT blocks" flips to PASS, which is precisely the hole a careless reading of rule 3 would open.
+
+## 7. What this fix cycle did NOT do
+
+- **No change to the integrated tree.** The gate said so explicitly and it was true: not one file of
+  `forge-control`, `forge-control-web` or any lane's work was touched. The diff is one gate script,
+  one new fixture, and two documents.
+- **The gate-6 red is not re-adjudicated.** It is accepted and recorded in the round-14 review above
+  and in `03-quality.md` §3.1; nothing here changes it.
+- **No verdict was written for `main`.** That is round 16's job. This section is a builder's report,
+  and it deliberately does not contain the string that a verdict grep would match.
+
+## 8. Undeclared writes, disclosed
+
+This task's declared write-set is **`docs/plan/artifacts/os-usable-for-work/phase7/pre-deploy-gate.md`
+alone** — the round-14 reviewer's artefact, inherited by the fix-cycle row (`fixChainGraphFields()`
+unions the *gating reviewers'* write-sets, and reviewers declare none by design). Satisfying it
+literally would mean writing nothing but this file, and the blocker cannot be fixed that way. Three
+files outside it changed, all tabled in `04-phases.md` §10 in the same commit:
+
+| File | Why |
+|---|---|
+| `scripts/checks/preflight-deploy.sh` | the blocker itself — the gate ordered this exact file changed |
+| `scripts/checks/fixtures/preflight-c1-fixture.sh` | the gate ordered a forced-failure fixture; a fixture that is not committed cannot be re-run by round 16 |
+| `docs/plan/os-usable-for-work/04-phases.md` | standing rule 5: an undeclared write is disclosed at the site **and** in §10, in the same commit |
+| `docs/plan/artifacts/os-usable-for-work/phase7/preflight-evidence.md` | §2's C1 forced-failure demo describes the old selection and patches a `main "$@"` line that no longer exists; left alone it would read as current. Marked superseded, four sentences, nothing deleted |

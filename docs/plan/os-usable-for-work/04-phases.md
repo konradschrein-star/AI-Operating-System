@@ -548,6 +548,22 @@ loosened. What it deliberately no longer fails on is pure line drift, which is t
 governing files it does not own should live on `main` with them — is untouched. This verifier still
 exists only on lanes, so `main`'s authors still cannot run it. That is `operator-visibility` work.
 
+### Undeclared writes, disclosed (round 15, fix cycle 1 — the pre-deploy gate's own blocker)
+
+The round-14 gate returned NEEDS_FIXES with exactly one blocker, and it was in
+`scripts/checks/preflight-deploy.sh` itself: `check_c1` selected `sort_by(.round) | last` over each
+workstream's reviewer rows, which for `main` is always a reviewer scheduled *after* the caller, so
+the deploy's own precondition could not be met at any of the three points the script runs. The
+fix-cycle row inherited the reviewer's write-set — `phase7/pre-deploy-gate.md` alone, because
+`fixChainGraphFields()` unions the *gating reviewers'* write-sets and reviewers declare none by
+design — so every path this fix cycle had to touch is undeclared. Tabled here, in the same commit.
+
+| Commit | File | Declared by | Why it had to change |
+|---|---|---|---|
+| round 15, `fix(preflight C1): …` — the commit carrying this row | `scripts/checks/preflight-deploy.sh` | **nobody** — built by task `4a645d9d` at round 0 of this same `main` workstream | The blocker itself; the gate named this file and prescribed the change. C1 now walks each workstream's reviewer rows from the highest round down and skips three cases — never run (`run_id` null), the caller's own run (`FORGE_RUN_UUID`), and no verdict yet while the run is still in flight — judging the first round-band that survives. A reviewer whose run *ended* without a verdict is still judged and still fails; a workstream where every row was skipped fails as `no-completed-reviewer`; every skip is printed and a green C1 carries the skipped count. The gate's prescribed rule (skip `run_id == null`) fixes two of the three unsatisfiable points it listed; the third — the post-deploy gate running the script inside its own unfinished run — needs the other two rules, which is why this is wider than the prescription. **This is the gate that judges this task's own output**, so the loosening ships with a committed forced-failure fixture and four mutation controls; see `phase7/pre-deploy-gate.md` §§2–6. |
+| same commit | `scripts/checks/fixtures/preflight-c1-fixture.sh` | **nobody** — new file | The forced-failure fixture the gate required. Eight cases, five of them failures, driving the **real** script (sourced, not a patched copy — the trailing `main "$@"` is now guarded by `BASH_SOURCE` vs `$0`, which no environment variable can subvert) against a per-run scratch Postgres DB and a throwaway HTTP server. An uncommitted fixture cannot be re-run by round 16, which is the whole point of shipping one. |
+| same commit | `docs/plan/artifacts/os-usable-for-work/phase7/preflight-evidence.md` | **nobody** — the round-0 preflight task's artefact | §2's C1 forced-failure demo documents the old selection and patches a line that no longer exists. One superseding paragraph added above it, pointing at the new fixture; nothing deleted, C2–C5 untouched. Left alone it would read as the current record of how C1 is proved. |
+
 ---
 
 ## Requirement → phase map (complete)

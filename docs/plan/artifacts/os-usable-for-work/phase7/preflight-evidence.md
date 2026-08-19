@@ -68,6 +68,14 @@ diff for every demo copy is below — each is a one-line data-source substitutio
 entrypoint, nothing in the check logic itself changed. None of these copies were committed; they
 exist only under `/tmp/preflight-demo/`.
 
+> **The C1 demo below is superseded (round 15, fix cycle 1).** Round 14's gate found `check_c1`'s
+> selection unsatisfiable and it was rewritten; the diff shown here patches a bare `main "$@"` line
+> that no longer exists, and it demonstrates the old `sort_by(.round) | last` behaviour. It is kept
+> as the record of what was run on 2026-08-19 and is not re-runnable as written. The current C1 is
+> covered by a committed, re-runnable, eight-case fixture —
+> `scripts/checks/fixtures/preflight-c1-fixture.sh` — with its own mutation controls; see
+> `phase7/pre-deploy-gate.md` §§2–6. C2–C5 below are unaffected.
+
 Method for C5: no patch was needed — `check_c5` already resolves its two source paths from `$REPO`,
 so the demo simply points `$REPO` at a scratch copy of the two files.
 
