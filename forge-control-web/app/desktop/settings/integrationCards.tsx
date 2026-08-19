@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * The two outside-service cards: `GeminiCard` and `GoogleCard`.
+ * The outside-service cards: `GeminiCard`, `GoogleCard`, and — added in phase
+ * 4 / B4c — `AgyCard` and `GitHubCard`.
  * (This file was `IntegrationsPanel.tsx` until round 1876.)
  *
  * Round 1876 folded settings' ACCOUNTS and INTEGRATIONS sections into one
@@ -14,12 +15,17 @@
  * about the shape of the app. Each card reports its loaded state upward
  * through `onFacts` so the row above it needs no second fetch.
  *
- * Two subjects, both backed by `forge-control/src/routes/integrations.ts`:
+ * Four subjects, all backed by `forge-control/src/routes/integrations.ts`:
  *
  *   GEMINI  — paste-in API key (secret store, never the database, never echoed
  *             back), a live reachability test, and OUR OWN spend count.
  *   GOOGLE  — the Gmail/Calendar/Drive consent this box already runs on, and
  *             the exact command to re-authorise it.
+ *   AGY     — the Antigravity CLI. A state, the verbatim terminal steps, and a
+ *             Verify that runs the real `agy models`. No Connect button: see
+ *             the block below for why one would be a lie.
+ *   GITHUB  — a write-only PAT field over `POST /api/secrets`, and a status
+ *             that comes only from a real `GET https://api.github.com/user`.
  *
  * ── What this panel deliberately does NOT render ─────────────────────────
  * (round 1302 research, docs/plan/operator-visibility/artifacts/phase1700/
@@ -34,6 +40,31 @@
  *     nothing, this panel says so in a sentence.
  *   • No claim that the API key replaces the Gemini Pool on :8090. The pool
  *     stays the free default path; the key is the higher-quality opt-in.
+ *
+ * ── AND WHAT PHASE 4 / B4c ADDED TO THAT LIST ────────────────────────────
+ * (phase0/S-A-agy-flow.md and phase4/agy-flow-affordance.md — read the second
+ * one before adding any button to `AgyCard`)
+ *
+ *   • No "Connect agy" button, and no paste-a-code box. `agy` has no `login`
+ *     subcommand; auth is implicit PKCE with
+ *     `redirect_uri=https://antigravity.google/oauth-callback`, so nothing on
+ *     this box catches the callback. The CLI prints a consent URL, waits a
+ *     HARD-CODED 60 seconds on ONE single-use challenge, and asks for the code
+ *     to be pasted into THAT process's stdin. A browser control cannot reach
+ *     that stdin, and the flow is over before a human could round-trip
+ *     Google's consent screen anyway. R54 explicitly permits recording this as
+ *     a blocker; it explicitly forbids the pretty lie. So the card prints the
+ *     verbatim command and the verbatim prompt, and offers Verify — which runs
+ *     the real probe and shows its real output.
+ *   • No "token present" chip on `GitHubCard`. A stored PAT is storage, not
+ *     authorisation; only a 200 from `GET https://api.github.com/user`
+ *     carrying a `login` produces the connected word. The two states have
+ *     deliberately different labels (`NO TOKEN STORED` vs `UNVERIFIED`) so
+ *     they can never be read as the same thing.
+ *   • No green dot anywhere without a `checked_at` (R57). Every one of these
+ *     cards renders its state through `connections.ts#summaryFromStatus`,
+ *     which is the only function in this surface that can produce the word
+ *     CONNECTED, and it cannot produce it from a null timestamp.
  *
  * ── Honesty rules ───────────────────────────────────────────────────────
  *   • The key is write-only from the browser's point of view. It goes up in a
@@ -60,7 +91,30 @@ import {
   type JSX,
 } from "react";
 import { tokens } from "../../tokens";
-import type { GoogleFacts } from "./connections";
+import { storeSecret } from "../../api";
+import {
+  fetchAgyConnection,
+  fetchConnections,
+  fetchGithubConnection,
+  fetchGoogleConnection,
+  probeAgyConnection,
+  probeGithubConnection,
+  probeGoogleConnection,
+  type AgyFlow,
+  type ConnectionStatus,
+  type GoogleAccountView,
+  type GoogleCheck,
+} from "../../api-connections";
+import {
+  agyConnection,
+  githubConnection,
+  probedAgo,
+  type AgyFacts,
+  type ConnectionSummary,
+  type GithubFacts,
+  type GoogleFacts,
+  type Read,
+} from "./connections";
 
 /* ── Wire shapes (mirror routes/integrations.ts) ─────────────────────────── */
 
@@ -122,31 +176,10 @@ interface GeminiUsage {
   basis: string;
 }
 
-interface GoogleAccount {
-  id: string;
-  email: string | null;
-  scopes: string[];
-  has_refresh_token: boolean;
-  client_id: string | null;
-  connected_at: string | null;
-  access_expires_at: string | null;
-  token_path: string;
-}
-
-interface GoogleCheck {
-  ok: boolean;
-  email: string | null;
-  reason: string | null;
-  message: string;
-  checked_at: string;
-}
-
-interface GoogleStatus {
-  accounts: GoogleAccount[];
-  last_check: GoogleCheck | null;
-  reauth: { command: string; interactive: boolean; why: string };
-  detail?: string;
-}
+/* The Google/agy/GitHub wire shapes used to be re-declared here. They now live
+ * in `app/api-connections.ts`, imported above — one declaration, mirroring
+ * `forge-control/src/lib/connection-status.ts`, so a field added on the server
+ * cannot go on being described two different ways in two files. */
 
 /* ── Fetch helpers ───────────────────────────────────────────────────────── */
 
@@ -352,6 +385,111 @@ function eur(n: number): string {
   return `€${n.toFixed(n < 1 ? 4 : 2)}`;
 }
 
+/* ── The connection state chip — phase 4 / B4c ───────────────────────────── */
+
+/**
+ * The ONE place a connection state becomes a colour.
+ *
+ * `connected` is the only entry that reaches a positive token, and nothing can
+ * reach `connected` except `summaryFromStatus()`, which cannot produce it from
+ * a null `checked_at`. So R57 is enforced by the type of the thing being
+ * looked up rather than by a rule somebody has to remember at each call site.
+ * Amber for unknown, deliberately the same amber the Claude rows use.
+ */
+const STATE_SKIN: Record<
+  ConnectionSummary["state"],
+  { fg: string; bg: string }
+> = {
+  connected: { fg: tokens.ok, bg: tokens.freezeBgOk },
+  unknown: { fg: tokens.warn, bg: tokens.freezeBgWarn },
+  broken: { fg: tokens.bleed, bg: tokens.dangerActionBg },
+  absent: { fg: tokens.textFaint, bg: tokens.bgGutter },
+};
+
+function StateChip({ summary }: { summary: ConnectionSummary }): JSX.Element {
+  const skin = STATE_SKIN[summary.state];
+  return <Chip text={summary.stateLabel} fg={skin.fg} bg={skin.bg} />;
+}
+
+/** "verified 4 min ago" / "never checked". The word in front of the age is
+ *  the point: an age with no verb reads as "when we last looked at the file". */
+function checkedAgo(checkedAt: string | null): string {
+  if (checkedAt === null) return "never checked";
+  const at = Date.parse(checkedAt);
+  if (Number.isNaN(at)) return `unreadable timestamp ${checkedAt}`;
+  return `verified ${probedAgo(Date.now() - at).replace(/^probed /, "")}`;
+}
+
+/**
+ * The server's re-check cadence, fetched once per page load.
+ *
+ * Memoised because it is CONFIGURATION, not state: it comes from
+ * `CONNECTION_RECHECK_INTERVAL_MS` and changes only when someone edits an env
+ * file and restarts forge-control. Three cards each firing their own GET for
+ * one integer is three requests to learn the same number.
+ *
+ * It is NOT defaulted on failure. A wrong interval silently widens or narrows
+ * the staleness window — the exact class of quiet lie this phase exists to
+ * remove — so a failure here throws and the card renders the error (N1).
+ */
+let intervalPromise: Promise<number> | null = null;
+function loadRecheckIntervalMs(): Promise<number> {
+  if (intervalPromise === null) {
+    intervalPromise = fetchConnections()
+      .then((r) => {
+        if (!Number.isFinite(r.recheck_interval_ms) || r.recheck_interval_ms <= 0) {
+          throw new Error(
+            `GET /connections reported recheck_interval_ms=${JSON.stringify(r.recheck_interval_ms)}, ` +
+              `which is not a positive number of milliseconds. Staleness cannot be judged against it.`,
+          );
+        }
+        return r.recheck_interval_ms;
+      })
+      .catch((e: unknown) => {
+        // Clear the memo so a transient failure does not poison every later
+        // mount for the lifetime of the page.
+        intervalPromise = null;
+        throw e;
+      });
+  }
+  return intervalPromise;
+}
+
+/** Exported so a check can reset the memo between fixtures. */
+export function resetRecheckIntervalCache(): void {
+  intervalPromise = null;
+}
+
+function messageOf(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+/** The five answers, laid out the same way on every card, under the chip. */
+function SummaryFields({ summary }: { summary: ConnectionSummary }): JSX.Element {
+  return (
+    <>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+          gap: 10,
+          fontSize: 12.5,
+          marginTop: 4,
+        }}
+      >
+        <Field label="IDENTITY (FROM THE PROBE)" value={summary.identity} />
+        <Field label="HEALTH" value={summary.health} />
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <Label text="TO CONNECT / REPAIR" />
+        <div style={{ color: tokens.textBody, marginTop: 2, fontSize: 12.5 }}>
+          {summary.action}
+        </div>
+      </div>
+    </>
+  );
+}
+
 /* ── Gemini ──────────────────────────────────────────────────────────────── */
 
 /** What the summary row above this card needs to know. Reported upward
@@ -362,6 +500,10 @@ export interface GeminiKeyFacts {
   present: boolean | null;
   masked: string | null;
   verdict: { ok: boolean; message?: string } | null;
+  /** The reason the key status could not be READ, if it could not. Null while
+   *  the fetch is in flight and after a successful one. Same channel, same
+   *  rule as the other four rows — see `AgyCard`'s note. */
+  readError: string | null;
 }
 
 export function GeminiCard({
@@ -373,6 +515,8 @@ export function GeminiCard({
   const [usage, setUsage] = useState<GeminiUsage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The read's own error, apart from the actions' — see `AgyCard`. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [verdict, setVerdict] = useState<TestVerdict | null>(null);
@@ -382,9 +526,9 @@ export function GeminiCard({
   const load = useCallback(async () => {
     try {
       setStatus(await call<GeminiStatus>("/gemini"));
-      setError(null);
+      setReadError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setReadError(e instanceof Error ? e.message : String(e));
     }
     // The usage query has its own error slot on purpose: a database that will
     // not answer must not blank out the key controls, and must not render as
@@ -466,9 +610,10 @@ export function GeminiCard({
         verdict === null
           ? null
           : { ok: verdict.ok, message: verdict.ok ? undefined : verdict.message },
+      readError,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, verdict, present]);
+  }, [status, verdict, present, readError]);
 
   const models = verdict?.ok ? verdict.models : [];
   const shown = showAllModels ? models : models.slice(0, 12);
@@ -572,6 +717,12 @@ export function GeminiCard({
         reads show the last four characters only.
       </div>
 
+      {readError && (
+        <Banner tone="bad">
+          <strong data-gemini-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
       {error && <Banner tone="bad">{error}</Banner>}
 
       {verdict && !verdict.ok && (
@@ -719,26 +870,66 @@ export function GeminiCard({
   );
 }
 
-/* ── Google account ──────────────────────────────────────────────────────── */
 
+/* ── Google account (R48–R51) ────────────────────────────────────────────── */
+
+/**
+ * Three DISTINCT states, and the third one is the reason this card was
+ * rewritten in phase 4:
+ *
+ *   CONNECTED (verified <age>)   a real Gmail profile call came back 200, and
+ *                               the address shown is the one IT returned
+ *   UNVERIFIED (never checked)   a credential file exists and nobody has asked
+ *                               it to prove anything — amber, never green
+ *   NOT ANSWERING (<verbatim>)   the probe ran and failed, and Google's own
+ *                               status code and body are printed as they came
+ *
+ * Before this, the third and second states were the same state: the check
+ * result lived in a module-level variable in the API and died on every
+ * restart, so "connected" and "nobody has ever asked" both rendered as a
+ * credential file sitting there looking healthy. B4b persisted the record; this
+ * card stops throwing the distinction away at the last step.
+ *
+ * The card no longer keeps its own `check === null ? UNVERIFIED : …` ladder.
+ * It hands the persisted status to `googleConnection()` and renders what comes
+ * back, because that function is where R57 and R51 are enforced for all four
+ * connections at once.
+ */
 export function GoogleCard({
   onFacts,
 }: {
-  onFacts?: (f: GoogleFacts) => void;
+  onFacts?: (f: Read<GoogleFacts>) => void;
 } = {}): JSX.Element {
-  const [status, setStatus] = useState<GoogleStatus | null>(null);
+  const [status, setStatus] = useState<ConnectionStatus | null>(null);
+  const [accounts, setAccounts] = useState<GoogleAccountView[]>([]);
+  const [lastCheck, setLastCheck] = useState<GoogleCheck | null>(null);
+  const [reauth, setReauth] = useState<{ command: string; why: string } | null>(null);
+  const [absentDetail, setAbsentDetail] = useState<string | null>(null);
+  const [intervalMs, setIntervalMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The read's own error — see `AgyCard`'s note. It travels upward so the
+   *  panel's row head can say READ FAILED instead of READING… forever. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [check, setCheck] = useState<GoogleCheck | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await call<GoogleStatus>("/google");
-      setStatus(res);
-      setCheck(res.last_check);
-      setError(null);
+      // Both, in parallel: the status (state, identity, checked_at) and the
+      // cadence its staleness is judged against. Neither is defaulted if the
+      // other fails — `Promise.all` rejects and the card shows why.
+      const [res, ms] = await Promise.all([
+        fetchGoogleConnection(),
+        loadRecheckIntervalMs(),
+      ]);
+      setStatus(res.status);
+      setAccounts(res.accounts);
+      setLastCheck(res.last_check);
+      setReauth({ command: res.reauth.command, why: res.reauth.why });
+      setAbsentDetail(res.detail ?? null);
+      setIntervalMs(ms);
+      setReadError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setReadError(messageOf(e));
     }
   }, []);
 
@@ -750,30 +941,51 @@ export function GoogleCard({
     setBusy(true);
     setError(null);
     try {
-      setCheck(await call<GoogleCheck>("/google/test", { method: "POST" }));
+      const res = await probeGoogleConnection();
+      setStatus(res.status);
+      setLastCheck({
+        ok: res.ok,
+        email: res.email,
+        reason: res.reason,
+        message: res.message,
+        checked_at: res.checked_at,
+        http_status: res.http_status,
+        upstream: res.upstream,
+      });
+      // The probe just learned the verified address; the account view carries
+      // it, so reload rather than patch a field and hope the two agree.
+      await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(messageOf(e));
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [load]);
 
-  const accounts = status?.accounts ?? [];
+  const account = accounts[0] ?? null;
+
+  const facts: GoogleFacts | null =
+    status === null || intervalMs === null
+      ? null
+      : {
+          status,
+          hasAccount: account !== null,
+          hasRefreshToken: account?.has_refresh_token ?? false,
+          scopeCount: account?.scopes.length ?? 0,
+          reauthCommand: reauth?.command ?? "python3 /opt/ai-os/google-setup/setup.py",
+          recheckIntervalMs: intervalMs,
+        };
+
+  /* Facts beat a read error: a failed refresh must not erase a real reading. */
+  const read: Read<GoogleFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
 
   useEffect(() => {
-    if (!onFacts || !status) return;
-    const a = accounts[0];
-    onFacts({
-      hasAccount: a !== undefined,
-      hasRefreshToken: a?.has_refresh_token ?? false,
-      email: check?.email ?? a?.email ?? null,
-      scopeCount: a?.scopes.length ?? 0,
-      checkOk: check === null ? null : check.ok,
-      checkMessage: check?.message ?? null,
-      reauthCommand: status.reauth.command,
-    });
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, check]);
+  }, [status, intervalMs, accounts, reauth, readError]);
 
   return (
     <div data-google-card style={card()}>
@@ -782,8 +994,9 @@ export function GoogleCard({
         note="Gmail · Calendar · Drive · Docs · Sheets · Contacts"
         right={
           <button
+            data-google-check
             onClick={() => void runCheck()}
-            disabled={busy || accounts.length === 0}
+            disabled={busy || account === null}
             style={btn(tokens.toolBg, tokens.border)}
           >
             {busy ? "checking…" : "Check connection"}
@@ -791,55 +1004,68 @@ export function GoogleCard({
         }
       />
 
+      {readError && (
+        <Banner tone="bad">
+          <strong data-google-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
       {error && <Banner tone="bad">{error}</Banner>}
 
-      {status && accounts.length === 0 && (
+      {/* THE STATE LINE. The chip's word and the age of the evidence behind it
+          travel together — a health word with no clock is the defect this
+          whole phase exists to remove. */}
+      {status && (
+        <div
+          data-google-state
+          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+        >
+          <StateChip
+            summary={{
+              id: "google",
+              title: "Google Workspace",
+              what: "",
+              state: status.state,
+              stateLabel:
+                status.state === "connected"
+                  ? "CONNECTED"
+                  : status.state === "broken"
+                    ? "NOT ANSWERING"
+                    : status.state === "absent"
+                      ? "NOT CONNECTED"
+                      : "UNVERIFIED",
+              identity: "",
+              health: "",
+              action: "",
+            }}
+          />
+          <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+            {checkedAgo(status.checked_at)}
+          </span>
+          <span style={{ fontSize: 13 }}>
+            {/* The address the PROBE returned, and nothing else. `identity` is
+                null in every non-connected state by construction upstream. */}
+            {status.identity ?? "no verified address"}
+          </span>
+        </div>
+      )}
+
+      {status && status.state === "absent" && (
         <Banner tone="bad">
           <strong>No Google account is connected.</strong>
-          <div style={{ marginTop: 4 }}>{status.detail ?? "No credential file was found."}</div>
+          <div style={{ marginTop: 4 }}>{absentDetail ?? status.detail}</div>
         </Banner>
       )}
 
-      {/* One account today. The list shape is plural so a second credential
-          needs no new contract — and there is deliberately no second OAuth
-          client to add one with. */}
-      {accounts.map((a) => (
+      {account && (
         <div
-          key={a.id}
           style={{
             border: `1px solid ${tokens.borderSoft}`,
             borderRadius: 10,
             padding: 14,
-            marginBottom: 10,
+            margin: "12px 0 10px",
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-              marginBottom: 10,
-            }}
-          >
-            <span style={{ fontSize: 14 }}>
-              {a.email ?? "address not recorded in the credential file"}
-            </span>
-            {check?.ok === true && (
-              <Chip text="CONNECTED" fg={tokens.ok} bg={tokens.freezeBgOk} />
-            )}
-            {check?.ok === false && (
-              <Chip
-                text={check.reason === "invalid_grant" ? "INVALID GRANT" : "NOT ANSWERING"}
-                fg={tokens.bleed}
-                bg={tokens.dangerActionBg}
-              />
-            )}
-            {check === null && (
-              <Chip text="UNVERIFIED" fg={tokens.warn} bg={tokens.freezeBgWarn} />
-            )}
-          </div>
-
           <div
             style={{
               display: "grid",
@@ -848,26 +1074,30 @@ export function GoogleCard({
               fontSize: 12.5,
             }}
           >
-            <Field label="CONSENT WRITTEN" value={stamp(a.connected_at)} />
+            <Field label="CONSENT WRITTEN" value={stamp(account.connected_at)} />
             <Field
               label="REFRESH TOKEN"
-              value={a.has_refresh_token ? "present" : "MISSING"}
+              value={account.has_refresh_token ? "present" : "MISSING"}
             />
-            <Field label="SCOPES" value={String(a.scopes.length)} />
-            <Field label="LAST CHECK" value={check ? stamp(check.checked_at) : "never"} />
+            <Field label="SCOPES" value={String(account.scopes.length)} />
+            <Field label="LAST CHECK" value={stamp(status?.checked_at ?? null)} />
+          </div>
+
+          {/* What the FILE claims, labelled as configuration. It is shown
+              because it is useful when the two disagree, and it is labelled
+              because showing it unlabelled beside a verified address is how a
+              configured email gets read as a probed one (R50). */}
+          <div style={{ marginTop: 10, fontSize: 12.5 }}>
+            <Field
+              label="ADDRESS THE CREDENTIAL FILE CLAIMS (CONFIGURATION, NOT VERIFIED)"
+              value={account.configured_account ?? "the file records none"}
+            />
           </div>
 
           <div style={{ marginTop: 12 }}>
             <Label text="GRANTED SCOPES" />
-            <div
-              style={{
-                display: "flex",
-                gap: 6,
-                flexWrap: "wrap",
-                marginTop: 6,
-              }}
-            >
-              {a.scopes.map((s) => (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {account.scopes.map((s) => (
                 <span
                   key={s}
                   className="mono"
@@ -897,24 +1127,473 @@ export function GoogleCard({
             className="mono"
             style={{ fontSize: 11, color: tokens.textFaint, marginTop: 10 }}
           >
-            {a.token_path}
-            {a.client_id ? ` · client ${a.client_id}` : ""}
+            {account.token_path}
+            {account.client_id ? ` · client ${account.client_id}` : ""}
           </div>
-
-          {check && (
-            <Banner tone={check.ok ? "ok" : "bad"}>
-              {check.message}
-              {check.email && !check.ok && (
-                <div style={{ marginTop: 4 }}>Address of record: {check.email}</div>
-              )}
-            </Banner>
-          )}
         </div>
-      ))}
+      )}
+
+      {/* R58. `detail` already carries Google's own status code and body; the
+          extra line below is the machine-readable class, not a replacement. */}
+      {status && status.state !== "absent" && (
+        <Banner tone={status.state === "connected" ? "ok" : status.state === "broken" ? "bad" : "info"}>
+          <div style={{ whiteSpace: "pre-wrap" }} data-google-detail>
+            {status.detail}
+          </div>
+          {lastCheck?.reason && (
+            <div className="mono" style={{ marginTop: 6, fontSize: 11.5 }}>
+              FAILURE CLASS — {lastCheck.reason}
+              {lastCheck.http_status === null ? "" : ` · HTTP ${lastCheck.http_status}`}
+            </div>
+          )}
+          <div style={{ marginTop: 6 }}>{status.action}</div>
+        </Banner>
+      )}
+
+      {reauth && <CommandBlock command={reauth.command} why={reauth.why} />}
+    </div>
+  );
+}
+
+/* ── agy / Antigravity CLI (R52–R54) ─────────────────────────────────────── */
+
+/**
+ * THE HONEST AFFORDANCE, and the reasoning is committed at
+ * `phase4/agy-flow-affordance.md`.
+ *
+ * There is no Connect button and no paste-a-code box on this card. Not as a
+ * shortcut — as the finding. `agy` authenticates through implicit PKCE with
+ * `redirect_uri=https://antigravity.google/oauth-callback`, which is not
+ * localhost, so nothing on this box catches the callback. The CLI prints a
+ * consent URL, opens a HARD-CODED 60-second window on ONE single-use
+ * `code_challenge`, and reads the pasted code from the stdin of THAT process.
+ * A browser control has no route to that stdin, and 60 seconds is not enough
+ * for a human to open Google's consent screen, grant it and come back.
+ *
+ * So this card renders three things and refuses to imply a fourth:
+ *   1. the state, from the real probe, subject to the same R57/R51 rules as
+ *      every other connection;
+ *   2. the VERBATIM command and the VERBATIM prompt Konrad will see, so what
+ *      is on screen matches what the terminal will say;
+ *   3. Verify — which runs `agy models` for real and shows what it printed.
+ */
+export function AgyCard({
+  onFacts,
+}: {
+  onFacts?: (f: Read<AgyFacts>) => void;
+} = {}): JSX.Element {
+  const [status, setStatus] = useState<ConnectionStatus | null>(null);
+  const [flow, setFlow] = useState<AgyFlow | null>(null);
+  const [intervalMs, setIntervalMs] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /* THE READ'S OWN ERROR, KEPT APART FROM THE ACTIONS' (R5-gate item 3).
+     A rejected `fetchAgyConnection()` used to set `error` and nothing else, so
+     the row head — which lives on the panel, outside this card — went on
+     saying READING… while the reason sat in a banner inside a collapsed body.
+     This one travels UPWARD through `onFacts`, so the head can say what
+     happened. `error` keeps its old job: whatever Verify just did. */
+  const [readError, setReadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const apply = useCallback((res: { status: ConnectionStatus; flow: AgyFlow }) => {
+    setStatus(res.status);
+    setFlow(res.flow);
+  }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const [res, ms] = await Promise.all([fetchAgyConnection(), loadRecheckIntervalMs()]);
+      apply(res);
+      setIntervalMs(ms);
+      setReadError(null);
+    } catch (e) {
+      setReadError(messageOf(e));
+    }
+  }, [apply]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /** The real probe: `<absolute path>/agy models`. ~0.3s, and it never opens
+   *  the 60-second OAuth wait that `agy -p` does. */
+  const verify = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      apply(await probeAgyConnection());
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [apply]);
+
+  const facts: AgyFacts | null =
+    status === null || intervalMs === null ? null : { status, recheckIntervalMs: intervalMs };
+  /* Facts beat a read error, deliberately: a refresh that failed after a
+     successful load must not erase the reading it could not replace. The
+     banner below still says the refresh failed. */
+  const read: Read<AgyFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
+  const summary = agyConnection(read);
+
+  useEffect(() => {
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, intervalMs, readError]);
+
+  return (
+    <div data-agy-card style={card()}>
+      <CardHead
+        title="Antigravity CLI (agy)"
+        note="Google AI Ultra · signed in at a terminal, never from here"
+        right={
+          <button
+            data-agy-verify
+            data-busy={busy ? "true" : "false"}
+            onClick={() => void verify()}
+            disabled={busy || status?.state === "absent"}
+            style={btn(tokens.toolBg, tokens.border)}
+          >
+            {busy ? "verifying…" : "Verify"}
+          </button>
+        }
+      />
+
+      {readError && (
+        <Banner tone="bad">
+          <strong data-agy-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
+      {error && <Banner tone="bad">{error}</Banner>}
 
       {status && (
-        <CommandBlock command={status.reauth.command} why={status.reauth.why} />
+        <div
+          data-agy-state
+          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+        >
+          <StateChip summary={summary} />
+          <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+            {checkedAgo(status.checked_at)}
+          </span>
+        </div>
       )}
+
+      {status && <SummaryFields summary={summary} />}
+
+      {/* THE BLOCKER, ON SCREEN. R54 permits recording that the flow cannot be
+          completed from the browser; it forbids pretending otherwise. */}
+      {flow && (
+        <Banner tone="info">
+          <strong data-agy-blocker>
+            This login cannot be completed from this browser, and the card will not
+            pretend otherwise.
+          </strong>
+          <div style={{ marginTop: 6 }}>{flow.why_no_button}</div>
+          <div style={{ marginTop: 8 }}>
+            The consent window is <strong>{flow.window_seconds} seconds</strong> and the
+            challenge is single-use, so the code has to be pasted into the same terminal
+            that printed the URL — while it is still waiting.
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <Label text="WHAT KONRAD MUST DO, AT A TERMINAL ON THIS BOX" />
+            <ol
+              style={{
+                margin: "6px 0 0",
+                paddingInlineStart: 20,
+                fontSize: 12.5,
+                lineHeight: 1.6,
+              }}
+            >
+              <li>
+                Run{" "}
+                <code className="mono" data-agy-signin-command style={{ color: tokens.textHi }}>
+                  {flow.signin_command}
+                </code>
+              </li>
+              <li>Open the Google URL it prints, in any browser, and grant consent.</li>
+              <li>
+                Copy the authorization code Google shows and paste it back at the CLI&rsquo;s
+                own prompt:{" "}
+                <code className="mono" data-agy-paste-prompt style={{ color: tokens.textHi }}>
+                  {flow.paste_prompt}
+                </code>
+              </li>
+              <li>Come back here and press Verify.</li>
+            </ol>
+          </div>
+          <div className="mono" style={{ fontSize: 11, color: tokens.textFaint, marginTop: 10 }}>
+            {flow.flow}
+          </div>
+        </Banner>
+      )}
+
+      {/* The probe's real output, verbatim (R58) — including its exit code and
+          the CLI's own words when it refuses. */}
+      {status && (
+        <div
+          style={{
+            marginTop: 12,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <Label text="LAST PROBE — VERBATIM OUTPUT" />
+          <div
+            data-agy-detail
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: 12,
+              color: tokens.textBody,
+              marginTop: 4,
+            }}
+          >
+            {status.detail}
+          </div>
+          {flow && (
+            <div className="mono" style={{ fontSize: 11, color: tokens.textFaint, marginTop: 8 }}>
+              probe command: {flow.probe_command}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── GitHub (R55, R56) ───────────────────────────────────────────────────── */
+
+/**
+ * The token is WRITE-ONLY from the browser's point of view.
+ *
+ * It goes up in a POST body to `/api/secrets` under the fixed name the server
+ * chose, the input is `type=password`, and the value is dropped from state the
+ * moment the save resolves. It is never rendered, never put in a URL or a query
+ * string, never interpolated into an error message and never logged. Same rule
+ * and same reasoning as `desktop/chat/SecretField.tsx`, whose header is the
+ * long version.
+ *
+ * And storing it connects nothing. "Token present" is storage; only a 200 from
+ * `GET https://api.github.com/user` carrying a `login` produces the connected
+ * word, which is why saving the token leaves this card UNVERIFIED until Probe
+ * is pressed.
+ */
+export function GitHubCard({
+  onFacts,
+}: {
+  onFacts?: (f: Read<GithubFacts>) => void;
+} = {}): JSX.Element {
+  const [status, setStatus] = useState<ConnectionStatus | null>(null);
+  const [secretName, setSecretName] = useState<string | null>(null);
+  const [intervalMs, setIntervalMs] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** The read's own error — see `AgyCard`'s note. */
+  const [readError, setReadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [token, setToken] = useState("");
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [res, ms] = await Promise.all([fetchGithubConnection(), loadRecheckIntervalMs()]);
+      setStatus(res.status);
+      setSecretName(res.secret_name);
+      setIntervalMs(ms);
+      setReadError(null);
+    } catch (e) {
+      setReadError(messageOf(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const probe = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await probeGithubConnection();
+      setStatus(res.status);
+      setSecretName(res.secret_name);
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const save = useCallback(async () => {
+    if (secretName === null) {
+      setError("the server has not reported which secret name to store under yet");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const meta = await storeSecret(
+        secretName,
+        token,
+        "GitHub personal access token — phase 4 connections panel",
+      );
+      // Only the NAME comes back into the UI. Clear the value first, so it is
+      // gone from state before anything else can run.
+      setToken("");
+      setSaved(meta.name);
+      await load();
+    } catch (e) {
+      // `e.message` and nothing else. The token is never interpolated into an
+      // error string — that is how a credential ends up in a screenshot.
+      setError(messageOf(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [secretName, token, load]);
+
+  const facts: GithubFacts | null =
+    status === null || intervalMs === null || secretName === null
+      ? null
+      : { status, secretName, recheckIntervalMs: intervalMs };
+  /* Facts beat a read error: a failed refresh must not erase a real reading. */
+  const read: Read<GithubFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
+  const summary = githubConnection(read);
+
+  useEffect(() => {
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, intervalMs, secretName, readError]);
+
+  return (
+    <div data-github-card style={card()}>
+      <CardHead
+        title="GitHub"
+        note="push work branches · open pull requests"
+        right={
+          <button
+            data-github-probe
+            data-busy={busy ? "true" : "false"}
+            onClick={() => void probe()}
+            disabled={busy || status?.state === "absent"}
+            style={btn(tokens.toolBg, tokens.border)}
+          >
+            {busy ? "probing…" : "Probe"}
+          </button>
+        }
+      />
+
+      {readError && (
+        <Banner tone="bad">
+          <strong data-github-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
+      {error && <Banner tone="bad">{error}</Banner>}
+
+      {status && (
+        <div
+          data-github-state
+          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+        >
+          <StateChip summary={summary} />
+          <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+            {checkedAgo(status.checked_at)}
+          </span>
+        </div>
+      )}
+
+      {status && <SummaryFields summary={summary} />}
+
+      {/* R56: the login and the scopes come out of the probe's own answer and
+          are printed verbatim, because "which scopes does this token actually
+          have" is a question no configuration file on this box can answer. */}
+      {status && (
+        <div
+          style={{
+            marginTop: 12,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <Label text="LAST PROBE — GET https://api.github.com/user, VERBATIM" />
+          <div
+            data-github-detail
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: 12,
+              color: tokens.textBody,
+              marginTop: 4,
+            }}
+          >
+            {status.detail}
+          </div>
+        </div>
+      )}
+
+      <div
+        style={{
+          marginTop: 12,
+          background: tokens.bgGutter,
+          border: `1px solid ${tokens.borderSoft}`,
+          borderRadius: 8,
+          padding: "10px 12px",
+        }}
+      >
+        <Label text={`STORE A PERSONAL ACCESS TOKEN — SECRET NAME ${secretName ?? "…"}`} />
+        <div style={{ fontSize: 12.5, color: tokens.textBody, margin: "6px 0 8px" }}>
+          The value goes straight to the secure secret store and is never read back into
+          this browser, never echoed, and never placed in a URL. Storing it does not
+          connect anything: press Probe afterwards and GitHub will say whether it works.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input
+            data-github-token
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="ghp_… (write-only)"
+            style={{
+              flex: 1,
+              minWidth: 240,
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 7,
+              color: tokens.text,
+              fontSize: 12.5,
+              padding: "6px 10px",
+            }}
+          />
+          <button
+            data-github-save
+            onClick={() => void save()}
+            disabled={saving || token === "" || secretName === null}
+            style={btn(tokens.toolBg, tokens.border)}
+          >
+            {saving ? "storing…" : "Store token"}
+          </button>
+        </div>
+        {saved && (
+          <div style={{ fontSize: 12, color: tokens.textSoft, marginTop: 8 }}>
+            Stored under <span className="mono">{saved}</span>. Still UNVERIFIED — press
+            Probe.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

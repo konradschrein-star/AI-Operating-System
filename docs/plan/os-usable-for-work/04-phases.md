@@ -252,6 +252,74 @@ works in `integrationCards.tsx` and `api-connections.ts` and hands B4b any route
 builders in one workstream may not declare the same file — where a split is impossible, one builder
 writes that file twice rather than two builders serialising on it.
 
+### Undeclared writes, disclosed (R4-gate blocker 3)
+
+The rule above was broken once, and R4-gate found it. Recorded here rather than amended away, because
+the point of a write-set is that a violation is visible afterwards.
+
+| Commit | File | Declared by | What actually happened |
+|---|---|---|---|
+| `343a65e` (B4b) | `scripts/checks/check-integrations.tsx` | **B4c**, not B4b | B4b extended the integrations check to cover the Google persistence it had just built. B4c then wrote the same file at `5b36eba`. This is the two-builder collision the paragraph above forbids; the content does not conflict (B4b added Google sections, B4c added agy/GitHub sections) but the rule was still broken. |
+| `5b36eba` (B4c) | `docs/plan/artifacts/os-usable-for-work/phase4/browser-harness-phase4.cjs` | **B4a**, not B4c | B4c added its three `b4c-*` modes to B4a's already-committed harness. Disclosed at the time in B4c's own report and in the file's header; not in its write-set. |
+| `5b36eba` (B4c) | `docs/plan/artifacts/os-usable-for-work/phase4/b4c-after-settings-surface.png` | nobody | A fourth screenshot, taken to record that the cards had no mount point. Never declared. |
+
+**Deliverable naming.** The Deliverables list above names `phase4/agy-flow.md`; what shipped is
+`phase4/agy-flow-affordance.md`. The file is the deliverable, under a longer name — recorded so the
+next reader does not go looking for a document that was never written under that path.
+
+**Round 4 (fix cycle 1) write-set.** The fix cycle was seeded with the R4-red reviewer's write-set —
+`phase4/red-team-report.md` alone — because a fix-cycle row inherits its parent's declaration. Every
+source file it had to touch to close blockers 1 and 2 is therefore an undeclared write by
+construction; they are enumerated in `phase4/fix-cycle-1-report.md` §1 and in the fix commit's own
+message.
+
+**Round 5 (re-check of that fix cycle) write-set.** Same inheritance, one turn worse: round 5 was
+seeded with the **R4-gate reviewer's** declaration, `phase4/gate-report.md` and
+`phase4/gates-phase4.txt`. Satisfying it literally would mean writing over the gate report carrying
+the blockers being fixed and over the transcript that evidences them. Neither was touched; its
+writes are enumerated in `phase4/fix-cycle-1-recheck.md` §1.
+
+**Round 6 (fix cycle 2) write-set: EMPTY, and the brief says so.** This row was seeded with no
+declaration at all — "(empty — nothing was declared)" — so every path it touches is undeclared by
+construction, the third turn of the same engine defect. What it wrote, and why each file had to
+change, is enumerated in `phase4/fix-cycle-2-report.md` §1; the three groups are
+
+- the four connection **row functions** and the three **cards** that feed them, plus the panel — the
+  fix for R5-gate item 3 (a failed read rendered READING… for as long as the tab was open);
+- `scripts/checks/check-connection-states.ts` §5c and the browser harness's new `b4c-read-fail`
+  mode — the assertions that would have caught it, both proved to fail on the old code;
+- `phase4/fix-cycle-1-report.md` §2 and `fix-cycle-1-recheck.md` §2b — the operator ruling on the
+  secret-scan blocker, plus this section.
+
+**Why the rows above are NOT amended, in answer to R4-gate blocker 3.** The blocker asked for two
+things: disclose the overlap in the phase record (the table above) and *amend the task rows to match
+what was written*. The disclosure stands; the amendment is refused, and the reason is a measurement
+rather than a preference:
+
+- **There is no API for it.** `routes/projects.ts` exposes `POST /:id/tasks`, `POST /:id/unwedge`,
+  `POST /:id/status` and two GETs — no PATCH or PUT for a task row. The only path is a raw `UPDATE`
+  against `project_tasks`, i.e. hand-editing a ledger.
+- **`write_set` is the scheduler's file-contention lock, not an audit column.**
+  `forge-control/src/lib/task-graph.ts:749` refuses to promote a candidate whose `write_set`
+  intersects that of a **running** task. All three rows are `done`, so amending them is
+  scheduling-inert: it changes the record and nothing else.
+- **Amending would put the two artefacts in disagreement**, with the machine-readable one wrong —
+  this document saying a collision occurred, the ledger saying every write was declared.
+
+Escalated rather than decided unilaterally, since it sets how audit ledgers get corrected
+fleet-wide.
+
+**RULED BY THE OPERATOR, 2026-08-19** — `AI OS/Operator Decisions.md`, *"A ledger you may edit after the fact stops
+being evidence"*. The refusal is upheld, and the ruling is sharper than the reasoning above:
+
+> `write_set` records what a task **declared**; the commit records what it **wrote**. Those are two
+> separate facts, and **the gap between them is the only signal that a collision happened.**
+
+So the rows stay as written and the violation is disclosed here, where violations are disclosed.
+**A PATCH endpoint for task `write_set` was also rejected** — "do not make retroactive ledger edits
+convenient; an audit trail whose entries can be corrected is a draft, not a trail." That applies to
+every append-only record the fleet keeps, this document included: it is appended to, never amended.
+
 ---
 
 ## Phase 5 — Businesses, Pipeline, Money

@@ -47,9 +47,25 @@ const SKIP_EXTENSIONS = new Set([
 /** A password segment carrying any of these is a labelled placeholder, not a
  *  live credential — angle/guillemet brackets, a template interpolation or
  *  command substitution, the literal fallback default, or a word that only
- *  shows up in fake values. */
+ *  shows up in fake values.
+ *
+ *  `^\*+$` — A SEGMENT THAT IS NOTHING BUT ASTERISKS. Added in phase 4's fix
+ *  cycle (R4-gate blocker 2), and scoped to the exact TOKEN rather than to a
+ *  file or a directory, which is the distinction that matters:
+ *  `postgresql://ai_os_app:***@host` in a determination document is the
+ *  universal redaction, while a REAL credential written anywhere else in that
+ *  same file still fails. It is ANCHORED on purpose — `abc***def` is not a
+ *  redaction, it is a password with asterisks in it, and it must keep
+ *  failing.
+ *
+ *  `^\$[A-Za-z_][A-Za-z0-9_]*$` — A BARE SHELL VARIABLE REFERENCE. Completes
+ *  the intent of the `\$[{(]` alternative already here, which recognises
+ *  `${VAR}` and `$(cmd)` and then flags the third spelling of the same thing.
+ *  `PGPASSWORD="$DOCPW"` is a script READING a credential at run time, which
+ *  is the opposite of committing one. Anchored, so `$VARsomething-else` and
+ *  `pw$X` keep failing. */
 const SAFE_MARKERS =
-  /[<>]|[\u2039\u203A]|\$[{(]|\u2026|PASSWORD|SYNTHETIC|REDACTED|FAKE|PLACEHOLDER|^PASS$|^USER$|^content_forge_prod$/i;
+  /^\*+$|^\$[A-Za-z_][A-Za-z0-9_]*$|[<>]|[\u2039\u203A]|\$[{(]|\u2026|PASSWORD|SYNTHETIC|REDACTED|FAKE|PLACEHOLDER|^PASS$|^USER$|^content_forge_prod$/i;
 
 // A DSN's password segment: postgres(ql)://user:PASSWORD@host
 const DSN_RE = /postgres(?:ql)?:\/\/[^\s"'\\/]+:([^\s"'\\@]+)@/g;

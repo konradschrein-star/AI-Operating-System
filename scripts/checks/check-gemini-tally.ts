@@ -12,24 +12,40 @@
  *   • rows with no unit count are `tokens: null`, NEVER `tokens: 0`;
  *   • the tally survives an Anthropic 429 — two upstreams, one row, and one
  *     failing is no reason for the other's number to disappear;
- *   • `agy` state is read from the filesystem only. The session lives in the
- *     OS keyring (verified against antigravity.google/docs/cli/install), which
- *     an HTTP handler must not open, so "a profile exists" is as far as an
- *     honest probe goes.
+ *   • `agy` state comes from the BINARY plus the PERSISTED PROBE, and from
+ *     nothing else. It used to come from walking this process's PATH and from
+ *     the existence of a settings FILE — the first lies under pm2 (which never
+ *     sources .bashrc, where `agy install` puts its export) and the second is
+ *     configuration that survives a revoked session. R4-red photographed the
+ *     result: one panel asserting "agy is not installed on this box" directly
+ *     above a probe reporting "SIGNED IN · listed 7 models".
+ *
+ * WHAT THIS CHECK CANNOT DRIVE, AND WHERE IT IS MEASURED INSTEAD. The
+ * substrate is now `access("/root/.local/bin/agy", X_OK)` against a named
+ * absolute constant with no env seam — that absence of a seam is R52's point,
+ * so this check cannot fake "the CLI is missing". The `installed:false` and
+ * `installed:null` branches are measured directly, in
+ * `forge-control/src/lib/connection-status.test.ts`, over the pure
+ * `agyUltraNarrative()`. What THIS file drives is the sidecar: absent, fresh
+ * ok, fresh failure and stale, through the real route.
  *
  * Everything runs against a THROWAWAY Postgres and a stubbed Anthropic — no
  * live service, no live database, nothing on :7700 is touched.
  *
- * Run (from forge-control; needs docker):
- *   docker run -d --rm --name r1876-tally -e POSTGRES_PASSWORD=x \
+ * Run (from forge-control; needs docker). The container password is a shell
+ * variable rather than a literal — it is a throwaway, but a literal one in a
+ * committed DSN is indistinguishable from a real one to `check-secret-scan.ts`
+ * and to a human skimming the file, and this line was that check's last red:
+ *   PGPW=$(openssl rand -hex 12)
+ *   docker run -d --rm --name r1876-tally -e POSTGRES_PASSWORD="$PGPW" \
  *     -p 55876:5432 postgres:16-alpine
- *   GEMINI_TALLY_DSN=postgres://postgres:x@127.0.0.1:55876/postgres \
+ *   GEMINI_TALLY_DSN="postgres://postgres:$PGPW@127.0.0.1:55876/postgres" \
  *     ./node_modules/.bin/tsx ../scripts/checks/check-gemini-tally.ts
  *   docker rm -f r1876-tally
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -61,22 +77,33 @@ writeFileSync(
   credsPath,
   JSON.stringify({ claudeAiOauth: { accessToken: "fake-oauth-token" } }),
 );
-/** Deliberately NOT created: the unauthenticated state is the one Konrad has
- *  today, and it is the one that must render as words rather than a zero. */
-const agyAbsent = join(tmp, "no-such-agy", "settings.json");
-const agyPresent = join(tmp, "agy-settings.json");
-writeFileSync(agyPresent, JSON.stringify({ useG1Credits: true }));
+/** The sidecar directory the route reads the persisted probe out of. Nothing
+ *  under /opt/ai-os/.secrets is touched: this is the env seam the status store
+ *  ships for exactly this purpose. Deliberately EMPTY to start — "nobody has
+ *  ever probed" is the state Konrad's box is actually in today. */
+const statusDir = join(tmp, "status");
+mkdirSync(statusDir, { recursive: true });
 
-/** Kept before PATH is emptied below: `psql` still has to be found, while the
- *  route's `agy` probe must see a PATH with no CLI on it. */
-const REAL_PATH = process.env.PATH ?? "";
+const AGY_RECORD = join(statusDir, "agy.json");
+/** Frozen so a fixture's freshness does not depend on when the check runs. */
+const writeAgyRecord = (r: {
+  ok: boolean;
+  detail: string;
+  ageMs: number;
+}): void =>
+  writeFileSync(
+    AGY_RECORD,
+    JSON.stringify({
+      ok: r.ok,
+      identity: null,
+      detail: r.detail,
+      checked_at: new Date(Date.now() - r.ageMs).toISOString(),
+    }),
+  );
 
 process.env.CLAUDE_CREDENTIALS = credsPath;
-process.env.AGY_SETTINGS_PATH = agyAbsent;
+process.env.FORGE_CONNECTION_STATUS_DIR = statusDir;
 process.env.DATABASE_URL = DSN;
-/** `agy` is genuinely absent from this box; PATH is emptied anyway so the
- *  result cannot depend on whatever the runner happens to have installed. */
-process.env.PATH = join(tmp, "empty-bin");
 
 /* ── Anthropic stub ──────────────────────────────────────────────────────── */
 
@@ -110,8 +137,10 @@ globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
 /* ── Wire shapes ─────────────────────────────────────────────────────────── */
 
 interface Tally {
-  cli_installed: boolean;
-  cli_profile: boolean;
+  cli_installed: boolean | null;
+  probe_state: "connected" | "unknown" | "broken" | null;
+  probe_checked_at: string | null;
+  session_probed_ok: boolean;
   auth_note: string;
   connect_command: string | null;
   five_hour: { calls: number; tokens: number | null } | null;
@@ -136,7 +165,7 @@ function sql(statement: string): void {
   try {
     execFileSync("psql", [DSN!, "-v", "ON_ERROR_STOP=1", "-tAXq", "-c", statement], {
       encoding: "utf8",
-      env: { ...process.env, PATH: REAL_PATH },
+      env: process.env,
     });
   } catch (e: unknown) {
     const err = e as { stderr?: string; message?: string };
@@ -170,16 +199,34 @@ async function main(): Promise<void> {
   }
 
   /* ══ §1 nothing logged yet — the state Konrad is in today ════════════════ */
-  console.log("§1 nothing counted, nobody signed in");
+  console.log("§1 nothing counted, no probe has ever run");
   {
     const b = await quota();
     ok("the Claude windows still come through", b.five_hour?.utilization === 41);
     ok("a gemini tally is attached", b.gemini !== undefined);
     const g = b.gemini!;
-    ok("agy is reported as not installed", g.cli_installed === false && g.cli_profile === false);
+    /* THE ROW THAT USED TO LIE. `agy` IS installed on this box, so the only
+     * honest answer here is `true` — and the previous implementation, walking
+     * this process's PATH, answered `false`. */
+    ok(
+      "the CLI is seen where it actually is, not where PATH says",
+      g.cli_installed === true,
+      `cli_installed=${JSON.stringify(g.cli_installed)}`,
+    );
+    ok(
+      "…and the row does NOT tell Konrad to install software already installed",
+      !g.auth_note.includes("not installed"),
+      g.auth_note,
+    );
+    ok(
+      "an empty sidecar is 'nobody has asked', not a session",
+      g.probe_state === "unknown" && g.probe_checked_at === null && g.session_probed_ok === false,
+      `${g.probe_state}/${g.probe_checked_at}/${g.session_probed_ok}`,
+    );
     ok(
       "…in a sentence, not a flag alone",
-      g.auth_note.includes("not installed") && g.auth_note.includes("never been signed in"),
+      g.auth_note.includes("no probe currently vouches") && g.auth_note.includes("Never checked"),
+      g.auth_note,
     );
     ok("…with the exact thing to do", (g.connect_command ?? "").includes("agy"));
     ok("zero calls is a real zero, not an error", g.five_hour?.calls === 0 && g.error === undefined);
@@ -255,21 +302,78 @@ async function main(): Promise<void> {
   }
   upstream = { status: 200, five: 41, seven: 12 };
 
-  /* ══ §6 a local agy profile ══════════════════════════════════════════════ */
-  console.log("\n§6 a local agy profile is a profile, not a proven session");
-  process.env.AGY_SETTINGS_PATH = agyPresent;
-  process.env.PATH = tmp; // pretend `agy` resolves: the check writes one below
-  writeFileSync(join(tmp, "agy"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  /* ══ §6 the probe is the only thing that can say "signed in" ═════════════ */
+  console.log("\n§6 only a fresh successful probe produces a signed-in reading");
+  sql(`CREATE TABLE IF NOT EXISTS spend_log (
+      id          bigserial PRIMARY KEY,
+      created_at  timestamptz NOT NULL DEFAULT now(),
+      provider    text NOT NULL,
+      kind        text NOT NULL,
+      amount_eur  numeric(10,4) NOT NULL DEFAULT 0,
+      units       integer,
+      meta        jsonb NOT NULL DEFAULT '{}'::jsonb
+    )`);
+
+  writeAgyRecord({
+    ok: true,
+    detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
+    ageMs: 60_000,
+  });
   {
     const g = (await quota()).gemini!;
-    ok("the CLI is seen on PATH", g.cli_installed === true);
-    ok("…and its profile is found", g.cli_profile === true);
-    ok(
-      "…but the session is NOT claimed — it lives in the OS keyring",
-      g.auth_note.includes("keyring") && g.auth_note.includes("our own count"),
-    );
+    ok("a fresh ok probe is a signed-in session", g.session_probed_ok === true);
+    ok("…and the state says so", g.probe_state === "connected", String(g.probe_state));
+    ok("…carrying the probe's own words", g.auth_note.includes("listed 7 models"), g.auth_note);
     ok("…so no connect command is offered", g.connect_command === null);
   }
+
+  console.log("\n§6b a probe that came back NO is not a session, and not 'not installed'");
+  writeAgyRecord({
+    ok: false,
+    detail: "exit 1 — Error: Please sign in to view available models.",
+    ageMs: 60_000,
+  });
+  {
+    const g = (await quota()).gemini!;
+    ok("a failed probe is not a session", g.session_probed_ok === false);
+    ok("…it is BROKEN, not absent", g.probe_state === "broken", String(g.probe_state));
+    ok(
+      "…the CLI is still reported as installed",
+      g.cli_installed === true && !g.auth_note.includes("not installed"),
+      g.auth_note,
+    );
+    ok("…and the CLI's own words survive", g.auth_note.includes("Please sign in to view available models"));
+    ok("…and a sign-in step is offered again", (g.connect_command ?? "").includes("agy"));
+  }
+
+  console.log("\n§6c evidence has a shelf life — a stale success is not a session");
+  writeAgyRecord({
+    ok: true,
+    detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
+    // 3 × the 15-minute default, plus a minute. The literal is written out
+    // rather than imported from the subject, for the reason
+    // check-connection-states.ts spells out at STALE_AFTER_MS.
+    ageMs: 2_700_000 + 60_000,
+  });
+  {
+    const g = (await quota()).gemini!;
+    ok("a stale success stops counting as one", g.session_probed_ok === false);
+    ok("…and is UNKNOWN, not CONNECTED", g.probe_state === "unknown", String(g.probe_state));
+    ok("…saying why, and naming the shelf life", g.auth_note.includes("shelf life"), g.auth_note);
+  }
+
+  console.log("\n§6d a corrupt sidecar is an error on screen, never 'never checked'");
+  writeFileSync(AGY_RECORD, "{ this is not json");
+  {
+    const g = (await quota()).gemini!;
+    ok("the corrupt record does not read as a session", g.session_probed_ok === false);
+    ok("…and the failure is quoted rather than swallowed", g.auth_note.includes("could not be read"), g.auth_note);
+    ok(
+      "…and it does not take the Claude quota row down with it",
+      (await quota()).five_hour?.utilization === 41,
+    );
+  }
+  unlinkSync(AGY_RECORD);
 }
 
 main()

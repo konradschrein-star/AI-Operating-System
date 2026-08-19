@@ -42,22 +42,37 @@
  * state — the same rule the rest of this surface follows.
  */
 
-import { useCallback, useState, type CSSProperties, type JSX } from "react";
+import { useCallback, useMemo, useState, type CSSProperties, type JSX } from "react";
 import { tokens } from "../../tokens";
-import { AccountCard, HEALTH_STYLE, useAccountRegistry } from "./accountRegistry";
 import {
+  AccountCard,
+  HEALTH_STYLE,
+  probeAge,
+  renderSafeAccount,
+  useAccountRegistry,
+  type AccountRegistry,
+} from "./accountRegistry";
+import {
+  AgyCard,
   GeminiCard,
+  GitHubCard,
   GoogleCard,
   type GeminiKeyFacts,
 } from "./integrationCards";
 import {
+  agyConnection,
   claudeConnection,
   geminiKeyConnection,
+  githubConnection,
   googleConnection,
+  isReadFailure,
   ultraConnection,
+  type AgyFacts,
   type ConnectionState,
   type ConnectionSummary,
+  type GithubFacts,
   type GoogleFacts,
+  type Read,
 } from "./connections";
 import { useQuotaSnapshot } from "../quota/quotaQuery";
 
@@ -89,19 +104,42 @@ const PANEL_CSS = `
 export function ConnectionsPanel(): JSX.Element {
   const registry = useAccountRegistry();
   const [gemini, setGemini] = useState<GeminiKeyFacts | null>(null);
-  const [google, setGoogle] = useState<GoogleFacts | null>(null);
+  // `Read<…>`, not `… | null`: a card whose fetch REJECTED reports the reason
+  // upward instead of staying silent, and the row head renders READ FAILED
+  // with that reason rather than READING… for as long as the tab is open
+  // (R5-gate item 3). `null` still means "in flight" and nothing else.
+  const [google, setGoogle] = useState<Read<GoogleFacts>>(null);
+  // Reported UPWARD by the cards, exactly as Gemini and Google already do —
+  // one fetch per subject. `agy` is read twice on this panel (its own row and
+  // the Ultra row) and fetched once, which is what makes the two rows
+  // structurally incapable of disagreeing.
+  const [agy, setAgy] = useState<Read<AgyFacts>>(null);
+  const [github, setGithub] = useState<Read<GithubFacts>>(null);
   // The Ultra row rides the indicator row's cache entry — an observer, not a
   // poll. See desktop/quota/quotaQuery.ts.
   const quota = useQuotaSnapshot();
+
+  /* Rendered ONCE, and the verbatim-error box below is gated on the RENDERED
+   * state rather than on the server's. They differ exactly when the client's
+   * staleness rule demotes a stored failure to UNKNOWN (R51) — and a red
+   * upstream error box beside an amber chip is a row disagreeing with itself,
+   * which is the shape of defect this phase exists to remove. The failure text
+   * is not lost: `summary.health` carries it, prefixed with why it is stale. */
+  const agySummary = agyConnection(agy);
+  const githubSummary = githubConnection(github);
+
+  /* A read that FAILED carries no `status`, so it has no upstream text to show
+   * verbatim in that box — and it never renders `broken` anyway, so this only
+   * narrows the type to the arm the box was written for. The reason is not
+   * lost: `summary.health` prints it, which is the whole point of item 3. */
+  const agyFacts = isReadFailure(agy) ? null : agy;
+  const githubFacts = isReadFailure(github) ? null : github;
 
   const [open, setOpen] = useState<string | null>(null);
   const toggle = useCallback(
     (id: string) => setOpen((cur) => (cur === id ? null : id)),
     [],
   );
-
-  const accounts = registry.data?.accounts ?? [];
-  const serving = registry.data?.summary.serving ?? null;
 
   return (
     <div data-connections-panel style={{ maxWidth: 940 }}>
@@ -141,32 +179,8 @@ export function ConnectionsPanel(): JSX.Element {
         </div>
       )}
 
-      <GroupLabel
-        text="CLAUDE — the logins that run your agents"
-        note={
-          registry.data
-            ? `${registry.data.summary.usable} usable of ${registry.data.summary.total} · serving ${serving ?? "none"}`
-            : "loading…"
-        }
-      />
-      {registry.data && accounts.length === 0 && (
-        <Empty text="No Claude account is registered. Runs cannot execute until one is." />
-      )}
-      {accounts.map((a) => (
-        <Row
-          key={a.slug}
-          summary={claudeConnection(a, serving === a.slug)}
-          open={open === `claude:${a.slug}`}
-          onToggle={toggle}
-        >
-          <AccountCard
-            a={a}
-            serving={serving === a.slug}
-            busy={registry.busy}
-            act={registry.act}
-          />
-        </Row>
-      ))}
+      <ClaudeAccountsSection registry={registry} open={open} onToggle={toggle} />
+
       {registry.data && (
         <div
           style={{
@@ -210,13 +224,14 @@ export function ConnectionsPanel(): JSX.Element {
 
       <GroupLabel
         text="GEMINI — two different products, wired separately"
-        note="a billed API key · and the Ultra subscription"
+        note="a billed API key · and the Ultra subscription behind the agy CLI"
       />
       <Row
         summary={geminiKeyConnection(
           gemini?.present ?? null,
           gemini?.masked ?? null,
           gemini?.verdict ?? null,
+          gemini?.readError ?? null,
         )}
         open={open === "gemini-key"}
         onToggle={toggle}
@@ -224,7 +239,7 @@ export function ConnectionsPanel(): JSX.Element {
         <GeminiCard onFacts={setGemini} />
       </Row>
       <Row
-        summary={ultraConnection(quota.data?.gemini)}
+        summary={ultraConnection(quota.data?.gemini, agy)}
         open={open === "gemini-ultra"}
         onToggle={toggle}
       >
@@ -257,8 +272,375 @@ export function ConnectionsPanel(): JSX.Element {
           </div>
         </div>
       </Row>
+
+      {/* THE agy ROW. R53/R54 lived in `AgyCard` for a whole phase without a
+          mount point, which made them unreachable on the only surface Konrad
+          opens — R4-gate blocker 1. The card reports its facts upward, and the
+          Ultra row above reads the SAME `agy` state, so the two rows about one
+          binary cannot contradict each other any more. */}
+      <Row
+        summary={agySummary}
+        open={open === "agy"}
+        onToggle={toggle}
+        verbatimError={agySummary.state === "broken" ? agyFacts?.status.detail ?? null : null}
+      >
+        <AgyCard onFacts={setAgy} />
+      </Row>
+
+      <GroupLabel
+        text="GITHUB — the token that pushes branches and opens pull requests"
+        note="write-only from this browser · verified by a real GET /user"
+      />
+      <Row
+        summary={githubSummary}
+        open={open === "github"}
+        onToggle={toggle}
+        verbatimError={githubSummary.state === "broken" ? githubFacts?.status.detail ?? null : null}
+      >
+        <GitHubCard onFacts={setGithub} />
+      </Row>
     </div>
   );
+}
+
+/**
+ * The Claude half of the panel — every registered login, its probe age, its
+ * controls, and the add flow.
+ *
+ * ── WHY THIS TAKES ITS REGISTRY AS A PROP ────────────────────────────────
+ * `ConnectionsPanel` mounts `useAccountRegistry()` once and passes the result
+ * down, which is the same one-fetch-per-subject rule the rest of this surface
+ * follows. It also gives `scripts/checks/check-settings-surface.tsx` a real
+ * seam: that harness renders with `react-dom/server`, where `useEffect` never
+ * runs and no fetch can ever resolve, so a self-fetching component is
+ * permanently stuck at its loading state and the health rules cannot be
+ * asserted at all. Injecting the registry lets the check drive FIXTURES through
+ * the exact component Konrad looks at — including the one state that matters
+ * most and cannot occur on demand in production: a stored `healthy` with no
+ * probe behind it.
+ *
+ * This is dependency injection at a seam that already existed, not test-only
+ * plumbing bolted onto production code: the panel above was already the single
+ * owner of the fetch.
+ */
+export function ClaudeAccountsSection({
+  registry,
+  open,
+  onToggle,
+}: {
+  registry: AccountRegistry;
+  open: string | null;
+  onToggle: (id: string) => void;
+}): JSX.Element {
+  // LAYER TWO of R57, applied once, here — before an account reaches either
+  // `claudeConnection()` (which decides the row's words and belongs to another
+  // task) or `AccountCard`. Fixing it at this boundary means both consumers get
+  // a truthful row without either of them having to re-derive the rule.
+  const accounts = (registry.data?.accounts ?? []).map(renderSafeAccount);
+  const serving = registry.data?.summary.serving ?? null;
+
+  return (
+    <>
+      <GroupLabel
+        text="CLAUDE — the logins that run your agents"
+        note={
+          registry.data
+            ? `${registry.data.summary.usable} usable of ${registry.data.summary.total} · serving ${serving ?? "none"}`
+            : "loading…"
+        }
+      />
+      {registry.data && accounts.length === 0 && (
+        <Empty text="No Claude account is registered. Runs cannot execute until one is." />
+      )}
+      {registry.actionError && (
+        <div
+          data-account-action-error
+          style={{
+            background: tokens.dangerActionBg,
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            borderRadius: 10,
+            padding: "10px 12px",
+            marginBottom: 12,
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            wordBreak: "break-word",
+          }}
+        >
+          <span className="mono" style={{ fontSize: 10.5, color: tokens.textLabel }}>
+            LAST ACTION FAILED —{" "}
+          </span>
+          {registry.actionError}
+        </div>
+      )}
+      {accounts.map((a) => (
+        <Row
+          key={a.slug}
+          summary={claudeConnection(a, serving === a.slug)}
+          open={open === `claude:${a.slug}`}
+          onToggle={onToggle}
+          // R45: the health word never travels without its clock, and the age
+          // sits on the COLLAPSED head — the only thing visible before a click.
+          probe={{
+            label: probeAge(a).label,
+            absolute: probeAge(a).absolute,
+            unmeasured: a.last_probed_at === null,
+          }}
+          // R58: the verbatim upstream error, on the head, not buried in the
+          // expanded card. Konrad must be able to tell an expired token from a
+          // network outage without opening anything.
+          verbatimError={a.last_error}
+        >
+          <AccountCard
+            a={a}
+            serving={serving === a.slug}
+            busy={registry.busy}
+            act={registry.act}
+          />
+        </Row>
+      ))}
+      <AddAccount registry={registry} />
+      {registry.data && (
+        <div
+          style={{
+            fontSize: 12,
+            color: tokens.textFaint,
+            lineHeight: 1.55,
+            margin: "2px 2px 4px",
+          }}
+        >
+          Every Claude row above carries the age of its last probe. A row that has never been
+          probed reads <strong style={{ color: tokens.warn }}>UNKNOWN</strong> whatever the
+          registry stores for it — a word written once is not a reading.
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Add a Claude account — and be honest about what that means (R46).
+ *
+ * ── THERE IS NO BROWSER OAUTH FLOW, AND THE UI MUST NOT IMPLY ONE ────────
+ * The AI OS cannot log a Claude account in. A Claude Code session is created by
+ * `claude auth login --claudeai` running INTERACTIVELY ON THIS BOX, which opens
+ * a browser and writes `<config dir>/.credentials.json`. All this form does is
+ * REGISTER a directory that already holds that file.
+ *
+ * So the flow is: show the exact command → Konrad runs it on the VPS → he pastes
+ * the directory here → we register it → we PROBE it → we show the probed
+ * health. A "Sign in with Claude" button would be a fake success state, and a
+ * UI implying a flow that does not exist is a worse lie than the one this phase
+ * is fixing.
+ *
+ * The command is not a constant: it is recomputed from the directory as it is
+ * typed, matching `reauth_command` in routes/accounts.ts exactly (bare
+ * `claude auth login --claudeai` for /root/.claude, `CLAUDE_CONFIG_DIR=<dir>`
+ * in front of it otherwise). A copyable line that names the wrong directory is
+ * worse than no line at all.
+ */
+function AddAccount({ registry }: { registry: AccountRegistry }): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [slug, setSlug] = useState("");
+  const [dir, setDir] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const command = useMemo(
+    () =>
+      dir.trim() === "" || dir.trim() === "/root/.claude"
+        ? "claude auth login --claudeai"
+        : `CLAUDE_CONFIG_DIR=${dir.trim()} claude auth login --claudeai`,
+    [dir],
+  );
+
+  const submit = useCallback(async () => {
+    // The registry surfaces the verbatim failure through `actionError`; this
+    // catch exists only so a rejected promise does not become an unhandled
+    // rejection. It deliberately swallows NOTHING that the user would not
+    // otherwise see.
+    const created = await registry
+      .create({ slug: slug.trim(), config_dir: dir.trim() })
+      .catch(() => null);
+    if (created) {
+      setSlug("");
+      setDir("");
+      setOpen(false);
+    }
+  }, [registry, slug, dir]);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        data-add-account-open
+        onClick={() => setOpen(true)}
+        style={{
+          background: tokens.toolBg,
+          border: `1px dashed ${tokens.borderSoft}`,
+          borderRadius: 10,
+          color: tokens.textBody,
+          cursor: "pointer",
+          fontSize: 12.5,
+          padding: "10px 14px",
+          marginBottom: 12,
+          textAlign: "left",
+          width: "100%",
+          font: "inherit",
+        }}
+      >
+        + Add a Claude account —{" "}
+        <span style={{ color: tokens.textFaint }}>
+          registers a config directory you have already logged in on this box
+        </span>
+      </button>
+    );
+  }
+
+  const canSubmit =
+    slug.trim().length > 0 && dir.trim().startsWith("/") && registry.busy !== "new:create";
+
+  return (
+    <div
+      data-add-account-form
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 12,
+        padding: 18,
+        marginBottom: 12,
+        fontSize: 12.5,
+        lineHeight: 1.55,
+      }}
+    >
+      <div style={{ fontSize: 14, fontWeight: 600, color: tokens.textHi, marginBottom: 6 }}>
+        Add a Claude account
+      </div>
+      <div style={{ color: tokens.textSoft }}>
+        This OS <strong>cannot log a Claude account in for you</strong>. There is no browser consent
+        to click here. A session is created by running the Claude CLI interactively on this VPS,
+        which writes <span className="mono">.credentials.json</span> into a config directory. This
+        form registers a directory that <strong>already holds that file</strong>, then probes it and
+        shows what the probe found.
+      </div>
+
+      <div className="mono" style={{ fontSize: 10, color: tokens.textLabel, margin: "14px 0 5px" }}>
+        STEP 1 — RUN THIS ON THE VPS, IN A REAL TERMINAL
+      </div>
+      <div
+        style={{
+          background: tokens.bgGutter,
+          border: `1px solid ${tokens.borderSoft}`,
+          borderRadius: 8,
+          padding: "10px 12px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <code
+          className="mono"
+          data-add-account-command
+          style={{ fontSize: 12, color: tokens.textHi, wordBreak: "break-all", flex: 1 }}
+        >
+          {command}
+        </code>
+        <button
+          type="button"
+          data-add-account-copy
+          onClick={() => {
+            void navigator.clipboard?.writeText(command);
+            setCopied(true);
+          }}
+          style={smallBtn()}
+        >
+          {copied ? "copied" : "copy"}
+        </button>
+      </div>
+
+      <div className="mono" style={{ fontSize: 10, color: tokens.textLabel, margin: "14px 0 5px" }}>
+        STEP 2 — REGISTER THE DIRECTORY IT WROTE
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        <label style={{ display: "block" }}>
+          <span className="mono" style={{ fontSize: 10, color: tokens.textLabel }}>
+            SLUG
+          </span>
+          <input
+            data-add-account-slug
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder="e.g. konrad-second"
+            style={input()}
+          />
+        </label>
+        <label style={{ display: "block" }}>
+          <span className="mono" style={{ fontSize: 10, color: tokens.textLabel }}>
+            CONFIG DIRECTORY (ABSOLUTE)
+          </span>
+          <input
+            data-add-account-dir
+            value={dir}
+            onChange={(e) => setDir(e.target.value)}
+            placeholder="/root/.claude-second"
+            style={input()}
+          />
+        </label>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center" }}>
+        <button
+          type="button"
+          data-add-account-submit
+          onClick={() => void submit()}
+          disabled={!canSubmit}
+          style={{
+            ...smallBtn(),
+            background: canSubmit ? tokens.okActionBg : tokens.toolBg,
+            border: `1px solid ${canSubmit ? tokens.okActionBorder : tokens.border}`,
+            cursor: canSubmit ? "pointer" : "not-allowed",
+          }}
+        >
+          {registry.busy === "new:create" ? "registering and probing…" : "Register and probe"}
+        </button>
+        <button type="button" data-add-account-cancel onClick={() => setOpen(false)} style={smallBtn()}>
+          Cancel
+        </button>
+        <span style={{ color: tokens.textFaint, fontSize: 11.5 }}>
+          Registration always probes. The row you get back shows the health the probe measured, not
+          a hopeful default.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function input(): CSSProperties {
+  return {
+    background: tokens.bgGutter,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 7,
+    color: tokens.text,
+    display: "block",
+    fontSize: 12.5,
+    marginTop: 3,
+    padding: "6px 9px",
+    width: "100%",
+  };
+}
+
+function smallBtn(): CSSProperties {
+  return {
+    // `font` FIRST: it is a shorthand and would reset `fontSize` if it came
+    // after. React writes inline styles in key order, so the order here is the
+    // order the browser sees.
+    font: "inherit",
+    background: tokens.toolBg,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 7,
+    color: tokens.text,
+    cursor: "pointer",
+    fontSize: 12,
+    padding: "5px 11px",
+  };
 }
 
 function GroupLabel({ text, note }: { text: string; note?: string }): JSX.Element {
@@ -311,11 +693,18 @@ function Row({
   summary,
   open,
   onToggle,
+  probe,
+  verbatimError,
   children,
 }: {
   summary: ConnectionSummary;
   open: boolean;
   onToggle: (id: string) => void;
+  /** The age of the reading behind `summary.state`. Optional only because the
+   *  non-Claude rows are B4b/B4c's to wire; a Claude row always passes it. */
+  probe?: { label: string; absolute: string; unmeasured: boolean };
+  /** The upstream failure, VERBATIM — status code and message (R58). */
+  verbatimError?: string | null;
   children: React.ReactNode;
 }): JSX.Element {
   const skin = STATE_SKIN[summary.state];
@@ -328,6 +717,7 @@ function Row({
       <button
         type="button"
         className="conn-head"
+        data-row-toggle={summary.id}
         aria-expanded={open}
         onClick={() => onToggle(summary.id)}
         style={headStyle(open)}
@@ -349,6 +739,19 @@ function Row({
           >
             {summary.stateLabel}
           </span>
+          {probe && (
+            <span
+              className="mono"
+              data-connection-probe-age
+              title={probe.absolute}
+              style={{
+                fontSize: 10.5,
+                color: probe.unmeasured ? tokens.warn : tokens.textFaint,
+              }}
+            >
+              {probe.label}
+            </span>
+          )}
           <span style={{ flex: 1 }} />
           <span className="mono" style={{ fontSize: 11, color: tokens.textGhost }}>
             {open ? "▾ hide" : "▸ open"}
@@ -387,6 +790,29 @@ function Row({
           </span>
           <span data-connection-action>{summary.action}</span>
         </div>
+
+        {/* R58 — VERBATIM. Status code and message, exactly as the upstream
+            sent them. A friendly string here ("probe failed") is precisely what
+            makes an expired token indistinguishable from a network outage. */}
+        {verbatimError && (
+          <div
+            data-connection-error
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: tokens.bleed,
+              background: tokens.dangerActionBg,
+              border: `1px solid ${tokens.dangerActionBorder}`,
+              borderRadius: 8,
+              padding: "8px 10px",
+              lineHeight: 1.45,
+              wordBreak: "break-word",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {verbatimError}
+          </div>
+        )}
       </button>
 
       {/* Kept mounted: its fetch already happened, and a collapse must not

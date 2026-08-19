@@ -37,7 +37,8 @@
  */
 
 import { Hono } from "hono";
-import { readFile, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
+import { constants as FS } from "node:fs";
 import { join } from "node:path";
 import pg from "pg";
 import {
@@ -46,6 +47,27 @@ import {
   listSecrets,
   putSecret,
 } from "../lib/secret-store.ts";
+import {
+  AGY_BIN,
+  AGY_PROBE_ARGS,
+  AGY_SIGNIN_COMMAND,
+  GITHUB_PAT_SECRET,
+  GOOGLE_REAUTH_COMMAND,
+  absentConnectionStatus,
+  agyBinaryPresent,
+  buildConnectionStatus,
+  connectionRecheckIntervalMs,
+  googleTokenPath,
+  probeAgy,
+  probeGithub,
+  probeGoogle,
+  readConnectionRecord,
+  resolveGithubToken,
+  writeConnectionRecord,
+  type ConnectionRecord,
+  type ConnectionStatus,
+  type GoogleTokenFile,
+} from "../lib/connection-status.ts";
 
 const r = new Hono();
 
@@ -496,34 +518,73 @@ r.get("/gemini/usage", async (c) => {
   });
 });
 
-/* ── Google account (Gmail / Calendar / Drive) ───────────────────────────── */
+/* ── Connections: Google, agy, GitHub (R48–R58) ──────────────────────────── */
 
-/** Where setup.py writes the credential (TOKEN_PATH = HERMES_HOME/google_token.json). */
-const GOOGLE_TOKEN_PATH =
-  process.env.GOOGLE_TOKEN_PATH ?? "/root/.hermes/google_token.json";
-const GOOGLE_SETUP_SCRIPT = "/opt/ai-os/google-setup/setup.py";
-const GOOGLE_REAUTH_COMMAND = `python3 ${GOOGLE_SETUP_SCRIPT}`;
-const GMAIL_PROFILE_URL =
-  "https://gmail.googleapis.com/gmail/v1/users/me/profile";
+/**
+ * THE INVARIANT THIS SECTION EXISTS FOR (R57):
+ *
+ *   NO CONNECTION RENDERS A POSITIVE STATE WITHOUT A checked_at TIMESTAMP.
+ *   checked_at === null RENDERS UNKNOWN, IN AMBER, ALWAYS.
+ *
+ * Every `status` field below is produced by exactly one of two functions in
+ * `lib/connection-status.ts` — `buildConnectionStatus()` (which funnels through
+ * `renderState()`, the only producer of "connected") or
+ * `absentConnectionStatus()` (which hardcodes `checked_at: null`). No route in
+ * this file assembles a state by hand, so there is one place to audit.
+ *
+ * WHAT WAS REMOVED, AND WHY THE OLD COMMENT WAS WRONG. Until this task the
+ * Google check lived in `let lastGoogleCheck: GoogleCheck | null = null` — a
+ * MODULE-LEVEL VARIABLE — whose own comment defended the choice: "Survives no
+ * restart on purpose: a stale 'connected' from before a revocation is exactly
+ * the fake success state this panel must not show." The fear was right and the
+ * remedy was backwards. Dying on restart does not degrade the answer to "we do
+ * not know"; it degrades it to "nobody has ever asked", while the credential
+ * file still sits on disk looking exactly like a working account. So after
+ * every `pm2 restart forge-control` the surface could not distinguish
+ * CONNECTED from NEVER CHECKED — the precise failure Konrad calls worse than
+ * showing nothing. Staleness is now handled where it belongs: the result is
+ * PERSISTED WITH ITS AGE and demoted to UNKNOWN once it is older than three
+ * re-check intervals (R51), so a pre-revocation "connected" expires instead of
+ * being thrown away and re-learned from zero.
+ *
+ * IDENTITY COMES FROM THE PROBE RESPONSE, NEVER FROM CONFIGURATION (R50). The
+ * old GET fell back to `parsed.account` from the credential file. That field is
+ * written by nobody and verified by nothing; rendering it beside a green dot
+ * was the same lie in a smaller font. It is still reported — as
+ * `configured_account`, explicitly labelled, next to the verified one.
+ */
 
-interface GoogleTokenFile {
-  account?: unknown;
-  scopes?: unknown;
-  client_id?: unknown;
-  client_secret?: unknown;
-  refresh_token?: unknown;
-  token_uri?: unknown;
-  expiry?: unknown;
+const GOOGLE_ID = "google";
+const AGY_ID = "agy";
+const GITHUB_ID = "github";
+
+const GOOGLE_REAUTH_WHY =
+  "setup.py opens a consent URL and waits on a redirect to http://localhost:8765. It needs a human at a browser, so it cannot be started from an API request that has no terminal.";
+
+function reauthBlock(): { command: string; interactive: boolean; why: string } {
+  return { command: GOOGLE_REAUTH_COMMAND, interactive: true, why: GOOGLE_REAUTH_WHY };
 }
+
+/** One clock for every status this router builds, so the staleness boundary
+ *  and the cron cadence cannot drift apart between two endpoints. */
+function clock(): { now: number; intervalMs: number } {
+  return { now: Date.now(), intervalMs: connectionRecheckIntervalMs() };
+}
+
+/* ── Google ──────────────────────────────────────────────────────────────── */
 
 interface GoogleAccountView {
   /** Stable handle for the UI's key. One credential file, one account today —
    *  the list shape is plural so a second one does not need a new contract. */
   id: string;
-  /** The credential file does NOT record the address (setup.py leaves
-   *  `account` empty), so this is usually null until a live check fills it in.
-   *  Null is honest; a hardcoded address would be decoration. */
+  /** THE VERIFIED ADDRESS: the one Gmail's profile call returned on the last
+   *  successful probe, and null whenever the connection is not currently
+   *  CONNECTED. Never the credential file's own `account` field (R50). */
   email: string | null;
+  /** What the credential file claims, labelled as configuration so it can be
+   *  shown without being mistaken for a verified identity. Usually null:
+   *  setup.py leaves it empty. */
+  configured_account: string | null;
   scopes: string[];
   has_refresh_token: boolean;
   client_id: string | null;
@@ -535,45 +596,89 @@ interface GoogleAccountView {
   token_path: string;
 }
 
+/** Kept for the existing panel, which types `last_check` as this shape. Now
+ *  derived from the PERSISTED record rather than a variable, and widened with
+ *  the verbatim upstream fields R58 requires. */
 interface GoogleCheck {
   ok: boolean;
   email: string | null;
   reason: string | null;
   message: string;
-  checked_at: string;
+  checked_at: string | null;
+  http_status: number | null;
+  upstream: string | null;
 }
 
-/** Last live probe result, in memory. Survives no restart on purpose: a stale
- *  "connected" from before a revocation is exactly the fake success state this
- *  panel must not show. */
-let lastGoogleCheck: GoogleCheck | null = null;
+const GOOGLE_ACTIONS = {
+  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+  unknown: "Press Test connection to run a real token refresh plus a Gmail profile call.",
+  broken: `Re-authorise at a terminal: ${GOOGLE_REAUTH_COMMAND}`,
+} as const;
+
+function googleCheckFromRecord(record: ConnectionRecord | null): GoogleCheck | null {
+  if (record === null) return null;
+  return {
+    ok: record.ok,
+    email: record.ok ? record.identity : null,
+    reason: record.ok ? null : "see detail",
+    message: record.detail,
+    checked_at: record.checked_at,
+    http_status: null,
+    upstream: null,
+  };
+}
 
 function readScopes(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.filter((s): s is string => typeof s === "string") : [];
 }
 
+/**
+ * GET /api/integrations/google
+ *
+ * Reads the persisted record back. A restart between the probe and this call
+ * changes nothing — that is the whole point of R48, and the proof transcript
+ * lives in phase4/google-persistence-proof.md.
+ */
 r.get("/google", async (c) => {
+  const tokenPath = googleTokenPath();
+
+  let record: ConnectionRecord | null;
+  try {
+    record = await readConnectionRecord(GOOGLE_ID);
+  } catch (err) {
+    return c.json(
+      {
+        error: "could not read the persisted Google connection status",
+        detail: (err as Error).message,
+      },
+      500,
+    );
+  }
+
   let raw: string;
   try {
-    raw = await readFile(GOOGLE_TOKEN_PATH, "utf8");
+    raw = await readFile(tokenPath, "utf8");
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
     if (e.code === "ENOENT") {
+      // No credential file at all: ABSENT, not broken and certainly not
+      // unknown-with-a-timestamp. There is nothing here to have checked.
       return c.json({
         accounts: [],
-        last_check: lastGoogleCheck,
-        reauth: {
-          command: GOOGLE_REAUTH_COMMAND,
-          interactive: true,
-          why: "setup.py opens a consent URL and waits on a redirect to http://localhost:8765. It needs a human at a browser, so it cannot be started from an API request that has no terminal.",
-        },
-        detail: `no credential file at ${GOOGLE_TOKEN_PATH} — the Google tooling on this box is not connected`,
+        status: absentConnectionStatus(
+          GOOGLE_ID,
+          `No credential file at ${tokenPath} — the Google tooling on this box has never been connected.`,
+          `Run \`${GOOGLE_REAUTH_COMMAND}\` at a terminal and complete the consent in a browser.`,
+        ),
+        last_check: googleCheckFromRecord(record),
+        reauth: reauthBlock(),
+        detail: `no credential file at ${tokenPath} — the Google tooling on this box is not connected`,
       });
     }
     return c.json(
       {
         error: "could not read the Google credential file",
-        detail: `${GOOGLE_TOKEN_PATH}: ${e.message}`,
+        detail: `${tokenPath}: ${e.message}`,
       },
       500,
     );
@@ -586,195 +691,392 @@ r.get("/google", async (c) => {
     return c.json(
       {
         error: "the Google credential file is not valid JSON",
-        detail: `${GOOGLE_TOKEN_PATH}: ${(err as Error).message}`,
+        detail: `${tokenPath}: ${(err as Error).message}`,
       },
       500,
     );
   }
 
-  const mtime = await stat(GOOGLE_TOKEN_PATH)
+  // Carried over unchanged from the pre-existing GET. The only tolerated catch
+  // on this path, and it is tolerable because `connected_at` is decoration:
+  // it is "when the consent was last written", it feeds NO state, and `null`
+  // renders as "unknown" rather than as anything positive. The file itself was
+  // read successfully three lines above, so this cannot mask a missing
+  // credential — that case returned ABSENT already.
+  const mtime = await stat(tokenPath)
     .then((s) => s.mtime.toISOString())
     .catch(() => null);
 
+  const status = buildConnectionStatus(GOOGLE_ID, record, clock(), GOOGLE_ACTIONS);
+
   const account: GoogleAccountView = {
     id: "hermes-google",
-    email:
+    // The verified address, and ONLY when the status is currently positive.
+    // `status.identity` is null in every other state by construction.
+    email: status.identity,
+    configured_account:
       typeof parsed.account === "string" && parsed.account.trim()
         ? parsed.account.trim()
-        : (lastGoogleCheck?.ok ? lastGoogleCheck.email : null),
+        : null,
     scopes: readScopes(parsed.scopes),
     has_refresh_token:
       typeof parsed.refresh_token === "string" && parsed.refresh_token.length > 0,
     client_id: typeof parsed.client_id === "string" ? parsed.client_id : null,
     connected_at: mtime,
     access_expires_at: typeof parsed.expiry === "string" ? parsed.expiry : null,
-    token_path: GOOGLE_TOKEN_PATH,
+    token_path: tokenPath,
   };
 
   return c.json({
     accounts: [account],
-    last_check: lastGoogleCheck,
-    reauth: {
-      command: GOOGLE_REAUTH_COMMAND,
-      interactive: true,
-      why: "setup.py opens a consent URL and waits on a redirect to http://localhost:8765. It needs a human at a browser, so it cannot be started from an API request that has no terminal.",
-    },
+    status,
+    last_check: googleCheckFromRecord(record),
+    reauth: reauthBlock(),
   });
 });
 
 /**
- * POST /api/integrations/google/test — spend the refresh token once and ask
- * Gmail who we are. This is the ONLY way to distinguish "connected" from
- * "invalid_grant", and it is also where the connected email comes from: the
- * credential file does not record it, and `userinfo` is out of scope on this
- * consent, so Gmail's own profile endpoint is the address of record.
+ * POST /api/integrations/google/test — the real probe (R50): spend the refresh
+ * token once, then ask Gmail's profile endpoint who we are. Persisted before
+ * the response is written, so a client that never reads the body still leaves
+ * a durable `checked_at` behind.
  *
- * Nothing is written back — the refreshed access token is used for one call
- * and dropped. The file on disk is not touched by this route at all.
+ * This is a READ against the credential file. The refreshed access token is
+ * used for one call and dropped; nothing on this path opens the file for
+ * writing. Proven by sha256 before and after in
+ * phase4/google-persistence-proof.md.
  */
 r.post("/google/test", async (c) => {
-  let parsed: GoogleTokenFile;
+  const result = await probeGoogle();
+
+  let stored: ConnectionRecord;
   try {
-    parsed = JSON.parse(await readFile(GOOGLE_TOKEN_PATH, "utf8")) as GoogleTokenFile;
+    stored = await writeConnectionRecord(GOOGLE_ID, result.record);
   } catch (err) {
-    const check: GoogleCheck = {
-      ok: false,
-      email: null,
-      reason: "no_credential",
-      message: `Could not read ${GOOGLE_TOKEN_PATH}: ${(err as Error).message}`,
-      checked_at: new Date().toISOString(),
-    };
-    lastGoogleCheck = check;
-    return c.json({ ...check, reauth_command: GOOGLE_REAUTH_COMMAND }, 400);
-  }
-
-  const refresh = typeof parsed.refresh_token === "string" ? parsed.refresh_token : "";
-  const clientId = typeof parsed.client_id === "string" ? parsed.client_id : "";
-  const clientSecret =
-    typeof parsed.client_secret === "string" ? parsed.client_secret : "";
-  const tokenUri =
-    typeof parsed.token_uri === "string"
-      ? parsed.token_uri
-      : "https://oauth2.googleapis.com/token";
-
-  if (!refresh || !clientId || !clientSecret) {
-    const check: GoogleCheck = {
-      ok: false,
-      email: null,
-      reason: "incomplete_credential",
-      message:
-        "The credential file is missing the refresh token or the client identity, so it cannot be renewed. Re-run the setup script.",
-      checked_at: new Date().toISOString(),
-    };
-    lastGoogleCheck = check;
-    return c.json({ ...check, reauth_command: GOOGLE_REAUTH_COMMAND });
-  }
-
-  const fail = (reason: string, message: string) => {
-    const check: GoogleCheck = {
-      ok: false,
-      email: null,
-      reason,
-      message,
-      checked_at: new Date().toISOString(),
-    };
-    lastGoogleCheck = check;
-    return c.json({ ...check, reauth_command: GOOGLE_REAUTH_COMMAND });
-  };
-
-  /** Google's error bodies quote neither secret, but this router's rule is
-   *  that nothing upstream is relayed unscrubbed. */
-  const clean = (text: string): string =>
-    text.split(refresh).join("<redacted>").split(clientSecret).join("<redacted>");
-
-  let tokenRes: Response;
-  try {
-    tokenRes = await fetch(tokenUri, {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: refresh,
-        client_id: clientId,
-        client_secret: clientSecret,
-      }),
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
-  } catch (err) {
-    return fail(
-      "unreachable",
-      `Could not reach Google's token endpoint: ${clean((err as Error).message)}`,
+    // The probe succeeded and the STORE failed. Reporting the probe's answer
+    // with no timestamp would be exactly the state this task deletes, so this
+    // is a 500 carrying both facts (N1).
+    return c.json(
+      {
+        error: "the Google probe ran but its result could not be persisted",
+        detail: (err as Error).message,
+        probe_detail: result.record.detail,
+      },
+      500,
     );
-  }
-
-  const tokenBody = await tokenRes.text();
-  if (!tokenRes.ok) {
-    const isInvalidGrant = tokenBody.includes("invalid_grant");
-    return fail(
-      isInvalidGrant ? "invalid_grant" : "token_refresh_failed",
-      isInvalidGrant
-        ? "Google refused the refresh token (invalid_grant) — the consent was revoked, the password changed, or the token expired. Gmail, Calendar and Drive are dead until it is re-authorised, and that needs the interactive setup script."
-        : `Google answered HTTP ${tokenRes.status} to the refresh: ${clean(tokenBody.slice(0, 300))}`,
-    );
-  }
-
-  let accessToken = "";
-  try {
-    const j = JSON.parse(tokenBody) as { access_token?: unknown };
-    accessToken = typeof j.access_token === "string" ? j.access_token : "";
-  } catch {
-    return fail(
-      "token_refresh_failed",
-      "Google's token endpoint answered 200 with a body that is not JSON.",
-    );
-  }
-  if (!accessToken) {
-    return fail(
-      "token_refresh_failed",
-      "Google's token response carried no access_token.",
-    );
-  }
-
-  let profileRes: Response;
-  try {
-    profileRes = await fetch(GMAIL_PROFILE_URL, {
-      headers: { authorization: `Bearer ${accessToken}`, accept: "application/json" },
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-    });
-  } catch (err) {
-    return fail(
-      "unreachable",
-      `The token refreshed, but Gmail did not answer: ${clean((err as Error).message)}`,
-    );
-  }
-
-  const profileBody = await profileRes.text();
-  if (!profileRes.ok) {
-    return fail(
-      "profile_failed",
-      `The token refreshed, so the consent is alive, but Gmail answered HTTP ${profileRes.status}: ${clean(profileBody.slice(0, 300))}`,
-    );
-  }
-
-  let email: string | null = null;
-  try {
-    const j = JSON.parse(profileBody) as { emailAddress?: unknown };
-    email = typeof j.emailAddress === "string" ? j.emailAddress : null;
-  } catch {
-    email = null;
   }
 
   const check: GoogleCheck = {
-    ok: true,
-    email,
-    reason: null,
-    message: email
-      ? `Connected. Google renewed the token and Gmail answered as ${email}.`
-      : "Connected. Google renewed the token and Gmail answered, but returned no address.",
-    checked_at: new Date().toISOString(),
+    ok: stored.ok,
+    email: stored.ok ? stored.identity : null,
+    reason: result.reason,
+    message: stored.detail,
+    checked_at: stored.checked_at,
+    http_status: result.http_status,
+    upstream: result.upstream,
   };
-  lastGoogleCheck = check;
-  return c.json(check);
+
+  return c.json({
+    ...check,
+    status: buildConnectionStatus(GOOGLE_ID, stored, clock(), GOOGLE_ACTIONS),
+    reauth_command: GOOGLE_REAUTH_COMMAND,
+  });
+});
+
+/* ── agy / Antigravity CLI (R52) ─────────────────────────────────────────── */
+
+const AGY_ACTIONS = {
+  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+  unknown: "Press Probe to run the CLI and see what it says.",
+  broken: `Sign in at a terminal on this box: run \`${AGY_SIGNIN_COMMAND}\`, open the printed Google URL in a browser, and paste the authorization code back into the terminal within 60 seconds. There is no login subcommand and no browser flow this OS can drive for you.`,
+} as const;
+
+/** The affordance, in one object, so the panel prints facts rather than a
+ *  guess at how a CLI login usually works. Every line here is something
+ *  phase0/S-A-agy-flow.md OBSERVED. */
+function agyFlow(): {
+  binary: string;
+  probe_command: string;
+  signin_command: string;
+  flow: string;
+  paste_prompt: string;
+  window_seconds: number;
+  why_no_button: string;
+} {
+  return {
+    binary: AGY_BIN,
+    probe_command: `${AGY_BIN} ${AGY_PROBE_ARGS.join(" ")}`,
+    signin_command: AGY_SIGNIN_COMMAND,
+    flow: "PKCE authorization-code, not device-code. agy prints a Google consent URL, waits 60 seconds, and asks for an authorization code to be pasted back into the terminal.",
+    paste_prompt: "Or, paste the authorization code here and press Enter:",
+    window_seconds: 60,
+    why_no_button:
+      "redirect_uri is https://antigravity.google/oauth-callback, not localhost, so no local listener can catch the callback — a human reads the code off Google's page and types it into the terminal. Observed in phase0/S-A-agy-flow.md §2.",
+  };
+}
+
+/** "Is there a credential file at all?" — and nothing else. ENOENT and EACCES
+ *  mean there is nothing here to be connected, which is ABSENT. Any other
+ *  errno is this box failing at something it should be able to do, and is
+ *  rethrown so it surfaces as an error rather than degrading into a state
+ *  (N1): "no credential" and "the disk is unhappy" are different sentences. */
+async function credentialFilePresent(path: string): Promise<boolean> {
+  try {
+    await access(path, FS.R_OK);
+    return true;
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    if (e.code === "ENOENT" || e.code === "EACCES") return false;
+    throw new Error(`could not stat ${path}: ${e.message}`);
+  }
+}
+
+async function agyStatus(record: ConnectionRecord | null): Promise<ConnectionStatus> {
+  if (!(await agyBinaryPresent())) {
+    return absentConnectionStatus(
+      AGY_ID,
+      `${AGY_BIN} is not present or not executable — the Antigravity CLI is not installed on this box.`,
+      // NAMES THE BINARY. The Ultra row prints this same action, and an
+      // instruction that does not say which path must exist is a step Konrad
+      // cannot follow to a checkable end.
+      `Install the Antigravity CLI so that ${AGY_BIN} exists, then run \`${AGY_SIGNIN_COMMAND}\` once to sign in.`,
+    );
+  }
+  return buildConnectionStatus(AGY_ID, record, clock(), AGY_ACTIONS);
+}
+
+r.get("/agy", async (c) => {
+  let record: ConnectionRecord | null;
+  try {
+    record = await readConnectionRecord(AGY_ID);
+  } catch (err) {
+    return c.json(
+      {
+        error: "could not read the persisted agy connection status",
+        detail: (err as Error).message,
+      },
+      500,
+    );
+  }
+  try {
+    return c.json({ status: await agyStatus(record), flow: agyFlow() });
+  } catch (err) {
+    return c.json(
+      { error: "could not determine the agy status", detail: (err as Error).message },
+      500,
+    );
+  }
+});
+
+/**
+ * POST /api/integrations/agy/probe — spawn `<AGY_BIN> models`.
+ *
+ * `models` and never `-p`: S-A-agy-flow.md §5 measured `models` at 0.32s and
+ * confirmed it fails clean when signed out, while `-p` opens the 60-second
+ * OAuth wait. A route that can block for a minute is a route that will.
+ */
+r.post("/agy/probe", async (c) => {
+  let record: ConnectionRecord;
+  try {
+    record = await probeAgy();
+  } catch (err) {
+    return c.json(
+      { error: `could not run ${AGY_BIN}`, detail: (err as Error).message },
+      500,
+    );
+  }
+
+  let stored: ConnectionRecord;
+  try {
+    stored = await writeConnectionRecord(AGY_ID, record);
+  } catch (err) {
+    return c.json(
+      {
+        error: "the agy probe ran but its result could not be persisted",
+        detail: (err as Error).message,
+        probe_detail: record.detail,
+      },
+      500,
+    );
+  }
+
+  try {
+    return c.json({ status: await agyStatus(stored), flow: agyFlow() });
+  } catch (err) {
+    return c.json(
+      { error: "could not determine the agy status", detail: (err as Error).message },
+      500,
+    );
+  }
+});
+
+/* ── GitHub (R55, R56) ───────────────────────────────────────────────────── */
+
+const GITHUB_ACTIONS = {
+  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+  unknown: "Press Probe to make a real GET https://api.github.com/user with the stored token.",
+  broken: `The stored token was rejected. Mint a new personal access token on GitHub and store it through the secure panel under the name \`${GITHUB_PAT_SECRET}\` — never paste it into a chat.`,
+} as const;
+
+const GITHUB_ABSENT_ACTION = `Store a GitHub personal access token through the secure panel (POST /api/secrets) under the name \`${GITHUB_PAT_SECRET}\`. The value must never travel through a chat message, a brief, a log line or a URL.`;
+
+async function secretNames(): Promise<string[]> {
+  return (await listSecrets()).map((s) => s.name);
+}
+
+/** Resolve the PAT, or describe precisely what is missing. The token itself
+ *  never leaves this function's caller and is never returned, logged or
+ *  echoed — only the NAME appears anywhere in a response. */
+async function githubToken(): Promise<
+  { token: string } | { token: null; status: ConnectionStatus }
+> {
+  const resolved = await resolveGithubToken(secretNames, getSecret);
+  if (resolved.token !== null) return { token: resolved.token };
+  const near =
+    resolved.candidates.length === 0
+      ? ""
+      : ` The store does hold ${resolved.candidates.map((n) => `\`${n}\``).join(", ")}, but this probe will not guess which account you mean — store the one you want under \`${GITHUB_PAT_SECRET}\`.`;
+  return {
+    token: null,
+    status: absentConnectionStatus(
+      GITHUB_ID,
+      `No secret named \`${GITHUB_PAT_SECRET}\` is stored, so there is nothing to authorise with.${near}`,
+      GITHUB_ABSENT_ACTION,
+    ),
+  };
+}
+
+r.get("/github", async (c) => {
+  let record: ConnectionRecord | null;
+  try {
+    record = await readConnectionRecord(GITHUB_ID);
+  } catch (err) {
+    return c.json(
+      {
+        error: "could not read the persisted GitHub connection status",
+        detail: (err as Error).message,
+      },
+      500,
+    );
+  }
+
+  let resolved: Awaited<ReturnType<typeof githubToken>>;
+  try {
+    resolved = await githubToken();
+  } catch (err) {
+    return c.json(
+      { error: "could not read the secret store", detail: (err as Error).message },
+      500,
+    );
+  }
+
+  if (resolved.token === null) {
+    return c.json({ status: resolved.status, secret_name: GITHUB_PAT_SECRET });
+  }
+  return c.json({
+    status: buildConnectionStatus(GITHUB_ID, record, clock(), GITHUB_ACTIONS),
+    secret_name: GITHUB_PAT_SECRET,
+  });
+});
+
+/**
+ * POST /api/integrations/github/probe — a real `GET /user`.
+ *
+ * "Token present" is storage, not authorisation: the only thing that produces
+ * CONNECTED here is a 200 carrying a `login`. The token goes in an
+ * Authorization HEADER, never a query string, so it cannot land in an access
+ * log; it is not written to the status record, not logged, and not echoed.
+ */
+r.post("/github/probe", async (c) => {
+  let resolved: Awaited<ReturnType<typeof githubToken>>;
+  try {
+    resolved = await githubToken();
+  } catch (err) {
+    return c.json(
+      { error: "could not read the secret store", detail: (err as Error).message },
+      500,
+    );
+  }
+  if (resolved.token === null) {
+    return c.json({ status: resolved.status, secret_name: GITHUB_PAT_SECRET }, 400);
+  }
+
+  const record = await probeGithub(resolved.token);
+
+  let stored: ConnectionRecord;
+  try {
+    stored = await writeConnectionRecord(GITHUB_ID, record);
+  } catch (err) {
+    return c.json(
+      {
+        error: "the GitHub probe ran but its result could not be persisted",
+        detail: (err as Error).message,
+        probe_detail: record.detail,
+      },
+      500,
+    );
+  }
+
+  return c.json({
+    status: buildConnectionStatus(GITHUB_ID, stored, clock(), GITHUB_ACTIONS),
+    secret_name: GITHUB_PAT_SECRET,
+  });
+});
+
+/* ── All three at once, for the settings panel's first paint ─────────────── */
+
+/**
+ * GET /api/integrations/connections — every persisted status in one call, so
+ * B4c's panel makes one request instead of three and cannot render two of them
+ * against different clocks. Reads only; it never probes.
+ */
+r.get("/connections", async (c) => {
+  const out: ConnectionStatus[] = [];
+  const errors: { id: string; detail: string }[] = [];
+
+  for (const id of [GOOGLE_ID, AGY_ID, GITHUB_ID]) {
+    try {
+      const record = await readConnectionRecord(id);
+      if (id === AGY_ID) {
+        out.push(await agyStatus(record));
+        continue;
+      }
+      if (id === GITHUB_ID) {
+        const resolved = await githubToken();
+        out.push(
+          resolved.token === null
+            ? resolved.status
+            : buildConnectionStatus(GITHUB_ID, record, clock(), GITHUB_ACTIONS),
+        );
+        continue;
+      }
+      const tokenPath = googleTokenPath();
+      const present = await credentialFilePresent(tokenPath);
+      out.push(
+        present
+          ? buildConnectionStatus(GOOGLE_ID, record, clock(), GOOGLE_ACTIONS)
+          : absentConnectionStatus(
+              GOOGLE_ID,
+              `No credential file at ${tokenPath} — the Google tooling on this box has never been connected.`,
+              `Run \`${GOOGLE_REAUTH_COMMAND}\` at a terminal and complete the consent in a browser.`,
+            ),
+      );
+    } catch (err) {
+      // A connection whose status cannot be read is reported as an ERROR, not
+      // omitted and not defaulted: a missing card and a broken card look
+      // identical to a reader, and only one of them is our fault (N1).
+      errors.push({ id, detail: (err as Error).message });
+    }
+  }
+
+  if (errors.length > 0 && out.length === 0) {
+    return c.json({ error: "no connection status could be read", errors }, 500);
+  }
+  return c.json({
+    connections: out,
+    errors,
+    recheck_interval_ms: connectionRecheckIntervalMs(),
+  });
 });
 
 export default r;
