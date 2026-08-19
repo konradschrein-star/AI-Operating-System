@@ -1,3 +1,71 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+ * SELF-HOSTED WEBFONTS (R31, task B2c).
+ *
+ * Until 2026-08-19 all three families arrived over two render-blocking <link>s
+ * to fonts.googleapis.com and NOTHING here was self-hosted — forge-control-web
+ * had no public/ directory at all. A third party therefore decided whether this
+ * UI was legible, and when it did not answer, `.ms` (which has a single family
+ * and NO fallback) rendered every icon as its ligature name: the word
+ * "description" beside a filename, "open_in_new" beside "Open in Obsidian".
+ * Measured, blocked vs allowed, in
+ * docs/plan/artifacts/os-usable-for-work/phase2/font-measurement.md §5.
+ *
+ * The bytes are now local. THIS CHANGES WHERE THE BYTES COME FROM AND NOTHING
+ * ELSE (R32): the three classes below still name the same three families, and
+ * no component gained a font-family of its own.
+ *
+ * Each file is the exact woff2 Google served for the URL layout.tsx used to
+ * link, taken from the @font-face blocks in its CSS response (curl -4 — this
+ * host publishes an unreachable AAAA route to fonts.googleapis.com). Provenance
+ * and hashes: public/fonts/LICENSE.md.
+ * ───────────────────────────────────────────────────────────────────────────*/
+
+/* latin subset, variable weight axis — one file covers the 400/450/500/600 the
+ * UI asks for. unicode-range is Google's own for this subset, kept verbatim so
+ * a glyph outside it still falls through to the next family in the stack. */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-variable-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-variable-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* R31 names only Inter and JetBrains Mono. Extending it to the icon font is
+ * deliberate: it is the LOUDEST third of the defect, and fixing the two text
+ * faces while leaving the icons on a CDN would have shipped the visible part.
+ *
+ * NO unicode-range here. The icon glyphs live in the Private Use Area and are
+ * reached through LIGATURES ('liga', below) — restricting the range would stop
+ * the ligature substitution and put the literal words straight back.
+ *
+ * font-weight: 200 exactly, because the file Google serves for the pinned axes
+ * opsz,wght,FILL,GRAD@20,200,0,0 is a STATIC INSTANCE at wght 200, not a
+ * variable face. `.ms`'s font-variation-settings below is inert against it and
+ * is kept anyway: it is correct, it costs nothing, and it keeps working if this
+ * file is ever swapped for the variable build. */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 200;
+  font-display: swap;
+  src: url('/fonts/material-symbols-outlined.woff2') format('woff2');
+}
+
 *,
 *::before,
 *::after {

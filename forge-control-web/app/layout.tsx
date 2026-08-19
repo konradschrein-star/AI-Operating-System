@@ -36,20 +36,17 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link
-          rel="preconnect"
-          href="https://fonts.gstatic.com"
-          crossOrigin="anonymous"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
-          rel="stylesheet"
-        />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20,200,0,0&display=swap"
-          rel="stylesheet"
-        />
+        {/* NO FONT <link>s. All three families (Inter, JetBrains Mono, Material
+            Symbols Outlined) are self-hosted from public/fonts and declared in
+            globals.css — see the @font-face block at the top of that file for
+            the measurement and the reasoning.
+
+            The two fonts.googleapis.com stylesheets AND their two preconnect
+            hints were removed together, deliberately. A leftover render-blocking
+            stylesheet that never resolves is browser-harness.md §5 Failure 4:
+            DOMContentLoaded never fires, page.goto times out, and a live surface
+            is reported dead. A preconnect to a host nothing requests is a DNS +
+            TLS handshake spent on nothing. */}
         {/* Apply the stored theme BEFORE first paint — otherwise a light-mode
             user eats a black flash on every navigation. Inline and blocking on
             purpose: it's three lines and must run before the body renders. */}
