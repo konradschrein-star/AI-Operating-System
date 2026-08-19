@@ -1,0 +1,573 @@
+"use client";
+
+/**
+ * STATS — the third tab of the GOALS/TASKS surface (docs/SPEC-DAILY-SURFACE.md
+ * §4). Split out of GoalsSurface.tsx purely for size; it is mounted only by
+ * that file and imports nothing from it, so there is no back-edge between the
+ * two modules.
+ *
+ * This is the part of the Notion system Konrad actually liked, minus the reason
+ * he stopped trusting it: every number here comes from the same server-side
+ * score (spec §2), so the ring on TODAY, the tiles below and the heatmap can
+ * never disagree. Nothing on this screen is recomputed in React.
+ */
+
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { tokens } from "../tokens";
+import {
+  fetchDailyStats,
+  dailyHabitStrip,
+  dailyBestScore,
+  dailyBestDayLabel,
+  type DailyArea,
+  type DailyHabitStat,
+  type DailyHeatmapCell,
+  type DailyStatsResponse,
+} from "../api";
+
+/** Kept local rather than imported from GoalsSurface: this file is downstream
+ *  of that one and a shared constant would make the edge circular. */
+const AREA_ICON: Record<DailyArea, string> = {
+  uni: "school",
+  business: "payments",
+  content: "movie",
+  health: "cardiology",
+  admin: "folder_open",
+  personal: "person",
+};
+
+const WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
+
+const HEATMAP_DAYS = 56;
+
+/** Monday = 0. `YYYY-MM-DD` parsed as local midnight so the grid never slips a
+ *  row against a UTC boundary. */
+const dayDate = (day: string): Date => new Date(`${day}T00:00:00`);
+const weekdayIndex = (day: string): number => (dayDate(day).getDay() + 6) % 7;
+
+/** Five intensity steps of the accent, GitHub-style. Step 0 is an empty cell,
+ *  not a faint one — "no data" must not read as "a bad day". */
+function heatStyle(cell: DailyHeatmapCell | null): React.CSSProperties {
+  if (!cell) {
+    return { background: "transparent", border: `1px solid ${tokens.borderDivider}` };
+  }
+  const s = cell.score;
+  if (s <= 0) return { background: tokens.borderDivider };
+  const opacity = s >= 85 ? 1 : s >= 65 ? 0.75 : s >= 45 ? 0.52 : s >= 20 ? 0.32 : 0.18;
+  return { background: tokens.accent, opacity };
+}
+
+export function GoalsStats({ narrow }: { narrow: boolean }) {
+  const q = useQuery({
+    queryKey: ["daily", "stats", HEATMAP_DAYS],
+    queryFn: () => fetchDailyStats(HEATMAP_DAYS),
+    refetchInterval: 120_000,
+  });
+
+  if (q.isError) {
+    return (
+      <div
+        className="mono"
+        style={{
+          margin: "14px 0",
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.bleed}`,
+          borderRadius: 8,
+          padding: 16,
+          fontSize: 11.5,
+          color: tokens.bleed,
+          lineHeight: 1.6,
+        }}
+      >
+        stats didn&apos;t load —{" "}
+        {q.error instanceof Error ? q.error.message : "unknown error"}
+      </div>
+    );
+  }
+
+  const data: DailyStatsResponse | undefined = q.data;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 22, paddingBottom: 40 }}>
+      <Heatmap cells={data?.heatmap ?? []} loading={q.isLoading} />
+      <ScoreTiles score={data?.score} narrow={narrow} />
+      <HabitCards habits={data?.habits ?? []} narrow={narrow} loading={q.isLoading} />
+      <TaskStats tasks={data?.tasks} />
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      className="mono"
+      style={{
+        fontSize: 10,
+        color: tokens.textFaint,
+        letterSpacing: "0.12em",
+        marginBottom: 9,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ── Heatmap ───────────────────────────────────────────────────────────────── */
+
+function Heatmap({ cells, loading }: { cells: DailyHeatmapCell[]; loading: boolean }) {
+  const [sel, setSel] = useState<DailyHeatmapCell | null>(null);
+
+  const weeks = useMemo<(DailyHeatmapCell | null)[][]>(() => {
+    if (cells.length === 0) return [];
+    const sorted = [...cells].sort((a, b) => a.day.localeCompare(b.day));
+    const first = sorted[0];
+    const startSlot = weekdayIndex(first.day);
+    const startMs = dayDate(first.day).getTime();
+    const grid: (DailyHeatmapCell | null)[][] = [];
+    for (const c of sorted) {
+      // Slot from the date, not the array index — a missing day must leave a
+      // hole in the grid rather than shift every later day one square left.
+      const offset = Math.round((dayDate(c.day).getTime() - startMs) / 86_400_000);
+      const slot = startSlot + offset;
+      if (slot < 0) continue;
+      const w = Math.floor(slot / 7);
+      const r = slot % 7;
+      while (grid.length <= w) grid.push(Array<DailyHeatmapCell | null>(7).fill(null));
+      grid[w][r] = c;
+    }
+    return grid;
+  }, [cells]);
+
+  return (
+    <div>
+      <SectionLabel>DAY SCORE · {HEATMAP_DAYS / 7} WEEKS</SectionLabel>
+      <div
+        style={{
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.border}`,
+          borderRadius: 8,
+          padding: "12px 13px",
+        }}
+      >
+        {/* The one place horizontal scroll is allowed (spec §4 mobile). */}
+        <div className="scroll" style={{ overflowX: "auto", overflowY: "hidden" }}>
+          <div style={{ display: "flex", gap: 4, minWidth: "min-content" }}>
+            <div
+              className="mono"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                flex: "none",
+                paddingRight: 2,
+              }}
+            >
+              {WEEKDAYS.map((d, i) => (
+                <span
+                  key={i}
+                  style={{
+                    height: 14,
+                    lineHeight: "14px",
+                    fontSize: 8.5,
+                    color: tokens.textGhost,
+                    width: 9,
+                  }}
+                >
+                  {i % 2 === 0 ? d : ""}
+                </span>
+              ))}
+            </div>
+            {weeks.map((week, wi) => (
+              <div
+                key={wi}
+                style={{ display: "flex", flexDirection: "column", gap: 4, flex: "none" }}
+              >
+                {week.map((cell, ri) => (
+                  <div
+                    key={ri}
+                    onClick={() => setSel(cell)}
+                    title={
+                      cell
+                        ? `${cell.day} — ${cell.score}% · ${cell.habits_done} habits · ${cell.goals_done} focus · ${cell.tasks_done} tasks`
+                        : undefined
+                    }
+                    style={{
+                      width: 14,
+                      height: 14,
+                      borderRadius: 3,
+                      cursor: cell ? "pointer" : "default",
+                      outline:
+                        sel && cell && sel.day === cell.day
+                          ? `1px solid ${tokens.text}`
+                          : "none",
+                      ...heatStyle(cell),
+                    }}
+                  />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div
+          className="mono"
+          style={{
+            marginTop: 10,
+            fontSize: 10.5,
+            color: sel ? tokens.textLabel : tokens.textFaint,
+            minHeight: 15,
+          }}
+        >
+          {loading
+            ? "loading…"
+            : sel
+              ? `${sel.day} · ${sel.score}% · ${sel.habits_done} habits · ${sel.goals_done} focus · ${sel.tasks_done} tasks`
+              : weeks.length === 0
+                ? "no days logged yet — the first tap on a habit starts this."
+                : "tap a square for the day"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Score tiles ───────────────────────────────────────────────────────────── */
+
+function ScoreTiles({
+  score,
+  narrow,
+}: {
+  score: DailyStatsResponse["score"] | undefined;
+  narrow: boolean;
+}) {
+  const best = score ? dailyBestScore(score.best_day) : 0;
+  const bestDay = score
+    ? (score.best_day_at ?? dailyBestDayLabel(score.best_day))
+    : null;
+  const tiles: { label: string; value: string; sub: string }[] = [
+    { label: "TODAY", value: `${score?.today ?? 0}%`, sub: "live" },
+    { label: "7-DAY AVG", value: `${Math.round(score?.avg_7 ?? 0)}%`, sub: "last week" },
+    { label: "30-DAY AVG", value: `${Math.round(score?.avg_30 ?? 0)}%`, sub: "last month" },
+    { label: "BEST DAY", value: `${Math.round(best)}%`, sub: bestDay ?? "all time" },
+  ];
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: narrow ? "1fr 1fr" : "repeat(4, 1fr)",
+        gap: 9,
+      }}
+    >
+      {tiles.map((t) => (
+        <div
+          key={t.label}
+          style={{
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: "11px 13px",
+          }}
+        >
+          <div
+            className="mono"
+            style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}
+          >
+            {t.label}
+          </div>
+          <div
+            className="mono"
+            style={{ fontSize: 19, fontWeight: 500, color: tokens.textHi, marginTop: 7 }}
+          >
+            {t.value}
+          </div>
+          <div className="mono" style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4 }}>
+            {t.sub}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ── Habit cards ───────────────────────────────────────────────────────────── */
+
+function HabitCards({
+  habits,
+  narrow,
+  loading,
+}: {
+  habits: DailyHabitStat[];
+  narrow: boolean;
+  loading: boolean;
+}) {
+  return (
+    <div>
+      <SectionLabel>HABITS · STREAKS + 30-DAY RATE</SectionLabel>
+      {habits.length === 0 ? (
+        <div
+          className="mono"
+          style={{
+            background: tokens.bgCard,
+            border: `1px dashed ${tokens.border}`,
+            borderRadius: 8,
+            padding: 18,
+            fontSize: 11,
+            color: tokens.textFaint,
+            textAlign: "center",
+          }}
+        >
+          {loading ? "loading…" : "no habits configured."}
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: narrow ? "1fr" : "repeat(auto-fill, minmax(250px, 1fr))",
+            gap: 9,
+          }}
+        >
+          {habits.map((h) => (
+            <HabitCard key={h.id} habit={h} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HabitCard({ habit }: { habit: DailyHabitStat }) {
+  const tone = habit.polarity === "avoid" ? tokens.warn : tokens.accent;
+  const strip = dailyHabitStrip(habit.last_7, 7);
+  const rate = Math.max(0, Math.min(1, habit.rate_30));
+  const target = habit.target_per_week / 7;
+  // Under target is the only judgement this card makes, and it is a colour, not
+  // a number of shameful days.
+  const underTarget = rate < target - 0.001;
+
+  return (
+    <div
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderLeft: `3px solid ${underTarget ? tokens.textFaint : tone}`,
+        borderRadius: 8,
+        padding: "11px 13px",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+        <span className="ms" style={{ fontSize: 18, color: tone }}>
+          {habit.icon}
+        </span>
+        <span
+          style={{
+            fontSize: 12.5,
+            color: tokens.textLabel,
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {habit.label}
+        </span>
+        <span
+          className="mono"
+          style={{ fontSize: 11, color: habit.current_streak > 0 ? tone : tokens.textFaint }}
+          title={`longest streak ${habit.longest_streak}d`}
+        >
+          <span className="ms" style={{ fontSize: 13, verticalAlign: "-2px", marginRight: 2 }}>
+            local_fire_department
+          </span>
+          {habit.current_streak}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 4, marginTop: 9 }}>
+        {strip.map((on, i) => (
+          <span
+            key={i}
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: on ? tone : "transparent",
+              border: on ? "none" : `1px solid ${tokens.borderDivider}`,
+            }}
+          />
+        ))}
+        <span style={{ flex: 1 }} />
+        <span className="mono" style={{ fontSize: 9.5, color: tokens.textFaint }}>
+          best {habit.longest_streak}d
+        </span>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9 }}>
+        <div
+          style={{
+            flex: 1,
+            height: 5,
+            borderRadius: 3,
+            background: tokens.borderDivider,
+            position: "relative",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: `${Math.max(rate * 100, rate > 0 ? 2 : 0)}%`,
+              height: "100%",
+              background: underTarget ? tokens.textMuted : tone,
+            }}
+          />
+          {/* The weekly target, marked in place — "5/7 training" is a pass. */}
+          <div
+            style={{
+              position: "absolute",
+              top: -2,
+              bottom: -2,
+              left: `${target * 100}%`,
+              width: 1.5,
+              background: tokens.text,
+              opacity: 0.75,
+            }}
+          />
+        </div>
+        <span
+          className="mono"
+          style={{
+            fontSize: 9.5,
+            color: underTarget ? tokens.textMuted : tone,
+            flex: "none",
+          }}
+          title={`30-day rate vs target ${habit.target_per_week}/7`}
+        >
+          {Math.round(rate * 100)}% · tgt {habit.target_per_week}/7
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Task stats ────────────────────────────────────────────────────────────── */
+
+function TaskStats({ tasks }: { tasks: DailyStatsResponse["tasks"] | undefined }) {
+  const byArea = tasks?.by_area ?? [];
+  const max = Math.max(1, ...byArea.map((a) => a.count));
+  const stale = tasks?.backlog_older_14d ?? 0;
+
+  return (
+    <div>
+      <SectionLabel>TASKS</SectionLabel>
+      <div
+        style={{
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.border}`,
+          borderRadius: 8,
+          padding: "12px 14px",
+        }}
+      >
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginBottom: 12 }}>
+          <Metric label="DONE · 7D" value={tasks?.done_last_7 ?? 0} />
+          <Metric label="DONE · 30D" value={tasks?.done_last_30 ?? 0} />
+          <Metric label="OPEN" value={tasks?.open_total ?? 0} />
+          <Metric
+            label="OLDER THAN 14D"
+            value={stale}
+            tone={stale > 0 ? tokens.warn : tokens.textHi}
+          />
+        </div>
+
+        {byArea.length === 0 ? (
+          <div className="mono" style={{ fontSize: 10.5, color: tokens.textFaint }}>
+            nothing finished yet in this window.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {byArea.map((a) => (
+              <div key={a.area} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span className="ms" style={{ fontSize: 15, color: tokens.textMuted, flex: "none" }}>
+                  {AREA_ICON[a.area] ?? "circle"}
+                </span>
+                <span
+                  className="mono"
+                  style={{ fontSize: 10.5, color: tokens.textMuted, width: 62, flex: "none" }}
+                >
+                  {a.area}
+                </span>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 4,
+                    borderRadius: 2,
+                    background: tokens.borderDivider,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${Math.max((a.count / max) * 100, 2)}%`,
+                      height: "100%",
+                      background: tokens.accent,
+                      opacity: 0.8,
+                    }}
+                  />
+                </div>
+                <span
+                  className="mono"
+                  style={{ fontSize: 10, color: tokens.textFaint, flex: "none", width: 22, textAlign: "right" }}
+                >
+                  {a.count}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {stale > 0 && (
+          <div
+            className="mono"
+            style={{
+              marginTop: 12,
+              fontSize: 10.5,
+              color: tokens.warn,
+              lineHeight: 1.6,
+            }}
+          >
+            {stale} task{stale === 1 ? "" : "s"} older than 14 days — open PLAN and
+            drop what you are never going to do. A backlog you don&apos;t triage is
+            the thing that killed the last system.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: string;
+}) {
+  return (
+    <div>
+      <div
+        className="mono"
+        style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}
+      >
+        {label}
+      </div>
+      <div
+        className="mono"
+        style={{ fontSize: 17, fontWeight: 500, color: tone ?? tokens.textHi, marginTop: 5 }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}

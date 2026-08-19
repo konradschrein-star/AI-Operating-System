@@ -44,6 +44,7 @@ import { MoneySurface } from "./MoneySurface";
 import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
+import { GoalsSurface } from "./GoalsSurface";
 import { AgentActivity } from "./live/AgentActivity";
 import { QuotaRow } from "./quota/QuotaRow";
 import {
@@ -112,12 +113,10 @@ import {
  * yet" determination this record made for it was true when B3a measured it and
  * is false now. It is gone from this record and from `NAV.unbuilt` in
  * ./nav-items (a change outside this file's original write-set, disclosed in
- * the round-8 commit). This branch has no `GoalsSurface` to import — it is
- * `main`-only — so `surface === "goals"` renders nothing here rather than a
- * second, competing copy of that component. The integration merge is what
- * brings `main`'s import and render line in; this file must not fight it by
- * re-declaring goals as a placeholder. FOUR KEYS remain: journal, map, library,
- * search.
+ * the round-8 commit). PHASE 7: the surfaces/main reconciliation merge brought
+ * `main`'s `GoalsSurface` import and `surface === "goals" && <GoalsSurface />`
+ * render line in — see the render switch below. FOUR KEYS remain here: journal,
+ * map, library, search.
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /** The keys this branch renders. `search` is in `SURFACES` but not in `NAV`;
@@ -488,17 +487,20 @@ export function DesktopApp() {
           {surface === "money" && <MoneySurface />}
           {surface === "settings" && <SettingsSurface />}
           {surface === "businesses" && <BusinessesSurface />}
-          {/* Round 300. This branch used to read `surface in PLACEHOLDER_SURFACES`
-              followed by seven `surface !== …` clauses, five of which named
-              surfaces that have been built for months (memory, chat, skills,
-              pipeline, autonomy) and two of which (automation, businesses) were
-              never keys in that record at all. The exclusions existed to stop
-              dead copy rendering over a working surface; that dead copy is now
-              deleted, so the record IS the guard. The set this renders for is
-              journal, map, library, search — `goals` retired round 8, see the
-              note above `PlaceholderKey` — and no built surface reaches it,
-              then or now. `surface === "goals"` renders nothing in this file;
-              `main`'s GoalsSurface fills it after the integration merge. */}
+          {/* Round 300, reconciled at the phase-7 surfaces/main merge. This
+              branch used to read `surface in PLACEHOLDER_SURFACES` followed by
+              seven `surface !== …` clauses, five of which named surfaces that
+              have been built for months (memory, chat, skills, pipeline,
+              autonomy) and two of which (automation, businesses) were never
+              keys in that record at all. The exclusions existed to stop dead
+              copy rendering over a working surface; that dead copy is now
+              deleted, so the record IS the guard — `isPlaceholderKey` covers
+              journal, map, library and search, and `goals` is not a member of
+              `PlaceholderKey` (retired round 8), so the two lines below cannot
+              double-render it. `surface === "goals" && <GoalsSurface />` is
+              `main`'s 553fa38 line, carried forward unmodified — this merge is
+              the integration that brings it in. */}
+          {surface === "goals" && <GoalsSurface />}
           {isPlaceholderKey(surface) && (
             <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
           )}
