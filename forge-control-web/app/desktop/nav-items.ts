@@ -85,13 +85,20 @@ export interface NavItem {
    * all, so every render site guards on it and a built row is byte-identical
    * to what it was before this flag existed (R43). A marker on everything is a
    * marker on nothing — `scripts/checks/check-phase3-placeholders.ts` asserts
-   * the set is exactly the four, and asserts that a BUILT key wrongly flagged
+   * the set is exactly the three, and asserts that a BUILT key wrongly flagged
    * would be caught.
    *
-   * Evidence for each of the four — no route, no table, no data module:
+   * Evidence for each — no route, no table, no data module:
    * docs/plan/artifacts/os-usable-for-work/phase3/surface-determinations.md.
    * `search` is deliberately absent: it is not a NAV entry, and its backend is
-   * built and live (§5 of that document), so it is a different defect. */
+   * built and live (§5 of that document), so it is a different defect.
+   *
+   * ROUND 8: GOALS retired from this flag. It was one of the original four —
+   * `main` (553fa38) shipped a real `GoalsSurface` and Konrad used it the
+   * night of 2026-08-18, so the determination this flag made for it is now
+   * false. `journal`, `library` and `map` are still genuinely unbuilt; this is
+   * not licence to clear them too. See DesktopApp.tsx's `PlaceholderKey` note
+   * for the render-side half of this change. */
   unbuilt?: true;
 }
 
@@ -110,7 +117,7 @@ export const NAV: NavItem[] = [
   { key: "control", label: "CONTROL", group: "ai" },
   { key: "autonomy", label: "AUTONOMY", group: "ai" },
   { key: "automation", label: "AUTOMATION", group: "ai" },
-  { key: "goals", label: "GOALS", group: "recall", unbuilt: true },
+  { key: "goals", label: "GOALS", group: "recall" },
   { key: "journal", label: "JOURNAL", group: "recall", unbuilt: true },
   { key: "map", label: "MAP", group: "recall", unbuilt: true },
 ];

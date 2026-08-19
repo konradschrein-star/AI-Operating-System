@@ -106,11 +106,24 @@ import {
  * is built, mounted at index.ts:166 and answering live today (determinations
  * §5). Only its screen is missing, and there is no nav entry that reaches it.
  * Printing the same banner on it would replace one wrong label with another.
+ *
+ * ROUND 8: GOALS RETIRED FROM THIS RECORD. `main` (553fa38) shipped a real
+ * `GoalsSurface` and Konrad used it the night of 2026-08-18 — the "not built
+ * yet" determination this record made for it was true when B3a measured it and
+ * is false now. It is gone from this record and from `NAV.unbuilt` in
+ * ./nav-items (a change outside this file's original write-set, disclosed in
+ * the round-8 commit). This branch has no `GoalsSurface` to import — it is
+ * `main`-only — so `surface === "goals"` renders nothing here rather than a
+ * second, competing copy of that component. The integration merge is what
+ * brings `main`'s import and render line in; this file must not fight it by
+ * re-declaring goals as a placeholder. FOUR KEYS remain: journal, map, library,
+ * search.
  * ══════════════════════════════════════════════════════════════════════════ */
 
 /** The keys this branch renders. `search` is in `SURFACES` but not in `NAV`;
- *  the other four are `NAV` entries carrying `unbuilt: true`. */
-type PlaceholderKey = "goals" | "journal" | "map" | "library" | "search";
+ *  the other three (`journal`, `map`, `library`) are `NAV` entries carrying
+ *  `unbuilt: true`. `goals` was a fourth until round 8 — see the note above. */
+type PlaceholderKey = "journal" | "map" | "library" | "search";
 
 interface PlaceholderCopy {
   tag: string;
@@ -131,19 +144,6 @@ interface PlaceholderCopy {
 }
 
 const PLACEHOLDER_SURFACES: Record<PlaceholderKey, PlaceholderCopy> = {
-  goals: {
-    tag: "GOALS",
-    state: "unbuilt",
-    headline: "GOALS is not built yet.",
-    subhead:
-      "Nothing failed to load here. This screen was never written, and there is no data behind it to load.",
-    purpose:
-      "A three-horizon objective tracker: quarter objectives with their success metrics, the week beneath them, and the subset due today mirrored into TODAY.",
-    needs:
-      "All of it. A goals table, a forge-control/src/routes/goals.ts, a db/goals.ts and a GoalsSurface — none of the four exists. Of the five unfinished screens this is the only one with no producer at all: nothing in this system knows what your quarter objectives are.",
-    scheduling:
-      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs it at 2 rounds, 3 builders and a database migration — and argues it may belong in the vault as note frontmatter instead of a new table, which would be materially cheaper and is your call.",
-  },
   journal: {
     tag: "JOURNAL",
     state: "unbuilt",
@@ -495,8 +495,10 @@ export function DesktopApp() {
               never keys in that record at all. The exclusions existed to stop
               dead copy rendering over a working surface; that dead copy is now
               deleted, so the record IS the guard. The set this renders for is
-              unchanged — goals, journal, map, library, search — and no built
-              surface reaches it, then or now. */}
+              journal, map, library, search — `goals` retired round 8, see the
+              note above `PlaceholderKey` — and no built surface reaches it,
+              then or now. `surface === "goals"` renders nothing in this file;
+              `main`'s GoalsSurface fills it after the integration merge. */}
           {isPlaceholderKey(surface) && (
             <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
           )}
@@ -542,9 +544,10 @@ export function DesktopApp() {
  * three different markers.
  *
  * EVERY CALL IS GUARDED ON `n.unbuilt`, which is optional and set on exactly
- * four entries. A built entry renders no extra node at all and is byte-identical
- * to what it was before this round (R43) — a marker on everything is a marker on
- * nothing.
+ * three entries (four until round 8, which retired `goals` — see the note
+ * above `PlaceholderKey` in the component above). A built entry renders no
+ * extra node at all and is byte-identical to what it was before this round
+ * (R43) — a marker on everything is a marker on nothing.
  *
  * TWO VARIANTS, BECAUSE THE TOP STRIP HAS NO ROOM AND THAT IS MEASURED.
  * The rail and the phone sheet are vertical lists with a `flex: 1` spacer, so a
@@ -553,8 +556,9 @@ export function DesktopApp() {
  * `forge` wordmark's right edge (77px) is past TODAY's left edge (36px) — the
  * brand block has collapsed and the search box on the right is cut. Measured on
  * this build by hiding the marker in the DOM and re-measuring: 1,384px without
- * it, 1,432px with the word. Only LIBRARY is affected — `goals`, `journal` and
- * `map` are in the `recall` group, which the strip does not render at all.
+ * it, 1,432px with the word. Only LIBRARY is affected — `journal` and `map`
+ * (and `goals`, though it no longer carries the flag) are in the `recall`
+ * group, which the strip does not render at all.
  *
  * Adding 48px to a strip that is already 104px over would push one more BUILT
  * destination off the right edge in the 1,384–1,432px band, and R43 forbids

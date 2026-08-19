@@ -10,6 +10,13 @@
  * The screen now says so in words. This file asserts the OTHER half: that the
  * nav marks exactly those four, so the truth is visible before the click.
  *
+ * ROUND 8: GOALS RETIRED. The determination above was true when B3a measured
+ * it and is false now — `main` (553fa38) shipped a real `GoalsSurface` and
+ * Konrad used it the night of 2026-08-18. `EXPECTED_UNBUILT` below is now
+ * three keys, not four; `journal`, `library` and `map` are still genuinely
+ * unbuilt and stay flagged. A dedicated flip (§1a) proves the audit still
+ * catches `goals` if it is ever re-marked while `GoalsSurface` exists.
+ *
  * WHAT IS HERE AND WHAT IS NOT
  *   Here: everything about `NAV.unbuilt` that is pure — the set, its membership
  *   in the nav model, its absence from the built entries, and its reachability
@@ -60,14 +67,17 @@ function check(label: string, actual: unknown, expected: unknown): void {
 
 /* ── The claim, written once ──────────────────────────────────────────────────
  *
- * These four and no others. Sorted, so the assertion is about the SET and not
+ * These three and no others. Sorted, so the assertion is about the SET and not
  * about the order entries happen to sit in inside `NAV` — reordering the rail
  * is not a defect and must not fail this file.
  *
- * `search` is deliberately absent. It is a placeholder key but not a NAV entry,
+ * `goals` is deliberately absent as of round 8: `main` shipped a real
+ * `GoalsSurface` and it is no longer unbuilt. `search` is deliberately absent
+ * too, for a different reason — it is a placeholder key but not a NAV entry,
  * and its backend is built, mounted and answering live (determinations §5), so
- * marking it would be a second wrong label rather than a fix. Asserted below. */
-const EXPECTED_UNBUILT: readonly Surface[] = ["goals", "journal", "library", "map"];
+ * marking it would be a second wrong label rather than a fix. Both are
+ * asserted below, not just omitted. */
+const EXPECTED_UNBUILT: readonly Surface[] = ["journal", "library", "map"];
 
 const sorted = (keys: readonly Surface[]): Surface[] => [...keys].sort();
 
@@ -131,17 +141,17 @@ function navWith(key: Surface, unbuilt: boolean): NavItem[] {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
- * 1 — the set is exactly the four
+ * 1 — the set is exactly the three
  * ══════════════════════════════════════════════════════════════════════════ */
 
 console.log("\n── the unbuilt set ─────────────────────────────────────────");
 
 check(
-  "NAV marks exactly goals, journal, library, map",
+  "NAV marks exactly journal, library, map",
   sorted(unbuiltNavKeys()),
-  ["goals", "journal", "library", "map"],
+  ["journal", "library", "map"],
 );
-check("…four of them, not more", unbuiltNavKeys().length, 4);
+check("…three of them, not more", unbuiltNavKeys().length, 3);
 check(
   "the exported constant is the same derivation, not a second list",
   sorted(UNBUILT_NAV_KEYS),
@@ -160,9 +170,11 @@ check(
 
 console.log("\n── and NOT on the built ones ───────────────────────────────");
 
-/* Named individually rather than only as a set difference: these are the eight
+/* Named individually rather than only as a set difference: these are the
  * surfaces that render real components and that Konrad uses daily. If one of
- * them ever acquires a marker, the failing line should say which. */
+ * them ever acquires a marker, the failing line should say which. `goals`
+ * joined this list at round 8 — it used to be one of the four unbuilt keys,
+ * and this is exactly the regression §1a's flip below exists to catch. */
 for (const built of [
   "today",
   "inbox",
@@ -172,6 +184,7 @@ for (const built of [
   "memory",
   "live",
   "settings",
+  "goals",
 ] as const) {
   check(
     `${built.toUpperCase()} is built and carries no marker`,
@@ -180,9 +193,9 @@ for (const built of [
   );
 }
 check(
-  "13 of the 17 NAV entries carry nothing at all",
+  "14 of the 17 NAV entries carry nothing at all",
   NAV.filter((n) => n.unbuilt === undefined).length,
-  13,
+  14,
 );
 check(
   "SEARCH is not in NAV, so it cannot be marked — it is a different defect",
@@ -203,16 +216,19 @@ console.log("\n── every marked entry is reachable on a phone ─────
 {
   const reachable = new Set(mobileNavDestinations());
   check(
-    "all four are in the phone sheet's destinations",
+    "all three are in the phone sheet's destinations",
     unbuiltNavKeys().filter((k) => !reachable.has(k)),
     [],
   );
   check(
-    "…named: goals, journal, map, library",
-    ["goals", "journal", "map", "library"].map((k) =>
-      reachable.has(k as Surface),
-    ),
-    [true, true, true, true],
+    "…named: journal, map, library",
+    ["journal", "map", "library"].map((k) => reachable.has(k as Surface)),
+    [true, true, true],
+  );
+  check(
+    "…and goals, no longer marked, is still reachable in its own right",
+    reachable.has("goals" as Surface),
+    true,
   );
 }
 
@@ -240,7 +256,7 @@ console.log("\n── the flip: a BUILT key marked unbuilt is caught ───�
   check(
     "the fixture really is different from NAV",
     sorted(unbuiltNavKeys(doctored)),
-    ["goals", "journal", "library", "map", "today"],
+    ["journal", "library", "map", "today"],
   );
   const audit = auditUnbuiltMarks(doctored, mobileNavDestinations());
   check("…and the audit names TODAY", audit.markedButBuilt, ["today"]);
@@ -249,6 +265,29 @@ console.log("\n── the flip: a BUILT key marked unbuilt is caught ───�
     "the whole audit, so a silent extra field cannot hide",
     audit,
     { ...CLEAN, markedButBuilt: ["today"] },
+  );
+}
+
+console.log("\n── §1a: the flip: GOALS re-marked unbuilt is caught ────────");
+{
+  /* The exact regression round 8 exists to prevent: GOALS was one of the
+   * original four, `main` shipped a real `GoalsSurface`, and if this key is
+   * ever re-flagged — a bad merge, a stale rebase, a copy-paste from an old
+   * NAV — the screen would tell Konrad his own feature "is not built yet"
+   * again. This must fail loudly, the same way TODAY does above. */
+  const doctored = navWith("goals", true);
+  check(
+    "the fixture really is different from NAV",
+    sorted(unbuiltNavKeys(doctored)),
+    ["goals", "journal", "library", "map"],
+  );
+  const audit = auditUnbuiltMarks(doctored, mobileNavDestinations());
+  check("…and the audit names GOALS", audit.markedButBuilt, ["goals"]);
+  check("…and does not invent a second complaint", audit.unmarkedButUnbuilt, []);
+  check(
+    "the whole audit, so a silent extra field cannot hide",
+    audit,
+    { ...CLEAN, markedButBuilt: ["goals"] },
   );
 }
 
@@ -301,7 +340,7 @@ console.log("\n── the real NAV is unchanged by all of the above ────
 check(
   "no fixture mutated the imported model",
   sorted(unbuiltNavKeys(NAV)),
-  ["goals", "journal", "library", "map"],
+  ["journal", "library", "map"],
 );
 check("…and it still has 17 entries", NAV.length, 17);
 
