@@ -1596,3 +1596,53 @@ Three consequences, stated so nobody has to infer them:
 
 **This section overrides any brief it contradicts**, which is why the obligation
 lives here and not only in a final message a later planner may never read.
+
+---
+
+**Round 972's write-set — declared here because the task row declares nothing,
+and the ROUND SPANS TWO COMMITS.** Round 972's builder task
+(`a9727666-0e79-43af-bab4-bd9eb1ff0d74`) was seeded with `write_set = []`, the
+same seeding defect rounds 962 and 963 traced to `strict_write_sets` being set
+only for goal-mode projects. §10 is therefore the only place a manifest can
+exist. Written in the commit that makes it, and repeated in
+`evidence/round972-fix-cycle-1.md` and in the commit message, so three
+statements can be cross-checked against `git show --stat`.
+
+**The first commit's row is a correction, and it is stated first because it is
+the one nobody wrote.** `af3cba6` — round 972's own earlier commit, R72's lane
+cap — *created* `forge-control/src/db/projects.test.ts` and declared it in
+neither this section nor `03-quality.md` §3.1 item 12's allow list. That file
+matches gate 6's ban pattern `db/projects` verbatim, so from `af3cba6` onward
+`gates-808.sh --strict` exited **1** on this branch under its own documented
+invocation. Measured, not inferred: `PATHS MATCHING THE BAN (4)` /
+`FORBIDDEN forge-control/src/db/projects.test.ts` / `GATE6_EXIT=1`. Fix cycle 1
+closes both halves in one commit — the §10 row below and the fourth allow-list
+entry — per standing rule 2, amend the gate where it is enforced.
+
+| file | why round 972 writes it |
+|---|---|
+| `forge-control/src/db/projects.test.ts` | **`af3cba6`, disclosed late.** R72's lane-cap harness against a real Postgres. Correct in substance and unchanged by this commit; only its declaration was missing. |
+| `forge-control/src/db/projects.ts` | **`af3cba6`.** R72's lane cap in `promoteReadyTasks()`. Already owned by phases 2/3/4 in the table above, so it needed no new row — listed for completeness of the round. |
+| `forge-control/src/routes/chat.ts` | **fix cycle 1's deliverable.** Round 971's findings 1, 2 and 3. The `/compact` handler body moves to `lib/thread-compaction.ts`; the route keeps the HTTP shape and gains the NaN-safe `keep` and the post-commit prune report. Owned by **phase 6** in the table above. |
+| `forge-control/src/lib/thread-compaction.ts` | **new.** The extracted body: the `FOR UPDATE` transaction that closes the lost-update race, `resolveKeep()`, `buildMarker()`, and the retention policy. Extracted rather than inlined because the proof this defect demands is a *concurrent* harness, and a Hono handler cannot be driven by one. |
+| `forge-control/src/lib/thread-compaction.test.ts` | **new.** The hermetic half — findings 2, 3 and 4 — inside `pnpm test`. |
+| `forge-control/src/db/compact-race.test.ts` | **new.** The concurrent harness for finding 1. Outside `pnpm test` by the same rule as `db/projects.test.ts`: it needs a live Postgres and two contending sessions. |
+| `forge-control/src/lib/project-tick.test.ts` | **the `main` merge, not a spend.** Two lanes widened NF7's `BUDGET` independently from 3050; the merge carries both prompt texts so it carries both widenings, and exposes a six-character double-draw on the base headroom that neither lane could see alone. `4247 -> 4253`, headroom 0, reasoning inline at the constant. No round's ledger row was adjusted. |
+| `docs/plan/engine-task-graph/03-quality.md` | **standing rule 2.** §3.1 item 12's allow list gains its fourth entry, with the measured `GATE6_EXIT=1` that forced it. |
+| `docs/plan/engine-task-graph/04-phases.md` | this disclosure. |
+| `scripts/checks/check-forbidden-file-diff.sh` | **standing rule 2 — gate 6's decision is tested here.** `PROJECT_ALLOW` gains the same fourth entry (its case 13 went red on the live diff, which is how the staleness was found at all), and case 3 widens from three declared files to four so no allow-list entry sits unmeasured. |
+| `docs/plan/notification-gap.md` | **standing rule 2, and NOT this project's document.** Gate 17 was `ALL PASS 92/92` at `af3cba6` and `20 FAILURE(S)` at the merge — `main`'s `6a9406d` (+4 in `cc-runner.ts`) and `1e0330b` (+1 in `AssistantThread.tsx`) moved every pin this doc holds on both files, and neither author could have run the verifier because it does not exist on `main`. Re-anchored per the document's own convention: predecessor tables keep their numbers, a fourth correction table records the drift. |
+| `docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs` | the other half of that amendment — the `LINE_RULES` handshake. Eight superseded now-columns reclassified `historical`, eight new rules for the round-972 table, five contexts disambiguated by their was-column (the two tables share pin labels), and two rules for the insertion points the new narrative cites. |
+| `scripts/checks/dollar-allowlist.txt` | **gate 8, red on `main` itself at `9c3f63a`** — `toFixed(2)` building an SVG polyline coordinate pair in `goals/ui.tsx`, a file `553fa38` put on `main` and not in this lane's diff. One entry, anchored on the coordinate pair rather than the file; proved narrow by a mutation control (a real `amount.toFixed(2)` in the same file still fails). |
+| `docs/plan/engine-task-graph/evidence/round972-fix-cycle-1.md` | **new.** The transcript: the race measured red and green, the mutation control on the shipped subject with its sha256 restore proof, and the merge arithmetic. |
+
+**A merge commit appears in this round and that is not a write-set violation, but
+it must be read as what it is.** `37cc974` merges `main` into the lane because
+the subject of fix cycle 1 — the `/compact` route, shipped at `91f6b28` — was
+**not in this worktree at all**: `git merge-base --is-ancestor 91f6b28 HEAD` was
+NO. A cherry-pick was rejected because it would leave `main` and this lane
+holding the same route with different blob ancestry, and the integration merge
+could then resolve to two `r.post("/:id/compact")` registrations. The 33 files
+that commit touches are **upstream's work, not this round's**; the paths this
+round authored are the table above, and `git show --stat 37cc974` versus the
+follow-up commit separates them cleanly.

@@ -651,10 +651,25 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     what the list is buying. A path in the list that is not in §10 is a finding.
 
     ```bash
-    # The three banned-pattern paths this branch changes, all of them declared:
+    # The four banned-pattern paths this branch changes, all of them declared:
     #   forge-control/src/db/projects.ts          — §10, phases 2/3/4
     #   forge-control/src/lib/project-tick.ts     — §10, phases 4/5
     #   forge-control/src/lib/project-tick.test.ts — §10, rounds 822 and 960 tables
+    #   forge-control/src/db/projects.test.ts     — §10, round 972's table
+    # THE FOURTH ENTRY, ADDED ROUND 972 FIX CYCLE 1 — standing rule 2, amended
+    # where it is enforced, in the commit that closes it. `af3cba6` (round 972's
+    # first commit, R72's lane cap) CREATED db/projects.test.ts, which matches the
+    # ban pattern `db/projects` verbatim, and disclosed it in neither this list nor
+    # 04-phases.md §10. So `gates-808.sh --strict` exited 1 on this branch at every
+    # sha from af3cba6 onward, with the DOCUMENTED invocation — the gate was
+    # unsatisfiable as written, which is the exact shape this item was created to
+    # stop being tolerated. Measured before amending, not assumed:
+    #   PATHS MATCHING THE BAN (4) / FORBIDDEN forge-control/src/db/projects.test.ts
+    #   >>> FORBIDDEN FILE DIFFERS — 1 path(s) ...          GATE6_EXIT=1
+    # This is precisely case 11 of check-forbidden-file-diff.sh ("matching is
+    # exact, so db/projects.ts does not permit db/projects.test.ts") firing on the
+    # live diff instead of on a fixture. The entry is a REAL exemption, not an
+    # inert one, and it is bought by round 972's §10 row.
     # workspace.ts is in the mandate and matches NO ban pattern: listing it is an
     # INERT entry, and the gate says so by name.
     # executor.ts is DIFFERENT and the difference is load-bearing. The ban pattern
@@ -663,10 +678,10 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
     # declared write-set in 04-phases.md §10 is "none" and for which gate 6 is the
     # only automated guard. Do not add it. It is absent from the list below because
     # this branch does not change it — not because listing it would do nothing.
-    export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
+    export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts,forge-control/src/db/projects.test.ts'
     bash scripts/checks/gates-808.sh --strict            # MUST exit 0
     git diff --name-only main...HEAD | GATES_ENGINE_ALLOW= bash scripts/checks/forbidden-file-diff.sh
-    #   ^ the control read: exits 1 and names the three, which is what the list buys
+    #   ^ the control read: exits 1 and names the four, which is what the list buys
     bash scripts/checks/check-forbidden-file-diff.sh     # MUST exit 0 — 14 cases
     ```
 
@@ -1176,7 +1191,13 @@ bash scripts/check-schedule-sql.sh
 # §10, and the second command is the control read that shows what it buys.
 # gate 6 was unsatisfiable on this branch for four rounds; it is now bound to the
 # declared write-set (operator ruling, 2026-08-18) and it is TESTED.
-export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
+# FOURTH ENTRY ADDED ROUND 972 FIX CYCLE 1 — `af3cba6` created
+# `forge-control/src/db/projects.test.ts`, which matches `db/projects`, and
+# declared it in neither list nor §10; measured GATE6_EXIT=1 before the
+# amendment. This line and §3.1 item 12's MUST stay byte-identical after
+# `export GATES_ENGINE_ALLOW=` — they are two copies of one fact, and round 972
+# found only one of them updated is exactly how the fact rots.
+export GATES_ENGINE_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts,forge-control/src/db/projects.test.ts'
 # GATE 18 NEEDS A PRIVATE SCRATCH DATABASE — round 963's finding 3, amended here
 # where the suite is invoked. `check-usage-fold.ts`'s SCRATCH_DB reads
 # `USAGE_FOLD_DB` and falls back to the FIXED name `r1354_sampler`, so two

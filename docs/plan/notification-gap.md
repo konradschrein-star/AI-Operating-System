@@ -55,15 +55,18 @@ other four's numbers mean something:
    reconciliation list. A *repeat* names the `path:line` another pass verified and fails
    with it, so restating a pin can no longer outlive the pin. A *historical* pin — a number
    recorded because it rotted — carries a mandatory written reason. **4 live + 32 repeats
-   + 26 historical.**
+   + 44 historical.**
 5. **The inventory.** The script tokenises the whole document — every `path.ext:NNN` and
    every bare `` `:NNN` ``, fenced or not, hyphen or en-dash — and asserts passes 1–4
    consumed all of them. **An unclassified pin is a hard failure, not a skip.**
 
-Current result: **`ALL PASS — 92/92 pins classified`**, and 92 is the denominator, printed
+Current result: **`ALL PASS — 110/110 pins classified`**, and 110 is the denominator, printed
 next to the count. (It was 64 before round 1863's edits added eight more, 78 after round
-1875 recorded a drift event, and 92 after round 6 recorded the next one — the denominator
-is derived from the document, not declared, so it moves with the document. That is also
+1875 recorded a drift event, 92 after round 6 recorded the next one, and 110 after round
+972 recorded the fourth — the denominator is derived from the document, not declared, so it
+moves with the document. Round 972's +18 is its correction table's sixteen numbers plus the
+two insertion points its narrative cites; recording a drift always costs pins, which is the
+mechanism working and not an overhead to be trimmed. That is also
 why this paragraph read `72/72` while the script printed `78/78`: round 1875's own
 correction table added six pins and it updated the table but not this sentence — counted,
 not assumed, by running the tokeniser over the document at `ed25c4f` and `0bfe05c`. The
@@ -93,7 +96,7 @@ the mechanism working: describing a control in prose registers a repeat like any
 restatement. A repeat cannot outlive its primary.
 
 Round 6 added the third control, aimed at its own repair rather than at the script's older
-claims. Renumber the freshly re-pinned §2a1 quote from `:533-545` to `:534-545` and the
+claims. Renumber the freshly re-pinned §2a1 quote from `:537-549` to `:534-545` and the
 script exits 1 with **six** failures — the quote, plus every place this document restates
 that pin: §1's rot narrative, §2's verdict table, the round-6 correction table, §3's recipe
 item 2, and this paragraph. The five `cc-runner.ts` registrations added below are
@@ -189,6 +192,42 @@ verdict, the round-600 fixture argument at §1, and the `170–188` → `234–2
 §4, which record where these lines *were* and are correct as history. The gap this
 document reports is untouched; only its coordinates moved.
 
+**The fourth drift event — BOTH files at once, and the first one caused by a merge rather
+than by an edit.** Found the same way as the third: `engine-task-graph` (branch
+`project/8c591d6c`, round 972 fix cycle 1) ran `gates-808.sh --strict` and this verifier
+came back `20 FAILURE(S)`. It was `ALL PASS — 92/92` at that branch's pre-merge tip
+`af3cba6` and red at `37cc974`, measured at both, so the merge is the cause and not a
+coincidence of timing.
+
+Cause, and it is a shape worth naming: **nobody edited a pinned file on this branch.**
+`main` moved underneath. Two upstream commits inserted lines above every pin this document
+holds — `6a9406d` added 4 lines to `buildSystemPrompt` in `cc-runner.ts` (at old `:205`,
+so `+4` to all five cc-runner pins) and `1e0330b` added one import line to
+`AssistantThread.tsx` (at old `:33`, so `+1` to all three, its other insertions all sitting
+*below* them). Neither commit's author could have seen this verifier: it does not exist on
+`main`, so `main` has never run it. Two lanes, one file, and the gate only meets the change
+at the merge.
+
+Bodies unchanged, machine-diffed at both offsets, not re-read. Re-resolved against
+`37cc974` (this branch's merge commit — the tree in which the new numbers are correct):
+
+| Pin | Was (`ed601ff`/`9b960ef`) | Now (`37cc974`) | Cause |
+|---|---|---|---|
+| `AssistantThread.tsx` `CommsMessage()` | `:158-162` | `:159-163` | `1e0330b`, +1 line above; body unchanged |
+| `AssistantThread.tsx` `UserMessage` dispatch | `:331-333` | `:332-334` | same, +1; body unchanged |
+| `AssistantThread.tsx` `AssistantMessage` dispatch | `:375-376` | `:376-377` | same, +1; body unchanged |
+| `cc-runner.ts` §2a1 the `evt.type === "user"` branch | `:533-545` | `:537-549` | `6a9406d`, +4 lines above; body unchanged |
+| `cc-runner.ts` §2a2 the `parentToolUseId` lift | `:490-496` | `:494-500` | same, +4; body unchanged |
+| `cc-runner.ts` §3 the `CcEvent` union | `:265-266` | `:269-270` | same, +4; body unchanged |
+| §3 recipe item 2 — the `parentToolUseId` binding in scope | `:493` | `:497` | same, +4 |
+| §3 recipe item 1 — the `CcEvent` `type` field to widen | `:266` | `:270` | same, +4 |
+
+The `ed601ff` and `9b960ef` tables above are kept and **were not overwritten** — the same
+treatment rounds 1875 and 6 gave their predecessors. A "Now" column that silently acquires
+a later tree's numbers claims that tree held them, which is the rot this document exists to
+catch, wearing the costume of a fix. §2b's verdict and the gap itself are untouched; only
+the coordinates moved, for the fourth time.
+
 **The withdrawn correction, recorded rather than deleted (round 1354's review, finding 1).**
 Round 1353 reported the two §2c pins as transposed since round 1350 and swapped them. They
 were not transposed. The tree says, at `main`, at `91b0fa7` and at `852b089` alike —
@@ -240,7 +279,7 @@ has anything to do with events.
 
 But the round-600 chat fixture (`docs/plan/artifacts/phase600/fixtures/run-3853c154-chat.json`)
 recorded the **verbatim snippet** the author quoted at `:417–429` — and it is
-**character-for-character identical** to the block now at `:533–545`, machine-diffed. So
+**character-for-character identical** to the block now at `:537–549`, machine-diffed. So
 the engine code behind R19 has **not changed since round 600**; it moved down 85 lines
 because ~332 lines were inserted above it (mostly `buildSystemPrompt` growth and the
 idle-timeout rewrite).
@@ -257,7 +296,7 @@ gap it found is real; the sentence it wrote about the gap was not.
 |---|---|---|
 | a1 | **Synchronous** in-process sub-agent (Agent tool, `run_in_background: false`) — final text arrives as the `tool_result` on the spawning `tool_use` | **COVERED** |
 | a2 | **Async** in-process sub-agent — its own stream events (assistant text, tool calls) while it works | **COVERED**, inline, tagged `meta.parent_tool_use_id` |
-| b | **Async task-completion notification** — the harness banner that says a background agent finished | **UNCOVERED — dies in `cc-runner.ts:533–545`. Confirmed on the live database round 1863, not inferred: see §2b-live.** |
+| b | **Async task-completion notification** — the harness banner that says a background agent finished | **UNCOVERED — dies in `cc-runner.ts:537–549`. Confirmed on the live database round 1863, not inferred: see §2b-live.** |
 | c | Peer run messaging this run via `POST /api/runs/:id/message` | **COVERED** end to end: engine → thread → client renderer, with tests |
 
 ### 2a1. Synchronous sub-agent final text — COVERED
@@ -265,7 +304,7 @@ gap it found is real; the sentence it wrote about the gap was not.
 The CLI emits the sub-agent's final report as a `tool_result` block on a `user` event.
 `cc-runner` forwards exactly that block shape:
 
-`cc-runner.ts` — the `evt.type === "user"` branch of the stream-line handler (`:533-545` @ `9b960ef`)
+`cc-runner.ts` — the `evt.type === "user"` branch of the stream-line handler (`:537-549` @ `9b960ef`)
 ```ts
       } else if (evt.type === "user") {
         const msg = evt.message as { content?: StreamBlock[] } | undefined;
@@ -324,7 +363,7 @@ is told. Not part of R19.
 Every stream event a Task sub-agent produces is stamped by the CLI with a top-level
 `parent_tool_use_id`, and `cc-runner` lifts it onto **every** event it emits:
 
-`cc-runner.ts` — the `parentToolUseId` lift (`:490-496` @ `9b960ef`)
+`cc-runner.ts` — the `parentToolUseId` lift (`:494-500` @ `9b960ef`)
 ```ts
       // parent_tool_use_id equal to the spawning Task tool_use_id. This
       // is the ONLY reliable way to attribute a stream event back to the
@@ -361,7 +400,7 @@ on the floor, silently.
 
 Even if that branch existed, there is nothing to emit — the event union is closed:
 
-`cc-runner.ts` — the `CcEvent` union (`:265-266` @ `9b960ef`)
+`cc-runner.ts` — the `CcEvent` union (`:269-270` @ `9b960ef`)
 ```ts
 export interface CcEvent {
   type: "init" | "assistant_text" | "tool_call" | "tool_result";
@@ -518,7 +557,7 @@ asserts the receiver/echo role+kind contract and the `[message from …]` prefix
 
 Rendered client-side as a direction-marked card, not an anonymous user bubble:
 
-`AssistantThread.tsx` — `CommsMessage()` (`:158-162` @ `ed601ff`)
+`AssistantThread.tsx` — `CommsMessage()` (`:159-163` @ `ed601ff`)
 ```tsx
 function CommsMessage({ facts }: { facts: CommsFacts }) {
   const peers = useContext(PeerRolesContext);
@@ -527,7 +566,7 @@ function CommsMessage({ facts }: { facts: CommsFacts }) {
   const { identity } = header;
 ```
 
-dispatched from `AssistantThread.tsx:331-333` (`UserMessage`) and `:375-376`
+dispatched from `AssistantThread.tsx:332-334` (`UserMessage`) and `:376-377`
 (`AssistantMessage`, for the outbound echo) @ `ed601ff`, with identity/colour resolved in
 `comms-identity.ts`.
 
@@ -541,11 +580,11 @@ the majority of agent→operator traffic on this system by volume.
 
 Small, and entirely inside files this project may not touch. Four edits:
 
-1. **`cc-runner.ts`** — widen the union at `:266`:
+1. **`cc-runner.ts`** — widen the union at `:270`:
    `type: "init" | "assistant_text" | "tool_call" | "tool_result" | "task_notification"`.
-2. **`cc-runner.ts`** — add one `else if` to the `user` branch at `:533-545`, alongside
+2. **`cc-runner.ts`** — add one `else if` to the `user` branch at `:537-549`, alongside
    the `tool_result` check, that recognises the notification block and emits the new
-   event (carrying `parentToolUseId`, already in scope at `:493`).
+   event (carrying `parentToolUseId`, already in scope at `:497`).
 3. **`db/runs.ts:52`** — add `| "task_notification"` to `ThreadEntry["kind"]`. No
    migration: `thread` is `jsonb` (same free ride `"comms"` took, C21).
 4. **`executor.ts`** — one more branch in `onEvent` (`:952-986` @ `852b089`) → an entry builder beside

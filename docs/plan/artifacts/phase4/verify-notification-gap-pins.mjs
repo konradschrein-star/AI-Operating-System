@@ -172,10 +172,10 @@ const PROSE_PINS = [
   },
   {
     section: "§3",
-    cite: "already in scope at `:493`",
-    bind: /`parentToolUseId`, already in scope at `:493`/,
+    cite: "already in scope at `:497`",
+    bind: /`parentToolUseId`, already in scope at `:497`/,
     path: "forge-control/src/lib/cc-runner.ts",
-    line: 493,
+    line: 497,
     what: "the parentToolUseId binding",
     expect: /^\s*const parentToolUseId =/,
   },
@@ -199,19 +199,19 @@ const PROSE_PINS = [
   },
   {
     section: "§2c",
-    cite: "`AssistantThread.tsx:331-333`",
-    bind: /`AssistantThread\.tsx:331-333` \(`UserMessage`\)/,
+    cite: "`AssistantThread.tsx:332-334`",
+    bind: /`AssistantThread\.tsx:332-334` \(`UserMessage`\)/,
     path: "forge-control-web/app/desktop/chat/AssistantThread.tsx",
-    line: 331,
+    line: 332,
     what: "UserMessage, where an inbound comms entry is dispatched",
     expect: /^function UserMessage\(\)/,
   },
   {
     section: "§2c",
-    cite: "`:375-376`",
-    bind: /and `:375-376`\s+\(`AssistantMessage`/,
+    cite: "`:376-377`",
+    bind: /and `:376-377`\s+\(`AssistantMessage`/,
     path: "forge-control-web/app/desktop/chat/AssistantThread.tsx",
-    line: 375,
+    line: 376,
     what: "AssistantMessage's comms lookup, for the outbound echo",
     expect: /^\s*const comms = useCommsFacts\(\);/,
   },
@@ -288,21 +288,21 @@ const LINE_RULES = [
     context: /^\| `AssistantThread\.tsx` `CommsMessage\(\)` \| `:149-153`/,
     tokens: [
       { historical: "the pre-1871 position of CommsMessage — superseded by rounds 1871/1873/1875" },
-      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:158" },
+      { historical: "where CommsMessage sat between rounds 1871/1873/1875 and round 972 — superseded by round 972's merge of main (`1e0330b`, +1)" },
     ],
   },
   {
     context: /^\| `AssistantThread\.tsx` `UserMessage` dispatch \| `:235-237`/,
     tokens: [
       { historical: "the pre-1871 position of the UserMessage dispatch — superseded by rounds 1871/1873/1875" },
-      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:331" },
+      { historical: "the pre-972 position of the UserMessage dispatch — superseded by round 972's merge of main (`1e0330b`, +1)" },
     ],
   },
   {
     context: /^\| `AssistantThread\.tsx` `AssistantMessage` dispatch \| `:279-281`/,
     tokens: [
       { historical: "the pre-1871 position of the AssistantMessage dispatch — superseded by rounds 1871/1873/1875" },
-      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:375" },
+      { historical: "the pre-972 position of the AssistantMessage dispatch — superseded by round 972's merge of main (`1e0330b`, +1)" },
     ],
   },
   /* The round-6 (`project/b7ab4c57`) correction table — every `cc-runner.ts` pin, moved
@@ -310,38 +310,125 @@ const LINE_RULES = [
    * above: the was-column is historical, the now-column repeats a pin another half
    * verifies, so renumbering the doc without renumbering the primary fails here. */
   {
-    context: /^\| `cc-runner\.ts` §2a1 the `evt\.type === "user"` branch/,
+    context: /^\| `cc-runner\.ts` §2a1 the `evt\.type === "user"` branch \| `:502-514`/,
     tokens: [
       { historical: "where the user branch sat at 852b089 — superseded by rounds 900/902" },
-      { repeat: "forge-control/src/lib/cc-runner.ts:533" },
+      { historical: "where the user branch sat between rounds 900/902 and round 972 — superseded by round 972's merge of main (`6a9406d`, +4)" },
     ],
   },
   {
-    context: /^\| `cc-runner\.ts` §2a2 the `parentToolUseId` lift/,
+    context: /^\| `cc-runner\.ts` §2a2 the `parentToolUseId` lift \| `:459-465`/,
     tokens: [
       { historical: "where the parentToolUseId lift sat at 852b089 — superseded by rounds 900/902" },
-      { repeat: "forge-control/src/lib/cc-runner.ts:490" },
+      { historical: "the pre-972 position of the parentToolUseId lift — superseded by round 972's merge of main (`6a9406d`, +4)" },
     ],
   },
   {
-    context: /^\| `cc-runner\.ts` §3 the `CcEvent` union/,
+    context: /^\| `cc-runner\.ts` §3 the `CcEvent` union \| `:234-235`/,
     tokens: [
       { historical: "where the CcEvent union sat at 852b089 — superseded by rounds 900/902" },
-      { repeat: "forge-control/src/lib/cc-runner.ts:265" },
+      { historical: "the pre-972 position of the CcEvent union — superseded by round 972's merge of main (`6a9406d`, +4)" },
     ],
   },
   {
-    context: /^\| §3 recipe item 2 — the `parentToolUseId` binding in scope/,
+    context: /^\| §3 recipe item 2 — the `parentToolUseId` binding in scope \| `:462`/,
     tokens: [
       { historical: "the 852b089 position of the parentToolUseId binding §3 item 2 leans on" },
-      { repeat: "forge-control/src/lib/cc-runner.ts:493" },
+      { historical: "the pre-972 position of the parentToolUseId binding — superseded by round 972's merge of main (`6a9406d`, +4)" },
     ],
   },
   {
-    context: /^\| §3 recipe item 1 — the `CcEvent` `type` field to widen/,
+    context: /^\| §3 recipe item 1 — the `CcEvent` `type` field to widen \| `:235`/,
     tokens: [
       { historical: "the 852b089 position of the type field §3 item 1 says to widen" },
-      { repeat: "forge-control/src/lib/cc-runner.ts:266" },
+      { historical: "the pre-972 position of the type field — superseded by round 972's merge of main (`6a9406d`, +4)" },
+    ],
+  },
+
+  /* Round 972's own narrative cites the two INSERTION POINTS in main's commits — the
+   * lines the upstream edits landed at, in the PRE-merge file. They are historical by
+   * construction: they name where something was inserted, in a tree that no longer
+   * exists on this branch. Registered because the tokeniser counts every bare `:NNN`
+   * and an unowned pin is a hard failure — which is exactly how this paragraph was
+   * caught, one run after it was written. Describing a drift registers pins like any
+   * other prose. */
+  {
+    context: /^holds — `6a9406d` added 4 lines to `buildSystemPrompt` in `cc-runner\.ts` \(at old `:205`,$/,
+    tokens: [
+      { historical: "the pre-merge line in cc-runner.ts that `6a9406d` inserted after — the cause of the +4, not a pin into the current tree" },
+    ],
+  },
+  {
+    context: /^`AssistantThread\.tsx` \(at old `:33`, so `\+1` to all three, its other insertions all sitting$/,
+    tokens: [
+      { historical: "the pre-merge line in AssistantThread.tsx that `1e0330b` inserted after — the cause of the +1" },
+    ],
+  },
+  /* THE ROUND-972 CORRECTION TABLE — the fourth drift event, and the first caused by a
+   * MERGE rather than by an edit. `main`'s `6a9406d` (+4 in cc-runner.ts, at old :205)
+   * and `1e0330b` (+1 in AssistantThread.tsx, at old :33) moved every pin this document
+   * holds on both files. Nobody on branch project/8c591d6c edited either file; the gate
+   * only met the change when main was merged in at `37cc974`, and it was ALL PASS 92/92
+   * at the pre-merge tip `af3cba6` — measured at both, so the merge is the cause.
+   *
+   * Same shape as the round-1875 and round-6 rows above: was-column historical,
+   * now-column a repeat of the pin halves A and B verify. The predecessor tables keep
+   * their numbers — a "Now" column that silently acquires a later tree's numbers claims
+   * that tree held them, which is the rot this script exists to catch. */
+  {
+    context: /^\| `AssistantThread\.tsx` `CommsMessage\(\)` \| `:158-162`/,
+    tokens: [
+      { historical: "the pre-972 position of CommsMessage — superseded by `1e0330b`" },
+      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:159" },
+    ],
+  },
+  {
+    context: /^\| `AssistantThread\.tsx` `UserMessage` dispatch \| `:331-333`/,
+    tokens: [
+      { historical: "the pre-972 position of the UserMessage dispatch — superseded by `1e0330b`" },
+      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:332" },
+    ],
+  },
+  {
+    context: /^\| `AssistantThread\.tsx` `AssistantMessage` dispatch \| `:375-376`/,
+    tokens: [
+      { historical: "the pre-972 position of the AssistantMessage dispatch — superseded by `1e0330b`" },
+      { repeat: "forge-control-web/app/desktop/chat/AssistantThread.tsx:376" },
+    ],
+  },
+  {
+    context: /^\| `cc-runner\.ts` §2a1 the `evt\.type === "user"` branch \| `:533-545`/,
+    tokens: [
+      { historical: "where the user branch sat at 9b960ef — superseded by `6a9406d`" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:537" },
+    ],
+  },
+  {
+    context: /^\| `cc-runner\.ts` §2a2 the `parentToolUseId` lift \| `:490-496`/,
+    tokens: [
+      { historical: "where the parentToolUseId lift sat at 9b960ef — superseded by `6a9406d`" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:494" },
+    ],
+  },
+  {
+    context: /^\| `cc-runner\.ts` §3 the `CcEvent` union \| `:265-266`/,
+    tokens: [
+      { historical: "where the CcEvent union sat at 9b960ef — superseded by `6a9406d`" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:269" },
+    ],
+  },
+  {
+    context: /^\| §3 recipe item 2 — the `parentToolUseId` binding in scope \| `:493`/,
+    tokens: [
+      { historical: "the 9b960ef position of the parentToolUseId binding §3 item 2 leans on" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:497" },
+    ],
+  },
+  {
+    context: /^\| §3 recipe item 1 — the `CcEvent` `type` field to widen \| `:266`/,
+    tokens: [
+      { historical: "the 9b960ef position of the type field §3 item 1 says to widen" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:270" },
     ],
   },
   {
@@ -398,11 +485,11 @@ const LINE_RULES = [
   },
   {
     context: /^\*\*character-for-character identical\*\* to the block now at/,
-    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:533" }],
+    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:537" }],
   },
   {
     context: /^\| b \| \*\*Async task-completion notification\*\*/,
-    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:533" }],
+    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:537" }],
   },
   {
     context: /^`` `executor\.ts:1` `` and a bare `` `:4242` `` to this file/,
@@ -419,9 +506,9 @@ const LINE_RULES = [
     ],
   },
   {
-    context: /Renumber the freshly re-pinned §2a1 quote from `:533-545` to/,
+    context: /Renumber the freshly re-pinned §2a1 quote from `:537-549` to/,
     tokens: [
-      { repeat: "forge-control/src/lib/cc-runner.ts:533" },
+      { repeat: "forge-control/src/lib/cc-runner.ts:537" },
       { historical: "round 6's own control value — the deliberately wrong start line that makes the quote and its four repeats fail together" },
     ],
   },
@@ -485,7 +572,7 @@ const LINE_RULES = [
       {
         live: {
           path: "forge-control/src/lib/cc-runner.ts",
-          line: 266,
+          line: 270,
           what: "the CcEvent `type` field §3 item 1 says to widen",
           expect: /type: "init" \| "assistant_text" \| "tool_call" \| "tool_result";/,
         },
@@ -494,7 +581,7 @@ const LINE_RULES = [
   },
   {
     context: /^2\. \*\*`cc-runner\.ts`\*\* — add one `else if` to the `user` branch at/,
-    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:533" }],
+    tokens: [{ repeat: "forge-control/src/lib/cc-runner.ts:537" }],
   },
   {
     context: /^3\. \*\*`db\/runs\.ts:52`\*\* — add `\| "task_notification"`/,

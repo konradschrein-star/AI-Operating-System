@@ -4,9 +4,18 @@ import { Hono } from "hono";
  * into lib/plan-corpus.ts so the listing and the reader cannot disagree about
  * which directory the corpus is. `realpath` is still load-bearing over there:
  * `resolve` alone cannot see a symlink escape. */
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import pg from "pg";
 import { resolvePlanDoc, selectPlanCorpus } from "../lib/plan-corpus.ts";
+/* round 972 fix cycle 1 — /compact's body, extracted so a concurrent harness
+ * can drive it. `mkdir`/`writeFile` left this file with it. */
+import {
+  ARCHIVE_DIR,
+  DEFAULT_RETENTION,
+  compactRunThread,
+  pruneThreadArchives,
+  resolveKeep,
+} from "../lib/thread-compaction.ts";
 /* phase 6 (R55) — the DERIVED depth the plan panel groups and orders by.
  * lib/task-graph.ts is a pure leaf: its only import is `import type
  * { TaskStatus }`, which erases, so it opens no pool and pulls no db module in
@@ -1670,69 +1679,47 @@ r.post("/:id/resume", async (c) => {
  * removing from the vault write path. If the archive write fails, nothing is
  * rewritten and the route 500s — never compact what you could not save first.
  *
- * `keep` is clamped to [10, 400]. Below 10 the agent loses the thread of the
- * conversation it is in; above 400 there is no point compacting.
+ * ROUND 972 FIX CYCLE 1 — the body moved to `lib/thread-compaction.ts` and the
+ * read, the archive and the overwrite now happen under ONE ROW LOCK. As shipped
+ * in `91f6b28` this was a read-then-full-overwrite with no lock, and every
+ * other thread writer in the codebase is an atomic `thread = thread || …`
+ * append: an executor append landing in that window was lost from the row AND
+ * from the archive, since both were computed from the same stale snapshot. The
+ * reasoning, the rejected alternatives and the retention policy all live in
+ * that module's header. It is extracted rather than inlined because the proof
+ * this class of defect demands is a CONCURRENT harness, and a Hono handler
+ * cannot be driven by one.
+ *
+ * `keep` is clamped to [10, 400], NaN-safe (see resolveKeep).
  */
 r.post("/:id/compact", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
-  const current = await getRun(id);
-  if (!current) return c.json({ error: "run not found" }, 404);
 
-  const body = (await c.req.json().catch(() => ({}))) as { keep?: number };
-  const keep = Math.min(400, Math.max(10, Number(body.keep ?? 60)));
+  const body = (await c.req.json().catch(() => ({}))) as { keep?: unknown };
+  const keep = resolveKeep(body.keep);
 
-  const thread = Array.isArray(current.thread) ? current.thread : [];
-  /* `keep + 1`, not `keep`: this route's OUTPUT is always the marker plus
-   * `keep` entries, so a thread of exactly keep+1 is already compacted. Using
-   * `keep` here made the route non-idempotent — a second /compact dropped one
-   * more real entry and stacked a second marker, eroding the transcript one
-   * message per invocation. Found by running it twice, which is the only way
-   * that class of bug shows itself. */
-  if (thread.length <= keep + 1) {
-    return c.json({ compacted: false, reason: "already short", entries: thread.length });
+  /* No pre-read for the 404. The SELECT ... FOR UPDATE inside is the only read
+   * of this row, so there is no second, unlocked one to disagree with it. */
+  const outcome = await compactRunThread(teamPool, { id, keep, now: new Date() });
+  if (outcome.kind === "not_found") return c.json({ error: "run not found" }, 404);
+  if (outcome.kind === "already_short") {
+    return c.json({ compacted: false, reason: "already short", entries: outcome.entries });
   }
 
-  const dropped = thread.length - keep;
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = "/opt/ai-os/backups/threads";
-  const archive = `${dir}/${id}-${stamp}.json`;
-  // Archive FIRST. A failure here must abort the compaction, not proceed.
-  await mkdir(dir, { recursive: true });
-  await writeFile(archive, JSON.stringify(thread), "utf8");
-
-  const marker = {
-    role: "system",
-    content:
-      `[compacted ${stamp}] ${dropped} earlier entries of this chat were removed from the ` +
-      `working context to free room. NOTHING WAS LOST: the full transcript is archived at ` +
-      `${archive}. Durable state for this session lives in the Obsidian vault — read ` +
-      `"AI OS/Session State" and "AI OS/Operator Decisions" before assuming anything about ` +
-      `what was decided. The ${keep} most recent entries follow verbatim.`,
-    ts: new Date().toISOString(),
-    kind: "text",
-    meta: { compaction: { dropped, kept: keep, archive } },
-  };
-
-  const next = [marker, ...thread.slice(-keep)];
-  const { rows } = await teamPool.query(
-    `UPDATE runs
-        SET thread = $2::jsonb,
-            metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{last_compaction}',
-                        to_jsonb($3::text), true),
-            updated_at = now()
-      WHERE id = $1
-      RETURNING id`,
-    [id, JSON.stringify(next), archive],
-  );
-  if (!rows.length) return c.json({ error: "run not found" }, 404);
+  /* Retention runs AFTER the commit and its failures are REPORTED, not thrown:
+   * the compaction is already durable, and failing to tidy the backup directory
+   * must not turn that success into a 500. `prune.errors` is in the response
+   * precisely so a failure here is visible rather than swallowed. */
+  const prune = await pruneThreadArchives(ARCHIVE_DIR, DEFAULT_RETENTION, new Date());
 
   return c.json({
     compacted: true,
-    dropped,
-    kept: next.length,
-    was: thread.length,
-    archive,
+    dropped: outcome.dropped,
+    kept: outcome.kept,
+    was: outcome.was,
+    archive: outcome.archive,
+    prune,
   });
 });
 

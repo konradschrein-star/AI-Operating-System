@@ -27,7 +27,15 @@ SUBJECT="$REPO/scripts/checks/forbidden-file-diff.sh"
 # It is repeated here so the control can assert the exact list the gate is run
 # with is the list that passes — and so a fourth engine file appearing in the
 # diff without being declared turns this control red, not just the gate.
-PROJECT_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts'
+#
+# THAT IS EXACTLY WHAT HAPPENED, ROUND 972 FIX CYCLE 1. `af3cba6` created
+# `forge-control/src/db/projects.test.ts` — a fourth banned-pattern path — and
+# declared it nowhere, so case 13 went red on the live diff while cases 1-12
+# stayed green. The control did its job; the list was stale. Amended here in the
+# same commit as `03-quality.md` §3.1 item 12 and the `04-phases.md` §10 row that
+# buys the entry, per standing rule 2 — the three statements must agree, and a
+# reviewer diffing any one against another is the check.
+PROJECT_ALLOW='forge-control/src/db/projects.ts,forge-control/src/lib/project-tick.ts,forge-control/src/lib/project-tick.test.ts,forge-control/src/db/projects.test.ts'
 
 EXPECTED_CASES=14
 CASES=0
@@ -100,12 +108,16 @@ echo
 echo "B. THE AMENDMENT — a declared path is permitted, and nothing else is."
 echo
 
+# Every entry of PROJECT_ALLOW is exercised here, not a subset: an entry that
+# permitted nothing would otherwise sit in the list unmeasured and be read as
+# load-bearing. The fourth path was added round 972 with the list itself.
 run "$PROJECT_ALLOW" 'forge-control/src/lib/project-tick.ts
 forge-control/src/db/projects.ts
 forge-control/src/lib/project-tick.test.ts
+forge-control/src/db/projects.test.ts
 README.md'
-expect 3 "the three declared engine files, declared -> clean" 0 \
-  "clean — 3 banned path(s) differ and every one was declared"
+expect 3 "the four declared engine files, declared -> clean" 0 \
+  "clean — 4 banned path(s) differ and every one was declared"
 
 run 'forge-control/src/db/projects.ts' 'forge-control/src/lib/project-tick.ts'
 expect 4 "an allow list naming a DIFFERENT engine file does not blanket" 1 \
