@@ -299,10 +299,18 @@ excluding dotdirs:  288
 
 ---
 
-## 7. GitHub push
+## 7. GitHub push — succeeded
 
-`scripts/git-sync-branch.sh` was run on the worktree. Plain push only; no force, no lease. Its
-outcome is recorded in §9 and never changed the outcome of the deploy.
+```
+$ bash scripts/git-sync-branch.sh /opt/ai-os/workspace/projects/7851068b-…
+git-sync-branch.sh: pushing project/7851068b to git@github.com:konradschrein-star/AI-Operating-System.git
+To github.com:konradschrein-star/AI-Operating-System.git
+   818425a..2ad7c63  HEAD -> project/7851068b
+pushed-branch: project/7851068b
+sync exit=0
+```
+
+Plain push. No `--force`, no `--force-with-lease`, no rewritten history.
 
 ---
 
@@ -320,6 +328,10 @@ itself (exit 2, no screenshot written, on a wall). It exists because `browser-ha
 `localStorage["forge.desktop.surface"]` (`DesktopApp.tsx:253`) before it shoots — the improvement
 already filed against the harness in phase 2. The harness itself was not forked or edited.
 
-## 9. Push outcome
+## 9. Final state of `main`
 
-See the task's final report; recorded there verbatim whether it succeeded or failed.
+The deploy merge landed at `457f101`, which is the commit that was built and is being served. This
+report and `build-ids.txt` were written **after** that build, so they arrive on `main` in a second,
+docs-only merge on top of it. That merge changes no code and therefore does **not** move the
+`BUILD_ID` — `s5xDVZg4vNWFK40pXIcf6` remains what the host serves, and the §5 proof stands. The
+final `main` tip is recorded in the task's report.
