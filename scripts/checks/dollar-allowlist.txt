@@ -61,3 +61,26 @@ forge-control-web/app/desktop/nav-items.ts	spent a minute navigating	Header-comm
 # supposed to prevent. If a dollar ever returns to ChatSurface.tsx, the gate
 # fails, which is the point.
 forge-control-web/app/desktop/quota/geminiLine.ts	spen[dt]	Round 1876, replacing the deleted chat/QuotaStrip.tsx entry. One COMMENT — "'We cannot tell' and 'we spent nothing' are different sentences" — explaining why a failed Gemini tally renders as "unknown" rather than as 0. The file renders a TOKEN COUNT and never a currency figure: the indicator row is a working surface, and the one place money is allowed is the Credit Tracker in settings.
+
+# ── Phase 5, round 4: the BUSINESS INVENTORY, and two sentences that must stay ──
+#
+# businesses-inventory.ts is the corpus behind the Businesses tab (R59-R63):
+# a hand-transcribed inventory of Konrad's actual businesses, every field
+# carrying the spec line it came from. Round 2 (c94b10d) landed two lines that
+# trip the primary gate and NEITHER may be reworded — both are spec-faithful
+# copy R63 requires ON SCREEN, and rewording a business fact to appease a grep
+# would put a fiction in front of Konrad to keep a script quiet.
+#
+# The procedural finding this round records, because it is the one that cost a
+# gate: no phase-5 builder ran the suite after the product code landed. Both
+# hits were introduced in round 2 and found red at HEAD by the phase-5 gate,
+# two rounds later.
+#
+# Patterns are anchored to the two SENTENCES, never `\$[0-9]` and never the
+# file — a genuinely new dollar arriving anywhere else in this file still fails.
+# The file also holds ~90 other business facts; only these two are excused.
+
+forge-control-web/app/desktop/businesses-inventory.ts	signs off on spend	Line 467, the `qualified` funnel stage's CRITERION prose: a lead counts as qualified once the discovery call recorded "the named need, who does that work today, and who signs off on spend" (spec §3.2 L263). "Spend" is the PROSPECT'S budget authority — who at the target company can approve a purchase — not a euro figure this OS renders. R63 requires the criterion verbatim so a zero in the funnel can be audited against the spec. Landed round 2 (c94b10d), unlisted until round 4.
+forge-control-web/app/desktop/businesses-inventory.ts	\$197 / \$497 / \$2,497	Line 592, the `axtrelis` secondary-arm STATE sentence: "Pricing is locked in code at $197 / $497 / $2,497 one-time" (spec §2.2 L211). A third party's own PRICE LIST, transcribed from the spec — the point of the sentence is that a rigorously specified revenue model has no customers in it, which is a business finding, not agent-cost noise. U11 forbids rendering what the fleet costs Konrad; it does not forbid quoting what Konrad's own product charges. Landed round 2 (c94b10d), unlisted until round 4.
+
+forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line 440, Sparkline(): SVG polyline COORDINATES — `${x.toFixed(2)},${y.toFixed(2)}` builds a `points` attribute out of pixel positions computed from `i / values.length * W` and `H - v / max * H`. Geometry, not currency, and the twelfth false positive of the naive toFixed(2) anchor (MemorySurface score, three token-magnitude formatters, …). Came in from `main` with 553fa38, Konrad's own Goals/Tasks daily surface, and met this lane-only gate for the first time at the round-13 merge — the same shape as gate 17's pins. The pattern is the coordinate PAIR, not `.*`: a real € or $ arriving in this file still fails the gate.

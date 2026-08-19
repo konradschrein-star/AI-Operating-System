@@ -50,8 +50,18 @@ export interface GeminiWindowTally {
 }
 
 export interface GeminiTally {
-  cli_installed: boolean;
-  cli_profile: boolean;
+  /** `access(/root/.local/bin/agy, X_OK)` on the server — never a PATH walk,
+   *  which pm2 makes lie. Null means the check itself failed: we do not know,
+   *  which is not the same sentence as "not installed". */
+  cli_installed: boolean | null;
+  /** The persisted probe's verdict. Null whenever `cli_installed` is not
+   *  `true` — there is nothing to have probed. */
+  probe_state: "connected" | "unknown" | "broken" | null;
+  /** When that probe ran. Null ⇒ nobody has ever asked (R57). */
+  probe_checked_at: string | null;
+  /** A probe, inside its shelf life, came back ok. REPLACES `cli_profile`,
+   *  which reported a settings FILE on disk and was read as a session. */
+  session_probed_ok: boolean;
   auth_note: string;
   connect_command: string | null;
   five_hour: GeminiWindowTally | null;

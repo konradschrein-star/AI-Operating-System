@@ -43,10 +43,13 @@ const QUOTA = {
   cached: false,
   gemini: {
     cli_installed: false,
-    cli_profile: false,
+    probe_state: null,
+    probe_checked_at: null,
+    session_probed_ok: false,
     auth_note:
-      "Antigravity CLI (agy) is not installed on this box, so the Ultra subscription has never been signed in here.",
-    connect_command: "install the Antigravity CLI, then run `agy` once to sign in",
+      "The Antigravity CLI is not installed on this box — nothing is present or executable at /root/.local/bin/agy, so the Ultra subscription has never been signed in here.",
+    connect_command:
+      "install the Antigravity CLI so that /root/.local/bin/agy exists, then run `/root/.local/bin/agy` once to sign in",
     five_hour: { calls: 0, tokens: null },
     seven_day: { calls: 0, tokens: null },
     no_limit_note:
@@ -62,9 +65,11 @@ const QUOTA_COUNTED = {
   gemini: {
     ...QUOTA.gemini,
     cli_installed: true,
-    cli_profile: true,
+    probe_state: "connected",
+    probe_checked_at: new Date(Date.now() - 90_000).toISOString(),
+    session_probed_ok: true,
     auth_note:
-      "agy has a local profile; the session lives in the OS keyring and cannot be read from here, so this is still our own count.",
+      "/root/.local/bin/agy is installed and its last probe succeeded: agy models exited 0 and listed 7 models.",
     connect_command: null,
     five_hour: { calls: 4, tokens: 12_400 },
     seven_day: { calls: 31, tokens: 208_000 },

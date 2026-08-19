@@ -69,8 +69,12 @@
  *     ../scripts/checks/check-usage-fold.ts
  *
  * The DSN is used ONLY to reach the SERVER and to create the database named by
- * USAGE_FOLD_DB (default `r1354_sampler`); every other statement is issued
- * against that database. It refuses to run if the two resolve to one name.
+ * USAGE_FOLD_DB; every other statement is issued against that database. It
+ * refuses to run if the two resolve to one name. With USAGE_FOLD_DB unset —
+ * which is how the command above and `gates-808.sh` both run it — the name is
+ * generated per process and the database is DROPPED on the way out, so
+ * concurrent runs cannot collide and nothing accumulates on the server. See
+ * SCRATCH_DB below.
  *
  * Typecheck (outside forge-control's tsconfig `include`, so it needs its own
  * invocation with the same compiler options):
@@ -81,6 +85,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 
 import {
   HOUR_MS,
@@ -103,7 +108,96 @@ function check(name: string, actual: unknown, expected: unknown): void {
 
 /* ── Scratch database ─────────────────────────────────────────────────────── */
 
-const SCRATCH_DB = process.env.USAGE_FOLD_DB ?? "r1354_sampler";
+/** Set only when an operator named a database by hand. `undefined` is the
+ *  ordinary case and drives both defaults below. */
+const SCRATCH_DB_OVERRIDE = process.env.USAGE_FOLD_DB;
+
+/**
+ * `os-usable-for-work` round-4 review, finding F4, and round 3's fix.
+ *
+ * This name used to default to the CONSTANT `r1354_sampler`. That project runs
+ * five lanes concurrently by design, every lane runs the gate suite, and two
+ * runs then `TRUNCATE runs, spend_log, usage_hourly` in the SAME database mid
+ * assertion. Postgres resolves that one of two ways and BOTH are lies:
+ *
+ *     ERROR:  deadlock detected
+ *     DETAIL: Process 759483 waits for AccessExclusiveLock …; blocked by 759484.
+ *
+ * — or, when the lock does not actually cross, no error at all and simply the
+ * wrong arithmetic, because the other run truncated the fixtures between the
+ * write and the assertion. Neither says anything whatever about the code under
+ * test, and a gate that fails on the weather teaches readers to discount it,
+ * which is how a real red gets waved through.
+ *
+ * Round 3 of the fix cycle taught `gates-808.sh` to pass a private
+ * `USAGE_FOLD_DB` — but an override only protects the caller who remembers it,
+ * and the header of this very file tells operators to run the check with no
+ * such variable. So the DEFAULT is what had to change, and this is it.
+ *
+ * WHY THIS NAME IS COLLISION-FREE HERE:
+ *   • `process.pid` is unique among the processes ALIVE AT ONE INSTANT on this
+ *     host, which is exactly the window in which two runs can be inside the
+ *     TRUNCATE together. Two concurrent runs cannot share a pid — that is the
+ *     kernel's guarantee, not an assumption about how the lanes are launched.
+ *   • pid alone would not be enough OVER TIME. Pids are recycled after exit, so
+ *     a run that leaked its database (a SIGKILL, a failed DROP) would be found
+ *     by a later run with the recycled pid — which would then see the database
+ *     already present, set `scratchCreatedHere = false`, and correctly refuse
+ *     to drop someone else's database. The leak would become permanent. Four
+ *     random bytes turn that from a scheduled certainty into 1 in 4.3e9.
+ *   • The random half also covers the case pid alone cannot see at all: two
+ *     containers with separate pid NAMESPACES pointing at one Postgres server.
+ *   • Length: 15 + <=7 + 1 + 8 = at most 31 bytes, well inside Postgres'
+ *     63-byte identifier limit, so the name is never silently truncated into a
+ *     collision.
+ *
+ * The `r1354_sampler_p` prefix is deliberate: any residue left by a killed run
+ * is greppable in `pg_database` as this check's litter and nobody else's.
+ */
+const SCRATCH_DB =
+  SCRATCH_DB_OVERRIDE ?? `r1354_sampler_p${process.pid}_${randomBytes(4).toString("hex")}`;
+
+/**
+ * Teardown policy. A per-run name that is never dropped is not a fix — it
+ * trades a flaky gate for unbounded scratch accumulation, which is the mistake
+ * that already put 61 GB in /tmp and 28 abandoned databases on this server.
+ * So the two defaults are tied together: a name this process INVENTED is
+ * ephemeral by construction and cleans itself up by construction, while a name
+ * an operator CHOSE is theirs and is kept unless they say otherwise.
+ *
+ *   USAGE_FOLD_DB unset  → generated name, dropped   (the gate suite's path)
+ *   USAGE_FOLD_DB set    → operator's name, kept
+ *   USAGE_FOLD_DROP=1/0  → overrides either, both ways
+ *
+ * `USAGE_FOLD_DROP=0` exists so a failing run can be left on the server for a
+ * post-mortem; the name is printed on the verdict line, so it can be found.
+ *
+ * Beyond this switch the drop is deliberately NARROW: it only ever fires on a
+ * database THIS process created in THIS run (see `scratchCreatedHere`). A
+ * scratch database that was already there belongs to whoever made it, and
+ * `USAGE_FOLD_DROP=1` cannot outrank that.
+ */
+function dropPolicy(): boolean {
+  const raw = process.env.USAGE_FOLD_DROP;
+  if (raw === undefined || raw === "") return SCRATCH_DB_OVERRIDE === undefined;
+  if (raw === "1") return true;
+  if (raw === "0") return false;
+  // Not a silent fallback: a typo here decides whether a database survives, and
+  // guessing either way would be wrong in a way nobody would notice for weeks.
+  throw new Error(
+    `USAGE_FOLD_DROP must be "1" (drop the scratch database this run created), ` +
+      `"0" (keep it), or unset (drop it when this check chose the name itself, ` +
+      `keep it when USAGE_FOLD_DB named it). Got ${JSON.stringify(raw)}.`,
+  );
+}
+
+const DROP_SCRATCH = dropPolicy();
+
+/** Both set by `main()` once the scratch database is known to exist, and read
+ *  by `dropScratch()` on BOTH exit paths — a failing assertion must not leak a
+ *  per-run database either. */
+let scratchCreatedHere = false;
+let adminDb: PsqlDb | null = null;
 
 function dsn(): { admin: string; scratch: string } {
   const url = process.env.DATABASE_URL;
@@ -126,6 +220,38 @@ function dsn(): { admin: string; scratch: string } {
   const scratch = new URL(url);
   scratch.pathname = `/${SCRATCH_DB}`;
   return { admin: url, scratch: scratch.toString() };
+}
+
+/**
+ * Teardown for the per-run scratch database. Called on the passing path and
+ * from the top-level `catch`, so a red gate leaks nothing either.
+ *
+ * Every statement this file issues goes through `execFileSync("psql", …)`,
+ * which exits before the next one starts, so nothing here holds a session open
+ * against the database being dropped.
+ */
+function dropScratch(): void {
+  if (!DROP_SCRATCH || adminDb === null) return;
+  if (!scratchCreatedHere) {
+    console.log(
+      `(kept scratch database ${SCRATCH_DB} — it existed before this run; ` +
+        "USAGE_FOLD_DROP only drops what this run created)",
+    );
+    return;
+  }
+  try {
+    adminDb.exec(`DROP DATABASE "${SCRATCH_DB.replace(/"/g, '""')}"`);
+    console.log(`(dropped scratch database ${SCRATCH_DB})`);
+  } catch (e: unknown) {
+    // Reported, never rethrown: on the failure path this runs INSIDE the
+    // handler for the real defect, and a teardown error must not replace the
+    // diagnostic the reader came for. Loud enough to be actioned by hand.
+    console.error(
+      `WARNING: could not drop scratch database ${SCRATCH_DB} — it is still on ` +
+        `the server. Drop it with: psql "$DATABASE_URL" -c 'DROP DATABASE ` +
+        `"${SCRATCH_DB}"'\n  ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 /** Minimal `runs`: the sampler reads `id` and `metadata` and nothing else. */
@@ -339,6 +465,7 @@ async function main(): Promise<void> {
   const { admin, scratch } = dsn();
 
   const admin_db = psqlQuerier(admin);
+  adminDb = admin_db;
   const present = await admin_db.query<{ ok: number }>(
     `SELECT 1 AS ok FROM pg_database WHERE datname = ${lit(SCRATCH_DB)}`,
   );
@@ -347,6 +474,7 @@ async function main(): Promise<void> {
     // it stays ONE identifier whatever it contains. `CREATE DATABASE` cannot
     // run inside the wrapping CTE, so it goes through `exec`.
     admin_db.exec(`CREATE DATABASE "${SCRATCH_DB.replace(/"/g, '""')}"`);
+    scratchCreatedHere = true;
     console.log(`(created scratch database ${SCRATCH_DB})`);
   }
 
@@ -591,6 +719,10 @@ async function main(): Promise<void> {
     console.log(text.trimEnd().split("\n").map((l) => `        ${l}`).join("\n"));
   }
 
+  // Before the summary, so the verdict stays the LAST line this prints —
+  // `gates-808.sh` pipes it through `tail -3` and reads that line.
+  dropScratch();
+
   console.log(
     `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — usage fold (scratch db: ${SCRATCH_DB})`,
   );
@@ -599,5 +731,6 @@ async function main(): Promise<void> {
 
 void main().catch((e: unknown) => {
   console.error(e instanceof Error ? e.stack : e);
+  dropScratch();
   process.exit(1);
 });

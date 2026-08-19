@@ -1,0 +1,12 @@
+# typecheck baseline — os-usable-for-work phase 1 (task B1d)
+# commit: 9d63480f30e9688636b3abd57553789f5b1cc87a
+# captured (UTC): 2026-08-18T19:27:41Z
+# worktree: /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault  branch: project/7851068b-vault
+# node: v22.22.2   pnpm: 9.15.9   NODE_ENV=production
+# deps installed with: pnpm install --frozen-lockfile --prod=false (both packages)
+
+$ cd forge-control && npx tsc --noEmit
+[exit=0]
+
+$ cd ../forge-control-web && npx tsc --noEmit
+[exit=0]

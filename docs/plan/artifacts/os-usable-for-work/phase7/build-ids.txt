@@ -1,0 +1,42 @@
+os-usable-for-work / phase 7 / round 15 — deploy task fe3749e0
+BUILD_ID ledger
+================================================================================
+
+STATUS: NO DEPLOY PERFORMED. The deploy STOPPED on its own preconditions.
+        There is therefore ONE BUILD_ID recorded here, not two, and that is
+        the correct outcome — not a missing measurement.
+
+PRE-DEPLOY  BUILD_ID : TsvXpNcIwjauqnJDJB2dy
+POST-DEPLOY BUILD_ID : (none — the merge, the rebuild and the restart were
+                        never performed; see deploy-report.md § "Why there is
+                        no second id")
+
+Read from  : /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
+Command    : cat /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
+Output     : TsvXpNcIwjauqnJDJB2dy
+
+Served-HTML proof of the PRE-deploy id (baseline, so the next attempt has a
+number to move it away from):
+
+  $ curl -s -L -m 10 http://127.0.0.1:7701/signin | grep -c TsvXpNcIwjauqnJDJB2dy
+  1
+
+  $ curl -s -L -m 10 http://127.0.0.1:7701/signin \
+      | grep -o '0:{\\"P\\":null,\\"b\\":\\"[A-Za-z0-9_-]*\\"'
+  0:{\"P\":null,\"b\":\"TsvXpNcIwjauqnJDJB2dy\"
+
+  (the id is embedded exactly once, in the flight-data payload
+   self.__next_f.push([1,"0:{\"P\":null,\"b\":\"<BUILD_ID>\",...)
+
+Listener at the time of measurement (pm2 "online" is not "listening"):
+
+  $ ss -lntp | grep 7701
+  LISTEN 0 511 *:7701 *:* users:(("next-server (v1",pid=1901687,fd=23))
+
+Live checkout at the time of measurement: /opt/forge-ai-os, branch main,
+HEAD = 9c3f63aa161a29b844699fcf537e9c8ae22f374d, `git status --porcelain`
+printed nothing.
+
+`pm2 restart forge-executor` was NEVER run by this task. Neither was
+`pm2 restart forge-control`, `pm2 restart forge-control-web`, `pnpm build`,
+nor any merge into main — nothing was deployed at all.

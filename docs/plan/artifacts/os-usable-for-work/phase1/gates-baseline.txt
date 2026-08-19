@@ -1,0 +1,530 @@
+================================================================================
+ GATES BASELINE — project os-usable-for-work, phase 1, task B1d
+================================================================================
+ commit      : 9d63480f30e9688636b3abd57553789f5b1cc87a
+ branch      : project/7851068b-vault  (workstream `vault`)
+ worktree    : /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault
+ captured    : 2026-08-18T19:28:21Z  (2026-08-18T21:28:21+02:00 local)
+ command     : bash scripts/checks/gates-808.sh --strict
+ strict exit : 0        (--strict exits nonzero iff RED>0, so 0 means RED=0)
+ recorded    : RED: 0 — 23 GREEN, 2 SKIPPED, 0 RED, out of 25 gates
+ node v22.22.2 · pnpm 9.15.9 · NODE_ENV=production
+ deps installed first, in BOTH packages, with:
+   pnpm install --frozen-lockfile --prod=false
+ forge-control-web BUILD_ID produced by gate 3: pkwixzQXy2_h27U9FU1sm
+
+ This file is the reference every later phase of this project decides
+ "no NEW red" against (00-vision.md §4, criterion S13). The verbatim run
+ follows the header, unedited, unsummarised and untrimmed.
+
+ FIDELITY. The verbatim body is 367 lines — 23 `EXIT=` lines plus 2 SKIPPED
+ gates = 25 gates — and hashes to
+   e52f8c0944af1e7168e37ab9b9bdae2955459f56900d5b53ed7a3bd9df7832b5
+ Re-derive that from this very file, anchored on the body's own first banner
+ line rather than on a byte offset, so editing this header cannot rot the proof:
+   F=docs/plan/artifacts/os-usable-for-work/phase1/gates-baseline.txt
+   S=$(grep -n '^ ROUND 808 — UNIVERSAL GATES, verbatim$' "$F" | cut -d: -f1)
+   tail -n +$((S-1)) "$F" | sha256sum
+ A mismatch means the body was edited. It must never be edited.
+
+--------------------------------------------------------------------------------
+ EVERY GATE, WITH ITS VERDICT AND WHAT IT ACTUALLY MEANS HERE
+--------------------------------------------------------------------------------
+ gates-808.sh governs EVERY ai-os project, not the 808 lane. Several of its
+ gates are pinned to round 808's own commits and files, and read meaningless on
+ this branch. They are listed anyway, with the reason: a gate dropped from the
+ table is a gate nobody can adjudicate later.
+
+ #   verdict   gate                                                  meaning on this branch
+ --  --------  ----------------------------------------------------  ----------------------
+ 1   GREEN     npx tsc --noEmit — forge-control                       LIVE. Universal. Any phase's type error turns this red.
+ 2   GREEN     npx tsc --noEmit — forge-control-web                   LIVE. Universal.
+ 3   GREEN     NODE_ENV=production pnpm build — forge-control-web     LIVE. Universal. Emitted BUILD_ID pkwixzQXy2_h27U9FU1sm.
+ 4   GREEN     token purity — round 808's own files                   PINNED, MEANINGLESS HERE. Greps a hardcoded list of round-808
+                                                                      artefacts (phase800/*.cjs, phase600/nav-walk.cjs,
+                                                                      check-working-sql-agreement.ts, gates-808.sh,
+                                                                      dollar-allowlist.txt, README.md) for colour literals. It cannot
+                                                                      see one line this project writes. Green here says nothing.
+ 5   GREEN     no-raw-colours.cjs (whole app)                         LIVE. Universal, whole-app. THIS is the colour gate that will
+                                                                      judge phases 2–6's UI work, not gate 4.
+ 6   GREEN     forbidden-file diff — three-dot main...HEAD            LIVE AND LOAD-BEARING — see WARNING 2 below. Ban list:
+                                                                      project-tick, cc-runner, executor.ts, db/projects,
+                                                                      VaultFileList, routes/files. Computed over main...HEAD, so it
+                                                                      reacts to THIS project's commits. It was round 808's ONLY red.
+ 7   GREEN     forge-control/ untouched by round 808's own commits    PINNED, CANNOT FAIL. Body ends in a literal `exit 0`; it is a
+                                                                      reporter, not a gate. Diffs 7b961b5..HEAD and prints the 47
+                                                                      forge-control/ files that differ — all sibling work already in
+                                                                      main. Green here is structural, not evidence.
+ 8   GREEN     dollar-sweep.sh                                        LIVE. Universal repo-wide sweep with an allowlist.
+ 9   GREEN     check-composer-v3.ts                                   LIVE. Universal UI invariant.
+ 10  GREEN     check-secret-requests.ts                               LIVE. Universal. Relevant to phase 4 (C1–C4 handle secrets).
+ 11  GREEN     contrast-canvas-banners.cjs                            LIVE. Universal.
+ 12  GREEN     check-working-sql-agreement.ts — standalone typecheck  LIVE though 808-flavoured in name: it typechecks a checked-in
+                                                                      script outside forge-control's tsconfig. Stays valid here.
+ 13  GREEN     check-stop-affordance.tsx                              LIVE. Universal (round 1354).
+ 14  GREEN     check-dismiss-peek.tsx                                 LIVE. Universal (round 1355).
+ 15  GREEN     check-team-rows.ts                                     LIVE. Universal.
+ 16  GREEN     check-team-confirm.ts                                  LIVE. Universal. Destructive-control machines.
+ 17  GREEN     verify-notification-gap-pins.mjs                       LIVE, AND LINE-ANCHORED — see WARNING 3. 92/92 pins in
+                                                                      docs/plan/notification-gap.md classified. NOT the "known
+                                                                      pre-existing red" the brief names — see WARNING 1.
+ 18  GREEN     check-usage-fold.ts — against a real Postgres          LIVE BUT ENVIRONMENT-DEPENDENT — see WARNING 4. It ran because
+                                                                      DATABASE_URL was set in this shell; it builds its own scratch
+                                                                      database (r1354_sampler) and issues nothing against the DSN's
+                                                                      own database. With DATABASE_URL unset it is SKIPPED and the
+                                                                      suite reports 25 gates with 3 skipped, not a regression.
+ 19  GREEN     check-usage-fold.ts — standalone typecheck             LIVE.
+ 20  GREEN     pnpm test — forge-control unit suite                   LIVE. Universal. 1293 tests, 1293 pass, 0 fail. This is the
+                                                                      gate phase 1's new vault/memory tests land in.
+ 21  GREEN     psql-argv-leak.cjs — round 807 finding 3               PINNED to round 807's finding, but self-contained: 23 checks,
+                                                                      writes only to /tmp, compares against committed evidence.
+                                                                      Harmless, and its "connection refused" lines on port 59997 are
+                                                                      the check working as designed, not a failure.
+ 22  GREEN     nav-walk-sampling.cjs — round 807 finding 4            PINNED, MEANINGLESS HERE. 11 arithmetic self-checks over a
+                                                                      round-807 sampling calculation. Cannot see this project.
+ 23  SKIPPED   phase700/network-700.cjs (NFU3)                        SKIPPED, LOUDLY, and not run by this baseline — see WARNING 5.
+                                                                      Needs --browser plus the phase800 §2 harness: an API on its own
+                                                                      port with an ISOLATED SECRET_STORE_DIR and a web build baked
+                                                                      against it. Dark in this baseline; a later phase that turns it
+                                                                      on has NO baseline verdict to compare against.
+ 24  SKIPPED   phase600/nav-walk.cjs — P1/P2/P3                       SKIPPED, same reason and same consequence as gate 23.
+ 25  GREEN     reproduce-cleanliness                                  LIVE. Re-runs gates 21 and 22 and asserts `git status
+                                                                      --porcelain` is byte-identical before and after. Consequence
+                                                                      for every later phase: a reproducer must write to /tmp, never
+                                                                      into the tree.
+
+--------------------------------------------------------------------------------
+ WARNINGS FOR EVERY LATER PHASE THAT COMPARES AGAINST THIS FILE
+--------------------------------------------------------------------------------
+ WARNING 1 — THERE IS NO PRE-EXISTING RED. The brief for this task states
+   "Gate 17 is a KNOWN PRE-EXISTING RED". At this commit it is not. Gate 17
+   (`verify-notification-gap-pins.mjs`) is GREEN, and so is every other gate:
+   RED: 0.
+   The claim is stale NUMBERING, not a stale verdict. Round 808's suite had 17
+   gates and its gate 17 was `reproduce-cleanliness` (green); its ONE red was
+   gate 6, `forbidden-file diff` (docs/plan/artifacts/phase800/gates-808.txt).
+   Rounds 1354/1355 inserted four checks in the middle of the list and the
+   usage-fold pair after them, so every gate number shifted by up to eight.
+   RULE: cite a gate by NAME. A gate number does not survive a round.
+   CONSEQUENCE: the bar for phases 2–7 is a ZERO-red bar. There is no
+   pre-existing red to shelter under, and any red in a later run is NEW.
+
+ WARNING 2 — GATE 6 FORBIDS A FILE PHASE 6 IS LIKELY TO WANT. It greps
+   `git diff --name-only main...HEAD` for `project-tick|cc-runner|executor.ts|
+   db/projects|VaultFileList|routes/files`, and it is computed over this
+   project's own commits. Two collisions are already visible in the plan:
+     · 00-vision.md §2.7 records that `listActiveTasks()`
+       (forge-control/src/db/projects.ts:334) has no LIMIT. A phase-6 commit
+       adding one turns gate 6 RED and fails criterion S13 for the whole
+       project.
+     · 00-vision.md §2.6 records the reminder delivery path at
+       forge-control/src/executor.ts:1524. It is already out of bounds for
+       other reasons; gate 6 makes it a gate failure as well.
+   Phase 6 must either solve the lag entirely in forge-control-web (which
+   §2.7's evidence — 127 unwindowed cards, three polling loops — supports), or
+   get the ban list amended EXPLICITLY, in the same commit, with the operator
+   waiver written in the script the way the 2026-08-16 FileExplorerPanel waiver
+   is (gates-808.sh:110).
+
+ WARNING 3 — GATE 17 IS LINE-ANCHORED TO A PROSE DOCUMENT.
+   `verify-notification-gap-pins.mjs` classifies all 92 `path.ext:NNN` pins in
+   docs/plan/notification-gap.md. Reflowing that document orphans a line rule,
+   and merely DESCRIBING a control in it adds a repeat to its own failure count.
+   Green today; it turns red on an edit that changes no code at all.
+
+ WARNING 4 — GATE 18 DEPENDS ON THE SHELL, NOT THE TREE. It runs only when
+   DATABASE_URL is set. A later run in a shell without it will show gate 18 as
+   SKIPPED. That is an environment difference, NOT a regression, and must not be
+   reported as one. It also must not be used the other way round: a phase cannot
+   claim gate 18 green if its own run skipped it.
+
+ WARNING 5 — TWO GATES ARE DARK IN THIS BASELINE. Gates 23 and 24 were SKIPPED
+   because this run did not pass --browser and the phase800 §2 harness was not
+   up. Their baseline verdict is therefore UNKNOWN, not green. A later phase
+   that runs them for the first time and finds a red has NOT necessarily
+   regressed anything — but it also cannot claim the red is pre-existing without
+   evidence. Whoever needs them must run them at this commit first.
+   NOTE: gates 23/24 are a DIFFERENT harness from the one this task delivers
+   (phase1/browser-harness.mjs). That one drives an authenticated UI for
+   screenshots and reproduction; these two need an isolated API with its own
+   SECRET_STORE_DIR. Do not substitute one for the other.
+
+ HOW TO COMPARE, later: re-run `bash scripts/checks/gates-808.sh --strict` with
+ the same two `pnpm install --frozen-lockfile --prod=false` first, then diff the
+ SUMMARY block against this one BY GATE NAME. Any name that reads a nonzero code
+ here-and-not-there, or a gate that has vanished from the list entirely, is the
+ finding.
+
+================================================================================
+ ===== VERBATIM ===== everything below is the unedited output of
+ `bash scripts/checks/gates-808.sh --strict`, tee'd from the run described above.
+ Nothing is trimmed, summarised or reordered. The script's own final exit was
+ captured separately as STRICT_EXIT=0.
+================================================================================
+================================================================================
+ ROUND 808 — UNIVERSAL GATES, verbatim
+ repo:   /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault
+ branch: project/7851068b-vault
+ HEAD:   9d63480f30e9688636b3abd57553789f5b1cc87a
+ date:   2026-08-18T21:28:21+02:00
+================================================================================
+
+WORKING-COPY STATE AT THE TOP OF THIS RUN (read this before the gates):
+?? docs/plan/artifacts/os-usable-for-work/phase1/
+
+NOTE: five sibling tasks of this project write in this same worktree
+concurrently. Round 808's OWN commits are the only thing it claims; the
+browser evidence was captured against an isolated 'git archive' of them
+(see docs/plan/artifacts/phase800/README §8), not against this working copy.
+
+########## GATE 1 — npx tsc --noEmit — forge-control ##########
+$ cd forge-control && npx tsc --noEmit
+
+
+EXIT=0
+
+########## GATE 2 — npx tsc --noEmit — forge-control-web ##########
+$ cd forge-control-web && npx tsc --noEmit
+
+
+EXIT=0
+
+########## GATE 3 — NODE_ENV=production pnpm build — forge-control-web ##########
+$ cd forge-control-web && NODE_ENV=production pnpm build 2>&1 | grep -E 'Compiled|Route \(app\)|Failed|Error' | head -5
+
+ ✓ Compiled successfully
+Route (app)                              Size     First Load JS
+
+EXIT=0
+
+########## GATE 4 — token purity — round 808's own files ##########
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\('      docs/plan/artifacts/phase800/psql-argv-leak.cjs      docs/plan/artifacts/phase800/nav-walk-sampling.cjs      docs/plan/artifacts/phase600/nav-walk.cjs      scripts/checks/check-working-sql-agreement.ts      scripts/checks/gates-808.sh      scripts/checks/dollar-allowlist.txt      README.md    && { echo '>>> UNLISTED COLOUR LITERAL'; exit 1; } || { echo 'CLEAN — zero colour literals'; exit 0; }
+
+CLEAN — zero colour literals
+
+EXIT=0
+
+########## GATE 5 — no-raw-colours.cjs (whole app) ##########
+$ node scripts/checks/no-raw-colours.cjs
+
+── 46 KNOWN DEBT hit(s): pre-existing literals, not this gate's fault and not silently forgiven ──
+  forge-control-web/app/MobileApp.tsx  (3)  → TODO: 3 hits — `#fff` text, `#000` background, and a white-alpha row wash. Mobile surface, outside this phase.
+      :308  #fff
+      :685  #000
+      :738  rgba(255,255,255,0.02)
+  forge-control-web/app/_components/GlassCard.tsx  (2)  → TODO: 2 hits — white-alpha fill and border. The whole glass effect assumes a dark backdrop; in light mode it washes out rather than breaking.
+      :29  rgba(255, 255, 255, 0.04)
+      :32  rgba(255, 255, 255, 0.09)
+  forge-control-web/app/desktop/DesktopApp.tsx  (6)  → TODO: 6 hits — the CommandPalette overlay/panel (`rgba(0,0,0,0.6)`, `#0c0c0e`) and the InboxRichPreview video/scene-thumb chrome (`#000`, `rgba(0,0,0,0.6)`, `#fff`, `rgba(255,255,255,0.02)`). Round 808 fixed the `#141417` active-nav background (now `tokens.selectedBg`, same token InboxSurface already uses for a selected row) — see contrast-nav-rail.cjs for the before/after. These 6 remain: separate blocks, not this round's brief.
+      :1247  rgba(0,0,0,0.6)
+      :1260  #0c0c0e
+      :2053  #000
+      :2105  rgba(0,0,0,0.6)
+      :2106  #fff
+      :2125  rgba(255,255,255,0.02)
+  forge-control-web/app/desktop/MemorySurface.tsx  (8)  → TODO: 8 hits — `#141417` selected-source/row backgrounds (same defect as DesktopApp's) plus near-black card and inset surfaces on the memory panels.
+      :207  #141417
+      :233  #141417
+      :813  #0e0c14
+      :848  #0a1316
+      :849  #16323a
+      :918  #0e0c14
+      :919  #221d33
+      :960  #0a0a0c
+  forge-control-web/app/desktop/ProjectsSurface.tsx  (2)  → TODO: 2 hits — a white-alpha row wash and a `#0b0b0d` card background.
+      :488  rgba(255,255,255,0.02)
+      :614  #0b0b0d
+  forge-control-web/app/desktop/SkillsSurface.tsx  (4)  → TODO: 4 hits — an amber `#fbbf24` badge and its `rgba(251,191,36,0.45)` border, twice. Closest existing token is `warn`; needs a look at the badge in both themes, not a blind swap.
+      :296  #fbbf24
+      :297  rgba(251,191,36,0.45)
+      :456  #fbbf24
+      :457  rgba(251,191,36,0.45)
+  forge-control-web/app/desktop/_ui/Toasts.tsx  (1)  → TODO: 1 hit — `rgba(0,0,0,0.35)` drop shadow. Shadow-only, cosmetic.
+      :140  rgba(0,0,0,0.35)
+  forge-control-web/app/desktop/chat/SlashPopover.tsx  (2)  → TODO: 2 hits — the popover's drop shadow and its white-alpha inset highlight. Shadow-only; the least harmful of the set.
+      :123  rgba(0,0,0,0.55)
+      :123  rgba(255,255,255,0.04)
+  forge-control-web/app/globals.css  (2)  → TODO: 2 hits — `background: #000` / `color: #ededee` on html,body. Currently INERT: theme.css re-declares both against `var(--fg-*)` and wins on order. Delete them when someone is in the file; they are a trap for the next reader, not a live bug.
+      :11  #000
+      :12  #ededee
+  forge-control-web/app/v2.css  (16)  → TODO: ~20 non-definition literals in v2.css rule bodies (`color: #fff`, `background: rgba(0,0,0,0.3)`, white-alpha insets, an inline SVG chevron with a baked-in accent). theme.css already re-declares v2's SURFACE variables for light; these direct values are what it could not reach.
+      :86  rgba(255,255,255,0.07)
+      :87  rgba(0,0,0,0.5)
+      :92  rgba(0,0,0,0.5)
+      :108  #fff
+      :125  rgba(255,255,255,0.25)
+      :276  rgba(255,255,255,0.2)
+      :304  rgba(255,255,255,0.06)
+      :320  rgba(0,0,0,0.45)
+      :332  rgba(0, 0, 0, 0.3)
+      :344  rgba(0, 0, 0, 0.4)
+      :356  rgba(0, 0, 0, 0.3)
+      :357  rgba(91,141,239,0.6)
+      :363  #e5e2e1
+      :375  rgba(0, 0, 0, 0.4)
+      :386  #1a1a1a
+      :387  #e5e2e1
+
+no-raw-colours: PASS — 222 literal(s) across 14 file(s), all accounted for (176 legitimate, 46 known debt, 0 unlisted).
+
+EXIT=0
+
+########## GATE 6 — forbidden-file diff — three-dot main...HEAD ##########
+$ git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|VaultFileList|routes/files'    && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }
+
+clean — no engine/Files file differs
+
+EXIT=0
+
+########## GATE 7 — forge-control/ untouched by round 808's own commits ##########
+$ changed=$(git diff --name-only 7b961b5..HEAD -- forge-control/ | wc -l);    echo "forge-control/ files in 7b961b5..HEAD: $changed";    git diff --name-only 7b961b5..HEAD -- forge-control/;    echo '(round 808 authored none of these; any listed file is a sibling task on the same branch)';    exit 0
+
+forge-control/ files in 7b961b5..HEAD: 47
+forge-control/scripts/probe-usage-router.ts
+forge-control/src/db/projects.ts
+forge-control/src/index.ts
+forge-control/src/lib/cc-runner.test.ts
+forge-control/src/lib/cc-runner.ts
+forge-control/src/lib/cp2-reconciler-interaction.test.ts
+forge-control/src/lib/cp3-linkage.test.ts
+forge-control/src/lib/dismissals.test.ts
+forge-control/src/lib/dismissals.ts
+forge-control/src/lib/fixtures/replay-operator-visibility.json
+forge-control/src/lib/fixtures/replay-operator-visibility.md
+forge-control/src/lib/fixtures/schedule-truncated-4.json
+forge-control/src/lib/migrations.test.ts
+forge-control/src/lib/plan-corpus.test.ts
+forge-control/src/lib/plan-corpus.ts
+forge-control/src/lib/project-reconcile.test.ts
+forge-control/src/lib/project-reconcile.ts
+forge-control/src/lib/project-tick.test.ts
+forge-control/src/lib/project-tick.ts
+forge-control/src/lib/r1871-subagent-recovery.test.ts
+forge-control/src/lib/run-control-rules.test.ts
+forge-control/src/lib/run-control-rules.ts
+forge-control/src/lib/schedule-metrics.test.ts
+forge-control/src/lib/schedule-metrics.ts
+forge-control/src/lib/schedule-source.test.ts
+forge-control/src/lib/schedule-source.ts
+forge-control/src/lib/source-hygiene.test.ts
+forge-control/src/lib/task-graph-replay.test.ts
+forge-control/src/lib/task-graph.test.ts
+forge-control/src/lib/task-graph.ts
+forge-control/src/lib/uploads-index.test.ts
+forge-control/src/lib/uploads-index.ts
+forge-control/src/lib/usage-sampler.test.ts
+forge-control/src/lib/usage-sampler.ts
+forge-control/src/lib/workspace.ts
+forge-control/src/routes/agents-shared.ts
+forge-control/src/routes/agents.ts
+forge-control/src/routes/capabilities.ts
+forge-control/src/routes/chat-linkage.ts
+forge-control/src/routes/chat.ts
+forge-control/src/routes/integrations.ts
+forge-control/src/routes/projects.ts
+forge-control/src/routes/run-control.ts
+forge-control/src/routes/secrets.ts
+forge-control/src/routes/tasks.ts
+forge-control/src/routes/uploads.ts
+forge-control/src/routes/usage.ts
+(round 808 authored none of these; any listed file is a sibling task on the same branch)
+
+EXIT=0
+
+########## GATE 8 — dollar-sweep.sh ##########
+$ bash scripts/checks/dollar-sweep.sh | tail -6
+
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/chat/BrowserShots.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+
+EXIT=0
+
+########## GATE 9 — check-composer-v3.ts ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-composer-v3.ts | tail -3
+
+PASS  an unknown level still falls to the calm rung rather than throwing
+
+OK — 9 clamp cases + ramp table clean
+
+EXIT=0
+
+########## GATE 10 — check-secret-requests.ts ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-secret-requests.ts | tail -3
+
+PASS  capNote does not interpret markup — it returns the raw characters
+
+ALL PASS
+
+EXIT=0
+
+########## GATE 11 — contrast-canvas-banners.cjs ##########
+$ node scripts/checks/contrast-canvas-banners.cjs
+
+CanvasPane error banners — WCAG contrast, before → after
+
+banner     theme  BEFORE (literal)          ratio      AFTER (token)                ratio      
+----------------------------------------------------------------------------------------------------------------
+conflict   dark   #ffd8a8 on #5c3a0033        14.50:1  warn on freezeBgWarn           10.71:1  PASS
+conflict   light  #ffd8a8 on #5c3a0033         1.13:1  warn on freezeBgWarn            4.71:1  PASS
+error      dark   #ffa8a8 on #5c000033        11.13:1  bleed on dangerActionBg         5.16:1  PASS
+error      light  #ffa8a8 on #5c000033         1.12:1  bleed on dangerActionBg         5.09:1  PASS
+watchErr   dark   #ffd8a8 on #5c3a0033        14.50:1  warn on freezeBgWarn           10.71:1  PASS
+watchErr   light  #ffd8a8 on #5c3a0033         1.13:1  warn on freezeBgWarn            4.71:1  PASS
+
+BEFORE composited over bgBody (round 804's surface, so its published numbers reproduce).
+AFTER over bgCard, the pane's real parent; also checked over bgBody (10.71:1, 4.71:1, 5.16:1, 5.09:1, 10.71:1, 4.71:1).
+Target 4.5:1 in BOTH themes.
+
+PASS — all 6 banner/theme combinations clear 4.5:1.
+
+EXIT=0
+
+########## GATE 12 — check-working-sql-agreement.ts — standalone typecheck (the file round 808 changed) ##########
+$ cd forge-control && npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler      --lib ES2022 --strict --skipLibCheck --allowImportingTsExtensions --isolatedModules --types node      ../scripts/checks/check-working-sql-agreement.ts
+
+
+EXIT=0
+
+########## GATE 13 — check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does ##########
+$ cd forge-control-web && ../forge-control/node_modules/.bin/tsx      --tsconfig ../tsconfig.checks.json ../scripts/checks/check-stop-affordance.tsx | tail -3
+
+PASS  no colour literal in the rendered row
+
+ALL PASS — stop affordance
+
+EXIT=0
+
+########## GATE 14 — check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces ##########
+$ cd forge-control-web && ../forge-control/node_modules/.bin/tsx      --tsconfig ../tsconfig.checks.json ../scripts/checks/check-dismiss-peek.tsx | tail -3
+
+PASS  the team panel's reading names the Live panel
+
+ALL PASS — dismissal peek affordance
+
+EXIT=0
+
+########## GATE 15 — check-team-rows.ts — flatten, hiddenRows, frozen time ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-rows.ts | tail -2
+
+
+ALL PASS — team row model
+
+EXIT=0
+
+########## GATE 16 — check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all) ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2
+
+
+ALL PASS — team confirm machine
+
+EXIT=0
+
+########## GATE 17 — verify-notification-gap-pins.mjs — fenced quotes + prose pins ##########
+$ node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2
+
+ALL PASS — 92/92 pins in docs/plan/notification-gap.md classified (11 fenced quotes, 12 prose, 4 live, 7 cross-doc, 32 repeat, 26 historical).
+Denominator = every `path.ext:NNN` and every bare `:NNN` citation in docs/plan/notification-gap.md, fenced or not. Outside it: pins carrying no line number, and other documents' pins into this one.
+
+EXIT=0
+
+########## GATE 18 — check-usage-fold.ts — hourly token fold, against a real Postgres ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-usage-fold.ts | tail -3
+
+NOTICE:  relation "runs" already exists, skipping
+NOTICE:  relation "spend_log" already exists, skipping
+NOTICE:  relation "spend_log_provider_created_idx" already exists, skipping
+NOTICE:  relation "usage_hourly" already exists, skipping
+                      Filter: (provider = 'claude-code'::text)
+
+ALL PASS — usage fold (scratch db: r1354_sampler)
+
+EXIT=0
+
+########## GATE 19 — check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig) ##########
+$ cd forge-control && npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler      --lib ES2022 --strict --skipLibCheck --allowImportingTsExtensions --isolatedModules --types node      ../scripts/checks/check-usage-fold.ts
+
+
+EXIT=0
+
+########## GATE 20 — pnpm test — forge-control unit suite ##########
+$ cd forge-control && pnpm test 2>&1 | grep -E '^# (tests|pass|fail)'
+
+# tests 1293
+# pass 1293
+# fail 0
+
+EXIT=0
+
+########## GATE 21 — psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard ##########
+$ node docs/plan/artifacts/phase800/psql-argv-leak.cjs | tail -4
+
+psql: error: connection to server at "127.0.0.1", port 59997 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+psql: error: connection to server at "127.0.0.1", port 59997 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+ALL PASS — 23 checks → /tmp/phase800-out/psql-argv-leak.json
+      committed evidence left untouched (/opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault/docs/plan/artifacts/phase800/psql-argv-leak.json)
+      re-record in place with:  node /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault/docs/plan/artifacts/phase800/psql-argv-leak.cjs --write
+
+EXIT=0
+
+########## GATE 22 — nav-walk-sampling.cjs — round 807 finding 4, the arithmetic ##########
+$ node docs/plan/artifacts/phase800/nav-walk-sampling.cjs | tail -4
+
+
+ALL PASS — 11 checks → /tmp/phase800-out/nav-walk-sampling.json
+      committed evidence left untouched (/opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault/docs/plan/artifacts/phase800/nav-walk-sampling.json)
+      re-record in place with:  node /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--vault/docs/plan/artifacts/phase800/nav-walk-sampling.cjs --write
+
+EXIT=0
+
+########## GATE 23 — phase700/network-700.cjs (NFU3) ##########
+SKIPPED — browser harness not requested (--browser); run separately, results in README §8
+
+########## GATE 24 — phase600/nav-walk.cjs — P1/P2/P3 ##########
+SKIPPED — browser harness not requested (--browser); run separately, results in README §8
+
+########## GATE 25 — reproduce-cleanliness — re-running a protocol leaves the tree untouched ##########
+$ before=$(git status --porcelain | md5sum);    node docs/plan/artifacts/phase800/psql-argv-leak.cjs >/dev/null 2>&1;    node docs/plan/artifacts/phase800/nav-walk-sampling.cjs >/dev/null 2>&1;    after=$(git status --porcelain | md5sum);    echo "before: $before"; echo "after:  $after";    [ "$before" = "$after" ] && { echo 'PASS — tree untouched'; exit 0; } || { echo 'FAIL — tree changed'; exit 1; }
+
+before: 410a7fd6775a2bb922a56b3cd8beb41b  -
+after:  410a7fd6775a2bb922a56b3cd8beb41b  -
+PASS — tree untouched
+
+EXIT=0
+
+================================================================================
+ SUMMARY — 25 gates
+================================================================================
+ 1  0      npx tsc --noEmit — forge-control
+ 2  0      npx tsc --noEmit — forge-control-web
+ 3  0      NODE_ENV=production pnpm build — forge-control-web
+ 4  0      token purity — round 808's own files
+ 5  0      no-raw-colours.cjs (whole app)
+ 6  0      forbidden-file diff — three-dot main...HEAD
+ 7  0      forge-control/ untouched by round 808's own commits
+ 8  0      dollar-sweep.sh
+ 9  0      check-composer-v3.ts
+ 10 0      check-secret-requests.ts
+ 11 0      contrast-canvas-banners.cjs
+ 12 0      check-working-sql-agreement.ts — standalone typecheck (the file round 808 changed)
+ 13 0      check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does
+ 14 0      check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces
+ 15 0      check-team-rows.ts — flatten, hiddenRows, frozen time
+ 16 0      check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)
+ 17 0      verify-notification-gap-pins.mjs — fenced quotes + prose pins
+ 18 0      check-usage-fold.ts — hourly token fold, against a real Postgres
+ 19 0      check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig)
+ 20 0      pnpm test — forge-control unit suite
+ 21 0      psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard
+ 22 0      nav-walk-sampling.cjs — round 807 finding 4, the arithmetic
+ 23 -      phase700/network-700.cjs (NFU3) (SKIPPED)
+ 24 -      phase600/nav-walk.cjs — P1/P2/P3 (SKIPPED)
+ 25 0      reproduce-cleanliness — re-running a protocol leaves the tree untouched
+
+ RED: 0

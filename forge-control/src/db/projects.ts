@@ -57,6 +57,9 @@ import { selectClaimable, type GraphTask } from "../lib/task-graph.ts";
 // imports of a module that imports nothing but types, so no cycle is closed
 // around the pool — the same shape as the task-graph import above.
 import { earliestFailedGroup, duplicatesFixChain } from "../lib/project-reconcile.ts";
+// Pure column arithmetic for the board feed — no DB, no I/O; see its header for
+// why the board's column list is derived rather than written twice (R73).
+import { projectBoardColumns } from "../lib/projects-board-limit.ts";
 
 const { Pool } = pg;
 
@@ -175,6 +178,19 @@ export interface ProjectTaskWithProject extends ProjectTask {
   project_name: string;
 }
 
+/**
+ * One row of the Kanban board feed (`GET /api/projects/board`) — a
+ * ProjectTaskWithProject WITHOUT `brief`.
+ *
+ * `Omit` rather than `brief: string | null`, deliberately: the field is ABSENT
+ * from the response, not null, and a type that admitted null would let a caller
+ * write `task.brief ?? ""` and render an empty pane where the brief should be.
+ * A caller that needs a brief fetches the one task it is showing —
+ * `GET /api/tasks/:id` — instead of receiving 149 of them it will never read
+ * (phase6/projects-lag-before.md §5).
+ */
+export type ProjectBoardTask = Omit<ProjectTaskWithProject, "brief">;
+
 const PROJECT_COLS = `id::text, name, brief, repo, workspace_dir, base_branch, work_branch,
   status, metadata, created_at::text, updated_at::text`;
 const TASK_COLS = `id::text, project_id::text, round, role, title, brief, status,
@@ -193,6 +209,17 @@ const TASK_COLS_PT = `pt.id::text, pt.project_id::text, pt.round, pt.role, pt.ti
 /** Last assistant message of the joined run `r`, by thread timestamp — the
  *  text every verdict parse reads. Shared by listSettledRunningTasks() and
  *  listVerdictRound() so the two can never drift apart. */
+/** TASK_COLS_PT minus the columns the Kanban board does not render, DERIVED
+ *  from it rather than written out a second time (lib/projects-board-limit.ts
+ *  explains why, and throws if the derivation stops making sense).
+ *
+ *  Today that is exactly one column, `brief`, and it was 88.2% of a 1,843,144-
+ *  byte response the board rendered 34,834 bytes of — measured three times in
+ *  `docs/plan/artifacts/os-usable-for-work/phase6/projects-lag-before.md §2.1`.
+ *  Evaluated at module load, so a projection this file can no longer build is a
+ *  boot failure naming the column, not a 500 on the board's next poll. */
+const BOARD_TASK_COLS_PT = projectBoardColumns(TASK_COLS_PT);
+
 const LAST_ASSISTANT_TEXT = `(SELECT elem->>'content'
                FROM jsonb_array_elements(r.thread) elem
               WHERE elem->>'role' = 'assistant'
@@ -330,10 +357,17 @@ export async function listTasksForProject(
 
 /** Every task across every non-terminal project — what the unified Kanban
  *  board renders. Terminal projects (done/cancelled) are excluded so the
- *  board doesn't accumulate stale cards forever. */
-export async function listActiveTasks(): Promise<ProjectTaskWithProject[]> {
-  const r = await pool.query<ProjectTaskWithProject>(
-    `SELECT ${TASK_COLS_PT}, p.name AS project_name
+ *  board doesn't accumulate stale cards forever.
+ *
+ *  EVERY ROW, NEVER A LIMIT (R75): all 149 active/blocked tasks stay reachable,
+ *  and a `LIMIT` here would drop cards off the board with no affordance to reach
+ *  them. What is capped is the COLUMN list — BOARD_TASK_COLS_PT omits `brief`,
+ *  which no card renders and which was 88.2% of this response by weight
+ *  (phase6/projects-lag-before.md §2.1). Callers that need one task's brief ask
+ *  `GET /api/tasks/:id` for that one task. */
+export async function listActiveTasks(): Promise<ProjectBoardTask[]> {
+  const r = await pool.query<ProjectBoardTask>(
+    `SELECT ${BOARD_TASK_COLS_PT}, p.name AS project_name
        FROM project_tasks pt
        JOIN projects p ON p.id = pt.project_id
       WHERE p.status IN ('active','blocked')

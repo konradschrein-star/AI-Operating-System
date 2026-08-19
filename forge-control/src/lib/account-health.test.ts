@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 
 import {
   classifyCredential,
+  effectiveHealth,
   classifyError,
   shouldFailover,
   pickAccount,
@@ -210,6 +211,155 @@ describe("classifyCredential", () => {
       lastOkAt: NOW - (DEFAULT_UNEXERCISED_MS + HOUR),
     });
     assert.equal(justOutside.health, "unknown");
+  });
+});
+
+/* ========================================================================== *
+ * Probe age — the display invariant (R57)
+ *
+ * `claude_accounts.health` is a STORED column. `markSuccess()` writes
+ * 'healthy' and never touches `last_probed_at`, and rows can be seeded by
+ * hand — so the word can precede or outlive any measurement. Reproduced live
+ * on 2026-08-18: a row with health='healthy', last_probed_at=NULL rendered
+ * CONNECTED in green (docs/plan/artifacts/os-usable-for-work/phase4/
+ * b4a-before-connections.png).
+ *
+ * The whole point is asymmetry — this function DEMOTES and never promotes.
+ * Each test below therefore checks the direction, not just the value.
+ * ========================================================================== */
+
+describe("effectiveHealth — no positive state without a measurement", () => {
+  const stored = (
+    over: Partial<Parameters<typeof effectiveHealth>[0]> = {},
+  ): Parameters<typeof effectiveHealth>[0] => ({
+    health: "healthy",
+    detail: "confirmed by a successful run",
+    lastProbedAt: NOW - 4 * 60_000,
+    ...over,
+  });
+
+  test("THE INVARIANT: a stored `healthy` with NO probe renders unknown", () => {
+    const e = effectiveHealth(stored({ lastProbedAt: null }), { now: NOW });
+    assert.equal(e.health, "unknown");
+    assert.equal(e.downgraded, true);
+    assert.equal(e.storedHealth, "healthy");
+    assert.equal(e.probeAgeMs, null);
+    // The detail must SAY why, and must carry the stored word it overrode —
+    // a silent demotion is a different lie, not a fix.
+    assert.match(e.detail, /never probed/i);
+    assert.match(e.detail, /confirmed by a successful run/);
+  });
+
+  test("a stored `healthy` probed within the window passes through untouched", () => {
+    const e = effectiveHealth(stored({ lastProbedAt: NOW - 4 * 60_000 }), { now: NOW });
+    assert.equal(e.health, "healthy");
+    assert.equal(e.downgraded, false);
+    assert.equal(e.detail, "confirmed by a successful run");
+    assert.equal(e.probeAgeMs, 4 * 60_000);
+  });
+
+  test("a probe OLDER than the unexercised window demotes to unknown", () => {
+    const e = effectiveHealth(
+      stored({ lastProbedAt: NOW - (DEFAULT_UNEXERCISED_MS + DAY) }),
+      { now: NOW },
+    );
+    assert.equal(e.health, "unknown");
+    assert.equal(e.downgraded, true);
+    assert.match(e.detail, /last probed 8 days ago/);
+    assert.match(e.detail, /no longer evidence/);
+  });
+
+  test("the staleness boundary, both sides of it", () => {
+    const justInside = effectiveHealth(
+      stored({ lastProbedAt: NOW - (DEFAULT_UNEXERCISED_MS - HOUR) }),
+      { now: NOW },
+    );
+    assert.equal(justInside.health, "healthy");
+    assert.equal(justInside.downgraded, false);
+
+    const justOutside = effectiveHealth(
+      stored({ lastProbedAt: NOW - (DEFAULT_UNEXERCISED_MS + HOUR) }),
+      { now: NOW },
+    );
+    assert.equal(justOutside.health, "unknown");
+    assert.equal(justOutside.downgraded, true);
+  });
+
+  test("the window is configurable, and the boundary moves with it", () => {
+    const rec = stored({ lastProbedAt: NOW - 2 * HOUR });
+    assert.equal(effectiveHealth(rec, { now: NOW, staleAfterMs: 3 * HOUR }).health, "healthy");
+    assert.equal(effectiveHealth(rec, { now: NOW, staleAfterMs: HOUR }).health, "unknown");
+  });
+
+  test("`broken` is NEVER demoted to unknown, probed or not", () => {
+    // `unknown` is the WEAKER statement. Konrad's note — "token expired
+    // 2026-06-03; not re-authenticated by choice" — is operator knowledge, and
+    // replacing it with "nobody knows" would throw it away. `broken` is also
+    // not a positive state, so R57 has nothing to say about it.
+    const never = effectiveHealth(
+      { health: "broken", detail: "token expired 2026-06-03; unused since.", lastProbedAt: null },
+      { now: NOW },
+    );
+    assert.equal(never.health, "broken");
+    assert.equal(never.downgraded, false);
+    assert.equal(never.detail, "token expired 2026-06-03; unused since.");
+
+    const ancient = effectiveHealth(
+      { health: "broken", detail: "d", lastProbedAt: NOW - 400 * DAY },
+      { now: NOW },
+    );
+    assert.equal(ancient.health, "broken");
+    assert.equal(ancient.downgraded, false);
+  });
+
+  test("`unknown` stays unknown and is never promoted by a fresh probe", () => {
+    const e = effectiveHealth(
+      { health: "unknown", detail: "never confirmed working", lastProbedAt: NOW - 1000 },
+      { now: NOW },
+    );
+    assert.equal(e.health, "unknown");
+    assert.equal(e.downgraded, false);
+  });
+
+  test("it NEVER produces a positive state without a probe age — exhaustive", () => {
+    // The property, asserted over the whole input space rather than at the
+    // points a hand-written case happens to pick.
+    const healths = ["healthy", "broken", "unknown"] as const;
+    const ages = [null, 0, HOUR, DEFAULT_UNEXERCISED_MS - 1, DEFAULT_UNEXERCISED_MS + 1, 400 * DAY];
+    for (const health of healths) {
+      for (const age of ages) {
+        const e = effectiveHealth(
+          { health, detail: "d", lastProbedAt: age === null ? null : NOW - age },
+          { now: NOW },
+        );
+        if (e.health === "healthy") {
+          assert.notEqual(
+            e.probeAgeMs,
+            null,
+            `healthy with no probe age escaped for stored=${health} age=${age}`,
+          );
+          assert.ok(
+            (e.probeAgeMs ?? Infinity) <= DEFAULT_UNEXERCISED_MS,
+            `healthy with a stale probe escaped for stored=${health} age=${age}`,
+          );
+        }
+        // And never an upgrade, in any direction.
+        assert.ok(
+          !(health !== "healthy" && e.health === "healthy"),
+          `promoted ${health} to healthy for age=${age}`,
+        );
+      }
+    }
+  });
+
+  test("a null detail does not become the string 'null' on screen", () => {
+    const e = effectiveHealth({ health: "unknown", detail: null, lastProbedAt: NOW }, { now: NOW });
+    assert.equal(e.detail, "");
+  });
+
+  test("the demotion message falls back to the health word when detail is null", () => {
+    const e = effectiveHealth({ health: "healthy", detail: null, lastProbedAt: null }, { now: NOW });
+    assert.match(e.detail, /"healthy"/);
   });
 });
 

@@ -1,0 +1,222 @@
+{
+ "as_of": "2026-08-18T22:13:14.992Z",
+ "stall_threshold_hours": 48,
+ "stall_cutoff": "2026-08-16T22:13:14.992Z",
+ "phases": [
+  {
+   "key": "idea",
+   "label": "Idea",
+   "description": "Topic + brief, pre-script",
+   "statuses": [],
+   "count": 0,
+   "stalled_count": 0,
+   "state": "no_work_idle",
+   "state_reason": "Nothing in Idea, and it is the first phase \u2014 no work has been created.",
+   "cards": [],
+   "cards_truncated": false
+  },
+  {
+   "key": "script",
+   "label": "Script",
+   "description": "Scripting \u2192 script ready",
+   "statuses": [],
+   "count": 0,
+   "stalled_count": 0,
+   "state": "no_work_idle",
+   "state_reason": "Nothing in Script, and nothing in any earlier phase \u2014 idle, not blocked.",
+   "cards": [],
+   "cards_truncated": false
+  },
+  {
+   "key": "voice",
+   "label": "Voice",
+   "description": "TTS generation",
+   "statuses": [],
+   "count": 0,
+   "stalled_count": 0,
+   "state": "no_work_idle",
+   "state_reason": "Nothing in Voice, and nothing in any earlier phase \u2014 idle, not blocked.",
+   "cards": [],
+   "cards_truncated": false
+  },
+  {
+   "key": "assets",
+   "label": "Assets",
+   "description": "Image / clip / asset collection",
+   "statuses": [],
+   "count": 0,
+   "stalled_count": 0,
+   "state": "no_work_idle",
+   "state_reason": "Nothing in Assets, and nothing in any earlier phase \u2014 idle, not blocked.",
+   "cards": [],
+   "cards_truncated": false
+  },
+  {
+   "key": "qc",
+   "label": "QC",
+   "description": "QMS validation + manual gates",
+   "statuses": [
+    "AWAITING_QC",
+    "AWAITING_UPLOADER"
+   ],
+   "count": 6,
+   "stalled_count": 5,
+   "state": "has_work",
+   "state_reason": "6 jobs in QC.",
+   "cards": [
+    {
+     "id": "STUB_FRESH_00000000-0000-4000-8000-000000000001",
+     "title": "STUB \u2014 a job whose status changed three minutes ago",
+     "status": "AWAITING_QC",
+     "format": "RANKING",
+     "channel": "Stub Channel",
+     "template": "Ranking Default",
+     "age": "3m",
+     "updated_at": "2026-08-18T22:10:14.992Z",
+     "status_updated_at": "2026-08-18T22:10:14.992Z",
+     "stalled": false,
+     "stall_days": 0
+    },
+    {
+     "id": "c65abcfe-a6cc-465a-bd78-368c5dbfbb0d",
+     "title": "MacBook Air M3 vs Dell XPS 15",
+     "status": "AWAITING_UPLOADER",
+     "format": "TECH_COMPARISON",
+     "channel": "Content Forge Main",
+     "template": "Comparison X vs Y \u2014 Software",
+     "age": "12d",
+     "updated_at": "2026-08-06 21:50:26.252+00",
+     "status_updated_at": "2026-08-06 21:50:26.252+00",
+     "stalled": true,
+     "stall_days": 12
+    },
+    {
+     "id": "75c0cbe8-ed38-48b0-9b26-8e1c591f10c5",
+     "title": "Best budget standing desks under 400",
+     "status": "AWAITING_UPLOADER",
+     "format": "RANKING",
+     "channel": "Blink Blueprint",
+     "template": "Ranking Default",
+     "age": "13d",
+     "updated_at": "2026-08-05 21:26:34.847+00",
+     "status_updated_at": "2026-08-05 21:26:34.847+00",
+     "stalled": true,
+     "stall_days": 13
+    },
+    {
+     "id": "bd4bfd38-bf92-4b0f-8fda-145e5feb72f5",
+     "title": "Best budget mechanical keyboards under 150",
+     "status": "AWAITING_UPLOADER",
+     "format": "RANKING",
+     "channel": "Blink Blueprint",
+     "template": "Ranking Default",
+     "age": "13d",
+     "updated_at": "2026-08-05 20:37:24.549+00",
+     "status_updated_at": "2026-08-05 20:37:24.549+00",
+     "stalled": true,
+     "stall_days": 13
+    },
+    {
+     "id": "6a9341e6-ef76-4735-b92b-54f5eb26a34d",
+     "title": "Best Speakers 2026 below 100$",
+     "status": "AWAITING_QC",
+     "format": "RANKING",
+     "channel": "Your VirtualFD",
+     "template": "Ranking Default",
+     "age": "14d",
+     "updated_at": "2026-08-04 11:53:01.457+00",
+     "status_updated_at": "2026-08-04 11:53:01.457+00",
+     "stalled": true,
+     "stall_days": 14
+    },
+    {
+     "id": "797bc9b0-44e7-43dc-a187-6d1fd5732816",
+     "title": "Best noise cancelling headphones under 300",
+     "status": "AWAITING_UPLOADER",
+     "format": "RANKING",
+     "channel": "Blink Blueprint",
+     "template": "Ranking Default",
+     "age": "14d",
+     "updated_at": "2026-08-04 01:01:34.885+00",
+     "status_updated_at": "2026-08-04 01:01:34.885+00",
+     "stalled": true,
+     "stall_days": 14
+    }
+   ],
+   "cards_truncated": false
+  },
+  {
+   "key": "render",
+   "label": "Render",
+   "description": "Routing + render + stitch",
+   "statuses": [],
+   "count": 0,
+   "stalled_count": 0,
+   "state": "no_work_blocked_upstream",
+   "state_reason": "Nothing in Render \u2014 6 jobs held further up, in QC (6). This column is empty because work is stuck, not because there is none.",
+   "cards": [],
+   "cards_truncated": false
+  },
+  {
+   "key": "publish",
+   "label": "Publish",
+   "description": "Uploader \u2192 published",
+   "statuses": [],
+   "count": 0,
+   "stalled_count": 0,
+   "state": "no_work_blocked_upstream",
+   "state_reason": "Nothing in Publish \u2014 6 jobs held further up, in QC (6). This column is empty because work is stuck, not because there is none.",
+   "cards": [],
+   "cards_truncated": false
+  }
+ ],
+ "total": 6,
+ "stalled_total": 5,
+ "card_limit_per_phase": 20,
+ "card_query_limit": 500,
+ "card_rows_scanned": 6,
+ "workers": {
+  "ok": true,
+  "as_of": "2026-08-18T22:13:14.992Z",
+  "expected": [
+   "worker-orchestrator",
+   "worker-render",
+   "worker-video-stitch",
+   "claude-pool"
+  ],
+  "online": 4,
+  "missing": [],
+  "workers": [
+   {
+    "name": "worker-orchestrator",
+    "status": "online",
+    "uptime_ms": 662400000,
+    "restarts": 0
+   },
+   {
+    "name": "worker-render",
+    "status": "online",
+    "uptime_ms": 662400000,
+    "restarts": null
+   },
+   {
+    "name": "worker-video-stitch",
+    "status": "online",
+    "uptime_ms": 662400000,
+    "restarts": 3
+   },
+   {
+    "name": "claude-pool",
+    "status": "stopped",
+    "uptime_ms": null,
+    "restarts": null
+   }
+  ]
+ },
+ "queues": {
+  "ok": false,
+  "as_of": "2026-08-18T22:13:14.992Z",
+  "endpoint": "127.0.0.1:6399",
+  "error": "connect ECONNREFUSED 127.0.0.1:6399"
+ }
+}

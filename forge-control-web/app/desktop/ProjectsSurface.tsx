@@ -14,7 +14,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens, dot } from "../tokens";
 import {
-  fetchProjectBoard,
   fetchProjects,
   fetchChat,
   createProject,
@@ -23,11 +22,19 @@ import {
   PROJECT_REPO_OPTIONS,
   type Project,
   type ProjectRepo,
-  type ProjectTaskWithProject,
   type TaskRole,
   type TaskStatus,
   type RunDetail,
 } from "../api";
+/* The board feed and the on-demand brief live in this lane's own client file
+ * (02-architecture.md §0.3). `ProjectBoardTask` is `ProjectTaskWithProject`
+ * WITHOUT `brief`, which is the whole phase-6 fix: the column was 88.2% of a
+ * 1.8 MB response polled every 6 s and no card renders it. */
+import {
+  fetchProjectBoardCards,
+  fetchTaskBrief,
+  type ProjectBoardTask,
+} from "../api-perf";
 import { useRunEvents } from "./chat/useRunEvents";
 import { AssistantThread } from "./chat/AssistantThread";
 
@@ -73,7 +80,7 @@ export function ProjectsSurface() {
   const qc = useQueryClient();
   const boardQ = useQuery({
     queryKey: ["projects", "board"],
-    queryFn: fetchProjectBoard,
+    queryFn: fetchProjectBoardCards,
     refetchInterval: 6_000,
   });
   const projectsQ = useQuery({
@@ -110,10 +117,10 @@ export function ProjectsSurface() {
     [tasks, projectFilter],
   );
   const columns = useMemo(() => {
-    const byRole = new Map<TaskRole, ProjectTaskWithProject[]>(
+    const byRole = new Map<TaskRole, ProjectBoardTask[]>(
       ROLES.map((r) => [r, []]),
     );
-    const done: ProjectTaskWithProject[] = [];
+    const done: ProjectBoardTask[] = [];
     for (const t of filtered) {
       if (t.status === "done") done.push(t);
       else byRole.get(t.role)?.push(t);
@@ -376,7 +383,7 @@ function RoleColumn({
   onSelect,
 }: {
   role: TaskRole;
-  tasks: ProjectTaskWithProject[];
+  tasks: ProjectBoardTask[];
   onSelect: (id: string) => void;
 }) {
   const color = ROLE_COLOR[role];
@@ -430,7 +437,7 @@ function DoneColumn({
   tasks,
   onSelect,
 }: {
-  tasks: ProjectTaskWithProject[];
+  tasks: ProjectBoardTask[];
   onSelect: (id: string) => void;
 }) {
   return (
@@ -477,7 +484,7 @@ function TaskCard({
   task,
   onSelect,
 }: {
-  task: ProjectTaskWithProject;
+  task: ProjectBoardTask;
   onSelect: () => void;
 }) {
   const color = STATUS_COLOR[task.status];
@@ -530,7 +537,7 @@ function FloorGrid({
   tasks,
   onExpand,
 }: {
-  tasks: ProjectTaskWithProject[];
+  tasks: ProjectBoardTask[];
   onExpand: (id: string) => void;
 }) {
   if (tasks.length === 0) {
@@ -586,7 +593,7 @@ function FloorTile({
   task,
   onExpand,
 }: {
-  task: ProjectTaskWithProject;
+  task: ProjectBoardTask;
   onExpand: () => void;
 }) {
   const runId = task.run_id!;
@@ -690,7 +697,7 @@ function TaskDetail({
   task,
   onClose,
 }: {
-  task: ProjectTaskWithProject;
+  task: ProjectBoardTask;
   onClose: () => void;
 }) {
   const qc = useQueryClient();
@@ -701,6 +708,17 @@ function TaskDetail({
     queryFn: () => fetchChat(runId!),
     enabled: !!runId,
     refetchInterval: live ? 20_000 : 3_000,
+  });
+  /* The brief is NOT on the board feed any more — it was 88.2% of it, carried on
+   * every one of 149 cards to be read here, on at most one of them, and only
+   * while that one has no run yet. So it is fetched for the selected task, when
+   * that pane is the one being shown. `enabled` keeps a task that has a run from
+   * issuing the request at all. */
+  const briefQ = useQuery({
+    queryKey: ["projects", "task-brief", task.id],
+    queryFn: () => fetchTaskBrief(task.id),
+    enabled: !runId,
+    staleTime: 60_000,
   });
   const [draft, setDraft] = useState("");
   const sendM = useMutation({
@@ -803,8 +821,27 @@ function TaskDetail({
             {runId ? "loading run…" : "not started yet — waiting on an earlier round to finish"}
           </div>
           <div style={{ fontSize: 13, color: tokens.textSecondary, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-            {task.brief}
+            {briefQ.data}
           </div>
+          {/* Three distinguishable states, on purpose: a brief still loading, a
+              brief that FAILED to load, and a brief that is genuinely empty. An
+              `?? ""` here would render all three as the same blank pane. */}
+          {briefQ.isPending && (
+            <div className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+              loading the brief…
+            </div>
+          )}
+          {briefQ.isError && (
+            <div className="mono" style={{ fontSize: 11, color: tokens.bleed, lineHeight: 1.6 }}>
+              could not load this task&apos;s brief —{" "}
+              {briefQ.error instanceof Error ? briefQ.error.message : String(briefQ.error)}
+            </div>
+          )}
+          {briefQ.isSuccess && briefQ.data.length === 0 && (
+            <div className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+              this task has an empty brief.
+            </div>
+          )}
         </div>
       )}
     </div>

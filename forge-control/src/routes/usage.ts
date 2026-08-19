@@ -20,10 +20,12 @@
  */
 
 import { Hono } from "hono";
-import { access, readFile } from "node:fs/promises";
-import { constants as FS } from "node:fs";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import pg from "pg";
+import {
+  agyUltraNarrative,
+  readAgySubstrate,
+} from "../lib/connection-status.ts";
 import {
   ATTRIBUTION,
   DEFAULT_EUR_PER_USD,
@@ -82,15 +84,38 @@ interface GeminiWindowTally {
 }
 
 export interface GeminiTally {
-  /** `agy` on PATH — the CLI that carries the Ultra entitlement. */
-  cli_installed: boolean;
-  /** A local `agy` profile exists. The session itself lives in the OS keyring
-   *  (Linux Secret Service), which no HTTP handler may open, so this is the
-   *  furthest an honest probe gets without launching the CLI. */
-  cli_profile: boolean;
+  /** The CLI that carries the Ultra entitlement is present and executable at
+   *  the ONE absolute path this codebase knows it by — `agyBinaryPresent()`,
+   *  shared with `routes/integrations.ts`.
+   *
+   *  IT IS NOT A `PATH` WALK ANY MORE, AND THAT IS THE FIX. `agy install`
+   *  appends its export to `.bashrc`, which pm2 never sources, so walking this
+   *  process's `PATH` reported "not installed" for a CLI sitting on disk and
+   *  answering probes — the contradiction R4-red photographed on one panel.
+   *
+   *  NULL means the check itself failed and we do not know — never folded into
+   *  `false`, because "not installed" is a claim and a disk error is not
+   *  evidence for it. See `AgySubstrate#installed`. */
+  cli_installed: boolean | null;
+  /** The persisted probe's verdict, straight from `renderState` — the one
+   *  function permitted to say "connected". Null whenever `cli_installed` is
+   *  not `true`: there is nothing to have probed. */
+  probe_state: "connected" | "unknown" | "broken" | null;
+  /** When that probe ran. Null ⇒ nobody has ever asked, which renders UNKNOWN
+   *  and never green (R57). */
+  probe_checked_at: string | null;
+  /** True ONLY when a probe that is still inside its shelf life came back ok.
+   *
+   *  This field REPLACES `cli_profile`, which reported whether
+   *  `~/.gemini/antigravity-cli/settings.json` existed. A settings file is
+   *  configuration: it is written the first time the CLI runs and survives a
+   *  revoked session, a rotated password and an uninstall that left the
+   *  dotfiles behind. It was being read as "signed in". */
+  session_probed_ok: boolean;
   /** One line, rendered verbatim: what state the sign-in is actually in. */
   auth_note: string;
-  /** The exact thing to type to sign in. Null once a profile exists. */
+  /** The exact thing to type to sign in. Null only once a probe has vouched
+   *  for the session — never merely because a file exists on disk. */
   connect_command: string | null;
   five_hour: GeminiWindowTally | null;
   seven_day: GeminiWindowTally | null;
@@ -102,42 +127,12 @@ export interface GeminiTally {
   no_limit_note: string;
 }
 
-/** Where the Antigravity CLI keeps its settings on Linux —
- *  `~/.gemini/antigravity-cli/settings.json` per antigravity.google/docs/cli/
- *  install. Read per call, not once at import, for the same reason `PATH` is:
- *  the CLI can be installed and signed into while this process is running, and
- *  a value frozen at boot would keep reporting the state of an hour ago. */
-function agySettingsPath(): string {
-  return (
-    process.env.AGY_SETTINGS_PATH ??
-    join(process.env.HOME ?? "/root", ".gemini/antigravity-cli/settings.json")
-  );
-}
-
 const NO_LIMIT_NOTE =
   "Google publishes no quota endpoint for an AI Ultra subscription — no denominator exists, so this is our own count, not a share of a limit.";
 
 /** Token-priced spend kinds. `units` on an image or TTS row is images/seconds,
  *  and summing those into a token figure would be a fabricated number. */
 const TOKEN_KINDS = ["llm_input", "llm_output", "embedding"];
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await access(path, FS.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** `agy` on PATH, resolved by hand: no shell, no `which`, no spawn. */
-async function agyOnPath(): Promise<boolean> {
-  const dirs = (process.env.PATH ?? "").split(":").filter(Boolean);
-  for (const dir of dirs) {
-    if (await exists(join(dir, "agy"))) return true;
-  }
-  return false;
-}
 
 interface GeminiTallyRow {
   calls_5h: string;
@@ -163,24 +158,16 @@ async function geminiTally(fresh: boolean): Promise<GeminiTally> {
     return geminiCache;
   }
 
-  const settingsPath = agySettingsPath();
-  const cliInstalled = await agyOnPath();
-  const cliProfile = cliInstalled ? await exists(settingsPath) : false;
-  const auth_note = !cliInstalled
-    ? "Antigravity CLI (agy) is not installed on this box, so the Ultra subscription has never been signed in here."
-    : !cliProfile
-      ? `agy is installed but has no local profile (${settingsPath} is absent) — run it once to sign in.`
-      : "agy has a local profile; the session lives in the OS keyring and cannot be read from here, so this is still our own count.";
+  const substrate = await readAgySubstrate();
+  const narrative = agyUltraNarrative(substrate);
 
   const base: Omit<GeminiTally, "five_hour" | "seven_day"> = {
-    cli_installed: cliInstalled,
-    cli_profile: cliProfile,
-    auth_note,
-    connect_command: cliProfile
-      ? null
-      : cliInstalled
-        ? "agy   # then paste the printed URL into a browser and enter the code back in the terminal (the SSH sign-in flow)"
-        : "install the Antigravity CLI, then run `agy` once to sign in",
+    cli_installed: substrate.installed,
+    probe_state: substrate.probe === null ? null : substrate.probe.state,
+    probe_checked_at: substrate.probe === null ? null : substrate.probe.checked_at,
+    session_probed_ok: substrate.probe?.state === "connected",
+    auth_note: narrative.auth_note,
+    connect_command: narrative.connect_command,
     no_limit_note: NO_LIMIT_NOTE,
   };
 

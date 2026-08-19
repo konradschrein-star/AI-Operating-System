@@ -1,0 +1,102 @@
+reminders-row-count-before.txt — phase 6 (workstream perf), task B
+The BEFORE row count for success criterion S12 ("count rows before and after phase 6 -> identical").
+
+measured_at_utc = 2026-08-18T20:21:03Z
+database        = postgresql://postgres:***@127.0.0.1:5432/content_forge
+connection      = the DATABASE_URL the live forge-control process is running with
+                  (pm2 env of `forge-control`), NOT the literal default in
+                  forge-control/src/db/reminders.ts:17. See the NOTE below.
+
+query:  SELECT count(*) FROM reminders;
+result: 177
+
+supporting counts, same connection, same moment:
+  SELECT count(*) FROM reminders WHERE status <> 'dismissed';  -> 157
+  SELECT count(*) FROM reminders WHERE status = 'pending';     -> 1
+  SELECT count(*) FROM reminders WHERE status='pending' AND due_at < now();  -> 0
+  SELECT max(created_at) FROM reminders;                       -> 2026-08-18 20:20:53.42992+00
+
+--------------------------------------------------------------------------------
+NOTE 1 — THE CONNECTION STRING IN THE BRIEF DOES NOT AUTHENTICATE.
+
+  psql "postgresql://postgres:content_forge_prod@127.0.0.1:5432/content_forge"
+  psql: error: connection to server at "127.0.0.1", port 5432 failed:
+        FATAL:  password authentication failed for user "postgres"
+
+`content_forge_prod` is the *fallback literal* in forge-control/src/db/reminders.ts:17,
+reached only when DATABASE_URL is unset. It is not the password this box runs. The live
+forge-control, forge-executor and forge-control-web processes are all started with a
+DATABASE_URL pointing at the SAME host, port and database (127.0.0.1:5432/content_forge)
+with a different 30-character password, and that is the connection used above.
+
+This is the good failure mode: a wrong password ERRORS. The fleet's standing hazard is the
+other one — a wrong *instance* answers 0 rows and reads as a finding. The total asserted
+here is 177, three digits and in the expected band, so the connection is sound.
+
+--------------------------------------------------------------------------------
+NOTE 2 — S12 ("identical before and after") IS NOT SATISFIABLE AS WRITTEN. READ THIS
+BEFORE FAILING PHASE 6 ON IT.
+
+The table is written to continuously by this fleet's own agents. Two counts taken five
+minutes apart during THIS task:
+
+  2026-08-18T20:16:06Z  ->  176
+  2026-08-18T20:21:03Z  ->  177
+  2026-08-18T20:21:40Z  ->  179     (three rows in 5m34s, none of them written by this task)
+
+63 rows were created on 2026-08-18 alone, against 5 on 2026-08-16. The producers are
+worker escalations from the very project that phase 6 belongs to, plus watchdog
+auto-unwedge notices. The count will therefore differ before and after phase 6 no matter
+what phase 6 does, and a literal reading of S12 fails the phase for other agents' traffic.
+
+What S12 actually needs to assert, and what a verifier should use instead:
+
+  (a) NO ROW IS DESTROYED. Pin the identities, not the count:
+        SELECT count(*) FROM reminders WHERE id IN (<the 177 ids at this timestamp>);
+      -- must still be 177. Equivalently, the min(created_at) must not move and no id
+      -- present now may be absent later.
+  (b) NO STATUS IS REWRITTEN BY US. The 20 'dismissed' rows stay 20 or grow (Konrad may
+      dismiss); no row may travel delivered -> pending or delivered -> dismissed without a
+      user action.
+  (c) DELIVERY STILL FIRES. max(created_at) and max(delivered_at) both keep advancing.
+
+Task B wrote NOTHING to this table: no INSERT, no UPDATE, no DELETE. Every statement it
+ran was a SELECT.
+
+--------------------------------------------------------------------------------
+IDENTITY ANCHOR for check (a) — so no separate id dump is needed.
+
+  measured_at_utc = 2026-08-18T20:21:40Z
+  query: SELECT md5(string_agg(id::text, ',' ORDER BY id)) AS id_set_md5,
+                count(*) AS n, min(created_at) AS oldest FROM reminders;
+              id_set_md5            |  n  |            oldest             
+  ----------------------------------+-----+-------------------------------
+   e122c56bf8807533e0726ab5346b1c15 | 179 | 2026-07-02 19:36:18.253059+00
+  (1 row)
+  
+  The md5 changes when rows are ADDED (expected — other agents write here) and also
+  when rows are REMOVED (not expected — that is the thing S12 exists to catch). To
+  separate the two, re-run it restricted to rows created at or before the timestamp
+  above; that subset's md5 and n must be UNCHANGED after phase 6:
+
+  query: SELECT md5(string_agg(id::text, ',' ORDER BY id)) AS frozen_set_md5, count(*) AS n
+           FROM reminders WHERE created_at <= '2026-08-18 20:21:03+00';
+            frozen_set_md5          |  n  
+  ----------------------------------+-----
+   d3005de3ee9e4057eb742e04fa4ed54b | 177
+  (1 row)
+  
+
+--------------------------------------------------------------------------------
+THE ANCHOR WAS TESTED BEFORE IT WAS TRUSTED — re-run at 2026-08-18T20:33Z, twelve
+minutes after it was taken and after three more rows had arrived:
+
+  SELECT count(*) FROM reminders;                      -> 180   (was 177 — GREW)
+  SELECT md5(string_agg(id::text, ',' ORDER BY id)), count(*)
+    FROM reminders WHERE created_at <= '2026-08-18 20:21:03+00';
+                       -> d3005de3ee9e4057eb742e04fa4ed54b / 177   (UNCHANGED)
+
+That is exactly the discrimination S12 needs and the naive count cannot make: the
+table grew, and the frozen set did not move. A verifier re-running the second query
+after phase 6 and getting the same md5 and the same 177 has proven no row was
+destroyed, whatever the total says.

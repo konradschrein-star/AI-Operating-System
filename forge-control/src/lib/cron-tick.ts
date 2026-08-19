@@ -17,6 +17,12 @@ import {
 } from "../db/cron.ts";
 import { createRun } from "../db/runs.ts";
 import { getFleetState } from "../db/ai_os.ts";
+import {
+  DEFAULT_CONNECTION_RECHECK_INTERVAL_MS,
+  connectionRecheckIntervalMs,
+  recheckAllConnections,
+} from "./connection-status.ts";
+import { getSecret, listSecrets } from "./secret-store.ts";
 
 const TICK_INTERVAL_MS = Number(process.env.CRON_TICK_INTERVAL_MS ?? "15000");
 
@@ -59,7 +65,86 @@ async function fireSchedule(s: {
   }
 }
 
+/* ── Connection re-check pass (R51) ──────────────────────────────────────── */
+
+/**
+ * Google, agy and GitHub are re-probed on this tick rather than on a process of
+ * their own. Hanging it here costs nothing — the timer already exists and fires
+ * every 15s — and it means the re-check inherits the same lifecycle, the same
+ * logs and the same restart semantics as everything else in forge-control.
+ *
+ * Cadence is CONNECTION_RECHECK_INTERVAL_MS (default 900_000 = 15 minutes),
+ * named in lib/connection-status.ts so that this scheduler and the staleness
+ * rule in renderState() read literally the same number: a status re-checked
+ * every 15 minutes but only demoted after some other constant would age into a
+ * lie in the gap between them.
+ *
+ * NOTHING HERE THROWS INTO THE TICK. An upstream saying no is persisted as
+ * ok:false with the verbatim error — a recorded failure, not a silent fallback.
+ * An internal failure (an unwritable status store, a probe function faulting)
+ * is logged with its message, exactly as fireSchedule() already does, and never
+ * converted into a health verdict.
+ */
+let recheckInFlight = false;
+let lastConnectionRecheckAt = 0;
+
+async function maybeRecheckConnections(): Promise<void> {
+  if (recheckInFlight) return;
+
+  let intervalMs: number;
+  try {
+    intervalMs = connectionRecheckIntervalMs();
+  } catch (e) {
+    console.error(
+      "[cron-tick] connection re-check disabled:",
+      e instanceof Error ? e.message : e,
+    );
+    return;
+  }
+
+  const now = Date.now();
+  // lastConnectionRecheckAt starts at 0, so the first tick after boot probes
+  // immediately. That is deliberate: a restart is exactly when the persisted
+  // checked_at is most likely to be about to go stale, and it is one cheap
+  // read per integration.
+  if (now - lastConnectionRecheckAt < intervalMs) return;
+
+  recheckInFlight = true;
+  lastConnectionRecheckAt = now;
+  try {
+    const results = await recheckAllConnections({
+      listSecretNames: async () => (await listSecrets()).map((s) => s.name),
+      readSecret: getSecret,
+    });
+    for (const res of results) {
+      if (res.error !== null) {
+        console.error(`[cron-tick] connection re-check ${res.id} FAILED: ${res.error}`);
+      } else if (!res.ok) {
+        console.log(
+          `[cron-tick] connection re-check ${res.id} recorded a failure (see the persisted detail)`,
+        );
+      }
+    }
+    const good = results.filter((x) => x.error === null && x.ok).map((x) => x.id);
+    console.log(
+      `[cron-tick] connection re-check done · ${good.length}/${results.length} connected${good.length ? ` (${good.join(", ")})` : ""}`,
+    );
+  } catch (e) {
+    console.error(
+      "[cron-tick] connection re-check pass threw:",
+      e instanceof Error ? e.message : e,
+    );
+  } finally {
+    recheckInFlight = false;
+  }
+}
+
 async function tickOnce(): Promise<void> {
+  // First, and not awaited into the schedule path: a slow upstream must not
+  // delay a due cron fire, and claimDueSchedules() returning early below must
+  // not skip the re-check.
+  void maybeRecheckConnections();
+
   let due: Awaited<ReturnType<typeof claimDueSchedules>>;
   try {
     due = await claimDueSchedules();
@@ -96,8 +181,16 @@ async function tickOnce(): Promise<void> {
 export function startCronTick(): void {
   if (running) return;
   running = true;
+  // Deliberately quoting the RAW configuration rather than calling
+  // connectionRecheckIntervalMs(), which throws on a malformed value: a bad
+  // env var for a status widget must not make forge-control unbootable. The
+  // throw is still surfaced — loudly, once per tick — from
+  // maybeRecheckConnections() below.
   console.log(
-    `[cron-tick] starting · interval=${TICK_INTERVAL_MS}ms`,
+    `[cron-tick] starting · interval=${TICK_INTERVAL_MS}ms · connection re-check every ${
+      process.env.CONNECTION_RECHECK_INTERVAL_MS ??
+      `${DEFAULT_CONNECTION_RECHECK_INTERVAL_MS} (default)`
+    }ms`,
   );
   // Run once immediately so a schedule created seconds before startup fires
   // without waiting a full interval.
