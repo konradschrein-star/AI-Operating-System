@@ -529,7 +529,15 @@ R2-gate ──────────────┘   (vault lane merges via I
 |---|---|---|---|
 | round 13, `fix(gate 17): re-anchor …` — the commit carrying this row | `docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs` | **nobody in this project** — it belongs to `operator-visibility` | Gate 17 of `gates-808.sh`. Merging `main` moves the lines it pins: `6a9406d` (+4 in `cc-runner.ts`) and `1e0330b` (+85 in `AssistantThread.tsx`) took it from **92/92 green to 20 failures** without touching one pinned symbol. Measured on the merge-tree before merging, not discovered as a red afterwards. The operator ruling *"where a doc-gate lives"* (`AI OS/Operator Decisions.md`) forbids the cheap fix — *"do not fix this by re-pinning the numbers, that buys one merge"* — and prescribes re-anchoring on symbols or fenced content. Done: halves A–D now resolve every pin by content through one shared `anchor()`, with an explicit `scope` (`after` + `until`) wherever the content is genuinely not unique. `docs/plan/notification-gap.md` itself is **unchanged** — its `:A-B @ sha` citations were always historical and remain true. |
 
-The write is confined to that one file. Three negative controls, run on scratch copies of the merged
+| step 1 follow-up, `fix(gate 8, step 1 integration damage): …` | `scripts/checks/dollar-allowlist.txt` | **nobody in this project** | Gate 8 of `gates-808.sh`. Merging `main` took it RED:1 → RED:2 on a single new hit: `goals/ui.tsx:440`, `` return `${x.toFixed(2)},${y.toFixed(2)}`; `` — `Sparkline()` building an SVG `points` attribute out of pixel positions. Geometry, not currency, and the twelfth false positive of the sweep's naive `toFixed(2)` anchor. Konrad's own line from `553fa38`; not reworded, because two decimals on a coordinate is the correct output. One row, scoped to the coordinate PAIR rather than `.*`, per the allowlist's own stated convention. |
+| step 1 follow-up, same commit | `docs/plan/artifacts/phase400/dollar-allowlist.md` | **nobody in this project** | The per-line table the allowlist's header names as its companion. Kept in sync because the business lane did the same at its round 4; leaving it stale would make the authoritative table silently wrong. |
+
+The gate-8 and gate-17 rows are **one cause, twice**: both are lane-only gates meeting `main`'s files
+for the first time at this merge, and `main` can run neither. That is point 1 of the same operator
+ruling. Gate 17 got the re-anchoring half; gate 8 needs the relocation half, which is
+`operator-visibility` work and is recorded, not done, here.
+
+The gate-17 write is confined to one file. Three negative controls, run on scratch copies of the merged
 tree and recorded in `phase7/integration-report.md` §2, prove the re-anchored gate still fails on a
 changed pinned line, on a duplicated block, and on a renamed scope symbol — it is re-anchored, not
 loosened. What it deliberately no longer fails on is pure line drift, which is the defect.
