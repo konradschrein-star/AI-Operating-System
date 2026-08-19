@@ -523,6 +523,21 @@ R6-gate ─→ I6 ─→ RI6 │
 R2-gate ──────────────┘   (vault lane merges via I2/RI2 on the same pattern)
 ```
 
+### Undeclared writes, disclosed (round 13, the three-merge integration)
+
+| Commit | File | Declared by | Why it had to change |
+|---|---|---|---|
+| round 13, `fix(gate 17): re-anchor …` — the commit carrying this row | `docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs` | **nobody in this project** — it belongs to `operator-visibility` | Gate 17 of `gates-808.sh`. Merging `main` moves the lines it pins: `6a9406d` (+4 in `cc-runner.ts`) and `1e0330b` (+85 in `AssistantThread.tsx`) took it from **92/92 green to 20 failures** without touching one pinned symbol. Measured on the merge-tree before merging, not discovered as a red afterwards. The operator ruling *"where a doc-gate lives"* (`AI OS/Operator Decisions.md`) forbids the cheap fix — *"do not fix this by re-pinning the numbers, that buys one merge"* — and prescribes re-anchoring on symbols or fenced content. Done: halves A–D now resolve every pin by content through one shared `anchor()`, with an explicit `scope` (`after` + `until`) wherever the content is genuinely not unique. `docs/plan/notification-gap.md` itself is **unchanged** — its `:A-B @ sha` citations were always historical and remain true. |
+
+The write is confined to that one file. Three negative controls, run on scratch copies of the merged
+tree and recorded in `phase7/integration-report.md` §2, prove the re-anchored gate still fails on a
+changed pinned line, on a duplicated block, and on a renamed scope symbol — it is re-anchored, not
+loosened. What it deliberately no longer fails on is pure line drift, which is the defect.
+
+**Not fixed here, and named so it is not mistaken for done:** the same ruling's first point — a gate
+governing files it does not own should live on `main` with them — is untouched. This verifier still
+exists only on lanes, so `main`'s authors still cannot run it. That is `operator-visibility` work.
+
 ---
 
 ## Requirement → phase map (complete)

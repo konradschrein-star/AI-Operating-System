@@ -12,12 +12,33 @@
  * So: this script IS the check. It runs in FOUR halves and then, in a fifth
  * pass, proves that those four covered everything.
  *
- *  A. FENCED QUOTES. Every pinned heading followed by a code fence: the quote
- *     must be byte-identical to the pinned range in the working tree. It does
- *     not verify the SHA — if you have moved off `852b089` and the lines still
- *     match, that is a pass, and correctly so, because the quote is what the
- *     reader relies on. Whether the doc's SHA is current is what §1's
- *     `git diff <sha> -- <files>` command is for.
+ *  A. FENCED QUOTES. Every pinned heading followed by a code fence: the quoted
+ *     block must still exist in the working tree, verbatim, contiguously, and
+ *     EXACTLY ONCE. It does not verify the SHA — if you have moved off
+ *     `852b089` and the block still matches, that is a pass, and correctly so,
+ *     because the quote is what the reader relies on. Whether the doc's SHA is
+ *     current is what §1's `git diff <sha> -- <files>` command is for.
+ *
+ *     ROUND 972 — CONTENT ANCHORS, NOT LINE NUMBERS. This half used to slice
+ *     the source at the doc's cited line range and compare. That made every
+ *     pin a hostage to unrelated edits ABOVE it: main's `6a9406d` (+4 lines in
+ *     `cc-runner.ts`) and `1e0330b` (+1 in `AssistantThread.tsx`) took this
+ *     script from 92/92 green to 20 failures without touching one pinned
+ *     symbol, on a merge whose authors could not have known — this verifier
+ *     does not exist on `main`, so `main` has never run it. The operator ruling
+ *     ("where a doc-gate lives", `AI OS/Operator Decisions.md`) is explicit:
+ *     *do not fix this by re-pinning the numbers, that buys one merge* —
+ *     re-anchor on symbols or fenced content.
+ *
+ *     So the doc's `:A-B` is now read as what it has always literally said: a
+ *     HISTORICAL citation, true at the `@ sha` printed beside it. The check is
+ *     the content. Where the block has moved, the found line is reported as
+ *     `now :M` — drift stays visible without being fatal. What still fails, and
+ *     these are the failures worth having:
+ *       - the block is GONE (0 matches) — the code the doc describes changed;
+ *       - the block is AMBIGUOUS (2+ matches) — the anchor no longer identifies
+ *         one place, so declare a scope in FENCE_SCOPES rather than let the
+ *         script pick the first. Ambiguity is reported, never resolved silently.
  *
  *  B. PROSE PINS — added round 1355, and the reason is a failure of half A.
  *     The doc also cites `file:line` in running prose, with no fence under it,
@@ -91,6 +112,30 @@ const RESOLVE = new Map([
 const HEADING = /^`([^`]+)`\s+—\s+.*\(`:(\d+)(?:-(\d+))?`\s+@\s+`([0-9a-f]{7,40})`\)\s*$/;
 
 /**
+ * SCOPES — the disambiguator a content anchor needs when the content is not
+ * unique in its file.
+ *
+ * `after` must match EXACTLY ONE line; `until` ends the scope at its first
+ * match strictly below that line (end of file if it never matches, or if
+ * `until` is omitted). The anchor must then resolve to exactly one line INSIDE
+ * that window. This is what "cite by symbol" means operationally: the outer
+ * anchor names the symbol, the inner one names the line within it. Both are
+ * content, so both survive an insertion anywhere above.
+ *
+ * Keyed by the doc's own citation, so an entry that stops being needed fails
+ * loudly (its key no longer resolves) instead of lingering as a dead waiver.
+ */
+const FENCE_SCOPES = new Map([
+  [
+    // This 8-line commsEntries({...}) call is byte-identical in `/:id/message`
+    // and in `/:id/resume-chat` — a genuine duplicate in the source, not a
+    // defect in the pin. The doc means the one in `/:id/message`.
+    "routes/run-control.ts:259-266",
+    { after: /^r\.post\("\/:id\/message"/, until: /^r\.(?:post|get|patch|delete)\(/ },
+  ],
+]);
+
+/**
  * Half B: the pins that live in running prose, where no fence carries the
  * evidence.
  *
@@ -147,6 +192,9 @@ const PROSE_PINS = [
     line: 806,
     what: 'toolResultEntry\'s role: "tool"',
     expect: /^\s*role: "tool",\s*$/,
+    // `toolCallEntry` above it carries the identical line — the symbol is what
+    // distinguishes them, which is the whole point of §3a's claim.
+    scope: { after: /^function toolResultEntry\(/, until: /^function / },
   },
   {
     section: "§2b / §3",
@@ -214,6 +262,9 @@ const PROSE_PINS = [
     line: 375,
     what: "AssistantMessage's comms lookup, for the outbound echo",
     expect: /^\s*const comms = useCommsFacts\(\);/,
+    // `UserMessage` makes the identical call — §2c pins both, and only the
+    // enclosing component tells them apart.
+    scope: { after: /^function AssistantMessage\(\)/, until: /^function / },
   },
   {
     section: "§2c",
@@ -460,6 +511,12 @@ const LINE_RULES = [
           line: 351,
           what: "the orphan-result branch the second tool_result actually lands in",
           expect: /if \(content\.trim\(\)\) openParts\.push\(\{ type: "text", text: content \}\);/,
+          // That push is the shared degrade-to-text idiom and appears three
+          // times in the mapper; its own comment is what names THIS one.
+          scope: {
+            after: /^\s*\/\/ orphaned result — degrade to a text part rather than dropping it$/,
+            until: /^\s*return;\s*$/,
+          },
         },
       },
     ],
@@ -543,6 +600,9 @@ const LINE_RULES = [
           line: 187,
           what: "02-architecture's narrowed gap claim",
           expect: /async task-completion notification/,
+          // §2.2's facts list says the same phrase at :49 — the section
+          // heading is what makes §6.3's copy the one this pin means.
+          scope: { after: /^### 6\.3 What is knowingly absent \(R19\)/, until: /^#{2,3} / },
         },
       },
     ],
@@ -609,6 +669,92 @@ function sourceLines(path) {
 }
 
 let failed = 0;
+
+/* ── The content anchor, shared by halves A–D (round 972) ─────────────────────
+ *
+ * One resolver for every pin, so no half can drift into a weaker rule than its
+ * neighbours. `find` takes the source lines and returns every 1-based line the
+ * anchor matches; the scope narrows the search before it runs.
+ *
+ * @returns {{ok:true,line:number}|{ok:false,why:string}}
+ */
+function scopeWindow(path, scope) {
+  const lines = sourceLines(path);
+  if (scope === undefined) return { ok: true, from: 0, to: lines.length };
+  const starts = lines.map((t, i) => (scope.after.test(t) ? i : -1)).filter((i) => i >= 0);
+  if (starts.length !== 1) {
+    return {
+      ok: false,
+      why: `scope anchor /${scope.after.source}/ matches ${starts.length} line(s) of ${path}, expected exactly 1`,
+    };
+  }
+  const from = starts[0];
+  let to = lines.length;
+  if (scope.until !== undefined) {
+    for (let i = from + 1; i < lines.length; i++) {
+      if (scope.until.test(lines[i])) {
+        to = i;
+        break;
+      }
+    }
+  }
+  return { ok: true, from, to };
+}
+
+function anchor(path, scope, find, what) {
+  const win = scopeWindow(path, scope);
+  if (!win.ok) return win;
+  const hits = find(sourceLines(path), win.from, win.to);
+  if (hits.length === 1) return { ok: true, line: hits[0] };
+  const where = scope === undefined ? path : `${path} within /${scope.after.source}/`;
+  if (hits.length === 0) {
+    return { ok: false, why: `${what} is no longer present in ${where}` };
+  }
+  return {
+    ok: false,
+    why:
+      `${what} matches ${hits.length} places in ${where} (lines ${hits.join(", ")}) — ` +
+      `the anchor no longer identifies one site; narrow it with a scope rather than picking one`,
+  };
+}
+
+/** A single line matching `expect`. */
+const anchorLine = (path, expect, scope, what) =>
+  anchor(
+    path,
+    scope,
+    (lines, from, to) => {
+      const hits = [];
+      for (let i = from; i < to; i++) if (expect.test(lines[i])) hits.push(i + 1);
+      return hits;
+    },
+    what,
+  );
+
+/** A contiguous verbatim block, used by half A for a fenced quote. */
+const anchorBlock = (path, block, scope, what) =>
+  anchor(
+    path,
+    scope,
+    (lines, from, to) => {
+      const hits = [];
+      for (let s = from; s + block.length <= to; s++) {
+        let ok = true;
+        for (let k = 0; k < block.length; k++) {
+          if (lines[s + k] !== block[k]) {
+            ok = false;
+            break;
+          }
+        }
+        if (ok) hits.push(s + 1);
+      }
+      return hits;
+    },
+    what,
+  );
+
+/** `` (now :M) `` when the content has moved off the line the doc cites. */
+const drift = (declared, found) => (found === declared ? "" : `  (now :${found})`);
 
 /* ── Half E's tokeniser, run FIRST so A–D can mark what they consume ─────────
  *
@@ -679,25 +825,28 @@ for (let i = 0; i < doc.length; i++) {
   const a = Number(aRaw);
   const b = bRaw === undefined ? a : Number(bRaw);
   if (b < a) throw new Error(`${DOC}:${i + 1} pins an inverted range :${a}-${b}`);
-  const actual = sourceLines(path).slice(a - 1, b);
 
   checked++;
   consume(i, "fenced");
-  const ok = quoted.length === actual.length && quoted.every((l, k) => l === actual[k]);
-  if (ok) {
+  const cite = `${name}:${aRaw}${bRaw ? `-${bRaw}` : ""}`;
+  const found = anchorBlock(path, quoted, FENCE_SCOPES.get(cite), "the quoted block");
+
+  /* `claim()` is keyed on the line the DOC cites, not the line the block was
+   * found at. Half D's `repeat` disposition asks whether the document restates
+   * its own citation consistently — a question about the doc, answered inside
+   * the doc. Keying it on the resolved line would make every restatement fail
+   * the moment the source moved, which is the rot this change removes. */
+  if (found.ok) {
     claim(path, a);
-    console.log(`PASS  ${name}:${a}${bRaw ? `-${b}` : ""} @ ${sha}  (${quoted.length} line${quoted.length === 1 ? "" : "s"})`);
+    console.log(
+      `PASS  ${cite} @ ${sha}  (${quoted.length} line${quoted.length === 1 ? "" : "s"})${drift(a, found.line)}`,
+    );
     continue;
   }
   failed++;
-  console.log(`FAIL  ${name}:${a}${bRaw ? `-${b}` : ""} @ ${sha}`);
-  console.log(`        doc quotes ${quoted.length} line(s), source range holds ${actual.length}`);
-  const width = Math.max(quoted.length, actual.length);
-  for (let k = 0; k < width; k++) {
-    if (quoted[k] === actual[k]) continue;
-    console.log(`        L${a + k}  doc: ${JSON.stringify(quoted[k] ?? null)}`);
-    console.log(`               src: ${JSON.stringify(actual[k] ?? null)}`);
-  }
+  console.log(`FAIL  ${cite} @ ${sha}`);
+  console.log(`        ${found.why}`);
+  if (quoted.length > 0) console.log(`        first quoted line: ${JSON.stringify(quoted[0])}`);
 }
 
 if (checked === 0) {
@@ -766,18 +915,16 @@ for (const pin of PROSE_PINS) {
   }
   candidates[0].owner = "prose";
 
-  const line = sourceLines(pin.path)[pin.line - 1];
   prose++;
-  if (line !== undefined && pin.expect.test(line)) {
+  const found = anchorLine(pin.path, pin.expect, pin.scope, `/${pin.expect.source}/`);
+  if (found.ok) {
     claim(pin.path, pin.line);
-    console.log(`PASS  ${label}`);
+    console.log(`PASS  ${label}${drift(pin.line, found.line)}`);
     continue;
   }
   failed++;
   console.log(`FAIL  ${label}`);
-  console.log(`        ${pin.path}:${pin.line} does not hold it`);
-  console.log(`        expected /${pin.expect.source}/`);
-  console.log(`        line is  ${JSON.stringify(line ?? null)}`);
+  console.log(`        ${found.why}`);
 }
 
 if (prose === 0 && PROSE_PINS.length > 0) {
@@ -874,19 +1021,19 @@ for (const phase of ["prove", "repeat"]) {
         say(token, `FAIL  ${d.live ? "live" : "cross-doc"}   ${where} starts at :${token.start}, rule declares :${spec.line}`);
         return;
       }
-      const line = sourceLines(spec.path)[spec.line - 1];
-      if (line !== undefined && spec.expect.test(line)) {
+      const found = anchorLine(spec.path, spec.expect, spec.scope, `/${spec.expect.source}/`);
+      if (found.ok) {
         claim(spec.path, spec.line);
-        say(token, `PASS  ${d.live ? "live      " : "cross-doc "} ${where} → ${spec.what}`);
+        say(
+          token,
+          `PASS  ${d.live ? "live      " : "cross-doc "} ${where} → ${spec.what}${drift(spec.line, found.line)}`,
+        );
         return;
       }
       failed++;
       say(
         token,
-        `FAIL  ${d.live ? "live" : "cross-doc"}   ${where} → ${spec.what}\n` +
-          `        ${spec.path}:${spec.line} does not hold it\n` +
-          `        expected /${spec.expect.source}/\n` +
-          `        line is  ${JSON.stringify(line ?? null)}`,
+        `FAIL  ${d.live ? "live" : "cross-doc"}   ${where} → ${spec.what}\n` + `        ${found.why}`,
       );
     });
   }
