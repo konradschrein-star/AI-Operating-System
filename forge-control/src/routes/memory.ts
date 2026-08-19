@@ -8,7 +8,7 @@ import {
   extractTriplesForNote,
   extractTriplesNextBatch,
   pingMemory,
-  knowledgeGraph,
+  wikilinkGraph,
   syncVaultNotes,
   graphLaneStatus,
   indexHealth,
@@ -37,14 +37,31 @@ r.get("/health", async (c) => c.json(await pingMemory()));
  * UI (or a curl) force an immediate resync after editing the vault. */
 r.post("/sync", async (c) => c.json(await syncVaultNotes()));
 
-/* v2.2: entity graph for the 3D visualization. Registered before /:slug so
- * the catch-all param route doesn't shadow it. */
+/* The 3D visualization's graph, built from hcp.knowledge_note.links — the
+ * parsed [[wikilinks]] the vault-sync tick already writes. It used to be built
+ * from content_forge.knowledge_triples, which has held 0 rows since some point
+ * before 2026-08-19 with nothing to refill it (see wikilinkGraph()).
+ * Registered before /:slug so the catch-all param route doesn't shadow it.
+ *
+ * Same contract as /index-health below: on failure this returns 500 WITH THE
+ * MESSAGE and never degrades to an empty graph. An empty graph is a legitimate
+ * answer for a vault with no wikilinks — which is precisely why a broken query
+ * must not be able to imitate one. */
 r.get("/graph", async (c) => {
   const maxLinks = Math.min(
     6000,
     Math.max(100, Number(c.req.query("limit") ?? "3000")),
   );
-  return c.json(await knowledgeGraph(maxLinks));
+  try {
+    return c.json(await wikilinkGraph(maxLinks));
+  } catch (err) {
+    return c.json(
+      {
+        error: `memory graph failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+      500,
+    );
+  }
 });
 
 /* Vault-wide labelled counts envelope, independent of pagination. Mounted

@@ -34,6 +34,10 @@ import {
   type MemoryCounts,
   type ReconcileInput,
 } from "../lib/index-health.ts";
+// The Obsidian deep-link pair, REUSED rather than reimplemented: obsidianUri()
+// already encodes each component separately, which is the whole reason a note
+// whose name contains "&" opens at all (see its comment in lib/vault.ts).
+import { vaultName, obsidianUri } from "../lib/vault.ts";
 
 const { Pool } = pg;
 
@@ -101,6 +105,16 @@ export interface NoteDetail extends NoteRow {
   frontmatter: Record<string, unknown>;
   wikilinks: string[];
   backlinks: { slug: string; topic: string }[];
+  /** The Obsidian vault name the deep link below targets. Returned for EVERY
+   *  note, agent briefs included, because the UI states the precondition on
+   *  screen ("only opens on a machine running Obsidian with this vault")
+   *  whether or not it can offer the link (R26). */
+  vault_name: string;
+  /** obsidian://open?vault=…&file=… — null for an agent brief, whose
+   *  vault_path is "a self-declared label, not a path that exists on disk"
+   *  (see NoteSource). A deep link to one silently fails, which is exactly
+   *  what R26 forbids. */
+  obsidian_uri: string | null;
 }
 
 export interface SearchHit {
@@ -726,6 +740,21 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
     topic: r.topic,
   }));
 
+  // Obsidian deep link (R25/R26). Agent briefs never reach obsidianUri() at
+  // all — their vault_path names no file, so a link would open nothing.
+  //
+  // N1 ruling, deliberate: a VaultRefusedError out of obsidianUri() on a VAULT
+  // note propagates and 500s the read. It can only fire on an empty vault name
+  // or an empty path, and syncVaultNotes() cannot produce either — every row
+  // it writes came from a real readdir entry. So that throw is a genuine
+  // defect in the registry, not a malformed row to be tolerated, and
+  // swallowing it would hand the UI a note that looks fine and has no link.
+  const vault_name = vaultName();
+  const obsidian_uri =
+    source === "agent"
+      ? null
+      : obsidianUri({ vaultName: vault_name, vaultRelativePath: vaultPath });
+
   return {
     id: reg?.id ?? slug,
     slug,
@@ -743,6 +772,8 @@ export async function getMemory(slug: string): Promise<NoteDetail | null> {
     frontmatter: meta,
     wikilinks,
     backlinks,
+    vault_name,
+    obsidian_uri,
   };
 }
 
@@ -1527,79 +1558,313 @@ export async function pingMemory(): Promise<{
 }
 
 /* ============================================================================
- * v2.2 — knowledge graph export for the 3D visualization.
+ * The memory graph — built from hcp.knowledge_note.links (parsed [[wikilinks]]).
  *
- * Entities (triple subjects/objects) become nodes; each distinct
- * (subject, predicate, object) becomes a link. Node degree drives size,
- * the notes[] provenance list powers the click-through panel.
+ * WHY NOT knowledge_triples. Until 2026-08-19 this section exported
+ * knowledgeGraph(), which selected from content_forge.knowledge_triples. That
+ * table held 1 452 rows at the 2026-08-02 audit and holds 0 today, and NOTHING
+ * REFILLS IT: the LLM extractor (extractTriplesNextBatch, above) is manual-only
+ * and no tick calls it. GET /api/memory/graph therefore served
+ * {"nodes":[],"links":[],"triples":0} for a week while the 3D component was
+ * blamed for it (00-vision.md §2.2). Scheduling the extractor is an explicit
+ * non-goal — an LLM pass over 2 131 chunks, recurring, to rebuild something the
+ * vault already states in plain text.
+ *
+ * WHAT WE READ INSTEAD. hcp.knowledge_note.links is written by
+ * extractWikilinks() inside syncVaultNotes() on the 5-minute vault-sync tick
+ * (lib/vault-sync-tick.ts): deterministic, already fresh, zero marginal cost.
+ * Measured 2026-08-19 on the live hcp database: 288 vault-sync rows, 122 of
+ * them carrying at least one wikilink, 636 link entries in total.
+ *
+ * SCOPE: VAULT-SYNC ROWS ONLY, and that is a measurement rather than a taste.
+ * The 198 agent-authored rows (NoteSource "agent" — a worker's brief, whose
+ * vault_path is a self-declared label) do carry a `links` array, but 6 of 6
+ * non-empty ones hold URLs, not wikilinks:
+ *   hcp-worker-03 ops/runbooks/hcp-approve-publish-flow
+ *     → {http://127.0.0.1:8650/approvals}
+ * Feeding those into a wikilink graph would draw edges to hostnames and add
+ * agent rows to the resolution index, where their self-declared vault_path
+ * would be handed back to the UI as if it were a real file.
  * ========================================================================== */
 
-export interface GraphNode {
-  id: string; // normalised entity key
-  label: string; // display form (first-seen original casing)
-  degree: number;
-  notes: string[]; // note slugs this entity appears in (capped)
+/** One knowledge_note row, reduced to what the graph needs. Named separately
+ *  from NoteRow because the pure builder below must be callable from a test
+ *  with no database — see lib/memory-graph.test.ts. */
+export interface WikilinkNoteRow {
+  /** vault-relative path, WITH the .md suffix (as syncVaultNotes writes it). */
+  vault_path: string;
+  /** frontmatter `title`, else the filename with [_-]+ collapsed to spaces. */
+  topic: string;
+  /** raw [[targets]] as extractWikilinks() stored them; may be null in SQL. */
+  links: string[] | null;
 }
 
-export interface GraphLink {
+export interface WikilinkNode {
+  /** Normalised key. For a node backed by a real note this is its slug
+   *  (vault_path minus .md, lowercased) — unique, because two notes may share
+   *  a basename. For a dangling target it is the normalised link text. */
+  id: string;
+  /** Display form: the note's topic when resolved, else the first-seen
+   *  original casing of the link text. */
+  label: string;
+  /** Number of incident rendered edges. */
+  degree: number;
+  /** false ⇒ a wikilink target with no knowledge_note row behind it: a note
+   *  Konrad meant to write. Kept as a node ON PURPOSE (R34) — dropping it
+   *  makes the graph quietly under-report. */
+  resolved: boolean;
+  /** The real on-disk path, or null when `resolved` is false. */
+  vault_path: string | null;
+  /** Slugs of the notes this node appears in, capped at NODE_NOTES_CAP. */
+  notes: string[];
+}
+
+export interface WikilinkLink {
   source: string;
   target: string;
-  predicate: string;
+  kind: "wikilink";
 }
 
-export interface KnowledgeGraph {
-  nodes: GraphNode[];
-  links: GraphLink[];
-  triples: number;
+/** Every figure here is labelled on screen by MemoryGraph3D — a bare integer
+ *  floating over a 3D scene is the defect this phase exists to remove.
+ *
+ *  Units, exactly:
+ *   - notes_scanned      knowledge_note rows read (vault-sync only)
+ *   - notes_with_links   of those, how many carried ≥1 non-empty link entry
+ *   - links_total        edges IN `links` — i.e. what is actually drawn:
+ *                        self-links removed, duplicate source→target collapsed
+ *   - unresolved_targets nodes with resolved:false
+ *   - self_links_dropped link entries pointing at their own note (including
+ *                        bare `[[#Heading]]` anchors), skipped for rendering
+ *                        but COUNTED here rather than silently discarded */
+export interface WikilinkGraphCounts {
+  notes_scanned: number;
+  notes_with_links: number;
+  links_total: number;
+  unresolved_targets: number;
+  self_links_dropped: number;
 }
 
-export async function knowledgeGraph(maxLinks = 3000): Promise<KnowledgeGraph> {
-  const r = await cf.query<{
-    subject: string;
-    predicate: string;
-    object: string;
-    subject_key: string;
-    object_key: string;
-    note_slug: string;
-  }>(
-    `SELECT subject, predicate, object, subject_key, object_key, note_slug
-       FROM knowledge_triples
-       ORDER BY created_at DESC
-       LIMIT $1`,
-    [maxLinks],
-  );
+export interface WikilinkGraph {
+  /** The literal table this graph was built from. R33 asserts this string. */
+  source: "knowledge_note.links";
+  nodes: WikilinkNode[];
+  links: WikilinkLink[];
+  counts: WikilinkGraphCounts;
+  /** Non-null ONLY when `nodes` is empty, and then it names the table read,
+   *  the rows found and what would refill them (R35). */
+  empty_reason: string | null;
+  measured_at: string;
+}
 
-  const nodes = new Map<string, GraphNode>();
-  const seen = new Set<string>();
-  const links: GraphLink[] = [];
+/** Existing convention from the triples graph this replaces. */
+const NODE_NOTES_CAP = 12;
 
-  const touch = (key: string, label: string, slug: string): void => {
-    let n = nodes.get(key);
+/** Default edge ceiling. Measured against the live vault (636 link entries
+ *  across 288 rows) this sits roughly 5× above the whole corpus, so the cap is
+ *  a guard against a pathological vault, not a page. */
+export const WIKILINK_GRAPH_MAX_LINKS = 3000;
+
+/** Normalise one raw [[target]] to its lookup key.
+ *
+ *  Three artefacts of how the links were stored, all present in the live vault:
+ *
+ *  1. A HEADING OR BLOCK ANCHOR. `[[System - Software Stack#AI Services]]`
+ *     targets the note, not a separate thing; Obsidian resolves the part before
+ *     the `#`. A bare `[[#Heading]]` has nothing before it and is a link into
+ *     the note's OWN body — it normalises to "" and the caller counts it as a
+ *     self-link.
+ *  2. A TRAILING BACKSLASH. Inside a markdown table an aliased link must be
+ *     written `[[Target\|Alias]]` so the pipe is not read as a cell separator,
+ *     and WIKILINK_RE's `[^\]|]+` capture keeps that escape: the stored target
+ *     is "System - Remotion Rendering Pipeline\". Left alone, every wikilink in
+ *     every table in the vault reads as dangling.
+ *  3. CASE AND PADDING. Keys are compared lowercased and trimmed.
+ *
+ *  Deliberately NOT fixed upstream in extractWikilinks(): rewriting what
+ *  syncVaultNotes stores would change note.links and the backlink query too,
+ *  and would not take effect until the next tick re-wrote all 288 rows. The
+ *  escape artefact is reported as a finding instead. */
+export function normaliseWikilinkTarget(raw: string): string {
+  const beforeAnchor = raw.split("#")[0];
+  return beforeAnchor.replace(/\\+$/, "").trim().toLowerCase();
+}
+
+/** vault_path → slug key: drop the .md, lowercase. Uses slugify() so the graph
+ *  and /api/memory/:slug cannot drift apart. */
+function slugKey(vaultPath: string): string {
+  return slugify(vaultPath).toLowerCase();
+}
+
+/** Last "/"-separated segment of a slug — the filename without .md. */
+function basenameKey(vaultPath: string): string {
+  const slug = slugify(vaultPath);
+  const cut = slug.lastIndexOf("/");
+  return (cut === -1 ? slug : slug.slice(cut + 1)).toLowerCase();
+}
+
+/** Shape the graph. PURE: no database, no clock unless you omit `measuredAt`,
+ *  no I/O — so lib/memory-graph.test.ts can drive every branch from fixtures.
+ *
+ *  RESOLUTION (R34). A target resolves against a knowledge_note row by, in
+ *  order of precedence:
+ *    1. its slug   — the full vault_path minus .md. Required, not optional:
+ *       the vault really does contain path-qualified links such as
+ *       `[[30_YouTube/Plan for YouTube/System - OpenClaw AI Agent]]`, which no
+ *       basename comparison can ever match.
+ *    2. its topic  — frontmatter title, case-insensitively.
+ *    3. its basename — filename minus .md, case-insensitively. Ambiguous when
+ *       two folders hold the same filename; rows are sorted by vault_path in
+ *       the query so first-wins is deterministic rather than whatever order
+ *       Postgres felt like.
+ *  Precedence 1 above 2/3 means a link that names an exact file always wins
+ *  over a same-named note somewhere else.
+ *
+ *  A target that matches nothing becomes a node with resolved:false and
+ *  vault_path:null. It is never dropped. */
+export function buildWikilinkGraph(
+  rows: WikilinkNoteRow[],
+  options: { maxLinks?: number; measuredAt?: string } = {},
+): WikilinkGraph {
+  const maxLinks = options.maxLinks ?? WIKILINK_GRAPH_MAX_LINKS;
+  const measured_at = options.measuredAt ?? new Date().toISOString();
+
+  // ---- resolution index -------------------------------------------------
+  // key → row. First writer wins, so precedence is expressed by filling the
+  // three maps separately and consulting them in order.
+  const bySlug = new Map<string, WikilinkNoteRow>();
+  const byTopic = new Map<string, WikilinkNoteRow>();
+  const byBasename = new Map<string, WikilinkNoteRow>();
+  for (const row of rows) {
+    const sk = slugKey(row.vault_path);
+    if (!bySlug.has(sk)) bySlug.set(sk, row);
+    const tk = row.topic.trim().toLowerCase();
+    if (tk && !byTopic.has(tk)) byTopic.set(tk, row);
+    const bk = basenameKey(row.vault_path);
+    if (bk && !byBasename.has(bk)) byBasename.set(bk, row);
+  }
+  const resolve = (key: string): WikilinkNoteRow | undefined =>
+    bySlug.get(key) ?? byTopic.get(key) ?? byBasename.get(key);
+
+  // ---- accumulate -------------------------------------------------------
+  const nodes = new Map<string, WikilinkNode>();
+  const links: WikilinkLink[] = [];
+  const seenEdge = new Set<string>();
+  let notes_with_links = 0;
+  let self_links_dropped = 0;
+
+  /** Create-or-touch a node. `slug` is the note the edge was found in. */
+  const touch = (
+    id: string,
+    label: string,
+    row: WikilinkNoteRow | undefined,
+    slug: string,
+  ): void => {
+    let n = nodes.get(id);
     if (!n) {
-      n = { id: key, label, degree: 0, notes: [] };
-      nodes.set(key, n);
+      n = {
+        id,
+        label,
+        degree: 0,
+        resolved: row !== undefined,
+        vault_path: row?.vault_path ?? null,
+        notes: [],
+      };
+      nodes.set(id, n);
     }
     n.degree += 1;
-    if (n.notes.length < 12 && !n.notes.includes(slug)) n.notes.push(slug);
+    if (n.notes.length < NODE_NOTES_CAP && !n.notes.includes(slug)) {
+      n.notes.push(slug);
+    }
   };
 
-  for (const t of r.rows) {
-    if (t.subject_key === t.object_key) continue; // self-loops render badly
-    const linkKey = `${t.subject_key}→${t.predicate}→${t.object_key}`;
-    if (seen.has(linkKey)) continue;
-    seen.add(linkKey);
-    touch(t.subject_key, t.subject, t.note_slug);
-    touch(t.object_key, t.object, t.note_slug);
-    links.push({
-      source: t.subject_key,
-      target: t.object_key,
-      predicate: t.predicate,
-    });
+  for (const row of rows) {
+    const entries = (row.links ?? []).filter(
+      (l) => typeof l === "string" && l.trim() !== "",
+    );
+    if (entries.length > 0) notes_with_links += 1;
+
+    const sourceId = slugKey(row.vault_path);
+    const sourceSlug = slugify(row.vault_path);
+
+    for (const raw of entries) {
+      const key = normaliseWikilinkTarget(raw);
+      // "" ⇐ a bare [[#Heading]] anchor: a link into this note's own body.
+      if (key === "" || key === sourceId) {
+        self_links_dropped += 1;
+        continue;
+      }
+      const target = resolve(key);
+      const targetId = target ? slugKey(target.vault_path) : key;
+      if (targetId === sourceId) {
+        // Resolved back to the linking note itself (e.g. [[Topic]] where Topic
+        // is this note's own title). Same edge, same reason to skip it.
+        self_links_dropped += 1;
+        continue;
+      }
+      const edgeKey = `${sourceId}→${targetId}`;
+      if (seenEdge.has(edgeKey)) continue;
+      if (links.length >= maxLinks) continue;
+      seenEdge.add(edgeKey);
+
+      touch(sourceId, row.topic, row, sourceSlug);
+      touch(
+        targetId,
+        target ? target.topic : raw.replace(/\\+$/, "").trim(),
+        target,
+        sourceSlug,
+      );
+      links.push({ source: sourceId, target: targetId, kind: "wikilink" });
+    }
   }
 
-  return {
-    nodes: [...nodes.values()],
-    links,
-    triples: r.rows.length,
+  const nodeList = [...nodes.values()];
+  const counts: WikilinkGraphCounts = {
+    notes_scanned: rows.length,
+    notes_with_links,
+    links_total: links.length,
+    unresolved_targets: nodeList.filter((n) => !n.resolved).length,
+    self_links_dropped,
   };
+
+  // R35: an empty graph must never leave the operator guessing which store was
+  // read. The week this endpoint cost was spent looking at a React component
+  // because the response said nothing about the table behind it.
+  const empty_reason =
+    nodeList.length === 0
+      ? `read hcp.knowledge_note.links: ${counts.notes_scanned} vault-sync rows scanned, ` +
+        `${counts.notes_with_links} carried a wikilink, ${counts.self_links_dropped} self-link(s) dropped — ` +
+        `no renderable node. hcp.knowledge_note.links is refilled by syncVaultNotes() in ` +
+        `forge-control/src/db/memory.ts on the 5-minute vault-sync tick (lib/vault-sync-tick.ts); ` +
+        `a vault whose notes contain no [[wikilinks]] yields an empty graph and that is not an error. ` +
+        `content_forge.knowledge_triples is NOT read by this endpoint any more.`
+      : null;
+
+  return {
+    source: "knowledge_note.links",
+    nodes: nodeList,
+    links,
+    counts,
+    empty_reason,
+    measured_at,
+  };
+}
+
+/** GET /api/memory/graph's data source.
+ *
+ *  N1: no catch-and-default. If the query fails this THROWS and the route
+ *  answers 5xx with the message. A zeroed graph is indistinguishable from a
+ *  real empty graph, and chasing that phantom is the week this function exists
+ *  to save. */
+export async function wikilinkGraph(
+  maxLinks = WIKILINK_GRAPH_MAX_LINKS,
+): Promise<WikilinkGraph> {
+  const r = await hcp.query<WikilinkNoteRow>(
+    `SELECT vault_path, topic, links
+       FROM knowledge_note
+       WHERE created_by = $1
+       ORDER BY vault_path`,
+    [VAULT_SYNC_AUTHOR],
+  );
+  return buildWikilinkGraph(r.rows, { maxLinks });
 }
