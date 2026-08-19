@@ -1,42 +1,48 @@
-os-usable-for-work / phase 7 / round 15 — deploy task fe3749e0
-BUILD_ID ledger
-================================================================================
-
-STATUS: NO DEPLOY PERFORMED. The deploy STOPPED on its own preconditions.
-        There is therefore ONE BUILD_ID recorded here, not two, and that is
-        the correct outcome — not a missing measurement.
+os-usable-for-work — phase 7 deploy (round 17, task d4561713, run 3d5c6e98-5b92-4637-9edf-684c4b2c4e8b)
+=======================================================================================================
 
 PRE-DEPLOY  BUILD_ID : TsvXpNcIwjauqnJDJB2dy
-POST-DEPLOY BUILD_ID : (none — the merge, the rebuild and the restart were
-                        never performed; see deploy-report.md § "Why there is
-                        no second id")
+POST-DEPLOY BUILD_ID : s5xDVZg4vNWFK40pXIcf6
 
-Read from  : /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
-Command    : cat /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
-Output     : TsvXpNcIwjauqnJDJB2dy
+They differ. That difference IS the proof of deployment; a command that exits 0 is not.
 
-Served-HTML proof of the PRE-deploy id (baseline, so the next attempt has a
-number to move it away from):
 
-  $ curl -s -L -m 10 http://127.0.0.1:7701/signin | grep -c TsvXpNcIwjauqnJDJB2dy
-  1
+1. PRE-DEPLOY, read before anything was touched
+-----------------------------------------------
+$ cat /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
+TsvXpNcIwjauqnJDJB2dy
 
-  $ curl -s -L -m 10 http://127.0.0.1:7701/signin \
-      | grep -o '0:{\\"P\\":null,\\"b\\":\\"[A-Za-z0-9_-]*\\"'
-  0:{\"P\":null,\"b\":\"TsvXpNcIwjauqnJDJB2dy\"
+$ curl -s -L -m 10 http://127.0.0.1:7701/signin | grep -c "$(cat /opt/forge-ai-os/forge-control-web/.next/BUILD_ID)"
+1
 
-  (the id is embedded exactly once, in the flight-data payload
-   self.__next_f.push([1,"0:{\"P\":null,\"b\":\"<BUILD_ID>\",...)
+$ ss -lntp | grep 7701
+LISTEN 0  511  *:7701  *:*  users:(("next-server (v1",pid=1901687,fd=23))
 
-Listener at the time of measurement (pm2 "online" is not "listening"):
 
-  $ ss -lntp | grep 7701
-  LISTEN 0 511 *:7701 *:* users:(("next-server (v1",pid=1901687,fd=23))
+2. POST-DEPLOY, after the merge, the rebuild and the two allowed pm2 restarts
+-----------------------------------------------------------------------------
+$ cat /opt/forge-ai-os/forge-control-web/.next/BUILD_ID
+s5xDVZg4vNWFK40pXIcf6
 
-Live checkout at the time of measurement: /opt/forge-ai-os, branch main,
-HEAD = 9c3f63aa161a29b844699fcf537e9c8ae22f374d, `git status --porcelain`
-printed nothing.
+$ ss -lntp | grep -E '770[01]'
+LISTEN 0  511  127.0.0.1:7700  0.0.0.0:*  users:(("node /opt/forge",pid=2965204,fd=31))
+LISTEN 0  511          *:7701        *:*  users:(("next-server (v1",pid=2965178,fd=23))
 
-`pm2 restart forge-executor` was NEVER run by this task. Neither was
-`pm2 restart forge-control`, `pm2 restart forge-control-web`, `pnpm build`,
-nor any merge into main — nothing was deployed at all.
+Both PIDs are new (7701 was 1901687 before), and both are LISTENING — pm2 "online" is
+not "listening" and was not accepted as evidence.
+
+
+3. THE SERVED HTML — verbatim, the fragment carrying the new id
+---------------------------------------------------------------
+$ curl -s -L -m 10 http://127.0.0.1:7701/signin | grep -o 'self.__next_f.push(\[1,"0:{\\"P\\":null,\\"b\\":\\"[A-Za-z0-9_-]*\\"'
+
+self.__next_f.push([1,"0:{\"P\":null,\"b\":\"s5xDVZg4vNWFK40pXIcf6\"
+
+Occurrence counts in that one response body:
+
+  new id (s5xDVZg4vNWFK40pXIcf6) : 1
+  old id (TsvXpNcIwjauqnJDJB2dy) : 0
+
+The old id is GONE from what the host serves. `/` 307s to `/signin` for an
+unauthenticated request; `/signin` returns 200 (`curl -o /dev/null -w %{http_code} -L` → 200)
+and embeds the id exactly once, which is why it is the fetch target.
