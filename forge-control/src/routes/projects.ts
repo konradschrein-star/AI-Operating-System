@@ -163,7 +163,18 @@ export function buildProjectMetadata(body: CreateProjectBody): Record<string, un
 
 /* Unified board feed — every task across every active/blocked project,
  * for the Kanban UI. Registered before /:id so "board" doesn't get parsed
- * as a project id. */
+ * as a project id.
+ *
+ * EVERY row (R75) and every column EXCEPT `brief` (R73). The board renders 1.9%
+ * of what this used to return and `brief` was 88.2% of it, measured — see
+ * `docs/plan/artifacts/os-usable-for-work/phase6/projects-lag-before.md §2.1`
+ * and `listActiveTasks()`. The three graph fields R56 names — `depends_on`,
+ * `workstream`, `write_set` — are still here, and a test asserts they are
+ * (lib/projects-board-limit.test.ts).
+ *
+ * A client that needs one task's brief reads `GET /api/tasks/:id`, which serves
+ * the whole row. That is the one place in the UI that ever wanted it:
+ * `TaskDetail`'s pane for a task that has no run yet. */
 r.get("/board", async (c) => {
   const tasks = await listActiveTasks();
   return c.json({ count: tasks.length, tasks });

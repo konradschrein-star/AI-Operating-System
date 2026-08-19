@@ -144,6 +144,47 @@ describe("GET /api/reminders?contains=", () => {
 });
 
 /* ========================================================================== *
+ * 2b. ADDED IN PHASE 6 (task D). The retention view is a THIRD branch, and
+ *     everything R705 depends on had to survive it. These assertions exist so
+ *     that a future retention change cannot quietly reroute the dedup lookup;
+ *     every assertion above this point is untouched.
+ * ========================================================================== */
+
+describe("GET /api/reminders?view=window — additive, not a rewrite", () => {
+  test("the dedup branch is still reached — `view` is checked and RETURNS before it", () => {
+    const viewBranch = ROUTE.indexOf('c.req.query("view")');
+    const containsBranch = ROUTE.indexOf('const contains = (c.req.query("contains")');
+    assert.ok(viewBranch > 0 && containsBranch > viewBranch, "the view branch precedes and returns");
+    // The dedup call itself, unchanged and still downstream of it.
+    assert.match(ROUTE, /findRemindersByText\(\{ contains, limit: REMINDER_MATCH_LIMIT \}\)/);
+  });
+
+  test("an absent ?view= reaches the two original branches — no silent redirection", () => {
+    // `view !== undefined` and nothing looser: a falsy test would send `?view=`
+    // (empty) into the new branch, and a truthy one on the QUERY OBJECT would
+    // send every request there.
+    assert.match(ROUTE, /if \(view !== undefined\)/);
+  });
+
+  test("an unknown ?view= is a 400 naming the value, never a fallback to the old page", () => {
+    // Falling back would answer the 100-row oldest-first page under a parameter
+    // the caller believed had changed the result — the R705 failure mode exactly.
+    assert.match(ROUTE, /unknown view "\$\{view\}"/);
+  });
+
+  test("the view branch echoes `view`, the same handshake `filter` performs", () => {
+    assert.match(ROUTE, /mode: "window"/);
+    assert.match(ROUTE, /window_days: page\.window_days/);
+    assert.match(ROUTE, /history_count: page\.history_count/);
+  });
+
+  test("retention never deletes: no DELETE reaches the reminders route or its data layer", () => {
+    assert.doesNotMatch(ROUTE, /\bDELETE\b/i);
+    assert.doesNotMatch(DB, /\bDELETE\b/i);
+  });
+});
+
+/* ========================================================================== *
  * 3. The client half: what it does with the answer it gets
  * ========================================================================== */
 
