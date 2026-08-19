@@ -247,19 +247,39 @@ FAIL  docs/plan/artifacts/os-usable-for-work/phase4/fix-cycle-2-report.md
 1 FILE(S) FAILED        EXIT=1
 ```
 
-Four rounds, four instances, none of them a credential. That is the measurement behind the
-recommendation in §7: this instrument cannot tell a use from a mention, and every document written
-about it pays the toll.
+Four rounds, four instances, none of them a live credential — **and the fourth one is the guard
+working, not a false positive.** A draft of this report drew the opposite conclusion and recommended
+teaching the scanner a use/mention rule; that recommendation is withdrawn, because it was already
+overruled on this branch at `ce742f9` before this round committed. The distinction, restated so it
+is not re-derived wrong a third time:
+
+- a checker whose subject is **prose** cannot tell a description of a pattern from the pattern, and
+  that is a real defect to close;
+- a checker whose subject is **a credential-shaped string in a tracked file has no mention case**.
+  A live-looking DSN in a committed document *is* the thing being prevented, whatever its author
+  meant by it, because repos get cloned, mirrored and grepped by people who never read the
+  paragraph around it.
+
+So the toll is the price of the guarantee, and it is paid by the prose, never by the guard. The
+practical rule: **never widen `SAFE_MARKERS` for an evidence document and never scope an exemption
+to a file or a directory** — which is what this round did, and why `check-secret-scan.ts` has an
+empty diff for it.
 
 ---
 
 ## 7. WHAT IS LEFT
 
-- **Recorded and not acted on, again:** `check-secret-scan.ts` does not distinguish *use* from
-  *mention*. Three rounds have now been spent on documents that describe the pattern the scanner
-  hunts. Closing that class means teaching the checker about fenced code blocks or a `<!-- scan:
-  mention -->` marker, which is a change to a security instrument — outside this fix cycle's
-  blockers and outside a write-set that is empty. It is a recommendation, not a smuggled edit.
+- **Nothing is open against `check-secret-scan.ts`, and the recommendation to change it is
+  WITHDRAWN.** A draft of §6 above proposed teaching it a use/mention rule. The manager overruled
+  exactly that recommendation at `ce742f9`, one commit before this round's own — the instrument is
+  correct, a credential-shaped string in a tracked file has no mention case, and the only legitimate
+  self-exemption is the one already there (`SELF_PATH`, the source that defines the patterns). The
+  fix for a document that trips it is the document. Recorded here rather than quietly dropped,
+  because the wrong version of this recommendation has now been written twice.
+- **The ordering rule is honoured and terminates.** Per the standing rule in `AI OS/Operator
+  Decisions.md` (*Gates*), the scan is run as the LAST step, after the evidence lands, in a fresh
+  clone of the final commit — and its exit code is reported to the operator rather than written back
+  into the corpus, which is what would make this regress forever.
 - **The fix-cycle write-set defect is unchanged** and now has three instances. The engine seeds a
   fix-cycle row with its parent's declaration (or, this time, with nothing at all), so the write-set
   audit gate cannot be satisfied by any fix cycle. Owner: the engine.
