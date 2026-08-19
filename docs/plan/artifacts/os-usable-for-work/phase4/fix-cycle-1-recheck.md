@@ -97,9 +97,25 @@ EXIT=0
 **The loosening was re-verified, not re-asserted.** The canary was rebuilt in a throwaway
 `git clone --shared` at `6a1fa33` with the literals assembled in the shell, and all three shapes are
 still caught — the real-looking password, the `abc***def` that proves the anchor works, and the bare
-`PGPASSWORD`. The recipe is now committed in the report so the next reader re-runs it instead of
-trusting a paste. The recipe printed in that document was **extracted from the document and executed
-verbatim** by this pass; it reproduces.
+`PGPASSWORD`.
+
+### 2b. SUPERSEDED BY THE OPERATOR RULING (round 6)
+
+Two claims above are corrected here rather than edited away, because this document is the record of
+what round 5 did:
+
+1. **"The recipe is now committed in the report so the next reader re-runs it."** It is not, any
+   more. The operator ruling on this blocker rejected the recipe as a fix: a re-assembled trigger is
+   still a trigger sitting in a tracked file, and a canary carrying a safe marker would never have
+   fired the check it claims to demonstrate. Round 6 replaced it with the detector's **verdict** plus
+   the **sha of the commit whose content fired it** (`04c79b1`) — see `fix-cycle-1-report.md` §2.
+   Nobody needs a live-shaped credential at the tip to prove a scanner works.
+2. **"Measured at the working tree after the fix — 916 tracked files."** A working-tree figure is not
+   a corpus figure: `git ls-files` reads the index, so the very file being written is invisible to
+   the scan that clears it. That is the ordering defect this document itself names below, committed
+   once more in the paragraph reporting it. Round 6 re-measured every relevant commit in a fresh
+   clone of the **committed** tip; the ladder — `3f98e67` 6 red, `07f1c4b` 8, `04c79b1` 1, still 1 at
+   `6a1fa33` and `3c5a6c8`, 0 from `d3fe3d1` on — is in `fix-cycle-1-report.md` §2 with exit codes.
 
 ---
 

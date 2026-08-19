@@ -184,45 +184,68 @@ spelling of the same thing, so `^\$[A-Za-z_][A-Za-z0-9_]*$` completes that inten
 throwaway container password in `check-gemini-tally.ts`'s documented run line, pre-existing at the
 merge-base and now generated into a shell variable.
 
-**The loosened checker still catches real credentials.** Canary file in a throwaway clone, carrying a
-redaction, a shell variable and a real-looking credential *in the same file*:
+**The loosened checker still catches real credentials — and the proof is a SHA, not a paste.**
+
+This paragraph is the third rewrite of one that kept re-breaking the checker it documents. The first
+version pasted the canary transcript verbatim, which put three credential-shaped strings back into
+the corpus and turned `check-secret-scan.ts` red on this file. The second replaced the paste with a
+shell recipe that re-assembled the same literals from fragments: green, because no DSN shape ever
+formed on one line, but the trigger values were still here to read. The operator ruling on round 5's
+re-review closes the class rather than the instance — **quote the detector's verdict, never its
+trigger, and point at a commit where the trigger lives if a reader wants to re-run it.**
+
+The commit that carried the trigger is **`04c79b1`**, and it carried it in this very file. What the
+checker said there — its own output, with the three suspect lines redacted to their count, because
+reproducing them is the defect:
 
 ```
-FAIL  docs/canary-secret-scan.md
-        DSN password: postgresql://ai_os_app:<a live-looking 14-char password>@   ← still caught
-        DSN password: postgresql://u:<abc, three asterisks, def>@                 ← still caught (anchor works)
-        PGPASSWORD=<a bare unmarked word>                                         ← still caught
-EXIT=1
+FAIL  docs/plan/artifacts/os-usable-for-work/phase4/fix-cycle-1-report.md
+        <3 suspect lines: 2 × DSN password, 1 × PGPASSWORD — values not reproduced here>
+
+1 FILE(S) FAILED — live-looking DB credential committed        EXIT=1
 ```
 
-The password literals are shown bracketed **on purpose, and this is the point of blocker 2**: pasting
-them verbatim is how this document put itself back into the checker's mouth. So the canary is
-recorded as a recipe you can re-run rather than as a paste you must trust — the literals are
-assembled in the shell and never enter a tracked file:
+To see the values and satisfy yourself that they are credential-shaped and that the checker fires on
+them, check that commit out — no live-looking credential needs to exist in a tracked file at the tip
+for a scanner to be proved:
 
 ```sh
-W=$(mktemp -d); git clone -q --shared . "$W/repo"; cd "$W/repo"
-S=postgresql            # the scheme is a variable too, so this recipe carries no DSN shape either
-U=ai_os_app; P1=S3cr3t; P1="${P1}LiveP4ss"; P2='abc***def'; P3=hunter2correct
-printf 'one: %s://%s:%s@db/x\ntwo: %s://u:%s@db/x\nshell: %s=%s\n' \
-  "$S" "$U" "$P1" "$S" "$P2" PGPASSWORD "$P3" > docs/canary-secret-scan.md
-git add docs/canary-secret-scan.md && tsx scripts/checks/check-secret-scan.ts   # → all three suspects, EXIT=1
+git clone -q --shared . /tmp/scan-check && cd /tmp/scan-check
+git checkout -q 04c79b1
+forge-control/node_modules/.bin/tsx scripts/checks/check-secret-scan.ts; echo "EXIT=$?"
 ```
 
-Re-run at `6a1fa33` on 2026-08-19 by the round-5 pass: all three shapes still caught, in one file,
-with the anchored `^\*+$` marker in place. The loosening did not blunt the checker.
+Three shapes were caught there in one file: a redaction that must NOT fire (`^\*+$`, and it did not),
+an asterisk-bearing password that must fire (the anchor is why it did), and a bare `PGPASSWORD`
+assignment. That is the loosening tested in both directions, and it is testable by anyone, forever,
+without this document holding a single credential-shaped string.
 
-Measured on both sides, in a throwaway clone rather than by assertion:
+**Measured, not asserted.** Every figure below comes from running the checker in a fresh clone at the
+named commit — never in a working tree, because the corpus is `git ls-files` and an uncommitted
+report is not in it:
 
 ```
-merge-base 3f98e67    6 FILE(S) FAILED
-tip        07f1c4b    8 FILE(S) FAILED     (the gate reported 6→8; both figures verified here)
-after this fix        ALL PASS — 914 tracked files
+3f98e67  merge-base                  6 FILE(S) FAILED   EXIT=1
+07f1c4b  R4-gate tip                 8 FILE(S) FAILED   EXIT=1   (the gate reported 6→8; both verified)
+04c79b1  the fix + this report       1 FILE(S) FAILED   EXIT=1   ← this file, carrying the paste
+dc7bd5a  …                           1 FILE(S) FAILED   EXIT=1
+e0a721f  …                           1 FILE(S) FAILED   EXIT=1
+6a1fa33  the tip R5-gate reviewed    1 FILE(S) FAILED   EXIT=1
+3c5a6c8  §2 reworded here            1 FILE(S) FAILED   EXIT=1   ← the re-check DOC had it now
+d3fe3d1  the doc reworded too        ALL PASS — 917 tracked files   EXIT=0
+5ef6286                              ALL PASS — 918 tracked files   EXIT=0
+4b31971  round-5 tip                 ALL PASS — 918 tracked files   EXIT=0
 ```
 
-**That last line was true when it was written and false one commit later** — the run predated this
-report becoming a tracked file, and the paste it then carried was itself a ninth red. Corrected by
-the round-5 pass; see `fix-cycle-1-recheck.md` §2 for the measurement at the real tip.
+The two `1 FILE(S) FAILED` rows in the middle of that ladder are the same trap caught twice more: the
+document describing the pattern is inside the corpus the pattern is searched for. `3c5a6c8` cleaned
+this file and left the shape in the re-check that reported the cleaning.
+
+**The line that used to sit here — a hand-written "ALL PASS — 914 tracked files" — is deleted rather
+than corrected.** It was written by a human about a file whose own content decides the verdict, from
+a run that predated this report becoming tracked, and one commit later it was false. A summary of
+that kind is worth less than nothing; the four measured lines above, each re-runnable at a named sha,
+replace it. `fix-cycle-1-recheck.md` §2 carries the same measurement for the commits after `4b31971`.
 
 ---
 
@@ -239,7 +262,7 @@ the round-5 pass; see `fix-cycle-1-recheck.md` §2 for the measurement at the re
 | `check-settings-surface.tsx` | PASS |
 | `check-integrations.tsx` | PASS |
 | `check-gemini-tally.ts` (throwaway Postgres in docker) | ALL PASS |
-| `check-secret-scan.ts` | **ALL PASS**, from 8 red at the tip this cycle started on |
+| `check-secret-scan.ts` | 8 red → **1 red at `04c79b1`**: the code fix landed and this report's own paste was the one that survived. Zero from `d3fe3d1` on — the measured ladder is in §2. |
 | `browser-harness-phase4.cjs b4c-after` @ `/settings` | 12/12 PASS |
 | `browser-harness-phase4.cjs b4c-unknown` @ `/settings` | 10/10 PASS |
 | `gates-808.sh --strict` @ `dc7bd5a` | **25 gates, 23 executed, 2 skipped by design, RED: 0** — transcript at `phase4/gates-round4.txt` |

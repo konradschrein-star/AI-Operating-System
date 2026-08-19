@@ -20,6 +20,9 @@
  * Four integrations × three fixtures (null / fresh-ok / fresh-fail) is the
  * twelve the phase's acceptance criteria name; §4 adds the thirteenth
  * (stale ⇒ UNKNOWN) for each of the four, and §5 adds the identity rule.
+ * §5c adds the state none of them had: a read that came back BROKEN, which is
+ * neither a probe result nor a fetch still in flight, and which the panel used
+ * to render as READING… for as long as the tab stayed open.
  *
  * Assertions are over the PURE layer — the `ConnectionSummary` objects
  * `app/desktop/settings/connections.ts` produces — not over a screenshot. The
@@ -56,10 +59,12 @@ import type { Account } from "../../forge-control-web/app/desktop/settings/accou
 import {
   agyConnection,
   claudeConnection,
+  geminiKeyConnection,
   githubConnection,
   googleConnection,
   STALE_FACTOR,
   summaryFromStatus,
+  ultraConnection,
   type AgyFacts,
   type ConnectionStatusFacts,
   type ConnectionSummary,
@@ -769,6 +774,158 @@ for (const c of MATRIX.filter((m) => m.identityIsProbed)) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * §5c A READ THAT FAILED IS NOT A READ THAT IS STILL RUNNING.
+ *     R5-gate item 3: when `fetchAgyConnection()` rejected, the card kept the
+ *     reason to itself, the panel's state stayed `null`, and the row head read
+ *     READING… for as long as the tab was open — beside a dead API, with the
+ *     reason inside a collapsed card body. "READING…" is a claim too.
+ *
+ *     The boundary this section measures is between the TWO unread states, and
+ *     it is exactly the boundary the old code did not have: `null` (in flight)
+ *     versus `{read_error}` (came back broken). Both are amber; only one of
+ *     them says why, and neither may ever be green.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n§5c a read that FAILED says so, verbatim — it does not sit at READING… (R5-gate 3)");
+
+/** A verbatim rejection message, of the shape `messageOf()` produces from a
+ *  failed proxy call. The exact string must survive into the row: "could not
+ *  load" would not tell Konrad a 502 from an expired session. */
+const READ_ERROR = "GET /api/proxy/integrations/connections failed: 502 Bad Gateway";
+
+const READS: {
+  id: string;
+  failed: ConnectionSummary;
+  loading: ConnectionSummary;
+  /** The fixture that proves the "no probe age" rule below is not vacuous.
+   *  Null for the Gemini key row, which has no probe and no age to carry —
+   *  its own non-vacuity control is the `discriminates()` pair. */
+  connected: ConnectionSummary | null;
+  /** The word this row shows while the fetch is IN FLIGHT. Four of the five
+   *  say READING…; the Gemini key row said UNKNOWN before any of this existed
+   *  and still does. Written per row rather than assumed, because asserting a
+   *  shared literal here would have quietly demanded a copy change nobody
+   *  asked for — and the rule is about the FAILED state, not the waiting one. */
+  waitingLabel: string;
+}[] = [
+  {
+    id: "google",
+    failed: googleConnection({ read_error: READ_ERROR }, NOW),
+    loading: googleConnection(null, NOW),
+    connected: googleOk,
+    waitingLabel: "READING…",
+  },
+  {
+    id: "agy",
+    failed: agyConnection({ read_error: READ_ERROR }, NOW),
+    loading: agyConnection(null, NOW),
+    connected: agyOk,
+    waitingLabel: "READING…",
+  },
+  {
+    id: "github",
+    failed: githubConnection({ read_error: READ_ERROR }, NOW),
+    loading: githubConnection(null, NOW),
+    connected: githubOk,
+    waitingLabel: "READING…",
+  },
+  {
+    // The Ultra row has no state of its own — it reads the SAME agy value —
+    // so it inherits the defect and must inherit the fix. It is asserted here
+    // rather than in `check-quota-row.ts` because the boundary is this one.
+    id: "gemini-ultra",
+    failed: ultraConnection(undefined, { read_error: READ_ERROR }, NOW),
+    loading: ultraConnection(undefined, null, NOW),
+    connected: ultraConnection(undefined, agyFacts({
+      state: "connected",
+      identity: null,
+      checked_at: iso(60_000),
+      detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
+    }), NOW),
+    waitingLabel: "READING…",
+  },
+  {
+    /* The fifth row on the panel. It reaches the failed-read rendering by a
+     * different door — three primitives, not a facts object — and it is here
+     * because a panel with four honest rows and one still saying "Loading…"
+     * teaches the reader that "Loading…" is just how this surface looks. */
+    id: "gemini-key",
+    failed: geminiKeyConnection(null, null, null, READ_ERROR),
+    loading: geminiKeyConnection(null, null, null),
+    connected: null,
+    waitingLabel: "UNKNOWN",
+  },
+];
+
+for (const r of READS) {
+  ok(
+    `${r.id}: a failed read renders UNKNOWN — never green, never NOT CONNECTED`,
+    r.failed.state === "unknown",
+    `state=${r.failed.state}`,
+  );
+  ok(
+    `${r.id}: …and the chip NAMES the failed read instead of a waiting state`,
+    /READ FAILED/.test(r.failed.stateLabel) && !/READING/i.test(r.failed.stateLabel),
+    `stateLabel=${JSON.stringify(r.failed.stateLabel)}`,
+  );
+  ok(
+    `${r.id}: …and the rejection message is carried VERBATIM into the row`,
+    r.failed.health.includes(READ_ERROR),
+    JSON.stringify(r.failed.health.slice(0, 200)),
+  );
+  ok(
+    `${r.id}: …and the row says it is not a measurement of the connection`,
+    /not a measurement|not a statement about the connection/i.test(r.failed.health),
+    JSON.stringify(r.failed.health.slice(0, 200)),
+  );
+  ok(
+    `${r.id}: a read still in flight is UNCHANGED — it still says ${r.waitingLabel}`,
+    r.loading.state === "unknown" && r.loading.stateLabel === r.waitingLabel,
+    `stateLabel=${JSON.stringify(r.loading.stateLabel)}`,
+  );
+
+  /* THE CONTROL THAT MAKES THIS SECTION NON-INERT, and it points at exactly
+   * the code that was wrong: before the fix both unread states came out of one
+   * branch, so a predicate satisfied by the failed read was satisfied by the
+   * loading one too. Each of these must FAIL on `loading`. */
+  discriminates(
+    `${r.id}: "prints the read's rejection" separates a failed read from one in flight`,
+    (s) => s.health.includes(READ_ERROR),
+    { label: `${r.id}.readFailed`, summary: r.failed },
+    { label: `${r.id}.loading`, summary: r.loading },
+  );
+  discriminates(
+    `${r.id}: "the chip names a failed read" separates a failed read from one in flight`,
+    (s) => /READ FAILED/.test(s.stateLabel),
+    { label: `${r.id}.readFailed`, summary: r.failed },
+    { label: `${r.id}.loading`, summary: r.loading },
+  );
+  /* And neither unread state may be confused with a real reading. */
+  ok(
+    `${r.id}: neither unread state carries a probe age, because no probe was read`,
+    !/probed (\d+ (min|h|d) ago|just now)/.test(r.failed.health) &&
+      !/probed (\d+ (min|h|d) ago|just now)/.test(r.loading.health),
+    `${JSON.stringify(r.failed.health.slice(0, 80))} | ${JSON.stringify(r.loading.health.slice(0, 80))}`,
+  );
+  if (r.connected !== null) {
+    ok(
+      `${r.id}: …while the CONNECTED fixture does carry one — so the rule above is not vacuous`,
+      /probed (\d+ (min|h|d) ago|just now)/.test(r.connected.health),
+      JSON.stringify(r.connected.health.slice(0, 120)),
+    );
+  }
+}
+
+/* A failure carrying nothing to print is an ERROR, not a row saying READ
+ * FAILED with an empty reason (N1) — the same rule §8 applies to a corrupt
+ * timestamp. */
+throwsWith(
+  "a read failure with an empty reason throws rather than rendering an empty banner",
+  () => agyConnection({ read_error: "   " }, NOW),
+  "carried no reason to print",
+);
+
+/* ════════════════════════════════════════════════════════════════════════════
  * §6 THE PHOTOGRAPHED DEFECT, and the layer that now stops it.
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -957,6 +1114,6 @@ ok("…and carries the reason it is absent", absent.health === "no credential fi
 console.log(
   `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — phase 4 connection states ` +
     `(4 integrations × {null, fresh-ok, fresh-fail, stale, connected-with-no-identity}, ` +
-    `R50/R51/R57/R58)`,
+    `plus the failed READ over all five rows on the panel — R50/R51/R57/R58, R5-gate 3)`,
 );
 process.exit(failures === 0 ? 0 : 1);

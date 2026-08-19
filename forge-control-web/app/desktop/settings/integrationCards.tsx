@@ -113,6 +113,7 @@ import {
   type ConnectionSummary,
   type GithubFacts,
   type GoogleFacts,
+  type Read,
 } from "./connections";
 
 /* ── Wire shapes (mirror routes/integrations.ts) ─────────────────────────── */
@@ -499,6 +500,10 @@ export interface GeminiKeyFacts {
   present: boolean | null;
   masked: string | null;
   verdict: { ok: boolean; message?: string } | null;
+  /** The reason the key status could not be READ, if it could not. Null while
+   *  the fetch is in flight and after a successful one. Same channel, same
+   *  rule as the other four rows — see `AgyCard`'s note. */
+  readError: string | null;
 }
 
 export function GeminiCard({
@@ -510,6 +515,8 @@ export function GeminiCard({
   const [usage, setUsage] = useState<GeminiUsage | null>(null);
   const [usageError, setUsageError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The read's own error, apart from the actions' — see `AgyCard`. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState<"save" | "test" | "remove" | null>(null);
   const [verdict, setVerdict] = useState<TestVerdict | null>(null);
@@ -519,9 +526,9 @@ export function GeminiCard({
   const load = useCallback(async () => {
     try {
       setStatus(await call<GeminiStatus>("/gemini"));
-      setError(null);
+      setReadError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setReadError(e instanceof Error ? e.message : String(e));
     }
     // The usage query has its own error slot on purpose: a database that will
     // not answer must not blank out the key controls, and must not render as
@@ -603,9 +610,10 @@ export function GeminiCard({
         verdict === null
           ? null
           : { ok: verdict.ok, message: verdict.ok ? undefined : verdict.message },
+      readError,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, verdict, present]);
+  }, [status, verdict, present, readError]);
 
   const models = verdict?.ok ? verdict.models : [];
   const shown = showAllModels ? models : models.slice(0, 12);
@@ -709,6 +717,12 @@ export function GeminiCard({
         reads show the last four characters only.
       </div>
 
+      {readError && (
+        <Banner tone="bad">
+          <strong data-gemini-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
       {error && <Banner tone="bad">{error}</Banner>}
 
       {verdict && !verdict.ok && (
@@ -884,7 +898,7 @@ export function GeminiCard({
 export function GoogleCard({
   onFacts,
 }: {
-  onFacts?: (f: GoogleFacts) => void;
+  onFacts?: (f: Read<GoogleFacts>) => void;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [accounts, setAccounts] = useState<GoogleAccountView[]>([]);
@@ -893,6 +907,9 @@ export function GoogleCard({
   const [absentDetail, setAbsentDetail] = useState<string | null>(null);
   const [intervalMs, setIntervalMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The read's own error — see `AgyCard`'s note. It travels upward so the
+   *  panel's row head can say READ FAILED instead of READING… forever. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -910,9 +927,9 @@ export function GoogleCard({
       setReauth({ command: res.reauth.command, why: res.reauth.why });
       setAbsentDetail(res.detail ?? null);
       setIntervalMs(ms);
-      setError(null);
+      setReadError(null);
     } catch (e) {
-      setError(messageOf(e));
+      setReadError(messageOf(e));
     }
   }, []);
 
@@ -959,11 +976,16 @@ export function GoogleCard({
           recheckIntervalMs: intervalMs,
         };
 
+  /* Facts beat a read error: a failed refresh must not erase a real reading. */
+  const read: Read<GoogleFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
+
   useEffect(() => {
-    if (!onFacts || facts === null) return;
-    onFacts(facts);
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, intervalMs, accounts, reauth]);
+  }, [status, intervalMs, accounts, reauth, readError]);
 
   return (
     <div data-google-card style={card()}>
@@ -982,6 +1004,12 @@ export function GoogleCard({
         }
       />
 
+      {readError && (
+        <Banner tone="bad">
+          <strong data-google-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
       {error && <Banner tone="bad">{error}</Banner>}
 
       {/* THE STATE LINE. The chip's word and the age of the evidence behind it
@@ -1152,12 +1180,19 @@ export function GoogleCard({
 export function AgyCard({
   onFacts,
 }: {
-  onFacts?: (f: AgyFacts) => void;
+  onFacts?: (f: Read<AgyFacts>) => void;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [flow, setFlow] = useState<AgyFlow | null>(null);
   const [intervalMs, setIntervalMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /* THE READ'S OWN ERROR, KEPT APART FROM THE ACTIONS' (R5-gate item 3).
+     A rejected `fetchAgyConnection()` used to set `error` and nothing else, so
+     the row head — which lives on the panel, outside this card — went on
+     saying READING… while the reason sat in a banner inside a collapsed body.
+     This one travels UPWARD through `onFacts`, so the head can say what
+     happened. `error` keeps its old job: whatever Verify just did. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const apply = useCallback((res: { status: ConnectionStatus; flow: AgyFlow }) => {
@@ -1170,9 +1205,9 @@ export function AgyCard({
       const [res, ms] = await Promise.all([fetchAgyConnection(), loadRecheckIntervalMs()]);
       apply(res);
       setIntervalMs(ms);
-      setError(null);
+      setReadError(null);
     } catch (e) {
-      setError(messageOf(e));
+      setReadError(messageOf(e));
     }
   }, [apply]);
 
@@ -1196,13 +1231,19 @@ export function AgyCard({
 
   const facts: AgyFacts | null =
     status === null || intervalMs === null ? null : { status, recheckIntervalMs: intervalMs };
-  const summary = agyConnection(facts);
+  /* Facts beat a read error, deliberately: a refresh that failed after a
+     successful load must not erase the reading it could not replace. The
+     banner below still says the refresh failed. */
+  const read: Read<AgyFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
+  const summary = agyConnection(read);
 
   useEffect(() => {
-    if (!onFacts || facts === null) return;
-    onFacts(facts);
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, intervalMs]);
+  }, [status, intervalMs, readError]);
 
   return (
     <div data-agy-card style={card()}>
@@ -1222,6 +1263,12 @@ export function AgyCard({
         }
       />
 
+      {readError && (
+        <Banner tone="bad">
+          <strong data-agy-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
       {error && <Banner tone="bad">{error}</Banner>}
 
       {status && (
@@ -1341,12 +1388,14 @@ export function AgyCard({
 export function GitHubCard({
   onFacts,
 }: {
-  onFacts?: (f: GithubFacts) => void;
+  onFacts?: (f: Read<GithubFacts>) => void;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [secretName, setSecretName] = useState<string | null>(null);
   const [intervalMs, setIntervalMs] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The read's own error — see `AgyCard`'s note. */
+  const [readError, setReadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
   const [token, setToken] = useState("");
@@ -1358,9 +1407,9 @@ export function GitHubCard({
       setStatus(res.status);
       setSecretName(res.secret_name);
       setIntervalMs(ms);
-      setError(null);
+      setReadError(null);
     } catch (e) {
-      setError(messageOf(e));
+      setReadError(messageOf(e));
     }
   }, []);
 
@@ -1413,13 +1462,17 @@ export function GitHubCard({
     status === null || intervalMs === null || secretName === null
       ? null
       : { status, secretName, recheckIntervalMs: intervalMs };
-  const summary = githubConnection(facts);
+  /* Facts beat a read error: a failed refresh must not erase a real reading. */
+  const read: Read<GithubFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
+  const summary = githubConnection(read);
 
   useEffect(() => {
-    if (!onFacts || facts === null) return;
-    onFacts(facts);
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, intervalMs, secretName]);
+  }, [status, intervalMs, secretName, readError]);
 
   return (
     <div data-github-card style={card()}>
@@ -1439,6 +1492,12 @@ export function GitHubCard({
         }
       />
 
+      {readError && (
+        <Banner tone="bad">
+          <strong data-github-read-error>Could not read this connection&rsquo;s status.</strong>{" "}
+          {readError}
+        </Banner>
+      )}
       {error && <Banner tone="bad">{error}</Banner>}
 
       {status && (

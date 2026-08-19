@@ -65,12 +65,14 @@ import {
   geminiKeyConnection,
   githubConnection,
   googleConnection,
+  isReadFailure,
   ultraConnection,
   type AgyFacts,
   type ConnectionState,
   type ConnectionSummary,
   type GithubFacts,
   type GoogleFacts,
+  type Read,
 } from "./connections";
 import { useQuotaSnapshot } from "../quota/quotaQuery";
 
@@ -102,13 +104,17 @@ const PANEL_CSS = `
 export function ConnectionsPanel(): JSX.Element {
   const registry = useAccountRegistry();
   const [gemini, setGemini] = useState<GeminiKeyFacts | null>(null);
-  const [google, setGoogle] = useState<GoogleFacts | null>(null);
+  // `Read<…>`, not `… | null`: a card whose fetch REJECTED reports the reason
+  // upward instead of staying silent, and the row head renders READ FAILED
+  // with that reason rather than READING… for as long as the tab is open
+  // (R5-gate item 3). `null` still means "in flight" and nothing else.
+  const [google, setGoogle] = useState<Read<GoogleFacts>>(null);
   // Reported UPWARD by the cards, exactly as Gemini and Google already do —
   // one fetch per subject. `agy` is read twice on this panel (its own row and
   // the Ultra row) and fetched once, which is what makes the two rows
   // structurally incapable of disagreeing.
-  const [agy, setAgy] = useState<AgyFacts | null>(null);
-  const [github, setGithub] = useState<GithubFacts | null>(null);
+  const [agy, setAgy] = useState<Read<AgyFacts>>(null);
+  const [github, setGithub] = useState<Read<GithubFacts>>(null);
   // The Ultra row rides the indicator row's cache entry — an observer, not a
   // poll. See desktop/quota/quotaQuery.ts.
   const quota = useQuotaSnapshot();
@@ -121,6 +127,13 @@ export function ConnectionsPanel(): JSX.Element {
    * is not lost: `summary.health` carries it, prefixed with why it is stale. */
   const agySummary = agyConnection(agy);
   const githubSummary = githubConnection(github);
+
+  /* A read that FAILED carries no `status`, so it has no upstream text to show
+   * verbatim in that box — and it never renders `broken` anyway, so this only
+   * narrows the type to the arm the box was written for. The reason is not
+   * lost: `summary.health` prints it, which is the whole point of item 3. */
+  const agyFacts = isReadFailure(agy) ? null : agy;
+  const githubFacts = isReadFailure(github) ? null : github;
 
   const [open, setOpen] = useState<string | null>(null);
   const toggle = useCallback(
@@ -218,6 +231,7 @@ export function ConnectionsPanel(): JSX.Element {
           gemini?.present ?? null,
           gemini?.masked ?? null,
           gemini?.verdict ?? null,
+          gemini?.readError ?? null,
         )}
         open={open === "gemini-key"}
         onToggle={toggle}
@@ -268,7 +282,7 @@ export function ConnectionsPanel(): JSX.Element {
         summary={agySummary}
         open={open === "agy"}
         onToggle={toggle}
-        verbatimError={agySummary.state === "broken" ? agy?.status.detail ?? null : null}
+        verbatimError={agySummary.state === "broken" ? agyFacts?.status.detail ?? null : null}
       >
         <AgyCard onFacts={setAgy} />
       </Row>
@@ -281,7 +295,7 @@ export function ConnectionsPanel(): JSX.Element {
         summary={githubSummary}
         open={open === "github"}
         onToggle={toggle}
-        verbatimError={githubSummary.state === "broken" ? github?.status.detail ?? null : null}
+        verbatimError={githubSummary.state === "broken" ? githubFacts?.status.detail ?? null : null}
       >
         <GitHubCard onFacts={setGithub} />
       </Row>

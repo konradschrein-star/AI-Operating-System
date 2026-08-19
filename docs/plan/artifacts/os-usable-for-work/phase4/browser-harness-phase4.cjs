@@ -93,6 +93,21 @@
  *   node …/browser-harness-phase4.cjs b4c-after      # seeded fresh records
  *   node …/browser-harness-phase4.cjs b4c-unknown    # empty status dir → amber
  *
+ * ── b4c-read-fail — THE MODE THAT NEEDS THE API DEAD (R5-gate item 3) ─────
+ * Every mode above asks what the panel says about a connection. This one asks
+ * what it says when it cannot READ one: `next start` is left running and
+ * /tmp/b4c-serve.ts is STOPPED, so the baked-in proxy answers 502 and every
+ * `fetch*Connection()` rejects. Before the fix that rendered READING… for as
+ * long as the tab stayed open, with the reason hidden inside a collapsed card
+ * body; after it, each row says UNKNOWN — READ FAILED and prints the rejection.
+ *
+ *   kill %1                                          # /tmp/b4c-serve.ts on :7742
+ *   node …/browser-harness-phase4.cjs b4c-read-fail
+ *
+ * The mode asserts the API really is unreachable BEFORE it believes a single
+ * row: run against a live :7742 it would photograph four healthy rows and call
+ * them a read failure.
+ *
  * The fixtures for b4c-after/b4c-unknown are written by the harness itself into
  * FORGE_CONNECTION_STATUS_DIR (env `B4C_STATUS_DIR`), so the state under test is
  * created by the run that asserts it, not by a step someone has to remember.
@@ -109,7 +124,15 @@ const { chromium } = require("/opt/hermes-workspace/node_modules/playwright");
 /* ---------------------------------------------------------------- config -- */
 
 const MODE = process.argv[2];
-const MODES = ["before", "after", "add-flow", "b4c-before", "b4c-after", "b4c-unknown"];
+const MODES = [
+  "before",
+  "after",
+  "add-flow",
+  "b4c-before",
+  "b4c-after",
+  "b4c-unknown",
+  "b4c-read-fail",
+];
 if (!MODES.includes(MODE || "")) {
   throw new Error(`usage: browser-harness-phase4.cjs <${MODES.join("|")}>; got ${JSON.stringify(MODE)}`);
 }
@@ -483,9 +506,16 @@ async function api(pathSuffix, init) {
             "Gmail answered for konrad.schrein@gmail.com.\n\nUPSTREAM HTTP 200: {\"emailAddress\":\"konrad.schrein@gmail.com\",\"messagesTotal\":48211}",
           checked_at: new Date(Date.now() - 4 * 60_000).toISOString(),
         });
+        /* identity: NULL, AND THAT IS THE REAL BOX (R5-gate item 2).
+         * `classifyAgyProbe` (connection-status.ts) returns `identity: null` on
+         * EVERY branch — `agy models` lists models, it never names the Google
+         * account behind them. The first version of this fixture seeded a
+         * sentence there, so the committed after-shot photographed an identity
+         * this system cannot produce, and the one case R4-red item 3 named
+         * (connected + no identity) was the one the photograph avoided. */
         seedStatus("agy", {
           ok: true,
-          identity: "the Google account signed in to the Antigravity CLI",
+          identity: null,
           detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
           checked_at: new Date(Date.now() - 90_000).toISOString(),
         });
@@ -502,6 +532,32 @@ async function api(pathSuffix, init) {
         fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
         fs.writeFileSync(path.join(SECRET_DIR, "github-pat"), "FIXTURE-NOT-A-REAL-TOKEN", { mode: 0o600 });
       }
+      /* THE PRECONDITION THIS MODE IS WORTHLESS WITHOUT. Run against a LIVE
+       * :7742 every assertion below would be measured on healthy rows, and the
+       * screenshot would show four connections reading fine under the caption
+       * "the API is dead". So the API is proved unreachable first, from node,
+       * through the same proxy the browser uses. */
+      if (MODE === "b4c-read-fail") {
+        const probe = await fetch(`${BASE}/api/proxy/integrations/connections`, {
+          headers: { cookie: `authjs.session-token=${COOKIE}` },
+          redirect: "manual",
+        }).then(
+          (r) => ({ status: r.status, err: null }),
+          (e) => ({ status: null, err: String(e && e.message ? e.message : e) }),
+        );
+        if (probe.status !== null && probe.status < 500) {
+          throw new Error(
+            `b4c-read-fail needs the forge-control API DOWN, but ` +
+              `${BASE}/api/proxy/integrations/connections answered HTTP ${probe.status}. ` +
+              `Stop /tmp/b4c-serve.ts (:7742) and run again — with it up, this mode would ` +
+              `photograph healthy rows and call them a read failure.`,
+          );
+        }
+        console.log(
+          `  precondition ok: /api/proxy/integrations/connections → ${probe.status ?? probe.err}`,
+        );
+      }
+
       if (MODE === "b4c-unknown") {
         clearStatus();
         fs.mkdirSync(SECRET_DIR, { recursive: true, mode: 0o700 });
@@ -620,6 +676,32 @@ async function api(pathSuffix, init) {
           );
         }
         if (has("agy")) {
+          /* THE CONNECTED-WITH-NO-IDENTITY ROW, PHOTOGRAPHED (R5-gate item 2).
+           * The probe succeeded and named nobody, which is the only answer the
+           * real `agy` ever gives — so the row must be green on the state and
+           * explicit about the missing name, never blank and never borrowing an
+           * address from somewhere else. */
+          const agyHead = await page
+            .locator(onPanel ? '[data-connection-row="agy"]' : "[data-agy-card]")
+            .innerText();
+          ok(
+            "R50/R4-red-3: the agy row states the probe returned NO identity, in words",
+            /no signed-in Google account/i.test(agyHead) && /returned no identity/i.test(agyHead),
+            JSON.stringify(agyHead.replace(/\n/g, " | ").slice(0, 260)),
+          );
+          ok(
+            "R50: …and it borrows no address from any other connection",
+            !/konrad\.schrein@gmail\.com|konradschreiner/.test(agyHead),
+            JSON.stringify(agyHead.replace(/\n/g, " | ").slice(0, 260)),
+          );
+          if (onPanel) {
+            ok(
+              "…while the state itself is still CONNECTED — the probe's answer, not the name's",
+              (await stateOf("agy")) === "connected",
+              String(await stateOf("agy")),
+            );
+          }
+
           /* ROUND 4 (fix cycle 1). R54's affordance lives in the CARD, and on
            * the panel the card body is kept mounted but hidden with CSS until
            * its row is expanded — so `innerText` on a collapsed row returns
@@ -708,6 +790,78 @@ async function api(pathSuffix, init) {
             `R57: ${id} never says the connected word`,
             !/\bCONNECTED\b/.test(text),
             JSON.stringify(text.replace(/\n/g, " | ").slice(0, 220)),
+          );
+        }
+        console.log(`\nscreenshot: ${shotFile}`);
+      }
+
+      /* ── b4c-read-fail (R5-gate item 3) ────────────────────────────────────
+       * The API is down (asserted above). Every row that fetches must say so
+       * and say WHY. Waiting is a state; "still waiting" after the answer came
+       * back broken is a false one. */
+      if (MODE === "b4c-read-fail") {
+        /* The rejections arrive after mount, so wait for the RENDERED verdict
+         * rather than for a timer — and let the wait itself be the assertion's
+         * first half, so a row stuck at READING… fails here with its text. */
+        const READ_FAILED = "READ FAILED";
+        try {
+          await page.waitForFunction(
+            (needle) =>
+              Array.from(document.querySelectorAll("[data-connection-chip]")).some((el) =>
+                (el.textContent || "").includes(needle),
+              ),
+            READ_FAILED,
+            { timeout: 20000 },
+          );
+        } catch {
+          const chips = await page.$$eval("[data-connection-chip]", (els) =>
+            els.map((e) => e.textContent),
+          );
+          ok(
+            "a row reports the failed read within 20s rather than sitting at READING…",
+            false,
+            `chips=${JSON.stringify(chips)}`,
+          );
+        }
+
+        const shotFile = await shot(page, "b4c-read-fail-rows");
+
+        /* All FIVE rows, including the Gemini key row, which reaches the
+         * failed-read rendering through a different signature. Four honest
+         * rows and one still saying "Loading…" would teach the reader that
+         * "Loading…" is just how this surface looks. */
+        for (const id of ["google", "gemini-key", "gemini-ultra", "agy", "github"]) {
+          const scope = `[data-connection-row="${id}"]`;
+          if ((await page.locator(scope).count()) === 0) {
+            blocker(`${id} has a row to report the read failure on`, "no such row on the panel");
+            continue;
+          }
+          const chip = (await page.locator(`${scope} [data-connection-chip]`).innerText()).trim();
+          const text = await page.locator(scope).innerText();
+          ok(
+            `${id}: a dead API renders READ FAILED, not READING…`,
+            chip.includes(READ_FAILED) && !/READING/i.test(chip),
+            `chip=${JSON.stringify(chip)}`,
+          );
+          ok(
+            `${id}: …and the row is amber-unknown, never green and never NOT CONNECTED`,
+            (await stateOf(id)) === "unknown",
+            String(await stateOf(id)),
+          );
+          ok(
+            /* Two shapes, because the Gemini row is read by a different client:
+             * `callConnections` says "answered HTTP 500:", `call` says
+             * "answered 500 with a body that is not JSON". Both carry the code,
+             * which is the thing that must survive to the screen. */
+            `${id}: …and the rejection is printed VERBATIM, with its status code`,
+            /answered (HTTP )?5\d\d/.test(text),
+            JSON.stringify(text.replace(/\n/g, " | ").slice(0, 460)),
+          );
+          ok(
+            `${id}: …and it says this row is not a measurement of the connection`,
+            /Nothing on this row is a measurement/i.test(text) &&
+              /not a statement about the connection/i.test(text),
+            JSON.stringify(text.replace(/\n/g, " | ").slice(0, 300)),
           );
         }
         console.log(`\nscreenshot: ${shotFile}`);

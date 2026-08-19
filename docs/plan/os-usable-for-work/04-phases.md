@@ -279,6 +279,18 @@ seeded with the **R4-gate reviewer's** declaration, `phase4/gate-report.md` and
 the blockers being fixed and over the transcript that evidences them. Neither was touched; its
 writes are enumerated in `phase4/fix-cycle-1-recheck.md` §1.
 
+**Round 6 (fix cycle 2) write-set: EMPTY, and the brief says so.** This row was seeded with no
+declaration at all — "(empty — nothing was declared)" — so every path it touches is undeclared by
+construction, the third turn of the same engine defect. What it wrote, and why each file had to
+change, is enumerated in `phase4/fix-cycle-2-report.md` §1; the three groups are
+
+- the four connection **row functions** and the three **cards** that feed them, plus the panel — the
+  fix for R5-gate item 3 (a failed read rendered READING… for as long as the tab was open);
+- `scripts/checks/check-connection-states.ts` §5c and the browser harness's new `b4c-read-fail`
+  mode — the assertions that would have caught it, both proved to fail on the old code;
+- `phase4/fix-cycle-1-report.md` §2 and `fix-cycle-1-recheck.md` §2b — the operator ruling on the
+  secret-scan blocker, plus this section.
+
 **Why the rows above are NOT amended, in answer to R4-gate blocker 3.** The blocker asked for two
 things: disclose the overlap in the phase record (the table above) and *amend the task rows to match
 what was written*. The disclosure stands; the amendment is refused, and the reason is a measurement

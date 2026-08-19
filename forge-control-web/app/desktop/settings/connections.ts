@@ -138,6 +138,103 @@ export interface ConnectionCopy {
   noIdentity: string;
 }
 
+/**
+ * THE THIRD OUTCOME OF A READ, AND IT IS THE ONE THAT WAS MISSING.
+ *
+ * A card fetches its connection and gets one of three answers: the facts, not
+ * yet, or an error. Until R5-gate item 3 only two of them had a rendering —
+ * facts, or `null` meaning "still loading" — so a `fetchAgyConnection()` that
+ * REJECTED left the panel's state at `null` for good and the row head read
+ * READING… forever, with the reason buried in a banner inside a collapsed card
+ * body. "READING…" beside a dead API is a claim too, and it was false.
+ *
+ * So a failed read is its own value travelling through the same channel the
+ * facts travel through, and it renders as UNKNOWN carrying the verbatim
+ * reason — the same treatment R58 already gives a failed probe. The two are
+ * different sentences and keep different words: a probe that failed is
+ * evidence ABOUT the connection, a read that failed is the absence of any
+ * evidence at all.
+ */
+export interface ConnectionReadFailure {
+  /** Verbatim, from the rejected fetch. Never paraphrased, never a friendly
+   *  string — the difference between a 502 from nginx and a JSON parse error
+   *  is the whole diagnostic. */
+  read_error: string;
+}
+
+/** What a card hands a row function: the facts, nothing yet (`null`), or the
+ *  reason the read failed. */
+export type Read<F> = F | ConnectionReadFailure | null;
+
+/**
+ * Narrows a `Read<F>` to the failure arm.
+ *
+ * Throws on a failure carrying nothing to print, rather than rendering an
+ * empty reason under a "READ FAILED" chip — a row that says the read failed
+ * and then says nothing about how is the same shape of defect as READING…
+ * forever, one word further along (N1).
+ */
+export function isReadFailure(x: unknown): x is ConnectionReadFailure {
+  if (typeof x !== "object" || x === null || !("read_error" in x)) return false;
+  const reason = (x as { read_error: unknown }).read_error;
+  if (typeof reason !== "string" || reason.trim() === "") {
+    throw new Error(
+      `a connection read failure carried no reason to print: read_error=${JSON.stringify(reason)}`,
+    );
+  }
+  return true;
+}
+
+/**
+ * The row for a connection whose facts are not in hand — the two states that
+ * share that description and must NOT share a sentence.
+ *
+ * `readError === null` is "the fetch is in flight". Anything else is "the
+ * fetch came back and it came back broken", which is amber and says why.
+ */
+function unreadSummary(
+  base: { id: string; title: string; what: string },
+  readError: string | null,
+  loadingHealth: string,
+): ConnectionSummary {
+  if (readError === null) {
+    return {
+      ...base,
+      state: "unknown",
+      stateLabel: "READING…",
+      identity: "not read yet",
+      health: loadingHealth,
+      action: "Loading…",
+    };
+  }
+  return readFailedSummary(base, readError);
+}
+
+/** The row for a read that came back broken. Its own function because the
+ *  Gemini key row reaches it without passing through `unreadSummary` — that
+ *  row's waiting state is spelled differently and predates this rule. */
+function readFailedSummary(
+  base: { id: string; title: string; what: string },
+  readError: string,
+): ConnectionSummary {
+  return {
+    ...base,
+    state: "unknown",
+    stateLabel: "UNKNOWN — READ FAILED",
+    identity: "not read — this browser could not reach forge-control",
+    // VERBATIM, for the same reason R58 is verbatim: "could not load" does not
+    // tell Konrad whether forge-control is down, the proxy is unauthenticated
+    // or the route 500s.
+    health:
+      `Nothing on this row is a measurement — the browser could not read this connection's ` +
+      `status at all, so this is not a statement about the connection. The read failed with, ` +
+      `verbatim: ${readError}`,
+    action:
+      "Reload the page. If it keeps failing, forge-control is not answering " +
+      "/api/integrations/connections on this box — check `pm2 logs forge-control`.",
+  };
+}
+
 export interface ConnectionClock {
   /** Epoch ms. Passed in rather than read inside, so this layer is pure and a
    *  fixture can sit a record on either side of the staleness boundary. */
@@ -429,20 +526,15 @@ export interface GoogleFacts {
 }
 
 export function googleConnection(
-  f: GoogleFacts | null,
+  f: Read<GoogleFacts>,
   nowMs: number = Date.now(),
 ): ConnectionSummary {
-  if (f === null) {
-    return {
-      id: GOOGLE_COPY.id,
-      title: GOOGLE_COPY.title,
-      what: GOOGLE_COPY.what,
-      state: "unknown",
-      stateLabel: "READING…",
-      identity: "not read yet",
-      health: "Loading the persisted status.",
-      action: "Loading…",
-    };
+  if (f === null || isReadFailure(f)) {
+    return unreadSummary(
+      { id: GOOGLE_COPY.id, title: GOOGLE_COPY.title, what: GOOGLE_COPY.what },
+      f === null ? null : f.read_error,
+      "Loading the persisted status.",
+    );
   }
 
   const summary = summaryFromStatus(GOOGLE_COPY, f.status, {
@@ -489,20 +581,15 @@ export interface AgyFacts {
 }
 
 export function agyConnection(
-  f: AgyFacts | null,
+  f: Read<AgyFacts>,
   nowMs: number = Date.now(),
 ): ConnectionSummary {
-  if (f === null) {
-    return {
-      id: AGY_COPY.id,
-      title: AGY_COPY.title,
-      what: AGY_COPY.what,
-      state: "unknown",
-      stateLabel: "READING…",
-      identity: "not read yet",
-      health: "Loading the persisted status.",
-      action: "Loading…",
-    };
+  if (f === null || isReadFailure(f)) {
+    return unreadSummary(
+      { id: AGY_COPY.id, title: AGY_COPY.title, what: AGY_COPY.what },
+      f === null ? null : f.read_error,
+      "Loading the persisted status.",
+    );
   }
   return summaryFromStatus(AGY_COPY, f.status, {
     nowMs,
@@ -539,20 +626,15 @@ export interface GithubFacts {
 }
 
 export function githubConnection(
-  f: GithubFacts | null,
+  f: Read<GithubFacts>,
   nowMs: number = Date.now(),
 ): ConnectionSummary {
-  if (f === null) {
-    return {
-      id: GITHUB_COPY.id,
-      title: GITHUB_COPY.title,
-      what: GITHUB_COPY.what,
-      state: "unknown",
-      stateLabel: "READING…",
-      identity: "not read yet",
-      health: "Loading the persisted status.",
-      action: "Loading…",
-    };
+  if (f === null || isReadFailure(f)) {
+    return unreadSummary(
+      { id: GITHUB_COPY.id, title: GITHUB_COPY.title, what: GITHUB_COPY.what },
+      f === null ? null : f.read_error,
+      "Loading the persisted status.",
+    );
   }
   return summaryFromStatus(GITHUB_COPY, f.status, {
     nowMs,
@@ -564,12 +646,18 @@ export function geminiKeyConnection(
   present: boolean | null,
   masked: string | null,
   verdict: { ok: boolean; message?: string } | null,
+  /** The reason `GET /integrations/gemini` rejected, if it did. Optional and
+   *  last so every existing caller is unchanged; supplied, it is the same rule
+   *  the other four rows follow — a read that failed says so instead of
+   *  sitting at "Loading…" for as long as the tab is open. */
+  readError: string | null = null,
 ): ConnectionSummary {
   const base = {
     id: "gemini-key",
     title: "Gemini API key",
     what: "An AI Studio key, billed to its Cloud project. The higher-quality opt-in beside the free Gemini Pool — not a way into the Ultra subscription.",
   };
+  if (present === null && readError !== null) return readFailedSummary(base, readError);
   if (present === null) {
     return {
       ...base,
@@ -646,7 +734,7 @@ const ULTRA_COPY: ConnectionCopy = {
  */
 export function ultraConnection(
   t: GeminiTally | undefined,
-  agy: AgyFacts | null,
+  agy: Read<AgyFacts>,
   nowMs: number = Date.now(),
 ): ConnectionSummary {
   const base = {
@@ -654,17 +742,18 @@ export function ultraConnection(
     title: ULTRA_COPY.title,
     what: ULTRA_COPY.what,
   };
-  if (agy === null) {
-    return {
-      ...base,
-      state: "unknown",
-      stateLabel: "READING…",
-      identity: "not read yet",
-      health: t
+  // Reading, or a read that failed — this row inherits both from the SAME agy
+  // status its neighbour reads, which is the point of it having no state of
+  // its own. Before R5-gate item 3 it inherited only the first of the two and
+  // sat at READING… beside a dead API for as long as the tab was open.
+  if (agy === null || isReadFailure(agy)) {
+    return unreadSummary(
+      base,
+      agy === null ? null : agy.read_error,
+      t
         ? `Waiting for the agy connection status. ${t.auth_note}`
         : "Waiting for the agy connection status.",
-      action: "Loading…",
-    };
+    );
   }
 
   const summary = summaryFromStatus(ULTRA_COPY, agy.status, {
