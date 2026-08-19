@@ -615,3 +615,42 @@ below is inside B1a's or B1b's declared write set, or is named in the reviewer's
 **Blocker 2 of the re-review is not actionable by this lane** and nothing was done to it: `/opt/forge-ai-os`
 carries a Goals/daily-surface build applied outside a worktree. The vault workstream has no authority
 over that tree and the worktree-only policy forbids touching it. Reported to the manager chat.
+
+### 10.6 Undeclared writes — round 11, phase 2 fix cycle 1 (task `R2-fix`), disclosed here
+
+This round's declared `write_set` was `docs/plan/artifacts/os-usable-for-work/phase2/gate-verdict.md`
+— the **phase-2 gating reviewer's own report file**, inherited by the fix-cycle row exactly as §10.2
+and §10.3 describe for phase 1. It is the reviewer's to write, not the builder's, and it was **not
+touched**. Audit this round against R2-gate's two numbered blockers and against the phase-2 builder
+rows they name (`bd47e519`, `c6b7e49e`), per `03-quality.md` §3.5.
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control-web/app/layout.tsx` | `bd47e519` (B2c) | blocker 1 — the `<head>` comment's word "spent" trips `dollar-sweep.sh`'s `\bspen[dt]` primary gate. Reworded to "…is a DNS + TLS handshake **for** nothing." One word; no allowlist widened, per that gate's own standing rule |
+| `docs/plan/artifacts/os-usable-for-work/phase2/graph-after.png` | `c6b7e49e` (B2e) | blocker 2 — R36's literal test is a committed PNG. Retaken this round rather than copied from round 10's upload, so the image and the assertion transcript that vouches for it come from one run |
+| `docs/plan/artifacts/os-usable-for-work/phase2/graph-empty-state.png` | `c6b7e49e` (B2e) | blocker 2 — declared by that row and never produced. R35's empty case, forced live |
+| `docs/plan/artifacts/os-usable-for-work/phase2/graph-report.md` | `c6b7e49e` (B2e) | blocker 2 — same; the recipe, the three states and the blast-radius checks |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | this subsection, in the same commit as the writes it discloses |
+
+**R35's live-exercise gap is closed, not restated.** `editor-browser-proof.md` §8 named it unproven;
+`graph-report.md` §2 walks one build through **292 → 0 → 292 nodes drawn** by `UPDATE`-ing the `links`
+column of a per-run scratch copy of `hcp.knowledge_note`, so the empty panel is proven to appear *and*
+to clear. State 3 is what rules out an empty state that latches.
+
+**The two write-set bookkeeping findings (R2-gate §7, folded items 3 and 4) are recorded here and the
+task rows are NOT amended.** `bd47e519`'s declared set omits
+`forge-control-web/app/desktop/MemorySurface.tsx`, which its own run committed at `5fc2367`; `5667b6d3`'s
+omits `…/phase2/before-fonts-blocked-note-view.png`, produced by `23531f6`. Both files are squarely
+inside the subject matter of the row that wrote them and neither is a scope violation. The operator has
+ruled (`AI OS/Operator Decisions.md`, *"A ledger you may edit after the fact stops being evidence"*)
+that a `done` row's `write_set` is never amended retroactively: it records what a task **declared**, the
+commit records what it **wrote**, and the gap between them is the only signal that a fold or a collision
+happened. Erasing the gap deletes the finding. Both are therefore disclosed here — which is the place
+this project consults — and left in the ledger as they stand.
+
+**Cause, so it stops recurring:** both gaps come from the fold mechanism. Retiring a sub-task's row into
+a sibling's execution moves the *work* but not the *declaration*, so the executing row's `write_set`
+goes stale the moment the fold happens. A folded row's declared artefacts can also simply never be
+produced — `c6b7e49e`'s three were exactly that, and blocker 2 is the bill. Whoever folds a row should
+check the absorbing row's declaration against the folded row's the same day, and treat the folded row's
+declared artefacts as a to-do list, not as a description of something that exists.

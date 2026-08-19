@@ -46,7 +46,7 @@ export default function RootLayout({
             stylesheet that never resolves is browser-harness.md §5 Failure 4:
             DOMContentLoaded never fires, page.goto times out, and a live surface
             is reported dead. A preconnect to a host nothing requests is a DNS +
-            TLS handshake spent on nothing. */}
+            TLS handshake for nothing. */}
         {/* Apply the stored theme BEFORE first paint — otherwise a light-mode
             user eats a black flash on every navigation. Inline and blocking on
             purpose: it's three lines and must run before the body renders. */}
