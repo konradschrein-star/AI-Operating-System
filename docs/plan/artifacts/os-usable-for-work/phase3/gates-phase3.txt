@@ -1,0 +1,736 @@
+================================================================================
+ PHASE 3 — FIX CYCLE 1 (round 3): the full gate evidence, verbatim
+ repo:      /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--surfaces
+ branch:    project/7851068b-surfaces
+ HEAD:      0361c4ab1c0efcb499eaeef601ffba14ccd72912   (the tip this round STARTED from)
+ date:      2026-08-18T22:33:43+02:00
+ BUILD_ID:  j7oko4kbe02sH9MQBKqMb   (at the end of this transcript)
+ BUILD_ID:  X7kY007mygqP7FcjEn6bM   (the build the browser evidence was taken against)
+================================================================================
+
+WHAT THIS ROUND CHANGED, AND WHY THE TRANSCRIPT IS LONGER THAN ROUND 2's
+
+  Round 2's gate returned NEEDS_FIXES with four findings. Two are fixed in code
+  here (findings 3 and 4); two are not this lane's to execute (findings 1 and 2)
+  and are argued in gate-verdict.md beside this file. Everything below is the
+  evidence for the two that are.
+
+  READ THIS FIRST — GATE 18 IS RED IN THE FIRST RUN AND GREEN IN THE SECOND,
+  and the difference is one environment variable, so it is stated up front
+  rather than buried:
+
+    Part 2  bash scripts/checks/gates-808.sh --strict                 → RED: 1 (gate 18)
+    Part 3  USAGE_FOLD_DB=r1354_sampler_surfaces  … same command      → RED: 0
+
+  check-usage-fold.ts takes its scratch database from USAGE_FOLD_DB and DEFAULTS
+  to the single fixed name 'r1354_sampler' (scripts/checks/check-usage-fold.ts:106),
+  and it issues 'TRUNCATE runs, spend_log, usage_hourly' between fixtures (:279).
+  Five lanes of this project run their gates concurrently on this host. Two of
+  them inside that check at once truncate each other's fixtures mid-assertion.
+  That is the whole mechanism, and it is visible in the source rather than
+  inferred: a fixed name plus a TRUNCATE is a collision waiting for a second
+  caller. Part 4 runs the same check ALONE, unchanged and with no env override:
+  ALL PASS, 36 assertions. This lane's diff touches no SQL, no route and no
+  forge-control file (see git diff --stat in Part 1), so it cannot have caused a
+  usage-fold failure by any path.
+
+  This is a real finding about the gate, not an excuse for it, and gate-verdict.md
+  files it as one with the one-line fix.
+
+################################################################################
+# PART 1 — the diff this round is accountable for
+################################################################################
+$ git diff --stat
+ .../os-usable-for-work/phase3/gates-phase3.txt     | 404 ++-------------------
+ .../os-usable-for-work/phase3/verify-phase3.cjs    |  26 +-
+ forge-control-web/app/desktop/DesktopApp.tsx       |   2 +-
+ 3 files changed, 59 insertions(+), 373 deletions(-)
+
+$ git status --porcelain
+ M docs/plan/artifacts/os-usable-for-work/phase3/gates-phase3.txt
+ M docs/plan/artifacts/os-usable-for-work/phase3/verify-phase3.cjs
+ M forge-control-web/app/desktop/DesktopApp.tsx
+?? docs/plan/artifacts/os-usable-for-work/phase3/gate-goals.png
+?? docs/plan/artifacts/os-usable-for-work/phase3/gate-library.png
+?? docs/plan/artifacts/os-usable-for-work/phase3/gate-nav-390.png
+?? docs/plan/artifacts/os-usable-for-work/phase3/live-checkout-dirt-AssistantThread.patch
+
+################################################################################
+# PART 2 — gates-808.sh --strict, exactly as the brief mandates it
+################################################################################
+================================================================================
+ ROUND 808 — UNIVERSAL GATES, verbatim
+ repo:   /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--surfaces
+ branch: project/7851068b-surfaces
+ HEAD:   0361c4ab1c0efcb499eaeef601ffba14ccd72912
+ date:   2026-08-18T22:29:57+02:00
+================================================================================
+
+WORKING-COPY STATE AT THE TOP OF THIS RUN (read this before the gates):
+ M docs/plan/artifacts/os-usable-for-work/phase3/verify-phase3.cjs
+ M forge-control-web/app/desktop/DesktopApp.tsx
+?? docs/plan/artifacts/os-usable-for-work/phase3/gate-goals.png
+?? docs/plan/artifacts/os-usable-for-work/phase3/gate-library.png
+?? docs/plan/artifacts/os-usable-for-work/phase3/gate-nav-390.png
+?? docs/plan/artifacts/os-usable-for-work/phase3/live-checkout-dirt-AssistantThread.patch
+
+NOTE: five sibling tasks of this project write in this same worktree
+concurrently. Round 808's OWN commits are the only thing it claims; the
+browser evidence was captured against an isolated 'git archive' of them
+(see docs/plan/artifacts/phase800/README §8), not against this working copy.
+
+########## GATE 1 — npx tsc --noEmit — forge-control ##########
+$ cd forge-control && npx tsc --noEmit
+
+
+EXIT=0
+
+########## GATE 2 — npx tsc --noEmit — forge-control-web ##########
+$ cd forge-control-web && npx tsc --noEmit
+
+
+EXIT=0
+
+########## GATE 3 — NODE_ENV=production pnpm build — forge-control-web ##########
+$ cd forge-control-web && NODE_ENV=production pnpm build 2>&1 | grep -E 'Compiled|Route \(app\)|Failed|Error' | head -5
+
+ ✓ Compiled successfully
+Route (app)                              Size     First Load JS
+
+EXIT=0
+
+########## GATE 4 — token purity — round 808's own files ##########
+$ grep -rnE '#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\('      docs/plan/artifacts/phase800/psql-argv-leak.cjs      docs/plan/artifacts/phase800/nav-walk-sampling.cjs      docs/plan/artifacts/phase600/nav-walk.cjs      scripts/checks/check-working-sql-agreement.ts      scripts/checks/gates-808.sh      scripts/checks/dollar-allowlist.txt      README.md    && { echo '>>> UNLISTED COLOUR LITERAL'; exit 1; } || { echo 'CLEAN — zero colour literals'; exit 0; }
+
+CLEAN — zero colour literals
+
+EXIT=0
+
+########## GATE 5 — no-raw-colours.cjs (whole app) ##########
+$ node scripts/checks/no-raw-colours.cjs
+
+── 46 KNOWN DEBT hit(s): pre-existing literals, not this gate's fault and not silently forgiven ──
+  forge-control-web/app/MobileApp.tsx  (3)  → TODO: 3 hits — `#fff` text, `#000` background, and a white-alpha row wash. Mobile surface, outside this phase.
+      :308  #fff
+      :685  #000
+      :738  rgba(255,255,255,0.02)
+  forge-control-web/app/_components/GlassCard.tsx  (2)  → TODO: 2 hits — white-alpha fill and border. The whole glass effect assumes a dark backdrop; in light mode it washes out rather than breaking.
+      :29  rgba(255, 255, 255, 0.04)
+      :32  rgba(255, 255, 255, 0.09)
+  forge-control-web/app/desktop/DesktopApp.tsx  (6)  → TODO: 6 hits — the CommandPalette overlay/panel (`rgba(0,0,0,0.6)`, `#0c0c0e`) and the InboxRichPreview video/scene-thumb chrome (`#000`, `rgba(0,0,0,0.6)`, `#fff`, `rgba(255,255,255,0.02)`). Round 808 fixed the `#141417` active-nav background (now `tokens.selectedBg`, same token InboxSurface already uses for a selected row) — see contrast-nav-rail.cjs for the before/after. These 6 remain: separate blocks, not this round's brief.
+      :1347  rgba(0,0,0,0.6)
+      :1360  #0c0c0e
+      :2153  #000
+      :2205  rgba(0,0,0,0.6)
+      :2206  #fff
+      :2225  rgba(255,255,255,0.02)
+  forge-control-web/app/desktop/MemorySurface.tsx  (8)  → TODO: 8 hits — `#141417` selected-source/row backgrounds (same defect as DesktopApp's) plus near-black card and inset surfaces on the memory panels.
+      :207  #141417
+      :233  #141417
+      :813  #0e0c14
+      :848  #0a1316
+      :849  #16323a
+      :918  #0e0c14
+      :919  #221d33
+      :960  #0a0a0c
+  forge-control-web/app/desktop/ProjectsSurface.tsx  (2)  → TODO: 2 hits — a white-alpha row wash and a `#0b0b0d` card background.
+      :488  rgba(255,255,255,0.02)
+      :614  #0b0b0d
+  forge-control-web/app/desktop/SkillsSurface.tsx  (4)  → TODO: 4 hits — an amber `#fbbf24` badge and its `rgba(251,191,36,0.45)` border, twice. Closest existing token is `warn`; needs a look at the badge in both themes, not a blind swap.
+      :296  #fbbf24
+      :297  rgba(251,191,36,0.45)
+      :456  #fbbf24
+      :457  rgba(251,191,36,0.45)
+  forge-control-web/app/desktop/_ui/Toasts.tsx  (1)  → TODO: 1 hit — `rgba(0,0,0,0.35)` drop shadow. Shadow-only, cosmetic.
+      :140  rgba(0,0,0,0.35)
+  forge-control-web/app/desktop/chat/SlashPopover.tsx  (2)  → TODO: 2 hits — the popover's drop shadow and its white-alpha inset highlight. Shadow-only; the least harmful of the set.
+      :123  rgba(0,0,0,0.55)
+      :123  rgba(255,255,255,0.04)
+  forge-control-web/app/globals.css  (2)  → TODO: 2 hits — `background: #000` / `color: #ededee` on html,body. Currently INERT: theme.css re-declares both against `var(--fg-*)` and wins on order. Delete them when someone is in the file; they are a trap for the next reader, not a live bug.
+      :11  #000
+      :12  #ededee
+  forge-control-web/app/v2.css  (16)  → TODO: ~20 non-definition literals in v2.css rule bodies (`color: #fff`, `background: rgba(0,0,0,0.3)`, white-alpha insets, an inline SVG chevron with a baked-in accent). theme.css already re-declares v2's SURFACE variables for light; these direct values are what it could not reach.
+      :86  rgba(255,255,255,0.07)
+      :87  rgba(0,0,0,0.5)
+      :92  rgba(0,0,0,0.5)
+      :108  #fff
+      :125  rgba(255,255,255,0.25)
+      :276  rgba(255,255,255,0.2)
+      :304  rgba(255,255,255,0.06)
+      :320  rgba(0,0,0,0.45)
+      :332  rgba(0, 0, 0, 0.3)
+      :344  rgba(0, 0, 0, 0.4)
+      :356  rgba(0, 0, 0, 0.3)
+      :357  rgba(91,141,239,0.6)
+      :363  #e5e2e1
+      :375  rgba(0, 0, 0, 0.4)
+      :386  #1a1a1a
+      :387  #e5e2e1
+
+no-raw-colours: PASS — 222 literal(s) across 14 file(s), all accounted for (176 legitimate, 46 known debt, 0 unlisted).
+
+EXIT=0
+
+########## GATE 6 — forbidden-file diff — three-dot main...HEAD ##########
+$ git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\.ts|db/projects|VaultFileList|routes/files'    && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }
+
+clean — no engine/Files file differs
+
+EXIT=0
+
+########## GATE 7 — forge-control/ untouched by round 808's own commits ##########
+$ changed=$(git diff --name-only 7b961b5..HEAD -- forge-control/ | wc -l);    echo "forge-control/ files in 7b961b5..HEAD: $changed";    git diff --name-only 7b961b5..HEAD -- forge-control/;    echo '(round 808 authored none of these; any listed file is a sibling task on the same branch)';    exit 0
+
+forge-control/ files in 7b961b5..HEAD: 47
+forge-control/scripts/probe-usage-router.ts
+forge-control/src/db/projects.ts
+forge-control/src/index.ts
+forge-control/src/lib/cc-runner.test.ts
+forge-control/src/lib/cc-runner.ts
+forge-control/src/lib/cp2-reconciler-interaction.test.ts
+forge-control/src/lib/cp3-linkage.test.ts
+forge-control/src/lib/dismissals.test.ts
+forge-control/src/lib/dismissals.ts
+forge-control/src/lib/fixtures/replay-operator-visibility.json
+forge-control/src/lib/fixtures/replay-operator-visibility.md
+forge-control/src/lib/fixtures/schedule-truncated-4.json
+forge-control/src/lib/migrations.test.ts
+forge-control/src/lib/plan-corpus.test.ts
+forge-control/src/lib/plan-corpus.ts
+forge-control/src/lib/project-reconcile.test.ts
+forge-control/src/lib/project-reconcile.ts
+forge-control/src/lib/project-tick.test.ts
+forge-control/src/lib/project-tick.ts
+forge-control/src/lib/r1871-subagent-recovery.test.ts
+forge-control/src/lib/run-control-rules.test.ts
+forge-control/src/lib/run-control-rules.ts
+forge-control/src/lib/schedule-metrics.test.ts
+forge-control/src/lib/schedule-metrics.ts
+forge-control/src/lib/schedule-source.test.ts
+forge-control/src/lib/schedule-source.ts
+forge-control/src/lib/source-hygiene.test.ts
+forge-control/src/lib/task-graph-replay.test.ts
+forge-control/src/lib/task-graph.test.ts
+forge-control/src/lib/task-graph.ts
+forge-control/src/lib/uploads-index.test.ts
+forge-control/src/lib/uploads-index.ts
+forge-control/src/lib/usage-sampler.test.ts
+forge-control/src/lib/usage-sampler.ts
+forge-control/src/lib/workspace.ts
+forge-control/src/routes/agents-shared.ts
+forge-control/src/routes/agents.ts
+forge-control/src/routes/capabilities.ts
+forge-control/src/routes/chat-linkage.ts
+forge-control/src/routes/chat.ts
+forge-control/src/routes/integrations.ts
+forge-control/src/routes/projects.ts
+forge-control/src/routes/run-control.ts
+forge-control/src/routes/secrets.ts
+forge-control/src/routes/tasks.ts
+forge-control/src/routes/uploads.ts
+forge-control/src/routes/usage.ts
+(round 808 authored none of these; any listed file is a sibling task on the same branch)
+
+EXIT=0
+
+########## GATE 8 — dollar-sweep.sh ##########
+$ bash scripts/checks/dollar-sweep.sh | tail -6
+
+ALLOWLISTED  forge-control-web/app/desktop/DesktopApp.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/AutomationSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/ChatSurface.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+ALLOWLISTED  forge-control-web/app/desktop/chat/BrowserShots.tsx  (false positive — no \bspen[dt]-anchored hit; matches only via a substring like isPending)
+
+dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.
+
+EXIT=0
+
+########## GATE 9 — check-composer-v3.ts ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-composer-v3.ts | tail -3
+
+PASS  an unknown level still falls to the calm rung rather than throwing
+
+OK — 9 clamp cases + ramp table clean
+
+EXIT=0
+
+########## GATE 10 — check-secret-requests.ts ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-secret-requests.ts | tail -3
+
+PASS  capNote does not interpret markup — it returns the raw characters
+
+ALL PASS
+
+EXIT=0
+
+########## GATE 11 — contrast-canvas-banners.cjs ##########
+$ node scripts/checks/contrast-canvas-banners.cjs
+
+CanvasPane error banners — WCAG contrast, before → after
+
+banner     theme  BEFORE (literal)          ratio      AFTER (token)                ratio      
+----------------------------------------------------------------------------------------------------------------
+conflict   dark   #ffd8a8 on #5c3a0033        14.50:1  warn on freezeBgWarn           10.71:1  PASS
+conflict   light  #ffd8a8 on #5c3a0033         1.13:1  warn on freezeBgWarn            4.71:1  PASS
+error      dark   #ffa8a8 on #5c000033        11.13:1  bleed on dangerActionBg         5.16:1  PASS
+error      light  #ffa8a8 on #5c000033         1.12:1  bleed on dangerActionBg         5.09:1  PASS
+watchErr   dark   #ffd8a8 on #5c3a0033        14.50:1  warn on freezeBgWarn           10.71:1  PASS
+watchErr   light  #ffd8a8 on #5c3a0033         1.13:1  warn on freezeBgWarn            4.71:1  PASS
+
+BEFORE composited over bgBody (round 804's surface, so its published numbers reproduce).
+AFTER over bgCard, the pane's real parent; also checked over bgBody (10.71:1, 4.71:1, 5.16:1, 5.09:1, 10.71:1, 4.71:1).
+Target 4.5:1 in BOTH themes.
+
+PASS — all 6 banner/theme combinations clear 4.5:1.
+
+EXIT=0
+
+########## GATE 12 — check-working-sql-agreement.ts — standalone typecheck (the file round 808 changed) ##########
+$ cd forge-control && npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler      --lib ES2022 --strict --skipLibCheck --allowImportingTsExtensions --isolatedModules --types node      ../scripts/checks/check-working-sql-agreement.ts
+
+
+EXIT=0
+
+########## GATE 13 — check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does ##########
+$ cd forge-control-web && ../forge-control/node_modules/.bin/tsx      --tsconfig ../tsconfig.checks.json ../scripts/checks/check-stop-affordance.tsx | tail -3
+
+PASS  no colour literal in the rendered row
+
+ALL PASS — stop affordance
+
+EXIT=0
+
+########## GATE 14 — check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces ##########
+$ cd forge-control-web && ../forge-control/node_modules/.bin/tsx      --tsconfig ../tsconfig.checks.json ../scripts/checks/check-dismiss-peek.tsx | tail -3
+
+PASS  the team panel's reading names the Live panel
+
+ALL PASS — dismissal peek affordance
+
+EXIT=0
+
+########## GATE 15 — check-team-rows.ts — flatten, hiddenRows, frozen time ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-rows.ts | tail -2
+
+
+ALL PASS — team row model
+
+EXIT=0
+
+########## GATE 16 — check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all) ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2
+
+
+ALL PASS — team confirm machine
+
+EXIT=0
+
+########## GATE 17 — verify-notification-gap-pins.mjs — fenced quotes + prose pins ##########
+$ node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2
+
+ALL PASS — 92/92 pins in docs/plan/notification-gap.md classified (11 fenced quotes, 12 prose, 4 live, 7 cross-doc, 32 repeat, 26 historical).
+Denominator = every `path.ext:NNN` and every bare `:NNN` citation in docs/plan/notification-gap.md, fenced or not. Outside it: pins carrying no line number, and other documents' pins into this one.
+
+EXIT=0
+
+########## GATE 18 — check-usage-fold.ts — hourly token fold, against a real Postgres ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-usage-fold.ts | tail -3
+
+NOTICE:  relation "runs" already exists, skipping
+NOTICE:  relation "spend_log" already exists, skipping
+NOTICE:  relation "spend_log_provider_created_idx" already exists, skipping
+NOTICE:  relation "usage_hourly" already exists, skipping
+                      Filter: (provider = 'claude-code'::text)
+
+6 FAILURE(S) — usage fold (scratch db: r1354_sampler)
+
+EXIT=1
+
+########## GATE 19 — check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig) ##########
+$ cd forge-control && npx tsc --noEmit --target ES2022 --module ESNext --moduleResolution bundler      --lib ES2022 --strict --skipLibCheck --allowImportingTsExtensions --isolatedModules --types node      ../scripts/checks/check-usage-fold.ts
+
+
+EXIT=0
+
+########## GATE 20 — pnpm test — forge-control unit suite ##########
+$ cd forge-control && pnpm test 2>&1 | grep -E '^# (tests|pass|fail)'
+
+# tests 1293
+# pass 1293
+# fail 0
+
+EXIT=0
+
+########## GATE 21 — psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard ##########
+$ node docs/plan/artifacts/phase800/psql-argv-leak.cjs | tail -4
+
+psql: error: connection to server at "127.0.0.1", port 59997 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+psql: error: connection to server at "127.0.0.1", port 59997 failed: Connection refused
+	Is the server running on that host and accepting TCP/IP connections?
+
+ALL PASS — 23 checks → /tmp/phase800-out/psql-argv-leak.json
+      committed evidence left untouched (/opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--surfaces/docs/plan/artifacts/phase800/psql-argv-leak.json)
+      re-record in place with:  node /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--surfaces/docs/plan/artifacts/phase800/psql-argv-leak.cjs --write
+
+EXIT=0
+
+########## GATE 22 — nav-walk-sampling.cjs — round 807 finding 4, the arithmetic ##########
+$ node docs/plan/artifacts/phase800/nav-walk-sampling.cjs | tail -4
+
+
+ALL PASS — 11 checks → /tmp/phase800-out/nav-walk-sampling.json
+      committed evidence left untouched (/opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--surfaces/docs/plan/artifacts/phase800/nav-walk-sampling.json)
+      re-record in place with:  node /opt/ai-os/workspace/projects/7851068b-32d7-469b-b42f-f5e3c1d9e83a--surfaces/docs/plan/artifacts/phase800/nav-walk-sampling.cjs --write
+
+EXIT=0
+
+########## GATE 23 — phase700/network-700.cjs (NFU3) ##########
+SKIPPED — browser harness not requested (--browser); run separately, results in README §8
+
+########## GATE 24 — phase600/nav-walk.cjs — P1/P2/P3 ##########
+SKIPPED — browser harness not requested (--browser); run separately, results in README §8
+
+########## GATE 25 — reproduce-cleanliness — re-running a protocol leaves the tree untouched ##########
+$ before=$(git status --porcelain | md5sum);    node docs/plan/artifacts/phase800/psql-argv-leak.cjs >/dev/null 2>&1;    node docs/plan/artifacts/phase800/nav-walk-sampling.cjs >/dev/null 2>&1;    after=$(git status --porcelain | md5sum);    echo "before: $before"; echo "after:  $after";    [ "$before" = "$after" ] && { echo 'PASS — tree untouched'; exit 0; } || { echo 'FAIL — tree changed'; exit 1; }
+
+before: 94bf6a541100bb9408546b30bcf89fa8  -
+after:  94bf6a541100bb9408546b30bcf89fa8  -
+PASS — tree untouched
+
+EXIT=0
+
+================================================================================
+ SUMMARY — 25 gates
+================================================================================
+ 1  0      npx tsc --noEmit — forge-control
+ 2  0      npx tsc --noEmit — forge-control-web
+ 3  0      NODE_ENV=production pnpm build — forge-control-web
+ 4  0      token purity — round 808's own files
+ 5  0      no-raw-colours.cjs (whole app)
+ 6  0      forbidden-file diff — three-dot main...HEAD
+ 7  0      forge-control/ untouched by round 808's own commits
+ 8  0      dollar-sweep.sh
+ 9  0      check-composer-v3.ts
+ 10 0      check-secret-requests.ts
+ 11 0      contrast-canvas-banners.cjs
+ 12 0      check-working-sql-agreement.ts — standalone typecheck (the file round 808 changed)
+ 13 0      check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does
+ 14 0      check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces
+ 15 0      check-team-rows.ts — flatten, hiddenRows, frozen time
+ 16 0      check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)
+ 17 0      verify-notification-gap-pins.mjs — fenced quotes + prose pins
+ 18 1      check-usage-fold.ts — hourly token fold, against a real Postgres
+ 19 0      check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig)
+ 20 0      pnpm test — forge-control unit suite
+ 21 0      psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard
+ 22 0      nav-walk-sampling.cjs — round 807 finding 4, the arithmetic
+ 23 -      phase700/network-700.cjs (NFU3) (SKIPPED)
+ 24 -      phase600/nav-walk.cjs — P1/P2/P3 (SKIPPED)
+ 25 0      reproduce-cleanliness — re-running a protocol leaves the tree untouched
+
+ RED: 1
+GATES_EXIT=1
+
+################################################################################
+# PART 3 — the same suite with a lane-private scratch database
+# $ USAGE_FOLD_DB=r1354_sampler_surfaces bash scripts/checks/gates-808.sh --strict
+################################################################################
+ SUMMARY — 25 gates
+================================================================================
+ 1  0      npx tsc --noEmit — forge-control
+ 2  0      npx tsc --noEmit — forge-control-web
+ 3  0      NODE_ENV=production pnpm build — forge-control-web
+ 4  0      token purity — round 808's own files
+ 5  0      no-raw-colours.cjs (whole app)
+ 6  0      forbidden-file diff — three-dot main...HEAD
+ 7  0      forge-control/ untouched by round 808's own commits
+ 8  0      dollar-sweep.sh
+ 9  0      check-composer-v3.ts
+ 10 0      check-secret-requests.ts
+ 11 0      contrast-canvas-banners.cjs
+ 12 0      check-working-sql-agreement.ts — standalone typecheck (the file round 808 changed)
+ 13 0      check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does
+ 14 0      check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces
+ 15 0      check-team-rows.ts — flatten, hiddenRows, frozen time
+ 16 0      check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)
+ 17 0      verify-notification-gap-pins.mjs — fenced quotes + prose pins
+ 18 0      check-usage-fold.ts — hourly token fold, against a real Postgres
+ 19 0      check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig)
+ 20 0      pnpm test — forge-control unit suite
+ 21 0      psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard
+ 22 0      nav-walk-sampling.cjs — round 807 finding 4, the arithmetic
+ 23 -      phase700/network-700.cjs (NFU3) (SKIPPED)
+ 24 -      phase600/nav-walk.cjs — P1/P2/P3 (SKIPPED)
+ 25 0      reproduce-cleanliness — re-running a protocol leaves the tree untouched
+
+ RED: 0
+GATES_EXIT=0
+
+################################################################################
+# PART 4 — gate 18's check alone, UNCHANGED and with NO env override
+################################################################################
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-usage-fold.ts
+          ->  Hash  (cost=8.93..8.93 rows=39 width=77)
+                ->  Index Scan using spend_log_created_at_idx on spend_log s2  (cost=0.15..8.93 rows=39 width=77)
+                      Index Cond: (created_at >= '2026-08-17 11:00:00+00'::timestamp with time zone)
+                      Filter: (provider = 'claude-code'::text)
+
+ALL PASS — usage fold (scratch db: r1354_sampler)
+EXIT=0
+
+################################################################################
+# PART 5 — the phase-3 checks
+################################################################################
+########## PHASE-3 CHECK A — check-phase3-placeholders.ts (R40) ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-phase3-placeholders.ts
+
+── the unbuilt set ─────────────────────────────────────────
+PASS  NAV marks exactly goals, journal, library, map
+PASS  …four of them, not more
+PASS  the exported constant is the same derivation, not a second list
+PASS  every marked key is a real NAV key
+PASS  every marked key is a real surface
+
+── and NOT on the built ones ───────────────────────────────
+PASS  TODAY is built and carries no marker
+PASS  INBOX is built and carries no marker
+PASS  CHAT is built and carries no marker
+PASS  TASKS is built and carries no marker
+PASS  PIPELINE is built and carries no marker
+PASS  MEMORY is built and carries no marker
+PASS  LIVE is built and carries no marker
+PASS  SETTINGS is built and carries no marker
+PASS  13 of the 17 NAV entries carry nothing at all
+PASS  SEARCH is not in NAV, so it cannot be marked — it is a different defect
+PASS  …though it is still a surface the app can be put into
+
+── every marked entry is reachable on a phone ──────────────
+PASS  all four are in the phone sheet's destinations
+PASS  …named: goals, journal, map, library
+
+── auditUnbuiltMarks(NAV) ──────────────────────────────────
+PASS  the real nav model is clean on all four counts
+
+── the flip: a BUILT key marked unbuilt is caught ──────────
+PASS  the fixture really is different from NAV
+PASS  …and the audit names TODAY
+PASS  …and does not invent a second complaint
+PASS  the whole audit, so a silent extra field cannot hide
+
+── the flip: PIPELINE, the built surface next to LIBRARY ───
+PASS  the audit names PIPELINE
+
+── the flip: an unbuilt key losing its marker is caught ────
+PASS  the audit names MAP
+PASS  …and nothing else
+PASS  …and LIBRARY, the one Konrad called empty
+
+── the flip: a marker the phone cannot reach is caught ─────
+PASS  the audit names JOURNAL
+PASS  …and still reports the set itself as correct
+
+── the flip: a marker on a non-surface is caught ───────────
+PASS  the audit names KANBAN as not a surface
+PASS  …and as unreachable on a phone
+
+── the real NAV is unchanged by all of the above ───────────
+PASS  no fixture mutated the imported model
+PASS  …and it still has 17 entries
+
+ALL PASS — phase 3 placeholders (R40)
+EXIT=0
+
+########## PHASE-3 CHECK B — check-r1873-fixes.ts ##########
+$ cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-r1873-fixes.ts
+PASS  18 destinations, no duplicates
+PASS  every destination the menu offers is a real surface
+
+ALL PASS — round 1873 fixes
+EXIT=0
+
+########## PHASE-3 CHECK C — no-raw-colours.cjs ##########
+$ node scripts/checks/no-raw-colours.cjs
+      :387  #e5e2e1
+
+no-raw-colours: PASS — 222 literal(s) across 14 file(s), all accounted for (176 legitimate, 46 known debt, 0 unlisted).
+EXIT=0
+
+################################################################################
+# PART 6 — FINDING 3: the /signin diagnostic, both branches proven reachable
+################################################################################
+
+  BEFORE (round 2, reviewer finding 3): the wait sat at the call site ABOVE the
+  wall assertion, so a bad cookie died at `Timeout 30000ms exceeded — waiting for
+  locator('nav')` after 30 seconds and the salt paragraph never printed.
+  AFTER: the wall assertion runs first and the wait moved INSIDE assertPastTheWall,
+  after it. Three call sites carried the same ordering, not the one the reviewer
+  named: verify-phase3.cjs:331, :496 and :550.
+
+  CONTROL A — a garbage cookie. The salt diagnostic must print, and fast.
+  $ echo "garbage-not-a-jwt" > /tmp/session-cookie-GARBAGE.txt
+  $ FORGE_RUN_ID=… BASE_URL=http://127.0.0.1:7786 COOKIE_FILE=/tmp/session-cookie-GARBAGE.txt \
+      node docs/plan/artifacts/os-usable-for-work/phase3/verify-phase3.cjs
+
+    preflight: http://127.0.0.1:7786/desktop → 307 (anonymous — the wall is up)
+    FAILED: Error: [initial load @1280x800] landed on http://127.0.0.1:7786/signin —
+    NOT past the auth wall. First suspect: the JWE salt. This run used
+    COOKIE_NAME=authjs.session-token (salt must equal the cookie name). The throwaway
+    http server takes "authjs.session-token"; a server with an https AUTH_URL takes
+    "__Secure-authjs.session-token". Then check AUTH_SECRET and maxAge.
+        at assertPastTheWall (…/verify-phase3.cjs:200:11)
+    CONTROL_EXIT=1  elapsed=1s
+
+  1 second, not 30 — the wall is now decided before anything waits on the DOM.
+  Exit 1, no screenshots written, no PASS line: the safety property is unchanged.
+
+  CONTROL B — the SECOND guard must still be reachable. Folding the wait into the
+  function could have made the "did not mount" branch dead code, which would be a
+  new defect hiding behind a fixed one. Proven against a COPY in /tmp so the real
+  harness is untouched (mountSelector → 'nav#this-element-does-not-exist',
+  timeoutMs default 30_000 → 4_000):
+
+    FAILED: Error: [initial load @1280x800] no visible "nav#this-element-does-not-exist"
+    at http://127.0.0.1:7786/desktop after 4000ms — the desktop shell did not mount.
+    Playwright: page.waitForSelector: Timeout 4000ms exceeded.
+        at assertPastTheWall (/tmp/canary-mount.cjs:210:11)
+    CANARY elapsed=5s
+
+  Both branches fire, and each names its own cause.
+
+################################################################################
+# PART 7 — the harness itself, authed, against the build carrying finding 4's fix
+################################################################################
+
+  $ cd forge-control-web && pnpm install --frozen-lockfile --prod=false
+      → Lockfile is up to date / Already up to date / Done in 985ms using pnpm v9.15.9
+      → typescript 5.7.2   next 15.1.3   next-auth 5.0.0-beta.25   (verified positively,
+        under NODE_ENV=production; neither '- typescript' nor '+ typescript' printed)
+  $ pnpm build                       → BUILD_ID X7kY007mygqP7FcjEn6bM
+  $ setsid env AUTH_URL=http://127.0.0.1:7786 … next start -p 7786
+  $ curl … /desktop  (anonymous)     → 307 http://127.0.0.1:7786/signin
+  $ curl … /desktop  (minted cookie) → 200, and the served HTML carries X7kY007mygqP7FcjEn6bM
+  $ curl … /desktop  (garbage cookie)→ 307 http://127.0.0.1:7786/signin
+
+  FINDING 4 — the old copy must be GONE from what is served, not merely edited:
+  $ grep -rl "423 files" .next/            → 3 hits, ALL of them .next/cache/webpack/*.pack
+  $ grep -rl "423 files" .next/ | grep -v '^\.next/cache/'
+                                           → NONE — the old copy exists only in the build cache
+  $ grep -rl "measured 2026-08-18" .next/  → 4 files
+  $ grep -rl "is not built yet" .next/     → 7 files   (R38's sentinel survives the edit)
+
+$ FORGE_RUN_ID=… BASE_URL=http://127.0.0.1:7786 COOKIE_FILE=/tmp/session-cookie-phase3-fc1.txt \
+    node docs/plan/artifacts/os-usable-for-work/phase3/verify-phase3.cjs
+
+preflight: http://127.0.0.1:7786/desktop → 307 (anonymous — the wall is up)
+browser: /root/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome
+target : http://127.0.0.1:7786  cookie: authjs.session-token (secure=false)
+════ 1280x800 ════════════════════════════════════
+PASS  1280x800 · the marker is on exactly the four unbuilt entries
+PASS  1280x800 · …and the left rail alone carries all four
+PASS  1280x800 · …with LIBRARY also marked in the top strip (5 nodes, 4 keys)
+PASS  R43 · the top strip carries exactly one marker (LIBRARY; recall is not in this strip)
+PASS  R43 · …and it costs the strip under 20px (1384px → 1402px, container 1280px)
+PASS  R43 · the strip already overflowed 1280 BEFORE this round's marker — pre-existing, reported not fixed
+PASS  1280x800 · goals · R38 the words "not built" render
+PASS  1280x800 · goals · R38 …and their bounding box is inside the viewport
+PASS  1280x800 · goals · R38 the whole warning banner is above the fold
+PASS  1280x800 · goals · R38 it is the warning treatment, not a neutral card
+PASS  1280x800 · goals · R39 all three statements render
+PASS  1280x800 · goals · R39 "coming soon" is not on the screen
+PASS  1280x800 · goals · the marker survives navigation
+PASS  1280x800 · journal · R38 the words "not built" render
+PASS  1280x800 · journal · R38 …and their bounding box is inside the viewport
+PASS  1280x800 · journal · R38 the whole warning banner is above the fold
+PASS  1280x800 · journal · R38 it is the warning treatment, not a neutral card
+PASS  1280x800 · journal · R39 all three statements render
+PASS  1280x800 · journal · R39 "coming soon" is not on the screen
+PASS  1280x800 · journal · the marker survives navigation
+PASS  1280x800 · map · R38 the words "not built" render
+PASS  1280x800 · map · R38 …and their bounding box is inside the viewport
+PASS  1280x800 · map · R38 the whole warning banner is above the fold
+PASS  1280x800 · map · R38 it is the warning treatment, not a neutral card
+PASS  1280x800 · map · R39 all three statements render
+PASS  1280x800 · map · R39 "coming soon" is not on the screen
+PASS  1280x800 · map · the marker survives navigation
+PASS  1280x800 · library · R38 the words "not built" render
+PASS  1280x800 · library · R38 …and their bounding box is inside the viewport
+PASS  1280x800 · library · R38 the whole warning banner is above the fold
+PASS  1280x800 · library · R38 it is the warning treatment, not a neutral card
+PASS  1280x800 · library · R39 all three statements render
+PASS  1280x800 · library · R39 "coming soon" is not on the screen
+PASS  1280x800 · library · the marker survives navigation
+PASS  1280x800 · search · does NOT say "not built" — its engine is live
+PASS  1280x800 · search · is flagged unreachable, not unbuilt
+PASS  1280x800 · search · R39 all three statements still render
+PASS  1280x800 · search · gets no nav marker: it has no nav entry
+════ 1280x600 ════════════════════════════════════
+PASS  1280x600 · the marker is on exactly the four unbuilt entries
+PASS  1280x600 · …and the left rail alone carries all four
+PASS  1280x600 · …with LIBRARY also marked in the top strip (5 nodes, 4 keys)
+PASS  1280x600 · goals · R38 the words "not built" render
+PASS  1280x600 · goals · R38 …and their bounding box is inside the viewport
+PASS  1280x600 · goals · R38 the whole warning banner is above the fold
+PASS  1280x600 · goals · R38 it is the warning treatment, not a neutral card
+PASS  1280x600 · goals · R39 all three statements render
+PASS  1280x600 · goals · R39 "coming soon" is not on the screen
+PASS  1280x600 · goals · the marker survives navigation
+PASS  1280x600 · journal · R38 the words "not built" render
+PASS  1280x600 · journal · R38 …and their bounding box is inside the viewport
+PASS  1280x600 · journal · R38 the whole warning banner is above the fold
+PASS  1280x600 · journal · R38 it is the warning treatment, not a neutral card
+PASS  1280x600 · journal · R39 all three statements render
+PASS  1280x600 · journal · R39 "coming soon" is not on the screen
+PASS  1280x600 · journal · the marker survives navigation
+PASS  1280x600 · map · R38 the words "not built" render
+PASS  1280x600 · map · R38 …and their bounding box is inside the viewport
+PASS  1280x600 · map · R38 the whole warning banner is above the fold
+PASS  1280x600 · map · R38 it is the warning treatment, not a neutral card
+PASS  1280x600 · map · R39 all three statements render
+PASS  1280x600 · map · R39 "coming soon" is not on the screen
+PASS  1280x600 · map · the marker survives navigation
+PASS  1280x600 · library · R38 the words "not built" render
+PASS  1280x600 · library · R38 …and their bounding box is inside the viewport
+PASS  1280x600 · library · R38 the whole warning banner is above the fold
+PASS  1280x600 · library · R38 it is the warning treatment, not a neutral card
+PASS  1280x600 · library · R39 all three statements render
+PASS  1280x600 · library · R39 "coming soon" is not on the screen
+PASS  1280x600 · library · the marker survives navigation
+PASS  1280x600 · search · does NOT say "not built" — its engine is live
+PASS  1280x600 · search · is flagged unreachable, not unbuilt
+PASS  1280x600 · search · R39 all three statements still render
+PASS  1280x600 · search · gets no nav marker: it has no nav entry
+════ 390x844 · the phone sheet ═══════════════════════════
+PASS  390px · the phone sheet marks the same four
+PASS  390px · …out of 18 destinations, so 14 carry nothing
+PASS  390px · …and no built destination is marked
+ALL PASS — 76 assertions, 6 shots in /opt/ai-os/uploads/71d8d606113f
+
+VERIFY_EXIT=0
+
+  Shots (also copied to /opt/ai-os/uploads/71d8d606113f, and three of them into
+  this directory as the gate-*.png this round declared):
+-rw-r--r--  1 root root  16761 Aug 18 22:28 20260818T202837Z-after-nav-rail.png
+-rw-r--r--  1 root root 109638 Aug 18 22:28 20260818T202839Z-after-goals.png
+-rw-r--r--  1 root root 117626 Aug 18 22:28 20260818T202840Z-after-journal.png
+-rw-r--r--  1 root root 113717 Aug 18 22:28 20260818T202841Z-after-map.png
+-rw-r--r--  1 root root 128880 Aug 18 22:28 20260818T202843Z-after-library.png
+-rw-r--r--  1 root root  20224 Aug 18 22:29 20260818T202900Z-after-phone-sheet.png
+
+  gate-goals.png   ← 20260818T202839Z-after-goals.png
+  gate-library.png ← 20260818T202843Z-after-library.png   (shows the dated LIBRARY copy)
+  gate-nav-390.png ← 20260818T202900Z-after-phone-sheet.png
+
+################################################################################
+# PART 8 — sha256 manifest of this transcript's own inputs
+################################################################################
+68d418825058ee6296eff545c89fe0863c8882193a31c51e9f12f68c1677df06  /tmp/gates-fc1.txt
+0dc7109a037f32c2a512c4c7d6ca72c3555e60ba01f9973edac7634af4465670  /tmp/gates-fc1-isolated.txt
+81d6cb88db975d62a6880db32d274415c03f3a619ff8558a88e38915cc00a364  /tmp/phase3-checks.txt
+21f6bf7bf7f02302ee4698232f4fad14bce499b88d1979144f64af66b26b9181  /tmp/verify-fc1.log
+
+e62c0c5e6ad5bc6334c857e89fa111468c7af41a86b6d297ad5145a81e56875a  docs/plan/artifacts/os-usable-for-work/phase3/gate-goals.png
+2390107cf4ec576b853628f159ad1c73f72617373d2b8c74622e205cca8505ca  docs/plan/artifacts/os-usable-for-work/phase3/gate-library.png
+9dbe0a36e9a73bd5733932124b9b288abf53ed515af9c2a8014814f288ba5fd4  docs/plan/artifacts/os-usable-for-work/phase3/gate-nav-390.png
+92d753f7a6834e41d8139946e021955ebe609639a1c4646f8fbbcdc0e1a1bc12  forge-control-web/app/desktop/DesktopApp.tsx
+a27597e9a1c21df739c9701df65ffb8db3eb8fee85a3f8ed48fe82db805a376a  docs/plan/artifacts/os-usable-for-work/phase3/verify-phase3.cjs
