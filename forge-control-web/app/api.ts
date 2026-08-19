@@ -1349,12 +1349,19 @@ export const fetchProject = async (
 ): Promise<{ project: Project; tasks: ProjectTask[] }> =>
   getJson<{ project: Project; tasks: ProjectTask[] }>(`/projects/${id}`);
 
-export const fetchProjectBoard = async (): Promise<ProjectTaskWithProject[]> => {
-  const r = await getJson<{ count: number; tasks: ProjectTaskWithProject[] }>(
-    "/projects/board",
-  );
-  return r.tasks;
-};
+/* `fetchProjectBoard` USED TO LIVE HERE and was deleted at the phase 4-6
+ * integration. It returned `ProjectTaskWithProject[]`, whose `brief: string` the
+ * board endpoint stopped sending when phase 6 column-projected the query — so the
+ * type promised a field the JSON no longer carries, and a future caller would
+ * have got `undefined` typed as `string` with the compiler's blessing. It had
+ * zero callers at deletion (its only one, ProjectsSurface, moved to
+ * `fetchProjectBoardCards` in `api-perf.ts`, which is typed
+ * `Omit<ProjectTaskWithProject, "brief">` and matches what the server sends).
+ *
+ * NOTE `brief` ITSELF STAYS on `ProjectTask` above. The board is not the only
+ * endpoint that mirror serves — `GET /api/projects/:id` and `GET /api/tasks/:id`
+ * both still send a brief, and `fetchTaskBrief` reads it. Deleting the field
+ * rather than the over-promising function would have been a build break. */
 
 export const createProject = async (input: {
   name: string;

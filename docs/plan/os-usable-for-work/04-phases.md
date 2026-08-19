@@ -320,6 +320,24 @@ So the rows stay as written and the violation is disclosed here, where violation
 convenient; an audit trail whose entries can be corrected is a draft, not a trail." That applies to
 every append-only record the fleet keeps, this document included: it is appended to, never amended.
 
+**Round 5 (the three-lane integration, I4) — fourth turn of the same engine defect.** The task that
+merged `perf`, `business` and `connections` in one session was seeded with a declaration that omits
+**two source files its own brief instructs it to change by name**. Appended, not amended:
+
+| Commit | File | Declared? | What actually happened |
+|---|---|---|---|
+| integration | `forge-control-web/app/api.ts` | **no** | Brief 3/3 folds a deletion here onto the integrator explicitly — "The perf lane could not touch `api.ts` (one client file per lane), so it belongs to you as the integrator." The dead `fetchProjectBoard` was removed after proving zero callers repo-wide. `brief` on `ProjectTask` was deliberately **kept**: `GET /api/tasks/:id` still serves it and `fetchTaskBrief` reads it, so the literal instruction ("delete the field") would have been a build break. `phase4/integration-report.md` §4. |
+| integration | `forge-control-web/middleware.ts` | **no** | Brief 3/3 likewise assigns it — "`middleware.ts` belongs to this integration, not the vault lane, which is why it was filed rather than taken." The auth matcher put `public/fonts` behind the sign-in wall. Shipped as `fonts/` with the slash, not the filed `fonts`: a bare prefix also excluded `/fontsecret-probe`, measured. `phase4/integration-report.md` §5. |
+
+The merge commits additionally write every path their lane parents carried — unavoidable, and
+acknowledged by the brief ("your write_set is the UNION of theirs"). Those outside the declaration are
+enumerated in `phase4/integration-report.md` §10.2 and `phase5/INTEGRATION.md` §6.
+
+**The pattern is now four for four**, across rounds 4, 5, 6 and this integration: a row whose brief
+names files in prose is seeded with a `write_set` that does not contain them. The disclosure ritual
+works, but it is documenting a seeding defect rather than agent carelessness — worth fixing where
+briefs are generated rather than absorbing once per round.
+
 ---
 
 ## Phase 5 — Businesses, Pipeline, Money

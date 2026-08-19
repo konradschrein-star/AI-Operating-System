@@ -13,11 +13,13 @@
  *  2. the one pane that genuinely wanted a brief must fetch the one brief it
  *     shows — `fetchTaskBrief`.
  *
- * `api.ts` exports `fetchProjectBoard` returning `ProjectTaskWithProject[]`,
- * whose `brief: string` is now an over-promise for board rows. It is not called
- * from anywhere after this change (it had exactly one caller, ProjectsSurface)
- * and this lane may not edit `api.ts` to remove it; whoever next owns that file
- * should delete it. Recorded in phase6/projects-lag-after.md §6.
+ * `api.ts` used to export `fetchProjectBoard` returning `ProjectTaskWithProject[]`,
+ * whose `brief: string` was an over-promise for board rows once the server stopped
+ * sending the column. This lane could not edit `api.ts` to remove it (one client
+ * file per lane) and recorded the debt in phase6/projects-lag-after.md §6.
+ * DISCHARGED: the phase 4-6 integration deleted that function, having first
+ * confirmed it had zero callers repo-wide. `brief` remains on `ProjectTask`,
+ * because `GET /api/tasks/:id` still serves it and `fetchTaskBrief` below reads it.
  */
 
 import type { ProjectTask, ProjectTaskWithProject } from "./api";
