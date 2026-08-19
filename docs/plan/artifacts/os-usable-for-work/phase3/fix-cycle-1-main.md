@@ -5,6 +5,10 @@ Answering the six findings of `integration-review.md` (round 4, `VERDICT: NEEDS_
 **Tree at start:** `3e37720` on `project/7851068b`, working copy clean.
 **Live checkout `/opt/forge-ai-os`:** `1e0330b` on `main`, working copy **clean** — see §1.
 
+> **§1–§9 below were written at round 5 and then stranded uncommitted for 21 hours.** They were
+> recovered and committed by **fix cycle 2 · `main` (round 7)**, whose own record is **§10**. If you
+> are reading this to adjudicate round 7, start at §10.
+
 ---
 
 ## Disposition at a glance
@@ -74,8 +78,46 @@ Two things follow, and only the first is comfortable:
 
 Not seeded as a task by me: with the blocker already gone, a task with write permission to
 `/opt/forge-ai-os` would be a standing hazard created to solve a problem that no longer exists. The
-policy question — *should a build-phase graph ever contain such a task?* — is Konrad's to rule on, and
-is reported to the manager chat rather than decided here.
+policy question — *should a build-phase graph ever contain such a task?* — went to the manager chat
+rather than being decided here.
+
+### 2.1 Konrad ruled, and the ruling reframes the failure
+
+Ruled 2026-08-18, recorded in the vault at `AI OS/Operator Decisions.md`
+§ "When the live checkout goes dirty". It takes the middle option and **explicitly rejects** the
+standing commit-in-place rule I offered as the third:
+
+> Do not make commit-in-place a standing rule. The operator's commit at `1e0330b` was defensible
+> because the provenance was known — the operator wrote it. An agent finding unattributed dirt does
+> not know whether it is a live fix, an abandoned experiment, or a mistake, and "commit whatever you
+> find" launders all three into `main` identically.
+
+A one-shot task **may** be seeded with permission to commit in place — never to revert — with a named
+owner, a declared policy bypass and the review debt booked. The dangerous verb is **DISCARD, not
+COMMIT**: committing preserves the work, `git checkout --` annihilates the only copy of something that
+may be serving traffic.
+
+**The correction I did not see, and should have.** I framed the four-round spin as *nobody could act*.
+The ruling names it differently: *nobody was told*.
+
+> This is the step that was missing: the loop did not spin because nobody could act, it spun because
+> nobody was told for four rounds.
+
+That is the sharper reading. Round 3 found the dirt and correctly refused to touch it; round 4 raised
+it as a blocker to its reviewer. Neither escalated it to Konrad, who could have cleared it in a minute
+— and did, nine minutes after finally hearing about it. The mandatory protocol is now four steps:
+check whether the change exists anywhere else (`git log --all -S`), preserve it as a git-apply-able
+patch in the phase artefacts, **escalate immediately in the report** naming whether it is the sole
+copy, and never revert, discard or `git stash` it.
+
+Measured against that protocol, the surfaces lane got step 2 right on its own initiative — the
+`live-checkout-dirt-AssistantThread.patch` it committed is exactly the preservation the ruling now
+requires. Step 3 is the one that was missing everywhere.
+
+**Folded into the corpus so this project inherits it:** `01-requirements.md` **N4** now cites the
+ruling by heading rather than restating it, per Konrad's own brief-size rule. N4 previously said *do
+not touch the live checkout* and was silent on what to do when you find it already dirty — which is
+the exact gap that cost four rounds.
 
 ## 3. Finding 3 — gate 18's shared scratch database (fixed, with a control)
 
@@ -273,3 +315,216 @@ fleet's evidence discipline exists to prevent. Its findings are answered here in
 **Two predictions in my brief did not survive the run, and both are in the tree's favour.** Gate 17
 was named "a known pre-existing red" — it is **green** here (EXIT=0). Gate 18 was round 4's red — it
 is green, and now deterministically so. `RED: 0` across 23 executed gates.
+
+### 9.1 Gate 17's stale prediction, corrected in the corpus (folded in, not seeded)
+
+`03-quality.md` §3.1 asserted "**Gate 17 is a known pre-existing red**". It is not, and has not been
+for the life of this project. Measured `EXIT=0` in **three independent full runs**: both captures
+inside the surfaces lane's `phase3/gates-phase3.txt` (one of which has gate 18 red, so the file is not
+a single run copied twice) and my run at `3e37720`.
+
+The claim is not merely stale, it is the dangerous direction. A reviewer briefed with "17 is expected
+red" would wave through a genuine failure. Gate 17 pins `docs/plan/notification-gap.md` through
+`LINE_RULES` (`verify-notification-gap-pins.mjs:248,802-808`) whose context regexes must each match
+**exactly one line** of that document — so it goes red when someone reflows or rewords that doc's
+prose, which is a true finding against *that edit*, not a standing condition.
+
+Corrected in place, struck rather than deleted, so a reviewer holding the old briefing can see it was
+retired deliberately. Folded into this task rather than seeded as a round: it is two sentences of
+corpus, and a fix cycle costs a full agent.
+
+---
+
+# 10. Round 7 — fix cycle 2 · `main`: the three round-6 blockers, recovered by hand
+
+Round 6's re-review returned **`VERDICT: NEEDS_FIXES`**. It discharged all six of round 4's findings
+and blocked on three conditions that arose *after* them. Everything below answers those three.
+
+**Where the verdict lives.** No `gate-verdict.md` was written for it either; per `03-quality.md` §3.6
+the authoritative fallback is `runs.thread`, quoted with its run id. The verdict is message 85 of run
+**`09cf3abc-5228-47bd-b61d-537a5a4ea813`** (`completed`, 2026-08-18 23:04:08 → 23:11:44 UTC), reviewing
+tip **`f283d5b`**. Read in full before this task started.
+
+**Why this is a hand recovery and not a seeded round.** The re-review run completed while the operator
+had the project **paused**. `projectAcceptsWork()` refuses a non-active project, so the fix chain the
+verdict implies was never seeded, and the task row sat `running` for **21 hours** with nobody looking.
+That is a graph-level failure mode worth naming: *a NEEDS_FIXES verdict delivered into a paused project
+produces no work and no alarm* — the same shape as a NEEDS_FIXES that seeds no fix cycle, one layer up.
+This task is that chain, seeded by hand as `57f8fdaf-c2c9-4931-8100-eb0392e38d14`.
+
+## 10.1 Blocker 1 — three files stranded uncommitted in the `main` worktree. **FIXED.**
+
+They are this document's own §§2.1/9.1, the N4 rewrite and the gate-17 correction — round 5's answers,
+written and never committed:
+
+| File | What it carries | mtime (UTC) |
+|---|---|---|
+| `docs/plan/os-usable-for-work/01-requirements.md` | **N4 rewritten** — finding 2's answer | 2026-08-18 21:10:51 |
+| `docs/plan/os-usable-for-work/03-quality.md` | §3.1 **gate-17 correction** — blocker 2 | 2026-08-18 20:54:40 |
+| `docs/plan/artifacts/…/phase3/fix-cycle-1-main.md` | evidence **§2.1** and **§9.1** | 2026-08-18 21:11 * |
+
+\* this file's mtime now reads 2026-08-19 because round 7 is appending §10 to it; the 21:11 figure is
+the round-6 reviewer's measurement, quoted rather than re-derived.
+
+**Why it mattered.** `01-requirements.md` **N4** said *do not touch the live checkout* and was silent on
+what to do when you find it **already dirty**. That silence is the exact gap that cost this project
+four rounds in phase 3 and a fifth in phase 4. Had the integrator merged `project/7851068b` without
+these three files, none of the repair would have travelled and N4 would still be silent. The N4 diff
+is one line and it cites Konrad's ruling by heading rather than restating it, per his brief-size rule:
+
+> **If you FIND the live checkout dirty**, N4 tells you not to touch it but not what to do — follow the
+> standing ruling `AI OS/Operator Decisions.md` § "When the live checkout goes dirty": check whether the
+> change exists anywhere else, preserve it as a patch in your phase artefacts, escalate it in your report
+> as a blocker naming whether it is the sole copy, and never revert, discard or stash it.
+
+Committed here, on `project/7851068b`, with the write-set position disclosed in §10.5.
+
+## 10.2 Blocker 2 — `03-quality.md:274` "Gate 17 is a known pre-existing red". **FIXED, and re-measured.**
+
+False, and false in the dangerous direction: a reviewer briefed with it waves through a real failure.
+The correction was already written into the stranded copy (§9.1), so it lands with blocker 1 and needed
+no separate work.
+
+**I did not take the briefing's word for it either.** The brief said four independent measurements show
+`EXIT=0`; asserting a gate's status from a briefing is the failure this correction exists to end. Round
+7's own full-suite run is the **fifth** independent measurement, and it is recorded verbatim in §10.4.
+
+## 10.3 Blocker 3 — the `goals` ownership question. **SETTLED, recorded, not re-opened.**
+
+Round 6 blocked because `/opt/forge-ai-os` was dirty again with ~180 KB of unbranched Goals/daily work
+and gave two acceptable exits: *a one-shot task commits it in place with a named owner*, **or** *the
+surfaces lane's `goals` determination is reseeded*. **The first has already happened.** Verified here
+against the live checkout, read-only, per N4:
+
+| Fact | Measurement |
+|---|---|
+| Author of the dirt | Konrad, in chat run **`765e56ad-6c68-4d23-854d-5ea539b39d0c`** — *"Okay I want to structure my days a little bit better. In the Goals tab I want…"* |
+| Run window vs. write window | run alive 2026-08-18 **22:08:15 → 23:53:15 UTC**; the reviewer measured the files written 00:17–00:43 +0200 = **22:17–22:43 UTC** — inside it |
+| Where it landed | **`553fa38`** *"feat(daily): Goals/Tasks daily surface — commit the work that was already live"*, author `VPS Cat`, 2026-08-19 01:16:03 +0200 |
+| Branch | on **`main`** (`git branch --contains 553fa38` → `main`, `operator/cheaper-verification`, `project/8c591d6c`) |
+| Size | 26 files, +7938/−11 — `routes/daily.ts`, `db/daily.ts`, `GoalsSurface.tsx`, `0042_daily_goals.sql`, `day-score.ts` + its test, and the `goals/` component tree |
+| Live checkout now | `git -C /opt/forge-ai-os status --porcelain` → **empty**, HEAD `9c3f63a` |
+
+So the dirt was never debris: it was **Konrad's own feature, already serving traffic**, and the
+non-destructive move — commit, never revert — preserved it. The ownership question is **closed** and
+this section is the citation. It is not re-opened here.
+
+### 10.3.1 The consequence that is NOT closed, and belongs to phase 7
+
+Settling ownership does not settle the *content collision* the same blocker named, and it would be
+dishonest to let §10.3 read as if it did. At the two tips, on the same file:
+
+```
+main:                        DesktopApp.tsx:468   {surface === "goals" && <GoalsSurface />}
+project/7851068b-surfaces:   DesktopApp.tsx:137   headline: "GOALS is not built yet."
+                             DesktopApp.tsx:143   "…a GoalsSurface — none of the four exists."
+                             check-phase3-placeholders.ts:70
+                                 EXPECTED_UNBUILT = ["goals","journal","library","map"]
+```
+
+`GoalsSurface` **exists**, on `main`, committed. The surfaces lane's phase-3 determination that `goals`
+is unbuilt was true when it was measured and is false now. **Failure scenario:** phase 7 merges the
+surfaces lane and Konrad clicks GOALS to read *"GOALS is not built yet"* over a surface he used the night
+before — or the merge silently reverts `553fa38`'s two lines in `DesktopApp.tsx` and `nav-items.ts`.
+
+This is a **finding for the phase-7 integrator**, recorded rather than fixed: the fix is a one-line
+change to `EXPECTED_UNBUILT` plus the placeholder branch, both of which live in the **surfaces** lane's
+write-set, not in `main`'s. Writing them from here would be an undeclared cross-lane write to solve a
+problem that has an owner. Reported to the manager chat with the same wording.
+
+## 10.4 Verification — the universal block at this tip
+
+`03-quality.md` §3.1, all four steps, `timeout 600000` on the Bash call. Tree: `f283d5b` plus the three
+files of §10.1 — i.e. byte-identical to the commit this task produces. Verbatim:
+
+```
+=== TIP: f283d5b25babfb146137c869874ff857bb421e48 ===
+=== 1. DEPENDENCIES (--prod=false) ===
+Lockfile is up to date, resolution step is skipped
+Already up to date
+Done in 695ms using pnpm v9.15.9          <- forge-control
+Lockfile is up to date, resolution step is skipped
+Already up to date
+Done in 866ms using pnpm v9.15.9          <- forge-control-web
+=== 2. TYPECHECK forge-control ===
+TSC_FC_EXIT=0
+=== 2b. TYPECHECK forge-control-web ===
+TSC_FCW_EXIT=0
+=== 3. UNIT TESTS forge-control ===
+# tests 1293
+# suites 239
+# pass 1293
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 5498.123708
+TEST_EXIT=0
+=== 4. GATE SUITE ===
+================================================================================
+ SUMMARY — 25 gates
+================================================================================
+ 1  0      npx tsc --noEmit — forge-control
+ 2  0      npx tsc --noEmit — forge-control-web
+ 3  0      NODE_ENV=production pnpm build — forge-control-web
+ 4  0      token purity — round 808's own files
+ 5  0      no-raw-colours.cjs (whole app)
+ 6  0      forbidden-file diff — three-dot main...HEAD
+ 7  0      forge-control/ untouched by round 808's own commits
+ 8  0      dollar-sweep.sh
+ 9  0      check-composer-v3.ts
+ 10 0      check-secret-requests.ts
+ 11 0      contrast-canvas-banners.cjs
+ 12 0      check-working-sql-agreement.ts — standalone typecheck (the file round 808 changed)
+ 13 0      check-stop-affordance.tsx — the ⏸ button's disabled state vs what a click does
+ 14 0      check-dismiss-peek.tsx — the way back out of a dismissal, both surfaces
+ 15 0      check-team-rows.ts — flatten, hiddenRows, frozen time
+ 16 0      check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)
+ 17 0      verify-notification-gap-pins.mjs — fenced quotes + prose pins
+ 18 0      check-usage-fold.ts — hourly token fold, against a real Postgres
+ 19 0      check-usage-fold.ts — standalone typecheck (outside forge-control's tsconfig)
+ 20 0      pnpm test — forge-control unit suite
+ 21 0      psql-argv-leak.cjs — round 807 finding 3, before/after + drift guard
+ 22 0      nav-walk-sampling.cjs — round 807 finding 4, the arithmetic
+ 23 -      phase700/network-700.cjs (NFU3) (SKIPPED)
+ 24 -      phase600/nav-walk.cjs — P1/P2/P3 (SKIPPED)
+ 25 0      reproduce-cleanliness — re-running a protocol leaves the tree untouched
+
+ RED: 0
+GATES_EXIT=0
+```
+
+**25 gates · 23 EXECUTED · 2 SKIPPED-by-design (23, 24 — browser harness, needs `--browser`) · RED: 0.**
+Both typechecks `EXIT=0`, `1293/1293` tests pass over 239 suites, `GATES_EXIT=0`.
+
+**Gate 17: `0`.** That is the measurement §10.2 owes. Five independent full runs now agree — the two
+captures inside the surfaces lane's `phase3/gates-phase3.txt`, the round-5 run at `3e37720`, the round-6
+reviewer's run at `f283d5b`, and this one. The stale "known pre-existing red" claim is retired on
+measurement, not on authority.
+
+Gate 25 is worth noting on a docs-only commit: it re-runs two evidence protocols and asserts the
+working tree's `git status --porcelain` md5 is unchanged (`2abef0eb…` before and after). The three
+files of §10.1 were present in the tree during that check and did not perturb it.
+
+## 10.5 Write-set — clean, and here is the arithmetic
+
+Task `57f8fdaf-c2c9-4931-8100-eb0392e38d14` declares exactly:
+
+```
+docs/plan/os-usable-for-work/01-requirements.md
+docs/plan/os-usable-for-work/03-quality.md
+docs/plan/artifacts/os-usable-for-work/phase3/fix-cycle-1-main.md
+```
+
+Round 7's commit touches **exactly those three and nothing else. There are no undeclared writes**, and
+so — unlike `d2856cf`, whose five paths all fell outside an inherited write-set (§8) — no disclosure
+block is required in the commit message and no `§10 Write-set ownership` amendment is owed. (This
+project's `04-phases.md` carries no such section; the requirement in the fleet note applies to corpora
+that do.) The row was seeded from the *work*, not inherited from a reviewer, which is precisely the
+shape `03-quality.md` §3.5 asks for and the reason this audit is one line instead of a page.
+
+Two things I deliberately did **not** write, both of which would have been undeclared:
+
+- **`check-phase3-placeholders.ts` / `DesktopApp.tsx`** — the §10.3.1 collision. Owned by the surfaces
+  lane; see above.
+- **`integration-review.md`** — still another agent's testimony under a verdict, still untouched.

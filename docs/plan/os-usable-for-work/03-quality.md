@@ -271,7 +271,15 @@ cd .. && bash scripts/checks/gates-808.sh --strict
 **On `gates-808.sh`:** it governs every ai-os project, not the 808 lane. Several of its gates are
 scoped to round 808's own commits (`forge-control/ untouched by round 808's own commits` pins
 `7b961b5..HEAD`; `forbidden-file diff` pins `main...HEAD` against a round-808 file list) and will read
-red or meaningless for this project. **Gate 17 is a known pre-existing red.** This is exactly why
+red or meaningless for this project. ~~**Gate 17 is a known pre-existing red.**~~ **CORRECTED
+2026-08-18 (round 5): gate 17 is GREEN and has been for this whole project.** Measured `EXIT=0` in
+three independent full runs — both captures in `phase3/gates-phase3.txt` and the round-5 run at
+`3e37720`. Do not adjudicate a red there as "expected". What gate 17 actually does is pin
+`docs/plan/notification-gap.md` with `LINE_RULES` whose context regexes must each match **exactly one
+line** of that document, so it goes red when someone *reflows or rewords that doc's prose* — a real
+finding against that edit, not a standing condition. The stale claim is struck rather than deleted so
+that a reviewer who was briefed with it can see it was retired on purpose. Gates that go red for
+reasons having nothing to do with this project's code are exactly why
 **phase 1 captures a baseline run and commits it** as
 `docs/plan/artifacts/os-usable-for-work/phase1/gates-baseline.txt`. The rule for every later phase is
 **no NEW red versus that baseline** — a rule that is only decidable because the baseline exists.
