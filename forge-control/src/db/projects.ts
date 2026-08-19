@@ -1032,6 +1032,76 @@ async function dependencyCorruption(taskId: string): Promise<DepsCorruption | nu
  *  them without a database. If the two ever disagree, the pure side is right
  *  and this statement is the bug.
  *
+ *  ------------------------------------------------------------------------
+ *  THE LANE CAP (R72, round 972) — ONE LIVE TASK PER (project, workstream).
+ *
+ *  One worktree per workstream isolates LANES. It does not isolate TASKS
+ *  WITHIN a lane, and the rule above will happily make several rows of the
+ *  same workstream `ready` on one tick, all of them pointing at the SAME
+ *  checkout, the same index and the same `git status`. Measured live on
+ *  2026-08-19 on project `os-usable-for-work`, three lanes at once, each
+ *  hand-serialised by the operator within minutes:
+ *
+ *    workstream    live  roles              why it matters
+ *    vault          2    reviewer+reviewer  two re-reviews gating one tip — spend
+ *    connections    2    builder+reviewer   a fix builder writing the tree a
+ *                                           reviewer was gating — CORRECTNESS
+ *    main           2    planner+reviewer   docs/plan/* appearing under a
+ *                                           reviewer's `git status --porcelain`
+ *
+ *  The builder+reviewer case is not waste, it is a wrong answer: a verdict
+ *  written against a tree that moved under it is worthless. Reviewers on this
+ *  repo have repeatedly escalated a dirty checkout they could not explain, and
+ *  several of those were a SIBLING TASK IN THEIR OWN LANE — undiagnosed
+ *  because nothing reported it (`stalled-projects.sh`, section "TWO LIVE
+ *  SESSIONS IN ONE WORKTREE", is the detector, and it can only report the
+ *  symptom after the fact).
+ *
+ *  So a `pending` row is held while its own project+workstream already has a
+ *  row in ('ready','running'). Parallelism is preserved exactly where the
+ *  design put it — ACROSS workstreams, which are different directories — and
+ *  removed exactly where the design never intended it, inside one checkout.
+ *
+ *  TWO HALVES, because one is not enough:
+ *
+ *   1. THE CROSS-STATEMENT HALF — the `NOT EXISTS … live` term. It sees rows
+ *      that were already `ready`/`running` when this statement started.
+ *   2. THE WITHIN-STATEMENT HALF — `row_number()` over
+ *      (project_id, workstream). An UPDATE's subqueries are evaluated against
+ *      the snapshot taken at statement start, so the `NOT EXISTS` term alone
+ *      is TRUE for every candidate of an empty lane and promotes all of them
+ *      in one go: the exact defect, unfixed, with a term that looks like a
+ *      fix. The lane's head is picked by `round ASC, created_at ASC, id ASC`
+ *      — the first two are `claimReadyTasks()`'s own ORDER BY, so the row this
+ *      promotes is the row that claim would have run first anyway; `id` is a
+ *      deterministic tie-break, because a planner inserts a whole lane in one
+ *      statement and `created_at` ties exactly.
+ *
+ *  REJECTED ALTERNATIVE — allow concurrency for DISJOINT `write_set`s, the way
+ *  `selectClaimable()` does at claim time. Refused deliberately. Two tasks of
+ *  one lane share a branch, an index, a stash and a `git status`; byte-disjoint
+ *  file sets do not make the checkout safe. A reviewer running `git status
+ *  --porcelain` sees the builder's untracked files whatever they are called, a
+ *  `git stash` in one task pops in the other (see the fleet's own stash
+ *  incident), and a commit from either moves the tip the other is judging. The
+ *  cap is on the CHECKOUT, which is why it is keyed on the workstream and not
+ *  on the files. Recorded here so it is not rediscovered as an optimisation.
+ *
+ *  WHY THIS ONE DECISION IS IN SQL AND NOT IN lib/task-graph.ts, against the
+ *  §1.2 rule above. It is not a judgement about one task in a projection —
+ *  `readyRule()`/`graphReady()` answer "may this row run at all", and they are
+ *  unchanged. This is an ADMISSION CAP on a physical resource (one checkout
+ *  per lane) that has to be atomic with the write that creates the live row;
+ *  computed in TypeScript it would be a read-then-write with a window in it,
+ *  which is the shape of the bug and not of its fix. The claim-time analogue
+ *  already lives one layer down in `selectClaimable()` and is not touched.
+ *  If a later round wants the pure mirror, the shape to mirror is "at most one
+ *  live row per lane", not a per-row predicate.
+ *
+ *  NOT A CAP ON THE OPERATOR PATH. `retryTask()` moves a whole (round,
+ *  workstream) group to `ready` by hand and is untouched here — an unwedge is a
+ *  deliberate act with a human behind it. This cap governs the automatic route.
+ *
  *  The return value stays `Promise<number>` (rows promoted). projectTick()
  *  calls it and ignores the value; widening the signature to surface the sweep
  *  would drag lib/project-tick.ts into this phase, and the sweep already
@@ -1040,36 +1110,68 @@ export async function promoteReadyTasks(): Promise<number> {
   // R14 back half, BEFORE the promote — decision 1 on the sweep above.
   await sweepDanglingDependencies();
   const r = await pool.query(
-    `UPDATE project_tasks pt
+    `WITH eligible AS (
+       -- Everything the ready RULE allows. Byte-identical to the predicate that
+       -- stood here before R72; the cap is applied AFTER it, never inside it,
+       -- so "may this row run at all" and "may it run yet" stay separable and
+       -- the pure mirror in lib/task-graph.ts still answers the first one alone.
+       SELECT pt.id, pt.project_id, pt.workstream, pt.round, pt.created_at
+         FROM project_tasks pt
+         JOIN projects p ON p.id = pt.project_id
+        WHERE p.status = 'active'                      -- E7/R8/R13: unchanged, load-bearing
+          AND pt.status = 'pending'
+          AND (
+            -- GRAPH BRANCH
+            (pt.depends_on IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM project_tasks d
+                              WHERE d.id = ANY(pt.depends_on)
+                                AND d.project_id = pt.project_id   -- R27, round 204
+                                AND d.status <> 'done')
+             AND (SELECT count(*) FROM project_tasks d
+                   WHERE d.id = ANY(pt.depends_on)
+                     AND d.project_id = pt.project_id)   -- R27, round 204
+                 = cardinality(pt.depends_on)          -- R14: no dangling dep may satisfy
+             AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3/E4: the straddle term
+                              WHERE l.project_id = pt.project_id
+                                AND (pt.graph_frozen OR l.depends_on IS NULL)  -- R71, E4
+                                AND l.round < pt.round
+                                AND l.status <> 'done'))  -- TODO(R12-retire)
+            OR
+            -- LEGACY BRANCH  TODO(R12-retire)
+            (pt.depends_on IS NULL
+             AND NOT EXISTS (SELECT 1 FROM project_tasks earlier
+                              WHERE earlier.project_id = pt.project_id
+                                AND earlier.round < pt.round
+                                AND earlier.status <> 'done'))
+          )
+          -- R72 half 1, THE CROSS-STATEMENT HALF: this lane's checkout is
+          -- already occupied by a row that was live before this statement ran.
+          AND NOT EXISTS (SELECT 1 FROM project_tasks live
+                           WHERE live.project_id = pt.project_id
+                             AND live.workstream = pt.workstream
+                             AND live.status IN ('ready','running'))
+     ),
+     lane_head AS (
+       -- R72 half 2, THE WITHIN-STATEMENT HALF. Without it an EMPTY lane
+       -- satisfies the term above for every one of its candidates at once —
+       -- subqueries read the statement's opening snapshot — and the whole lane
+       -- promotes together, which is the defect verbatim.
+       SELECT id FROM (
+         SELECT id,
+                row_number() OVER (PARTITION BY project_id, workstream
+                                   ORDER BY round ASC, created_at ASC, id ASC) AS rn
+           FROM eligible
+       ) ranked
+        WHERE rn = 1
+     )
+     UPDATE project_tasks pt
         SET status = 'ready', updated_at = now()
-       FROM projects p
-      WHERE p.id = pt.project_id
-        AND p.status = 'active'                        -- E7/R8/R13: unchanged, load-bearing
+      WHERE pt.id IN (SELECT id FROM lane_head)
+        -- Repeated, not inherited, for the reason recorded on the sweep's
+        -- blocked_tasks CTE: an UPDATE re-checks its own WHERE against the row
+        -- version it locks, so a row a concurrent tick already promoted is
+        -- skipped here rather than re-written and re-counted.
         AND pt.status = 'pending'
-        AND (
-          -- GRAPH BRANCH
-          (pt.depends_on IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM project_tasks d
-                            WHERE d.id = ANY(pt.depends_on)
-                              AND d.project_id = pt.project_id   -- R27, round 204
-                              AND d.status <> 'done')
-           AND (SELECT count(*) FROM project_tasks d
-                 WHERE d.id = ANY(pt.depends_on)
-                   AND d.project_id = pt.project_id)     -- R27, round 204
-               = cardinality(pt.depends_on)            -- R14: no dangling dep may satisfy
-           AND NOT EXISTS (SELECT 1 FROM project_tasks l   -- R69, E3/E4: the straddle term
-                            WHERE l.project_id = pt.project_id
-                              AND (pt.graph_frozen OR l.depends_on IS NULL)  -- R71, E4
-                              AND l.round < pt.round
-                              AND l.status <> 'done'))  -- TODO(R12-retire)
-          OR
-          -- LEGACY BRANCH  TODO(R12-retire)
-          (pt.depends_on IS NULL
-           AND NOT EXISTS (SELECT 1 FROM project_tasks earlier
-                            WHERE earlier.project_id = pt.project_id
-                              AND earlier.round < pt.round
-                              AND earlier.status <> 'done'))
-        )
       RETURNING pt.id`,
   );
   return r.rowCount ?? 0;
