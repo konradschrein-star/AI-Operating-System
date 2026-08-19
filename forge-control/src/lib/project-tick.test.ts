@@ -2581,7 +2581,26 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
    * headroom and BUDGET is not trimmed to match; if it needs MORE, that is a
    * second amendment with its own arithmetic, not a quiet spend of the 25. */
   const BASELINE = 9221;
-  const BUDGET = 3700;
+  /* MERGE ARITHMETIC, round 972 fix cycle 1 — this is NOT a new widening.
+   * Two lanes widened this cap independently from the same base of 3050:
+   * this lane by 650 (round 822's reservation, spent by round 962) -> 3700,
+   * and `main` by 547 (round 974's REVIEW_ECONOMY block) -> 3597. The merge
+   * carries BOTH prompt texts, so it must carry BOTH widenings; taking either
+   * side's number alone would red the cap on characters that lane already
+   * accounted for. 3050 + 650 + 547 = 4247.
+   *
+   * AND THAT IS SIX SHORT — the merge exposes a DOUBLE-DRAW that neither lane
+   * could see alone, so this states it rather than rounding it away. At the base
+   * the cap was 3050 against 3006 ledgered, leaving 44 characters of headroom.
+   * Both lanes then drew on that same 44: this one spent 656 against the 650 it
+   * added and reported 38 left; `main` spent 591 against the 547 it added and
+   * reported 0 left. 6 + 44 = 50 claims on a pool of 44. The merged tree really
+   * does hold 3006 + 656 + 591 = 4253 characters, so the cap is 4253 and the
+   * headroom is 0 — the honest number, with the six named. This is a widening of
+   * SIX, it buys nothing new, and no lane's row is adjusted to hide it: the
+   * exactness assertion below is what forced it into the open, which is the only
+   * reason to keep a ledger whose sum is exact rather than a bound. */
+  const BUDGET = 4253;
 
   test("G5 — the maximal planner prompt stays inside the amended budget", () => {
     const measured = maximalPlannerPrompt().length;
@@ -2780,6 +2799,39 @@ describe("NF7 the prompt budget, and the assertion that holds it", () => {
         "a net-zero replacement that states the cap where the fan-out decision is made",
       spent: 0,
       reserved: 0,
+    },
+    // ROUND 974 — merged in from `main` at round 972's fix cycle 1, NOT written
+    // by this lane. It is the other lane's row, kept verbatim: both lanes edited
+    // `maximalPlannerPrompt()` from the same base (BUDGET 3050, ledger ending at
+    // round 900), so the merged prompt carries BOTH texts and the exactness
+    // assertion below only balances if BOTH sets of rows are present. Dropping
+    // either side's rows would leave its characters unattributed, which is the
+    // one failure this ledger exists to catch.
+    {
+      round: 974,
+      what:
+        "REVIEW_ECONOMY (new) reaching BOTH planner branches, plus TIER_GUIDE rewritten to make " +
+        '"junior" the default and to name re-checks explicitly. Konrad, 2026-08-19, after a 5h ' +
+        'usage window hit 82%: "review only code, never docs or evidence", "we shouldn\'t instruct ' +
+        'the reviewers to have to find issues because if there are no issues then there are no ' +
+        'issues". THIS IS A WIDENING and it is licensed by the arithmetic, not by preference: ' +
+        "measured over 7 days, verification is 43% of ALL fleet tokens (fix cycles 25%, first-pass " +
+        "reviews 12%, re-reviews 6%) and 510 of 574 sessions ran Opus because TIER_GUIDE called " +
+        "Opus right for \"most implementation and review work\". 547 characters on the planner " +
+        "prompt is paid once per PLANNER spawn (32 in 7 days); the reviewer tiering and the " +
+        "no-review-for-docs rule are paid back on every reviewer and fix cycle the planner does " +
+        "NOT seed. RETIREMENT WAS ATTEMPTED FIRST and is why this is 547 and not 1780: TIER_GUIDE " +
+        "and REVIEW_ECONOMY were rewritten twice, shedding 1233 characters. A further 326 were " +
+        "available by compressing COMPANION FILES and the one-reviewer clause, and were NOT taken " +
+        "— both are pinned by .includes() assertions in this file and in cp3-linkage.test.ts, so " +
+        "the saving cost more in test churn than the characters were worth. Recorded rather than " +
+        "hidden, per the standing condition that a widening states what it retired. TWO NUMBERS, " +
+        "kept distinct: the block SPENDS 591 characters, of which 44 came from headroom that " +
+        "already existed and only 547 required BUDGET to move (3050 -> 3597). The ledger measures " +
+        "spend since the 5A tip; the cap measures the widening. Conflating them is how a widening " +
+        "hides inside a spend.",
+      spent: 591,
+      reserved: 591,
     },
   ] as const;
 

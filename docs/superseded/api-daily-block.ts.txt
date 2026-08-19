@@ -1,0 +1,351 @@
+/* ----------------------------------------------------------------------------
+ * Daily system — the GOALS/TASKS surface (docs/SPEC-DAILY-SURFACE.md).
+ *
+ * Evening plan → focus goals → tasks → habit chips → stats that feed the next
+ * evening's plan. Server routes live at /api/daily/*; `day` is always a plain
+ * `YYYY-MM-DD` in Europe/Berlin terms and is ALWAYS sent by the caller, never
+ * inferred from UTC on either side (the API defaults it, but a browser in
+ * another timezone would then disagree with the phone in Konrad's hand).
+ *
+ * The score is computed server-side only (spec §2) so TODAY, STATS and the
+ * heatmap cannot drift apart — nothing in this file recomputes it.
+ * -------------------------------------------------------------------------- */
+
+export type DailyArea =
+  | "uni"
+  | "business"
+  | "content"
+  | "health"
+  | "admin"
+  | "personal";
+export type DailyImportance = "critical" | "high" | "normal" | "low";
+export type DailyTaskStatus = "todo" | "doing" | "blocked" | "done" | "dropped";
+export type DailyGoalStatus = "open" | "done" | "dropped" | "carried";
+/** `agent` = written by the evening planner, `konrad` = typed by hand. The
+ *  surface tags agent goals so the system's work is visible (spec "why it
+ *  exists", cause 1). */
+export type DailyGoalSource = "agent" | "konrad";
+export type DailyHabitPolarity = "do" | "avoid";
+
+export const DAILY_AREAS: readonly DailyArea[] = [
+  "uni",
+  "business",
+  "content",
+  "health",
+  "admin",
+  "personal",
+];
+
+export const DAILY_IMPORTANCES: readonly DailyImportance[] = [
+  "critical",
+  "high",
+  "normal",
+  "low",
+];
+
+export interface DailyGoal {
+  id: string;
+  day: string;
+  title: string;
+  detail: string | null;
+  status: DailyGoalStatus;
+  source: DailyGoalSource;
+  sort: number;
+  created_at: string;
+  done_at: string | null;
+}
+
+export interface DailyTask {
+  id: string;
+  title: string;
+  notes: string | null;
+  area: DailyArea;
+  importance: DailyImportance;
+  status: DailyTaskStatus;
+  due: string | null;
+  /** The day it is scheduled onto. `null` = backlog. */
+  planned_day: string | null;
+  estimate_min: number | null;
+  sort: number;
+  created_at: string;
+  done_at: string | null;
+  dropped_at: string | null;
+}
+
+export interface DailyHabit {
+  id: string;
+  key: string;
+  label: string;
+  /** Material Symbols glyph name — rendered with `className="ms"`. */
+  icon: string;
+  target_per_week: number;
+  sort: number;
+  polarity: DailyHabitPolarity;
+}
+
+/** A habit as TODAY returns it: the definition plus whether it is logged. */
+export interface DailyHabitToday extends DailyHabit {
+  done: boolean;
+}
+
+export interface DailyMeta {
+  mood: number | null;
+  energy: number | null;
+  note: string | null;
+  plan_note: string | null;
+  planned_at: string | null;
+  reviewed_at: string | null;
+}
+
+export interface DailyTodayResponse {
+  day: string;
+  /** 0–100, server-computed (spec §2). Never recomputed client-side. */
+  score: number;
+  /** The numerator and denominator behind `score`. Not named in spec §3 but
+   *  shipped by the route, and the only way the "3/5 habits · 1/3 focus" line
+   *  is guaranteed to agree with the ring above it. Optional so a server
+   *  without it still renders. */
+  counts?: {
+    habits_done: number;
+    habits_active: number;
+    goals_done: number;
+    goals_total: number;
+  };
+  goals: DailyGoal[];
+  tasks: DailyTask[];
+  habits: DailyHabitToday[];
+  meta: DailyMeta;
+  /** Open tasks planned for an earlier day — the CARRIED group. */
+  carried: number;
+}
+
+export interface DailyHeatmapCell {
+  day: string;
+  score: number;
+  habits_done: number;
+  goals_done: number;
+  tasks_done: number;
+}
+
+/**
+ * `last_7` / `last_30` in spec §3 are named but not shaped. A count is the
+ * obvious server-side reading; the 7-dot strip in STATS wants a per-day
+ * boolean array. Accepting both is the only way this file cannot be wrong
+ * about it — `dailyHabitStrip()` below normalises whichever arrives.
+ */
+export type DailyHabitWindow = number | boolean[];
+
+export interface DailyHabitStat {
+  id: string;
+  key: string;
+  label: string;
+  icon: string;
+  polarity: DailyHabitPolarity;
+  target_per_week: number;
+  current_streak: number;
+  longest_streak: number;
+  last_7: DailyHabitWindow;
+  last_30: DailyHabitWindow;
+  /** 0–1 completion rate over the last 30 days. */
+  rate_30: number;
+}
+
+/** Same tolerance as `DailyHabitWindow`: "best day" may land as a bare score
+ *  or as the day that scored it. */
+export type DailyBestDay = number | { day: string; score: number } | null;
+
+export interface DailyStatsResponse {
+  heatmap: DailyHeatmapCell[];
+  habits: DailyHabitStat[];
+  tasks: {
+    done_last_7: number;
+    done_last_30: number;
+    by_area: { area: DailyArea; count: number }[];
+    open_total: number;
+    backlog_older_14d: number;
+  };
+  score: {
+    today: number;
+    avg_7: number;
+    avg_30: number;
+    best_day: DailyBestDay;
+    /** The day `best_day` fell on, when the route reports the score as a bare
+     *  number (which is what it does today). */
+    best_day_at?: string | null;
+  };
+}
+
+/** Normalise a habit window into exactly `len` booleans, oldest first. A count
+ *  degrades to "the first N are filled" — honest about order being unknown,
+ *  never a crash. */
+export const dailyHabitStrip = (
+  window: DailyHabitWindow,
+  len: number,
+): boolean[] => {
+  if (Array.isArray(window)) {
+    const tail = window.slice(-len);
+    return [...Array<boolean>(Math.max(0, len - tail.length)).fill(false), ...tail];
+  }
+  const n = Math.max(0, Math.min(len, Math.round(window)));
+  return Array.from({ length: len }, (_, i) => i >= len - n);
+};
+
+/** The score of the best day, whichever shape the server used. */
+export const dailyBestScore = (best: DailyBestDay): number =>
+  best === null ? 0 : typeof best === "number" ? best : best.score;
+
+/** The day the best score fell on, when the server said so. */
+export const dailyBestDayLabel = (best: DailyBestDay): string | null =>
+  best !== null && typeof best !== "number" ? best.day : null;
+
+const dayQuery = (day?: string) =>
+  day ? `?day=${encodeURIComponent(day)}` : "";
+
+export const fetchDailyToday = (day?: string): Promise<DailyTodayResponse> =>
+  getJson<DailyTodayResponse>(`/daily/today${dayQuery(day)}`);
+
+export const fetchDailyTasks = async (filter?: {
+  status?: DailyTaskStatus;
+  area?: DailyArea;
+  importance?: DailyImportance;
+  planned?: "today" | "backlog" | "all";
+  limit?: number;
+}): Promise<DailyTask[]> => {
+  const params = new URLSearchParams();
+  if (filter?.status) params.set("status", filter.status);
+  if (filter?.area) params.set("area", filter.area);
+  if (filter?.importance) params.set("importance", filter.importance);
+  if (filter?.planned) params.set("planned", filter.planned);
+  if (filter?.limit !== undefined) params.set("limit", String(filter.limit));
+  const qs = params.toString();
+  const r = await getJson<{ tasks: DailyTask[] }>(
+    `/daily/tasks${qs ? `?${qs}` : ""}`,
+  );
+  return r.tasks;
+};
+
+export const createDailyTask = async (input: {
+  title: string;
+  area?: DailyArea;
+  importance?: DailyImportance;
+  due?: string | null;
+  planned_day?: string | null;
+  notes?: string | null;
+  estimate_min?: number | null;
+}): Promise<DailyTask> => {
+  const r = await postJson<{ task: DailyTask }>("/daily/tasks", input);
+  return r.task;
+};
+
+export const updateDailyTask = async (
+  id: string,
+  patch: {
+    title?: string;
+    notes?: string | null;
+    area?: DailyArea;
+    importance?: DailyImportance;
+    status?: DailyTaskStatus;
+    due?: string | null;
+    planned_day?: string | null;
+    estimate_min?: number | null;
+    sort?: number;
+  },
+): Promise<DailyTask> => {
+  const r = await patchJson<{ task: DailyTask }>(
+    `/daily/tasks/${encodeURIComponent(id)}`,
+    patch,
+  );
+  return r.task;
+};
+
+/** Hard delete — for typos only. Everything else is `status: 'dropped'`, which
+ *  keeps the row for the stats. */
+export const deleteDailyTask = async (id: string): Promise<void> => {
+  await deleteJson<{ deleted: true }>(
+    `/daily/tasks/${encodeURIComponent(id)}`,
+  );
+};
+
+export const createDailyGoal = async (input: {
+  day?: string;
+  title: string;
+  detail?: string | null;
+  source?: DailyGoalSource;
+}): Promise<DailyGoal> => {
+  const r = await postJson<{ goal: DailyGoal }>("/daily/goals", input);
+  return r.goal;
+};
+
+export const updateDailyGoal = async (
+  id: string,
+  patch: {
+    title?: string;
+    detail?: string | null;
+    status?: DailyGoalStatus;
+    sort?: number;
+  },
+): Promise<DailyGoal> => {
+  const r = await patchJson<{ goal: DailyGoal }>(
+    `/daily/goals/${encodeURIComponent(id)}`,
+    patch,
+  );
+  return r.goal;
+};
+
+export const deleteDailyGoal = async (id: string): Promise<void> => {
+  await deleteJson<{ deleted: true }>(
+    `/daily/goals/${encodeURIComponent(id)}`,
+  );
+};
+
+export interface DailyHabitToggleResult {
+  habit_id: string;
+  day: string;
+  done: boolean;
+}
+
+/** Idempotent flip. The chip updates optimistically and reconciles against
+ *  `done` here — a habit that logs slowly is a habit that stops being logged. */
+export const toggleDailyHabit = (
+  id: string,
+  day?: string,
+): Promise<DailyHabitToggleResult> =>
+  postJson<DailyHabitToggleResult>(
+    `/daily/habits/${encodeURIComponent(id)}/toggle`,
+    day ? { day } : {},
+  );
+
+export const fetchDailyHabits = async (): Promise<DailyHabit[]> => {
+  const r = await getJson<{ habits: DailyHabit[] }>("/daily/habits");
+  return r.habits;
+};
+
+export const updateDailyDay = async (input: {
+  day?: string;
+  mood?: number | null;
+  energy?: number | null;
+  note?: string | null;
+}): Promise<DailyMeta> => {
+  const r = await patchJson<{ meta: DailyMeta }>("/daily/day", input);
+  return r.meta;
+};
+
+export const fetchDailyStats = (days = 56): Promise<DailyStatsResponse> =>
+  getJson<DailyStatsResponse>(`/daily/stats?days=${days}`);
+
+export interface DailyPlanResult {
+  day: string;
+  goals: DailyGoal[];
+  tasks: DailyTask[];
+}
+
+/** The evening planner's single write. Replaces the day's AGENT-sourced goals
+ *  and schedules the listed tasks onto it; Konrad's own goals are untouched. */
+export const planDailyDay = (input: {
+  day?: string;
+  goals: { title: string; detail?: string }[];
+  task_ids?: string[];
+  plan_note?: string;
+  source?: "agent";
+}): Promise<DailyPlanResult> => postJson<DailyPlanResult>("/daily/plan", input);
+

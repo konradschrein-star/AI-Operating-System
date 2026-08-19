@@ -44,6 +44,7 @@ import { MoneySurface } from "./MoneySurface";
 import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
+import { GoalsSurface } from "./GoalsSurface";
 import { AgentActivity } from "./live/AgentActivity";
 import { QuotaRow } from "./quota/QuotaRow";
 import {
@@ -141,16 +142,6 @@ const PLACEHOLDER_SURFACES: Record<
       { icon: "tune", label: "trust dial per channel / skill" },
       { icon: "rule", label: "policy rules, toggleable" },
       { icon: "history", label: "autonomous actions feed" },
-    ],
-  },
-  goals: {
-    tag: "GOALS",
-    title: "What I'm trying to do",
-    desc: "Quarter cards, week list, today mirror.",
-    items: [
-      { icon: "flag", label: "quarter objectives" },
-      { icon: "list", label: "this week" },
-      { icon: "today", label: "today mirror" },
     ],
   },
   journal: {
@@ -474,6 +465,7 @@ export function DesktopApp() {
           {surface === "money" && <MoneySurface />}
           {surface === "settings" && <SettingsSurface />}
           {surface === "businesses" && <BusinessesSurface />}
+          {surface === "goals" && <GoalsSurface />}
           {surface in PLACEHOLDER_SURFACES &&
             surface !== "memory" &&
             surface !== "chat" &&

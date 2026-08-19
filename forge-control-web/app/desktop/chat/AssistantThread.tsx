@@ -31,6 +31,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type CSSProperties,
@@ -876,6 +877,12 @@ function CommsLedger({ thread }: { thread: RunDetail["thread"] }) {
 const NO_ACTIONS: RichActions = {};
 const NO_PEERS: ReadonlyMap<string, PeerFacts> = new Map();
 
+/** How many messages mount initially, and how many each "show older" adds.
+ *  60 is not a guess: it comfortably exceeds a full screen at any realistic
+ *  row height, so the window is invisible in a normal-length chat and only
+ *  engages where the freeze actually was. */
+const WINDOW_STEP = 60;
+
 export interface AssistantThreadProps {
   run: RunDetail;
   /** Defaults to `raw` — the manager chat and ProjectsSurface are unchanged. */
@@ -917,10 +924,41 @@ export function AssistantThread({
       ),
     [run.thread, scopeKind, scopeSubagentId],
   );
+
+  /* WINDOWING (2026-08-18). Measured cause of the scroll freeze Konrad
+   * reported: this chat's thread is 2200 entries / 2.8 MB and EVERY mapped
+   * message was mounted. A long transcript therefore built many thousands of
+   * DOM nodes — each message rendering markdown, tool rows and comms cards —
+   * in one synchronous commit, which locks the main thread. That is the Long
+   * Task; the frozen cursor and the buffered-mouse replay are its symptom.
+   *
+   * Only the newest WINDOW_STEP messages mount; older ones are reachable by an
+   * explicit control. Deliberately NOT virtual scrolling: these rows have
+   * wildly variable heights (a one-line tool call vs a 300-line report), and a
+   * virtualiser that estimates heights fights the scroll anchor on every poll
+   * tick — which on this surface fires every 3s.
+   *
+   * The window is on RENDER ONLY, never on the data. `messages` stays
+   * complete, so the ledger, the digest and every count still describe the
+   * whole transcript. A window that also shrank the numbers would make the UI
+   * lie about what it holds. */
+  const [windowSize, setWindowSize] = useState(WINDOW_STEP);
+  /* Reset on identity change: otherwise opening a short chat after a long one
+   * keeps a grown window, and the reverse silently truncates. */
+  useEffect(() => {
+    setWindowSize(WINDOW_STEP);
+  }, [run.id, scopeKind, scopeSubagentId]);
+
+  const hiddenCount = Math.max(0, messages.length - windowSize);
+  const windowed = useMemo(
+    () => (hiddenCount > 0 ? messages.slice(hiddenCount) : messages),
+    [messages, hiddenCount],
+  );
+
   const isRunning = run.status === "running" || run.status === "queued";
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
-    messages,
+    messages: windowed,
     isRunning,
     convertMessage: (m) => m,
     // The composer lives outside assistant-ui (slash commands need it);
@@ -959,6 +997,52 @@ export function AssistantThread({
                     }}
                   >
                     empty thread
+                  </div>
+                )}
+                {hiddenCount > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 0 12px",
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="mono"
+                      onClick={() => setWindowSize((n) => n + WINDOW_STEP)}
+                      style={{
+                        fontSize: 10.5,
+                        letterSpacing: "0.04em",
+                        padding: "6px 14px",
+                        borderRadius: 6,
+                        cursor: "pointer",
+                        color: tokens.textMuted,
+                        background: tokens.bgCard,
+                        border: `1px solid ${tokens.borderDivider}`,
+                      }}
+                    >
+                      show {Math.min(WINDOW_STEP, hiddenCount)} older
+                    </button>
+                    <button
+                      type="button"
+                      className="mono"
+                      onClick={() => setWindowSize(messages.length)}
+                      style={{
+                        fontSize: 9.5,
+                        letterSpacing: "0.04em",
+                        padding: 0,
+                        border: "none",
+                        background: "none",
+                        cursor: "pointer",
+                        color: tokens.textFaint,
+                      }}
+                      title="Mounts every remaining message at once. On a very long transcript this is the slow path — it is what the window exists to avoid."
+                    >
+                      {hiddenCount} older hidden · show all
+                    </button>
                   </div>
                 )}
                 <ThreadPrimitive.Messages

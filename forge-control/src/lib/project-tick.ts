@@ -313,11 +313,32 @@ function taskCurl(projectId: string): string {
 }
 
 const TIER_GUIDE =
-  `Each task's "tier" picks its model: "fast" (Haiku) for trivial mechanical work, "junior" (Sonnet) for ` +
-  `well-specified junior-engineer work — writing tests, boilerplate, repetitive edits from a clear spec — ` +
-  `"standard" (Opus) for most implementation and review work, "flagship" (Fable) only when a task genuinely ` +
-  `needs the strongest model. Omit tier to fall back to the role default (Opus). Flagship is the expensive ` +
-  `one — reserve it for design-heavy or genuinely hard tasks.`;
+  `Each task's "tier" picks its model. SET ONE ON EVERY TASK — omitting it means Opus, and 510 of this ` +
+  `fleet's last 574 sessions ran Opus. "fast" (Haiku): trivial mechanical work. "junior" (Sonnet) is THE ` +
+  `DEFAULT — tests, boilerplate, docs, evidence, and ALL re-checks. "standard" (Opus): implementation needing ` +
+  `judgement, and the one gating review of a phase touching product code. "flagship" (Fable): genuinely hard ` +
+  `design only. If you cannot say why a task needs Opus, it does not.`;
+
+/** Konrad, 2026-08-19, after a 5-hour usage window went to 82% on work he
+ *  described as "simple stuff": "we shouldn't instruct the reviewers to have to
+ *  find issues because if there are no issues then there are no issues", and
+ *  "review only code, never docs or evidence".
+ *
+ *  This is a real correction to how this engine was built, not a cost dodge. A
+ *  reviewer told to attack WILL return findings — that is what the instruction
+ *  asks for — and each one costs a fix cycle plus a re-check, which measured at
+ *  25% and 6% of all token spend respectively. Reviews that find real defects
+ *  have paid for themselves here repeatedly (a panel that lied about a
+ *  connection, a write path that destroyed notes, three false module-wide
+ *  claims). Reviews that manufacture findings to look diligent cost two extra
+ *  sessions and teach the fleet that PASS is a failure state. */
+const REVIEW_ECONOMY =
+  `REVIEW ONLY WHAT CAN BREAK — product code, schemas, live endpoints, security paths. Never seed a reviewer ` +
+  `for documentation, evidence, plans or reports. PASS IS THE EXPECTED OUTCOME OF GOOD WORK: never brief a ` +
+  `reviewer to "attack" or "find problems" — one told to find issues will find them, and each buys a fix ` +
+  `cycle plus a re-check (31% of all tokens). Brief it to check the stated claims and report what it finds. ` +
+  `A RE-CHECK IS NOT A REVIEW: give it the numbered blockers and the tip sha, tier "junior", and say it must ` +
+  `not re-derive the phase or rebuild what is already proven.`;
 
 /** R50 — the idempotency contract, restated for a computed round.
  *
@@ -1271,9 +1292,10 @@ export function buildPrompt(
         `about rounds — they declare dependencies and let the engine compute every round below yours. Each ` +
         `planner brief: "Plan phase k per ${corpus}/04-phases.md" ` +
         `plus anything phase-specific the corpus doesn't capture. If a phase needs research first, add a scout ` +
-        `task at round k*100 - 1. For high-risk phases, tell the planner to add adversarial review (a red-team ` +
-        `reviewer briefed to attack, not just check).\n` +
-        `   ${GRAPH_GUIDE}\n   ${TIER_GUIDE}\n   ${IDEMPOTENCY_NOTE}\n\n` +
+        `task at round k*100 - 1. A red-team reviewer briefed to attack rather than check is reserved for ` +
+        `paths where a silent failure is EXPENSIVE — credentials, data loss, anything a user's work depends ` +
+        `on. It is not the default posture for a phase, and it is never right for documentation.\n` +
+        `   ${GRAPH_GUIDE}\n   ${TIER_GUIDE}\n   ${REVIEW_ECONOMY}\n   ${IDEMPOTENCY_NOTE}\n\n` +
         // R14/R16/R17. Gated on `live` like every other policy block: a scratch
         // project has no live checkout to deploy to and no executor to restart,
         // so this guidance would be noise at best and a wrong instruction at worst.
@@ -1314,7 +1336,7 @@ export function buildPrompt(
       `"reviewer" task DEPENDING ON every builder you created — the join, not a round number — briefed to ` +
       `review the whole diff. ` +
       `Do not write implementation code or commit anything yourself — that's the builder's job.\n` +
-      `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}`
+      `${TIER_GUIDE}\n${REVIEW_ECONOMY}\n${IDEMPOTENCY_NOTE}`
     );
   }
   if (task.role === "planner") {
@@ -1344,7 +1366,7 @@ export function buildPrompt(
       `summary of intent: phase 2 of this very project widened a shared type and forced edits to two test ` +
       `files' object factories no write_set named — a finding then, a clobber under workstreams, where two ` +
       `sets omitting the same forced companion are scheduled in parallel over it.\n` +
-      `${TIER_GUIDE}\n${IDEMPOTENCY_NOTE}\n` +
+      `${TIER_GUIDE}\n${REVIEW_ECONOMY}\n${IDEMPOTENCY_NOTE}\n` +
       `Do not write implementation code yourself — plan, then fan out.` +
       // R16: the planner writes the reviewer briefs, so it needs the push rule
       // in hand to put it into them.
