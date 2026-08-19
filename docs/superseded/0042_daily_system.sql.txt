@@ -1,0 +1,138 @@
+-- 0042_daily_system.sql
+--
+-- The "Daily" system — the real surface behind the `goals` placeholder.
+-- Evening planning, a task manager, habit tracking, and the stats that feed
+-- the next evening's plan. Contract: docs/SPEC-DAILY-SURFACE.md.
+--
+-- TIMEZONE CONTRACT (read before touching anything here)
+--   `day` is ALWAYS a plain `date` in Europe/Berlin local terms. The database
+--   never decides what "today" is: the API resolves it with
+--       (now() AT TIME ZONE 'Europe/Berlin')::date
+--   and passes an explicit day into every statement. Computing it from UTC
+--   would flip the day at 01:00/02:00 local — precisely the hour habits get
+--   logged. Any timestamptz→day conversion in a query MUST carry the
+--   AT TIME ZONE 'Europe/Berlin' cast for the same reason.
+--
+-- Applied by hand, twice, to prove idempotency:
+--   psql "$DATABASE_URL" -f db/migrations/0042_daily_system.sql
+-- against content_forge.
+--
+-- Everything below is re-runnable: IF NOT EXISTS on tables and indexes,
+-- ON CONFLICT DO NOTHING on the seed.
+
+-- ---------------------------------------------------------------------------
+-- Habits: a small, stable list with WEEKLY targets. Notion's 20-column
+-- checkbox table failed because 20 daily-perfect items is a wish list; a
+-- target of 4/7 makes "trained 4 times" a pass instead of a 3-day failure.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_habits (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  key             text UNIQUE NOT NULL,       -- stable slug, e.g. 'sleep_8h'
+  label           text NOT NULL,
+  icon            text NOT NULL,              -- material symbol name
+  target_per_week int  NOT NULL DEFAULT 7 CHECK (target_per_week BETWEEN 1 AND 7),
+  sort            int  NOT NULL DEFAULT 0,
+  -- 'avoid' habits ("no sweets") read as "held the line" when logged; the
+  -- streak semantics are identical, only the UI colour differs.
+  polarity        text NOT NULL DEFAULT 'do' CHECK (polarity IN ('do','avoid')),
+  archived_at     timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- One row per (habit, day). `done` is flipped in place rather than deleted so
+-- an explicit "no" is distinguishable from "never touched it" in the log.
+CREATE TABLE IF NOT EXISTS daily_habit_log (
+  habit_id  uuid NOT NULL REFERENCES daily_habits(id) ON DELETE CASCADE,
+  day       date NOT NULL,
+  done      boolean NOT NULL DEFAULT true,
+  logged_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (habit_id, day)
+);
+CREATE INDEX IF NOT EXISTS daily_habit_log_day_idx ON daily_habit_log(day);
+
+-- ---------------------------------------------------------------------------
+-- One row per day Konrad (or the evening planner) touched. Absent row = a day
+-- with no check-out; the API returns nulls rather than inventing a row.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_days (
+  day         date PRIMARY KEY,
+  mood        int CHECK (mood BETWEEN 1 AND 5),
+  energy      int CHECK (energy BETWEEN 1 AND 5),
+  note        text,          -- Konrad's own line for the day
+  plan_note   text,          -- the agent's framing for tomorrow ("why this")
+  planned_at  timestamptz,   -- set when the evening planner wrote this day
+  reviewed_at timestamptz,   -- set when Konrad closed the day out
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Goals = the day's FOCUS (max ~3 in the UI). `source` is load-bearing: the
+-- evening planner owns 'agent' rows and may replace them; 'konrad' rows are
+-- never touched by any automated write.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_goals (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  day        date NOT NULL,
+  title      text NOT NULL,
+  detail     text,
+  status     text NOT NULL DEFAULT 'open'
+             CHECK (status IN ('open','done','dropped','carried')),
+  source     text NOT NULL DEFAULT 'konrad' CHECK (source IN ('agent','konrad')),
+  sort       int  NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  done_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS daily_goals_day_idx ON daily_goals(day);
+
+-- ---------------------------------------------------------------------------
+-- Tasks. `planned_day` NULL = backlog; a past `planned_day` on an open task is
+-- what the UI shows as CARRIED.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS daily_tasks (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title        text NOT NULL,
+  notes        text,
+  area         text NOT NULL DEFAULT 'personal'
+               CHECK (area IN ('uni','business','content','health','admin','personal')),
+  -- Four levels, not Notion's six. Six is decision paralysis.
+  importance   text NOT NULL DEFAULT 'normal'
+               CHECK (importance IN ('critical','high','normal','low')),
+  status       text NOT NULL DEFAULT 'todo'
+               CHECK (status IN ('todo','doing','blocked','done','dropped')),
+  due          date,
+  planned_day  date,          -- the day it is scheduled onto. NULL = backlog.
+  estimate_min int,
+  sort         int NOT NULL DEFAULT 0,
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  done_at      timestamptz,
+  dropped_at   timestamptz
+);
+-- Partial: the TODAY and CARRIED reads only ever ask about live work.
+CREATE INDEX IF NOT EXISTS daily_tasks_planned_idx
+  ON daily_tasks(planned_day) WHERE status IN ('todo','doing','blocked');
+CREATE INDEX IF NOT EXISTS daily_tasks_status_idx ON daily_tasks(status);
+-- The stats page counts completions per Berlin day over 30 days.
+CREATE INDEX IF NOT EXISTS daily_tasks_done_at_idx
+  ON daily_tasks(done_at) WHERE done_at IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Seed: 14 habits, collapsed from Konrad's real Notion list and given weekly
+-- targets. Idempotent on `key` — re-running this file never duplicates a habit
+-- and never resets a target he has since edited.
+-- ---------------------------------------------------------------------------
+INSERT INTO daily_habits (key, label, icon, target_per_week, polarity, sort) VALUES
+  ('wake_early',   'Wake up 6:00',      'alarm',             5, 'do',     10),
+  ('sleep_8h',     '8h sleep',          'bedtime',           6, 'do',     20),
+  ('journal',      'Journaling',        'edit_note',         7, 'do',     30),
+  ('meditate',     'Meditation 5 min',  'self_improvement',  5, 'do',     40),
+  ('stretch',      'Stretching',        'accessibility_new', 5, 'do',     50),
+  ('train',        'Trained',           'fitness_center',    4, 'do',     60),
+  ('clean_diet',   'Clean diet',        'restaurant',        6, 'do',     70),
+  ('no_sweets',    'No sweets',         'no_food',           5, 'avoid',  80),
+  ('supplements',  'Supplements',       'medication',        7, 'do',     90),
+  ('read_20',      'Read 20 min',       'menu_book',         5, 'do',    100),
+  ('deep_work',    'Done enough work',  'bolt',              5, 'do',    110),
+  ('shipped',      'Shipped / uploaded','rocket_launch',     3, 'do',    120),
+  ('chores',       'Chores done',       'checklist',         5, 'do',    130),
+  ('screen_limit', 'Screen time < 30m', 'phonelink_erase',   5, 'avoid', 140)
+ON CONFLICT (key) DO NOTHING;

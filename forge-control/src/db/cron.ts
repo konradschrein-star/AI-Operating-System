@@ -143,6 +143,24 @@ export async function updateSchedule(
     const next = nextFireFromExpr(patch.cron_expr, new Date()).toISOString();
     args.push(next);
     sets.push(`next_run_at = $${args.length}`);
+  } else if (patch.enabled === true) {
+    // Re-enabling a schedule must also re-arm it. `next_run_at` is frozen at
+    // whatever it held when the schedule was switched off, and the tick only
+    // ever fires rows where `next_run_at <= now()` — so a schedule paused in
+    // July and resumed in August comes back either dormant until its stale
+    // stamp arrives (mentor-evening sat on 2027-07-07: dead for a year) or,
+    // if the stamp is in the past, firing immediately at an hour nobody
+    // chose. Neither is what "enable" means. Recomputed from the expression
+    // here, so the first fire after resuming is the next real occurrence.
+    //
+    // Guarded on `=== true`: disabling must not touch the stamp, since a
+    // pause/resume within one interval should keep its place.
+    const s = await getScheduleById(id);
+    if (s) {
+      const next = nextFireFromExpr(s.cron_expr, new Date()).toISOString();
+      args.push(next);
+      sets.push(`next_run_at = $${args.length}`);
+    }
   }
 
   if (sets.length === 0) return getScheduleById(id);

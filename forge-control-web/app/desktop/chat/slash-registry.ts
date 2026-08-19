@@ -65,6 +65,12 @@ export interface SlashContext {
   }): Promise<{ ok: boolean; reminder: Reminder }>;
   /** POST /api/chat/:id/model — engine model for subsequent turns. */
   setModel(id: string, model: string): Promise<unknown>;
+  /** POST /api/chat/:id/compact — archive the thread, then keep only the
+   *  newest `keep` entries so the next turn carries less context. */
+  compactRun(id: string, keep?: number): Promise<{
+    compacted: boolean; dropped?: number; kept?: number; was?: number;
+    archive?: string; reason?: string; entries?: number;
+  }>;
   /** GET /api/autonomy — guardrail rules (spend caps, kill switches). */
   fetchRules(): Promise<GuardrailRule[]>;
   /** POST /api/autonomy/rules/:id — merge-patch a rule's config. */
@@ -109,6 +115,28 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     handler: async (ctx) => {
       await ctx.resumeFleet();
       ctx.sys("fleet resumed.");
+      return { kind: "noop" };
+    },
+  },
+  {
+    name: "compact",
+    help: "shrink this chat's context — archives the full thread first",
+    handler: async (ctx) => {
+      if (!ctx.runId) {
+        ctx.sys("no chat open — nothing to compact.");
+        return { kind: "noop" };
+      }
+      const r = await ctx.compactRun(ctx.runId);
+      /* Say what actually happened, including the archive path. A compaction
+       * that only reports "done" is indistinguishable from one that quietly
+       * threw the transcript away. */
+      ctx.sys(
+        r.compacted
+          ? `compacted — ${r.dropped} of ${r.was} entries archived to ${r.archive}; ` +
+            `${r.kept} kept. Durable state is in the vault (AI OS/Session State).`
+          : `not compacted — ${r.reason ?? "nothing to do"}` +
+            (r.entries ? ` (${r.entries} entries)` : ""),
+      );
       return { kind: "noop" };
     },
   },

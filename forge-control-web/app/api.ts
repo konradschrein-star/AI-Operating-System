@@ -697,6 +697,22 @@ export const createChat = async (input: {
   return r.run;
 };
 
+export interface CompactResult {
+  compacted: boolean;
+  dropped?: number;
+  kept?: number;
+  was?: number;
+  archive?: string;
+  reason?: string;
+  entries?: number;
+}
+
+/** Archive this chat's thread, then keep only the newest `keep` entries.
+ *  The server archives BEFORE it rewrites and refuses to compact if the
+ *  archive write fails, so this cannot silently lose a transcript. */
+export const compactChat = async (id: string, keep?: number) =>
+  postJson<CompactResult>(`/chat/${id}/compact`, keep ? { keep } : {});
+
 export const setChatModel = async (id: string, model: string) => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/model`, { model });
   return r.run;
@@ -1467,3 +1483,310 @@ export const clearSecretPending = async (name: string): Promise<void> => {
 export const deleteSecret = async (name: string): Promise<void> => {
   await deleteJson<{ deleted: true }>(`/secrets/${encodeURIComponent(name)}`);
 };
+
+/* ----------------------------------------------------------------------------
+ * GOALS/TASKS — the said-vs-done surface (docs/spec-daily-goals.md)
+ *
+ * The frozen contract is §4 of that spec: GET /api/daily, the five per-day
+ * writes under /api/daily/:day/*, the /api/daily/tasks CRUD, /api/daily/rollover
+ * and /api/daily/stats. Shapes below mirror the tables in §2 (day_plans,
+ * habits, habit_logs, day_tasks) and the score object in §3.
+ *
+ * The spine (§1): the evening job drafts tomorrow, Konrad COMMITS in the
+ * morning, and from that instant the Big 3 text is frozen — `committed_at`
+ * being non-null is what turns three inputs into three immutable lines with an
+ * abandon affordance. Nothing here recomputes a score; §3 says one place owns
+ * that formula and it is the server.
+ *
+ * Names are prefixed `Day…` rather than `Daily…` to sit beside the block above
+ * without colliding with it. Same word, two different data models — reach for
+ * the one whose route you are actually calling.
+ * -------------------------------------------------------------------------- */
+
+export type DayGoalStatus = "open" | "done" | "abandoned";
+
+/** One of the Big 3. Stored inside `day_plans.big3` as jsonb, so the id
+ *  travels with the entry — assigned by whoever wrote it (the evening job, or
+ *  this client when Konrad adds a line himself before commit). */
+export interface DayGoal {
+  id: string;
+  text: string;
+  why: string | null;
+  status: DayGoalStatus;
+  /** Why it was given up on. The UI demands one before it will abandon —
+   *  §1's whole point is that quitting is recorded, not edited away. */
+  reason: string | null;
+  done_at: string | null;
+}
+
+export interface DayPlan {
+  day: string;
+  big3: DayGoal[];
+  intent: string | null;
+  /** NULL = still an editable draft. Non-null = the day is *said*, and the
+   *  Big 3 text may no longer be rewritten (§1). */
+  committed_at: string | null;
+  generated_by: string | null;
+  generated_at: string | null;
+  subjective: number | null;
+  reflection: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DayHabitGroup = "morning" | "body" | "work" | "evening";
+export type DayHabitPolarity = "do" | "avoid";
+
+export interface DayHabit {
+  id: string;
+  key: string;
+  label: string;
+  /** Material Symbols glyph name — rendered with `className="ms"`. */
+  icon: string;
+  grp: string;
+  polarity: DayHabitPolarity;
+  weight: number;
+  sort: number;
+  active: boolean;
+  created_at: string;
+}
+
+/** The day bundle decorates each habit with its current streak, so the chip
+ *  can print a streak badge without the STATS window having been fetched. */
+export interface DayHabitWithStreak extends DayHabit {
+  streak: number;
+}
+
+/** A tick. An ABSENT row means not done — there is no third state. */
+export interface DayHabitTick {
+  day: string;
+  habit_id: string;
+  done: boolean;
+  ts: string;
+}
+
+export type DayTaskStatus = "todo" | "doing" | "done" | "parked";
+export type DayTaskView = "today" | "week" | "backlog" | "all";
+
+export interface DayTask {
+  id: string;
+  title: string;
+  area: string | null;
+  /** 3 critical / 2 high / 1 normal / 0 low. */
+  importance: number;
+  status: DayTaskStatus;
+  planned_day: string | null;
+  due_day: string | null;
+  est_min: number | null;
+  /** Times this task has been rolled onto a new day. >= 3 is stale (§5). */
+  carried: number;
+  notes: string | null;
+  done_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Calendar days since creation, computed in Berlin terms server-side.
+   *  Surfaced ONLY past 14 days (§6) — never as a permanent shame column. */
+  age_days: number;
+  /** `carried >= 3`. Drives the "This keeps sliding" strip (§5). */
+  stale: boolean;
+}
+
+/**
+ * The day's score, computed once server-side in `lib/day-score.ts` (§3).
+ *
+ * A component with no denominator is DROPPED and the remaining weights
+ * renormalise — a day with no committed Big 3 is scored on habits and tasks
+ * alone; `weights` reports what each component actually carried. A dropped
+ * component is `null` here, never `0`, and `score` itself is null when nothing
+ * had a denominator at all: rendering "missing" as "zero" is precisely the
+ * permanent, meaningless 0% that killed the Notion setup (§0.4).
+ */
+export interface DayScore {
+  score: number | null;
+  goal_pct: number | null;
+  habit_pct: number | null;
+  task_pct: number | null;
+  weights: { goal: number; habit: number; task: number };
+  counts: {
+    goals_done: number;
+    goals_abandoned: number;
+    goals_total: number;
+    habits_done_weight: number;
+    habits_total_weight: number;
+    tasks_done: number;
+    tasks_total: number;
+  };
+  /** score >= 80 — "Day fulfilled — rest guilt-free." (§3). */
+  fulfilled: boolean;
+}
+
+export interface DailyDayResponse {
+  day: string;
+  /** null until something writes a plan for that date. */
+  plan: DayPlan | null;
+  habits: DayHabitWithStreak[];
+  ticks: DayHabitTick[];
+  tasks: DayTask[];
+  /** `provisional` is true for today: real, but the day is not over, and the
+   *  UI must say so rather than let a 10:00 number read as a verdict. */
+  score: DayScore & { provisional: boolean };
+  stale_at: number;
+}
+
+export interface DayStatsDay {
+  day: string;
+  score: number | null;
+  habit_pct: number | null;
+  goal_pct: number | null;
+  task_pct: number | null;
+  subjective: number | null;
+}
+
+export interface DayStatsHabit {
+  id: string;
+  key: string;
+  label: string;
+  icon: string;
+  grp: string;
+  /** 0..1 over the last 30 days. */
+  rate30: number;
+  streak: number;
+  best: number;
+  /** The days inside that 30-day window that were ticked — the sparkline. */
+  ticks30: string[];
+}
+
+export interface DayStats {
+  window: { days: number; from: string; to: string };
+  days: DayStatsDay[];
+  habits: DayStatsHabit[];
+  /** The headline of the STATS tab (§6). `rate` is 0..1, or null when nothing
+   *  was committed in the window — no denominator, no percentage. */
+  said_vs_done: {
+    committed: number;
+    done: number;
+    abandoned: number;
+    open: number;
+    rate: number | null;
+  };
+  tasks: {
+    done_by_day: { day: string; n: number }[];
+    open: number;
+    stale: number;
+  };
+  streak: { current: number; best: number };
+}
+
+/**
+ * §4 pins the routes and their request bodies, not what the writes return.
+ * The surface never reads a mutation's result — each one invalidates
+ * `["daily"]` and re-reads GET /api/daily, which IS specified — so this is
+ * typed as the honest `unknown` rather than a shape invented here that would
+ * be quietly wrong the first time the server disagreed.
+ */
+type DayWriteResult = unknown;
+
+export const fetchDailyDay = (day?: string): Promise<DailyDayResponse> =>
+  getJson<DailyDayResponse>(
+    day ? `/daily?day=${encodeURIComponent(day)}` : "/daily",
+  );
+
+/** Draft edit of the intent line and/or the Big 3. 409 once committed (§1) —
+ *  callers surface that as "abandon instead of editing", never as a silent
+ *  no-op. */
+export const saveDayPlan = (
+  day: string,
+  input: { intent?: string | null; big3?: DayGoal[] },
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>(`/daily/${encodeURIComponent(day)}/plan`, input);
+
+/** Freeze the Big 3 and stamp `committed_at`. Idempotent. */
+export const commitDay = (day: string): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>(`/daily/${encodeURIComponent(day)}/commit`);
+
+export const setDayGoalStatus = (
+  day: string,
+  goalId: string,
+  input: { status: DayGoalStatus; reason?: string },
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>(
+    `/daily/${encodeURIComponent(day)}/goal/${encodeURIComponent(goalId)}`,
+    input,
+  );
+
+export const reflectDay = (
+  day: string,
+  input: { subjective?: number; reflection?: string },
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>(`/daily/${encodeURIComponent(day)}/reflect`, input);
+
+/** Upsert on true, delete the row on false. The chip flips optimistically and
+ *  reconciles against the refetch — a tick that waits on a round trip is a
+ *  tick that stops happening. */
+export const setDayHabit = (
+  day: string,
+  habitId: string,
+  done: boolean,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>(
+    `/daily/${encodeURIComponent(day)}/habit/${encodeURIComponent(habitId)}`,
+    { done },
+  );
+
+/**
+ * §4 gives the query string but not the envelope; `routes/daily.ts` answers
+ * `{view, day, count, stale_at, tasks}`, which is the wrapped shape every
+ * other list route in forge-control uses. A bare array is read too, and
+ * anything else throws with the keys it actually got. The failure mode being
+ * avoided is an empty planner that looks like an empty day.
+ */
+export const fetchDayTasks = async (params?: {
+  view?: DayTaskView;
+  area?: string;
+  status?: DayTaskStatus;
+}): Promise<DayTask[]> => {
+  const qs = new URLSearchParams();
+  if (params?.view) qs.set("view", params.view);
+  if (params?.area) qs.set("area", params.area);
+  if (params?.status) qs.set("status", params.status);
+  const path = qs.toString() ? `/daily/tasks?${qs.toString()}` : "/daily/tasks";
+  const r = await getJson<DayTask[] | { tasks?: DayTask[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.tasks)) return r.tasks;
+  throw new Error(
+    `GET ${path}: expected {tasks:[…]} or an array, got keys [${Object.keys(
+      r as Record<string, unknown>,
+    ).join(", ")}]`,
+  );
+};
+
+export interface DayTaskInput {
+  title: string;
+  area?: string | null;
+  importance?: number | null;
+  planned_day?: string | null;
+  due_day?: string | null;
+  est_min?: number | null;
+  notes?: string | null;
+}
+
+export const createDayTask = (input: DayTaskInput): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/tasks", input);
+
+export const updateDayTask = (
+  id: string,
+  patch: Partial<DayTaskInput> & { status?: DayTaskStatus; carried?: number },
+): Promise<DayWriteResult> =>
+  patchJson<DayWriteResult>(`/daily/tasks/${encodeURIComponent(id)}`, patch);
+
+export const deleteDayTask = (id: string): Promise<DayWriteResult> =>
+  deleteJson<DayWriteResult>(`/daily/tasks/${encodeURIComponent(id)}`);
+
+/** The anti-graveyard sweep (§5): every open task planned before today moves
+ *  onto today and `carried` goes up by one. Idempotent per day — the evening
+ *  job calls it too, so a manual press can only ever be a no-op. */
+export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/rollover", to ? { to } : {});
+
+export const fetchDayStats = (days = 90): Promise<DayStats> =>
+  getJson<DayStats>(`/daily/stats?days=${days}`);
