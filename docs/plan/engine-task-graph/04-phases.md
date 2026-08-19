@@ -357,7 +357,7 @@ sequential. Sequential is cheaper here.
 
 ## Phase 5 — Planner and role prompts
 **Planner round 500.**
-**Requirements: R47–R53, NF7.**
+**Requirements: R47–R53, R73, NF7.**
 
 ### Scope
 Teach the fleet the new vocabulary. Delete the old one in the same commit.
@@ -888,7 +888,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, R72, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
 | 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, R70, R17, NF1, NF5 |
-| 5 | R47, R48, R49, R50, R51, R52, R53, NF7 |
+| 5 | R47, R48, R49, R50, R51, R52, R53, R73, NF7 |
 | 6 | R54, R55, R56, R57, R58 |
 | 7 | R59, R60, R61, R62 |
 | 8 | R63, R64, R65, R66, R67, R68, NF2, NF5 |
@@ -1683,3 +1683,31 @@ commit as the writes, per standing rule 5.
 | `scripts/checks/check-r20-census.py` | **A THIRD instrument round 972 broke, found while discharging finding 3.** It has died with a `KeyError` traceback instead of a verdict since `af3cba6`, and `03-quality.md` §4 makes it mandatory for phase 2. Three causes, all fixed here: the cap's two new `round`-bearing lines were unjustified (both entered, both PROJECTIONS FEEDING AN ORDERING); `af3cba6` re-indented an R27 annotation by two spaces, silently invalidating its allow-list key; and `render()` looked the justification up with `[]`, replacing the R20 finding with a crash — now `.get` with a visible marker. `listTaskReports`, unattributed since round 970, is attributed. |
 | `docs/plan/engine-task-graph/evidence/phase2-replay.md` | **Generated region only.** `check-r20-census.py --write`, as the region's own header instructs; it was stale from round 970's new symbol and round 972's new lines. Seven lines, all inside `<!-- BEGIN GENERATED: r20-census -->`. |
 | `docs/plan/engine-task-graph/evidence/round974-fix-cycle-2.md` | **new.** The transcript: both findings reproduced before being fixed, the mutation control that proves case 1b is not self-satisfying, the canary that proves the migration guard fires, and every gate's fresh output. |
+
+### Round 975 — the recovered chain, and the four heredoc spans round 974 left behind
+
+**Round 975's write-set — one path was declared, and six are undeclared.** The
+recovered task was seeded with `write_set = {scripts/checks/check-scheduler-sql.sh}`.
+That declaration was written for a chain that assumed **nothing had landed yet**:
+round 973's verdict had in fact already been discharged by round 974's fix cycle 2
+(`20a2e8e`), which the recovery brief could not see because the fix chain was
+seeded by hand after the project had sat paused for 17 hours. Findings 1 and 2 of
+that verdict were therefore already closed at `HEAD` before this round began, and
+were **re-verified rather than re-implemented** — the transcripts are in
+`evidence/round975-recovered-chain.md`.
+
+Finding 3 was the one still open, and it is the reason for every undeclared path
+below: it asks for a rule *"where builders will read it"*, and a builder reads its
+brief, which is built by `project-tick.ts` — a file no one-line write-set could
+have contained. The manifest is here, in the same commit as the writes, per
+standing rule 5.
+
+| file | why round 975 writes it |
+|---|---|
+| `scripts/checks/check-scheduler-sql.sh` | **DECLARED — the one path in the write-set.** Failure mode (h): the seed heredoc is opened unquoted (`<<SQL`) so fixtures can interpolate their row ids, which also let bash expand **backquotes** in the body. Four spans of SQL-comment prose were being executed as command substitutions on every run — printing `running: command not found`, `pending: command not found` and two `syntax error: unexpected end of file`, at exit 0 with 104/104. Round 974 fixed **one** such pair by hand (in the DRIVER heredoc) and did not look for the class. The four are escaped, and section 1b now scans this file's own source for unescaped `` ` `` or `$(` inside any unquoted heredoc, so the class cannot return. `EXPECTED_ASSERTIONS` 104 → 105. |
+| `forge-control/src/lib/project-tick.ts` | **Finding 3, the deliverable — R73.** The builder branch of `buildTaskPrompt()` gains *GATES ARE ATTACHED TO FILES, NOT TO BRIEFS*: grep `scripts/checks/` for each path you wrote, run what names it, paste it, **whether or not the brief mentions it**. Round 974's narrow clause (§4: "any change to `promoteReadyTasks()` re-runs `check-scheduler-sql.sh`") is kept and is not the general form — it names one file and lives in a document builders do not read. |
+| `forge-control/src/lib/project-tick.test.ts` | R73 in prompt form, and its **negative control**: the clause must be absent from the planner and reviewer prompts. Asserting only presence would pass just as happily if the clause drifted into the shared header, which would tell reviewers to run builders' gates. Both directions watched red (`evidence/round975-recovered-chain.md` §4). |
+| `docs/plan/engine-task-graph/01-requirements.md` | **Standing rule 4 — R73 defined.** This is the hole round 974 was itself dinged for: it shipped R72 from code with no requirement to attach to, so `check-corpus-map.py` saw a contiguous corpus and reported nothing. R73 is defined before it is cited, in §F beside R52, whose builder-prompt clause it extends. |
+| `docs/plan/engine-task-graph/03-quality.md` | **Standing rule 2 — state the rule where the gates are indexed.** §2.2 gains R73's general form and the grep that answers it. A **hand-written subject → gate table was drafted here and deleted before committing**: verified against the grep, four of its six rows were wrong the day they were written, and a stale gate index fails in the direction that certifies — a builder who runs the two checks it lists has complied while leaving the rest unrun. The reasoning is kept in the document so the next round does not re-derive the table. |
+| `docs/plan/engine-task-graph/04-phases.md` | §9's phase-5 row and the phase-5 header gain R73 (`check-corpus-map.py` enforces the agreement three ways), and this disclosure. |
+| `docs/plan/engine-task-graph/evidence/round975-recovered-chain.md` | **new.** The transcript: both directions of the R11/R72 gate against the pre-972 and shipped statements, three canaries proving the heredoc scan fires and a clean-fixture control proving it is not always-red, the two prompt mutations, and the `merge-tree` proof for the migration pattern. |

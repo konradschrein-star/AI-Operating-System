@@ -2287,6 +2287,42 @@ describe("R52 the builder restates its declared write-set", () => {
   });
 });
 
+describe("R73 gates are attached to files, not to briefs", () => {
+  test("the builder is told to grep the check directory for the paths it wrote", () => {
+    const prompt = buildPrompt(task({ role: "builder" }), project({ repo: "ai-os" }));
+    for (const [what, needle] of [
+      ["the rule is stated as a rule", "GATES ARE ATTACHED TO FILES, NOT TO BRIEFS"],
+      ["the lookup is named, so the rule is satisfiable by a grep", "scripts/checks/"],
+      ["running it is mandatory, not advisory", "RUN IT AND PASTE ITS OUTPUT"],
+      // The load-bearing half. Round 972's builders did nothing wrong by the
+      // letter of their briefs; the rule only bites if it overrides the brief.
+      ["it overrides the brief's silence", "whether or not this brief mentions it"],
+      ["an unrunnable check is disclosed rather than skipped silently", "say which check and why"],
+    ] as const) {
+      assert.ok(prompt.includes(needle), `R73: ${what} — missing [${needle}]`);
+    }
+  });
+
+  test("it is on the BUILDER path and not in text every role shares", () => {
+    // The negative control, and the reason this test is not one assertion.
+    // `includes()` on a string built by a function with eight role branches
+    // passes just as happily if the clause drifted into the shared header, and
+    // a rule that reaches every role reaches none of them in particular — the
+    // reviewer would be told to run a builder's gates. Asserting BOTH sides
+    // makes the placement the measurement.
+    const planner = buildPrompt(task({ role: "planner" }), project({ repo: "ai-os" }));
+    const reviewer = buildPrompt(task({ role: "reviewer" }), project({ repo: "ai-os" }));
+    assert.ok(
+      !planner.includes("GATES ARE ATTACHED TO FILES"),
+      "R73: the clause leaked into the planner prompt — a planner writes briefs, it does not write files",
+    );
+    assert.ok(
+      !reviewer.includes("GATES ARE ATTACHED TO FILES"),
+      "R73: the clause leaked into the reviewer prompt, whose gate obligations are 03-quality.md §4's",
+    );
+  });
+});
+
 describe("R57 the reviewer's write-set audit", () => {
   const reviewerPrompt = buildPrompt(task({ role: "reviewer" }), project({ repo: "ai-os" }));
 

@@ -152,6 +152,44 @@ suite stays hermetic (NF3).
 | `scripts/checks/check-workstream-claim.ts` | round 960 (R48's criterion, R33's branch form) | The second check of that class, and the reason it exists is measured: `GRAPH_GUIDE`'s workstream bullet closed with a SAME-FILE criterion while the round-222 spawn belt serialises a workstream whatever its tasks write, so round 815's project produced a correct DAG that ran 1-wide (`evidence/phase8-verify.md` §7c). Drives `busyWorkstreams()` + `partitionByWorkstream()` + `selectClaimable()` with that exact shape: two disjoint tasks in one workstream spawn ONE while the contention gate would have run both; the same file in two workstreams spawns BOTH; six independent tasks over k workstreams reach width k for k ∈ {1,2,3,6}; `workstreamBranch()` is the hyphen form R33 verified against git and never the slash form three documents predicted. Then the guide is asserted to state exactly what the table proved, and to no longer carry the retired criterion. Needs no database and no git repo, so a build task may run it; prints the resolved path and sha256 of every module it imported, and fails rather than certifies if its case census comes up short. Mutation-tested at round 960 — five injected faults, each red, each restored by sha (`evidence/round960-workstream-criterion.md` §4). |
 | `scripts/checks/check-screenshot-render-shapes.ts` | round 902, review finding 1 | The FIRST check that executes a PROMPT'S CLAIM against the code it describes — "the only" until round 960 added the row above, corrected here in the commit that made it false. Seven payload shapes — a `Read` of the saved path, a JSON `"url"` member, a bare URL echoed as text, an MCP screenshot call, a silent `cp`, an unstamped name, prose mentioning the directory — through the shipped `extractBrowserShots`, then the two prompts asserted to state exactly what the table proved. Needs no database and no git repo, so it is safe from a build task; prints the resolved path and sha256 of every module it imported, and fails rather than certifies if its case census comes up short. |
 
+**A GATE IS ATTACHED TO A FILE, NOT TO A BRIEF (R73, round 975).** Every builder
+that writes one of the subjects below runs that subject's check and pastes its
+output, **whether or not its brief names it**. This is stated in the builder
+prompt itself (`buildTaskPrompt()`, the `role === "builder"` branch) rather than
+only here, because a builder reads its brief and may never open this document —
+which is exactly how the miss below happened.
+
+*The measurement.* Round 972 changed `db/projects.ts` and was fix-cycled twice;
+all three commits cited `gates-808.sh`, `pnpm test` and `tsc`, none of which runs
+`check-scheduler-sql.sh`. Six of its cases sat broken for two commits. §4's
+phase-2 block already carries the narrow form of this rule for
+`promoteReadyTasks()`; the narrow form is kept, and this is the general one.
+
+*The lookup, so the rule is satisfiable by a grep rather than by knowing.* One
+command, over a directory already checked out:
+
+```bash
+grep -rln "<each path you wrote>" scripts/checks/
+```
+
+**Deliberately not a table here, and the reason is measured.** Round 975 drafted
+exactly that table and verified it against the grep before committing: four of
+its six rows were already wrong on the day they were written — it credited
+`check-migration-0040.sh` with naming `db/projects.ts` (it does not), missed five
+of the six checks that name `lib/task-graph.ts`, and named `check-close-gate.ts`
+for `project-tick.ts` on the strength of a loose `grep project-tick` that had
+matched prose rather than the path. A hand-maintained index of gates is a second
+source of truth about a directory that changes every round, and it fails in the
+direction that certifies: a builder who consults it, runs the two checks it
+lists, and stops has *complied* while leaving the others unrun. The grep is
+authoritative, cannot go stale, and costs less than reading the table would.
+
+Two follow-ups the grep alone does not answer, so they are stated: an instrument
+under `scripts/checks/` is itself a subject (`check-instrument-typecheck.sh`, plus
+its own `--self-check` where it has one), and a check may name a subject only in
+prose — read the hit before dismissing it, and dismiss it in the report rather
+than silently.
+
 **Scratch database, not the live one.** Every script takes its connection string
 from `SCRATCH_DATABASE_URL` and **refuses to run** if that variable is unset or
 points at `content_forge`. A check that can be pointed at production by

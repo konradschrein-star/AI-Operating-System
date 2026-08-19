@@ -1499,6 +1499,26 @@ export function buildPrompt(
       `Restate it in your final report, and if you wrote ANY file outside it, say so LOUDLY: name each ` +
       `undeclared file and why it had to change. Your reviewer compares the paths your commits touched ` +
       `against this list and reports an undeclared write as a finding — disclose it first.\n\n` +
+      // R73, round 975, from a measured miss and stated GENERALLY on purpose. Round
+      // 972 changed db/projects.ts and was fix-cycled twice, and nobody ran
+      // check-scheduler-sql.sh — that file's own dedicated gate, the only
+      // instrument in the corpus that puts the shipped statement in front of a
+      // real Postgres — because the briefs listed the universal block and
+      // nothing else. A real gate sat broken and silent through two commits.
+      // The narrow fix went into that project's 03-quality.md ("any change to
+      // promoteReadyTasks() re-runs check-scheduler-sql.sh"); this is the same
+      // rule with the file name taken out, and it belongs HERE rather than in a
+      // corpus because a builder reads its brief and may never open the quality
+      // doc, and because the failure is not specific to one project.
+      // WHY IT IS SATISFIABLE, in the sense standing rule 2 means: the lookup is
+      // one grep over a directory the builder already has checked out. It never
+      // asks anyone to know which gates exist.
+      `GATES ARE ATTACHED TO FILES, NOT TO BRIEFS. Before you report done, grep the repo's check ` +
+      `directory (scripts/checks/) for each path you actually wrote. If a check names one of them, RUN IT ` +
+      `AND PASTE ITS OUTPUT — whether or not this brief mentions it. A brief lists the universal block plus ` +
+      `whatever its planner happened to know about; it cannot list a gate that was added after it was ` +
+      `written, and "my brief did not name it" has already let a broken gate ship twice. If running it is ` +
+      `genuinely impossible from the worktree, say which check and why, in your final message.\n\n` +
       `${BROWSER_FIRST}`
     );
   }

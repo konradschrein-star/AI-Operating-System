@@ -139,6 +139,31 @@
 #       its candidate in a lane of its own, and every case that expects TWO rows
 #       to promote in one tick (1, 5b's control, 6) spreads them across lanes.
 #       Case 1b is the deliberate exception and asserts the cap by name.
+#   (h) THE SHELL EDITING THE SQL ON ITS WAY TO POSTGRES. Round 975. The seed
+#       heredoc is opened UNQUOTED (`<<SQL`, not `<<'SQL'`) because the fixtures
+#       interpolate their row ids from shell variables — that expansion is the
+#       point. But an unquoted heredoc expands BACKQUOTES too, so prose written
+#       the way the rest of this corpus writes it — a symbol in backticks inside
+#       a `--` comment — was being executed as a command substitution and
+#       replaced by its output. Measured at 20a2e8e: four such spans in this
+#       file's seed, which made every run print
+#         `line 407: running: command not found`
+#         `line 407: pending: command not found`
+#         `command substitution: line 408: syntax error: unexpected end of file` ×2
+#       while still exiting 0 with 104/104. Harmless in that instance — all four
+#       sat inside SQL comments, so only comment text was deleted — but the
+#       mechanism is not harmless: bash SUBSTITUTES THE EMPTY STRING for a span
+#       it cannot parse, so a backquote landing in a VALUES literal would change
+#       a seeded value while the row COUNT (failure mode (a)) still tallied, and
+#       a backquoted word that happens to name a real command would EXECUTE it
+#       during a gate run. The seed's four spans are escaped now, the way the
+#       DRIVER heredoc below has always escaped its TypeScript template literals.
+#       Guarded generally rather than instance-by-instance: section 1b scans THIS
+#       FILE's own source, finds every unquoted heredoc, and fails on an
+#       unescaped backquote or `$(` in its body, naming the line and the opener.
+#       The scan is why the fix is not just four backslashes — four backslashes
+#       are one round's worth, and the next author writing a comment the way this
+#       header writes them would reintroduce it silently.
 #
 # A NOTE ON WHAT CASE 3 CAN AND CANNOT SEE, recorded rather than glossed.
 # The sweep's cardinality predicate is the literal negation of the promote
@@ -178,7 +203,11 @@ cd "$REPO_ROOT"
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
 # 93 → 104 at round 974: case 1b's nine, R11's new lane-separation assertion, and
 # R72's release assertion pair on tick 2 (11 added, none removed).
-EXPECTED_ASSERTIONS=104
+# 104 → 105 at round 975: section 1b's heredoc expansion guard, failure mode (h).
+# It is counted here rather than left as a bare `if` precisely because this file
+# refuses to certify a run whose probes did not all fire — a guard exempt from
+# that census would be the one probe allowed to go quiet.
+EXPECTED_ASSERTIONS=105
 ASSERTIONS_RUN=0
 # Every row the seed inserts, per case and in the order they are inserted:
 #   case 1  3 · case 1b 3 · case 2  2 · cases 3+4 2 · case 5  3 · case 5b 4
@@ -301,6 +330,78 @@ echo "  throwaway schema   : $SCHEMA (search_path via ?options=, verified pg 8.2
 echo "  driven by          : tsx, importing the SHIPPED promoteReadyTasks/claimReadyTasks"
 echo "  expected assertions: $EXPECTED_ASSERTIONS"
 echo '==============================================================================='
+
+# ---------------------------------------------------------------------------
+# 1b. HEREDOC EXPANSION GUARD — failure mode (h), round 975.
+#     Everything this check sends to Postgres, and the whole TypeScript driver,
+#     travels through a heredoc. Three of them are opened UNQUOTED so the
+#     fixtures can interpolate `$T1_CAND` and friends; that also hands bash the
+#     right to run BACKQUOTES and `$(...)` in the body and to splice the result
+#     into the text — or, when the span does not parse, to splice the EMPTY
+#     STRING and carry on at exit 0. That is the shape this project calls an
+#     instrument lying before the code does: the SQL that ran is not the SQL
+#     that is written here, and nothing in the transcript says so.
+#
+#     So the file reads ITS OWN SOURCE and refuses. It is deliberately a scan
+#     and not a list of the four spans round 975 found: a list is one round's
+#     worth of safety, and the next author writing `retryTask()` in a comment —
+#     which is exactly how the header above writes it — would reintroduce the
+#     defect with no signal at all.
+#
+#     Escaped backquotes are FINE and are the intended idiom: the DRIVER heredoc
+#     below carries eleven `\`` template literals and has always escaped them.
+#     Unescaped `$VAR` is also fine and is the reason the heredocs are unquoted;
+#     only `$(` is refused, because command substitution is the half that
+#     executes. Quoted heredocs (`<<'PY'`) expand nothing and are skipped.
+# ---------------------------------------------------------------------------
+HEREDOC_SCAN="$(python3 - "${BASH_SOURCE[0]}" <<'PY'
+import re, sys
+
+# `<<WORD` / `<<-WORD` / `<<'WORD'` / `<<"WORD"`. The quote form is captured so
+# the body can be skipped: a quoted delimiter disables ALL expansion, which is
+# what makes the python blocks in this file safe to write however they like.
+OPEN = re.compile(r"""<<-?\s*(?P<q>['"]?)(?P<w>[A-Za-z_][A-Za-z0-9_]*)(?P=q)""")
+# A backquote or a `$(` with no backslash in front of it. Both are expanded by
+# bash inside an unquoted heredoc; `$VAR` is not matched, on purpose.
+DANGER = re.compile(r'(?<!\\)`|(?<!\\)\$\(')
+
+path = sys.argv[1]
+delim, quoted, opened_at, hits = None, False, 0, []
+with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+    for n, raw in enumerate(fh, 1):
+        line = raw.rstrip('\n')
+        if delim is None:
+            # A `#` line cannot open a heredoc, and this file's header quotes
+            # heredoc syntax in prose repeatedly — including the paragraph that
+            # documents this very guard.
+            if line.lstrip().startswith('#'):
+                continue
+            m = OPEN.search(line)
+            if m:
+                delim, quoted, opened_at = m.group('w'), bool(m.group('q')), n
+            continue
+        if line.strip() == delim:
+            delim = None
+            continue
+        if quoted:
+            continue
+        for m in DANGER.finditer(line):
+            hits.append((n, m.group(0), delim, opened_at, line.strip()[:64]))
+
+if delim is not None:
+    sys.exit(f'HEREDOC SCAN ABORTED: <<{delim} opened at line {opened_at} is never '
+             f'closed. The scan cannot certify a file it could not parse.')
+
+for n, tok, d, at, text in hits:
+    print(f'  UNESCAPED {tok!r} at line {n}, inside <<{d} opened at line {at}: {text}',
+          file=sys.stderr)
+print(len(hits))
+PY
+)" || { echo "  FAIL: the heredoc scan could not run — see above." >&2; exit 1; }
+# One assertion, so the census counts it like every other probe. Zero is the
+# only passing value: a hit is not a warning, because the corrupted text has
+# already reached Postgres by the time any later assertion could notice.
+assert_eq "no shell expansion edits the SQL on its way out (failure mode (h))" "0" "$HEREDOC_SCAN"
 
 WORK="$(mktemp -d -t check-sched-XXXXXX)"
 # Symlinked node_modules so `import pg` resolves from a directory outside the
@@ -458,9 +559,9 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
 -- CASE 2 (R12). Both rows are LEGACY (depends_on IS NULL). The lower round is
 -- held by a 'running' row, which promote never touches, so the only way the
 -- candidate moves is the legacy branch releasing it after the drain.
--- LANES SPLIT ROUND 974 (failure mode (g)): the lower row is `running`, so with
+-- LANES SPLIT ROUND 974 (failure mode (g)): the lower row is \`running\`, so with
 -- both in 'main' R72's cap would hold the candidate on tick 1 by itself and the
--- case would assert `pending` without R12 having been consulted at all.
+-- case would assert \`pending\` without R12 having been consulted at all.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
   ('$T2_LOW','$P2',100,'builder','c2 lower-round legacy row, running','x','running',NULL,'main','{}'),
   ('$T2_CAND','$P2',200,'reviewer','c2 legacy candidate','x','pending',NULL,'c2-cand','{}');
@@ -528,10 +629,10 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
 -- by tick 1, and that route no longer exists: R72 promotes at most one row of
 -- workstream 'main' per call, while THIS case needs three of them ready at once
 -- to have anything to measure. The state is still reachable in production, by
--- two routes the cap deliberately does not govern — `retryTask()`, which moves a
+-- two routes the cap deliberately does not govern — \`retryTask()\`, which moves a
 -- whole (round, workstream) group to 'ready' as an operator unwedge, and any
 -- out-of-band write (an import, a psql, an older build), which is the same door
--- case 8b walks through. What is under test is `claimReadyTasks()`'s contention
+-- case 8b walks through. What is under test is \`claimReadyTasks()\`'s contention
 -- belt, and it is reached identically however the rows became ready. Seeding
 -- them keeps this case measuring the belt instead of measuring the promote
 -- statement a second time.

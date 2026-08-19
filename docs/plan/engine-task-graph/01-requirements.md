@@ -1252,6 +1252,45 @@ it. A declared write-set nobody checks is a suggestion.
 **R53.** `taskCurl()`'s example body shows the new fields and omits `round`.
 *How proved:* unit.
 
+**R73. The builder prompt attaches gates to FILES, not to briefs. ADDED ROUND
+975.** The builder prompt instructs every builder, before reporting done, to grep
+`scripts/checks/` for each path it actually wrote and to run and paste any check
+that names one — explicitly *whether or not the brief mentions it*. It is stated
+generally and lives in the prompt rather than in a corpus document, for two
+reasons: a builder reads its brief and may never open a quality doc, and the
+failure it prevents is not specific to this project.
+
+*The measurement it comes from.* Round 972 changed `db/projects.ts` to add R72's
+lane cap and was fix-cycled **twice** without anyone running
+`check-scheduler-sql.sh` — that file's own dedicated §2.2 gate, and the only
+instrument in the corpus that puts the shipped statement in front of a real
+Postgres. All three commits cited `gates-808.sh`, `pnpm test` and `tsc`, none of
+which runs it (NF3 keeps the unit suite hermetic and `gates-808.sh` does not
+invoke the per-project integration checks). Six of that script's cases were
+broken for two commits and were found only by round 973's reviewer. The cause was
+not negligence: **the briefs listed the universal block and nothing else**, so
+the gate was invisible to the people most able to run it.
+
+*Why this is the general form and 03-quality.md §4's clause is not.* Round 974
+closed the same hole by writing "any change to `promoteReadyTasks()` re-runs
+`check-scheduler-sql.sh`" into §4. That sentence is correct and stays, but it is
+one file's worth of safety: it does nothing for the next function whose gate a
+brief omits, and it is written in a document the reviewer reads rather than the
+builder. R73 is that clause with the file name taken out and moved to the surface
+a builder cannot miss.
+
+*Why it is satisfiable, in the sense standing rule 2 means.* The lookup is one
+grep over a directory the builder already has checked out. It never requires
+anyone to know in advance which gates exist, which is the archaeology R52/R57
+exist to forbid. Where a check genuinely cannot run from a worktree — it needs
+live services, or a database nobody prepared — the prompt requires the builder to
+name the check and say why, so an unrun gate is a disclosed line in a report
+rather than a silence.
+
+*How proved:* unit — prompt content, asserted present on the builder path and
+absent on a non-builder path, so the assertion cannot pass on a string every role
+happens to share.
+
 ---
 
 ## G. Observability — phase 6
@@ -1828,7 +1867,7 @@ budget written into the assertion message.
 | 2 — Graph scheduler | R10–R21, R69, R72, R18 (proof), NF1, NF6 |
 | 3 — Task creation, validation, cycles | R22–R31, NF4 |
 | 4 — Workstream worktrees, integration, consolidation | R32–R46, R70, R17 (warn clause), NF1, NF5 |
-| 5 — Prompts | R47–R53, NF7 |
+| 5 — Prompts | R47–R53, R73, NF7 |
 | 6 — Observability, plan API, Kanban | R54–R58 |
 | 7 — Measurement instrument | R59–R62 |
 | 8 — Deploy and verify | R63–R68, NF2, NF5 |
