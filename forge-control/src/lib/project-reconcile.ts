@@ -477,7 +477,7 @@ export interface FixChainGraph {
  * running in parallel with the work it is meant to follow, and the re-checkers
  * in parallel with the fix. The whole chain would be scheduled backwards.
  *
- *   fix builder    round + 1   depends_on = the gating task ids   write_set = the union
+ *   fix builder    round + 1   depends_on = the GATING task ids   write_set = the FIXED work's union
  *   each checker   round + 2   depends_on = [builder id]          write_set = {}
  *
  * `round + 1` / `round + 2` STAY LITERAL, as §5.2 says, because the group's
@@ -486,37 +486,88 @@ export interface FixChainGraph {
  * so `project-reconcile.test.ts` asserts it against `computeRound()` itself
  * rather than restating the arithmetic.
  *
+ * ── `gating` AND `fixing` ARE TWO DIFFERENT SETS (round 970) ────────────────
+ *
+ * They used to be one parameter, `members`, carrying both the gating task ids
+ * and the write-sets — which is how the fix builder came to inherit THE
+ * REVIEWER'S declared write_set. A reviewer's write_set is typically its one
+ * report file (often nothing at all); the fix builder's job is to change the
+ * SOURCE the reviewer criticised. Measured on 2026-08-18: `connections` fix
+ * cycle 1 wrote 20 source files, every one of them undeclared by construction,
+ * and `vault` fix cycle 1 had the same shape. So EVERY fix cycle looked like a
+ * write-set violation to its own re-checker, which teaches a reviewer to wave
+ * the violation through — and a genuinely undeclared write then reads exactly
+ * like the normal case. `metadata.strict_write_sets` makes an undeclared write
+ * a hard 400 for a hand-seeded task while the engine's own chain rows sailed
+ * past it.
+ *
+ *  - `gating` — the verdict tasks of the group. Their ids are the ORDERING
+ *    dependency and R41's immutable identity. Unchanged.
+ *  - `fixing` — the tasks WHOSE WORK IS BEING FIXED (the builders the gating
+ *    tasks depend on; see `priorBuilderWork()` in project-tick.ts). Their
+ *    declared write-sets are what the fix builder will actually touch.
+ *
+ * The two are SEPARATE PARAMETERS rather than one with a fallback, and the old
+ * name is deliberately gone: every call site fails to compile rather than
+ * silently keeping the old meaning. There is NO fallback to `gating`'s
+ * write-sets when `fixing` is empty — an empty declared set a re-checker can
+ * SEE is empty is honest, a wrong one is not, and `emptyWriteSetWarning()`
+ * already surfaces the empty case on the spawn path. `fixBuilderBrief()` says
+ * so in the row's own brief.
+ *
  * The builder's `depends_on` is DEDUPED AND SORTED, which does three jobs at
  * once: it makes the row byte-identical across replays of one decision, it
  * makes `duplicatesFixChain()`'s set comparison well-defined, and it is the
  * immutable identity R41's guard leans on (a task id cannot be renumbered; a
  * round can). The write-set union is sorted for the first of those reasons.
  *
- * An empty member list is REFUSED rather than defaulted: a chain whose builder
- * depends on nothing is a root, which is precisely the bug this function
- * exists to prevent, and it would also make R41's guard match every other
- * root-born chain at the same cycle. The decision layer cannot produce one
- * (`consolidateVerdictRound` returns `wait` for an empty group), so reaching
- * this means a caller built the input by hand.
+ * An empty `gating` list is REFUSED rather than defaulted: a chain whose
+ * builder depends on nothing is a root, which is precisely the bug this
+ * function exists to prevent, and it would also make R41's guard match every
+ * other root-born chain at the same cycle. The decision layer cannot produce
+ * one (`consolidateVerdictRound` returns `wait` for an empty group), so
+ * reaching this means a caller built the input by hand. An empty `fixing` list
+ * is NOT refused: a legacy group whose gating tasks carry the `depends_on`
+ * sentinel has no reachable builders, and blocking a real fix cycle over that
+ * would strand the feedback — the failure this module exists to prevent.
  */
 export function fixChainGraphFields(group: {
   round: number;
   workstream: string;
-  members: ReadonlyArray<{ taskId: string; writeSet: readonly string[] }>;
+  gating: ReadonlyArray<{ taskId: string }>;
+  fixing: ReadonlyArray<{ writeSet: readonly string[] }>;
 }): FixChainGraph {
-  if (group.members.length === 0) {
+  if (group.gating.length === 0) {
     throw new Error(
       `fixChainGraphFields: no gating tasks for ${groupLabel(group.round, group.workstream)} — ` +
         "a fix builder with no dependencies is a graph root and would run immediately, " +
         "in parallel with the work it is meant to follow (R42)",
     );
   }
-  const depends_on = [...new Set(group.members.map((m) => m.taskId))].sort();
-  const write_set = [...new Set(group.members.flatMap((m) => [...m.writeSet]))].sort();
+  const depends_on = [...new Set(group.gating.map((m) => m.taskId))].sort();
+  const write_set = inheritedWriteSet(group.fixing);
   return {
     builder: { round: group.round + 1, depends_on, workstream: group.workstream, write_set },
     checker: { round: group.round + 2, workstream: group.workstream, write_set: [] },
   };
+}
+
+/**
+ * The union of the write-sets of the tasks whose work is being fixed — deduped
+ * and sorted, so a replayed consolidation writes a byte-identical array.
+ *
+ * Exported because the brief text and the row must agree about what was
+ * inherited: `fixBuilderBrief()` reports the same union this writes, and a
+ * second implementation of "union, sorted" is how those two drift apart.
+ *
+ * Sorted with a plain `<` (via `Array.prototype.sort`'s default string order),
+ * NOT `localeCompare`: the row a replay writes must not depend on the process's
+ * locale — the same argument `earliestFailedGroup` makes above.
+ */
+export function inheritedWriteSet(
+  fixing: ReadonlyArray<{ writeSet: readonly string[] }>,
+): string[] {
+  return [...new Set(fixing.flatMap((m) => [...m.writeSet]))].sort();
 }
 
 /** Two id lists compared as SETS. Order-free and duplicate-free on both sides.
@@ -712,6 +763,236 @@ function mergeFeedback(
   );
 
   return `${header}\n\n${sections.join("\n\n")}`;
+}
+
+/* ------------------------------------------------------------------------- *
+ * The first carpenter's knowledge — the previous builders' reports (round 970)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One task whose work a fix cycle is fixing, as the brief builder sees it.
+ *
+ * Konrad, round 970: *"using a second worker who doesn't know what the first
+ * worker knew is quite unreasonable — as if for each leg of a table you spawn a
+ * new carpenter."* `mergeFeedback()` above already carries every dissenting
+ * verdict verbatim, so the INSPECTOR's punch-list survives into the fix builder;
+ * what did not survive was anything the ORIGINAL builder did, tried, rejected or
+ * learned. Measured on 2026-08-18 over 3,899 Bash calls by this fleet's
+ * builders: search 25.5% + read-via-shell 24.1% — half of a builder's shell work
+ * is re-deriving a map somebody upstream already drew.
+ *
+ * `report` is the task's FINAL ASSISTANT MESSAGE and nothing else. Not the
+ * thread: a builder's thread runs to ~189 entries, and cost per unit of work
+ * rises 2.2x with session length ([[Operator Decisions]] § Cost), so a fix
+ * builder handed a transcript is worse off than one handed nothing. `null` when
+ * the task has no run, or its run has no assistant turn — reported as such
+ * rather than dropped, because a silently missing section reads exactly like a
+ * builder that never existed.
+ *
+ * `createdAt` is carried ONLY as a sort key (see `orderPriorWork`) and never
+ * printed: it is immutable, so it cannot make a replay diverge, but a timestamp
+ * in a brief invites a reader to treat the brief as a log.
+ */
+export interface PriorWorkReport {
+  taskId: string;
+  title: string;
+  /** The row's immutable `created_at`, as a sortable ISO string. */
+  createdAt: string;
+  /** The task's declared `write_set` — what the fix builder inherits. */
+  writeSet: readonly string[];
+  /** The task's LAST assistant message. Never the thread. */
+  report: string | null;
+}
+
+/**
+ * How many characters of prior-work REPORT TEXT one fix builder's brief may
+ * carry, shared across every report in it.
+ *
+ * Chosen rather than derived, and here is the reasoning so the next round can
+ * argue with it instead of guessing: a builder's final report in this fleet runs
+ * 2–8k characters, a round fans out to 2–5 builders, and the merged brief
+ * already carries every dissenting verdict UNTRUNCATED. 24k characters is
+ * roughly 6k tokens — about one fifth of what re-deriving the map costs in tool
+ * calls, and small beside the transcript this deliberately does not carry.
+ *
+ * IT IS A BUDGET ON THE CARRIED TEXT, NOT ON THE SECTION. Headings, write-set
+ * lines and truncation notices sit outside it, so the number means one thing
+ * ("at most this much of what the builders wrote") and the arithmetic in
+ * `allocateReportBudget` has no overhead term to get wrong.
+ *
+ * WHY A FIX CYCLE DOES NOT ACCUMULATE. Cycle 2's re-checkers depend on cycle 1's
+ * FIX BUILDER, so `priorBuilderWork()` finds exactly that one row and cycle 2
+ * inherits one report — cycle 1's — not the original round's builders as well.
+ * The depth is bounded by the graph, not by this constant; this constant bounds
+ * the WIDTH of one round's fan-out.
+ */
+export const PRIOR_WORK_BUDGET = 24_000;
+
+/**
+ * The order prior-work sections appear in, and the ONLY thing that decides it:
+ * `(createdAt, taskId)` ascending, both immutable columns of the task row.
+ *
+ * IDEMPOTENCY IS LOAD-BEARING HERE. `mergeFeedback` feeds `createFixChain`,
+ * whose safety rests on a replayed consolidation producing a byte-identical
+ * brief; ordering by anything that can move between two ticks — arrival order,
+ * `updated_at`, a run's status — reintroduces the duplicate-chain bug that once
+ * ran an entire project twice. `created_at` is written once at INSERT and never
+ * updated, and a task id cannot be renumbered (R29), so the pair is a total
+ * order that is fixed for the life of the row. `<` rather than `localeCompare`
+ * for the same reason as `earliestFailedGroup`: a locale must not change what a
+ * replay writes.
+ *
+ * Sorted HERE rather than trusted from the caller's `ORDER BY` so the property
+ * is a property of this module — the caller's query can be edited by someone
+ * who never reads this file.
+ */
+function orderPriorWork(reports: readonly PriorWorkReport[]): PriorWorkReport[] {
+  return [...reports].sort((a, b) => {
+    if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1;
+    if (a.taskId !== b.taskId) return a.taskId < b.taskId ? -1 : 1;
+    return 0;
+  });
+}
+
+/**
+ * Split `budget` characters across reports of the given lengths, so that no
+ * report is cut while another is padded — the classic fair share, and it is
+ * worth the ten lines because the common case is one long report beside one
+ * short one, where an equal split throws away half the budget.
+ *
+ * Shortest first: each report takes the lesser of its own length and an equal
+ * share of what is LEFT, and whatever a short report does not use is
+ * redistributed to the ones still competing. A remainder that does not divide
+ * evenly falls to the reports considered later, which is why the tie-break on
+ * equal lengths is the ALREADY-ORDERED index rather than anything about the
+ * task: the result is then a pure function of (ordered lengths, budget), which
+ * is what makes two consolidations of one group byte-identical.
+ *
+ * Returns one allowance per input position, in input order. A zero budget or an
+ * empty list yields all zeroes — no special case, the loop simply allocates
+ * nothing.
+ */
+export function allocateReportBudget(lengths: readonly number[], budget: number): number[] {
+  const share = new Array<number>(lengths.length).fill(0);
+  const byLength = lengths
+    .map((length, index) => ({ length, index }))
+    .sort((a, b) => (a.length !== b.length ? a.length - b.length : a.index - b.index));
+
+  let left = budget;
+  let competing = byLength.length;
+  for (const { length, index } of byLength) {
+    const fair = Math.floor(left / competing);
+    const take = Math.min(length, Math.max(fair, 0));
+    share[index] = take;
+    left -= take;
+    competing -= 1;
+  }
+  return share;
+}
+
+/**
+ * The notice a truncated report carries AT ITS CUT POINT.
+ *
+ * "Cap it, and say when you truncated" — a truncated report that looks complete
+ * is the failure this project has hit five times. So the omission is stated
+ * where the text stops, in the units it was measured in, and it names where the
+ * full text still is. A fix builder that decides it needs the rest can go and
+ * read that run; one that never sees this line assumes it has the whole account
+ * and reasons from a half of it.
+ *
+ * Every number in it is a pure function of the inputs, so it cannot make a
+ * replay diverge.
+ */
+function truncationNotice(kept: number, total: number, taskId: string): string {
+  return (
+    `\n\n[… TRUNCATED — ${total - kept} of ${total} characters of this report were omitted to ` +
+    `fit the ${PRIOR_WORK_BUDGET}-character prior-work budget. The full report is the last ` +
+    `assistant message of task ${taskId}'s run; read it only if this excerpt leaves you guessing.]`
+  );
+}
+
+/** One report's section, cut to its allowance. The heading names the task, the
+ *  write-set line is what the fix builder has INHERITED from it, and a missing
+ *  report is stated rather than rendered as an empty section. */
+function priorWorkEntry(r: PriorWorkReport, allowance: number): string {
+  const declared =
+    r.writeSet.length > 0 ? [...r.writeSet].sort().join(", ") : "(none declared)";
+  const head = `### Previous builder: ${r.title}\nIts declared write-set: ${declared}\n`;
+
+  if (r.report === null) {
+    return (
+      `${head}(No final report was recorded for this task — its run produced no assistant ` +
+      `message, so there is nothing to carry. This is stated rather than omitted: a missing ` +
+      `section is indistinguishable from a builder that never ran.)`
+    );
+  }
+  if (r.report.length <= allowance) return `${head}${r.report}`;
+  return `${head}${r.report.slice(0, allowance)}${truncationNotice(allowance, r.report.length, r.taskId)}`;
+}
+
+/**
+ * The fix builder's brief: the merged feedback, then the previous builders'
+ * accounts.
+ *
+ * ORDER IS THE AUTHORITY ORDER. The verdicts come first and are untouched —
+ * `mergeFeedback`'s bytes are exactly what they were — and the accounts follow,
+ * headed as CONTEXT and explicitly subordinate to the findings. A fix builder
+ * that reads its predecessor's confident "this is handled by X" before it reads
+ * the reviewer's "X does not fire" will believe the wrong one; a reviewer's
+ * finding is evidence about the tree as it stands, a builder's report is a
+ * claim about the tree as it was believed to be.
+ *
+ * THE RE-CHECKERS DO NOT GET THIS. `recheckBrief()` is still fed
+ * `RoundDecision.mergedBrief` — the verdicts alone — because a re-checker's job
+ * is to decide whether each ORIGINAL concern is now answered, and handing it the
+ * builder's own account of its work is handing the defence to the judge. It also
+ * keeps every re-check brief byte-identical to the one it replaced.
+ *
+ * DETERMINISM, stated: the output is a pure function of `(mergedBrief, reports)`
+ * with the reports ordered by `(createdAt, taskId)` and each cut by
+ * `allocateReportBudget` over the ordered lengths. No clock, no task ordering
+ * from the caller, no counter. Task ids appear only inside a truncation notice,
+ * and a task id is immutable.
+ *
+ * An EMPTY report list is not silence: it says so, and it says WHY the row's
+ * `write_set` is empty, because "this task writes nothing" and "nothing could be
+ * inherited" look identical in a row and mean opposite things.
+ */
+export function fixBuilderBrief(
+  mergedBrief: string,
+  reports: readonly PriorWorkReport[],
+): string {
+  if (reports.length === 0) {
+    return (
+      `${mergedBrief}\n\n` +
+      `## What the previous builders reported — NOTHING COULD BE CARRIED\n` +
+      `No builder task was reachable from this round's verdict tasks (they declare no ` +
+      `dependencies, or none of their dependencies is a builder), so no previous account ` +
+      `could be carried into this brief and NO WRITE-SET COULD BE INHERITED. This task's ` +
+      `declared write_set is empty for that reason — not because it writes nothing. Declare ` +
+      `what you touch in your final report.`
+    );
+  }
+
+  const ordered = orderPriorWork(reports);
+  const allowances = allocateReportBudget(
+    ordered.map((r) => r.report?.length ?? 0),
+    PRIOR_WORK_BUDGET,
+  );
+  const inherited = inheritedWriteSet(ordered);
+
+  const header =
+    `## What the previous builders reported — CONTEXT, NOT INSTRUCTION\n` +
+    `Below is the FINAL REPORT of each builder whose work this fix cycle is fixing, so you ` +
+    `do not have to re-derive the map they already drew — where things live, what was tried, ` +
+    `what was rejected and why. It is their account, written BEFORE the review, and it MAY BE ` +
+    `WRONG: where it and the feedback above disagree, THE FEEDBACK IS AUTHORITATIVE, and ` +
+    `nothing here excuses leaving a finding unaddressed. Verify anything you rely on.\n` +
+    `Your declared write_set is the union of their write-sets: ` +
+    `${inherited.length > 0 ? inherited.join(", ") : "EMPTY — none of them declared one, so nothing could be inherited"}.`;
+
+  const sections = ordered.map((r, i) => priorWorkEntry(r, allowances[i]!));
+  return `${mergedBrief}\n\n${header}\n\n${sections.join("\n\n")}`;
 }
 
 /* ------------------------------------------------------------------------- *

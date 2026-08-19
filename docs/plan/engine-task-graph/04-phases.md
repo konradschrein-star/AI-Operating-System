@@ -1362,6 +1362,57 @@ is escalated to Konrad rather than resolved by a build task.
 
 ---
 
+### Round 970 — the fix cycle inherits the previous builder's report and write-set
+
+**Two halves of one omission, and the second was reported independently by two
+builders.** A fix builder received the inspector's punch-list — `mergeFeedback()`
+has carried every dissenting verdict verbatim since the module was written — and
+nothing at all about what the FIRST builder did, tried, rejected or learned, nor
+which files it had touched.
+
+- **The report.** Measured over 3,899 Bash calls by this fleet's builders:
+  search **25.5%** + read-via-shell **24.1%**. Half of a builder's shell work is
+  re-deriving a map somebody upstream already drew. Konrad: *"using a second
+  worker who doesn't know what the first worker knew is quite unreasonable — as
+  if for each leg of a table you spawn a new carpenter."*
+- **The write-set.** The chain row inherited the **gating tasks'** write-sets —
+  the reviewer's, typically one report file. Measured 2026-08-18: `connections`
+  fix cycle 1 wrote **20 source files, all undeclared by construction**; `vault`
+  fix cycle 1 had the same shape and tabled it honestly. So every fix cycle
+  looked like a write-set violation to its own re-checker, which is how a
+  reviewer learns to wave the violation through — and a genuinely undeclared
+  write then reads exactly like the normal case.
+
+**THE BRIEF'S "round R" IS OFF BY AT LEAST ONE, and this is a finding rather
+than a reinterpretation (standing rule 1).** The brief said to carry "the final
+report of each BUILDER task at round R". Under the graph this project builds,
+`GRAPH_GUIDE` tells planners *"REVIEWERS are a genuine join: one reviewer
+depending on EVERY builder of its group"* and `computeRound()` gives that
+reviewer `1 + max(dep.round)` — so its builders are at `R-1`, and at `R-2` as
+well whenever they chain among themselves (builders at 4 and 5, reviewer at 6). A
+round-literal lookup would silently miss the shallower ones and read as complete.
+Implemented against the **dependency edges** instead: `priorBuilderWork()` takes
+the union of the gating tasks' `depends_on`, narrowed to `role = 'builder'`. That
+is the graph's own answer to "whose work is this", and it composes across cycles
+for free — a cycle-2 re-checker depends only on the cycle-1 fix builder, so cycle
+3 inherits cycle 2's report and never cycles 1 and 2 in full.
+
+| file | why round 970 writes it |
+|---|---|
+| `forge-control/src/lib/project-reconcile.ts` | **declared, and the deliverable.** `PriorWorkReport`, `PRIOR_WORK_BUDGET`, `orderPriorWork`, `allocateReportBudget`, `fixBuilderBrief`, `inheritedWriteSet`; and `fixChainGraphFields`'s `members` split into `gating` (ids → `depends_on`) and `fixing` (write-sets → the union). `mergeFeedback`'s bytes are untouched. |
+| `forge-control/src/lib/project-reconcile.test.ts` | **declared.** T30 / T30b / T30c — 21 new cases; T23 and T29 updated for the split; **T27's source pin amended where it is enforced (standing rule 2)** — it pinned the exact call this round removes. |
+| `forge-control/src/lib/project-tick.ts` | **declared.** `priorBuilderWork()`, the fix branch's read and its warn clause, `fixBuilderBrief` on the builder's brief only. |
+| `forge-control/src/db/projects.ts` | **UNDECLARED at the task level; declared at the project level** — §10's table above assigns it to phases 2/3/4, and it is in `GATES_ENGINE_ALLOW`. `listTaskReports(projectId, taskIds, roles)` is the only new SQL: the reports must be fetched **by id**, and no existing function fetches a task's last assistant message by id. Putting the query in `project-tick.ts` to stay inside the declared set would have broken the module layering this repo keeps (all SQL in `db/*`), which is a worse defect than a disclosed write. |
+| `scripts/checks/check-fix-chain-graph.ts` | **UNDECLARED, and forced by the API change** — it calls `fixChainGraphFields` and would not compile otherwise. It also gains **§6b**, the behavioural proof of `listTaskReports` against real rows (7 assertions; `EXPECTED_ASSERTIONS` 33 → 40), because that query is the only part of this round that is SQL rather than a pure function. |
+| `docs/plan/engine-task-graph/04-phases.md` | this disclosure. |
+| `docs/plan/engine-task-graph/evidence/round970-builder-report-inheritance.md` | **new.** The transcript: the six mutation controls, the scratch-DB run, the budget arithmetic, and the finding against the brief. |
+
+**No migration, no route, no schema change, no deploy, no write to
+`/opt/forge-ai-os`.** `git status --porcelain` in that tree was not consulted and
+no command was issued against it.
+
+---
+
 ## 11. What "done" looks like from here
 
 `00-vision.md` §3's six DoD items, mapped to where each is discharged:

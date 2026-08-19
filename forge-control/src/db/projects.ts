@@ -1676,6 +1676,64 @@ export async function listVerdictRound(
   return r.rows;
 }
 
+/** A task row plus its final report — the last ASSISTANT message of its run.
+ *  Same projection as `VerdictRoundRow` minus the settlement columns, which
+ *  this caller does not read: a fix cycle carries what its predecessors SAID,
+ *  and whether their runs are still resumable is not part of that. */
+export interface TaskReportRow extends ProjectTask {
+  /** Last ASSISTANT message. NULL when the task has no run (LEFT JOIN) or its
+   *  run has produced no assistant turn yet — the caller must state that rather
+   *  than drop the row (lib/project-reconcile.ts, `priorWorkEntry`). */
+  last_text: string | null;
+}
+
+/** The tasks named by `taskIds`, narrowed to `roles`, each with its final
+ *  report — the input to a fix builder's inherited brief and write-set
+ *  (round 970; lib/project-reconcile.ts, `fixBuilderBrief` /
+ *  `fixChainGraphFields`).
+ *
+ *  BY ID, NOT BY ROUND, and that is the correctness of it rather than a taste.
+ *  A reviewer is a JOIN — `GRAPH_GUIDE` tells planners "one reviewer depending
+ *  on EVERY builder of its group" — so `computeRound()` puts it at
+ *  `1 + max(builder round)`: the builders whose work it judged are at round-1,
+ *  or shallower still when they chain among themselves (a reviewer over
+ *  builders at 4 and 5 sits at 6, and a round-5 lookup misses the round-4 one).
+ *  The dependency EDGE is the authoritative statement of "whose work is this",
+ *  and it is the one the graph already stores.
+ *
+ *  `project_id` is in the WHERE despite the ids being globally unique, for the
+ *  same reason every other query here carries it: an id list assembled from one
+ *  project's rows must not be able to reach another project's task if a caller
+ *  ever passes a stale set.
+ *
+ *  ORDER BY created_at ASC, id ASC — the same clause as `listVerdictRound`, and
+ *  for the same reason: it is what makes a replayed fix brief byte-identical.
+ *  lib/project-reconcile.ts re-sorts on the same two immutable columns anyway,
+ *  so the property survives an edit to this clause; both are stated because
+ *  neither file should have to trust the other.
+ *
+ *  An empty `taskIds` returns `[]` WITHOUT a query — `= ANY('{}')` is a valid
+ *  but pointless round trip on a path that runs inside consolidation. */
+export async function listTaskReports(
+  projectId: string,
+  taskIds: readonly string[],
+  roles: readonly TaskRole[],
+): Promise<TaskReportRow[]> {
+  if (taskIds.length === 0) return [];
+  const r = await pool.query<TaskReportRow>(
+    `SELECT ${TASK_COLS_PT},
+            ${LAST_ASSISTANT_TEXT} AS last_text
+       FROM project_tasks pt
+       LEFT JOIN runs r ON r.id = pt.run_id
+      WHERE pt.project_id = $1
+        AND pt.id = ANY($2::uuid[])
+        AND pt.role = ANY($3::text[])
+      ORDER BY pt.created_at ASC, pt.id ASC`,
+    [projectId, [...taskIds], [...roles]],
+  );
+  return r.rows;
+}
+
 /** What became of one chain row.
  *
  *  `replay` and `occupied` BOTH mean "the INSERT wrote nothing", and they must

@@ -33,6 +33,7 @@ import {
   markVerdictTaskDone,
   unsettledVerdictTasks,
   listVerdictRound,
+  listTaskReports,
   createFixChain,
   setProjectStatus,
   setProjectWorkspace,
@@ -66,9 +67,11 @@ import {
   groupLabel,
   groupCompleteNotification,
   fixChainGraphFields,
+  fixBuilderBrief,
   MAIN_WORKSTREAM,
   type VerdictInput,
   type VerdictRole,
+  type PriorWorkReport,
 } from "./project-reconcile.ts";
 import {
   classifyUsageWall,
@@ -1840,6 +1843,50 @@ function assertVerdictRole(
 }
 
 /**
+ * The tasks whose work a fix cycle is fixing: the BUILDER tasks the group's
+ * verdict tasks depend on (round 970).
+ *
+ * WHY THE EDGES AND NOT THE ROUND NUMBER. The brief for this change said "each
+ * BUILDER task at round R", and that is off by at least one under the graph this
+ * project builds: `GRAPH_GUIDE` tells planners "REVIEWERS are a genuine join:
+ * one reviewer depending on EVERY builder of its group", and `computeRound()`
+ * gives that reviewer `1 + max(dep.round)` — so its builders are at `R-1`, and
+ * at `R-2` as well whenever they chain among themselves (builders at 4 and 5, a
+ * reviewer at 6). A round-literal lookup would silently miss the shallower ones
+ * and read as complete. The dependency edge is the graph's own answer to "whose
+ * work is this", and this project exists to make that edge the authority. This
+ * is recorded as a FINDING against the brief rather than reinterpreted quietly
+ * (standing rule 1).
+ *
+ * WHY IT COMPOSES ACROSS CYCLES. A cycle-2 re-checker depends on the cycle-1 FIX
+ * BUILDER and nothing else, so this returns exactly that one row: cycle 2
+ * inherits cycle 1's report, cycle 3 inherits cycle 2's, and no cycle inherits
+ * its ancestors in full. The bound is the graph's, not a counter's.
+ *
+ * WORKSTREAM IS DELIBERATELY NOT A FILTER. An integration reviewer in `main`
+ * depends on lane builders that ran in other workstreams, and their write-sets
+ * are exactly the files the integration fix must touch.
+ *
+ * A `depends_on` of `null` is the legacy sentinel and contributes nothing, so a
+ * pre-0040 group yields an empty list — which `fixBuilderBrief` states in the
+ * row rather than papering over with the reviewer's own write-set.
+ */
+async function priorBuilderWork(
+  projectId: string,
+  gating: ReadonlyArray<Pick<ProjectTask, "depends_on">>,
+): Promise<PriorWorkReport[]> {
+  const ids = [...new Set(gating.flatMap((r) => r.depends_on ?? []))].sort();
+  const rows = await listTaskReports(projectId, ids, ["builder"]);
+  return rows.map((r) => ({
+    taskId: r.id,
+    title: r.title,
+    createdAt: r.created_at,
+    writeSet: r.write_set,
+    report: r.last_text,
+  }));
+}
+
+/**
  * Decide ONE gating round of ONE project, and act on that decision.
  *
  * The unit of decision is the round, never the task: a gating round is only
@@ -2045,23 +2092,52 @@ async function consolidateVerdictGroup(
         return;
       }
 
-      // R42 — the chain joins the graph instead of being born a root. The
-      // write-sets come from the REVIEWED tasks' rows (the gating reviewers and
-      // testers declare what their group touched), and the gating ids are what
-      // the fix builder must wait for. Computed once, by the pure helper, so
-      // the rounds, the edges and the union have one definition — and so the
-      // notification below names the same round the row was written at.
+      // ROUND 970 — the first carpenter's knowledge, and his write-set.
+      //
+      // Read HERE and not before the decision on purpose: consolidation runs
+      // every 10s per group and answers `wait` or `pass` almost every time, so
+      // a query issued above the switch would be paid on every tick of every
+      // gating group to serve the one branch that uses it. This is also the
+      // last point before the irreversible INSERT, so the reports are as fresh
+      // as they can be.
+      const priorWork = await priorBuilderWork(projectId, rows);
+      if (priorWork.length === 0) {
+        // Not fatal — a legacy group carries the `depends_on` sentinel and has
+        // no reachable builders — but it is the case where the fix builder ships
+        // with an empty declared write-set, and that must not be silent. The
+        // brief says the same thing to the builder itself.
+        console.warn(
+          `[project-tick] ${label} fix cycle ${decision.cycle}: no builder task reachable from ` +
+            `the gating tasks' depends_on — the fix builder inherits NO report and NO write-set`,
+        );
+      }
+
+      // R42 — the chain joins the graph instead of being born a root, with the
+      // two sets kept apart (round 970): the GATING ids are what the fix builder
+      // must wait for, and the write-set union comes from the tasks WHOSE WORK
+      // IS BEING FIXED. It used to come from the gating rows, so every fix
+      // builder inherited the REVIEWER's write_set — typically one report file —
+      // and then had to touch source it had not declared, which made every fix
+      // cycle look like a write-set violation to its own re-checker. Computed
+      // once, by the pure helper, so the rounds, the edges and the union have
+      // one definition — and so the notification below names the same round the
+      // row was written at.
       const graph = fixChainGraphFields({
         round,
         workstream,
-        members: rows.map((r) => ({ taskId: r.id, writeSet: r.write_set })),
+        gating: rows.map((r) => ({ taskId: r.id })),
+        fixing: priorWork,
       });
       const chain = await createFixChain({
         project_id: projectId,
         round,
         cycle: decision.cycle,
         builderTitle: FIX_TASK_TITLE(decision.cycle, workstream),
-        builderBrief: decision.mergedBrief,
+        // The verdicts, then the previous builders' accounts. The re-checkers
+        // below get `decision.mergedBrief` — the verdicts alone — because a
+        // re-check decides whether each ORIGINAL concern is answered, and the
+        // builder's own account of its work is the defence, not the evidence.
+        builderBrief: fixBuilderBrief(decision.mergedBrief, priorWork),
         builderChainKey: decision.builderChainKey,
         // One re-check per DISSENTING role, in the decision's order — a
         // reviewer's concerns are settled by reading the new diff, a tester's

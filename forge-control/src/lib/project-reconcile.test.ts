@@ -1071,6 +1071,11 @@ import {
   duplicatesFixChain,
   FIX_TASK_TITLE,
   MAIN_WORKSTREAM,
+  fixBuilderBrief,
+  inheritedWriteSet,
+  allocateReportBudget,
+  PRIOR_WORK_BUDGET,
+  type PriorWorkReport,
 } from "./project-reconcile.ts";
 import { computeRound, type GraphTask } from "./task-graph.ts";
 
@@ -1188,13 +1193,25 @@ describe("T22 chainKeys workstream namespace", () => {
  * ========================================================================== */
 
 describe("T23 fixChainGraphFields", () => {
-  const members = [
-    { taskId: "b0000000-0000-4000-8000-000000000002", writeSet: ["src/b.ts", "src/a.ts"] },
-    { taskId: "a0000000-0000-4000-8000-000000000001", writeSet: ["src/a.ts"] },
+  // ROUND 970 SPLIT THIS FIXTURE IN TWO, and the split is the point of the
+  // change rather than a rename. `gating` is the group's VERDICT tasks — their
+  // ids are the ordering dependency; `fixing` is the tasks WHOSE WORK IS BEING
+  // FIXED — their write-sets are what the fix builder inherits. They used to be
+  // one list, which is how a fix builder came to declare the REVIEWER's
+  // write_set (usually one report file) and then touch twenty source files it
+  // had not declared. These two fixtures are deliberately DISJOINT in their
+  // paths so no assertion below can pass by reading the wrong one.
+  const gating = [
+    { taskId: "b0000000-0000-4000-8000-000000000002" },
+    { taskId: "a0000000-0000-4000-8000-000000000001" },
+  ];
+  const fixing = [
+    { writeSet: ["src/b.ts", "src/a.ts"] },
+    { writeSet: ["src/a.ts"] },
   ];
 
   test("the builder waits on the gating tasks and inherits the group's workstream", () => {
-    const g = fixChainGraphFields({ round: 7, workstream: "ui", members });
+    const g = fixChainGraphFields({ round: 7, workstream: "ui", gating, fixing });
     assert.equal(g.builder.round, 8);
     assert.equal(g.builder.workstream, "ui");
     assert.deepEqual(g.builder.depends_on, [
@@ -1209,13 +1226,13 @@ describe("T23 fixChainGraphFields", () => {
     // next tick and run in parallel with the work it exists to follow. It would
     // also make R41's guard match every other root-born chain at the same cycle.
     assert.throws(
-      () => fixChainGraphFields({ round: 7, workstream: "main", members: [] }),
+      () => fixChainGraphFields({ round: 7, workstream: "main", gating: [], fixing }),
       /no gating tasks/,
     );
   });
 
   test("the checker sits one round further out with an empty write-set", () => {
-    const g = fixChainGraphFields({ round: 7, workstream: "ui", members });
+    const g = fixChainGraphFields({ round: 7, workstream: "ui", gating, fixing });
     assert.equal(g.checker.round, 9);
     assert.equal(g.checker.workstream, "ui");
     assert.deepEqual(g.checker.write_set, []);
@@ -1227,8 +1244,8 @@ describe("T23 fixChainGraphFields", () => {
     // two numbers is a PROPERTY, asserted here against task-graph.ts's own
     // function rather than against a restatement of `+1` in this file.
     const round = 7;
-    const g = fixChainGraphFields({ round, workstream: "ui", members });
-    const gatingRows = members.map(() => gt(round, { workstream: "ui" }));
+    const g = fixChainGraphFields({ round, workstream: "ui", gating, fixing });
+    const gatingRows = gating.map(() => gt(round, { workstream: "ui" }));
     assert.equal(g.builder.round, computeRound(gatingRows));
     const builderRow = gt(g.builder.round, { workstream: "ui" });
     assert.equal(g.checker.round, computeRound([builderRow]));
@@ -1238,7 +1255,7 @@ describe("T23 fixChainGraphFields", () => {
     // Every round tried here is at least two below its phase block's ceiling,
     // which is the domain the next case explains.
     for (const round of [0, 1, 50, 200, 412]) {
-      const g = fixChainGraphFields({ round, workstream: "main", members });
+      const g = fixChainGraphFields({ round, workstream: "main", gating, fixing });
       assert.equal(g.builder.round, computeRound([gt(round)]));
       assert.equal(g.checker.round, computeRound([gt(g.builder.round)]));
     }
@@ -1258,7 +1275,7 @@ describe("T23 fixChainGraphFields", () => {
     // real fix cycle to protect a numbering convention, and the group would
     // wedge with its feedback undelivered — trading a cosmetic defect for the
     // exact failure the reconcile module exists to prevent.
-    const g = fixChainGraphFields({ round: 99, workstream: "main", members });
+    const g = fixChainGraphFields({ round: 99, workstream: "main", gating, fixing });
     assert.equal(g.builder.round, 100);
     assert.equal(g.checker.round, 101);
     assert.throws(() => computeRound([gt(99)]), /leaves phase block 0/);
@@ -1270,7 +1287,7 @@ describe("T23 fixChainGraphFields", () => {
     // round is computed as 1 + max(dep.round), so the depth of a phase is the
     // longest chain its planner creates — a dozen at most in every project this
     // engine has run. The boundary is therefore documented, not defended.
-    assert.equal(fixChainGraphFields({ round: 98, workstream: "main", members }).checker.round, 100);
+    assert.equal(fixChainGraphFields({ round: 98, workstream: "main", gating, fixing }).checker.round, 100);
     assert.equal(computeRound([gt(97)]), 98);
   });
 
@@ -1278,10 +1295,11 @@ describe("T23 fixChainGraphFields", () => {
     const g = fixChainGraphFields({
       round: 1,
       workstream: "main",
-      members: [
-        { taskId: "a0000000-0000-4000-8000-000000000001", writeSet: ["src/a.ts"] },
-        { taskId: "a0000000-0000-4000-8000-000000000001", writeSet: ["src/a.ts"] },
+      gating: [
+        { taskId: "a0000000-0000-4000-8000-000000000001" },
+        { taskId: "a0000000-0000-4000-8000-000000000001" },
       ],
+      fixing: [{ writeSet: ["src/a.ts"] }, { writeSet: ["src/a.ts"] }],
     });
     assert.deepEqual(g.builder.depends_on, ["a0000000-0000-4000-8000-000000000001"]);
     assert.deepEqual(g.builder.write_set, ["src/a.ts"]);
@@ -1291,8 +1309,13 @@ describe("T23 fixChainGraphFields", () => {
     // Replay safety: a re-consolidation after a crash must produce the same row,
     // and listVerdictRound's ORDER BY is not the only thing that can reorder a
     // group (a member added by hand carries a later created_at).
-    const a = fixChainGraphFields({ round: 3, workstream: "main", members });
-    const b = fixChainGraphFields({ round: 3, workstream: "main", members: [...members].reverse() });
+    const a = fixChainGraphFields({ round: 3, workstream: "main", gating, fixing });
+    const b = fixChainGraphFields({
+      round: 3,
+      workstream: "main",
+      gating: [...gating].reverse(),
+      fixing: [...fixing].reverse(),
+    });
     assert.deepEqual(a, b);
   });
 });
@@ -1511,8 +1534,63 @@ describe("T27 the phase-4B helpers are on the engine's path", () => {
 
   test("project-tick builds the chain's graph fields with fixChainGraphFields", () => {
     assert.match(TICK, /const graph = fixChainGraphFields\(\{/);
-    assert.match(TICK, /members: rows\.map\(\(r\) => \(\{ taskId: r\.id, writeSet: r\.write_set \}\)\)/);
+    // AMENDED ROUND 970 — standing rule 2, in the commit that falsifies it. The
+    // pin read `members: rows.map((r) => ({ taskId: r.id, writeSet: r.write_set }))`,
+    // and that call is exactly the defect this round closes: it fed the GATING
+    // rows' write-sets (the reviewer's, typically one report file) to the fix
+    // builder. The two sets are now two parameters, and the pin says so — the
+    // gating rows supply IDS ONLY, and the write-set union comes from the
+    // separately-fetched prior work.
+    assert.match(TICK, /gating: rows\.map\(\(r\) => \(\{ taskId: r\.id \}\)\)/);
+    assert.match(TICK, /fixing: priorWork,/);
+    assert.doesNotMatch(
+      TICK,
+      /gating: rows\.map\(\(r\) => \(\{ taskId: r\.id, writeSet/,
+      "the gating rows must not carry write-sets into the chain again",
+    );
     assert.match(TICK, /^\s+graph,$/m);
+  });
+
+  test("project-tick carries the previous builders' reports into the fix brief, and only there", () => {
+    // ROUND 970. Three pins, and the third is the one worth having: the
+    // RE-CHECKERS keep `decision.mergedBrief` — the verdicts alone — so the
+    // builder's own account of its work never reaches the role judging it.
+    assert.match(TICK, /const priorWork = await priorBuilderWork\(projectId, rows\)/);
+    assert.match(TICK, /builderBrief: fixBuilderBrief\(decision\.mergedBrief, priorWork\)/);
+    assert.match(TICK, /brief: recheckBrief\(c\.role, decision\.mergedBrief\)/);
+    assert.doesNotMatch(
+      TICK,
+      /recheckBrief\(c\.role, fixBuilderBrief/,
+      "a re-checker handed the builder's account is handed the defence, not the evidence",
+    );
+  });
+
+  test("priorBuilderWork resolves the fixed work by EDGE, never by round arithmetic", () => {
+    const body = TICK.slice(
+      TICK.indexOf("async function priorBuilderWork"),
+      TICK.indexOf("Decide ONE gating round of ONE project"),
+    );
+    assert.ok(body.length > 0, "priorBuilderWork is gone from project-tick.ts");
+    // The union of the gating tasks' depends_on, narrowed to builders. A
+    // `round - 1` lookup would miss a builder that another builder depends on,
+    // because a reviewer's round is 1 + max(dep.round), not 1 + every dep's.
+    assert.match(body, /gating\.flatMap\(\(r\) => r\.depends_on \?\? \[\]\)/);
+    assert.match(body, /listTaskReports\(projectId, ids, \["builder"\]\)/);
+    assert.doesNotMatch(body, /round\s*[-+]\s*1/, "the fixed work is found by edge, not by round");
+  });
+
+  test("db/projects.ts fetches those reports BY ID, with a deterministic order", () => {
+    const body = PROJECTS_DB.slice(
+      PROJECTS_DB.indexOf("export async function listTaskReports"),
+      PROJECTS_DB.indexOf("/** What became of one chain row."),
+    );
+    assert.ok(body.length > 0, "listTaskReports is gone from db/projects.ts");
+    assert.match(body, /AND pt\.id = ANY\(\$2::uuid\[\]\)/);
+    assert.match(body, /AND pt\.role = ANY\(\$3::text\[\]\)/);
+    assert.match(body, /ORDER BY pt\.created_at ASC, pt\.id ASC/);
+    // The last ASSISTANT message, not the thread — the whole cost argument of
+    // this feature rests on that one word.
+    assert.match(body, /\$\{LAST_ASSISTANT_TEXT\} AS last_text/);
   });
 
   test("project-tick reports completion per group, through groupCompleteNotification", () => {
@@ -1656,7 +1734,8 @@ describe("T29 two workstreams at one round consolidate independently", () => {
     const ga = fixChainGraphFields({
       round: 7,
       workstream: MAIN_WORKSTREAM,
-      members: [{ taskId: "m1", writeSet: ["src/a.ts"] }],
+      gating: [{ taskId: "m1" }],
+      fixing: [{ writeSet: ["src/a.ts"] }],
     });
     const gb = fixChainGraphFields({
       round: 7,
@@ -1664,7 +1743,8 @@ describe("T29 two workstreams at one round consolidate independently", () => {
       // The SAME file, deliberately: different workstreams are isolated
       // worktrees and may write it concurrently — that is the whole point of
       // the design, and it is why the merge is an explicit integration task.
-      members: [{ taskId: "u1", writeSet: ["src/a.ts"] }],
+      gating: [{ taskId: "u1" }],
+      fixing: [{ writeSet: ["src/a.ts"] }],
     });
     assert.equal(ga.builder.workstream, "main");
     assert.equal(gb.builder.workstream, "ui");
@@ -1686,5 +1766,282 @@ describe("T29 two workstreams at one round consolidate independently", () => {
       RECHECK_TASK_TITLE("reviewer", 1, MAIN_WORKSTREAM),
       RECHECK_TASK_TITLE("reviewer", 1, "ui"),
     );
+  });
+});
+
+/* ========================================================================== *
+ * T30 — the fix cycle inherits the previous builder's REPORT and WRITE-SET
+ *       (round 970)
+ *
+ * Two defects, one fixture, because they are two halves of the same omission:
+ * a fix builder was handed the inspector's punch-list and nothing the first
+ * carpenter knew — neither what he did nor which files he touched.
+ *
+ *  1. THE REPORT. `mergeFeedback` already carries every dissenting verdict
+ *     untruncated. Nothing carried the ORIGINAL builders' accounts, so the fix
+ *     builder re-derived the same map: measured over 3,899 Bash calls by this
+ *     fleet's builders, search 25.5% + read-via-shell 24.1%.
+ *  2. THE WRITE-SET. The chain row inherited the GATING tasks' write-sets — the
+ *     reviewer's, typically one report file — while its job is to change source.
+ *     Measured 2026-08-18: `connections` fix cycle 1 wrote 20 source files, all
+ *     undeclared by construction. Every fix cycle therefore looked like a
+ *     write-set violation to its own re-checker.
+ *
+ * WHAT WOULD MAKE THIS BLOCK REPORT A PASS WRONGLY (standing rule 3):
+ *
+ *  a. "Both reports are present" passing because the assertion matched text the
+ *     HEADER also contains. Every fixture body carries a token that appears
+ *     nowhere else in the module — `KNOWLEDGE-ALPHA`, `KNOWLEDGE-BETA` — and the
+ *     header is asserted separately.
+ *  b. "Byte-identical twice" passing trivially, since a pure function called
+ *     twice on the same array is identical by construction. The real assertion
+ *     is that a REVERSED input yields the same bytes: that proves the ordering
+ *     is imposed here rather than inherited from the caller's `ORDER BY`.
+ *  c. "The write-set is the union" passing because the reviewer happened to
+ *     declare the same paths. The reviewer's fixture write-set is DISJOINT from
+ *     the builders', and its path is asserted ABSENT as well.
+ *  d. A truncation test that only checks the notice is present. The kept prefix
+ *     is compared against the original text's own slice, and the total carried
+ *     text is measured against the budget.
+ * ========================================================================== */
+
+describe("T30 fix cycles inherit the previous builders' reports", () => {
+  /** Two builders of one round. `beta` was created FIRST, so a correct sort by
+   *  (createdAt, taskId) puts it before `alpha` however the caller hands them
+   *  over — which is what makes the ordering assertions below falsifiable. */
+  const alpha: PriorWorkReport = {
+    taskId: "aaaaaaaa-0000-4000-8000-000000000001",
+    title: "Build the promotion rule",
+    createdAt: "2026-08-19T10:00:00.000Z",
+    writeSet: ["src/db/projects.ts", "src/lib/task-graph.ts"],
+    report: "KNOWLEDGE-ALPHA: promoteReadyTasks reads the sentinel in readyRule().",
+  };
+  const beta: PriorWorkReport = {
+    taskId: "bbbbbbbb-0000-4000-8000-000000000002",
+    title: "Build the claim belt",
+    createdAt: "2026-08-19T09:00:00.000Z",
+    writeSet: ["src/lib/task-graph.ts", "src/lib/project-tick.ts"],
+    report: "KNOWLEDGE-BETA: the belt partitions by project; I tried a global lock and rejected it.",
+  };
+
+  /** The decision a NEEDS_FIXES reviewer of that round produces. Built through
+   *  the real `consolidateVerdictRound` rather than hand-written, so the verdict
+   *  half of the brief is the engine's own text and not a restatement. */
+  function fixDecision() {
+    const d = consolidateVerdictRound(
+      7,
+      [rv({ taskId: "r1", title: "Review the graph", lastText: "VERDICT: NEEDS_FIXES\nFINDING-GAMMA: the belt is unpartitioned." })],
+      3,
+    );
+    if (d.action !== "fix") throw new Error(`expected a fix decision, got ${d.action}`);
+    return d;
+  }
+
+  test("the fix builder's brief carries BOTH reports AND the verdict", () => {
+    const brief = fixBuilderBrief(fixDecision().mergedBrief, [alpha, beta]);
+    assert.match(brief, /FINDING-GAMMA/);
+    assert.match(brief, /KNOWLEDGE-ALPHA/);
+    assert.match(brief, /KNOWLEDGE-BETA/);
+    assert.match(brief, /### Previous builder: Build the promotion rule/);
+    assert.match(brief, /### Previous builder: Build the claim belt/);
+  });
+
+  test("the verdict comes FIRST and the accounts are marked subordinate to it", () => {
+    // Authority order, and it is not cosmetic: a fix builder that reads its
+    // predecessor's confident account before the finding will believe the wrong
+    // one. The findings are evidence about the tree as it stands; the report is
+    // a claim about the tree as it was believed to be.
+    const brief = fixBuilderBrief(fixDecision().mergedBrief, [alpha, beta]);
+    assert.ok(
+      brief.indexOf("FINDING-GAMMA") < brief.indexOf("KNOWLEDGE-BETA"),
+      "the reviewer's finding must precede the builders' accounts",
+    );
+    assert.match(brief, /CONTEXT, NOT INSTRUCTION/);
+    assert.match(brief, /THE FEEDBACK IS AUTHORITATIVE/);
+  });
+
+  test("the order is (createdAt, taskId) and is imposed HERE, not by the caller", () => {
+    const brief = fixBuilderBrief(fixDecision().mergedBrief, [alpha, beta]);
+    assert.ok(
+      brief.indexOf("KNOWLEDGE-BETA") < brief.indexOf("KNOWLEDGE-ALPHA"),
+      "beta was created an hour earlier and must come first",
+    );
+    // (b) above: the falsifiable half. If the sort were the caller's, this
+    // would produce a different string.
+    assert.equal(
+      fixBuilderBrief(fixDecision().mergedBrief, [beta, alpha]),
+      brief,
+      "a reordered input must not move a single byte",
+    );
+  });
+
+  test("the id tiebreak decides when two rows share a created_at", () => {
+    const same = { ...alpha, createdAt: beta.createdAt };
+    const a = fixBuilderBrief(fixDecision().mergedBrief, [same, beta]);
+    const b = fixBuilderBrief(fixDecision().mergedBrief, [beta, same]);
+    assert.equal(a, b);
+    // aaaa… sorts before bbbb…, so the tiebreak — not the input order — decides.
+    assert.ok(a.indexOf("KNOWLEDGE-ALPHA") < a.indexOf("KNOWLEDGE-BETA"));
+  });
+
+  test("calling it twice returns BYTE-IDENTICAL output — createFixChain's whole safety", () => {
+    // `mergeFeedback` feeds `createFixChain`, whose idempotency rests on the
+    // merged brief being a pure function of its inputs. A timestamp, a counter
+    // or an unstable ordering here reintroduces the duplicate-chain bug that
+    // once ran an entire project twice.
+    const first = fixBuilderBrief(fixDecision().mergedBrief, [alpha, beta]);
+    const second = fixBuilderBrief(fixDecision().mergedBrief, [alpha, beta]);
+    assert.equal(first, second);
+    assert.equal(Buffer.byteLength(first), Buffer.byteLength(second));
+  });
+
+  test("an empty report list SAYS SO, and says why the write_set is empty", () => {
+    const brief = fixBuilderBrief(fixDecision().mergedBrief, []);
+    assert.match(brief, /NOTHING COULD BE CARRIED/);
+    assert.match(brief, /not because it writes nothing/);
+    // The verdict is still delivered in full — the whole point of the module.
+    assert.match(brief, /FINDING-GAMMA/);
+  });
+
+  test("a task with no final report is STATED, not silently dropped", () => {
+    const silent: PriorWorkReport = { ...alpha, report: null };
+    const brief = fixBuilderBrief(fixDecision().mergedBrief, [silent, beta]);
+    assert.match(brief, /### Previous builder: Build the promotion rule/);
+    assert.match(brief, /No final report was recorded for this task/);
+    assert.match(brief, /KNOWLEDGE-BETA/);
+  });
+});
+
+describe("T30b the prior-work budget is enforced and its omission is visible", () => {
+  const fixture = (over: Partial<PriorWorkReport> = {}): PriorWorkReport => ({
+    taskId: "cccccccc-0000-4000-8000-000000000003",
+    title: "A long-winded builder",
+    createdAt: "2026-08-19T08:00:00.000Z",
+    writeSet: ["src/lib/a.ts"],
+    // A filler character that appears nowhere in the module's prose, so the
+    // shared-budget count below measures CARRIED REPORT TEXT and not the
+    // headings and notices around it. Plain "x" over-counted by exactly 5,
+    // measured: "fix", "fixing" and "excuses" in the section header, and
+    // "excerpt" once in each of the two truncation notices.
+    report: "\u2588".repeat(50_000),
+    ...over,
+  });
+
+  test("a report longer than the budget is cut to its allowance", () => {
+    const long = fixture();
+    const brief = fixBuilderBrief("FEEDBACK", [long]);
+    // The kept prefix is compared against the ORIGINAL's own slice, so a bug
+    // that kept the tail, or kept a re-encoded copy, fails here.
+    assert.ok(brief.includes(long.report!.slice(0, PRIOR_WORK_BUDGET)));
+    assert.ok(!brief.includes(long.report!), "the whole 50k report must not survive");
+    assert.ok(
+      brief.length < long.report!.length,
+      "a brief longer than the report it truncated means nothing was truncated",
+    );
+  });
+
+  test("the omission is NAMED, with the numbers it was measured in", () => {
+    const brief = fixBuilderBrief("FEEDBACK", [fixture()]);
+    assert.match(brief, /TRUNCATED — 26000 of 50000 characters/);
+    assert.match(brief, new RegExp(`fit the ${PRIOR_WORK_BUDGET}-character prior-work budget`));
+    // And it says where the rest is, so a builder that needs it can go and read
+    // it instead of assuming this excerpt is the whole account.
+    assert.match(brief, /last\s+assistant message of task cccccccc-0000-4000-8000-000000000003/);
+  });
+
+  test("the budget is shared across reports, not paid per report", () => {
+    const two = [
+      fixture({ taskId: "c1", createdAt: "2026-08-19T08:00:00.000Z" }),
+      fixture({ taskId: "c2", createdAt: "2026-08-19T08:00:01.000Z" }),
+    ];
+    const brief = fixBuilderBrief("FEEDBACK", two);
+    const carried = (brief.match(/\u2588/g) ?? []).length;
+    assert.equal(carried, PRIOR_WORK_BUDGET, "two 50k reports must together carry exactly the budget");
+  });
+
+  test("allocateReportBudget gives a short report its whole length and the rest to the long one", () => {
+    // The reason the fair share is worth ten lines: an equal split would have
+    // given the 10-character report 12,000 and thrown that headroom away.
+    assert.deepEqual(allocateReportBudget([10, 30_000], 24_000), [10, 23_990]);
+    assert.deepEqual(allocateReportBudget([30_000, 10], 24_000), [23_990, 10]);
+  });
+
+  test("allocateReportBudget never exceeds the budget, and never pads", () => {
+    for (const lengths of [[], [0], [5, 5], [1, 2, 3], [100_000], [7, 7, 7, 7]]) {
+      for (const budget of [0, 3, 24_000]) {
+        const share = allocateReportBudget(lengths, budget);
+        assert.equal(share.length, lengths.length);
+        assert.ok(share.every((n, i) => n >= 0 && n <= lengths[i]!), `padded past a report's length: ${lengths}`);
+        assert.ok(share.reduce((a, b) => a + b, 0) <= budget, `overspent on ${lengths} @ ${budget}`);
+      }
+    }
+    // The odd remainder falls to the later position, deterministically.
+    assert.deepEqual(allocateReportBudget([5, 5], 3), [1, 2]);
+  });
+
+  test("a report at exactly the budget is NOT truncated — the boundary, both sides", () => {
+    const exact = fixture({ report: "y".repeat(PRIOR_WORK_BUDGET) });
+    assert.doesNotMatch(fixBuilderBrief("FEEDBACK", [exact]), /TRUNCATED/);
+    const over = fixture({ report: "y".repeat(PRIOR_WORK_BUDGET + 1) });
+    assert.match(fixBuilderBrief("FEEDBACK", [over]), /TRUNCATED — 1 of 24001 characters/);
+  });
+});
+
+describe("T30c the fix chain's write_set is the FIXED work's union, not the reviewer's", () => {
+  // The gating reviewer declares its report file and nothing else; the two
+  // builders declare the source. The two sets are disjoint on purpose (c above),
+  // so no assertion can pass by reading the wrong one.
+  const gating = [{ taskId: "r1" }];
+  const reviewerWriteSet = ["docs/reviews/round-7.md"];
+  const fixing = [
+    { writeSet: ["src/lib/task-graph.ts", "src/db/projects.ts"] },
+    { writeSet: ["src/lib/project-tick.ts", "src/lib/task-graph.ts"] },
+  ];
+
+  test("the builder row inherits the builders' union", () => {
+    const g = fixChainGraphFields({ round: 7, workstream: MAIN_WORKSTREAM, gating, fixing });
+    assert.deepEqual(g.builder.write_set, [
+      "src/db/projects.ts",
+      "src/lib/project-tick.ts",
+      "src/lib/task-graph.ts",
+    ]);
+  });
+
+  test("the REVIEWER's write_set is nowhere in the row", () => {
+    const g = fixChainGraphFields({ round: 7, workstream: MAIN_WORKSTREAM, gating, fixing });
+    for (const path of reviewerWriteSet) {
+      assert.ok(!g.builder.write_set.includes(path), `the reviewer's ${path} leaked into the chain`);
+    }
+    // …and the ordering dependency is still the GATING task, unchanged.
+    assert.deepEqual(g.builder.depends_on, ["r1"]);
+  });
+
+  test("an empty union stays EMPTY — there is no fallback to the gating rows", () => {
+    // "An empty declared set the reviewer can SEE is empty is honest; a wrong
+    // one is not." A legacy group carries the depends_on sentinel and reaches no
+    // builder, and the row must say nothing rather than say the reviewer's file.
+    const g = fixChainGraphFields({ round: 7, workstream: MAIN_WORKSTREAM, gating, fixing: [] });
+    assert.deepEqual(g.builder.write_set, []);
+    assert.deepEqual(g.builder.depends_on, ["r1"]);
+  });
+
+  test("the row and the brief report the SAME union — one implementation, not two", () => {
+    const reports: PriorWorkReport[] = fixing.map((f, i) => ({
+      taskId: `d${i}`,
+      title: `Builder ${i}`,
+      createdAt: `2026-08-19T0${i}:00:00.000Z`,
+      writeSet: f.writeSet,
+      report: `report ${i}`,
+    }));
+    const g = fixChainGraphFields({ round: 7, workstream: MAIN_WORKSTREAM, gating, fixing: reports });
+    const brief = fixBuilderBrief("FEEDBACK", reports);
+    assert.deepEqual(g.builder.write_set, inheritedWriteSet(reports));
+    assert.match(brief, new RegExp(`union of their write-sets: ${g.builder.write_set.join(", ")}\\.`));
+  });
+
+  test("the union is order-free and duplicate-free", () => {
+    const a = fixChainGraphFields({ round: 7, workstream: "ui", gating, fixing });
+    const b = fixChainGraphFields({ round: 7, workstream: "ui", gating, fixing: [...fixing].reverse() });
+    assert.deepEqual(a, b);
   });
 });

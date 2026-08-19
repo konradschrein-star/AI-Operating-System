@@ -236,7 +236,7 @@ function lit(s: string): string {
  * 3. Assertions, and the accounting that makes a missed probe a failure.
  * ------------------------------------------------------------------------- */
 
-const EXPECTED_ASSERTIONS = 33;
+const EXPECTED_ASSERTIONS = 40;
 let assertionsRun = 0;
 let assertionsFailed = 0;
 
@@ -381,7 +381,7 @@ async function main(): Promise<void> {
   const url = new URL(SCRATCH.dsn);
   url.searchParams.set("options", `-c search_path=${SCHEMA}`);
   process.env.DATABASE_URL = url.toString();
-  const { createFixChain } = await import(join(REPO_ROOT, PROJECTS_REL));
+  const { createFixChain, listTaskReports } = await import(join(REPO_ROOT, PROJECTS_REL));
   const { fixChainGraphFields, chainKeys, FIX_TASK_TITLE, RECHECK_TASK_TITLE } = await import(
     join(REPO_ROOT, RECONCILE_REL)
   );
@@ -389,8 +389,21 @@ async function main(): Promise<void> {
   type Outcome = { kind: string; id: string };
   type ChainResult = { builder: Outcome; checkers: Array<Outcome & { role: string }> };
 
+  // AMENDED ROUND 970 — `fixChainGraphFields` takes two sets now, and the
+  // split is the fix rather than a rename: `gating` (the verdict tasks) decides
+  // the ORDERING dependency, `fixing` (the builders whose work is being fixed)
+  // decides the write-set union. Feeding the gating rows' write-sets is what
+  // made every fix builder declare the reviewer's report file and then touch
+  // source it had not declared. This helper keeps ONE fixture list because the
+  // rows this script asserts on are the same either way; it is the SHIPPED
+  // function that decides which field reaches which column.
   const groupOf = (round: number, ws: string, members: Array<{ taskId: string; writeSet: string[] }>) =>
-    fixChainGraphFields({ round, workstream: ws, members });
+    fixChainGraphFields({
+      round,
+      workstream: ws,
+      gating: members.map((m) => ({ taskId: m.taskId })),
+      fixing: members.map((m) => ({ writeSet: m.writeSet })),
+    });
 
   const callChain = (
     round: number,
@@ -587,6 +600,115 @@ async function main(): Promise<void> {
   // ...and cycle 2 of the ORIGINAL group is not blocked by its own cycle 1.
   const cycle2 = await callChain(9, "main", 2, MAIN_MEMBERS);
   assertEq("cycle 2 of the same group is NOT refused", "created", cycle2.builder.kind);
+  console.log();
+
+  console.log("--- 6b. ROUND 970: listTaskReports — the fixed work, by edge ------------------");
+  // The fix builder's inherited BRIEF and WRITE-SET both come from this query,
+  // and it is the only part of round 970 that is SQL rather than a pure
+  // function — so it is proved against rows rather than reasoned about. The
+  // pure halves (`fixBuilderBrief`, `allocateReportBudget`, `inheritedWriteSet`)
+  // are unit-tested in project-reconcile.test.ts T30/T30b/T30c.
+  // fc4x, NOT fc3x: §6 already binds fc31 as `T_OTHER`. The collision was
+  // found by running this — a reused id aborts the script rather than quietly
+  // reusing a row, which is the behaviour a seeding helper owes.
+  const B_EARLY = "00000000-0000-4000-8000-00000000fc41";
+  const B_LATE = "00000000-0000-4000-8000-00000000fc42";
+  const P_DEP = "00000000-0000-4000-8000-00000000fc43";
+  const B_NORUN = "00000000-0000-4000-8000-00000000fc44";
+  const RUN_EARLY = "00000000-0000-4000-8000-00000000fd01";
+  const RUN_LATE = "00000000-0000-4000-8000-00000000fd02";
+
+  // Two runs whose threads hold MORE THAN ONE assistant message, so "the last
+  // one" is a real choice and not the only one available. The `ts` values are
+  // deliberately out of array order in RUN_LATE: the projection orders by
+  // thread timestamp, not by array position, and a probe seeded in order could
+  // not tell the two apart.
+  const seedRun = (id: string, entries: Array<[string, string, string]>): string =>
+    `INSERT INTO runs (id, title, prompt, status, thread) VALUES (${lit(id)}, ` +
+    `'synthetic builder run', 'seeded', 'completed', ` +
+    lit(JSON.stringify(entries.map(([role, ts, content]) => ({ role, ts, content })))) +
+    `::jsonb)`;
+  exec(
+    seedRun(RUN_EARLY, [
+      ["assistant", "2026-08-19T09:00:00Z", "an early draft nobody should read"],
+      ["user", "2026-08-19T09:30:00Z", "carry on"],
+      ["assistant", "2026-08-19T10:00:00Z", "REPORT-EARLY: the belt partitions by project."],
+    ]),
+    "seed run EARLY",
+  );
+  exec(
+    seedRun(RUN_LATE, [
+      ["assistant", "2026-08-19T12:00:00Z", "REPORT-LATE: promotion reads the sentinel."],
+      ["assistant", "2026-08-19T11:00:00Z", "an earlier turn, stored LATER in the array"],
+    ]),
+    "seed run LATE",
+  );
+
+  const seedTask = (
+    id: string,
+    role: string,
+    title: string,
+    writeSet: string[],
+    runId: string | null,
+    createdAt: string,
+  ): string =>
+    `INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, workstream, ` +
+    `write_set, depends_on, run_id, created_at) VALUES (${lit(id)}, ${lit(PROJECT_ID)}, 6, ` +
+    `${lit(role)}, ${lit(title)}, 'seeded', 'done', 'main', ` +
+    `ARRAY[${writeSet.map(lit).join(",")}]::text[], '{}'::uuid[], ` +
+    `${runId === null ? "NULL" : lit(runId)}, ${lit(createdAt)}::timestamptz)`;
+  exec(seedTask(B_LATE, "builder", "Builder LATE", ["src/late.ts"], RUN_LATE, "2026-08-19T02:00:00Z"), "seed builder LATE");
+  exec(seedTask(B_EARLY, "builder", "Builder EARLY", ["src/early.ts"], RUN_EARLY, "2026-08-19T01:00:00Z"), "seed builder EARLY");
+  exec(seedTask(P_DEP, "planner", "Planner", ["docs/plan.md"], null, "2026-08-19T00:30:00Z"), "seed planner dep");
+  exec(seedTask(B_NORUN, "builder", "Builder NO RUN", ["src/norun.ts"], null, "2026-08-19T03:00:00Z"), "seed builder without a run");
+
+  const allIds = [B_LATE, B_EARLY, P_DEP, B_NORUN];
+  const reports = (await listTaskReports(PROJECT_ID, allIds, ["builder"])) as Array<{
+    id: string;
+    title: string;
+    write_set: string[];
+    last_text: string | null;
+  }>;
+
+  assertEq(
+    "only BUILDERS come back — the planner dependency is filtered out",
+    ["Builder EARLY", "Builder LATE", "Builder NO RUN"],
+    reports.map((r) => r.title),
+  );
+  assertEq(
+    "…and in created_at order, NOT the order the ids were passed in",
+    [B_EARLY, B_LATE, B_NORUN],
+    reports.map((r) => r.id),
+  );
+  assertEq(
+    "the LAST assistant message by thread timestamp, not the first and not the last array slot",
+    ["REPORT-EARLY: the belt partitions by project.", "REPORT-LATE: promotion reads the sentinel.", null],
+    reports.map((r) => r.last_text),
+  );
+  assertEq(
+    "a task with NO run yields last_text null rather than vanishing from the result",
+    1,
+    reports.filter((r) => r.last_text === null).length,
+  );
+  assertEq(
+    "the declared write-sets ride along — this is what the fix builder inherits",
+    [["src/early.ts"], ["src/late.ts"], ["src/norun.ts"]],
+    reports.map((r) => r.write_set),
+  );
+  assertEq(
+    "an empty id list returns [] without a query",
+    0,
+    ((await listTaskReports(PROJECT_ID, [], ["builder"])) as unknown[]).length,
+  );
+  assertEq(
+    "an id from ANOTHER project is refused by the project_id term",
+    0,
+    ((await listTaskReports(
+      "00000000-0000-4000-8000-0000000000ff",
+      allIds,
+      ["builder"],
+    )) as unknown[]).length,
+  );
   console.log();
 
   console.log("--- 7. teardown ---------------------------------------------------------------");
