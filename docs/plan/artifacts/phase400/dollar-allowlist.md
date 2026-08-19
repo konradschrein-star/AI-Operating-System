@@ -185,3 +185,54 @@ EXIT=0
 
 A listed file is still a swept file. That is the property these two rows were
 written to preserve, and it is now measured rather than asserted.
+
+---
+
+## Round 13 (os-usable-for-work phase 7) — one more, and it arrived from `main`
+
+`gates-808.sh` gate 8 read `0` at the pre-merge tip of `project/7851068b` and `1`
+immediately after step 1 of the three-merge integration merged `main`. One hit,
+and no lane wrote it:
+
+| File | Line | Snippet | Fires on |
+|---|---|---|---|
+| `app/desktop/goals/ui.tsx` | 440 | `` return `${x.toFixed(2)},${y.toFixed(2)}`; `` | `toFixed\(2\)` |
+
+It is `Sparkline()` building an SVG `points` attribute out of pixel positions —
+`x = (i / (values.length - 1)) * W`, `y = H - (v / max) * H`. Geometry. It is the
+**twelfth** false positive of the naive `toFixed(2)` anchor in this table, after
+`MemorySurface.tsx`'s relevance score and the three token-magnitude formatters.
+
+**The source line was not touched.** Rewriting Konrad's own rendering code so a
+money grep stays quiet is the wrong direction, and there is nothing to reword —
+two decimal places on a coordinate is the correct output.
+
+**The finding worth carrying, because it is the second instance in one merge.**
+`553fa38` is Konrad's own commit on `main`. It met this gate for the first time
+at the merge, and could not have been run against it beforehand: `dollar-sweep.sh`
+and its allowlist exist on lanes, not on `main`. The identical shape took gate 17
+from 92/92 green to 20 failures in the same integration — see the ruling *"where a
+doc-gate lives"* in `AI OS/Operator Decisions.md`, whose first point is exactly
+this: *a gate that governs files it does not own must live where those files live*.
+Gate 17's pins were re-anchored at `c31c6f7`; gate 8 needs the other half of that
+ruling — relocation — which is not this task's to do. Two gates, one cause,
+recorded together so the next person sees a pattern rather than two accidents.
+
+**Anchoring proven by breaking it.** Same protocol as round 4 above:
+
+```
+$ printf '\n// control: renders a cost of $12.50 to the user\n' \
+    >> forge-control-web/app/desktop/goals/ui.tsx
+$ bash scripts/checks/dollar-sweep.sh ; echo "EXIT=$?"
+FAIL    forge-control-web/app/desktop/goals/ui.tsx:471
+EXIT=1
+$ # restored from a pre-mutation copy (NOT `git checkout --`, which would have
+$ # reverted to HEAD rather than to the pre-mutation content); sha256 identical:
+$ sha256sum forge-control-web/app/desktop/goals/ui.tsx
+47123b6f6f9739033873da0ccd4016ce86feb8777a6a92244947120e255a1edf  …/goals/ui.tsx
+$ bash scripts/checks/dollar-sweep.sh >/dev/null ; echo "EXIT=$?"
+EXIT=0
+```
+
+The pattern is the coordinate PAIR, `x\.toFixed\(2\).*y\.toFixed\(2\)`, not `.*`.
+A listed file is still a swept file.
