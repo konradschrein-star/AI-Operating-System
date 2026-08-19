@@ -8,9 +8,11 @@ import {
   extractTriplesForNote,
   extractTriplesNextBatch,
   pingMemory,
-  knowledgeGraph,
+  wikilinkGraph,
   syncVaultNotes,
   graphLaneStatus,
+  indexHealth,
+  pruneStaleEmbeddingRows,
   TRIPLE_CATEGORIES,
   type TripleCategory,
   type NoteSource,
@@ -19,6 +21,7 @@ import {
   SCORE_FLOOR,
   MAX_CHUNKS_PER_NOTE,
 } from "../lib/memory-ranking.ts";
+import { stalePaths } from "../lib/index-health.ts";
 
 const r = new Hono();
 
@@ -34,19 +37,104 @@ r.get("/health", async (c) => c.json(await pingMemory()));
  * UI (or a curl) force an immediate resync after editing the vault. */
 r.post("/sync", async (c) => c.json(await syncVaultNotes()));
 
-/* v2.2: entity graph for the 3D visualization. Registered before /:slug so
- * the catch-all param route doesn't shadow it. */
+/* The 3D visualization's graph, built from hcp.knowledge_note.links — the
+ * parsed [[wikilinks]] the vault-sync tick already writes. It used to be built
+ * from content_forge.knowledge_triples, which has held 0 rows since some point
+ * before 2026-08-19 with nothing to refill it (see wikilinkGraph()).
+ * Registered before /:slug so the catch-all param route doesn't shadow it.
+ *
+ * Same contract as /index-health below: on failure this returns 500 WITH THE
+ * MESSAGE and never degrades to an empty graph. An empty graph is a legitimate
+ * answer for a vault with no wikilinks — which is precisely why a broken query
+ * must not be able to imitate one. */
 r.get("/graph", async (c) => {
   const maxLinks = Math.min(
     6000,
     Math.max(100, Number(c.req.query("limit") ?? "3000")),
   );
-  return c.json(await knowledgeGraph(maxLinks));
+  try {
+    return c.json(await wikilinkGraph(maxLinks));
+  } catch (err) {
+    return c.json(
+      {
+        error: `memory graph failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+      500,
+    );
+  }
 });
 
-/* Vault-wide per-category totals, independent of pagination. Mounted before
- * the slug-scoped GET so Hono routes correctly. */
+/* Vault-wide labelled counts envelope, independent of pagination. Mounted
+ * before the slug-scoped GET so Hono routes correctly. The bare `all` and the
+ * five category chips are gone — see noteCounts() in db/memory.ts. */
 r.get("/counts", async (c) => c.json(await noteCounts(parseSource(c))));
+
+/* Three-way reconciliation of vault ↔ hcp.knowledge_note ↔
+ * content_forge.knowledge_embeddings (R12/R13). Registered BEFORE the
+ * /:slug{.+} catch-all below, which would otherwise swallow it and look up a
+ * note called "index-health"; memory-index-health.test.ts asserts that
+ * ordering against this router's own route table rather than by eye.
+ *
+ * On failure this returns 500 WITH THE MESSAGE. It never degrades to zeros:
+ * a zeroed reconciliation is indistinguishable from a real, total index gap,
+ * and chasing that phantom is the afternoon this endpoint exists to save. */
+r.get("/index-health", async (c) => {
+  try {
+    return c.json(await indexHealth());
+  } catch (err) {
+    return c.json(
+      {
+        error: `index-health failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+      500,
+    );
+  }
+});
+
+/* The ONLY caller of pruneStaleEmbeddingRows(). No tick, no startup path and
+ * no read reaches it (R14). It removes embedding rows for exactly the paths
+ * this run classified `stale_row_file_missing` — recomputed here, never taken
+ * from the client, so a stale or hostile path list cannot delete a live note's
+ * chunks. Deliberate act ⇒ `{"confirm": true}` required. */
+r.post("/index-health/prune", async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch (err) {
+    return c.json(
+      {
+        error: `body must be JSON {"confirm": true} — ${err instanceof Error ? err.message : String(err)}`,
+      },
+      400,
+    );
+  }
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    (body as { confirm?: unknown }).confirm !== true
+  ) {
+    return c.json(
+      { error: 'pruning requires {"confirm": true} in the body' },
+      400,
+    );
+  }
+  try {
+    const health = await indexHealth();
+    const stale = stalePaths(health);
+    const { pruned, count } = await pruneStaleEmbeddingRows(stale);
+    return c.json({ pruned, count });
+  } catch (err) {
+    // Same contract as the GET: 5xx carrying the message. A prune that cannot
+    // first reconcile must delete NOTHING and say why — reconciliation is what
+    // decides which paths are stale, so a failed one has no candidate list.
+    return c.json(
+      {
+        error: `index-health prune failed before deleting anything: ${err instanceof Error ? err.message : String(err)}`,
+      },
+      500,
+    );
+  }
+});
 
 r.get("/", async (c) => {
   const limit = Math.min(

@@ -581,3 +581,185 @@ Every R1–R90 appears exactly once. No requirement is unassigned and none is as
 | A planner opens a seventh workstream and gets a 400 mid-run | The cap is documented in every planner brief; six are pre-assigned |
 | Konrad does not rule on the Businesses spine or the reminder policy | Both have stated defaults (Funnel; pending + 7 days) recorded with the date the default was taken |
 | A phase drifts into building Goals/Journal/Map | Explicit non-goal in `00-vision.md §5`; phase 3's scope is words, not features |
+
+---
+
+## 10. Write-set ownership and disclosed exceptions
+
+Authoritative. This is what the next round and the successor project read to learn who owns a file and
+which behavioural freezes have been lifted. A commit message is not consulted; this table is.
+
+### 10.1 Requirement exception — R11 vs R20, `appendToDailyNote` and `readDailyNote`
+
+**Ruled by the operator on 2026-08-19, at round 100 fix cycle 1, on R1-red's blockers B-2 and B-3.**
+
+R11 freezes the three pre-existing verbs: `POST /append`, `POST /note`, `GET /daily` must "behave
+identically to before this project". R20 requires the vault verbs to hard-error, with no `catch {}`
+that returns a default. `lib/vault.ts:161` could not satisfy both: a bare `catch` read *every* read
+failure as "today's note does not exist yet" and then wrote the empty daily template over the note
+that was sitting right there, returning `{ok:true, created:true}`. Measured by the red team: **4 245
+bytes → 76, no snapshot, unrecoverable.**
+
+**Ruling: R20 wins, and R11 is excepted here.** R11 protects append-or-create **semantics**, not a
+data-destroying fallback. Silently replacing a note with an empty template is not "append behaving
+identically" — it is the opposite of appending.
+
+| Verb | Frozen behaviour that changed | Now |
+|---|---|---|
+| `appendToDailyNote` | any read failure → write `DAILY_TEMPLATE` over the note, resolve `{ok:true, created:true}` | ENOENT → create from template, unchanged. Anything else → **throw**, note untouched |
+| `appendToDailyNote` | `fs.writeFile(abs, …)` — destination opened `O_TRUNC` | temp file → fsync → rename (`atomicWrite`). **The bytes that land are unchanged**, which is why R11's byte-level characterisation tests still pass unmodified |
+| `readDailyNote` | any read failure → `content: null` ("no daily note today") | ENOENT → `content: null`, unchanged. Anything else → **throw** |
+
+`readDailyNote` is not in the reviewer's blocker list — it was raised as note N-2, "same R20 smell as
+B-2". It is fixed under the same ruling and disclosed here rather than left as a known R20 violation
+inside the phase that owns R20. `createNote` is untouched: it only ever opens `wx`.
+
+**What did NOT change:** the exact bytes written by an append, the section-insertion rule, the
+`{path, created}` result shape, the daily filename and timezone, and `POST /note` in every respect.
+
+### 10.2 Undeclared writes — round 100, fix cycle 1 (task `R1-fix`), disclosed here
+
+The fix-cycle task row inherited its `write_set` from the **reviewer** row it was seeded from
+(`docs/plan/artifacts/os-usable-for-work/phase1/red-team-vault-write.md` — a report file), which is
+unsatisfiable for a task whose entire brief is "fix three blockers in `lib/vault.ts`". This is the
+condition `03-quality.md` §3.5 names: audit a fix cycle against the **parent phase row** (B1a/B1b),
+not against the inherited row. Every path below is inside B1a's or B1b's declared write set, except
+the two corpus files, which are named in the reviewer's own prescription.
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control/src/lib/vault.ts` | B1a | the three blockers (B-1, B-2, B-3), the symlink escape, and folded findings F-2, F-3, F-6 |
+| `forge-control/src/lib/vault.test.ts` | B1a | 20 regression assertions, each verified to fail against the pre-fix tree |
+| `forge-control/src/routes/vault.ts` | B1b | folded finding F-5 — the 409 body cap |
+| `forge-control/src/lib/vault-routes.test.ts` | B1b | the two 409-cap assertions |
+| `docs/plan/os-usable-for-work/02-architecture.md` | — | §1.2 stated two things that are false (F-4); blocker 1's prescription is explicitly "and correct §1.2's claim" |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | this section — the R11 exception and this disclosure |
+| `docs/plan/artifacts/os-usable-for-work/phase1/red-team-vault-write.md` | **the declared row** | resolution appendix appended (nothing removed) |
+| `docs/plan/artifacts/os-usable-for-work/phase1/fix-cycle-1-vault-write.md` | — | the before/after evidence the fixes are proven by |
+
+`forge-control/src/lib/vault-fixture.ts` was **not** touched: the symlink fixtures are created inside
+the test that needs them, because a symlink committed into a shared fixture would change what every
+other lane-1 test resolves.
+
+### 10.3 Undeclared writes — round 5, fix cycle 1 second pass (task `R1-fix`, re-check), disclosed here
+
+This round's declared `write_set` was `docs/plan/artifacts/os-usable-for-work/phase1/gate-verdict.md`
+— the **gating reviewer's own report file**, inherited by the fix-cycle row exactly as §10.2 describes
+for the round before it. It is unsatisfiable for a task briefed to "address every point" of four
+code blockers, and the file is the reviewer's to write, not the builder's; it was **not** touched.
+
+`698c230` was already at HEAD when this round opened, so no blocker was re-fixed. The round verified
+that commit independently and closed the one gap that survived. Two files moved:
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control/src/lib/vault.test.ts` | B1a | one regression test pinning the §6.1 deviation — that `createNote`'s and the snapshot store's `wx` writes must **not** be routed through `atomicWrite`. Mutation-controlled: 61/0 → 58/3 |
+| `docs/plan/artifacts/os-usable-for-work/phase1/fix-cycle-1-vault-write.md` | — | §6, the independent pre-fix/HEAD probe table, and §6.1, the disclosed deviation (appended; nothing removed) |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | this subsection, in the same commit as the writes it discloses |
+
+**The deviation a re-check will otherwise read as an open blocker.** R1-gate's blocker 3 says "no
+`writeFile(abs…)` anywhere in the module". Two `flag: "wx"` sites survive at `lib/vault.ts:331` and
+`:522`. They are not R6 instances — `wx` refuses with `EEXIST` and truncates nothing (measured) — and
+following the wording literally would make `createNote` silently overwrite an existing note and let
+one snapshot destroy another, because `atomicWrite` reaches its destination by `rename` (also
+measured). The invariant enforced instead is strictly stronger than the sites it leaves standing:
+**every direct write is an exclusive create; the only non-exclusive path is `atomicWrite`, which
+never opens the destination.** Full evidence in the artefact §6.1.
+
+### 10.4 Requirement exception — R11 vs R20, `appendToDailyNote` under concurrency
+
+**Round 6, fix cycle 2. Extends §10.1 with the third change to that verb; the same reasoning governs.**
+
+R1-fix's re-review measured what §10.1 had not: `appendToDailyNote` reads the note, splices a line into
+its own copy and writes it back, and that sequence ran **outside** `serialiseOnPath`. Two captures of
+the same daily note therefore both read the pre-state, and the second `rename` replaced the first.
+Reproduced in this round before the fix, on one note:
+
+| Concurrent calls | Acknowledged `{ok:true}` | Lines on disk | Captures lost | Snapshots |
+|---|---|---|---|---|
+| 2 | 2 | 1 | 1 | 0 |
+| 5 | 5 | 1 | 4 | 0 |
+| 10 | 10 | 1 | 9 | 0 |
+
+The zero in the last column is the reason this is a §10.1-class defect rather than a nuisance: the verb
+takes no snapshot — correctly, since it replaces nothing when it works — so a capture lost this way has
+nowhere to be recovered from. Reachable from two concurrent `POST /api/vault/append` (mobile Capture,
+`forge-control-web/app/api.ts:877`) or one racing a Telegram capture (`telegram-bridge.ts`'s capture
+handler calls the verb directly, and its `getUpdates` long-poll loop is itself sequential), so exposure
+is real but not routine.
+
+**Ruling: R20 wins again, on the same grounds as §10.1.** R11 freezes append-or-create *semantics*.
+Acknowledging ten captures and keeping one is not "append behaving identically"; it is the failure
+append exists to prevent, wearing a 200.
+
+| Verb | Frozen behaviour that changed | Now |
+|---|---|---|
+| `appendToDailyNote` | read → splice → `atomicWrite` ran unqueued; concurrent callers interleaved and the last rename won | the sequence runs inside `serialiseOnPath(abs, …)`, the queue `writeVaultFile` already used. Same queue, same key, so an append and an edit of one note also cannot interleave |
+
+**What did NOT change:** the bytes an append writes, the section-insertion rule, the `{path, created}`
+result shape, the timestamp (computed *before* the queue, so it records when the capture was made, not
+when the queue reached it), the daily filename and timezone, and `POST /note` in every respect. The
+serial case — one caller at a time, which is every call the characterisation tests in §2.2 make — is
+byte-for-byte what it was.
+
+**Residual, not claimed closed:** `serialiseOnPath` keys on the **lexical** absolute path, so one note
+reachable under two in-vault names would take two queues and race with itself. `find /opt/obsidian-vault
+-type l` → 0, so this is theoretical today. Recorded in `lib/vault.ts`'s "what is NOT claimed" header
+list beside the cross-process window.
+
+### 10.5 Undeclared writes — round 6, fix cycle 2 (task `R1-fix-2`), disclosed here
+
+This round's declared `write_set` was **empty** — the fix-cycle row was seeded with none. Every path
+below is inside B1a's or B1b's declared write set, or is named in the reviewer's own prescription.
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control/src/lib/vault.ts` | B1a | blocker 1 — `appendToDailyNote` wrapped in `serialiseOnPath`; the header claims at `:14-18` and `:23-24` narrowed and corrected; the lexical-key residual added to "what is NOT claimed" (fold 3) |
+| `forge-control/src/lib/vault.test.ts` | B1a | the four regression tests blocker 1 prescribes; three of the four flip red against the unwrapped verb (mutation-controlled) |
+| `forge-control/src/routes/vault.ts` | B1b | fold — the stale `lib/vault.ts:353, :359, :372` pins replaced by the guards' names |
+| `docs/plan/os-usable-for-work/03-quality.md` | — | fold — §2.1's "byte-identical to `main`" criterion was falsified by §10.1's own ruling; amended to except the two verbs and point at §10.1 and §10.4 |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | §10.4 and this subsection, in the same commit as the writes they disclose |
+| `docs/plan/artifacts/os-usable-for-work/phase1/fix-cycle-2-vault-append-race.md` | — | the before/after evidence this round is proven by |
+
+**Blocker 2 of the re-review is not actionable by this lane** and nothing was done to it: `/opt/forge-ai-os`
+carries a Goals/daily-surface build applied outside a worktree. The vault workstream has no authority
+over that tree and the worktree-only policy forbids touching it. Reported to the manager chat.
+
+### 10.6 Undeclared writes — round 11, phase 2 fix cycle 1 (task `R2-fix`), disclosed here
+
+This round's declared `write_set` was `docs/plan/artifacts/os-usable-for-work/phase2/gate-verdict.md`
+— the **phase-2 gating reviewer's own report file**, inherited by the fix-cycle row exactly as §10.2
+and §10.3 describe for phase 1. It is the reviewer's to write, not the builder's, and it was **not
+touched**. Audit this round against R2-gate's two numbered blockers and against the phase-2 builder
+rows they name (`bd47e519`, `c6b7e49e`), per `03-quality.md` §3.5.
+
+| File | Owner row | Why it had to change |
+|---|---|---|
+| `forge-control-web/app/layout.tsx` | `bd47e519` (B2c) | blocker 1 — the `<head>` comment's word "spent" trips `dollar-sweep.sh`'s `\bspen[dt]` primary gate. Reworded to "…is a DNS + TLS handshake **for** nothing." One word; no allowlist widened, per that gate's own standing rule |
+| `docs/plan/artifacts/os-usable-for-work/phase2/graph-after.png` | `c6b7e49e` (B2e) | blocker 2 — R36's literal test is a committed PNG. Retaken this round rather than copied from round 10's upload, so the image and the assertion transcript that vouches for it come from one run |
+| `docs/plan/artifacts/os-usable-for-work/phase2/graph-empty-state.png` | `c6b7e49e` (B2e) | blocker 2 — declared by that row and never produced. R35's empty case, forced live |
+| `docs/plan/artifacts/os-usable-for-work/phase2/graph-report.md` | `c6b7e49e` (B2e) | blocker 2 — same; the recipe, the three states and the blast-radius checks |
+| `docs/plan/os-usable-for-work/04-phases.md` | — | this subsection, in the same commit as the writes it discloses |
+
+**R35's live-exercise gap is closed, not restated.** `editor-browser-proof.md` §8 named it unproven;
+`graph-report.md` §2 walks one build through **292 → 0 → 292 nodes drawn** by `UPDATE`-ing the `links`
+column of a per-run scratch copy of `hcp.knowledge_note`, so the empty panel is proven to appear *and*
+to clear. State 3 is what rules out an empty state that latches.
+
+**The two write-set bookkeeping findings (R2-gate §7, folded items 3 and 4) are recorded here and the
+task rows are NOT amended.** `bd47e519`'s declared set omits
+`forge-control-web/app/desktop/MemorySurface.tsx`, which its own run committed at `5fc2367`; `5667b6d3`'s
+omits `…/phase2/before-fonts-blocked-note-view.png`, produced by `23531f6`. Both files are squarely
+inside the subject matter of the row that wrote them and neither is a scope violation. The operator has
+ruled (`AI OS/Operator Decisions.md`, *"A ledger you may edit after the fact stops being evidence"*)
+that a `done` row's `write_set` is never amended retroactively: it records what a task **declared**, the
+commit records what it **wrote**, and the gap between them is the only signal that a fold or a collision
+happened. Erasing the gap deletes the finding. Both are therefore disclosed here — which is the place
+this project consults — and left in the ledger as they stand.
+
+**Cause, so it stops recurring:** both gaps come from the fold mechanism. Retiring a sub-task's row into
+a sibling's execution moves the *work* but not the *declaration*, so the executing row's `write_set`
+goes stale the moment the fold happens. A folded row's declared artefacts can also simply never be
+produced — `c6b7e49e`'s three were exactly that, and blocker 2 is the bill. Whoever folds a row should
+check the absorbing row's declaration against the folded row's the same day, and treat the folded row's
+declared artefacts as a to-do list, not as a description of something that exists.

@@ -144,8 +144,15 @@ the test detects a regression to it.
   both ways — with the DB up, assert real numbers.
 
 **Reviewer must also run:** `git diff` on `forge-control/src/lib/vault.ts` and confirm the existing
-`appendToDailyNote` / `createNote` / `readDailyNote` bodies are **byte-identical** to `main`. The write
-path extends this module; it must not refactor it while five other lanes are running.
+`createNote` body is **byte-identical** to `main`, and that `appendToDailyNote` and `readDailyNote`
+differ from `main` **only** in the three ways `04-phases.md` §10.1 and §10.4 rule and enumerate —
+the non-ENOENT throw, the `atomicWrite` routing, and `appendToDailyNote`'s `serialiseOnPath` wrapper.
+Any other change to those two bodies, and any change at all to `createNote`, is still a finding. The
+write path extends this module; it must not refactor it while five other lanes are running.
+
+The exception exists because the frozen behaviour was itself destructive — a bare `catch` that wrote
+the empty daily template over an existing note, an `O_TRUNC` destination, and a read-modify-write with
+no queue that lost 9 of 10 acknowledged captures. Freezing a data-loss path is not what R11 protects.
 
 ### 2.2 Phase 2 — memory surface
 
