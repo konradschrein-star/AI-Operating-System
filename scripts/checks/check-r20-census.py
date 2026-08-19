@@ -98,8 +98,39 @@ ALLOWED_SCHEDULING_LINES = {
         "SQL ANNOTATION. The predicate is R27's project correlation; the only "
         "`round` on the line is inside the trailing `--` comment."
     ),
-    "AND d.project_id = pt.project_id)     -- R27, round 204": (
+    # The key is the line's STRIPPED text, so interior whitespace is part of it.
+    # Round 972 re-indented this line from five spaces to three while moving the
+    # statement, which silently turned a justified line into an unjustified one —
+    # invisible in a diff that reads as a re-indent. Round 974 re-keyed it and
+    # left this note rather than normalising whitespace in the matcher: two lines
+    # whose only difference is spacing ARE two different lines to a reader, and a
+    # matcher that ignored that would let a genuinely edited predicate keep an old
+    # justification.
+    "AND d.project_id = pt.project_id)   -- R27, round 204": (
         "SQL ANNOTATION, as above, closing the second subquery."
+    ),
+    # ---- R72's lane cap, round 972; entered here round 974. --------------------
+    # THIS SCRIPT HAD BEEN CRASHING SINCE af3cba6 AND NOBODY RAN IT. The cap's two
+    # CTEs added `round` inside promoteReadyTasks(), `check_r20()` correctly called
+    # them unjustified, and `render()` then died with a KeyError on the same text
+    # before the finding could be printed — so the gate `03-quality.md` §4 makes
+    # mandatory for phase 2 reported a traceback rather than a verdict for two
+    # commits. Both lines are PROJECTIONS FEEDING AN ORDERING, the case §7.2
+    # already recognises for `ORDER BY pt.round ASC`, and neither can gate a
+    # promotion: `eligible` is computed by the predicate above them and the cap is
+    # applied strictly afterwards.
+    "SELECT pt.id, pt.project_id, pt.workstream, pt.round, pt.created_at": (
+        "R72's `eligible` CTE projection. Not a predicate — it is the column list "
+        "the cap's ORDER BY consumes one CTE later. Every row it projects has "
+        "ALREADY satisfied the ready rule; dropping `round` from it would change "
+        "which row of a lane goes first, never whether any row may go at all."
+    ),
+    "ORDER BY round ASC, created_at ASC, id ASC) AS rn": (
+        "R72's lane-head tie-break, and an ORDERING for the same reason as "
+        "`ORDER BY pt.round ASC` above (§7.2). It picks WHICH of a lane's "
+        "eligible rows is admitted first — deliberately the same order "
+        "claimReadyTasks() would have run them in — and cannot make an "
+        "ineligible row eligible."
     ),
 }
 
@@ -398,7 +429,13 @@ def render(c: dict, digest: str) -> str:
             continue
         text = c["lines"][i].strip()
         out.append(
-            f"| `{c['owner'][i]}` | `{text}` | {ALLOWED_SCHEDULING_LINES[text]} |"
+            # `.get`, not `[]`, and the default is not cosmetic. An unjustified
+            # line is already a FAIL from check_r20() by the time render() runs,
+            # and a KeyError here replaced that verdict with a traceback for two
+            # commits (round 974 — see the R72 entries in
+            # ALLOWED_SCHEDULING_LINES). The gate must print its finding.
+            f"| `{c['owner'][i]}` | `{text}` | "
+            f"{ALLOWED_SCHEDULING_LINES.get(text, '**UNJUSTIFIED — see the R20 FAIL above**')} |"
         )
     out.append("")
     out.append(END)
@@ -465,6 +502,15 @@ ATTRIBUTIONS = {
         "**The consolidation group.** Reads the verdict-bearing tasks of one "
         "project+round. Not a promotion or claim predicate; phase 4 owns its "
         "redefinition."
+    ),
+    "listTaskReports": (
+        "**Comments only** — the four hits are in the doc-comment describing why "
+        "a duplicate fix chain is retired rather than the round marked done "
+        "(round 972, fix cycle 1). No code line in this symbol reads `round`: it "
+        "reads a project's task reports by explicit id list. Attributed round "
+        "974, which is when this gate could be run again at all — the same "
+        "commit that broke it also left this symbol unattributed and the "
+        "generated region stale."
     ),
     "VerdictRoundRow": "**The consolidation group's row type.**",
     "ChainRowOutcome": "**Fix-chain outcome type**, comment only.",

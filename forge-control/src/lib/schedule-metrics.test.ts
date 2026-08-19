@@ -626,7 +626,7 @@ describe("D7 — the numbering stall", () => {
  *
  * The fixtures below are the literal motivating case from `00-vision.md` §2:
  * one 32-minute reviewer, seven unrelated builders numbered above it, and
- * `depends_on` exactly as `0042_task_graph.sql`'s R6 backfill writes it
+ * `depends_on` exactly as `0043_task_graph.sql`'s R6 backfill writes it
  * (`SELECT e.id … WHERE e.round < pt.round`). The true numbering stall is 32
  * minutes — the builders needed nothing from the reviewer — and the closure
  * makes it compute to 0.

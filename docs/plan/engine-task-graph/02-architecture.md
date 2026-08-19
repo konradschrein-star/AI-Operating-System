@@ -199,7 +199,7 @@ executor-loaded files this diff touches — after this design, it does not.
 ### 2.1 The four columns
 
 ```sql
--- db/migrations/0042_task_graph.sql
+-- db/migrations/0043_task_graph.sql
 ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS depends_on uuid[];              -- NULL default
 ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS workstream  text  NOT NULL DEFAULT 'main';
 ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS write_set   text[] NOT NULL DEFAULT '{}';
@@ -1279,7 +1279,7 @@ NULL DEFAULT false`, set `true` by the same backfill `UPDATE`), after which the
 gate is `pt.graph_frozen` and every objection above evaporates. That is cheap
 **only while 0040 is un-applied**, which is true until phase 8 runs `psql -f`,
 and impossible to do honestly afterwards. It is a phase-1 change touching
-`0042_task_graph.sql`, `db/projects.ts`, `task-graph.ts`, `task-graph.test.ts`,
+`0043_task_graph.sql`, `db/projects.ts`, `task-graph.ts`, `task-graph.test.ts`,
 `task-graph-replay.test.ts` (a case (g)), `check-scheduler-sql.sh` and R3/R6/R69
 — six files across three phases. Round 223 did not take it, and did not take it
 silently: it is priced here so the choice is one decision rather than a

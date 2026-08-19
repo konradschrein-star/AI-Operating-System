@@ -97,7 +97,7 @@ export interface GraphTask {
   write_set: string[];
   /**
    * PROVENANCE OF `depends_on`, not a second sentinel (R71, E4, round 242).
-   * `true` on exactly the rows whose closure `0042_task_graph.sql`'s backfill
+   * `true` on exactly the rows whose closure `0043_task_graph.sql`'s backfill
    * wrote; `false` on every row an engine wrote itself, which is the column
    * default and therefore the answer for every row the migration never touched.
    *
@@ -898,7 +898,7 @@ export function normaliseWritePath(raw: string): string {
  * R4's workstream regex, and the ONLY copy of it on this side of the wire.
  *
  * Character for character `project_tasks_workstream_chk` in
- * `db/migrations/0042_task_graph.sql`: `CHECK (workstream ~
+ * `db/migrations/0043_task_graph.sql`: `CHECK (workstream ~
  * '^[a-z0-9][a-z0-9-]{0,39}$')`. Confirmed by reading that file in round 211;
  * they match. If they ever diverge, the divergence is a FINDING — the database
  * would answer a violation with a constraint error at INSERT time, which is a
@@ -930,7 +930,7 @@ export function validateWorkstream(raw: string): string {
     throw new GraphValidationError(
       `task-graph: validateWorkstream(): ${JSON.stringify(raw)} is not a legal workstream name; ` +
         `it must match ${WORKSTREAM_RE.source} — character for character the CHECK constraint ` +
-        "project_tasks_workstream_chk in db/migrations/0042_task_graph.sql (R28, R4)",
+        "project_tasks_workstream_chk in db/migrations/0043_task_graph.sql (R28, R4)",
     );
   }
   return raw;

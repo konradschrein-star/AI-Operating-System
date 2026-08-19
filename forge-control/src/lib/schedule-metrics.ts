@@ -1111,7 +1111,7 @@ function isLegacyRow(task: MetricTask): boolean {
  * A3, which succeeded through the database rather than through the code).
  *
  * THE HOLE THIS CLOSES. `isLegacyRow()` keys on `depends_on IS NULL`. Migration
- * `0042_task_graph.sql`'s final statement — the R6 backfill — WRITES OVER that
+ * `0043_task_graph.sql`'s final statement — the R6 backfill — WRITES OVER that
  * exact sentinel on every pre-existing row, with "every task in a strictly
  * lower round". After it runs, a legacy project's rows are indistinguishable
  * from graph rows by nullity, `isLegacyRow()` answers false for all of them,

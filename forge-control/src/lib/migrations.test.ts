@@ -26,14 +26,21 @@ import { fileURLToPath } from "node:url";
 const MIGRATIONS_DIR = fileURLToPath(new URL("../../../db/migrations", import.meta.url));
 
 /** The task-graph migration's filename, in ONE place because it has already
- *  moved once. It shipped as `0040_task_graph.sql` and was renumbered to 0042 at
+ *  moved twice. It shipped as `0040_task_graph.sql` and was renumbered to 0042 at
  *  round 950, after phase 8A's merge of `main` landed a second, unrelated
  *  `0040_usage_hourly.sql` under the same number — two projects numbered a
  *  migration independently and git raised no conflict, because the filenames
  *  differ. Applying migrations BY GLOB would have silently picked an order
  *  between them; applying them BY EXPLICIT FILENAME, which is this repo's rule,
- *  did not. */
-const TASK_GRAPH_MIGRATION = "0042_task_graph.sql";
+ *  did not.
+ *
+ *  ROUND 974 MOVED IT AGAIN, 0042 → 0043, because the same thing happened a
+ *  second time: `main`'s `0042_daily_goals.sql` arrived through round 972's merge
+ *  and collided with the number round 950 had just picked. Twice is a pattern, so
+ *  the round that fixed it also added `no two migrations share a numeric prefix`
+ *  below — the property this constant's comment had been describing in prose
+ *  since round 950 while nothing in `pnpm test` asserted it. */
+const TASK_GRAPH_MIGRATION = "0043_task_graph.sql";
 
 /** Strip `--` line comments so a header paragraph that *describes* the DDL
  *  ("...a partial index...", "CREATE UNIQUE INDEX ... WHERE ...") is never
@@ -106,6 +113,65 @@ describe("db/migrations re-runnability", () => {
       }
     });
   }
+
+  /** R70's property, asserted where it can catch the thing that actually breaks
+   *  it: a MERGE. Two files claiming one number is not a style question — there
+   *  is no ledger table and no runner, so the only ordering these files have is
+   *  their names, and a duplicate prefix means sort order silently decides which
+   *  of two unrelated migrations an operator's glob applies first.
+   *
+   *  WRITTEN ROUND 974, AFTER THE COLLISION HAPPENED TWICE. Round 950 fixed
+   *  `0040_task_graph.sql` vs `0040_usage_hourly.sql` and wrote the hazard down;
+   *  round 972's merge of `main` then produced `0042_daily_goals.sql` vs
+   *  `0042_task_graph.sql` and nothing said a word. Both times git raised no
+   *  conflict, because the filenames differ — which is exactly why a human
+   *  reviewing a merge does not see it either.
+   *
+   *  THE GUARD EXISTED AND WAS IN THE WRONG PLACE. `db/projects.test.ts`
+   *  (`migrationFiles()`) already refused to run on a duplicate prefix, and that
+   *  is what caught the second collision — but it needs a scratch Postgres, so it
+   *  runs when someone remembers to run it, days after the merge. This copy is
+   *  hermetic and runs in `pnpm test` on every commit. The two are deliberately
+   *  redundant: this one fails FAST, that one refuses to certify a schema built
+   *  from an ambiguous corpus.
+   *
+   *  It asserts over `FILES`, the same list the per-file lint above enumerates,
+   *  so a corpus this test read differently from that lint is impossible. */
+  test("no two migrations share a numeric prefix (R70)", () => {
+    const byNumber = new Map<string, string[]>();
+    for (const file of FILES) {
+      const n = file.slice(0, 4);
+      if (!/^\d{4}$/.test(n)) {
+        throw new Error(
+          `${file} does not start with a four-digit number — every file in ` +
+            `db/migrations/ is applied by explicit filename in numeric order (R70), ` +
+            `and one that cannot be ordered has no place in the corpus.`,
+        );
+      }
+      byNumber.set(n, [...(byNumber.get(n) ?? []), file]);
+    }
+    const collisions = [...byNumber.entries()].filter(([, fs]) => fs.length > 1);
+    assert.deepEqual(
+      collisions,
+      [],
+      `two or more migrations share a number: ${
+        collisions.map(([n, fs]) => `${n} → ${fs.join(" + ")}`).join("; ")
+      }. There is no ledger table and no runner in this repo, so sort order would ` +
+        `silently decide which applies first (R70). This is what a merge does when ` +
+        `two branches numbered a migration independently — git raises no conflict ` +
+        `because the filenames differ. Renumber the one that has NOT been applied ` +
+        `to content_forge under its current name, to the next number free on ` +
+        `\`main\` as well as here, and update every path that cites it.`,
+    );
+    // The corpus is not empty and the numbers are what was counted — otherwise a
+    // FILES that came back empty would report "no collisions" and pass.
+    assert.ok(
+      byNumber.size === FILES.length && FILES.length >= 19,
+      `counted ${byNumber.size} distinct numbers over ${FILES.length} files — ` +
+        `with no collisions these must be equal and non-trivial, so this test ` +
+        `has gone stale or read an empty directory.`,
+    );
+  });
 
   // Named guard for the specific finding, so a regression reads as the bug it
   // is rather than as an anonymous lint failure.

@@ -28,10 +28,28 @@
 # on the same row, so "the pure side and the SQL agree" is a measurement here and
 # not a doc-comment's promise.
 #
+# ROUND 974 ADDED CASE 1b AND SEPARATED SIX FIXTURES BY WORKSTREAM (R72).
+# Round 972 added the LANE CAP to promoteReadyTasks() — at most one live row per
+# (project, workstream) — and nothing here was told. Six of this file's cases had
+# been written against a world where any number of rows of workstream `main` may
+# go `ready` in one tick, so the cap broke them; case 1 (R11) failed on its second
+# assertion at 84aac00 and the rest would have followed. THE CASES WERE NOT WRONG
+# AND THE CAP IS NOT A REGRESSION — the fixtures had two rules riding in one
+# lane and could no longer tell them apart, which is failure mode (g) below.
+# Each case whose subject is the READY RULE now puts the row under test in a
+# workstream of its own, so the only thing that can hold it is the rule the case
+# is named for. The retired half — several roots of ONE lane promoting together —
+# is now case 1b, where it is asserted directly, in both directions, and R72 is
+# written down in 01-requirements.md rather than living only in code comments.
+#
 # 03-quality.md §2.2 names this script and what it must prove:
 #   "Against the same scratch schema: a graph-ready task promotes with its
 #    round undrained; a NULL-deps task does not; a dangling dep yields
 #    `blocked`, not `ready`."
+# and, since round 974, adds: "two graph roots of ONE lane promote one-at-a-time
+# and the held sibling is released by the next tick, while the mirror still calls
+# it ready". §4's phase-2 block makes running THIS FILE mandatory on any change
+# to promoteReadyTasks() — the gate that would have caught round 972 in round 972.
 #
 # It is an INTEGRATION check, not a unit test: it needs a real Postgres, so it
 # lives here and never runs inside `pnpm test` (NF3 — the unit suite is
@@ -111,6 +129,16 @@
 #   (f) PROBES THAT MISS. The script counts the assertions it actually executed
 #       and exits non-zero if that count differs from EXPECTED_ASSERTIONS. A
 #       sweep whose probes miss must fail, never certify itself.
+#   (g) TWO RULES IN ONE LANE, so a case passes for the wrong reason. Since R72
+#       a candidate sharing a workstream with any live row is held BY THE CAP,
+#       whatever its dependencies say. A case about the ready rule whose
+#       candidate sits in the same lane as the row it is held behind therefore
+#       asserts `pending` and cannot tell WHICH rule produced it — and it would
+#       go on passing if the rule it names were deleted outright. Guarded by
+#       construction: every case whose subject is the ready rule (2, 5, 5b) puts
+#       its candidate in a lane of its own, and every case that expects TWO rows
+#       to promote in one tick (1, 5b's control, 6) spreads them across lanes.
+#       Case 1b is the deliberate exception and asserts the cap by name.
 #
 # A NOTE ON WHAT CASE 3 CAN AND CANNOT SEE, recorded rather than glossed.
 # The sweep's cardinality predicate is the literal negation of the promote
@@ -148,13 +176,19 @@ cd "$REPO_ROOT"
 
 # Every assertion this file defines. Kept in sync by hand and enforced at the
 # end: if the counter comes in lower, probes were skipped and the run FAILS.
-EXPECTED_ASSERTIONS=93
+# 93 → 104 at round 974: case 1b's nine, R11's new lane-separation assertion, and
+# R72's release assertion pair on tick 2 (11 added, none removed).
+EXPECTED_ASSERTIONS=104
 ASSERTIONS_RUN=0
-# Every row the seed inserts: 3 + 2 + 2 + 3 + 2 + 4 across cases 1–7, plus
-# 2 + 2 + 2 + 2 + 2 for cases 8, 8b, 9, 10 and case 10's foreign project.
+# Every row the seed inserts, per case and in the order they are inserted:
+#   case 1  3 · case 1b 3 · case 2  2 · cases 3+4 2 · case 5  3 · case 5b 4
+#   case 6  2 · case 7  4 · case 8  2 · case 8b 2 · case 9  2 · case 10 4
+# = 33. (Re-derived at round 974, which is also when the arithmetic in this
+# comment stopped being wrong: it enumerated eleven addends summing to 26 beside
+# a constant of 30, and nothing checked the sentence against the number.)
 # T3_GHOST and T8_GHOST are NOT among them — they are the ids cases 3 and 8 name
 # and nobody inserts. Guard against failure mode (a).
-SEED_EXPECTED_ROWS=30
+SEED_EXPECTED_ROWS=33
 
 pass() {
   ASSERTIONS_RUN=$((ASSERTIONS_RUN + 1))
@@ -307,7 +341,7 @@ assert_eq 'notifications starts empty (failure mode (d))' '0' \
 echo
 
 # ---------------------------------------------------------------------------
-# 3. Seed. Eleven synthetic projects, one per case, so that a project-scoped
+# 3. Seed. Twelve synthetic projects, one per case, so that a project-scoped
 #    rule (the legacy branch, R69's term, the sweep's project block) cannot
 #    leak between cases. Every id is a literal, so every assertion names the
 #    row it is about (failure mode (b), (c)).
@@ -321,6 +355,7 @@ echo
 # ---------------------------------------------------------------------------
 echo '--- 3. seed -------------------------------------------------------------------'
 P1='00000000-0000-4000-8000-0000000000c1'   # R11
+P1B='00000000-0000-4000-8000-0000000000e1'  # R72, the lane cap — round 974
 P2='00000000-0000-4000-8000-0000000000c2'   # R12
 P3='00000000-0000-4000-8000-0000000000c3'   # R14
 P5='00000000-0000-4000-8000-0000000000c5'   # R69
@@ -336,6 +371,9 @@ P10F='00000000-0000-4000-8000-0000000000cf' # the FOREIGN project cases 10 names
 T1_LOW='00000000-0000-4000-8000-00000000110a'   # graph, undrained, lower round
 T1_DEP='00000000-0000-4000-8000-00000000110b'   # graph, done, the real dependency
 T1_CAND='00000000-0000-4000-8000-00000000110c'  # the R11 candidate
+T1B_HEAD='00000000-0000-4000-8000-00000000111a'  # R72: the lane head, promotes
+T1B_TAIL='00000000-0000-4000-8000-00000000111b'  # R72: same lane, must be HELD
+T1B_OTHER='00000000-0000-4000-8000-00000000111c' # R72: another lane, promotes too
 T2_LOW='00000000-0000-4000-8000-00000000120a'
 T2_CAND='00000000-0000-4000-8000-00000000120c'
 T3_DEP='00000000-0000-4000-8000-00000000140a'
@@ -369,6 +407,7 @@ T10F_PENDING='00000000-0000-4000-8000-000000001f0b'
 psql_run -q >/dev/null <<SQL
 INSERT INTO projects (id, name, brief, repo, status) VALUES
   ('$P1','case1-R11','synthetic','ai-os','active'),
+  ('$P1B','case1b-R72-lane-cap','synthetic','ai-os','active'),
   ('$P2','case2-R12','synthetic','ai-os','active'),
   ('$P3','case3+4-R14','synthetic','ai-os','active'),
   ('$P5','case5-R69','synthetic','ai-os','active'),
@@ -391,17 +430,40 @@ INSERT INTO projects (id, name, brief, repo, status) VALUES
 -- row here would engage R69's term, which would correctly hold the candidate,
 -- and this script would report a bug that is in fact the specification
 -- (failure mode (e)). Case 5 is where a legacy row belongs.
+--
+-- THE CANDIDATE IS IN WORKSTREAM 'alpha' AND THE UNDRAINED ROW IN 'main', SINCE
+-- ROUND 974, AND THAT SEPARATION IS THE CASE (failure mode (g)). Both sat in
+-- 'main' until R72, and the cap then held the candidate for a reason that has
+-- nothing to do with R11 — the case failed on assertion 2 at 84aac00. Split
+-- across lanes, the ROUND is once again the only thing that could hold it, which
+-- is precisely what R11 claims cannot. The cap's own behaviour is case 1b.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
   ('$T1_LOW','$P1',100,'builder','c1 lower-round graph row, never done','x','pending','{}','main','{}'),
   ('$T1_DEP','$P1',100,'builder','c1 the real dependency','x','done','{}','main','{}'),
-  ('$T1_CAND','$P1',200,'reviewer','c1 candidate, deps done, round undrained','x','pending','{$T1_DEP}','main','{}');
+  ('$T1_CAND','$P1',200,'reviewer','c1 candidate, deps done, round undrained','x','pending','{$T1_DEP}','alpha','{}');
+
+-- CASE 1b (R72, ROUND 974). The lane cap, asserted by name instead of inferred
+-- from six other cases breaking. Three graph roots, all eligible on tick 1, all
+-- at the same round: two share workstream 'main' and one sits in 'ui'.
+-- created_at is explicit and one minute apart so the lane head is the row the
+-- cap's ORDER BY (round, created_at, id) must pick, not a coin toss — HEAD is
+-- older than TAIL. The expected outcome is the whole of R72: 'main' promotes
+-- exactly one row, 'ui' is unaffected by it, and the held row is released on the
+-- next tick once its lane frees, so the cap is a DELAY and never a deadlock.
+INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set, created_at) VALUES
+  ('$T1B_HEAD','$P1B',100,'builder','c1b main lane head','x','pending','{}','main','{}', now() - interval '2 min'),
+  ('$T1B_TAIL','$P1B',100,'builder','c1b main lane sibling, must be HELD','x','pending','{}','main','{}', now() - interval '1 min'),
+  ('$T1B_OTHER','$P1B',100,'builder','c1b another lane entirely','x','pending','{}','ui','{}', now() - interval '1 min');
 
 -- CASE 2 (R12). Both rows are LEGACY (depends_on IS NULL). The lower round is
 -- held by a 'running' row, which promote never touches, so the only way the
 -- candidate moves is the legacy branch releasing it after the drain.
+-- LANES SPLIT ROUND 974 (failure mode (g)): the lower row is `running`, so with
+-- both in 'main' R72's cap would hold the candidate on tick 1 by itself and the
+-- case would assert `pending` without R12 having been consulted at all.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
   ('$T2_LOW','$P2',100,'builder','c2 lower-round legacy row, running','x','running',NULL,'main','{}'),
-  ('$T2_CAND','$P2',200,'reviewer','c2 legacy candidate','x','pending',NULL,'main','{}');
+  ('$T2_CAND','$P2',200,'reviewer','c2 legacy candidate','x','pending',NULL,'c2-cand','{}');
 
 -- CASES 3 + 4 (R14). Every REAL dependency is done; one named id exists
 -- nowhere. Front half: it must not be promoted. Back half: it must land on
@@ -415,10 +477,13 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
 -- candidate's frozen closure is entirely done, and a LEGACY row sits at a
 -- strictly lower round, not done — exactly the fix chain the old engine
 -- inserts between \`psql -f 0040\` and the restart. It must be held.
+-- LANE SPLIT ROUND 974 (failure mode (g)): the legacy row promotes on its own
+-- merits on tick 1, so in a shared lane R72's cap would hold the candidate and
+-- the case would pass with R69's term deleted.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
   ('$T5_LEGACY','$P5',100,'builder','c5 post-migration legacy row','x','pending',NULL,'main','{}'),
   ('$T5_DEP','$P5',150,'builder','c5 frozen dependency, done','x','done','{}','main','{}'),
-  ('$T5_CAND','$P5',200,'reviewer','c5 frozen-closure candidate','x','pending','{$T5_DEP}','main','{}');
+  ('$T5_CAND','$P5',200,'reviewer','c5 frozen-closure candidate','x','pending','{$T5_DEP}','c5-cand','{}');
 
 -- CASE 5b (R69 WIDENED — E4, R71, round 242), the SQL-layer twin of R18 case
 -- (g). Same shape as case 5 with ONE difference that is the whole case: the row
@@ -432,31 +497,49 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
 -- against a snapshot that predates \$T5B_GRAPH); the declared one must promote
 -- (its dependencies are exactly what it says they are). If the widening were
 -- keyed on anything but the marker, the two would share a fate.
+-- THREE LANES SINCE ROUND 974, and the case cannot be run in fewer (failure mode
+-- (g)): the two candidates must be free to receive DIFFERENT verdicts in ONE
+-- tick, and R72 promotes at most one row per lane — in a shared lane the control
+-- could never fire, and the lower-round row would take the slot from both.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set, graph_frozen) VALUES
   ('$T5B_GRAPH','$P5B',100,'builder','c5b post-restart fix builder, real graph fields','x','pending','{}','main','{}',false),
   ('$T5B_DEP','$P5B',150,'builder','c5b frozen dependency, done','x','done','{}','main','{}',true),
-  ('$T5B_FROZEN','$P5B',200,'reviewer','c5b FROZEN candidate, closure entirely done','x','pending','{$T5B_DEP}','main','{}',true),
-  ('$T5B_DECLARED','$P5B',200,'reviewer','c5b DECLARED candidate, same deps, not frozen','x','pending','{$T5B_DEP}','main','{}',false);
+  ('$T5B_FROZEN','$P5B',200,'reviewer','c5b FROZEN candidate, closure entirely done','x','pending','{$T5B_DEP}','c5b-frozen','{}',true),
+  ('$T5B_DECLARED','$P5B',200,'reviewer','c5b DECLARED candidate, same deps, not frozen','x','pending','{$T5B_DEP}','c5b-declared','{}',false);
 
 -- CASE 6 (R13). One graph root and one legacy row in a PAUSED project. Both
 -- would promote on their own merits; the gate must stop both, and flipping the
 -- project back to 'active' must promote THE SAME TWO ROWS — a filter, not a
--- state change.
+-- state change. TWO ROWS IN ONE TICK IS THE ASSERTION, so since round 974 they
+-- are in two lanes: under R72 one shared lane promotes exactly one of them and
+-- the case would report the gate as a state change that it is not.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set) VALUES
   ('$T6_ROOT','$P6',100,'builder','c6 graph root in a paused project','x','pending','{}','main','{}'),
-  ('$T6_LEGACY','$P6',100,'builder','c6 legacy row in a paused project','x','pending',NULL,'main','{}');
+  ('$T6_LEGACY','$P6',100,'builder','c6 legacy row in a paused project','x','pending',NULL,'c6-legacy','{}');
 
 -- CASE 7 (R16/R17), beyond the six the brief mandates: the CLAIM path, driven
--- through the shipped claimReadyTasks(). Four graph roots, all promoted at
--- T1. A and B collide on src/x.ts in workstream 'main'; C writes the same path
--- in workstream 'ui' and therefore does not collide with either; D declares
--- nothing and is always claimable (R17). Created in a,b,c,d order so the
--- ORDER BY pt.round, pt.created_at makes the outcome deterministic.
+-- through the shipped claimReadyTasks(). Four graph roots, all READY. A and B
+-- collide on src/x.ts in workstream 'main'; C writes the same path in workstream
+-- 'ui' and therefore does not collide with either; D declares nothing and is
+-- always claimable (R17). Created in a,b,c,d order so the ORDER BY pt.round,
+-- pt.created_at makes the outcome deterministic.
+--
+-- SEEDED 'ready' SINCE ROUND 974 — they used to be seeded 'pending' and promoted
+-- by tick 1, and that route no longer exists: R72 promotes at most one row of
+-- workstream 'main' per call, while THIS case needs three of them ready at once
+-- to have anything to measure. The state is still reachable in production, by
+-- two routes the cap deliberately does not govern — `retryTask()`, which moves a
+-- whole (round, workstream) group to 'ready' as an operator unwedge, and any
+-- out-of-band write (an import, a psql, an older build), which is the same door
+-- case 8b walks through. What is under test is `claimReadyTasks()`'s contention
+-- belt, and it is reached identically however the rows became ready. Seeding
+-- them keeps this case measuring the belt instead of measuring the promote
+-- statement a second time.
 INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, depends_on, workstream, write_set, created_at) VALUES
-  ('$T7_A','$P7',100,'builder','c7 a writes src/x.ts in main','x','pending','{}','main','{src/x.ts}', now() - interval '4 min'),
-  ('$T7_B','$P7',100,'builder','c7 b writes src/x.ts in main','x','pending','{}','main','{src/x.ts}', now() - interval '3 min'),
-  ('$T7_C','$P7',100,'builder','c7 c writes src/x.ts in ui','x','pending','{}','ui','{src/x.ts}', now() - interval '2 min'),
-  ('$T7_D','$P7',100,'builder','c7 d declares nothing','x','pending','{}','main','{}', now() - interval '1 min');
+  ('$T7_A','$P7',100,'builder','c7 a writes src/x.ts in main','x','ready','{}','main','{src/x.ts}', now() - interval '4 min'),
+  ('$T7_B','$P7',100,'builder','c7 b writes src/x.ts in main','x','ready','{}','main','{src/x.ts}', now() - interval '3 min'),
+  ('$T7_C','$P7',100,'builder','c7 c writes src/x.ts in ui','x','ready','{}','ui','{src/x.ts}', now() - interval '2 min'),
+  ('$T7_D','$P7',100,'builder','c7 d declares nothing','x','ready','{}','main','{}', now() - interval '1 min');
 
 -- CASE 8 (R14 on the OPERATOR PATH, round 204 gating finding 1 / red-team
 -- finding 1). Shape identical to case 3 — one real done dep, one ghost — but the
@@ -492,7 +575,7 @@ INSERT INTO project_tasks (id, project_id, round, role, title, brief, status, de
   ('$T10_CAND2','$P10',200,'reviewer','c10 candidate naming a foreign PENDING row','x','pending','{$T10F_PENDING}','main','{}');
 SQL
 SEEDED="$(q 'SELECT count(*) FROM project_tasks')"
-echo "  seeded rows        : $SEEDED across 11 projects"
+echo "  seeded rows        : $SEEDED across 12 projects"
 assert_eq 'seed inserted exactly the rows the cases name' "$SEED_EXPECTED_ROWS" "$SEEDED"
 echo
 
@@ -561,8 +644,15 @@ if (step === "promote") {
   }
   const all = await probe.query<import("$REPO_ROOT/forge-control/src/lib/task-graph.ts").GraphTask>(
     // graph_frozen is SELECTed, not defaulted: an absent field would arrive as
-    // `undefined`, read as falsy inside graphReady()'s R69 term, and make the
-    // mirror answer for a rule the engine is not running (R71, E4).
+    // an undefined value, read as falsy inside graphReady()'s R69 term, and make
+    // the mirror answer for a rule the engine is not running (R71, E4).
+    // (NO BACKTICKS IN THIS HEREDOC. It is unquoted — \$REPO_ROOT below is
+    // substituted by design — so a backtick pair anywhere in it is a COMMAND
+    // SUBSTITUTION that bash executes while writing the file. This comment used
+    // to quote a word in backticks; every run of this script since has printed
+    // "line 505: undefined: command not found" to stderr and written the comment
+    // with the word deleted. Harmless there, and one identifier away from
+    // executing something real. Found and fixed round 974.)
     "select id::text, round, workstream, status, depends_on::text[] as depends_on, write_set," +
       " graph_frozen from project_tasks where project_id = \$1",
     [row.rows[0].project_id],
@@ -631,6 +721,15 @@ snapshot "$WORK/s0.txt"
 # is asked the same question the statement is about to answer.
 MIRROR5BF="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T5B_FROZEN" 2>/dev/null)"
 MIRROR5BD="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T5B_DECLARED" 2>/dev/null)"
+# CASE 1b's MIRROR, taken here for the same timing reason and asserting the
+# OPPOSITE agreement to case 5b's: the pure rule must say the held row is READY
+# while the statement declines to promote it. That disagreement is not a defect —
+# it is the whole of what makes R72 an admission cap rather than a ready rule
+# (01-requirements.md R72, 02-architecture.md §1.2). If this probe ever answered
+# MIRROR=false, the cap would have leaked into the pure predicate and every
+# consumer of graphReady() — the replay proof included — would have silently
+# changed meaning.
+MIRROR1BT="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" mirror "$T1B_TAIL" 2>/dev/null)"
 DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" promote | sed 's/^/  | /'
 snapshot "$WORK/s1.txt"
 PROMOTED1="$(promoted "$WORK/s0.txt" "$WORK/s1.txt")"
@@ -652,6 +751,36 @@ assert_eq 'R11: candidate promoted despite the undrained round' 'yes' "$(inset "
 assert_eq 'R11: candidate is now ready' 'ready' "$(st "$T1_CAND")"
 assert_eq 'R11: the lower-round graph row promoted too (it is a root)' 'yes' "$(inset "$T1_LOW" "$PROMOTED1")"
 assert_eq 'R11: round 100 of P1 is STILL undrained after the tick' 'ready' "$(st "$T1_LOW")"
+# The separation itself, asserted rather than left to the seed's comment: if a
+# later edit put these two back in one workstream, every assertion above would
+# still pass for the wrong reason on the day the cap is what holds the candidate.
+assert_eq 'R11: the candidate and the undrained row are in DIFFERENT lanes' 'alpha|main' \
+  "$(q "SELECT (SELECT workstream FROM project_tasks WHERE id='$T1_CAND') || '|' ||
+               (SELECT workstream FROM project_tasks WHERE id='$T1_LOW')")"
+echo
+
+echo '--- 5. case 1b — R72: one live task per lane, and the lane frees -------------'
+# Round 974. The cap round 972 shipped, measured directly instead of inferred
+# from six other cases breaking.
+assert_eq 'R72 premise: all three P1b roots were pending before the tick' 'pending|pending|pending' \
+  "$(sed -n "s/^$T1B_HEAD|//p;s/^$T1B_TAIL|//p;s/^$T1B_OTHER|//p" "$WORK/s0.txt" | paste -sd'|')"
+assert_eq 'R72: the lane head promoted' 'yes' "$(inset "$T1B_HEAD" "$PROMOTED1")"
+assert_eq 'R72: its same-lane sibling did NOT' 'no' "$(inset "$T1B_TAIL" "$PROMOTED1")"
+assert_eq 'R72: the held sibling is still pending, not blocked or failed' 'pending' "$(st "$T1B_TAIL")"
+# Lane ISOLATION, in the same tick and the same project: the cap is keyed on
+# (project_id, workstream), so a second workstream is untouched by the first
+# one's slot being taken. Without this assertion a cap that admitted one row per
+# PROJECT would pass every other assertion in this case.
+assert_eq 'R72: a DIFFERENT workstream of the same project promoted too' 'yes' \
+  "$(inset "$T1B_OTHER" "$PROMOTED1")"
+assert_eq 'R72: exactly one live row in lane main of P1b' '1' \
+  "$(q "SELECT count(*) FROM project_tasks WHERE project_id='$P1B' AND workstream='main'
+          AND status IN ('ready','running')")"
+# THE MIRROR, from the pre-tick capture in section 4. The pure rule and the
+# statement DISAGREE here, by design, and that is what is asserted.
+assert_has 'R72 MIRROR: the held row took the graph branch' "$MIRROR1BT" 'MIRROR_RULE=graph'
+assert_has 'R72 MIRROR: graphReady() calls the held row READY — the cap is not the rule' \
+  "$MIRROR1BT" 'MIRROR=true'
 echo
 
 echo '--- 5. case 2 — R12: a legacy row waits for its lower round -------------------'
@@ -742,7 +871,7 @@ echo
 # ---------------------------------------------------------------------------
 echo '--- 6. tick 2: drain the blockers, then promoteReadyTasks() again -------------'
 psql_run -q >/dev/null <<SQL
-UPDATE project_tasks SET status = 'done' WHERE id IN ('$T2_LOW','$T5_LEGACY','$T5B_GRAPH');
+UPDATE project_tasks SET status = 'done' WHERE id IN ('$T2_LOW','$T5_LEGACY','$T5B_GRAPH','$T1B_HEAD');
 UPDATE projects SET status = 'active' WHERE id = '$P6';
 SQL
 snapshot "$WORK/s2.txt"
@@ -756,6 +885,12 @@ assert_eq 'E4: the frozen candidate promotes once the graph row is done' 'yes' \
   "$(inset "$T5B_FROZEN" "$PROMOTED2")"
 assert_eq 'R13: resumed project promotes its graph row' 'yes' "$(inset "$T6_ROOT" "$PROMOTED2")"
 assert_eq 'R13: resumed project promotes its legacy row' 'yes' "$(inset "$T6_LEGACY" "$PROMOTED2")"
+# R72's other half, and the reason the cap is a delay and not a deadlock: the
+# held sibling was never touched by the sweep, never failed, and moves of its own
+# accord on the first tick after its lane frees. A cap that admitted a row and
+# then forgot it would pass every tick-1 assertion in case 1b and hang here.
+assert_eq 'R72: the held sibling promotes once its lane frees' 'yes' "$(inset "$T1B_TAIL" "$PROMOTED2")"
+assert_eq 'R72: … and it is the lane head now' 'ready' "$(st "$T1B_TAIL")"
 assert_eq 'R14: the blocked project promoted nothing on tick 2 either' 'blocked' "$(st "$T3_CAND")"
 assert_eq 'R14: still exactly one notification — the sweep is idempotent' '1' \
   "$(q "SELECT count(*) FROM notifications")"
@@ -771,7 +906,13 @@ echo '--- 7. case 7 — R16/R17: the contention belt in claimReadyTasks() ------
 for t in "$T7_A" "$T7_B" "$T7_C" "$T7_D"; do
   [ "$(st "$t")" = 'ready' ] || fail 'case 7 premise: all four P7 rows are ready' "$t is $(st "$t")"
 done
-pass 'case 7 premise: all four P7 rows are ready' '4 rows'
+# Since round 974 these rows are SEEDED ready rather than promoted here, so this
+# is a seed-integrity check (failure mode (b)) and no longer a statement about
+# the promote path. Kept, and relabelled rather than deleted: it is still the
+# thing that fails if one of the four was never inserted, and a claim step run
+# over three rows would otherwise report a contention verdict on a lane that is
+# missing its colliding row.
+pass 'case 7 premise: all four P7 rows are ready (seeded, see the case comment)' '4 rows'
 CLAIMED="$(DATABASE_URL="$DRIVER_URL" "$TSX" "$WORK/drive.mts" claim | sed -n 's/^CLAIMED_IDS=//p')"
 echo "  claimed ids        : $CLAIMED"
 assert_eq 'R16: a (first writer of src/x.ts in main) was claimed' 'yes' "$(inset "$T7_A" "$CLAIMED")"
@@ -944,7 +1085,9 @@ echo "PASS — the graph branch promotes past an undrained round (R11), the lega
 echo "       branch still waits (R12), the active gate is a filter (R13), a dangling"
 echo "       dependency lands on blocked and notifies (R14), the legacy-row term holds"
 echo "       a frozen closure (R69), that graph_frozen holds a DERIVED closure behind"
-echo "       a post-restart row while releasing a declared one (E4/R71, case 5b), and"
+echo "       a post-restart row while releasing a declared one (E4/R71, case 5b), that"
+echo "       one lane admits one live task at a time and frees on the next tick while"
+echo "       a sibling lane is untouched (R72, case 1b), and"
 echo "       the contention belt defers rather than fails"
 echo "       (R16/R17). Round 204: no route into 'running' survives a corrupt"
 echo "       depends_on — not promote, not retryTask, not an out-of-band 'ready'"

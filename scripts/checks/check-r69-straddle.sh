@@ -274,7 +274,7 @@ function toStatus(raw: string): Status {
 }
 
 /**
- * 0040's backfill, transcribed from `db/migrations/0042_task_graph.sql`: for
+ * 0040's backfill, transcribed from `db/migrations/0043_task_graph.sql`: for
  * every row in the SNAPSHOT, the ids of every row of the same project at a
  * strictly lower round, ordered by (round, created_at, id) exactly as the
  * `array_agg(... ORDER BY ...)` writes them.

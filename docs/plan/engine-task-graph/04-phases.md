@@ -28,7 +28,7 @@ the new columns without noticing them.
 
 ### Files this phase writes
 ```
-db/migrations/0042_task_graph.sql                                    (new)
+db/migrations/0043_task_graph.sql                                    (new)
 forge-control/src/lib/migrations.test.ts                             (append one case)
 forge-control/src/lib/fixtures/replay-operator-visibility.json       (new)
 forge-control/src/lib/task-graph.ts                                  (new, signatures + legacyRoundReady)
@@ -50,7 +50,7 @@ docs/plan/engine-task-graph/04-phases.md         (this list, phase 2 deliverable
 ```
 
 ### Deliverables
-1. **`0042_task_graph.sql`** — three `ADD COLUMN IF NOT EXISTS`, the workstream
+1. **`0043_task_graph.sql`** — three `ADD COLUMN IF NOT EXISTS`, the workstream
    CHECK in a `DO $$ … $$` guard, two `CREATE INDEX IF NOT EXISTS`, and the
    closure backfill guarded by `WHERE depends_on IS NULL`. Column comments state
    the NULL sentinel's meaning in the database itself.
@@ -73,7 +73,7 @@ docs/plan/engine-task-graph/04-phases.md         (this list, phase 2 deliverable
 ### Acceptance criteria
 - `pnpm typecheck`, `pnpm test` green (the replay cases may be `todo`, and the
   planner must say which are and why).
-- `migrations.test.ts` names `0042_task_graph.sql` explicitly.
+- `migrations.test.ts` names `0043_task_graph.sql` explicitly.
 - `check-migration-0040.sh` output pasted, including the zero-row second pass and
   the index existence checks.
 - The fixture has > 100 rows and no string longer than 500 characters.
@@ -107,7 +107,7 @@ consequence (see its acceptance criteria).
 
 ## Phase 2 — The graph scheduler
 **Planner round 200.**
-**Requirements: R10–R21, R69, R18 (proof), NF1, NF6.**
+**Requirements: R10–R21, R69, R72, R18 (proof), NF1, NF6.**
 
 ### Scope
 `promoteReadyTasks()` and `claimReadyTasks()` read the graph. The replica proof
@@ -665,7 +665,7 @@ own numbers move it further.
    verified that none of their tables exist yet in `content_forge`.
 
    ```
-   psql -U postgres -d content_forge -f db/migrations/0042_task_graph.sql     # ×2
+   psql -U postgres -d content_forge -f db/migrations/0043_task_graph.sql     # ×2
    psql -U postgres -d content_forge -f db/migrations/0040_usage_hourly.sql   # ×2
    psql -U postgres -d content_forge -f db/migrations/0041_ui_dismissals.sql  # ×2
    ```
@@ -687,7 +687,7 @@ own numbers move it further.
      conflict on. They were inert together — disjoint objects, no version ledger
      to collide in, no boot-time runner, no `schema_migrations` and no
      `migrations` table (the operator verified both absent), and
-     `migrations.test.ts` sorts filenames without asserting unique numbering —
+     `migrations.test.ts` sorted filenames without asserting unique numbering —
      which is why the fix was deferred out of the deploy rather than rushed into
      it. Round 802 ran three builders concurrently in one worktree and the
      renumber touched files two of them already owned: the exact contention that
@@ -698,6 +698,14 @@ own numbers move it further.
      columns were queried on `content_forge` before and after the rename and were
      identical. The migration remains APPLIED UNDER ITS ORIGINAL NAME; that is a
      fact about history, not a discrepancy to repair.
+     **Round 974 had to do it a second time:** `main`'s `0042_daily_goals.sql`
+     arrived through round 972's merge and re-collided with the number round 950
+     had just chosen, so this file is now `0043_task_graph.sql` — the next number
+     free on `main` as well as here, since `main` still carries this migration at
+     `0040`. The clause above about `migrations.test.ts` is why it recurred, and
+     it is no longer true: that file now refuses a duplicate numeric prefix in
+     `pnpm test`, so the third occurrence would fail on the commit that creates
+     it rather than on the day somebody runs an integration check.
      8A's judgement that renaming the migration this project exists to ship is a
      briefed decision rather than a merge side-effect is preserved.
    - **Why main's two files are this step's business at all.** The operator
@@ -718,7 +726,7 @@ own numbers move it further.
      plus the four `project_tasks` columns of R64/R71. Three rows, or the step
      is not done.
 
-   **After `0042_task_graph.sql` runs, 8ea0cc08's legacy sentinel is gone and
+   **After `0043_task_graph.sql` runs, 8ea0cc08's legacy sentinel is gone and
    with it the honest reason S3 refuses for** — see 2b, amended round 217. S3
    itself was never computable for this project; what the migration destroys is
    `legacy-rows`, the header field that says so. This is why step 2b's read is
@@ -877,7 +885,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | Phase | Requirements covered |
 |---|---|
 | 1 | R1, R2, R3, R4, R5, R6, R7, R8, R9, R71, R18 (harness only), NF3 |
-| 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, NF1, NF6 |
+| 2 | R10, R11, R12, R13, R14, R15, R16, R17, R18, R19, R20, R21, R69, R72, NF1, NF6 |
 | 3 | R22, R23, R24, R25, R26, R27, R28, R29, R30, R31, NF4 |
 | 4 | R32, R33, R34, R35, R36, R37, R38, R39, R40, R41, R42, R43, R44, R45, R46, R70, R17, NF1, NF5 |
 | 5 | R47, R48, R49, R50, R51, R52, R53, NF7 |
@@ -885,7 +893,7 @@ name the cause — a measurement that only ever confirms is not an instrument.
 | 7 | R59, R60, R61, R62 |
 | 8 | R63, R64, R65, R66, R67, R68, NF2, NF5 |
 
-R1–R71 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
+R1–R72 and NF1–NF7 are each defined exactly once in `01-requirements.md` and
 each has exactly one **primary owner** phase here. Four entries appear in two
 rows and each is deliberate, so a reader does not have to guess whether it is a
 mistake:
@@ -922,7 +930,7 @@ against it.
 
 | File | Phases that write it |
 |---|---|
-| `db/migrations/0042_task_graph.sql` | 1 |
+| `db/migrations/0043_task_graph.sql` | 1 |
 | `forge-control/src/lib/task-graph.ts` | 1 (stubs), 2 (fill), 3 (validators) |
 | `forge-control/src/lib/task-graph.test.ts` | 2, 3 |
 | `forge-control/src/lib/task-graph-replay.test.ts` | 1, 2 |
@@ -1646,3 +1654,32 @@ could then resolve to two `r.post("/:id/compact")` registrations. The 33 files
 that commit touches are **upstream's work, not this round's**; the paths this
 round authored are the table above, and `git show --stat 37cc974` versus the
 follow-up commit separates them cleanly.
+
+---
+
+**Round 974's write-set — every path below is UNDECLARED, and the declaration it
+was given could not have been satisfied.** The fix-cycle task
+(`Fix cycle 2`, round 974) was seeded with `write_set =
+{docs/plan/artifacts/engine-task-graph/round973-verdict.md}` — a path that **does
+not exist in this repository**, inherited from the reviewer row that produced the
+feedback, which is the structural defect recorded at round 820 (`fixChainGraphFields()`
+unions the write-sets of the GATING tasks, and reviewers declare none). Its
+brief's three findings are about a scheduler gate, a migration number and a stale
+transcript; none of them lives in a verdict file, and writing that path would have
+been the one thing the round must not do. So the manifest is here, in the same
+commit as the writes, per standing rule 5.
+
+| file | why round 974 writes it |
+|---|---|
+| `scripts/checks/check-scheduler-sql.sh` | **Finding 1, the deliverable.** Case 1 (R11) reconciled with R72 by splitting its two rows across lanes; new case 1b asserting the cap in both directions; cases 2, 5, 5b, 6 and 7 separated for the same reason (failure mode (g), added to the header); `SEED_EXPECTED_ROWS` 30 → 33 and `EXPECTED_ASSERTIONS` 93 → 104. Also fixes an unescaped backtick pair in the unquoted driver heredoc, which had been executing `undefined` as a command on every run since the file was written. |
+| `docs/plan/engine-task-graph/01-requirements.md` | **Standing rule 4, and the hole underneath finding 1.** R11 amended where it is stated; **R72 defined for the first time** — round 972 shipped it and cited it from code, but no requirement existed, so `check-corpus-map.py` saw a contiguous R1–R71 and the broken gate had no requirement to be reconciled with. Plus the round-974 renumber record, and the round-950 `git mv` transcript restored to the number it actually named. |
+| `docs/plan/engine-task-graph/03-quality.md` | **Standing rule 2 — amend the gate where it is enforced.** §2.2's row for this script restated (it now proves R72); §4's phase-2 block gains *any change to `promoteReadyTasks()` re-runs `check-scheduler-sql.sh`*, the gate whose absence let round 972 ship. |
+| `docs/plan/engine-task-graph/04-phases.md` | §9's phase-2 row and phase-2 header gain R72 (`check-corpus-map.py` enforces the agreement three ways); the phase-8 renumber narrative corrected — it credited round 950 with a move to `0043`, which no round made — and this disclosure. |
+| `db/migrations/0042_task_graph.sql` → `db/migrations/0043_task_graph.sql` | **Finding 2.** `main`'s `0042_daily_goals.sql` arrived through `37cc974` and re-collided with the number round 950 chose. Pure `git mv` (sha256 `497fdae6cc31d672…` before and after), plus the file's own provenance paragraph in the same commit. Ours moved rather than main's: nothing named `0042` was ever applied to `content_forge`, and `main` still holds this migration at `0040`, so the number had to be free there too. |
+| `forge-control/src/lib/migrations.test.ts` | **Finding 2's real fix.** `TASK_GRAPH_MIGRATION` re-pointed, and a new `no two migrations share a numeric prefix (R70)` case. The guard existed only in `db/projects.test.ts`, which needs a scratch Postgres and therefore runs days after the merge that breaks it; this one is hermetic and runs in `pnpm test`. Watched go red against a canary duplicate, which was then deleted. |
+| `forge-control/src/db/projects.ts`, `forge-control/src/lib/task-graph.ts`, `forge-control/src/lib/schedule-metrics.ts`, `forge-control/src/lib/task-graph-replay.test.ts`, `forge-control/src/lib/schedule-metrics.test.ts` | Comment-only citation updates for the renumber — every one is a path that must resolve on disk. No statement, type or test changed; `pnpm test` 1379/1379. |
+| `scripts/checks/check-migration-0040.sh`, `scripts/checks/check-r69-straddle.sh` | The same, plus this script's `$MIGRATION` constant and its self-describing banner. The filename stays `…-0040.sh` for the reason round 950 recorded and this header repeats. |
+| `docs/plan/engine-task-graph/02-architecture.md` | The same: two path citations. |
+| `scripts/checks/check-r20-census.py` | **A THIRD instrument round 972 broke, found while discharging finding 3.** It has died with a `KeyError` traceback instead of a verdict since `af3cba6`, and `03-quality.md` §4 makes it mandatory for phase 2. Three causes, all fixed here: the cap's two new `round`-bearing lines were unjustified (both entered, both PROJECTIONS FEEDING AN ORDERING); `af3cba6` re-indented an R27 annotation by two spaces, silently invalidating its allow-list key; and `render()` looked the justification up with `[]`, replacing the R20 finding with a crash — now `.get` with a visible marker. `listTaskReports`, unattributed since round 970, is attributed. |
+| `docs/plan/engine-task-graph/evidence/phase2-replay.md` | **Generated region only.** `check-r20-census.py --write`, as the region's own header instructs; it was stale from round 970's new symbol and round 972's new lines. Seven lines, all inside `<!-- BEGIN GENERATED: r20-census -->`. |
+| `docs/plan/engine-task-graph/evidence/round974-fix-cycle-2.md` | **new.** The transcript: both findings reproduced before being fixed, the mutation control that proves case 1b is not self-satisfying, the canary that proves the migration guard fires, and every gate's fresh output. |

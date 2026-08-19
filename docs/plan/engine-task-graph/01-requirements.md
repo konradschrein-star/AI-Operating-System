@@ -15,7 +15,7 @@ runnable from the worktree; `review` = a reviewer must read and state it;
 
 ## A. Schema and migration — phase 1
 
-**R1.** A single new migration `db/migrations/0042_task_graph.sql` adds every
+**R1.** A single new migration `db/migrations/0043_task_graph.sql` adds every
 column, index and backfill this project needs. No second migration file.
 *How proved:* unit — `migrations.test.ts` lints it; `git ls-files db/migrations`
 shows exactly one new file.
@@ -26,7 +26,7 @@ predicate that makes a second application a zero-row no-op. There is no
 migration ledger and no runner in this repo — applying a migration is a manual
 `psql -f`, and the only defence against applying it twice is the statement
 itself. *How proved:* unit — a new case in `migrations.test.ts` naming
-`0042_task_graph.sql` explicitly, in the shape of the existing 0039 case.
+`0043_task_graph.sql` explicitly, in the shape of the existing 0039 case.
 
 **R3.** `project_tasks.depends_on uuid[]`, **nullable, default NULL**.
 `NULL` means *"this task was never graph-scheduled — apply the legacy round
@@ -143,8 +143,77 @@ can never open a pg Pool in the test process.
 **R11.** `promoteReadyTasks()` promotes a `pending` task to `ready` when
 `depends_on IS NOT NULL` and every id in it belongs to a task with
 `status = 'done'`. An empty array is trivially satisfied and promotes
-immediately. *How proved:* unit over the pure rule; `check` against a throwaway
-Postgres for the SQL.
+immediately. **`round` is not consulted: an undrained round never holds a
+graph-ready candidate.** *How proved:* unit over the pure rule; `check` against a
+throwaway Postgres for the SQL.
+
+**AMENDED ROUND 974 — R72 SUPERSEDES THE MULTI-ROOT HALF OF THIS CLAIM, and its
+gate clause moved in the same commit (standing rule 4).** R11 answers *may this
+row run at all*; R72 answers *how many rows of one checkout may run at once*.
+Until round 972 nothing distinguished them, and `check-scheduler-sql.sh` case 1
+measured both in one fixture: its candidate and the undrained lower-round row
+both sat in workstream `main`, so "promotes with its round undrained" was
+entangled with "two rows of one checkout promote in one tick". The lane cap ends
+the second, and the case duly failed on its second assertion at `84aac00` —
+found by round 973's reviewer, reproduced from a clean tree before anything here
+was edited. What R11 itself claims is unchanged and is still measured: case 1's
+candidate now sits in workstream `alpha` while the undrained row stays in `main`,
+so the round is the only thing that could hold it, and it promotes. **Case 1b is
+the retired half, stated as a requirement instead of left as a silent
+regression:** two graph roots in ONE lane, exactly one promotes, the sibling is
+held `pending` and promotes on the next tick once the lane frees. Within-lane
+multi-root promotion is RETIRED — not merely untested. The same round separated
+five other fixtures that had quietly depended on it (cases 2, 5, 5b, 6, 7); each
+is named in `evidence/round974-fix-cycle-2.md` §2.
+
+**R72. The lane cap: at most one live task per (project, workstream). SHIPPED
+ROUND 972, RECORDED HERE ROUND 974.** A `pending` row is not promoted while its
+own `(project_id, workstream)` already holds a row in `('ready','running')`, and
+at most one row per lane is promoted by any single call. One worktree per
+workstream (R32–R35) isolates LANES; it does not isolate TASKS WITHIN a lane, and
+R11's rule alone will make several rows of one workstream `ready` on one tick —
+all of them pointing at the same checkout, the same index and the same
+`git status`. Measured live on 2026-08-19 on project `os-usable-for-work`: three
+lanes each carrying two live rows, one of them a fix builder writing the tree a
+reviewer was concurrently gating. That is not waste, it is a wrong answer — a
+verdict written against a tree that moved under it. **Two halves, because either
+alone is insufficient:** a `NOT EXISTS … status IN ('ready','running')` term for
+rows that were already live when the statement started, and a
+`row_number() OVER (PARTITION BY project_id, workstream ORDER BY round, created_at, id)`
+tie-break for candidates of an EMPTY lane, which all satisfy the first term
+against the statement's opening snapshot. The cap is keyed on the CHECKOUT, never
+on `write_set`: two tasks of one lane share a branch, an index, a stash and a
+`git status`, so byte-disjoint file sets do not make the checkout safe (the
+rejected alternative is recorded in the `promoteReadyTasks()` doc-comment).
+
+It caps the AUTOMATIC route only. `retryTask()` moves a whole (round, workstream)
+group to `ready` by hand and is deliberately untouched — an unwedge has a human
+behind it. `selectClaimable()`'s claim-time contention belt (R16/R17) is a
+separate layer, one level down, and is also untouched.
+
+**It lives in SQL rather than in `lib/task-graph.ts`, against §1.2's rule, and
+that is deliberate:** `readyRule()`/`graphReady()` answer a per-row question and
+are unchanged, while this is an ADMISSION CAP on a physical resource that must be
+atomic with the write creating the live row. Computed in TypeScript it would be a
+read-then-write with a window in it — the shape of the bug, not of its fix. A
+later round wanting the pure mirror must mirror "at most one live row per lane",
+not a per-row predicate.
+
+*How proved:* `check-scheduler-sql.sh` **case 1b** — one lane's second root is
+held `pending` while a different workstream's root promotes in the same tick, and
+the held row promotes on the following tick once its lane frees, so the cap is
+shown to be a delay and not a deadlock. The same case asserts THE MIRROR on the
+held row: `graphReady()` still answers `true` for it, which is what makes "the
+cap is not the ready rule" a measurement rather than a doc-comment's promise.
+Plus `forge-control/src/db/projects.test.ts` against a scratch database.
+
+**THE HOLE THIS ENTRY CLOSES, named rather than quietly filled.** Round 972
+shipped the cap and cited "R72" from `db/projects.ts`, `04-phases.md` §10 and its
+own commit message — but no R72 was ever defined here, so `check-corpus-map.py`
+saw a contiguous R1–R71 and reported nothing, and the requirement whose gate had
+just broken did not exist to be reconciled with. A requirement id that is live in
+code and absent from this file is invisible to every consistency check the corpus
+owns.
 
 **R12.** `promoteReadyTasks()` retains the legacy branch: when
 `depends_on IS NULL`, the task promotes under today's rule — no task of the same
@@ -1436,6 +1505,9 @@ the operator. Four clauses, binding on the deploy task:
 that this amendment tracked as a post-deploy task has been done, with the tree
 quiet and both deploys landed: `git mv db/migrations/0040_task_graph.sql
 db/migrations/0042_task_graph.sql` (0041 was already `0041_ui_dismissals.sql`).
+*That command is quoted as it was run: the file is at `0043` since round 974,
+and rewriting a transcript to match a later rename would falsify it. See the
+round-974 entry below.*
 The `git mv` itself changed no bytes — `sha256` read `5c0ad159911d10b6…`
 immediately before and immediately after it — though the same commit then edited
 the file's *comments* (a renumber-provenance paragraph and the `graph_frozen`
@@ -1457,7 +1529,32 @@ file.
   was a *deploy-time* instruction not to fix the collision mid-flight. The deploy
   is done and the collision is gone, so the clause now describes a repo state
   that no longer exists. It is kept above, in place, as the record of why the
-  deploy proceeded with two 0040s rather than stopping.
+  deploy proceeded with two 0040s rather than stopping. *(Round 974: still
+  retired, and still correct about **0040**. `main` does continue to carry this
+  file at `0040_task_graph.sql` beside `0040_usage_hourly.sql` — the round-950
+  renumber has not been merged there — which is why the number chosen below had
+  to be free on `main`, not merely free here.)*
+
+**Renumbered AGAIN at round 974: `0042_task_graph.sql` → `0043_task_graph.sql`.**
+The identical collision recurred through a merge. `main`'s `553fa38` added
+`0042_daily_goals.sql`; round 972's merge of `main` into this lane
+(`37cc974`) brought it alongside this project's `0042_task_graph.sql`, and git
+raised no conflict — for the third time — because the filenames differ. It was
+found by round 973's reviewer, through the guard that already existed:
+`forge-control/src/db/projects.test.ts` REFUSES TO RUN on a duplicate numeric
+prefix rather than letting sort order choose, so the collision presented as a
+test that would not start rather than as a wrong answer. **This file moved rather
+than `main`'s, on two measured grounds:** nothing named `0042` has ever been
+applied to `content_forge` (this migration is applied under `0040`, above; the
+daily-goals one is applied under its own name), and the next number free on
+`main` as well as here is `0043`. Pure `git mv` again — `sha256` read
+`497fdae6cc31d672…` immediately before and immediately after — with the same
+comment-only edit to the file's own provenance paragraph in the same commit.
+Nothing was applied, and the live column comment still carries the round-950
+wording for the reason given above. **The guard was moved into `pnpm test` in the
+same commit** (`migrations.test.ts`, "no two migrations share a numeric prefix"):
+the collision arrives by MERGE, so the thing that catches it has to run on every
+commit and not only when somebody has a scratch database to hand.
 - **Clause 1 is NOT retired and never should be.** "Apply migrations by explicit
   filename, never a glob" is the durable rule, and it is durable precisely
   because renumbering removed the symptom without removing the cause: two
@@ -1728,7 +1825,7 @@ budget written into the assertion message.
 | Phase | Requirements |
 |---|---|
 | 1 — Schema, fixture, replica harness | R1–R9, R71, R18 (harness only), NF3 |
-| 2 — Graph scheduler | R10–R21, R69, R18 (proof), NF1, NF6 |
+| 2 — Graph scheduler | R10–R21, R69, R72, R18 (proof), NF1, NF6 |
 | 3 — Task creation, validation, cycles | R22–R31, NF4 |
 | 4 — Workstream worktrees, integration, consolidation | R32–R46, R70, R17 (warn clause), NF1, NF5 |
 | 5 — Prompts | R47–R53, NF7 |

@@ -30,7 +30,7 @@ they could not and why.
 `migrations.test.ts` is a **linter**, not a runner. It asserts every
 `CREATE TABLE` carries `IF NOT EXISTS`, every `CREATE (UNIQUE)? INDEX` carries
 it, every `ADD COLUMN` carries it, and it names `0039_reviewer_chain_key.sql`
-specifically. Phase 1 adds an equivalent named case for `0042_task_graph.sql`.
+specifically. Phase 1 adds an equivalent named case for `0043_task_graph.sql`.
 
 ---
 
@@ -135,7 +135,7 @@ ones (R43):
   workstreams yield two independent chains (R40).
 - `project-tick.test.ts` — prompt-content assertions for R47–R53, and the
   prompt-length budget (NF7).
-- `migrations.test.ts` — the named `0042_task_graph.sql` case (R2).
+- `migrations.test.ts` — the named `0043_task_graph.sql` case (R2).
 
 ### 2.2 Integration — `scripts/checks/*`, run explicitly, never in `pnpm test`
 
@@ -145,7 +145,7 @@ suite stays hermetic (NF3).
 | Script | Proves | How |
 |---|---|---|
 | `scripts/checks/check-migration-0040.sh` | R2, R6, R7 | Creates a throwaway schema in a **local scratch database**, seeds it from the replay fixture, applies 0040 **twice**, diffs the resulting `project_tasks` rows, asserts the second application changed zero rows and the indexes exist. |
-| `scripts/checks/check-scheduler-sql.sh` | R11–R14, R16, R17, R27 (SQL half), R69 | Against the same scratch schema: a graph-ready task promotes with its round undrained; a NULL-deps task does not; a dangling dep yields `blocked`, not `ready`. **Round 204 added cases 8, 8b, 9, 10:** `retryTask()` refuses a corrupt row and the following claim does not claim it; a corrupt row written straight to `ready` is still swept; a duplicated id blocks and `graphReady()` agrees; a cross-project id resolves to nothing on both sides. Each new case also drives the real `graphReady()` over the same rows, so the mirror is measured rather than asserted in prose. |
+| `scripts/checks/check-scheduler-sql.sh` | R11–R14, R16, R17, R27 (SQL half), R69, **R72** | Against the same scratch schema: a graph-ready task promotes with its round undrained; a NULL-deps task does not; a dangling dep yields `blocked`, not `ready`. **Round 204 added cases 8, 8b, 9, 10:** `retryTask()` refuses a corrupt row and the following claim does not claim it; a corrupt row written straight to `ready` is still swept; a duplicated id blocks and `graphReady()` agrees; a cross-project id resolves to nothing on both sides. Each new case also drives the real `graphReady()` over the same rows, so the mirror is measured rather than asserted in prose. **Round 974 added case 1b and separated five fixtures (R72):** two graph roots of ONE lane promote one-at-a-time and the held sibling is released by the next tick, while the mirror still calls it ready — the cap is an admission cap, not the ready rule. Cases 1, 2, 5, 5b, 6 and 7 place the row under test in a workstream of its own, so each measures the ONE rule it names instead of collapsing into the lane cap. |
 | `scripts/checks/check-workstream-e2e.sh` | R32–R35, R38 | In a throwaway git repo under `/tmp`: provision `main` + two workstreams, assert branch names and sibling directories, assert `git status --porcelain` in `main` is **empty**, have two workstreams write the same file, run the integration merge, assert it exits non-zero and names the conflicting file, assert nothing was auto-resolved. |
 | `scripts/checks/check-task-api.ts` | R22–R31 | Mounts **only** `routes/projects.ts` on a spare port against the scratch database (the single-router probe pattern — `src/index.ts` starts cron/telegram/vault ticks and must not be booted), then drives the 400s and the 409. |
 | `scripts/checks/check-plan-store.ts` | R54–R56 | Extended: real edges in, `planEdges()` out, phase grouping intact. |
@@ -747,7 +747,7 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
 **Phase 1 — schema, fixture, replica harness**
 - `scripts/checks/check-migration-0040.sh` green, output pasted, including the
   "second application changed 0 rows" line.
-- `migrations.test.ts` names `0042_task_graph.sql`.
+- `migrations.test.ts` names `0043_task_graph.sql`.
 - The fixture exists, has > 100 rows, and contains **no brief text** — the
   reviewer greps it for `curl`, `http`, and any string over 500 chars.
   **Amended at capture (round 102).** The row count holds: the capture is 131
@@ -798,6 +798,19 @@ bash scripts/checks/check-instrument-typecheck.sh                   # MUST exit 
   re-serialize projects that have no legacy rows left.
 - `check-scheduler-sql.sh` green, including the dangling-dependency case landing
   on `blocked` and **not** on `ready`.
+- **ANY change to `promoteReadyTasks()` re-runs `check-scheduler-sql.sh`, and
+  the reviewer refuses a verdict that cites only `pnpm test`/`tsc`/`gates-808.sh`
+  on such a diff. Added round 974, from a measured miss.** That script is the
+  only instrument in the corpus that drives the shipped statement against a real
+  Postgres; `pnpm test` cannot reach it (NF3 keeps the unit suite hermetic) and
+  `gates-808.sh` does not run it. Round 972 changed exactly that function to add
+  R72's lane cap, and neither the builder nor its fix cycle ran this file — so
+  case 1 sat broken and silent through two commits and was found only by round
+  973's reviewer, who thought to ask what the §2.2 gate for the edited function
+  would say. **The number to cite is the assertion census, not "PASS":** the
+  script prints `assertions executed / declared / calls in this file` and exits
+  non-zero if the three disagree, so a case that silently stopped running is
+  visible in the transcript. Quote that line.
 - **Added round 204, from the fix cycle.** R14 is a guarantee about every route
   into `running`, not about the promote statement alone, and the reviewer checks
   all four of the paths the round-203 review found open: `retryTask()` (and
