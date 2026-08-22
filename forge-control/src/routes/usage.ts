@@ -20,6 +20,8 @@
  */
 
 import { Hono } from "hono";
+
+import { cachedGeminiQuota, refreshGeminiQuota } from "../lib/gemini-quota.ts";
 import { readFile } from "node:fs/promises";
 import pg from "pg";
 import {
@@ -294,6 +296,18 @@ async function fetchQuota(): Promise<QuotaSnapshot> {
     fetched_at: now,
   };
 }
+
+/* ── The Gemini quota bars ─────────────────────────────────────────────────
+ * MANUAL ONLY, by request. A reading spawns the Antigravity TUI in a pty and
+ * scrapes its /usage screen — ~20s and a real process — so nothing here runs on
+ * a timer. GET returns the last reading (or an empty one, honestly flagged);
+ * POST /gemini-quota/refresh takes a new one because a human pressed a button. */
+r.get("/gemini-quota", async (c) => c.json(cachedGeminiQuota()));
+
+r.post("/gemini-quota/refresh", async (c) => {
+  const reading = await refreshGeminiQuota();
+  return c.json(reading, reading.ok ? 200 : 502);
+});
 
 r.get("/quota", async (c) => {
   const fresh = c.req.query("fresh") === "1";

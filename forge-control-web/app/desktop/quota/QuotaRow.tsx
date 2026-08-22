@@ -38,10 +38,15 @@
  */
 
 import type { JSX } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { tokens } from "../../tokens";
 import { ContextGauge } from "../chat/ContextGauge";
 import { geminiLine, type GeminiTone } from "./geminiLine";
+import {
+  readGeminiQuota,
+  refreshGeminiQuotaNow,
+  type GeminiQuotaReading,
+} from "./quotaQuery";
 import {
   readingAge,
   resetsIn,
@@ -120,15 +125,7 @@ export function QuotaRow(): JSX.Element {
           the open chat's context window is. Renders nothing when no chat is on
           screen — see the header. */}
       <ContextGauge />
-      <span
-        data-gemini-line
-        data-gemini-tone={gem.tone}
-        title={gem.title}
-        style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-      >
-        <span style={{ color: tokens.textFaint }}>gem</span>
-        <span style={{ color: TONE_COLOUR[gem.tone] }}>{gem.text}</span>
-      </span>
+      <GeminiBars fallback={gem} />
       <Refresh
         refreshing={refreshing}
         onClick={() => void run()}
@@ -178,7 +175,135 @@ function Refresh({
   );
 }
 
-function Bar({ label, w }: { label: string; w: QuotaWindow }): JSX.Element {
+/**
+ * The Gemini bars — the same visual language as the Claude ones, from agy's own
+ * /usage screen.
+ *
+ * ── WHY THIS REPLACED A TOKEN TALLY ──────────────────────────────────────────
+ * The `gem` slot used to print what WE had counted, because the research said
+ * Google publishes no denominator for a consumer plan. That was true of every
+ * HTTP surface and false of the CLI: `agy`'s /usage screen states the limit as a
+ * percentage with a reset time. Konrad saw it and asked for a bar. So the
+ * denominator was never missing — it was behind a slash command.
+ *
+ * ── MANUAL, AND THAT IS THE FEATURE ──────────────────────────────────────────
+ * Nothing here polls. A reading costs ~20 seconds of a real Antigravity TUI in a
+ * pty, so it happens when the button is pressed and not otherwise — Konrad:
+ * "I don't even need it to automatically update." The mount does a single cheap
+ * GET of whatever the server last read; that is a cache lookup, not a reading.
+ *
+ * agy reports REMAINING; the shared Bar renders USED, which is what makes a
+ * filling bar mean rising pressure across every item in this row. So the
+ * conversion happens here, once, rather than by giving the bar a second meaning.
+ */
+function GeminiBars({ fallback }: { fallback: { text: string; tone: GeminiTone; title: string } }): JSX.Element {
+  const [reading, setReading] = useState<GeminiQuotaReading | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let off = false;
+    void readGeminiQuota()
+      .then((r) => {
+        if (!off) setReading(r);
+      })
+      .catch(() => undefined);
+    return () => {
+      off = true;
+    };
+  }, []);
+
+  const refresh = async () => {
+    setBusy(true);
+    try {
+      setReading(await refreshGeminiQuotaNow());
+    } catch {
+      /* leave the previous reading on screen — it is still the last true one */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const asWindow = (w: { remaining_pct: number } | null): QuotaWindow => ({
+    // remaining -> used. A missing reading stays null so Bar draws no fill at
+    // all: a 0%-wide bar and a real 0% look identical and only one is a fact.
+    utilization: w === null ? null : Math.max(0, Math.min(100, 100 - w.remaining_pct)),
+    resets_at: null,
+  });
+
+  const t = (label: string, w: { remaining_pct: number; refreshes_in: string | null } | null): string => {
+    if (reading === null) return `gemini ${label}: never read — press ⟳`;
+    if (!reading.ok) return `gemini ${label}: ${reading.error ?? "no reading"}`;
+    if (w === null) return `gemini ${label}: agy's screen did not state this limit`;
+    return (
+      `gemini ${label}: ${w.remaining_pct}% remaining` +
+      (w.refreshes_in ? ` · refreshes in ${w.refreshes_in}` : "") +
+      (reading.account ? `\n${reading.account}` : "") +
+      (reading.plan ? ` (${reading.plan})` : "") +
+      (reading.read_at ? `\nread ${readingAge(reading.read_at)}` : "")
+    );
+  };
+
+  // Nothing has ever been read AND the server has no cached reading: keep the
+  // old honest sentence rather than drawing two empty tracks that look broken.
+  const nothingYet = reading === null || (!reading.ok && reading.read_at === null);
+
+  return (
+    <span data-gemini-quota style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      {nothingYet ? (
+        <span
+          data-gemini-line
+          data-gemini-tone={fallback.tone}
+          title={fallback.title}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+        >
+          <span style={{ color: tokens.textFaint }}>gem</span>
+          <span style={{ color: TONE_COLOUR[fallback.tone] }}>{fallback.text}</span>
+        </span>
+      ) : (
+        <>
+          <Bar label="gem 5h" w={asWindow(reading.five_hour)} titleOverride={t("5h", reading.five_hour)} />
+          <Bar label="gem 7d" w={asWindow(reading.weekly)} titleOverride={t("7d", reading.weekly)} />
+        </>
+      )}
+      <button
+        data-gemini-refresh
+        onClick={() => void refresh()}
+        disabled={busy}
+        title={
+          busy
+            ? "reading agy's /usage screen — this takes about 20 seconds"
+            : reading?.read_at
+              ? `gemini quota read ${readingAge(reading.read_at)} — click to read again (~20s)`
+              : "read the gemini quota from agy (~20s)"
+        }
+        style={{
+          fontSize: 10,
+          lineHeight: 1,
+          padding: "2px 5px",
+          borderRadius: 4,
+          cursor: busy ? "default" : "pointer",
+          color: busy ? tokens.textFaint : tokens.textMuted,
+          background: "transparent",
+          border: `1px solid ${tokens.border}`,
+        }}
+      >
+        {busy ? "…" : "⟳"}
+      </button>
+    </span>
+  );
+}
+
+function Bar({
+  label,
+  w,
+  titleOverride,
+}: {
+  label: string;
+  w: QuotaWindow;
+  /** Used by the Gemini bars, whose reset is a duration agy prints ("2h 19m")
+   *  rather than a timestamp this row can compute from. */
+  titleOverride?: string;
+}): JSX.Element {
   const pct = w.utilization ?? 0;
   // Colour by pressure, not by brand — the point is to notice at a glance.
   const colour = pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : tokens.ok;
@@ -186,9 +311,12 @@ function Bar({ label, w }: { label: string; w: QuotaWindow }): JSX.Element {
     <span
       data-quota-bar={label}
       style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-      title={`${label}: ${w.utilization == null ? "no reading" : `${Math.round(pct)}% used`}${
-        w.resets_at ? ` · ${resetsIn(w.resets_at)}` : ""
-      }`}
+      title={
+        titleOverride ??
+        `${label}: ${w.utilization == null ? "no reading" : `${Math.round(pct)}% used`}${
+          w.resets_at ? ` · ${resetsIn(w.resets_at)}` : ""
+        }`
+      }
     >
       <span style={{ color: tokens.textFaint }}>{label}</span>
       <span

@@ -179,3 +179,58 @@ export function useMinuteTick(): void {
     return () => clearInterval(t);
   }, []);
 }
+
+/* ── Gemini quota: real bars, read on demand ────────────────────────────────
+ *
+ * A separate path and a separate cadence from the Claude quota above, because
+ * it has a separate COST. A Claude reading is an HTTP call; a Gemini reading
+ * spawns the Antigravity TUI in a pty and scrapes its /usage screen, ~20s and a
+ * real process. Konrad asked for it to be manual: "I don't even need it to
+ * automatically update."
+ *
+ * So this never polls. `readGeminiQuota` returns whatever the server last read
+ * (possibly never), and `refreshGeminiQuota` is what a button calls.
+ */
+
+export interface GeminiWindowQuota {
+  /** Percent REMAINING, as agy states it — NOT used. 99.35 means 99.35% left. */
+  remaining_pct: number;
+  refreshes_in: string | null;
+}
+
+export interface GeminiQuotaReading {
+  ok: boolean;
+  account: string | null;
+  plan: string | null;
+  weekly: GeminiWindowQuota | null;
+  five_hour: GeminiWindowQuota | null;
+  /** Antigravity's own bundled Claude/GPT allowance — a DIFFERENT subscription
+   *  from the Claude Code accounts this OS runs on. Carried, never rendered. */
+  other_group: { weekly: GeminiWindowQuota | null; five_hour: GeminiWindowQuota | null } | null;
+  read_at: string | null;
+  error: string | null;
+}
+
+const GEMINI_QUOTA_PATH = "/api/proxy/usage/gemini-quota";
+
+export async function readGeminiQuota(): Promise<GeminiQuotaReading> {
+  const res = await fetch(GEMINI_QUOTA_PATH, { headers: { accept: "application/json" } });
+  const raw = await res.text();
+  if (!res.ok) throw new Error(raw.slice(0, 300) || `HTTP ${res.status}`);
+  return JSON.parse(raw) as GeminiQuotaReading;
+}
+
+export async function refreshGeminiQuotaNow(): Promise<GeminiQuotaReading> {
+  const res = await fetch(`${GEMINI_QUOTA_PATH}/refresh`, {
+    method: "POST",
+    headers: { accept: "application/json" },
+  });
+  const raw = await res.text();
+  // A 502 here still carries a well-formed reading whose `error` says what went
+  // wrong; that is more useful on screen than a thrown status line.
+  try {
+    return JSON.parse(raw) as GeminiQuotaReading;
+  } catch {
+    throw new Error(raw.slice(0, 300) || `HTTP ${res.status}`);
+  }
+}
