@@ -2,13 +2,25 @@
  * /api/secrets — store a credential, and (2026-08-04) hand one back to Konrad
  * without it entering the chat thread.
  *
- *   POST /api/secrets                         { name, value, note?, for_konrad? }
- *   GET  /api/secrets                         → names + metadata ONLY
- *   POST /api/secrets/:name/reveal            → returns the value; clears
- *                                               `pending`. Deliberately a POST
- *                                               so the value can never end up
- *                                               in an access log's URL or a
- *                                               browser history entry.
+ *   POST /api/secrets                         { name, value, note?, for_konrad?,
+ *                                                service_tag? } — encrypted at
+ *                                               rest (AES-256-GCM, see
+ *                                               lib/secret-store.ts).
+ *   GET  /api/secrets                         → names + metadata ONLY —
+ *                                               service tag, access count,
+ *                                               created/updated/last-used.
+ *                                               NEVER a value.
+ *   POST /api/secrets/:name/reveal            → decrypts, bumps accessCount
+ *                                               and lastUsedAt, clears
+ *                                               `pending`, logs an audit
+ *                                               entry, returns the value.
+ *                                               Deliberately a POST so the
+ *                                               value can never end up in an
+ *                                               access log's URL or a browser
+ *                                               history entry.
+ *   POST /api/secrets/:name/rotate            { value, note?, service_tag? }
+ *                                               → replaces the ciphertext in
+ *                                               place, same name.
  *   POST /api/secrets/:name/clear-pending     → drop the "for Konrad" flag
  *                                               without revealing (dismiss).
  *   POST /api/secrets/:name/mark-pending      { requested_by_run_id? }
@@ -18,7 +30,12 @@
  *   GET  /api/secrets/events                  → SSE: `request` when an agent
  *                                               raises a "for Konrad" flag,
  *                                               `cleared` when one goes away.
- *   DELETE /api/secrets/:name                 → removes it
+ *   DELETE /api/secrets/:name                 → securely deletes it (value
+ *                                               overwritten before unlink)
+ *
+ * Every store/reveal/rotate/delete appends one line to the audit log
+ * (lib/secret-store.ts's appendAudit) — never the value, only that the
+ * action happened, to what name, and whether it succeeded.
  *
  * WHY A STREAM (round 808). The composer's credential panel is supposed to
  * open BY ITSELF the moment an agent asks — Konrad's words: "when I ask for a
@@ -51,9 +68,10 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import {
   putSecret,
+  rotateSecret,
   listSecrets,
   deleteSecret,
-  getSecret,
+  revealSecret,
   markCollected,
   markPending,
   isValidName,
@@ -64,6 +82,19 @@ const r = new Hono();
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Same "unparseable/absent body -> no run id, only a present-but-invalid
+ *  value is a 400" contract as mark-pending's `requested_by_run_id` below —
+ *  reused by reveal/rotate/delete so a caller naming which run is acting
+ *  gets the same validation everywhere. Returns `{ ok: false }` on a bad
+ *  value so the route can 400 without duplicating the UUID check. */
+function parseRunId(
+  raw: unknown,
+): { ok: true; runId: string | undefined } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, runId: undefined };
+  if (typeof raw !== "string" || !UUID_RE.test(raw)) return { ok: false };
+  return { ok: true, runId: raw };
+}
 
 /* ---------------------------------------------------------------------------
  * The change stream. Same shape as canvas.ts's event bus: an in-process
@@ -253,6 +284,8 @@ r.post("/", async (c) => {
     value?: string;
     note?: string;
     for_konrad?: boolean;
+    service_tag?: string;
+    run_id?: string;
   };
   try {
     body = await c.req.json();
@@ -270,6 +303,9 @@ r.post("/", async (c) => {
     typeof rawNote === "string" ? (rawNote.trim() || null) : undefined;
   const forKonrad =
     typeof body.for_konrad === "boolean" ? body.for_konrad : undefined;
+  const rawTag = body.service_tag;
+  const serviceTag =
+    typeof rawTag === "string" ? (rawTag.trim() || null) : undefined;
 
   if (!isValidName(name)) {
     return c.json(
@@ -282,8 +318,18 @@ r.post("/", async (c) => {
   }
   if (!value) return c.json({ error: "value is required" }, 400);
 
+  const runId = parseRunId(body.run_id);
+  if (!runId.ok) {
+    return c.json({ error: "run_id must be a valid uuid" }, 400);
+  }
+
   try {
-    const meta = await putSecret(name, value, { note, forKonrad });
+    const meta = await putSecret(name, value, {
+      note,
+      forKonrad,
+      serviceTag,
+      runId: runId.runId,
+    });
     // Only the two EXPLICIT forms of the flag say anything about the pending
     // set. `undefined` means "leave whatever is on disk alone" (see putSecret),
     // so it must not push a frame either — a re-POST of an unrelated value
@@ -299,22 +345,82 @@ r.post("/", async (c) => {
 
 /** Reveal — the ONE route that returns a value. Distinct path from list;
  *  POST rather than GET so the name never ends up in a URL that could be
- *  logged, cached, or bookmarked. Clears the `pending` marker as a side
- *  effect so a collected credential stops shouting for attention. */
+ *  logged, cached, or bookmarked. Clears the `pending` marker, bumps
+ *  `accessCount`/`lastUsedAt` and appends an audit entry as a side effect —
+ *  all inside lib/secret-store.ts's revealSecret(), not duplicated here. */
 r.post("/:name/reveal", async (c) => {
   const name = normalizeName(c.req.param("name"));
   if (!isValidName(name)) {
     return c.json({ error: "invalid name" }, 400);
   }
-  const value = await getSecret(name);
-  if (value === null) {
+
+  let body: { run_id?: unknown } = {};
+  try {
+    body = await c.req.json();
+  } catch {
+    body = {};
+  }
+  const runId = parseRunId(body.run_id);
+  if (!runId.ok) {
+    return c.json({ error: "run_id must be a valid uuid" }, 400);
+  }
+
+  const revealed = await revealSecret(name, { runId: runId.runId });
+  if (revealed === null) {
     return c.json({ error: "not found" }, 404);
   }
-  await markCollected(name);
   broadcastCleared(name);
   // Do NOT include the name in a top-level `error`/`message` field on any
   // future error branches added here — some log shippers grep for those.
-  return c.json({ name, value });
+  return c.json(revealed);
+});
+
+/** Rotate — replace an existing secret's value in place, same name. Distinct
+ *  from POST / so "I'm updating a credential that already exists" and "I'm
+ *  creating a new one" are different, auditable events (secret-store.ts logs
+ *  them as "rotate" vs "store"). 404s rather than silently creating, since a
+ *  rotate on a name nobody stored yet is almost certainly a typo. */
+r.post("/:name/rotate", async (c) => {
+  const name = normalizeName(c.req.param("name"));
+  if (!isValidName(name)) {
+    return c.json({ error: "invalid name" }, 400);
+  }
+
+  let body: {
+    value?: string;
+    note?: string;
+    service_tag?: string;
+    run_id?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "invalid JSON body" }, 400);
+  }
+
+  const value = body.value ?? "";
+  if (!value) return c.json({ error: "value is required" }, 400);
+  const rawNote = body.note;
+  const note =
+    typeof rawNote === "string" ? (rawNote.trim() || null) : undefined;
+  const rawTag = body.service_tag;
+  const serviceTag =
+    typeof rawTag === "string" ? (rawTag.trim() || null) : undefined;
+  const runId = parseRunId(body.run_id);
+  if (!runId.ok) {
+    return c.json({ error: "run_id must be a valid uuid" }, 400);
+  }
+
+  try {
+    const meta = await rotateSecret(name, value, {
+      note,
+      serviceTag,
+      runId: runId.runId,
+    });
+    return c.json({ secret: meta });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 404);
+  }
 });
 
 /** Retroactively flag an already-stored secret as "for Konrad to collect".
