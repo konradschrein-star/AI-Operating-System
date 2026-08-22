@@ -40,6 +40,7 @@ import capabilities from "./routes/capabilities.ts";
 import tasks from "./routes/tasks.ts";
 import integrations from "./routes/integrations.ts";
 import daily from "./routes/daily.ts";
+import terminal from "./routes/terminal.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
 import { startTelegramBridge } from "./lib/telegram-bridge.ts";
 import { startVaultSyncTick } from "./lib/vault-sync-tick.ts";
@@ -213,6 +214,7 @@ app.route("/api/integrations", integrations);
 // The Daily system (docs/SPEC-DAILY-SURFACE.md): evening plan, tasks, habits,
 // day score. Backs the GOALS/TASKS surface that replaced the placeholder.
 app.route("/api/daily", daily);
+app.route("/api/terminal", terminal);
 // Inbound webhook receiver: external services hit /webhooks/in/:slug directly.
 // NOT under /api so the CORS preflight middleware above doesn't affect it.
 app.route("/webhooks", webhookIn);

@@ -79,6 +79,7 @@ import {
   type StoredNav,
 } from "./chat/stored-nav";
 import { CanvasPane } from "./CanvasPane";
+import { TerminalPane } from "./TerminalPane";
 import { SecretField } from "./chat/SecretField";
 import {
   autoOpenTarget,
@@ -634,6 +635,13 @@ export function ChatSurface({
   });
   // Chat ↔ canvas: a proportion, not pixels, so the split survives a window
   // resize. Grow factors (not basis percentages) so the ratio is exact.
+  /* The terminal shares the canvas's slot rather than adding a third column.
+   * Two panes plus the chat at 320px minimum each is narrower than most of the
+   * windows this is used in, and a split nobody can read is not a feature.
+   * Opening one therefore closes the other, which is also why the toggles sit
+   * next to each other: they are one choice, not two. */
+  const [terminalOpen, setTerminalOpen] = useState(false);
+
   const canvasSplit = useResizablePanel({
     storageKey: "forge.layout.chat.canvasSplit",
     initial: 0.55,
@@ -1130,7 +1138,7 @@ export function ChatSurface({
       {/* Right pane — thread/composer, optionally split with the canvas */}
       <div
         style={{
-          flex: canvasOpen ? `${canvasSplit.size} 1 0%` : 1,
+          flex: canvasOpen || terminalOpen ? `${canvasSplit.size} 1 0%` : 1,
           minWidth: 0,
           display: "flex",
           flexDirection: "column",
@@ -1240,7 +1248,11 @@ export function ChatSurface({
                 </button>
               )}
               <button
-                onClick={() => setCanvasOpen(!canvasOpen)}
+                onClick={() => {
+                  const next = !canvasOpen;
+                  setCanvasOpen(next);
+                  if (next) setTerminalOpen(false);
+                }}
                 className="mono"
                 title={
                   canvasOpen
@@ -1260,6 +1272,33 @@ export function ChatSurface({
                 }}
               >
                 CANVAS
+              </button>
+              <button
+                data-terminal-toggle
+                onClick={() => {
+                  const next = !terminalOpen;
+                  setTerminalOpen(next);
+                  if (next) setCanvasOpen(false);
+                }}
+                className="mono"
+                title={
+                  terminalOpen
+                    ? "Close the terminal pane. The shell keeps running."
+                    : "Open a shell on this box beside the chat"
+                }
+                style={{
+                  flex: "none",
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  padding: "5px 10px",
+                  borderRadius: 6,
+                  cursor: "pointer",
+                  color: terminalOpen ? tokens.accent : tokens.textMuted,
+                  background: terminalOpen ? tokens.primaryActionBg : "transparent",
+                  border: `1px solid ${terminalOpen ? tokens.accent : tokens.border}`,
+                }}
+              >
+                TERMINAL
               </button>
               </>
             }
@@ -1285,6 +1324,25 @@ export function ChatSurface({
           </div>
         )}
       </div>
+
+      {terminalOpen && (
+        <>
+          <ResizeHandle
+            {...canvasSplit.handleProps}
+            title="Resize chat / terminal · double-click to reset"
+          />
+          <div
+            style={{
+              flex: `${1 - canvasSplit.size} 1 0%`,
+              minWidth: 320,
+              display: "flex",
+              minHeight: 0,
+            }}
+          >
+            <TerminalPane onClose={() => setTerminalOpen(false)} />
+          </div>
+        </>
+      )}
 
       {canvasOpen && (
         <>
