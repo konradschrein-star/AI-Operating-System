@@ -68,8 +68,13 @@ import {
   type ConnectionStatus,
   type GoogleTokenFile,
 } from "../lib/connection-status.ts";
+import cliAuth from "./cli-auth.ts";
 
 const r = new Hono();
+
+/* The sign-in broker. Mounted HERE rather than at /api/cli-auth so a Connect
+ * control and the row it belongs to are one subject at one path. */
+r.route("/cli-auth", cliAuth);
 
 /* ── Gemini ──────────────────────────────────────────────────────────────── */
 
