@@ -578,11 +578,24 @@ export function buildGraph(
  *  other drawing to a vector search. */
 const BANNER_RE = /^.*Switch to EXCALIDRAW VIEW.*$/gm;
 
-/** Strip the banner and the plugin's own scaffolding out of the back-of-note
- *  region, leaving only prose Konrad actually wrote. */
+/**
+ * Strip the banner and the plugin's own scaffolding out of the back-of-note
+ * region, leaving only prose Konrad actually wrote.
+ *
+ * The payload fence is stripped HERE, not only in the codec, because some files
+ * carry no `# Excalidraw Data` heading at all — plugin 2.20.0 wrote
+ * "Drawing 2026-07-03 18.25.41.excalidraw.md" as a bare `## Drawing` section,
+ * so the codec finds no data region and hands the whole file back as preamble.
+ * Without this the LZString base64 would be embedded as that drawing's prose:
+ * precisely the noise-vector failure that got drawings excluded in the first
+ * place. Only the two payload languages are stripped, so a code block someone
+ * genuinely wrote on the back of a note survives.
+ */
 export function cleanPreamble(preamble: string): string {
   return preamble
     .replace(BANNER_RE, "")
+    .replace(/```(?:compressed-json|json)\n[\s\S]*?```/g, "")
+    .replace(/^#+ Drawing\s*$/gm, "")
     .replace(/^%%\s*$/gm, "")
     .split("\n")
     .map((l) => l.trimEnd())

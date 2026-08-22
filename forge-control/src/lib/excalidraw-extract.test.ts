@@ -570,6 +570,25 @@ describe("markdown helpers", () => {
     );
   });
 
+  test("a payload fence in the preamble is scaffolding, not prose", () => {
+    // Measured on "Drawing 2026-07-03 18.25.41.excalidraw.md": plugin 2.20.0
+    // wrote it with a bare `## Drawing` section and NO `# Excalidraw Data`
+    // heading, so the codec finds no data region and returns the whole file as
+    // preamble. Left alone, 300 characters of LZString base64 become that
+    // drawing's "prose" — the noise vector that got drawings excluded.
+    const cleaned = cleanPreamble(
+      "==⚠  Switch to EXCALIDRAW VIEW ⚠==\n\n" +
+        "## Drawing\n```compressed-json\nN4IgLgngDgpiBcIYA8DGBDANgSwCYCd0B3\n```\n%%\n",
+    );
+    assert.equal(cleaned, "");
+    // NEIGHBOUR: a fence the USER wrote on the back of a note is prose and
+    // survives — only the two payload languages are scaffolding.
+    const withCode = cleanPreamble(
+      "==⚠  Switch to EXCALIDRAW VIEW ⚠==\n\nRun it with:\n```bash\npnpm test\n```\n",
+    );
+    assert.match(withCode, /pnpm test/);
+  });
+
   test("frontmatter tags drop the plugin's own marker and keep the real ones", () => {
     assert.deepEqual(
       drawingTags("---\nexcalidraw-plugin: parsed\ntags: [excalidraw, ai-os, planning]\n---\n"),
