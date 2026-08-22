@@ -122,10 +122,15 @@ const PALETTE: ReadonlyArray<readonly [hex: string, name: string]> = [
 
 const PALETTE_BY_HEX = new Map(PALETTE.map(([hex, name]) => [hex, name]));
 
-/** Max squared RGB distance still called "the same colour". 60 per channel —
- *  wide enough to absorb a hand-picked shade, narrow enough that a colour from
- *  outside the ramp keeps its hex instead of being flattened into a name. */
-const NEAREST_MAX_DISTANCE_SQ = 60 * 60 * 3;
+/**
+ * Max squared RGB distance still called "the same colour".
+ *
+ * DERIVED, not chosen: the two closest PALETTE entries with different names are
+ * `#e7f5ff` (blue) and `#f1f3f5` (grey), 204 apart. A snap radius of half that
+ * means a colour can only ever snap to one name — there is no hex inside this
+ * radius of two differently-named entries. Anything further away keeps its hex.
+ */
+const NEAREST_MAX_DISTANCE_SQ = 102;
 
 function parseHex(hex: string): [number, number, number] | null {
   const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
