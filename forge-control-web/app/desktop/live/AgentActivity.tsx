@@ -60,6 +60,7 @@ import {
 } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens, dot } from "../../tokens";
+import { AntigravityMark, GEMINI_ACCENT, isGeminiModel } from "../gemini-identity";
 import { RunShotsIndicator } from "../chat/BrowserShots";
 import {
   seededDismissals,
@@ -346,7 +347,16 @@ const CONTROL_STYLE: CSSProperties = {
 
 /** Aliases render fainter than resolved ids — the colour IS the statement
  *  that we know less about this row's model (R8). */
+/**
+ * The model label's colour — and, for Gemini, its identity.
+ *
+ * Konrad asked for the agents using Gemini to be colour-coded, so a glance down
+ * the live list says which engine each run is burning. The predicate is the
+ * shared one, so a row can only read violet if the dispatcher actually sent
+ * that run to `agy`.
+ */
 function modelColor(model: string | null | undefined): string {
+  if (isGeminiModel(model)) return GEMINI_ACCENT;
   return isModelAlias(model) ? tokens.textGhost : tokens.textFaint;
 }
 
@@ -561,7 +571,17 @@ function AgentRunLine({
         >
           {kindDetail(a, kind)}
         </span>
-        <span style={{ color: modelColor(a.model), flex: "none", whiteSpace: "nowrap" }}>
+        <span
+          style={{
+            color: modelColor(a.model),
+            flex: "none",
+            whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 3,
+          }}
+        >
+          {isGeminiModel(a.model) && <AntigravityMark size={10} />}
           {model}
         </span>
         {a.effort && <span>{a.effort}</span>}
@@ -740,7 +760,17 @@ function SubagentLine({
         >
           {roleLabel(s.role)}
         </span>
-        <span style={{ color: modelColor(s.model), flex: "none", whiteSpace: "nowrap" }}>
+        <span
+          style={{
+            color: modelColor(s.model),
+            flex: "none",
+            whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 3,
+          }}
+        >
+          {isGeminiModel(s.model) && <AntigravityMark size={10} />}
           {modelDisplay(s.model)}
         </span>
         {label && (

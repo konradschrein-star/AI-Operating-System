@@ -80,6 +80,7 @@ import {
 } from "./chat/stored-nav";
 import { CanvasPane } from "./CanvasPane";
 import { TerminalPane } from "./TerminalPane";
+import { AntigravityMark, GEMINI_ACCENT, isGeminiModel } from "./gemini-identity";
 import { SecretField } from "./chat/SecretField";
 import {
   autoOpenTarget,
@@ -1608,6 +1609,11 @@ function EngineControls({ run }: { run: RunDetail }) {
   const modelLabel =
     ENGINE_MODEL_CHOICES.find((m) => m.value === model)?.label ?? model;
 
+  /* One predicate, shared with every other Gemini indicator — see
+   * gemini-identity.tsx. If this and the server's dispatcher ever disagreed,
+   * the UI would colour a run as Gemini that ran on Claude. */
+  const geminiSelected = isGeminiModel(model);
+
   return (
     <div
       style={{ position: "relative" }}
@@ -1694,18 +1700,42 @@ function EngineControls({ run }: { run: RunDetail }) {
             >
               EFFORT
             </span>
+            {geminiSelected && (
+              <span
+                data-effort-locked
+                className="mono"
+                style={{ fontSize: 10, color: GEMINI_ACCENT, marginRight: 6 }}
+              >
+                fixed by the model — 3.7 Flash (high)
+              </span>
+            )}
             <div style={{ display: "flex", gap: 4 }}>
               {/* U29: cheapest → hottest, coloured by the ramp. Unselected
                   chips show the ramp in the border only, dimmed; the selected
                   one fills, doubles its outline and takes the ramp text
                   colour, which reads as "on" in both palettes. */}
+              {/* ── EFFORT IS MEANINGLESS ON THE GEMINI ENGINE ──────────────────
+                  agy takes no --effort flag; the thinking level is baked into
+                  the model id, and "-high" IS the level. Konrad could select
+                  `max` beside Gemini and nothing would apply it — a control
+                  that cannot do anything is a lie about what the system will
+                  do, which is the exact defect this surface keeps deleting.
+                  So the chips go inert and say why, rather than disappearing:
+                  a vanishing row reads as a rendering bug. */}
               {ENGINE_EFFORT_CHOICES.map((e) => {
                 const on = e === effort;
                 const ramp = effortRamp(e);
                 return (
                   <button
                     key={e}
+                    disabled={geminiSelected}
+                    title={
+                      geminiSelected
+                        ? "Gemini takes no effort setting — the level is part of the model id (3.7 Flash HIGH)."
+                        : undefined
+                    }
                     onClick={() => {
+                      if (geminiSelected) return;
                       setEffortLocal(e);
                       void setChatEffort(run.id, e);
                     }}
@@ -1716,11 +1746,11 @@ function EngineControls({ run }: { run: RunDetail }) {
                       border: `1px solid ${ramp.border}`,
                       background: on ? ramp.bg : "transparent",
                       boxShadow: on ? `inset 0 0 0 1px ${ramp.border}` : "none",
-                      opacity: on ? 1 : 0.55,
+                      opacity: geminiSelected ? 0.28 : on ? 1 : 0.55,
                       fontWeight: on ? 600 : 400,
                       borderRadius: 6,
                       padding: "3px 8px",
-                      cursor: "pointer",
+                      cursor: geminiSelected ? "not-allowed" : "pointer",
                     }}
                   >
                     {e}

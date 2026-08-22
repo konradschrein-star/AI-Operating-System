@@ -42,6 +42,7 @@ import { useEffect, useState } from "react";
 import { tokens } from "../../tokens";
 import { ContextGauge } from "../chat/ContextGauge";
 import { geminiLine, type GeminiTone } from "./geminiLine";
+import { AntigravityMark, GEMINI_ACCENT } from "../gemini-identity";
 import {
   readGeminiQuota,
   refreshGeminiQuotaNow,
@@ -261,8 +262,8 @@ function GeminiBars({ fallback }: { fallback: { text: string; tone: GeminiTone; 
         </span>
       ) : (
         <>
-          <Bar label="gem 5h" w={asWindow(reading.five_hour)} titleOverride={t("5h", reading.five_hour)} />
-          <Bar label="gem 7d" w={asWindow(reading.weekly)} titleOverride={t("7d", reading.weekly)} />
+          <Bar label="5h" w={asWindow(reading.five_hour)} titleOverride={t("5h", reading.five_hour)} accent={GEMINI_ACCENT} />
+          <Bar label="7d" w={asWindow(reading.weekly)} titleOverride={t("7d", reading.weekly)} accent={GEMINI_ACCENT} />
         </>
       )}
       <button
@@ -282,9 +283,9 @@ function GeminiBars({ fallback }: { fallback: { text: string; tone: GeminiTone; 
           padding: "2px 5px",
           borderRadius: 4,
           cursor: busy ? "default" : "pointer",
-          color: busy ? tokens.textFaint : tokens.textMuted,
+          color: busy ? tokens.textFaint : GEMINI_ACCENT,
           background: "transparent",
-          border: `1px solid ${tokens.border}`,
+          border: `1px solid ${busy ? tokens.border : GEMINI_ACCENT}`,
         }}
       >
         {busy ? "…" : "⟳"}
@@ -297,16 +298,26 @@ function Bar({
   label,
   w,
   titleOverride,
+  accent,
 }: {
   label: string;
   w: QuotaWindow;
   /** Used by the Gemini bars, whose reset is a duration agy prints ("2h 19m")
    *  rather than a timestamp this row can compute from. */
   titleOverride?: string;
+  /** Engine identity colour, used while the bar is HEALTHY.
+   *
+   *  Pressure still wins above 70%: engine and pressure are different axes, and
+   *  a reader must never have to wonder whether a bar is violet because it is
+   *  Gemini or because something is wrong. So identity colours the calm state —
+   *  which is almost all of the time — and pressure takes over exactly when it
+   *  needs to be noticed. */
+  accent?: string;
 }): JSX.Element {
   const pct = w.utilization ?? 0;
   // Colour by pressure, not by brand — the point is to notice at a glance.
-  const colour = pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : tokens.ok;
+  const colour =
+    pct >= 90 ? tokens.bleed : pct >= 70 ? tokens.warn : (accent ?? tokens.ok);
   return (
     <span
       data-quota-bar={label}
@@ -318,7 +329,10 @@ function Bar({
         }`
       }
     >
-      <span style={{ color: tokens.textFaint }}>{label}</span>
+      <span style={{ color: accent ?? tokens.textFaint, display: "inline-flex", alignItems: "center", gap: 3 }}>
+        {accent !== undefined && <AntigravityMark size={10} />}
+        {label}
+      </span>
       <span
         style={{
           width: TRACK_W,
