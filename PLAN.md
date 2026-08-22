@@ -1,347 +1,195 @@
-# PLAN — connect-clis-from-settings
+# PLAN — aios-journal-and-mentor
 
-Project fbfdf435 · branch project/fbfdf435 · architect round 0 · 2026-08-22
+Project 86632a79 · branch project/86632a79 · architect round 0 · 2026-08-23
 
 ## 0. Recommendation, in one paragraph
 
-Build ONE pty-backed login broker in forge-control (`src/lib/cli-auth/`) that owns a
-tmux session per provider on a DEDICATED tmux socket (`tmux -L forge-cli-auth`) with
-`remain-on-exit on`, so the CLI runs with NO shell behind it: when it exits the pane
-stays readable (`#{pane_dead}=1`, final screen intact) and can never become a bash
-prompt that swallows a pasted code. Verified on this box (tmux 3.4) during planning.
-Three provider definitions (`agy`, `gemini-cli`, `claude`) are DATA — binary, args,
-env, URL regex, prompt string, success/failure/expiry markers, `window_seconds`,
-probe function — and the engine is the same code path for all three. Routes live at
-`/api/integrations/cli-auth/*` as a sub-router mounted from `routes/integrations.ts`.
-The code arrives only in a POST body, goes to the pane through a 0600 temp file via
-`load-buffer` + `paste-buffer -d`, the file is `shred -u`'d, and every string that
-leaves the lib after the paste is passed through `scrub(text, code)` first.
-`connected` is produced ONLY by the existing probe (`probeAgy`, a new
-`probeGeminiCli`, `probeAccount`) writing a `ConnectionRecord` with `checked_at` —
-so the panel's R57 invariant (unprobed = amber) holds with zero new renderer code.
-The web side adds a `CliAuthConnect` control inside each connectable row's expanded
-body, reusing the panel's `Banner`/`btn()`/`CommandBlock` pieces.
+Build `JournalSurface.tsx` as a **2-column split retrospective workspace**: the **Left Pane (55%)** serves as the **Retrospective & Paper Journal Hub**, providing paper-first photo capture (drag-and-drop uploads stored at `/opt/ai-os/uploads/<id>/<name>` via `POST /api/journal/upload`), a zoomable high-resolution lightbox gallery for handwritten journal pages, compare-and-swap (CAS) markdown editing of the Obsidian daily note's `## Journal` section (`/opt/obsidian-vault/Daily/YYYY-MM-DD.md` via `GET/PUT /api/vault/file`), and a date-filtered stream of the day's logged decisions from `content_forge.decisions` (`GET /api/decisions?day=YYYY-MM-DD`). The **Right Pane (45%)** provides a dedicated home for the **Interactive Mentor Agent Deck**, embedding `AssistantThread.tsx` (reusing the exact assistant-ui / SSE streaming chat plumbing from `ChatSurface.tsx`) bound to the day's mentor debrief runs and backed by `/opt/obsidian-vault/Mentor/PERSONA.md` and `/opt/obsidian-vault/Mentor/Profile/`. The **Header Bar** provides a date stepper, streak & accountability metrics from `GET /api/mentor/metrics`, and a **live, fully wired toggle switch** that directly controls the real `mentor-evening` cron schedule (ID: `90577448-93f4-41dd-a991-14885c74644c`) via `PATCH /api/cron/:id`. Storage is backed by re-runnable PostgreSQL migration `0043_journal_entries.sql` and the existing `/opt/ai-os/uploads/` directory.
 
-Rejected alternatives (one line each):
-- `exec bash` behind the CLI (the operator's scripts): keeps the pane but turns it into
-  a shell — that is exactly how a code was pasted into bash on 2026-08-19.
-- node-pty / a PTY in-process: no tmux dependency, but untested here, a native module
-  under pm2, and loses the operator's ability to `tmux attach` to see what happened.
-- A localhost callback listener + SSH tunnel: impossible — redirect_uris are
-  `codeassist.google.com/authcode` and `antigravity.google/oauth-callback`.
-- Putting the code in the secret store and polling it (authcode-feed.sh): one more
-  place the code rests on disk, and it needs a second process; the broker pastes
-  synchronously from the request handler instead.
-- A second status shape for "connecting": the panel already has
-  `state·identity·checked_at·detail·action`; the broker's GET reuses `detail`/`action`
-  words and adds only what a live session needs.
+### Rejected alternatives (one line each):
+- *Automated machine diary generator (the obsolete June 2026 placeholder)*: Rejected because Konrad wants real human reflection on paper with his own words, not LLM hallucinations pretending to be him.
+- *Bespoke chat engine for Mentor*: Rejected because `AssistantThread.tsx` and `/api/chat` already provide token streaming, tool call timelines, and rich interaction; duplicating chat engines invites divergence and bugs.
+- *In-browser handwriting canvas / drawing tool*: Rejected because Konrad journals on physical paper notebooks; high-resolution image upload + lightbox zoom is the exact matching workflow.
+- *Storing journal notes in a custom SQL table instead of Obsidian*: Rejected because Obsidian `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` is Konrad's established second brain; duplicating note storage fractures his knowledge base.
+- *Mock/fake toggle for mentor cron*: Rejected because setting a disconnected state flag deceives the operator; the toggle must mutate the live `cron_schedules` row (`90577448-93f4-41dd-a991-14885c74644c`).
+
+---
 
 ## 1. What exists (read, not remembered)
 
-- `forge-control/src/routes/integrations.ts` — GET `/agy|/google|/github|/gemini|/connections`,
-  POST `/agy/probe`. Every status comes from `buildConnectionStatus()` /
-  `absentConnectionStatus()` in `lib/connection-status.ts`; records persist at
-  `/opt/ai-os/.secrets/status/<id>.json` (`FORGE_CONNECTION_STATUS_DIR`). `AGY_ACTIONS.broken`
-  currently tells Konrad to sign in at a terminal — that sentence must change.
-- `lib/connection-status.ts` exports `runCommand(bin,args,{timeoutMs,env})` which already
-  spawns with `stdio ["ignore","pipe","pipe"]` and resolves on close — REUSE it for every
-  probe and every tmux invocation that is not a long-lived pane. `AGY_BIN` lives there
-  (line ~435) with `access(X_OK)`. No `CLAUDE_BIN`/`GEMINI_BIN` constants exist yet.
-- `routes/accounts.ts` + `db/claude-accounts.ts` (`claude_accounts` table, ai_os DB) +
-  `lib/accounts.ts` (`probeAccount`, `createAccount`). POST `/api/accounts` creates a row and
-  probes it. `reauth_command` = `CLAUDE_CONFIG_DIR=<dir> claude auth login --claudeai`.
-- Web: `app/api-connections.ts` (`ROOT = "/api/proxy/integrations"`), `settings/connections.ts`
-  (`summaryFromStatus`, the ONE renderer; `ConnectionSummary.action` is a string),
-  `ConnectionsPanel.tsx` (`Row` head is a single `<button>` — NOTHING interactive may be
-  nested in it; the body is kept mounted and hidden), `integrationCards.tsx`
-  (`Banner`, `btn()`, `Chip`, `CardHead`, `CommandBlock`, `StateChip`, `AgyCard` with
-  `data-agy-verify`), `accountRegistry.tsx` (`useAccountRegistry().create()`).
-- There is NO Gemini CLI row today. `GET /gemini` is the API KEY. A `gemini-cli`
-  connection id must be added end to end (status record, probe, row) or there is
-  nothing to put a Connect button on.
-- `/root/ai-os/gemini/{auth.sh,agy-login.sh,agy-watch.sh,authcode-feed.sh}`: the proven
-  primitives are `capture-pane -p -J` + grep for the live prompt, `load-buffer`/`paste-buffer`,
-  `shred -u`. Keep the log line format of `state/authcode-feed.log`:
-  `HH:MM:SS [<session>/<name>] <message>`. DEFECT TO NOT COPY: `authcode-feed.sh` logs
-  `pane now: <last pane line>` 8 s after the paste — the pane echoes the code (verified:
-  pasted `abc` shows as `Enter the code: abc`), so that line can log the code.
-- Binaries (absolute): `/root/.local/bin/agy` 1.1.18, `/usr/bin/gemini` 0.55.1 (symlink
-  into node_modules), `/usr/bin/claude` 2.1.239 (symlink), `/usr/bin/tmux` 3.4,
-  `/usr/bin/shred`. pm2's PATH has none of `/root/.local/bin`.
-- Browser proof recipe that works on this repo: `docs/plan/artifacts/phase1871/README.md`
-  (worktree `next build` with `FORGE_CONTROL_URL=<throwaway api>`, `next start -p 7780`,
-  NextAuth cookie minted with salt = cookie name, `FORGE_SESSION_COOKIE`). Single-router
-  throwaway API pattern: `scripts/checks/serve-v3-7798.ts`.
-- Unit tests: `forge-control/package.json` → `tsx --test src/lib/*.test.ts` (TOP-LEVEL
-  glob: a test under `src/lib/cli-auth/` does NOT run; put tests at `src/lib/cli-auth*.test.ts`).
-- Gate suite: `scripts/checks/gates-808.sh`, `gate "<name>" <cmd>` helper at line 53.
+- **Audit findings document**: `/opt/ai-os/workspace/audits/journal.md` confirms `JournalSurface.tsx` is completely unbuilt, flagged with `unbuilt: true` in `nav-items.ts:121`, and routed to `PlaceholderSurface` in `DesktopApp.tsx:504-506`.
+- **Existing live data & routes**:
+  - `GET /api/decisions` (`forge-control/src/routes/decisions.ts` + `db/ai_os.ts:652-662`) holds 120+ decisions in `content_forge.decisions`.
+  - `GET /api/mentor/metrics` (`forge-control/src/routes/mentor.ts` + `db/mentor.ts`) returns streak and 30-day accountability metrics.
+  - `GET /api/cron` and `PATCH /api/cron/:id` (`forge-control/src/routes/cron.ts` + `db/cron.ts`) manage live schedules, including `mentor-evening` (ID: `90577448-93f4-41dd-a991-14885c74644c`, `30 21 * * *`, `enabled: true`) and `mentor-morning` (`8ef6886f-c9e9-4cd7-8474-4fe04b7989ab`, `enabled: false`).
+  - `GET /api/vault/file?path=Daily/YYYY-MM-DD.md` and `PUT /api/vault/file` (`forge-control/src/routes/vault.ts` + `lib/vault.ts`) provide CAS reads/writes for Obsidian daily notes.
+  - `POST /api/uploads` and `GET /api/uploads/:id/:name` (`forge-control/src/routes/uploads.ts`) store and serve files at `/opt/ai-os/uploads/<id>/<name>`.
+  - `POST /api/chat`, `GET /api/chat/:id`, `POST /api/chat/:id/message`, and `GET /api/chat/:id/events` (`forge-control/src/routes/chat.ts`) provide the SSE streaming chat execution engine.
+- **Obsidian Vault & Mentor Persona**:
+  - `/opt/obsidian-vault/Mentor/PERSONA.md`: Defines the Mentor persona ("Andrew Tate's frame control and zero-excuse mentality, Alex Hormozi's volume-and-skills doctrine... Said vs. done is the only scoreboard").
+  - `/opt/obsidian-vault/Mentor/Profile/`: Contains Konrad's `About Me.md`, `Current Chapter.md`, `Principles & Beliefs.md`, `Operating Manual.md`, `Goals & Aspirations.md`.
+  - `/opt/obsidian-vault/Mentor/log.md`: Tracks daily debrief continuity.
+  - `/opt/obsidian-vault/Daily/YYYY-MM-DD.md`: Active daily notes containing `## Tasks`, `## Notes`, and `## Journal` sections.
 
-## 2. Ownership (the four questions)
+---
 
-| question | answer |
-|---|---|
-| what owns state | `lib/cli-auth/session.ts`: an in-memory `Map<provider, Session>` (ONE live session per provider, replaced on every start) + the tmux server `-L forge-cli-auth` as the source of truth for "is the CLI still asking". Durable outcome state is NOT here: it is the existing `ConnectionRecord` written by the probe. |
-| what dispatches work | The HTTP handlers, synchronously: `start` spawns the tmux session and polls the pane for the URL; `code` pastes and polls the pane to a terminal outcome, then runs the probe, then answers. No queue, no cron. |
-| what happens on failure | Every failure is a state (`failed`/`expired`) with the CLI's own last lines (scrubbed) in `detail`, or an HTTP 5xx when THE BROKER could not do its job (tmux missing, shred missing, pane unreadable). Nothing is retried silently. A forge-control restart loses the in-memory map; GET then reports an orphan tmux session as `failed` "broker restarted — press Relaunch", and `start` kills it. |
-| how Konrad sees it broke | The row he is already looking at: chip + `detail` verbatim, plus the `cli-auth.log` line. The probe after success is the same probe the row renders, so a lie is structurally impossible. |
+## 2. Ownership & Invariants (The Four Questions)
 
-## 3. The broker — `forge-control/src/lib/cli-auth/`
+| Question | Answer |
+| :--- | :--- |
+| **What owns state** | **Paper journal uploads & metadata**: `journal_entries` table in PostgreSQL (`content_forge` DB). **Written journal text**: `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` (`## Journal` heading), managed via CAS `PUT /api/vault/file`. **Decisions**: `decisions` table in `content_forge`. **Mentor schedule & arming**: `cron_schedules` table (`mentor-evening` row). **Mentor conversations**: `runs` table (`metadata.kind = "mentor"`). |
+| **What dispatches work** | **Uploads**: Browser form upload directly to `POST /api/journal/upload` storing in `/opt/ai-os/uploads/<id>/<name>`. **Vault writes**: CAS `PUT /api/vault/file`. **Mentor cron toggle**: Optimistic React Query mutation calling `PATCH /api/cron/:id`. **Mentor chat**: `POST /api/chat` and `POST /api/chat/:id/message` dispatched to `forge-executor` runs queue with SSE token streaming. |
+| **What happens on failure** | **Upload failure**: 413/400/500 returned with exact error message; UI displays retry banner. **Vault conflict (409)**: Returns current server content and sha256; UI renders conflict resolver (Reload vs Overwrite). **Cron toggle failure**: Optimistic UI rolls back state and displays red error toast. **Mentor chat failure**: `AssistantThread` renders exact error part and status indicator without swallowing. |
+| **How does Konrad see it broke** | Clear visual feedback in every state (Loading skeleton, Empty prompt, Error banner with retry, Populated content). Every API error surfaces the real upstream error message. No silent fallbacks. |
 
-### 3.1 `src/lib/cli-paths.ts` (NEW, shared — the single place a CLI path is written)
+---
 
-```ts
-export const AGY_BIN    = "/root/.local/bin/agy";      // MUST equal connection-status.AGY_BIN (test asserts)
-export const GEMINI_BIN = "/usr/bin/gemini";
-export const CLAUDE_BIN = "/usr/bin/claude";
-export const TMUX_BIN   = "/usr/bin/tmux";
-export const SHRED_BIN  = "/usr/bin/shred";
-/** true | false | null — null when the errno is neither ENOENT nor EACCES (cannot decide). */
-export async function binPresent(bin: string): Promise<boolean | null>;
-```
-B2 makes `connection-status.ts` import `AGY_BIN` from here (one constant, two importers).
+## 3. Architecture & Design Specification
 
-### 3.2 `src/lib/cli-auth/types.ts`
+### 3.1 Backend & Database Layer
+1. **Migration `db/migrations/0043_journal_entries.sql`**:
+   ```sql
+   CREATE TABLE IF NOT EXISTS journal_entries (
+     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+     day         date NOT NULL,
+     type        text NOT NULL DEFAULT 'paper', -- 'paper' | 'written' | 'video'
+     upload_id   text,                          -- directory in /opt/ai-os/uploads/<upload_id>/
+     file_path   text NOT NULL,                 -- absolute path on VPS
+     file_url    text NOT NULL,                 -- /api/uploads/<id>/<name>
+     file_name   text NOT NULL,
+     mime_type   text NOT NULL,
+     size_bytes  bigint NOT NULL DEFAULT 0,
+     ocr_text    text,                          -- extracted text if available
+     ocr_status  text NOT NULL DEFAULT 'none',  -- 'none' | 'completed' | 'failed'
+     caption     text,                          -- optional human caption
+     created_at  timestamptz NOT NULL DEFAULT now(),
+     updated_at  timestamptz NOT NULL DEFAULT now()
+   );
+   CREATE INDEX IF NOT EXISTS journal_entries_day_idx ON journal_entries(day, created_at DESC);
+   ```
+2. **Database Module `forge-control/src/db/journal.ts`**:
+   - `listJournalEntries(day?: string, from?: string, to?: string)`
+   - `createJournalEntry(data: ...)`
+   - `deleteJournalEntry(id: string)`
+   - `updateJournalEntry(id: string, patch: ...)`
+3. **Decisions Query Extension (`forge-control/src/db/ai_os.ts` & `src/routes/decisions.ts`)**:
+   - Support `day` (YYYY-MM-DD) or `from`/`to` ISO timestamp query filters.
+4. **Journal Router (`forge-control/src/routes/journal.ts`)**:
+   - `GET /api/journal/day?day=YYYY-MM-DD`: Aggregates paper entries, vault daily note (`## Journal` slice), day's decisions, mentor metrics, and active/latest mentor run.
+   - `POST /api/journal/upload`: Multipart upload storing to `/opt/ai-os/uploads/<id>/<name>`, inserting into `journal_entries`, and appending markdown image link `![[uploads/...]]` to `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` under `## Journal`.
+   - `DELETE /api/journal/entries/:id`: Deletes entry.
+   - Mounted in `forge-control/src/index.ts`.
 
-```ts
-export type CliAuthProvider = "agy" | "gemini-cli" | "claude";
-export type CliAuthState =
-  "idle" | "starting" | "awaiting_code" | "exchanging" | "connected" | "expired" | "failed";
+### 3.2 Frontend Surface Components (`forge-control-web`)
+1. **Header Control Bar**:
+   - Date stepper (`<`, `Sun 23 Aug 2026`, `>`, `[Today]`).
+   - `MentorCronSwitch.tsx`: Live query of `/api/cron`, finds `mentor-evening`, displays armed pill (`● Debrief Armed (21:30 CEST)` vs `○ Disabled`), next fire countdown, and optimistic toggle switch invoking `PATCH /api/cron/:id`.
+   - Quick action button `[⚡ Trigger Debrief Now]`.
+   - Accountability streak and score badges from `GET /api/mentor/metrics`.
+2. **Left Pane (55%) — `JournalRetrospectivePane.tsx`**:
+   - `PaperCaptureDeck.tsx`: Drag-and-drop / file picker zone for photographing handwritten paper scans, thumbnail gallery, OCR status pill.
+   - `ImageLightbox.tsx`: Full-resolution zoomable modal for inspecting handwritten notes.
+   - `JournalVaultEditor.tsx`: CAS markdown editor reading/writing `## Journal` in `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` with conflict resolution modal.
+   - `DailyDecisionsStream.tsx`: Filtered timeline cards of logged decisions.
+3. **Right Pane (45%) — `MentorAgentDeck.tsx`**:
+   - Reuses `AssistantThread.tsx` connected to the day's mentor debrief run (or latest active mentor session) with live SSE token streaming (`/api/chat/:id/events`).
+   - Displays Mentor persona branding and tagline ("Said vs Done is the only scoreboard").
+   - Quick prompt pills (`⚡ Give me my evening debrief`, `🎯 Diagnose what blocked my top goal today`, `📊 Audit my volume this week`).
+   - Autogrow message composer for live two-way debriefing.
+4. **Surface Integration**:
+   - In `nav-items.ts`: Clear `unbuilt: true` for `journal`.
+   - In `DesktopApp.tsx`: Import `JournalSurface`, mount `{surface === "journal" && <JournalSurface />}`, retire `"journal"` from `PlaceholderKey` and `PLACEHOLDER_SURFACES`.
 
-export interface ProviderDef {
-  id: CliAuthProvider;
-  bin: string;                       // from cli-paths
-  args: readonly string[];
-  env: (input: StartInput) => NodeJS.ProcessEnv;   // e.g. NO_BROWSER=true, CLAUDE_CONFIG_DIR
-  cwd: string;                       // a scratch dir, never the repo
-  urlRegex: RegExp;                  // first match on the joined pane = the URL
-  prompt: string;                    // substring that means "asking for the code NOW"
-  successMarkers: readonly string[]; // pane substrings meaning the exchange succeeded
-  failureMarkers: readonly string[]; // pane substrings meaning the code was rejected
-  expiryMarkers: readonly string[];  // e.g. "timed out"
-  window_seconds: number | null;     // measured by research; null = no expiry observed
-  exchangeTimeoutMs: number;         // how long to wait after paste before calling it failed
-  probe: (input: StartInput) => Promise<ConnectionRecord>;   // the EXISTING probe
-  onConnected?: (input: StartInput, rec: ConnectionRecord) => Promise<void>; // claude: registry row
-}
+---
 
-export interface StartInput { slug?: string; config_dir?: string }   // claude only
-
-export interface CliAuthStatus {          // GET shape — SAME words as a connection row
-  provider: CliAuthProvider;
-  state: CliAuthState;
-  session_id: string | null;
-  url: string | null;                     // ONLY while state === "awaiting_code"; null otherwise, always
-  prompt: string | null;
-  window_seconds: number | null;
-  started_at: string | null;
-  expires_at: string | null;              // started_at + window, or null
-  detail: string;                         // human, scrubbed, verbatim CLI tail where useful
-  action: string;                         // the exact next click, in the panel's voice
-  probe: ConnectionRecord | null;         // set only after a post-success probe ran
-}
-```
-
-### 3.3 `src/lib/cli-auth/tmux.ts` — the only file that spells `tmux`
-
-- Socket: every call is `TMUX_BIN -L forge-cli-auth …` via `runCommand` (5 s timeout).
-- `startPane(name, bin, args, env, cwd)`:
-  `new-session -d -s <name> -x 240 -y 50 -c <cwd> -e K=V… -- <bin> <args…> \; set-option -t <name> remain-on-exit on`
-  (one tmux invocation, so the option is set before the process can exit). NO shell,
-  NO `exec bash`. `-e` sets env per session (tmux ≥3.2); the pane command is `bin` directly.
-- `capture(name)` → `capture-pane -p -J -S - -E - -t <name>` joined lines.
-- `paneState(name)` → `display-message -p -t <name> '#{pane_dead} #{pane_dead_status}'`
-  (status may lag `pane_dead` by a tick — re-read once; treat empty as unknown, never 0).
-- `pasteFile(name, path)` → `load-buffer -b <rand> <path>` then `paste-buffer -d -b <rand> -t <name>`
-  then `send-keys -t <name> Enter`. `-d` deletes the buffer; `list-buffers` is asserted
-  empty afterwards (test + runtime check → 500 if a buffer survived).
-- `kill(name)` → `kill-session -t <name>`; `exists(name)` → `has-session` (used ONLY to
-  decide whether to kill/orphan-report, NEVER as "alive").
-- Session names: `cli-auth-<provider>` (claude: `cli-auth-claude-<slug>`).
-
-### 3.4 `src/lib/cli-auth/session.ts` — the state machine
+## 4. Execution Graph (Tasks & Dependencies)
 
 ```
-start(provider, input)
-  ├ binPresent(bin) !== true  → throw BrokerError(503, "<bin> not executable")
-  ├ kill any existing session for provider (fresh PKCE: the old url is dead by construction)
-  ├ startPane(); state=starting; session_id = randomUUID()
-  ├ poll capture() every 250 ms ≤ 20 s for urlRegex
-  │    ├ match     → state=awaiting_code, url, started_at, expires_at
-  │    ├ pane dead → state=failed, detail = scrubbed tail (12 lines)
-  │    └ 20 s     → state=failed, detail="no URL within 20 s", pane tail
-  └ returns CliAuthStatus  (POST /start → 200 with it; 503 on BrokerError)
-
-status(provider)                         — pure read, ALWAYS re-inspects the pane:
-  ├ no record & no tmux session          → idle
-  ├ no record & tmux session exists      → failed "broker restarted; press Relaunch" (orphan)
-  ├ awaiting_code & pane shows expiryMarker or now > expires_at+grace(5 s) → expired (url:=null)
-  ├ awaiting_code & pane dead            → failed (url:=null)
-  └ otherwise the stored state
-
-submitCode(provider, session_id, code)
-  ├ session_id !== live.session_id      → 409 {state, detail:"that url is stale; relaunch"}  ← PKCE rule IN CODE
-  ├ status() !== awaiting_code           → 409 with the real status (expired/failed/idle)
-  ├ capture() must contain def.prompt NOW, else 409 "CLI is not asking" (tmux-has-session trap)
-  ├ code: trim, reject if /\s/ or length ∉ [8, 2048] → 400 (never echo it)
-  ├ mkdtemp(0700) + writeFile(0600) → pasteFile → shred -u (spawn SHRED_BIN) → rmdir
-  ├ state=exchanging; poll capture() every 300 ms ≤ exchangeTimeoutMs:
-  │    successMarker → run def.probe(); probe.ok ? connected (+onConnected) : failed
-  │                    detail="CLI reported success but the probe says: <probe.detail>"
-  │    failureMarker | pane dead with non-zero status → failed, detail = scrubbed tail
-  │    expiryMarker  → expired
-  │    timeout       → failed "no verdict within N s", scrubbed tail
-  ├ on connected/expired/failed: kill the tmux session (nothing left to read; the
-  │   scrubbed tail is already in detail)
-  └ returns the REAL outcome CliAuthStatus
-
-cancel(provider) → kill session, state=idle
-```
-- `scrub(text, code)` = `text.split(code).join("<code>")`, applied to every `detail`,
-  every log line, every thrown message AFTER the code exists. The `code` variable lives
-  only inside `submitCode`; it is never stored on the Session object.
-- Hard lifetime: a session older than 15 min is killed by `status()` → `expired`.
-- Log: `/opt/ai-os/state/cli-auth.log` (dir from `CLI_AUTH_STATE_DIR`), format
-  `HH:MM:SS [cli-auth-<provider>/<session_id8>] <message>`, messages fixed strings:
-  `started`, `url shown`, `code delivered (<n> bytes, redacted)`, `connected as <identity>`,
-  `failed: <scrubbed tail first line>`, `expired`, `cancelled`. Never a pane dump.
-
-### 3.5 `src/lib/cli-auth/providers.ts` — filled by research (§6), defaults below
-
-| field | agy | gemini-cli | claude |
-|---|---|---|---|
-| bin/args | `AGY_BIN -p "Reply with exactly: OK"` | `GEMINI_BIN` (bare TUI) | `CLAUDE_BIN auth login --claudeai` |
-| env | inherit + `PATH+=/root/.local/bin` | `NO_BROWSER=true`, unset `GEMINI_API_KEY`,`GOOGLE_API_KEY` | `CLAUDE_CONFIG_DIR=<config_dir>` |
-| urlRegex | `https://accounts\.google\.com/o/oauth2\S+` | same | research (claude.ai/oauth/authorize…) |
-| prompt | `paste the authorization code here and press Enter` | `Enter the authorization code:` | research |
-| window_seconds | 60 (re-measure) | research (null if none within the observation cap) | research |
-| probe | `probeAgy()` | `probeGeminiCli()` (NEW, B2) | `probeAccount(row)` after `createAccount` or on the existing row |
-| onConnected | — | — | create/refresh `claude_accounts` row (slug, config_dir); `login_email` stays null (configuration, not probe) |
-
-`probeGeminiCli` (B2, in `connection-status.ts`, id `gemini-cli`, persisted like agy):
-research decides the cheapest command that fails clean when signed out and yields an
-identity when signed in. Default if research finds nothing better: `GEMINI_BIN -p "Reply
-with exactly: OK" --output-format json` with `timeoutMs 90_000`, identity = the active
-email read from `~/.gemini/google_accounts.json` ONLY when the call succeeded (the call is
-the proof, the file supplies the name; `detail` says so). A timeout is `unknown`, not broken.
-
-## 4. Routes — `src/routes/cli-auth.ts`, mounted `r.route("/cli-auth", cliAuth)` inside integrations.ts
-
-| verb | path | body | answer |
-|---|---|---|---|
-| GET | `/cli-auth` | — | `{ providers: CliAuthStatus[] }` all three (claude: one per live session, plus `{provider:"claude", state:"idle"}`) |
-| GET | `/cli-auth/:provider` | — | `CliAuthStatus` (claude: `?slug=`) |
-| POST | `/cli-auth/:provider/start` | claude: `{slug, config_dir}` (config_dir absolute, slug `/^[a-z0-9][a-z0-9-]{0,39}$/`) | `CliAuthStatus` 200; 400 bad input; 503 BrokerError; 409 if another session for this provider is `exchanging` |
-| POST | `/cli-auth/:provider/code` | `{session_id, code}` (claude: `+slug`) | `CliAuthStatus` with the REAL terminal state; 400/409 as §3.4 |
-| POST | `/cli-auth/:provider/cancel` | claude: `{slug}` | `CliAuthStatus` idle |
-
-Provider param not in the three → 404 `{error}`. Bodies > 16 KiB → 413 (the code is ≤ 2 KiB).
-No `code` field is ever read from a query string. Hono's request logger in index.ts logs
-method+path only — the builder verifies it does not log bodies.
-
-Also in B3: `GET /gemini-cli`, `POST /gemini-cli/probe`, and `gemini-cli` in `/connections`
-(same three-function pattern as agy). Wording: `AGY_ACTIONS.broken` and the new
-`GEMINI_CLI_ACTIONS.{broken,absent-with-binary}` say "Expand this row and press Connect —
-a Google page shows a code, paste it back here (60 s window for agy)". Google's own row and
-GitHub are untouched.
-
-## 5. Web — workstream `web`
-
-Files: `app/api-connections.ts` (+ `CliAuthStatus` type mirror, `startCliAuth`,
-`readCliAuth`, `submitCliAuthCode`, `cancelCliAuth` — bodies JSON, never query strings),
-`settings/connections.ts` (+ `GEMINI_CLI_COPY`, `geminiCliConnection()` through
-`summaryFromStatus`, no other rule changes), `settings/CliAuthConnect.tsx` (NEW),
-`settings/integrationCards.tsx` (+ `GeminiCliCard` modelled on `AgyCard`, with
-`data-gemini-cli-*` markers; `AgyCard` and `GeminiCliCard` render `<CliAuthConnect>` at the
-top of the card when the row is not `connected`), `ConnectionsPanel.tsx` (+ the
-`gemini-cli` Row under the GEMINI group; `AddAccount` gains a "Sign in here" path that
-renders `<CliAuthConnect provider="claude" slug dir>` in place of STEP 1, keeping the
-manual command below it as the fallback; `AccountCard` broken state gets the same control
-with the row's `config_dir`).
-
-`CliAuthConnect` behaviour (pinned — do not redesign):
-1. Button `Connect` (`data-cli-auth-connect=<provider>`). On click, SYNCHRONOUSLY
-   `const tab = window.open("", "_blank")` (popup blockers allow it inside the click),
-   then POST start; on `awaiting_code` set `tab.location = url`; on anything else
-   `tab.close()` and show `detail` in a `Banner tone="bad"`.
-2. State `awaiting_code`: URL in a `CommandBlock`-style copyable box
-   (`data-cli-auth-url`), a countdown `expires in 42 s` when `window_seconds` is set,
-   one `<input data-cli-auth-code type="password" autoComplete="off">`, `Submit code`,
-   `Cancel`. Poll GET every 2 s while `awaiting_code|exchanging`; stop otherwise.
-3. `exchanging`: input disabled, "checking with <provider>…".
-4. `connected`: `Banner tone="ok"` with `probe.identity`/`detail`; call the card's
-   existing refresh (`onFacts` path / `registry.load`) so the ROW chip re-renders from the
-   persisted record — the control never paints the chip itself.
-5. `expired` / `failed`: `Banner tone="bad"` with `detail` VERBATIM, button `Relaunch`
-   (`data-cli-auth-relaunch`) which is step 1 again — and the old URL box is gone (server
-   returns `url:null`; the client also clears it).
-6. Any fetch rejection → the same `Banner tone="bad"` with the verbatim error. No
-   "submitted" toast exists anywhere.
-No new tokens, no new design language; `btn()`, `Banner`, `input()` from the panel.
-
-## 6. Research (all depends_on [], workstream main, tier junior) — measured, written to `docs/plan/cli-auth/evidence-<provider>.md`
-
-Each researcher uses the tmux recipe in §3.3 by hand (`tmux -L forge-cli-auth-research`),
-records exact prompt strings, the URL regex that matched, `window_seconds` (wall clock from
-URL shown to expiry marker, or "no expiry within N min" with the capture), what the CLI
-prints for a deliberately WRONG code (verbatim), the exit status via `pane_dead_status`,
-and the cheapest signed-out probe. Nobody completes a Google/Anthropic sign-in. Gemini's
-observation cap: 45 min. Kill your sessions when done.
-
-## 7. Tests and checks
-
-- `src/lib/cli-auth.test.ts` (B1): drives the engine against
-  `scripts/checks/fixtures/cli-auth-mock.sh` (a bash CLI: prints a URL with a random
-  nonce, prompts `Enter the authorization code: `, accepts only `MOCK-OK`, exits 2 on
-  anything else, prints `timed out` after `MOCK_WINDOW` s). Cases: url state; wrong code →
-  failed with verbatim tail; right code → `connected` ONLY when the injected probe returns
-  ok (and `failed` when the probe says no even though the CLI succeeded); expiry →
-  `expired` + url null + a relaunch yields a DIFFERENT url and the old session_id is 409;
-  no tmux buffer survives; the CANARY check — paste `CANARY-<uuid>` and assert the string
-  appears in NO response field, NOT in cli-auth.log, NOT in `list-buffers`, NOT on disk
-  under the temp dir. The mock provider is registered ONLY when `CLI_AUTH_MOCK_BIN` is set.
-- `scripts/checks/check-cli-auth-code-leak.ts` (B4): static scan of
-  `src/lib/cli-auth/**`, `src/lib/cli-paths.ts`, `src/routes/cli-auth.ts` for (a) any
-  `console.*`/`log(`/`appendFile(` call whose argument expression mentions `code`,
-  (b) `send-keys` with anything but a literal `Enter`, (c) `c.req.query(` anywhere,
-  (d) `detail:`/`message:` assignments inside `submitCode` not wrapped in `scrub(`,
-  (e) `JSON.stringify(session)`; plus it RUNS the canary case above. Registered in
-  `gates-808.sh` with `gate`. Per `do-not-soften-check-secret-scan`: the check's own
-  forbidden strings live in variables, never in prose the check then reads.
-- `scripts/checks/check-cli-auth-panel.mjs` (B7): Playwright against a throwaway stack per
-  phase1871 README — throwaway forge-control from THIS worktree on a spare port (mount
-  `accounts`, `integrations` only), `FORGE_CONTROL_URL` baked into a worktree `next build`,
-  `FORGE_CONNECTION_STATUS_DIR` pointed at a temp dir so no live record is touched.
-  Drives the REAL agy row with the REAL agy binary (no sign-in is completed): Connect →
-  shot `url-state`; submit `WRONG-CODE-<uuid>` → shot `wrong-code-failed` (banner shows
-  agy's verbatim words); Connect again → wait past `window_seconds` → shot `expired`;
-  Relaunch → assert the new URL ≠ the old → shot `relaunched`. Shots to
-  `/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png`, then Read back. Traps already
-  filed: `waitUntil:"commit"`, `__Secure-` cookie needs `secure:true`, rebuild with the
-  default URL before finishing, viewport height not fullPage.
-
-## 8. Task graph (seeded by the architect; ids in the forge-control project)
-
-```
-R1 researcher gemini-cli   []                main  junior
-R2 researcher agy          []                main  junior
-R3 researcher claude       []                main  junior
-B1 builder    engine       []                main  standard   cli-paths.ts, cli-auth/{types,tmux,session,log,index}.ts, cli-auth.test.ts, fixtures/cli-auth-mock.sh
-B2 builder    providers    [R1,R2,R3,B1]     main  standard   cli-auth/providers.ts, connection-status.ts, cli-auth-providers.test.ts
-B3 builder    routes       [B2]              main  standard   routes/cli-auth.ts, routes/integrations.ts
-B4 builder    leak check   [B3]              main  junior     check-cli-auth-code-leak.ts, gates-808.sh
-B5 builder    web          []                web   standard   api-connections.ts, connections.ts, CliAuthConnect.tsx, integrationCards.tsx, ConnectionsPanel.tsx, check-connection-states.ts, check-quota-row.ts
-B6 builder    integrate web→main [B5,B4]     main  junior     (B5's write_set; STOP on conflict)
-B7 builder    browser proof [B6]             main  standard   check-cli-auth-panel.mjs, docs/plan/cli-auth/README.md
-B8 reviewer   whole diff   [B1..B7]          main  standard
+[Task 1: Backend Data Layer & Endpoints]
+                  │
+                  ▼
+[Task 2: Frontend API Client & Left Retrospective Pane]
+                  │
+                  ▼
+[Task 3: Frontend Mentor Agent Deck, Live Cron Switch & Surface Assembly]
+                  │
+                  ▼
+[Task 4: Integration Review & Visual Verification]
 ```
 
-## 9. Decisions the brief did not make (reported to the manager chat)
+---
 
-- The Connect control sits at the TOP of the expanded card, not on the row head: the head
-  is one `<button>` and nested interactive content is invalid HTML. The head's `action`
-  sentence says "expand this row and press Connect".
-- A `gemini-cli` connection is a NEW row (status id `gemini-cli`, under the GEMINI group),
-  distinct from the API-key row.
-- `window.open` is called synchronously in the click and re-targeted after the POST.
-- Sessions are in-memory; a forge-control restart mid-login is reported as `failed`
-  with a Relaunch, never resumed.
+## 5. Task Definitions
+
+### Task 1: Backend Data Layer & Endpoints
+- **Role**: `builder`
+- **Tier**: `junior`
+- **Workstream**: `main`
+- **Write Set**:
+  - `db/migrations/0043_journal_entries.sql`
+  - `forge-control/src/db/journal.ts`
+  - `forge-control/src/db/ai_os.ts`
+  - `forge-control/src/routes/journal.ts`
+  - `forge-control/src/routes/decisions.ts`
+  - `forge-control/src/index.ts`
+  - `forge-control/src/lib/migrations.test.ts`
+- **Brief**:
+  1. Create `db/migrations/0043_journal_entries.sql` with re-runnable `IF NOT EXISTS` DDL for `journal_entries` table.
+  2. Implement `forge-control/src/db/journal.ts` with typed helpers to list, create, and delete journal entries.
+  3. Update `listDecisions` in `forge-control/src/db/ai_os.ts` and `forge-control/src/routes/decisions.ts` to accept `day`, `from`, `to` filter parameters.
+  4. Implement `forge-control/src/routes/journal.ts` providing `GET /api/journal/day`, `POST /api/journal/upload` (storing to `/opt/ai-os/uploads/<id>/<name>`, appending link to Obsidian daily note, inserting record), `DELETE /api/journal/entries/:id`.
+  5. Mount `/api/journal` in `forge-control/src/index.ts`.
+  6. Ensure migration hygiene test `forge-control/src/lib/migrations.test.ts` passes (`pnpm test`).
+  7. Verify with curl tests against throwaway / mock endpoints.
+
+### Task 2: Frontend API Client & Left Retrospective Pane
+- **Role**: `builder`
+- **Tier**: `standard`
+- **Workstream**: `main`
+- **Depends on**: `[Task 1 ID]`
+- **Write Set**:
+  - `forge-control-web/app/api.ts`
+  - `forge-control-web/app/desktop/journal/PaperCaptureDeck.tsx`
+  - `forge-control-web/app/desktop/journal/ImageLightbox.tsx`
+  - `forge-control-web/app/desktop/journal/JournalVaultEditor.tsx`
+  - `forge-control-web/app/desktop/journal/DailyDecisionsStream.tsx`
+  - `forge-control-web/app/desktop/journal/JournalRetrospectivePane.tsx`
+- **Brief**:
+  1. Add typed API client functions to `forge-control-web/app/api.ts` (`fetchJournalDay`, `uploadJournalPaper`, `deleteJournalEntry`, `fetchDecisionsForDay`).
+  2. Implement `PaperCaptureDeck.tsx`: drag-and-drop / file selector for photographing handwritten paper scans, thumbnail gallery, OCR status indicators.
+  3. Implement `ImageLightbox.tsx`: high-resolution zoomable viewer for handwritten notes.
+  4. Implement `JournalVaultEditor.tsx`: CAS markdown editor reading/writing `## Journal` section of `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` via `GET/PUT /api/vault/file`, with sync status indicator and conflict resolution modal.
+  5. Implement `DailyDecisionsStream.tsx`: rendering day's logged decisions with actor badges and timestamps.
+  6. Implement `JournalRetrospectivePane.tsx` combining paper capture, vault editor, and decisions stream into the left column.
+  7. Strict adherence to `app/tokens.ts` (zero raw colour literals) and all four data states (loading skeleton, honest empty, error banner, populated).
+
+### Task 3: Frontend Mentor Agent Deck, Live Cron Switch & Surface Assembly
+- **Role**: `builder`
+- **Tier**: `standard`
+- **Workstream**: `main`
+- **Depends on**: `[Task 2 ID]`
+- **Write Set**:
+  - `forge-control-web/app/desktop/journal/MentorAgentDeck.tsx`
+  - `forge-control-web/app/desktop/journal/MentorCronSwitch.tsx`
+  - `forge-control-web/app/desktop/JournalSurface.tsx`
+  - `forge-control-web/app/desktop/nav-items.ts`
+  - `forge-control-web/app/desktop/DesktopApp.tsx`
+- **Brief**:
+  1. Implement `MentorCronSwitch.tsx`: queries `/api/cron`, binds to `mentor-evening` (ID: `90577448-93f4-41dd-a991-14885c74644c`), shows armed status pill, and directly toggles schedule via `PATCH /api/cron/:id` with optimistic update.
+  2. Implement `MentorAgentDeck.tsx`: embeds `AssistantThread.tsx` (exact same plumbing as `ChatSurface.tsx`) bound to mentor debrief runs, renders persona badge (`PERSONA.md`), quick debrief triggers (`⚡ Give me my evening debrief`), and reply composer.
+  3. Implement `JournalSurface.tsx`: 2-column split workspace (Header with date stepper, cron switch, metrics pills; Left Pane `JournalRetrospectivePane`; Right Pane `MentorAgentDeck`). Responsive for narrow viewports.
+  4. In `nav-items.ts`: clear `unbuilt: true` on `journal` line (touch nothing else).
+  5. In `DesktopApp.tsx`: import `JournalSurface`, add `{surface === "journal" && <JournalSurface />}`, retire `journal` from `PlaceholderKey` and `PLACEHOLDER_SURFACES`.
+  6. Verification: `npx tsc --noEmit` and `npm run build` in `forge-control-web`.
+
+### Task 4: Integration Review & Visual Verification
+- **Role**: `reviewer`
+- **Tier**: `standard`
+- **Workstream**: `main`
+- **Depends on**: `[Task 3 ID]`
+- **Brief**:
+  1. Review git diff across all modified files for adherence to design tokens, no raw colour literals, error handling, and strict house rules.
+  2. Verify migration hygiene (`pnpm test` in `forge-control`).
+  3. Verify Next.js build (`npx tsc --noEmit` and `npm run build` in `forge-control-web`).
+  4. Run screenshot harness: `node /opt/ai-os/workspace/shots-aios.mjs` with `SHOT_SURFACES=journal` and visually verify rendered state.
+  5. Confirm real backend API responses (`/api/journal/day`, `/api/cron`, `/api/decisions`).
