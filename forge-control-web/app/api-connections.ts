@@ -126,6 +126,20 @@ export interface GithubConnectionResponse {
   secret_name: string;
 }
 
+/**
+ * The Gemini CLI — `/usr/bin/gemini`, signed in with a Google account.
+ *
+ * A DIFFERENT SUBJECT from `GET /gemini`, which is the billed AI Studio API
+ * key. One is a key in the secret store; the other is an OAuth session on
+ * disk, and they fail independently — so they are two rows, not one row with
+ * two meanings. Status-only on purpose: `PLAN.md` §4 gives this connection the
+ * same three-function pattern as `agy` but names no `flow` block for it, and a
+ * field this client does not read cannot be a field it describes wrongly.
+ */
+export interface GeminiCliConnectionResponse {
+  status: ConnectionStatus;
+}
+
 /* ── The one reader, and it never softens a failure ──────────────────────── */
 
 const ROOT = "/api/proxy/integrations";
@@ -266,3 +280,184 @@ export const fetchGithubConnection = (): Promise<GithubConnectionResponse> =>
  *  it is why R55 cannot be violated from the browser by accident. */
 export const probeGithubConnection = (): Promise<GithubConnectionResponse> =>
   callConnections<GithubConnectionResponse>("/github/probe", { method: "POST" });
+
+export const fetchGeminiCliConnection = (): Promise<GeminiCliConnectionResponse> =>
+  callConnections<GeminiCliConnectionResponse>("/gemini-cli");
+
+/** A REAL call: runs the Gemini CLI and reports what it answered. Persisted
+ *  server-side before the response is written, exactly like the agy probe. */
+export const probeGeminiCliConnection = (): Promise<GeminiCliConnectionResponse> =>
+  callConnections<GeminiCliConnectionResponse>("/gemini-cli/probe", { method: "POST" });
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * THE CLI SIGN-IN BROKER — `PLAN.md` §3.2 (the shape) and §4 (the verbs).
+ *
+ * ── WHY THESE TYPES ARE COPIED FROM A PLAN AND NOT FROM AN ENDPOINT ──────
+ * The broker is being built in the `main` workstream while this file is being
+ * written in `web`; there is no running server to read the shape off, and
+ * inventing one from a live response would mean mirroring whatever happened to
+ * be deployed rather than what was agreed. So this mirrors `PLAN.md` §3.2
+ * field for field, and anything the server adds beyond it is ignored rather
+ * than described wrongly here.
+ *
+ * ── THE ONE RULE THAT OUTRANKS EVERY OTHER RULE IN THIS FILE ─────────────
+ * THE AUTHORIZATION CODE TRAVELS IN A POST BODY AND NOWHERE ELSE. Not in a
+ * path, not in a query string, not in a header, not in an error message, not
+ * in a thrown `Error`, not in a retry. `submitCliAuthCode` is the only
+ * function that has ever seen one, it does not store it, and the diagnostics
+ * it throws are written from the PROVIDER and the SESSION ID — both of which
+ * are public — precisely so that no future edit can widen them into the code.
+ * A code that reaches a URL reaches an access log, and an access log is read
+ * by everything.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/** The three CLIs the broker can sign in. Anything else is a 404 upstream. */
+export type CliAuthProvider = "agy" | "gemini-cli" | "claude";
+
+/**
+ * Where a login is, as the SERVER sees it. There is no eighth state and no
+ * "submitted": a code that has been pasted is `exchanging` until the CLI
+ * answers, and then it is `connected`, `failed` or `expired`. The UI never
+ * invents an optimistic state of its own — that is what a "submitted" toast
+ * is, and it is the exact lie this whole surface exists to delete.
+ */
+export type CliAuthState =
+  | "idle"
+  | "starting"
+  | "awaiting_code"
+  | "exchanging"
+  | "connected"
+  | "expired"
+  | "failed";
+
+/** The probe's own record — mirrors `ConnectionRecord` in
+ *  `forge-control/src/lib/connection-status.ts`. Its presence is what makes
+ *  `connected` mean "a probe returned an identity" rather than "the CLI exited
+ *  0", and it is null in every state before that probe has run. */
+export interface CliAuthProbe {
+  ok: boolean;
+  identity: string | null;
+  detail: string;
+  checked_at: string | null;
+}
+
+export interface CliAuthStatus {
+  provider: CliAuthProvider;
+  state: CliAuthState;
+  session_id: string | null;
+  /** The consent URL — non-null ONLY while `state === "awaiting_code"`. The
+   *  PKCE verifier is minted per launch, so a URL from a dead session can
+   *  never be completed; the server nulls it and the control clears its own
+   *  copy rather than leaving a link that leads to a closed door. */
+  url: string | null;
+  /** The CLI's own prompt line, verbatim, so the box on screen can be matched
+   *  against what the terminal is actually asking for. */
+  prompt: string | null;
+  /** The hard consent window in seconds, or null when the provider has none
+   *  that anybody has measured. Null is NOT "no limit" — it is "unmeasured",
+   *  and the control says so rather than drawing a countdown from a guess. */
+  window_seconds: number | null;
+  started_at: string | null;
+  expires_at: string | null;
+  /** Human, scrubbed of the code, and where it helps, the CLI's verbatim tail. */
+  detail: string;
+  /** The exact next click, in the same voice the connection rows use. */
+  action: string;
+  probe: CliAuthProbe | null;
+}
+
+/** Claude alone needs a target: the registry key and the config directory the
+ *  credential will be written into. The other two providers have exactly one
+ *  identity per box and take no input. */
+export interface CliAuthTarget {
+  slug: string;
+  config_dir: string;
+}
+
+const CLI_AUTH_ROOT = "/cli-auth";
+
+/** `?slug=` for Claude, nothing for the other two. The slug is a registry key,
+ *  never a credential — it is the only thing about this flow that is allowed
+ *  in a query string. */
+function slugQuery(slug: string | null): string {
+  return slug === null || slug.trim() === "" ? "" : `?slug=${encodeURIComponent(slug.trim())}`;
+}
+
+/**
+ * Launch a login. Kills whatever session that provider had and mints a fresh
+ * URL, because the challenge behind the old one is dead by construction.
+ */
+export async function startCliAuth(
+  provider: CliAuthProvider,
+  target: CliAuthTarget | null = null,
+): Promise<CliAuthStatus> {
+  if (target !== null) {
+    if (target.slug.trim() === "") {
+      throw new Error(`cannot start a ${provider} login without a slug to register it under`);
+    }
+    if (!target.config_dir.trim().startsWith("/")) {
+      throw new Error(
+        `cannot start a ${provider} login: the config directory must be an absolute path, got ` +
+          `${JSON.stringify(target.config_dir)}`,
+      );
+    }
+  }
+  return callConnections<CliAuthStatus>(`${CLI_AUTH_ROOT}/${provider}/start`, {
+    method: "POST",
+    body: JSON.stringify(
+      target === null ? {} : { slug: target.slug.trim(), config_dir: target.config_dir.trim() },
+    ),
+  });
+}
+
+/** Where the login is NOW. The server re-inspects the pane on every call, so
+ *  this is a measurement rather than a cached verdict. */
+export const readCliAuth = (
+  provider: CliAuthProvider,
+  slug: string | null = null,
+): Promise<CliAuthStatus> =>
+  callConnections<CliAuthStatus>(`${CLI_AUTH_ROOT}/${provider}${slugQuery(slug)}`);
+
+/**
+ * Deliver the authorization code, and answer with what the CLI actually did.
+ *
+ * The code is in the BODY. Read the block at the top of this section before
+ * touching this function: no argument of it is ever interpolated into a
+ * message, a path or a log, and the two guards below are written against
+ * `provider` and the emptiness of the field rather than against its contents.
+ */
+export async function submitCliAuthCode(
+  provider: CliAuthProvider,
+  input: { session_id: string; code: string; slug?: string | null },
+): Promise<CliAuthStatus> {
+  if (input.session_id.trim() === "") {
+    throw new Error(
+      `cannot deliver a code for ${provider}: there is no live session — press Connect first`,
+    );
+  }
+  const code = input.code.trim();
+  if (code === "") {
+    throw new Error(`cannot deliver an empty code for ${provider}`);
+  }
+  const body: { session_id: string; code: string; slug?: string } = {
+    session_id: input.session_id.trim(),
+    code,
+  };
+  if (input.slug !== undefined && input.slug !== null && input.slug.trim() !== "") {
+    body.slug = input.slug.trim();
+  }
+  return callConnections<CliAuthStatus>(`${CLI_AUTH_ROOT}/${provider}/code`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** Abandon a login: the server kills the pane and reports `idle`. */
+export const cancelCliAuth = (
+  provider: CliAuthProvider,
+  slug: string | null = null,
+): Promise<CliAuthStatus> =>
+  callConnections<CliAuthStatus>(`${CLI_AUTH_ROOT}/${provider}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(slug === null || slug.trim() === "" ? {} : { slug: slug.trim() }),
+  });

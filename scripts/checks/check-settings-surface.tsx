@@ -58,6 +58,14 @@ import type {
   AccountRegistry,
 } from "../../forge-control-web/app/desktop/settings/accountRegistry.tsx";
 import { UsagePanel } from "../../forge-control-web/app/desktop/settings/UsagePanel.tsx";
+import {
+  CliAuthConnectView,
+  type CliAuthView,
+} from "../../forge-control-web/app/desktop/settings/CliAuthConnect.tsx";
+import type {
+  CliAuthState,
+  CliAuthStatus,
+} from "../../forge-control-web/app/api-connections.ts";
 // `UsagePanel` (round 1352) calls `useQueryClient`, so it needs a real
 // provider above it or the render throws before any assertion runs — that
 // was defect #1 (round 1350's check, red since 1352 landed). Reusing the
@@ -159,7 +167,18 @@ ok(
  * So the assertion is over the PANEL'S OWN MARKUP, at first paint, before any
  * fetch resolves. Delete a `<Row>` and this goes red.
  * ──────────────────────────────────────────────────────────────────────────── */
-const EXPECTED_ROWS = ["google", "gemini-key", "gemini-ultra", "agy", "github"] as const;
+const EXPECTED_ROWS = [
+  "google",
+  "gemini-key",
+  // The row that did not exist before the CLI sign-in broker: the Gemini CLI's
+  // own Google session, as opposed to the billed API key above it. Without a
+  // row there is nothing to put a Connect button on, and "the Gemini CLI has no
+  // credentials" stays true and invisible.
+  "gemini-cli",
+  "gemini-ultra",
+  "agy",
+  "github",
+] as const;
 for (const id of EXPECTED_ROWS) {
   ok(
     `the ${id} connection has a row on the panel, not just an exported card`,
@@ -175,6 +194,10 @@ ok(
 /* And the cards themselves are inside those rows, not merely the heads. */
 ok("the agy card body is mounted under its row", accounts.includes("data-agy-card"));
 ok("the GitHub card body is mounted under its row", accounts.includes("data-github-card"));
+ok(
+  "the Gemini CLI card body is mounted under its row",
+  accounts.includes("data-gemini-cli-card"),
+);
 
 console.log("§3b the real panels render — not the round-1351 stubs");
 // Both panels fetch on mount (`useQuery` / a `useEffect` that calls the
@@ -499,12 +522,344 @@ ok(
 ok(
   // The form itself is behind a click, which this DOM-less harness cannot
   // perform; the browser harness (browser-harness-phase4.cjs add-flow) asserts
-  // the opened form. What IS assertable here is that no rendered state of this
-  // section ever offers a browser consent that does not exist.
-  "R46: nothing in the section implies a browser OAuth flow",
+  // the opened form.
+  //
+  // WHAT THIS RULE MEANS NOW. It used to read "nothing implies a browser OAuth
+  // flow", because there was none: the OS could not log a Claude account in,
+  // and a button promising otherwise would have been a fake success state. The
+  // CLI sign-in broker gives it one — the OS runs the login on a pty and pastes
+  // the code in — so the forbidden thing is no longer "a browser flow". It is
+  // the ONE-CLICK version: a promise that pressing a button finishes the job
+  // with no code to fetch and paste. The literals stay exactly as they were,
+  // because those particular phrases are still the shape of that promise, and
+  // the assertion below adds the other half — the paste step must be NAMED.
+  "R46: the section never promises a one-click consent that needs no pasted code",
   !/sign in with claude|connect with claude|authorize in your browser|oauth consent/i.test(
     claude + addForm,
   ),
+);
+ok(
+  "R46: …and where it does offer a sign-in, it says a code has to come back",
+  /paste it below|paste it back|paste the code|paste it here/i.test(claude),
+);
+
+/* ========================================================================== *
+ * §6 THE CLI SIGN-IN CONTROL — SEVEN STATES, EVERY ONE WITH A FIXTURE.
+ *
+ * `PLAN.md` §5 pins six behaviours; the server's state machine has seven
+ * states. Six of them are unreachable through `CliAuthConnect` in this harness
+ * — no effect runs, no fetch resolves, so the stateful component is frozen at
+ * `idle` forever — which is why the control is split into a pure
+ * `CliAuthConnectView` over a `CliAuthView` and a container that feeds it. The
+ * fixtures below drive the SAME view Konrad looks at, one per state, and the
+ * list of states is written out here rather than derived from the type, so a
+ * state added upstream is a red line rather than a silently unfixtured branch.
+ *
+ * Two of these assertions are not about layout at all:
+ *
+ *   THE STALE-URL CONTROL. The `expired` fixture deliberately still CARRIES a
+ *   url, which is what a server that forgot to null it would send. The box
+ *   must not render — the PKCE challenge behind that link died with the
+ *   session, and a consent page completed against it produces a code that can
+ *   only ever be rejected. The same url on the `awaiting_code` fixture DOES
+ *   render, which is what makes this a measurement rather than a coincidence.
+ *
+ *   THE SECRET CONTROL. The `awaiting_code` fixture carries a value in the
+ *   code field. It may appear EXACTLY ONCE in the markup — as the password
+ *   input's value — and in no data-attribute, no url and no title. That is the
+ *   rule the whole broker is built around, asserted at the one place in this
+ *   repo where the code and the DOM meet.
+ * ========================================================================== */
+
+console.log("§6 the CLI sign-in control — seven states, one control (PLAN §5)");
+
+const CONSENT_URL =
+  "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=fixture.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback";
+
+/** Deliberately NOT a plausible authorization code: this string exists to be
+ *  grepped for, and a realistic-looking one in a tracked file is the thing the
+ *  repo's secret scanner is for. */
+const FIXTURE_CODE = "FIXTURE-CODE-PLACEHOLDER-NOT-A-CREDENTIAL";
+
+const CLI_NOW = Date.parse("2026-08-22T12:00:00.000Z");
+
+function cliStatus(over: Partial<CliAuthStatus>): CliAuthStatus {
+  return {
+    provider: "agy",
+    state: "idle",
+    session_id: null,
+    url: null,
+    prompt: null,
+    window_seconds: 60,
+    started_at: null,
+    expires_at: null,
+    detail: "fixture detail",
+    action: "fixture action",
+    probe: null,
+    ...over,
+  };
+}
+
+function cliView(over: Partial<CliAuthView>): CliAuthView {
+  return {
+    provider: "agy",
+    status: null,
+    busy: null,
+    error: null,
+    code: "",
+    nowMs: null,
+    blocked: null,
+    ...over,
+  };
+}
+
+/** The CLI's own words when a wrong code is handed to it — verbatim, the way
+ *  the panel prints every other upstream failure (R58). */
+const WRONG_CODE_TAIL =
+  "Error: invalid_grant — the authorization code is malformed or has already been used.";
+
+const CLI_VIEWS: Record<CliAuthState, CliAuthView> = {
+  idle: cliView({}),
+  starting: cliView({ status: cliStatus({ state: "starting" }), busy: "start" }),
+  awaiting_code: cliView({
+    status: cliStatus({
+      state: "awaiting_code",
+      session_id: "11111111-2222-3333-4444-555555555555",
+      url: CONSENT_URL,
+      prompt: "Or, paste the authorization code here and press Enter:",
+      // 42 seconds left of a 60-second window: the state PLAN §5 step 2 draws.
+      started_at: "2026-08-22T11:59:42.000Z",
+      expires_at: "2026-08-22T12:00:42.000Z",
+      detail: "the CLI is waiting for the code",
+      action: "Paste the code from the Google page into the field below.",
+    }),
+    code: FIXTURE_CODE,
+    nowMs: CLI_NOW,
+  }),
+  exchanging: cliView({
+    status: cliStatus({
+      state: "exchanging",
+      session_id: "11111111-2222-3333-4444-555555555555",
+      detail: "the code has been delivered; the CLI is talking to Google",
+    }),
+    busy: "code",
+  }),
+  connected: cliView({
+    status: cliStatus({
+      state: "connected",
+      detail: "the CLI reported success and the probe agreed",
+      action: "Nothing to do.",
+      probe: {
+        ok: true,
+        identity: "konrad.schrein@gmail.com",
+        detail: "/root/.local/bin/agy models exited 0 and listed 7 models.",
+        checked_at: "2026-08-22T12:00:04.000Z",
+      },
+    }),
+  }),
+  expired: cliView({
+    status: cliStatus({
+      state: "expired",
+      // THE CONTROL: a server that forgot to null it. The client nulls it too.
+      url: CONSENT_URL,
+      detail: "the 60 s window closed before the code arrived",
+      action: "Press Relaunch — a fresh URL, with a fresh challenge behind it.",
+    }),
+    nowMs: CLI_NOW,
+  }),
+  failed: cliView({
+    status: cliStatus({
+      state: "failed",
+      detail: WRONG_CODE_TAIL,
+      action: "Press Relaunch and try again with the code from the new page.",
+    }),
+  }),
+};
+
+const CLI_STATES: readonly CliAuthState[] = [
+  "idle",
+  "starting",
+  "awaiting_code",
+  "exchanging",
+  "connected",
+  "expired",
+  "failed",
+];
+
+const NOOP_ACTIONS = {
+  connect: () => {},
+  submit: () => {},
+  cancel: () => {},
+  setCode: () => {},
+};
+
+const cliMarkup: Record<CliAuthState, string> = Object.fromEntries(
+  CLI_STATES.map((s) => [
+    s,
+    renderToStaticMarkup(<CliAuthConnectView view={CLI_VIEWS[s]} actions={NOOP_ACTIONS} />),
+  ]),
+) as Record<CliAuthState, string>;
+
+ok(
+  "every one of the seven states has a fixture and renders",
+  CLI_STATES.length === 7 && CLI_STATES.every((s) => cliMarkup[s].length > 0),
+);
+for (const s of CLI_STATES) {
+  ok(
+    `${s}: the control marks the state it is in, so a browser test can wait on it`,
+    cliMarkup[s].includes(`data-cli-auth-state="${s}"`),
+    /data-cli-auth-state="([a-z_]+)"/.exec(cliMarkup[s])?.[1],
+  );
+}
+
+// --- Step 1 / step 5: one button, two words --------------------------------
+ok(
+  "idle offers Connect",
+  cliMarkup.idle.includes('data-cli-auth-connect="agy"') && />Connect</.test(cliMarkup.idle),
+);
+for (const s of ["expired", "failed"] as const) {
+  ok(
+    `${s} offers Relaunch, not Connect — the old challenge is dead`,
+    cliMarkup[s].includes('data-cli-auth-relaunch="agy"') &&
+      !cliMarkup[s].includes('data-cli-auth-connect="agy"'),
+  );
+  ok(
+    `${s} prints the CLI's own last words, verbatim`,
+    cliMarkup[s].includes(CLI_VIEWS[s].status!.detail),
+  );
+}
+ok(
+  "…and a wrong code is rendered as the CLI wrote it, not as 'that did not work'",
+  cliMarkup.failed.includes(WRONG_CODE_TAIL) &&
+    !/that did not work\b|something went wrong|try again later/i.test(cliMarkup.failed),
+);
+
+// --- THE STALE-URL CONTROL -------------------------------------------------
+ok(
+  "awaiting_code shows the consent URL in a copyable box",
+  cliMarkup.awaiting_code.includes("data-cli-auth-url") &&
+    cliMarkup.awaiting_code.includes(CONSENT_URL.replace(/&/g, "&amp;")),
+);
+ok(
+  "expired does NOT show it — even though the fixture still carries one",
+  CLI_VIEWS.expired.status!.url === CONSENT_URL &&
+    !cliMarkup.expired.includes("data-cli-auth-url") &&
+    !cliMarkup.expired.includes("accounts.google.com"),
+);
+for (const s of ["idle", "starting", "exchanging", "connected"] as const) {
+  ok(`${s} shows no URL either — the box belongs to one state only`, !cliMarkup[s].includes("data-cli-auth-url"));
+}
+
+// --- Step 2: the field, and the countdown ----------------------------------
+ok(
+  "awaiting_code takes the code in a password field with autocomplete off",
+  /<input [^>]*data-cli-auth-code="agy"[^>]*type="password"[^>]*autocomplete="off"/i.test(
+    cliMarkup.awaiting_code,
+  ) ||
+    /<input [^>]*type="password"[^>]*autocomplete="off"[^>]*data-cli-auth-code="agy"/i.test(
+      cliMarkup.awaiting_code,
+    ),
+  cliMarkup.awaiting_code.slice(
+    Math.max(0, cliMarkup.awaiting_code.indexOf("data-cli-auth-code") - 120),
+    cliMarkup.awaiting_code.indexOf("data-cli-auth-code") + 160,
+  ),
+);
+ok(
+  "…and counts the window down in seconds",
+  cliMarkup.awaiting_code.includes("expires in 42 s"),
+  /expires in [^<]*/.exec(cliMarkup.awaiting_code)?.[0],
+);
+ok(
+  "…and offers Submit and Cancel beside it",
+  cliMarkup.awaiting_code.includes('data-cli-auth-submit="agy"') &&
+    cliMarkup.awaiting_code.includes('data-cli-auth-cancel="agy"'),
+);
+ok(
+  // Step 3: disabled, not removed — a field that vanishes under the cursor
+  // reads as a page that lost the paste.
+  "exchanging keeps the field on screen and disables it, and says who is being waited on",
+  /data-cli-auth-code="agy"[^>]*disabled/.test(cliMarkup.exchanging.replace(/\n/g, " ")) &&
+    cliMarkup.exchanging.includes("checking with the Antigravity CLI"),
+);
+ok(
+  "…and no state anywhere claims the code was merely 'submitted'",
+  !CLI_STATES.some((s) => /submitted/i.test(cliMarkup[s])),
+);
+
+// --- Step 4: connected says what the PROBE found, and paints no chip -------
+ok(
+  "connected reports the probe's identity and the probe's own words",
+  cliMarkup.connected.includes("konrad.schrein@gmail.com") &&
+    cliMarkup.connected.includes("listed 7 models"),
+);
+ok(
+  // The invariant this whole surface is built on: the chip is the row's, and
+  // the row reads it off the persisted record. If this control ever renders a
+  // connection chip, an unprobed connection can be painted green from here.
+  "…and the control paints NO row chip — not in any of the seven states",
+  !CLI_STATES.some(
+    (s) => cliMarkup[s].includes("data-connection-chip") || cliMarkup[s].includes("data-connection-state"),
+  ),
+);
+
+// --- THE SECRET CONTROL ----------------------------------------------------
+const codeHits = cliMarkup.awaiting_code.split(FIXTURE_CODE).length - 1;
+ok(
+  "the code appears EXACTLY ONCE in the rendered markup",
+  codeHits === 1,
+  `${codeHits} occurrence(s)`,
+);
+ok(
+  "…and that one occurrence is the password input's value",
+  new RegExp(`<input [^>]*type="password"[^>]*value="${FIXTURE_CODE}"`).test(
+    cliMarkup.awaiting_code,
+  ) ||
+    new RegExp(`<input [^>]*value="${FIXTURE_CODE}"[^>]*type="password"`).test(
+      cliMarkup.awaiting_code,
+    ),
+);
+ok(
+  "…and it is in no data-attribute",
+  !new RegExp(`data-[a-z-]+="[^"]*${FIXTURE_CODE}`).test(cliMarkup.awaiting_code),
+);
+ok(
+  "…and in no URL, href or title",
+  !new RegExp(`(href|src|title)="[^"]*${FIXTURE_CODE}`).test(cliMarkup.awaiting_code) &&
+    !cliMarkup.awaiting_code.includes(`code=${FIXTURE_CODE}`) &&
+    !cliMarkup.awaiting_code.includes(`?${FIXTURE_CODE}`),
+);
+ok(
+  // The anti-inert control for the three lines above: if the fixture's code
+  // never reached the markup at all they would all pass while measuring
+  // nothing. It reaches it, exactly once, and that is the whole rule.
+  "…and the control is not vacuous — the fixture really does carry a code",
+  CLI_VIEWS.awaiting_code.code === FIXTURE_CODE && FIXTURE_CODE.length > 0,
+);
+
+// --- IT IS MOUNTED, NOT MERELY EXPORTED ------------------------------------
+/* R4-gate blocker 1 again, and it is the mistake this repo has already made
+ * once with `AgyCard`: a control that exists, is tested, and is reachable from
+ * nowhere. These read the PANEL's markup, at first paint. */
+ok(
+  "the control is mounted on the agy row's card",
+  accounts.includes('data-cli-auth="agy"'),
+);
+ok(
+  "…and on the Gemini CLI row's card",
+  accounts.includes('data-cli-auth="gemini-cli"'),
+);
+ok(
+  "…and on every Claude row that is not connected",
+  ["unmeasured", "raw-undemoted", "revoked"].every((slug) =>
+    row(slug).includes('data-cli-auth="claude"'),
+  ),
+);
+ok(
+  // The discrimination: a healthy, freshly-probed login has nothing to repair,
+  // so it gets no sign-in control. Without this line the assertion above would
+  // pass on a panel that put a Connect button under every row indiscriminately.
+  "…and NOT on the freshly-probed healthy one, which has nothing to sign in",
+  !row("fresh").includes("data-cli-auth="),
 );
 
 console.log("§4 design tokens only — both themes");
@@ -519,6 +874,10 @@ for (const [name, markup] of [
   // unknown is precisely the kind of rule someone reaches for a literal to
   // express.
   ["claude-fixtures", claude],
+  // The sign-in control introduces a countdown in amber, an ok banner and a
+  // bad banner — three new colours, and a countdown is exactly the kind of
+  // thing someone expresses with a literal red.
+  ...CLI_STATES.map((s) => [`cli-auth:${s}`, cliMarkup[s]] as const),
 ] as const) {
   ok(`${name}: no hex literal`, !HEX.test(markup), HEX.exec(markup)?.[0]);
   ok(

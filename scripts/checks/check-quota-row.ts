@@ -38,10 +38,12 @@ import {
 import {
   agyConnection,
   claudeConnection,
+  geminiCliConnection,
   geminiKeyConnection,
   googleConnection,
   ultraConnection,
   type AgyFacts,
+  type GeminiCliFacts,
 } from "../../forge-control-web/app/desktop/settings/connections";
 import type { Account } from "../../forge-control-web/app/desktop/settings/accountRegistry";
 
@@ -581,6 +583,96 @@ ok(
     ultraConnection(BASE, AGY_SIGNED_IN, ULTRA_NOW).state,
     ultraConnection(BASE, AGY_CLAIMED_NO_CLOCK, ULTRA_NOW).state,
   ]).size === 3,
+);
+
+/* ── THREE GEMINI ROWS, AND WHY THAT IS NOT THE DUPLICATION THIS FILE BANS ───
+ *
+ * This check exists because Konrad found the same reading twice ("we do not
+ * need a weekly and a 5-hour limit twice"), so a round that ADDS a third row
+ * with GEMINI on it owes this file an answer. The answer is that the three are
+ * three different subjects — a billed API key, a signed-in CLI session, and a
+ * subscription reached through a different binary entirely — and the test of
+ * that claim is that no two of them can be true or false together. §1 above
+ * still forbids a second quota indicator; this forbids a second row about the
+ * SAME credential, which is a different sin and needs its own assertion.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const geminiCliFacts = (over: Partial<GeminiCliFacts["status"]>): GeminiCliFacts => ({
+  status: {
+    state: "unknown",
+    identity: null,
+    checked_at: null,
+    detail: "fixture",
+    action: "fixture action",
+    ...over,
+  },
+  recheckIntervalMs: ULTRA_INTERVAL_MS,
+});
+
+const cliUnprobed = geminiCliConnection(geminiCliFacts({}), ULTRA_NOW);
+const keyUntested = geminiKeyConnection(true, "…aB4z", null);
+ok(
+  "the Gemini CLI row and the Gemini key row are different subjects, not one row twice",
+  cliUnprobed.id !== keyUntested.id && cliUnprobed.title !== keyUntested.title,
+  `${cliUnprobed.id}/${cliUnprobed.title} vs ${keyUntested.id}/${keyUntested.title}`,
+);
+ok(
+  "…and the CLI row says on its face that it is not the key above it",
+  /not the API key/i.test(cliUnprobed.what),
+  cliUnprobed.what,
+);
+ok(
+  "…and it is not the Ultra row either — that one is the agy binary",
+  cliUnprobed.id !== ultraLoading.id && !/agy/.test(cliUnprobed.what),
+  cliUnprobed.what,
+);
+ok(
+  "an unprobed Gemini CLI row is UNKNOWN in amber, never green — the rule this file owns",
+  cliUnprobed.state === "unknown" && cliUnprobed.stateLabel !== "SIGNED IN",
+  `${cliUnprobed.state}/${cliUnprobed.stateLabel}`,
+);
+
+/* The action sentence, from `PLAN.md` §4 — quoted there, supplied here by the
+ * fixture, and asserted to arrive unaltered. The point of the pair is the
+ * second line: the row a Connect button now lives on must stop telling him to
+ * go and open a terminal. */
+const PLAN_CONNECT_ACTION =
+  "Expand this row and press Connect — a Google page shows a code, paste it back here (60 s window for agy)";
+const cliBroken = geminiCliConnection(
+  geminiCliFacts({
+    state: "broken",
+    checked_at: ultraIso(30_000),
+    detail: "/usr/bin/gemini has no credentials on this box.",
+    action: PLAN_CONNECT_ACTION,
+  }),
+  ULTRA_NOW,
+);
+ok(
+  "the broker's next-step sentence reaches the Gemini CLI row unaltered",
+  cliBroken.action === PLAN_CONNECT_ACTION,
+  JSON.stringify(cliBroken.action),
+);
+ok(
+  "…and that row no longer sends Konrad to a terminal",
+  !/at a terminal|on the VPS|ssh/i.test(cliBroken.action),
+  cliBroken.action,
+);
+/* NON-INERT: the same predicate fires on the sentence it replaced. Without
+ * this line, "does not mention a terminal" is a property of almost every
+ * string, and the assertion above would pass on an empty action. */
+ok(
+  "…and the same test FIRES on the sentence it replaced, so it measures something",
+  /at a terminal|on the VPS|ssh/i.test(
+    geminiCliConnection(
+      geminiCliFacts({
+        state: "broken",
+        checked_at: ultraIso(30_000),
+        detail: "no credentials",
+        action: "Sign in at a terminal on this box: run `/usr/bin/gemini` and follow its prompts.",
+      }),
+      ULTRA_NOW,
+    ).action,
+  ),
 );
 
 /* The surface itself: one panel, mounted by both entry points, no leftover

@@ -55,13 +55,16 @@ import {
 import {
   AgyCard,
   GeminiCard,
+  GeminiCliCard,
   GitHubCard,
   GoogleCard,
+  input,
   type GeminiKeyFacts,
 } from "./integrationCards";
 import {
   agyConnection,
   claudeConnection,
+  geminiCliConnection,
   geminiKeyConnection,
   githubConnection,
   googleConnection,
@@ -70,10 +73,12 @@ import {
   type AgyFacts,
   type ConnectionState,
   type ConnectionSummary,
+  type GeminiCliFacts,
   type GithubFacts,
   type GoogleFacts,
   type Read,
 } from "./connections";
+import { CliAuthConnect } from "./CliAuthConnect";
 import { useQuotaSnapshot } from "../quota/quotaQuery";
 
 /** Chip colours per state. `unknown` reuses the account registry's amber pair
@@ -114,6 +119,7 @@ export function ConnectionsPanel(): JSX.Element {
   // the Ultra row) and fetched once, which is what makes the two rows
   // structurally incapable of disagreeing.
   const [agy, setAgy] = useState<Read<AgyFacts>>(null);
+  const [geminiCli, setGeminiCli] = useState<Read<GeminiCliFacts>>(null);
   const [github, setGithub] = useState<Read<GithubFacts>>(null);
   // The Ultra row rides the indicator row's cache entry — an observer, not a
   // poll. See desktop/quota/quotaQuery.ts.
@@ -126,6 +132,7 @@ export function ConnectionsPanel(): JSX.Element {
    * which is the shape of defect this phase exists to remove. The failure text
    * is not lost: `summary.health` carries it, prefixed with why it is stale. */
   const agySummary = agyConnection(agy);
+  const geminiCliSummary = geminiCliConnection(geminiCli);
   const githubSummary = githubConnection(github);
 
   /* A read that FAILED carries no `status`, so it has no upstream text to show
@@ -133,6 +140,7 @@ export function ConnectionsPanel(): JSX.Element {
    * narrows the type to the arm the box was written for. The reason is not
    * lost: `summary.health` prints it, which is the whole point of item 3. */
   const agyFacts = isReadFailure(agy) ? null : agy;
+  const geminiCliFacts = isReadFailure(geminiCli) ? null : geminiCli;
   const githubFacts = isReadFailure(github) ? null : github;
 
   const [open, setOpen] = useState<string | null>(null);
@@ -223,8 +231,8 @@ export function ConnectionsPanel(): JSX.Element {
       </Row>
 
       <GroupLabel
-        text="GEMINI — two different products, wired separately"
-        note="a billed API key · and the Ultra subscription behind the agy CLI"
+        text="GEMINI — three different products, wired separately"
+        note="a billed API key · a signed-in CLI on this box · and the Ultra subscription behind the agy CLI"
       />
       <Row
         summary={geminiKeyConnection(
@@ -237,6 +245,20 @@ export function ConnectionsPanel(): JSX.Element {
         onToggle={toggle}
       >
         <GeminiCard onFacts={setGemini} />
+      </Row>
+      {/* THE ROW THAT DID NOT EXIST. `GET /gemini` is the API key; the CLI's
+          own Google session had no row at all, so there was nothing on this
+          surface to put a Connect button on and no way to see that it had
+          never been signed in. One more subject, the same renderer. */}
+      <Row
+        summary={geminiCliSummary}
+        open={open === "gemini-cli"}
+        onToggle={toggle}
+        verbatimError={
+          geminiCliSummary.state === "broken" ? geminiCliFacts?.status.detail ?? null : null
+        }
+      >
+        <GeminiCliCard onFacts={setGeminiCli} />
       </Row>
       <Row
         summary={ultraConnection(quota.data?.gemini, agy)}
@@ -372,10 +394,12 @@ export function ClaudeAccountsSection({
           {registry.actionError}
         </div>
       )}
-      {accounts.map((a) => (
+      {accounts.map((a) => {
+        const summary = claudeConnection(a, serving === a.slug);
+        return (
         <Row
           key={a.slug}
-          summary={claudeConnection(a, serving === a.slug)}
+          summary={summary}
           open={open === `claude:${a.slug}`}
           onToggle={onToggle}
           // R45: the health word never travels without its clock, and the age
@@ -390,6 +414,19 @@ export function ClaudeAccountsSection({
           // network outage without opening anything.
           verbatimError={a.last_error}
         >
+          {/* A broken or never-probed login is the state this project exists
+              for: the row used to end at "re-authenticate on the VPS". The
+              control signs it in from here, into THIS row's config directory,
+              and calls `reload()` on success so the chip above comes from the
+              re-probed registry record rather than from anything painted here.
+              A healthy row gets no control — there is nothing to repair. */}
+          {summary.state !== "connected" && (
+            <CliAuthConnect
+              provider="claude"
+              target={{ slug: a.slug, config_dir: a.config_dir }}
+              onConnected={() => void registry.reload()}
+            />
+          )}
           <AccountCard
             a={a}
             serving={serving === a.slug}
@@ -397,7 +434,8 @@ export function ClaudeAccountsSection({
             act={registry.act}
           />
         </Row>
-      ))}
+        );
+      })}
       <AddAccount registry={registry} />
       {registry.data && (
         <div
@@ -498,6 +536,15 @@ function AddAccount({ registry }: { registry: AccountRegistry }): JSX.Element {
   const canSubmit =
     slug.trim().length > 0 && dir.trim().startsWith("/") && registry.busy !== "new:create";
 
+  /* The broker's own input rule, restated here so the reason a disabled button
+   * is disabled is on screen instead of arriving as a 400 after the click.
+   * `PLAN.md` §4: slug `^[a-z0-9][a-z0-9-]{0,39}$`, config_dir absolute. */
+  const signInBlocked: string | null = !/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug.trim())
+    ? "Type a slug first — lower-case letters, digits and dashes, starting with a letter or digit."
+    : !dir.trim().startsWith("/")
+      ? "Type the absolute config directory this login should write into."
+      : null;
+
   return (
     <div
       data-add-account-form
@@ -515,15 +562,64 @@ function AddAccount({ registry }: { registry: AccountRegistry }): JSX.Element {
         Add a Claude account
       </div>
       <div style={{ color: tokens.textSoft }}>
-        This OS <strong>cannot log a Claude account in for you</strong>. There is no browser consent
-        to click here. A session is created by running the Claude CLI interactively on this VPS,
-        which writes <span className="mono">.credentials.json</span> into a config directory. This
-        form registers a directory that <strong>already holds that file</strong>, then probes it and
-        shows what the probe found.
+        A Claude session is a <span className="mono">.credentials.json</span> inside a config
+        directory, written by the Claude CLI&rsquo;s own login. There are now two ways to get one:
+        sign in <strong>from here</strong> — the OS runs that login on this box and pastes the code
+        back for you — or run it yourself at a terminal and register the directory it wrote. Either
+        way the row you end up with shows the health a <strong>probe</strong> measured, never a
+        hopeful default.
       </div>
 
       <div className="mono" style={{ fontSize: 10, color: tokens.textLabel, margin: "14px 0 5px" }}>
-        STEP 1 — RUN THIS ON THE VPS, IN A REAL TERMINAL
+        STEP 1 — NAME IT AND SAY WHERE IT LIVES
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+        <label style={{ display: "block" }}>
+          <span className="mono" style={{ fontSize: 10, color: tokens.textLabel }}>
+            SLUG
+          </span>
+          <input
+            data-add-account-slug
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder="e.g. konrad-second"
+            style={input()}
+          />
+        </label>
+        <label style={{ display: "block" }}>
+          <span className="mono" style={{ fontSize: 10, color: tokens.textLabel }}>
+            CONFIG DIRECTORY (ABSOLUTE)
+          </span>
+          <input
+            data-add-account-dir
+            value={dir}
+            onChange={(e) => setDir(e.target.value)}
+            placeholder="/root/.claude-second"
+            style={input()}
+          />
+        </label>
+      </div>
+
+      <div className="mono" style={{ fontSize: 10, color: tokens.textLabel, margin: "14px 0 5px" }}>
+        STEP 2 — SIGN IN, WITHOUT LEAVING THIS PAGE
+      </div>
+      <CliAuthConnect
+        provider="claude"
+        target={{ slug: slug.trim(), config_dir: dir.trim() }}
+        blocked={signInBlocked}
+        onConnected={() => {
+          // The broker registers the row itself on success, so there is
+          // nothing left for this form to submit — close it and let the
+          // registry's own reload put the probed row on screen.
+          setSlug("");
+          setDir("");
+          setOpen(false);
+          void registry.reload();
+        }}
+      />
+
+      <div className="mono" style={{ fontSize: 10, color: tokens.textLabel, margin: "14px 0 5px" }}>
+        OR RUN THE SAME LOGIN YOURSELF, ON THE VPS
       </div>
       <div
         style={{
@@ -557,36 +653,9 @@ function AddAccount({ registry }: { registry: AccountRegistry }): JSX.Element {
       </div>
 
       <div className="mono" style={{ fontSize: 10, color: tokens.textLabel, margin: "14px 0 5px" }}>
-        STEP 2 — REGISTER THE DIRECTORY IT WROTE
+        STEP 3 — ALREADY LOGGED IN ON THIS BOX? REGISTER THAT DIRECTORY
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-        <label style={{ display: "block" }}>
-          <span className="mono" style={{ fontSize: 10, color: tokens.textLabel }}>
-            SLUG
-          </span>
-          <input
-            data-add-account-slug
-            value={slug}
-            onChange={(e) => setSlug(e.target.value)}
-            placeholder="e.g. konrad-second"
-            style={input()}
-          />
-        </label>
-        <label style={{ display: "block" }}>
-          <span className="mono" style={{ fontSize: 10, color: tokens.textLabel }}>
-            CONFIG DIRECTORY (ABSOLUTE)
-          </span>
-          <input
-            data-add-account-dir
-            value={dir}
-            onChange={(e) => setDir(e.target.value)}
-            placeholder="/root/.claude-second"
-            style={input()}
-          />
-        </label>
-      </div>
-
-      <div style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 4, alignItems: "center" }}>
         <button
           type="button"
           data-add-account-submit
@@ -613,19 +682,9 @@ function AddAccount({ registry }: { registry: AccountRegistry }): JSX.Element {
   );
 }
 
-function input(): CSSProperties {
-  return {
-    background: tokens.bgGutter,
-    border: `1px solid ${tokens.border}`,
-    borderRadius: 7,
-    color: tokens.text,
-    display: "block",
-    fontSize: 12.5,
-    marginTop: 3,
-    padding: "6px 9px",
-    width: "100%",
-  };
-}
+/* `input()` moved to `integrationCards.tsx` and is imported above. One field
+ * style, three importers — this panel, the integration cards, and the CLI
+ * sign-in control that renders inside both. */
 
 function smallBtn(): CSSProperties {
   return {

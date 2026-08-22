@@ -59,6 +59,7 @@ import type { Account } from "../../forge-control-web/app/desktop/settings/accou
 import {
   agyConnection,
   claudeConnection,
+  geminiCliConnection,
   geminiKeyConnection,
   githubConnection,
   googleConnection,
@@ -68,6 +69,7 @@ import {
   type AgyFacts,
   type ConnectionStatusFacts,
   type ConnectionSummary,
+  type GeminiCliFacts,
   type GithubFacts,
   type GoogleFacts,
 } from "../../forge-control-web/app/desktop/settings/connections";
@@ -150,6 +152,7 @@ const VERBATIM_401 =
 const PROBE_IDENTITY = {
   google: "konrad.schrein@gmail.com",
   agy: "konrad.schrein@gmail.com (Antigravity CLI session)",
+  "gemini-cli": "konrad.schrein@gmail.com (Gemini CLI session)",
   github: "konradschreiner",
   claude: "arved@example.com",
 } as const;
@@ -371,6 +374,56 @@ const agyStale = agyConnection(
   NOW,
 );
 
+/* ── Gemini CLI ──────────────────────────────────────────────────────────────
+ *
+ * THE FIFTH ROW, and it is new rather than renamed. `gemini-key` above is the
+ * AI Studio API key; this is the CLI's own Google session, which had no row on
+ * this surface at all — so "the Gemini CLI has no credentials" was true, was
+ * invisible, and had nowhere to put a Connect button. It goes through exactly
+ * the same `summaryFromStatus` as the other four, which is what makes adding a
+ * row cost one copy object rather than one more renderer.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+const geminiCliFacts = (s: Partial<ConnectionStatusFacts>): GeminiCliFacts => ({
+  status: status(s),
+  recheckIntervalMs: INTERVAL_MS,
+});
+
+const geminiCliNever = geminiCliConnection(
+  {
+    ...geminiCliFacts({}),
+    status: claimedConnectedWithNoTimestamp(PROBE_IDENTITY["gemini-cli"]),
+  },
+  NOW,
+);
+const geminiCliOk = geminiCliConnection(
+  geminiCliFacts({
+    state: "connected",
+    identity: PROBE_IDENTITY["gemini-cli"],
+    checked_at: iso(2 * 60_000),
+    detail: "/usr/bin/gemini answered and named the signed-in account.",
+  }),
+  NOW,
+);
+const geminiCliFail = geminiCliConnection(
+  geminiCliFacts({
+    state: "broken",
+    checked_at: iso(30_000),
+    detail:
+      "/usr/bin/gemini exited 41.\n\nUPSTREAM: Please set an Auth method in your /root/.gemini/settings.json file — this session is non-interactive.",
+  }),
+  NOW,
+);
+const geminiCliStale = geminiCliConnection(
+  geminiCliFacts({
+    state: "connected",
+    identity: PROBE_IDENTITY["gemini-cli"],
+    checked_at: iso(STALE_AFTER_MS + 60_000),
+    detail: "gemini answered.",
+  }),
+  NOW,
+);
+
 /* ── GitHub ──────────────────────────────────────────────────────────────── */
 
 const githubFacts = (s: Partial<ConnectionStatusFacts>): GithubFacts => ({
@@ -420,6 +473,13 @@ const googleAnon = googleConnection(
 );
 const agyAnon = agyConnection(
   { ...agyFacts({}), status: connectedWithNoIdentity("/root/.local/bin/agy models exited 0 and listed 7 models.") },
+  NOW,
+);
+const geminiCliAnon = geminiCliConnection(
+  {
+    ...geminiCliFacts({}),
+    status: connectedWithNoIdentity("/usr/bin/gemini answered, but named no account."),
+  },
   NOW,
 );
 const githubAnon = githubConnection(
@@ -491,6 +551,18 @@ const MATRIX = [
     identity: PROBE_IDENTITY.agy,
     identityIsProbed: true,
     verbatim: "Please sign in to view available models",
+    connectedWord: "SIGNED IN",
+  },
+  {
+    id: "gemini-cli",
+    anon: geminiCliAnon,
+    never: geminiCliNever,
+    ok: geminiCliOk,
+    fail: geminiCliFail,
+    stale: geminiCliStale,
+    identity: PROBE_IDENTITY["gemini-cli"],
+    identityIsProbed: true,
+    verbatim: "this session is non-interactive",
     connectedWord: "SIGNED IN",
   },
   {
@@ -628,6 +700,7 @@ console.log("\n§4b the staleness boundary itself, ±1ms");
 for (const [id, at] of [
   ["google", (ageMs: number) => googleConnection(googleFacts({ state: "connected", identity: PROBE_IDENTITY.google, checked_at: iso(ageMs), detail: "ok" }), NOW)],
   ["agy", (ageMs: number) => agyConnection(agyFacts({ state: "connected", identity: PROBE_IDENTITY.agy, checked_at: iso(ageMs), detail: "ok" }), NOW)],
+  ["gemini-cli", (ageMs: number) => geminiCliConnection(geminiCliFacts({ state: "connected", identity: PROBE_IDENTITY["gemini-cli"], checked_at: iso(ageMs), detail: "ok" }), NOW)],
   ["github", (ageMs: number) => githubConnection(githubFacts({ state: "connected", identity: PROBE_IDENTITY.github, checked_at: iso(ageMs), detail: "ok" }), NOW)],
 ] as const) {
   ok(
@@ -739,6 +812,7 @@ const NO_ADDRESS_MAY_APPEAR = [
   CONFIGURED_ONLY,
   PROBE_IDENTITY.google,
   PROBE_IDENTITY.agy,
+  PROBE_IDENTITY["gemini-cli"],
   PROBE_IDENTITY.github,
   PROBE_IDENTITY.claude,
 ];
@@ -820,6 +894,13 @@ const READS: {
     failed: agyConnection({ read_error: READ_ERROR }, NOW),
     loading: agyConnection(null, NOW),
     connected: agyOk,
+    waitingLabel: "READING…",
+  },
+  {
+    id: "gemini-cli",
+    failed: geminiCliConnection({ read_error: READ_ERROR }, NOW),
+    loading: geminiCliConnection(null, NOW),
+    connected: geminiCliOk,
     waitingLabel: "READING…",
   },
   {
@@ -1111,9 +1192,69 @@ const absent = summaryFromStatus(
 ok("an absent substrate renders NOT CONNECTED, not BROKEN", absent.state === "absent");
 ok("…and carries the reason it is absent", absent.health === "no credential file");
 
+/* ════════════════════════════════════════════════════════════════════════════
+ * §9 THE ACTION SENTENCE, AND THE FACT THAT THIS LAYER DOES NOT WRITE IT.
+ *
+ * The two CLI rows that can now be signed in from the panel get a new next-step
+ * sentence, and it is the SERVER's (`PLAN.md` §4, `AGY_ACTIONS.broken` and
+ * `GEMINI_CLI_ACTIONS`). What is asserted here is the property this file can
+ * actually hold: whatever the broker's routes write, the renderer carries it
+ * into the row UNCHANGED — no paraphrase, no prefix, no "see below". That is
+ * why the fixture supplies the sentence and the assertion compares for
+ * equality; pinning a copy of the server's literal here would only assert that
+ * two files in different workstreams were edited on the same afternoon, and
+ * would rot the moment either was reworded (see the operator note
+ * `verbatim-payload-quote-rots`).
+ *
+ * The second assertion is the one with teeth: a row that CAN be signed in from
+ * here must not still be sending Konrad to a terminal. That is the whole point
+ * of the project, and it is exactly the sentence this surface used to end on.
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+console.log("\n§9 the next-step sentence is the server's, carried verbatim (PLAN §4)");
+
+/** Quoted from `PLAN.md` §4. */
+const CONNECT_ACTION =
+  "Expand this row and press Connect — a Google page shows a code, paste it back here (60 s window for agy)";
+
+/** The sentence it replaces — `AGY_ACTIONS.broken` as it stood before this
+ *  project. Kept as the OTHER side of the boundary, so the rule below is a
+ *  measurement rather than a restatement of the fixture. */
+const TERMINAL_ACTION =
+  "Sign in at a terminal on this box: run `/root/.local/bin/agy`, open the printed Google URL in a browser, and paste the authorization code back into the terminal within 60 seconds. There is no login subcommand and no browser flow this OS can drive for you.";
+
+const sendsToTerminal = (s: ConnectionSummary): boolean =>
+  /at a terminal|on the VPS|ssh/i.test(s.action);
+
+for (const [id, render] of [
+  ["agy", (action: string) => agyConnection(agyFacts({ state: "broken", checked_at: iso(30_000), detail: "not signed in", action }), NOW)],
+  ["gemini-cli", (action: string) => geminiCliConnection(geminiCliFacts({ state: "broken", checked_at: iso(30_000), detail: "not signed in", action }), NOW)],
+] as const) {
+  ok(
+    `${id}: the broker's next-step sentence reaches the row byte for byte`,
+    render(CONNECT_ACTION).action === CONNECT_ACTION,
+    JSON.stringify(render(CONNECT_ACTION).action),
+  );
+  ok(
+    `${id}: …and it no longer sends Konrad to a terminal for a login the panel can drive`,
+    !sendsToTerminal(render(CONNECT_ACTION)),
+    render(CONNECT_ACTION).action,
+  );
+  /* NON-INERT: the same predicate must FIRE on the sentence this one replaced,
+   * or "does not mention a terminal" is a property of every string that never
+   * mentions one — which is most of them. */
+  discriminates(
+    `${id}: "sends him to a terminal" separates the old sentence from the new one`,
+    sendsToTerminal,
+    { label: `${id}.oldTerminalAction`, summary: render(TERMINAL_ACTION) },
+    { label: `${id}.planConnectAction`, summary: render(CONNECT_ACTION) },
+  );
+}
+
 console.log(
   `\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`} — phase 4 connection states ` +
-    `(4 integrations × {null, fresh-ok, fresh-fail, stale, connected-with-no-identity}, ` +
-    `plus the failed READ over all five rows on the panel — R50/R51/R57/R58, R5-gate 3)`,
+    `(5 integrations × {null, fresh-ok, fresh-fail, stale, connected-with-no-identity}, ` +
+    `plus the failed READ over all six rows on the panel and the PLAN §4 action ` +
+    `sentence — R50/R51/R57/R58, R5-gate 3)`,
 );
 process.exit(failures === 0 ? 0 : 1);
