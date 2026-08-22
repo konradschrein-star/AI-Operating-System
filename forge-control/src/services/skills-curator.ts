@@ -62,6 +62,13 @@ const PROTECTED_SKILL_IDS = new Set([
   ...parseProtectedEnv(process.env.CURATOR_PROTECTED_IDS),
 ]);
 
+/** Same protection list the curator uses to exempt skills from archival —
+ *  reused by the toggle routes so a skill Konrad has marked load-bearing
+ *  can't be disabled (and dropped from agent context) either. */
+export function isProtectedSkill(id: string): boolean {
+  return PROTECTED_SKILL_IDS.has(id);
+}
+
 export type Lifecycle = "active" | "stale" | "archive_candidate" | "protected";
 
 export interface SkillLifecycleEntry {

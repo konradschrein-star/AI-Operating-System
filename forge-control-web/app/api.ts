@@ -946,6 +946,8 @@ export interface SkillSummary {
   source: string;
   path: string;
   risk?: string;
+  enabled: boolean;
+  protected: boolean;
 }
 
 export interface SkillDetail extends SkillSummary {
@@ -954,11 +956,20 @@ export interface SkillDetail extends SkillSummary {
   word_count: number;
 }
 
+export interface SkillsTokenEstimate {
+  enabled_count: number;
+  disabled_count: number;
+  current_tokens: number;
+  all_enabled_tokens: number;
+  savings_tokens: number;
+}
+
 export const fetchSkills = async () => {
   const r = await getJson<{
     count: number;
-    categories: { key: string; count: number }[];
+    categories: { key: string; count: number; enabled_count: number }[];
     skills: SkillSummary[];
+    token_estimate: SkillsTokenEstimate;
   }>("/skills");
   return r;
 };
@@ -969,6 +980,31 @@ export const fetchSkill = async (id: string) => {
   );
   return r.skill;
 };
+
+export interface SkillToggleResult {
+  id: string;
+  enabled: boolean;
+  entry_name: string;
+  symlink_moved: boolean;
+}
+
+export const toggleSkill = (id: string, enabled: boolean) =>
+  postJson<SkillToggleResult>(`/skills/${encodeURIComponent(id)}/toggle`, {
+    enabled,
+  });
+
+export const bulkToggleSkills = (
+  target: { ids: string[] } | { category: string },
+  enabled: boolean,
+) =>
+  postJson<{
+    enabled: boolean;
+    results: ((SkillToggleResult & { skipped: false }) | {
+      id: string;
+      skipped: true;
+      reason: string;
+    })[];
+  }>("/skills/bulk-toggle", { ...target, enabled });
 
 /* ----------------------------------------------------------------------------
  * Skills curator audit (v1.6 Tier-2 backend, v1.8 UI hook)
