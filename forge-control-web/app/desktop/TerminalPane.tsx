@@ -28,6 +28,33 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { tokens } from "../tokens";
 
 const POLL_MS = 700;
+
+/**
+ * Browser KeyboardEvent.key -> the tmux key names the backend allows.
+ *
+ * Anything NOT in here that is a single printable character is sent as literal
+ * text, which is what makes typing safe: a key never becomes a key *sequence*.
+ */
+const KEY_MAP: Record<string, string> = {
+  Enter: "Enter",
+  Backspace: "BSpace",
+  Tab: "Tab",
+  Escape: "Escape",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  Home: "Home",
+  End: "End",
+  PageUp: "PageUp",
+  PageDown: "PageDown",
+};
+
+/** Ctrl-<letter> combinations the backend accepts. */
+const CTRL_MAP: Record<string, string> = {
+  c: "C-c", d: "C-d", z: "C-z", l: "C-l", a: "C-a",
+  e: "C-e", u: "C-u", k: "C-k", r: "C-r", p: "C-p", n: "C-n",
+};
 const ROOT = "/api/proxy/terminal";
 
 interface TerminalRead {
@@ -77,6 +104,7 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [typing, setTyping] = useState(false);
   const outRef = useRef<HTMLPreElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -134,6 +162,12 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
     if (el !== null) el.scrollTop = el.scrollHeight;
   }, [content]);
 
+  /* Focus the pane once the shell exists, so the terminal is typable the moment
+   * it opens rather than after a click nobody knows to make. */
+  useEffect(() => {
+    if (sessionId !== null) outRef.current?.focus();
+  }, [sessionId]);
+
   const send = useCallback(
     async (body: Record<string, unknown>) => {
       if (sessionId === null) return;
@@ -156,6 +190,95 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
     await send({ text, submit: true });
     inputRef.current?.focus();
   }, [input, send]);
+
+  /* ── Typing straight into the pane ────────────────────────────────────────
+   *
+   * Printable characters are BUFFERED and flushed on a short timer rather than
+   * sent one request per keystroke. Fast typing would otherwise open a request
+   * per character against a surface already near its ceiling, and — worse —
+   * concurrent POSTs can arrive out of order, so "ls -la" reaches the shell as
+   * "ls -al". One flush per burst keeps the order the typist intended.
+   *
+   * A named key flushes the buffer FIRST and then sends itself, for the same
+   * reason: Enter must not overtake the characters it is meant to submit.
+   */
+  const pending = useRef("");
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(async (): Promise<void> => {
+    if (flushTimer.current !== null) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    const text = pending.current;
+    pending.current = "";
+    if (text === "") return;
+    await send({ text });
+  }, [send]);
+
+  const queue = useCallback(
+    (text: string) => {
+      pending.current += text;
+      if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+      flushTimer.current = setTimeout(() => void flush(), 45);
+    },
+    [flush],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (flushTimer.current !== null) clearTimeout(flushTimer.current);
+    };
+  }, []);
+
+  const onPaneKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (sessionId === null || !alive) return;
+
+      // Let the browser keep copy/paste and devtools.
+      if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "c" || e.key === "V" || e.key === "C")) {
+        // Ctrl-C with a selection is a copy; with none it is an interrupt, which
+        // is the same rule a real terminal emulator uses.
+        const hasSelection = (window.getSelection()?.toString() ?? "") !== "";
+        if (e.key.toLowerCase() === "v" || hasSelection) return;
+      }
+      if (e.key === "F5" || e.key === "F12") return;
+
+      if (e.ctrlKey && !e.altKey && !e.metaKey) {
+        const mapped = CTRL_MAP[e.key.toLowerCase()];
+        if (mapped !== undefined) {
+          e.preventDefault();
+          void flush().then(() => send({ key: mapped }));
+          return;
+        }
+      }
+
+      const named = KEY_MAP[e.key];
+      if (named !== undefined) {
+        e.preventDefault();
+        void flush().then(() => send({ key: named }));
+        return;
+      }
+
+      // A single printable character. Longer `key` values are modifiers and
+      // function keys, which have no literal meaning to a shell.
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        queue(e.key);
+      }
+    },
+    [sessionId, alive, flush, send, queue],
+  );
+
+  const onPanePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (sessionId === null || !alive) return;
+      e.preventDefault();
+      const text = e.clipboardData.getData("text");
+      if (text !== "") queue(text);
+    },
+    [sessionId, alive, queue],
+  );
 
   const killSession = useCallback(async () => {
     if (sessionId === null) return;
@@ -256,6 +379,12 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
         ref={outRef}
         data-terminal-output
         className="mono"
+        tabIndex={0}
+        onKeyDown={onPaneKeyDown}
+        onPaste={onPanePaste}
+        onFocus={() => setTyping(true)}
+        onBlur={() => setTyping(false)}
+        title="Click here and type — keystrokes go straight to the shell"
         style={{
           flex: 1,
           margin: 0,
@@ -268,6 +397,9 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           minHeight: 0,
+          outline: typing ? `1px solid ${tokens.accent}` : "none",
+          outlineOffset: -1,
+          cursor: "text",
         }}
       >
         {content}
@@ -280,7 +412,7 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
           className="mono"
           value={input}
           disabled={sessionId === null || !alive}
-          placeholder={alive ? "command, then Enter" : "this shell has exited"}
+          placeholder={alive ? "…or type a whole line here" : "this shell has exited"}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
