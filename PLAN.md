@@ -1,347 +1,147 @@
-# PLAN — connect-clis-from-settings
+# PLAN — aios-library-and-map
 
-Project fbfdf435 · branch project/fbfdf435 · architect round 0 · 2026-08-22
+Project `5ca15ae2-f954-4db9-bcab-64ba761db761` · branch `project/5ca15ae2` · architect round 0 · 2026-08-23
 
-## 0. Recommendation, in one paragraph
+---
 
-Build ONE pty-backed login broker in forge-control (`src/lib/cli-auth/`) that owns a
-tmux session per provider on a DEDICATED tmux socket (`tmux -L forge-cli-auth`) with
-`remain-on-exit on`, so the CLI runs with NO shell behind it: when it exits the pane
-stays readable (`#{pane_dead}=1`, final screen intact) and can never become a bash
-prompt that swallows a pasted code. Verified on this box (tmux 3.4) during planning.
-Three provider definitions (`agy`, `gemini-cli`, `claude`) are DATA — binary, args,
-env, URL regex, prompt string, success/failure/expiry markers, `window_seconds`,
-probe function — and the engine is the same code path for all three. Routes live at
-`/api/integrations/cli-auth/*` as a sub-router mounted from `routes/integrations.ts`.
-The code arrives only in a POST body, goes to the pane through a 0600 temp file via
-`load-buffer` + `paste-buffer -d`, the file is `shred -u`'d, and every string that
-leaves the lib after the paste is passed through `scrub(text, code)` first.
-`connected` is produced ONLY by the existing probe (`probeAgy`, a new
-`probeGeminiCli`, `probeAccount`) writing a `ConnectionRecord` with `checked_at` —
-so the panel's R57 invariant (unprobed = amber) holds with zero new renderer code.
-The web side adds a `CliAuthConnect` control inside each connectable row's expanded
-body, reusing the panel's `Banner`/`btn()`/`CommandBlock` pieces.
+## 0. Recommendation, in One Paragraph
 
-Rejected alternatives (one line each):
-- `exec bash` behind the CLI (the operator's scripts): keeps the pane but turns it into
-  a shell — that is exactly how a code was pasted into bash on 2026-08-19.
-- node-pty / a PTY in-process: no tmux dependency, but untested here, a native module
-  under pm2, and loses the operator's ability to `tmux attach` to see what happened.
-- A localhost callback listener + SSH tunnel: impossible — redirect_uris are
-  `codeassist.google.com/authcode` and `antigravity.google/oauth-callback`.
-- Putting the code in the secret store and polling it (authcode-feed.sh): one more
-  place the code rests on disk, and it needs a second process; the broker pastes
-  synchronously from the request handler instead.
-- A second status shape for "connecting": the panel already has
-  `state·identity·checked_at·detail·action`; the broker's GET reuses `detail`/`action`
-  words and adds only what a live session needs.
+Build **LIBRARY** as the unified **OS Artifact & Media Hub** paired with a reusable `MediaDocumentViewer` primitive (`_ui/`) that handles rendered/editable Markdown, syntax-highlighted code/text, high-res images, inline seekable MP4/WebM video, audio, and PDF across four unified roots (`vault`, `workspace`, `uploads`, `media`). Build **MAP** as the **Dual-Mode AI OS & Business Atlas** combining (1) an interactive visual Mind Map connecting Konrad's 5 commercial ventures, AI OS agent fleet, and physical infrastructure with drill-in inspector drawers, (2) direct bi-directional integration with the Obsidian Excalidraw planning canvas (`AI OS - Life & Company OS - Planning Canvas.excalidraw.md`), and (3) a live 4-column Topology Grid (PM2 processes, parsed Nginx ingress domains, storage/databases, and LLM/API integrations) backed by a new `/api/map` route. Clear `unbuilt: true` for both `library` and `map` in `nav-items.ts`, update `scripts/checks/check-phase3-placeholders.ts` to assert `EXPECTED_UNBUILT = ["journal"]`, and wire `DesktopApp.tsx`.
 
-## 1. What exists (read, not remembered)
+### Rejected Alternatives (One Line Each)
+- *A static hardcoded JSON topology inventory (`businesses-inventory.ts` model)*: Stales within days; real topology must be aggregated dynamically from live PM2, systemd, Nginx vhosts, and the vault.
+- *Building Library exclusively for Content Forge video jobs*: Superseded by `PIPELINE`; Library's core mission in the AI OS is the entire artifact & deliverables catalog across all runs, media renders, and vault files.
+- *Separate standalone viewer routes for Chat vs Library*: Duplicates rendering logic; building `MediaDocumentViewer` in `_ui/` allows both Chat and Library to share identical document and video inspection capabilities.
+- *A third-party React-Flow heavyweight canvas for Map*: Unnecessary bundle bloat; SVG/CSS hierarchical layout for the live Mind Map plus mounting built-in `CanvasPane` for freeform Excalidraw gives the best of both worlds.
+- *Allowing silent fallback on missing domain/process telemetry in `/api/map`*: Hard errors and explicit sectional isolation are OS policy; failed sub-queries report error states with retry buttons.
 
-- `forge-control/src/routes/integrations.ts` — GET `/agy|/google|/github|/gemini|/connections`,
-  POST `/agy/probe`. Every status comes from `buildConnectionStatus()` /
-  `absentConnectionStatus()` in `lib/connection-status.ts`; records persist at
-  `/opt/ai-os/.secrets/status/<id>.json` (`FORGE_CONNECTION_STATUS_DIR`). `AGY_ACTIONS.broken`
-  currently tells Konrad to sign in at a terminal — that sentence must change.
-- `lib/connection-status.ts` exports `runCommand(bin,args,{timeoutMs,env})` which already
-  spawns with `stdio ["ignore","pipe","pipe"]` and resolves on close — REUSE it for every
-  probe and every tmux invocation that is not a long-lived pane. `AGY_BIN` lives there
-  (line ~435) with `access(X_OK)`. No `CLAUDE_BIN`/`GEMINI_BIN` constants exist yet.
-- `routes/accounts.ts` + `db/claude-accounts.ts` (`claude_accounts` table, ai_os DB) +
-  `lib/accounts.ts` (`probeAccount`, `createAccount`). POST `/api/accounts` creates a row and
-  probes it. `reauth_command` = `CLAUDE_CONFIG_DIR=<dir> claude auth login --claudeai`.
-- Web: `app/api-connections.ts` (`ROOT = "/api/proxy/integrations"`), `settings/connections.ts`
-  (`summaryFromStatus`, the ONE renderer; `ConnectionSummary.action` is a string),
-  `ConnectionsPanel.tsx` (`Row` head is a single `<button>` — NOTHING interactive may be
-  nested in it; the body is kept mounted and hidden), `integrationCards.tsx`
-  (`Banner`, `btn()`, `Chip`, `CardHead`, `CommandBlock`, `StateChip`, `AgyCard` with
-  `data-agy-verify`), `accountRegistry.tsx` (`useAccountRegistry().create()`).
-- There is NO Gemini CLI row today. `GET /gemini` is the API KEY. A `gemini-cli`
-  connection id must be added end to end (status record, probe, row) or there is
-  nothing to put a Connect button on.
-- `/root/ai-os/gemini/{auth.sh,agy-login.sh,agy-watch.sh,authcode-feed.sh}`: the proven
-  primitives are `capture-pane -p -J` + grep for the live prompt, `load-buffer`/`paste-buffer`,
-  `shred -u`. Keep the log line format of `state/authcode-feed.log`:
-  `HH:MM:SS [<session>/<name>] <message>`. DEFECT TO NOT COPY: `authcode-feed.sh` logs
-  `pane now: <last pane line>` 8 s after the paste — the pane echoes the code (verified:
-  pasted `abc` shows as `Enter the code: abc`), so that line can log the code.
-- Binaries (absolute): `/root/.local/bin/agy` 1.1.18, `/usr/bin/gemini` 0.55.1 (symlink
-  into node_modules), `/usr/bin/claude` 2.1.239 (symlink), `/usr/bin/tmux` 3.4,
-  `/usr/bin/shred`. pm2's PATH has none of `/root/.local/bin`.
-- Browser proof recipe that works on this repo: `docs/plan/artifacts/phase1871/README.md`
-  (worktree `next build` with `FORGE_CONTROL_URL=<throwaway api>`, `next start -p 7780`,
-  NextAuth cookie minted with salt = cookie name, `FORGE_SESSION_COOKIE`). Single-router
-  throwaway API pattern: `scripts/checks/serve-v3-7798.ts`.
-- Unit tests: `forge-control/package.json` → `tsx --test src/lib/*.test.ts` (TOP-LEVEL
-  glob: a test under `src/lib/cli-auth/` does NOT run; put tests at `src/lib/cli-auth*.test.ts`).
-- Gate suite: `scripts/checks/gates-808.sh`, `gate "<name>" <cmd>` helper at line 53.
+---
 
-## 2. Ownership (the four questions)
+## 1. What Exists (Read, Not Remembered)
 
-| question | answer |
+1. **Placeholder Definitions & Nav Flags**:
+   - `forge-control-web/app/desktop/nav-items.ts`: `NAV` lines 111 & 122 flag `library` and `map` as `unbuilt: true`. `UNBUILT_NAV_KEYS` computes `["journal", "library", "map"]`.
+   - `scripts/checks/check-phase3-placeholders.ts`: Asserts `EXPECTED_UNBUILT = ["journal", "library", "map"]` and checks flips.
+   - `forge-control-web/app/desktop/DesktopApp.tsx`: Lines 125, 159–184, 504–506 dispatch `library` and `map` to `PlaceholderSurface`.
+2. **Files & Uploads Backend**:
+   - `forge-control/src/routes/files.ts`: Mounted at `/api/files`. Provides `/roots`, `/list`, `/read`, `/search`, `/attach`. Currently defines roots `vault` (`/opt/obsidian-vault`) and `workspace` (`/opt/ai-os/workspace`).
+   - `forge-control/src/routes/uploads.ts` & `lib/uploads-index.ts`: Mounted at `/api/uploads`. `GET /api/uploads/index` lists 84 runs with 479 screenshots in `/opt/ai-os/uploads`. `ID_RE` currently restricts to `/^[a-f0-9]{12}$/` and indexer drops non-image runs (patches, logs, JSON).
+   - `forge-control/src/routes/media.ts`: Mounted at `/api/media`. Serves `/opt/content-forge/media` with HTTP Range support for video seeking.
+3. **Canvas & Graph Machinery**:
+   - `forge-control/src/routes/canvas.ts`: Mounted at `/api/canvas`. Provides `/list`, `/file`, `/stat`, `/events`, `/patch`. Verified live with `Excalidraw/AI OS - Life & Company OS - Planning Canvas.excalidraw.md`.
+   - `forge-control-web/app/desktop/CanvasPane.tsx`: 832-line full Excalidraw editor with optimistic concurrency (mtime conflict guards) and Syncthing safety.
+   - `forge-control-web/app/desktop/MemoryGraph3D.tsx`: 405-line 3D force-directed WebGL graph.
+4. **Telemetry & Live Systems**:
+   - `/api/pm2/list` (28 processes, 22 online live), `/api/systemd/units` (97 units), `/api/system/stats` (disk, RAM).
+   - `/etc/nginx/sites-enabled/`: 19 live vhost configurations (`hub.schreinercontentsystems.com`, `schichtkommunikationstool...`, `keywordtool...`, `thumbnails...`, etc.).
+   - Vault files: `/opt/obsidian-vault/90_AI_OS/Infrastructure - Master Map.md`, `Konrad Projects Overview.md`, `Excalidraw/AI OS - Life & Company OS - Planning Canvas.excalidraw.md`.
+
+---
+
+## 2. Ownership & Four Core Questions
+
+| Question | Answer |
 |---|---|
-| what owns state | `lib/cli-auth/session.ts`: an in-memory `Map<provider, Session>` (ONE live session per provider, replaced on every start) + the tmux server `-L forge-cli-auth` as the source of truth for "is the CLI still asking". Durable outcome state is NOT here: it is the existing `ConnectionRecord` written by the probe. |
-| what dispatches work | The HTTP handlers, synchronously: `start` spawns the tmux session and polls the pane for the URL; `code` pastes and polls the pane to a terminal outcome, then runs the probe, then answers. No queue, no cron. |
-| what happens on failure | Every failure is a state (`failed`/`expired`) with the CLI's own last lines (scrubbed) in `detail`, or an HTTP 5xx when THE BROKER could not do its job (tmux missing, shred missing, pane unreadable). Nothing is retried silently. A forge-control restart loses the in-memory map; GET then reports an orphan tmux session as `failed` "broker restarted — press Relaunch", and `start` kills it. |
-| how Konrad sees it broke | The row he is already looking at: chip + `detail` verbatim, plus the `cli-auth.log` line. The probe after success is the same probe the row renders, so a lie is structurally impossible. |
+| **What owns state?** | For **Library**: The underlying VPS filesystem directories (`/opt/ai-os/uploads`, `/opt/obsidian-vault`, `/opt/content-forge/media`, `/opt/ai-os/workspace`) are the single source of truth, read via `/api/files` and `/api/uploads`. Client-side browsing state (selected root, active folder, selected file, search/filter query, edit draft) is held in `LibrarySurface` React state.<br>For **Map**: Backend aggregated state is computed dynamically by `routes/map.ts` from live host telemetry (PM2, systemd, Nginx, databases, integrations). Canvas state is stored in `.excalidraw.md` files in the Obsidian vault via `routes/canvas.ts`. Selected node/tab state is held in `MapSurface` React state. |
+| **What dispatches work?** | Handlers in `forge-control-web` dispatch queries via `@tanstack/react-query` to `/api/files/*`, `/api/uploads/*`, `/api/map`, and `/api/canvas/*`. File save operations dispatch `PUT /api/files/write` or `PUT /api/canvas/file`. |
+| **What happens on failure?** | Sectional Error Isolation: each quadrant / column / pane has its own `ErrorBoundary` and fallback card with a retry button. If Nginx parsing fails, only the Domains column fails while PM2, systemd, and Canvas continue rendering. If a file preview fails, an explicit error banner with a "Download raw file" fallback renders. |
+| **How does Konrad see it broke?** | Immediate inline error cards displaying the exact HTTP error / failure reason, with no silent empty states or swallowed exceptions. `npx tsc --noEmit` and `check-phase3-placeholders.ts` fail loudly during build if contracts break. |
 
-## 3. The broker — `forge-control/src/lib/cli-auth/`
+---
 
-### 3.1 `src/lib/cli-paths.ts` (NEW, shared — the single place a CLI path is written)
+## 3. Detailed Component Architecture
 
-```ts
-export const AGY_BIN    = "/root/.local/bin/agy";      // MUST equal connection-status.AGY_BIN (test asserts)
-export const GEMINI_BIN = "/usr/bin/gemini";
-export const CLAUDE_BIN = "/usr/bin/claude";
-export const TMUX_BIN   = "/usr/bin/tmux";
-export const SHRED_BIN  = "/usr/bin/shred";
-/** true | false | null — null when the errno is neither ENOENT nor EACCES (cannot decide). */
-export async function binPresent(bin: string): Promise<boolean | null>;
-```
-B2 makes `connection-status.ts` import `AGY_BIN` from here (one constant, two importers).
+### 3.1 Reusable Media & Document Viewer (`forge-control-web/app/desktop/_ui/MediaDocumentViewer.tsx`)
+A unified viewer component supporting:
+- **Markdown (`.md`)**: Rendered rich view via `MessageMarkdown` + togglable "Edit" mode with textarea and `Save` button (mtime-guarded save).
+- **Code / Plain Text (`.ts`, `.tsx`, `.js`, `.py`, `.json`, `.sh`, `.patch`, `.diff`, `.log`, `.txt`, `.csv`, `.yml`, `.yaml`)**: Syntax highlighting / formatted pre-wrap, line numbers, copy raw content.
+- **Images (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`)**: Full preview with zoom, dimensions, checkerboard background, copy path, download.
+- **Video (`.mp4`, `.webm`, `.mov`)**: HTML5 video player with range-request streaming, playback controls, scrubber, speed controls.
+- **Audio (`.mp3`, `.wav`, `.m4a`, `.ogg`)**: Inline audio player with playback bar.
+- **PDF (`.pdf`)**: Embedded iframe.
+- **Unsupported**: File format icon, size, path, and clear "Download" action.
 
-### 3.2 `src/lib/cli-auth/types.ts`
+### 3.2 Library Surface (`forge-control-web/app/desktop/LibrarySurface.tsx`)
+- **Top Control Bar**:
+  - Root Selector: `Run Artefacts & Uploads (/opt/ai-os/uploads)`, `Obsidian Vault (/opt/obsidian-vault)`, `Content Forge Media (/opt/content-forge/media)`, `Agent Workspace (/opt/ai-os/workspace)`.
+  - Live Counter: e.g. `84 Runs · 818 Files · 479 Screenshots`.
+  - Search Input: real-time search across file names and labels.
+  - Type Filter Chips: `All`, `Screenshots & Images`, `Videos & Media`, `Notes & Markdown`, `Patches & Diffs`, `Data & JSON`.
+  - View Mode Toggle: `Grid` (cards with thumbnails) / `List` (dense table with file sizes and timestamps).
+- **Split Explorer / Preview Pane (`ResizableSplit`)**:
+  - Left / Top: Folder tree and file list (allowing continuous browsing of neighbouring files without losing context).
+  - Right / Bottom: Deep inspection powered by `MediaDocumentViewer`.
 
-```ts
-export type CliAuthProvider = "agy" | "gemini-cli" | "claude";
-export type CliAuthState =
-  "idle" | "starting" | "awaiting_code" | "exchanging" | "connected" | "expired" | "failed";
+### 3.3 Map Surface (`forge-control-web/app/desktop/MapSurface.tsx`)
+- **Header Mode Switch**:
+  - `[🗺️ Mind Map]` (Interactive Visual Graph)
+  - `[✏️ Planning Canvas]` (Embedded Excalidraw Editor)
+  - `[📊 System Atlas]` (Live 4-Column Topology Grid)
+- **Mode 1: Visual Mind Map (`map/VisualMindMap.tsx`)**:
+  - Auto-generated hierarchical SVG / HTML node graph:
+    - Root: `Konrad AI OS & Enterprise Hub`
+    - Cluster 1: `Commercial Ventures` (TheSkyLab YouTube, Jersey/UK Directory, Axtrelis, Client SaaS ShiftSync/KeywordTool/Thumbnails).
+    - Cluster 2: `AI OS Core Fleet` (Hermes Supervisor, Agent Workers, Task Graphs, Obsidian Vault, pgvector Memory, LLM Gateways).
+    - Cluster 3: `Physical Infrastructure` (VPS1 `65.108.6.149` 28 PM2/97 Systemd/Nginx/Postgres, VPS2 `167.233.145.218`, Windows 11 VM).
+  - Clicking any node opens `MapInspectorDrawer` with live health status, port, domain, repo path, and quick action links (`[Open URL]`, `[View in Live]`, `[Open in Files/Library]`).
+- **Mode 2: Planning Canvas (`CanvasPane.tsx` Integration)**:
+  - Mounts `CanvasPane` loading `Excalidraw/AI OS - Life & Company OS - Planning Canvas.excalidraw.md` with seamless vault saving and file switching dropdown.
+- **Mode 3: System Topology Atlas (`map/TopologyAtlasGrid.tsx`)**:
+  - 4 Live Columns:
+    1. *Processes & Services* (PM2 processes + Systemd units).
+    2. *Domains & Ingress* (19 Nginx vhosts with SSL cert status and proxy targets).
+    3. *Storage & Databases* (Disk `/`, RAM, Postgres 5432/5434, Redis, Vault).
+    4. *Providers & Integrations* (Claude OAuth, Gemini Pool 5/5, ElevenLabs, GitHub).
 
-export interface ProviderDef {
-  id: CliAuthProvider;
-  bin: string;                       // from cli-paths
-  args: readonly string[];
-  env: (input: StartInput) => NodeJS.ProcessEnv;   // e.g. NO_BROWSER=true, CLAUDE_CONFIG_DIR
-  cwd: string;                       // a scratch dir, never the repo
-  urlRegex: RegExp;                  // first match on the joined pane = the URL
-  prompt: string;                    // substring that means "asking for the code NOW"
-  successMarkers: readonly string[]; // pane substrings meaning the exchange succeeded
-  failureMarkers: readonly string[]; // pane substrings meaning the code was rejected
-  expiryMarkers: readonly string[];  // e.g. "timed out"
-  window_seconds: number | null;     // measured by research; null = no expiry observed
-  exchangeTimeoutMs: number;         // how long to wait after paste before calling it failed
-  probe: (input: StartInput) => Promise<ConnectionRecord>;   // the EXISTING probe
-  onConnected?: (input: StartInput, rec: ConnectionRecord) => Promise<void>; // claude: registry row
-}
+---
 
-export interface StartInput { slug?: string; config_dir?: string }   // claude only
+## 4. Backend Endpoints & API Changes
 
-export interface CliAuthStatus {          // GET shape — SAME words as a connection row
-  provider: CliAuthProvider;
-  state: CliAuthState;
-  session_id: string | null;
-  url: string | null;                     // ONLY while state === "awaiting_code"; null otherwise, always
-  prompt: string | null;
-  window_seconds: number | null;
-  started_at: string | null;
-  expires_at: string | null;              // started_at + window, or null
-  detail: string;                         // human, scrubbed, verbatim CLI tail where useful
-  action: string;                         // the exact next click, in the panel's voice
-  probe: ConnectionRecord | null;         // set only after a post-success probe ran
-}
-```
+1. **`forge-control/src/routes/files.ts`**:
+   - Add `uploads` (`/opt/ai-os/uploads`, "Run Artefacts & Uploads") and `media` (`/opt/content-forge/media`, "Content Forge Media") to `ROOTS`.
+   - Add `PUT /write` endpoint: receives `{ root, path, content }`, verifies containment via `resolveInRoot`, and writes file safely.
+2. **`forge-control/src/routes/uploads.ts` & `src/lib/uploads-index.ts`**:
+   - Broaden `ID_RE` to allow UUIDs: `/^[a-f0-9]{12}$|^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`.
+   - Include non-image artifacts (.patch, .diff, .txt, .json, .log) in run counts and list endpoints.
+3. **`forge-control/src/lib/nginx-parser.ts` & `src/routes/map.ts`**:
+   - Parse `/etc/nginx/sites-enabled/` safely for server names, proxy passes, listen ports.
+   - Aggregate businesses, PM2 processes, systemd units, domains, databases, and canvas files into `GET /api/map` with per-section try/catch error containment.
+   - Mount in `forge-control/src/index.ts`.
+4. **`forge-control-web/app/api.ts`**:
+   - Add typed client methods: `fetchUploadRuns()`, `fetchRunArtifacts()`, `fetchMapTopology()`, `writeFileContent()`.
 
-### 3.3 `src/lib/cli-auth/tmux.ts` — the only file that spells `tmux`
+---
 
-- Socket: every call is `TMUX_BIN -L forge-cli-auth …` via `runCommand` (5 s timeout).
-- `startPane(name, bin, args, env, cwd)`:
-  `new-session -d -s <name> -x 240 -y 50 -c <cwd> -e K=V… -- <bin> <args…> \; set-option -t <name> remain-on-exit on`
-  (one tmux invocation, so the option is set before the process can exit). NO shell,
-  NO `exec bash`. `-e` sets env per session (tmux ≥3.2); the pane command is `bin` directly.
-- `capture(name)` → `capture-pane -p -J -S - -E - -t <name>` joined lines.
-- `paneState(name)` → `display-message -p -t <name> '#{pane_dead} #{pane_dead_status}'`
-  (status may lag `pane_dead` by a tick — re-read once; treat empty as unknown, never 0).
-- `pasteFile(name, path)` → `load-buffer -b <rand> <path>` then `paste-buffer -d -b <rand> -t <name>`
-  then `send-keys -t <name> Enter`. `-d` deletes the buffer; `list-buffers` is asserted
-  empty afterwards (test + runtime check → 500 if a buffer survived).
-- `kill(name)` → `kill-session -t <name>`; `exists(name)` → `has-session` (used ONLY to
-  decide whether to kill/orphan-report, NEVER as "alive").
-- Session names: `cli-auth-<provider>` (claude: `cli-auth-claude-<slug>`).
+## 5. File Ownership & Write Sets
 
-### 3.4 `src/lib/cli-auth/session.ts` — the state machine
+| Task | Role | Tier | Write Set | Brief Summary |
+|---|---|---|---|---|
+| **T1: Backend & API Foundations** | builder | standard | `forge-control/src/routes/files.ts`<br>`forge-control/src/routes/uploads.ts`<br>`forge-control/src/lib/uploads-index.ts`<br>`forge-control/src/lib/nginx-parser.ts`<br>`forge-control/src/routes/map.ts`<br>`forge-control/src/index.ts`<br>`forge-control-web/app/api.ts` | Expand file roots (`uploads`, `media`), add file write endpoint, update upload UUID regex, implement Nginx parser, mount `/api/map`, and export typed frontend API client methods. |
+| **T2: Media Viewer & Library Surface** | builder | standard | `forge-control-web/app/desktop/_ui/MediaDocumentViewer.tsx`<br>`forge-control-web/app/desktop/_ui/MediaDocumentViewer.css`<br>`forge-control-web/app/desktop/LibrarySurface.tsx`<br>`forge-control-web/app/desktop/LibrarySurface.css` | Build `MediaDocumentViewer` supporting rendered/editable markdown, code/text, images, mp4 video player, audio, PDF. Build `LibrarySurface` with 4-root selector, filter chips, grid/list toggle, and resizable split preview. |
+| **T3: Map Surface (Atlas, Mind Map, Canvas)** | builder | standard | `forge-control-web/app/desktop/MapSurface.tsx`<br>`forge-control-web/app/desktop/MapSurface.css`<br>`forge-control-web/app/desktop/map/VisualMindMap.tsx`<br>`forge-control-web/app/desktop/map/MapInspectorDrawer.tsx`<br>`forge-control-web/app/desktop/map/TopologyAtlasGrid.tsx` | Build `MapSurface` with Mind Map node graph linking businesses/agents/infra, inspector drawer, Excalidraw `CanvasPane` planning integration, and 4-column live topology atlas grid. |
+| **T4: Navigation Wiring & Gating Suite** | builder | junior | `forge-control-web/app/desktop/nav-items.ts`<br>`forge-control-web/app/desktop/DesktopApp.tsx`<br>`scripts/checks/check-phase3-placeholders.ts`<br>`evidence/library-map-verification.md` | Clear `unbuilt` flags for library and map in `nav-items.ts`, wire `LibrarySurface` and `MapSurface` in `DesktopApp.tsx`, update `check-phase3-placeholders.ts` assertions, run build/tsc, and capture screenshot evidence. |
+| **T5: Full Integration & Gating Review** | reviewer | standard | `evidence/library-map-verification.md` | Review complete diff across backend routes, Library surface, Map surface, nav wiring, placeholder checks, and screenshot proofs. |
 
-```
-start(provider, input)
-  ├ binPresent(bin) !== true  → throw BrokerError(503, "<bin> not executable")
-  ├ kill any existing session for provider (fresh PKCE: the old url is dead by construction)
-  ├ startPane(); state=starting; session_id = randomUUID()
-  ├ poll capture() every 250 ms ≤ 20 s for urlRegex
-  │    ├ match     → state=awaiting_code, url, started_at, expires_at
-  │    ├ pane dead → state=failed, detail = scrubbed tail (12 lines)
-  │    └ 20 s     → state=failed, detail="no URL within 20 s", pane tail
-  └ returns CliAuthStatus  (POST /start → 200 with it; 503 on BrokerError)
+---
 
-status(provider)                         — pure read, ALWAYS re-inspects the pane:
-  ├ no record & no tmux session          → idle
-  ├ no record & tmux session exists      → failed "broker restarted; press Relaunch" (orphan)
-  ├ awaiting_code & pane shows expiryMarker or now > expires_at+grace(5 s) → expired (url:=null)
-  ├ awaiting_code & pane dead            → failed (url:=null)
-  └ otherwise the stored state
+## 6. Definition of Done & Verification Plan
 
-submitCode(provider, session_id, code)
-  ├ session_id !== live.session_id      → 409 {state, detail:"that url is stale; relaunch"}  ← PKCE rule IN CODE
-  ├ status() !== awaiting_code           → 409 with the real status (expired/failed/idle)
-  ├ capture() must contain def.prompt NOW, else 409 "CLI is not asking" (tmux-has-session trap)
-  ├ code: trim, reject if /\s/ or length ∉ [8, 2048] → 400 (never echo it)
-  ├ mkdtemp(0700) + writeFile(0600) → pasteFile → shred -u (spawn SHRED_BIN) → rmdir
-  ├ state=exchanging; poll capture() every 300 ms ≤ exchangeTimeoutMs:
-  │    successMarker → run def.probe(); probe.ok ? connected (+onConnected) : failed
-  │                    detail="CLI reported success but the probe says: <probe.detail>"
-  │    failureMarker | pane dead with non-zero status → failed, detail = scrubbed tail
-  │    expiryMarker  → expired
-  │    timeout       → failed "no verdict within N s", scrubbed tail
-  ├ on connected/expired/failed: kill the tmux session (nothing left to read; the
-  │   scrubbed tail is already in detail)
-  └ returns the REAL outcome CliAuthStatus
-
-cancel(provider) → kill session, state=idle
-```
-- `scrub(text, code)` = `text.split(code).join("<code>")`, applied to every `detail`,
-  every log line, every thrown message AFTER the code exists. The `code` variable lives
-  only inside `submitCode`; it is never stored on the Session object.
-- Hard lifetime: a session older than 15 min is killed by `status()` → `expired`.
-- Log: `/opt/ai-os/state/cli-auth.log` (dir from `CLI_AUTH_STATE_DIR`), format
-  `HH:MM:SS [cli-auth-<provider>/<session_id8>] <message>`, messages fixed strings:
-  `started`, `url shown`, `code delivered (<n> bytes, redacted)`, `connected as <identity>`,
-  `failed: <scrubbed tail first line>`, `expired`, `cancelled`. Never a pane dump.
-
-### 3.5 `src/lib/cli-auth/providers.ts` — filled by research (§6), defaults below
-
-| field | agy | gemini-cli | claude |
-|---|---|---|---|
-| bin/args | `AGY_BIN -p "Reply with exactly: OK"` | `GEMINI_BIN` (bare TUI) | `CLAUDE_BIN auth login --claudeai` |
-| env | inherit + `PATH+=/root/.local/bin` | `NO_BROWSER=true`, unset `GEMINI_API_KEY`,`GOOGLE_API_KEY` | `CLAUDE_CONFIG_DIR=<config_dir>` |
-| urlRegex | `https://accounts\.google\.com/o/oauth2\S+` | same | research (claude.ai/oauth/authorize…) |
-| prompt | `paste the authorization code here and press Enter` | `Enter the authorization code:` | research |
-| window_seconds | 60 (re-measure) | research (null if none within the observation cap) | research |
-| probe | `probeAgy()` | `probeGeminiCli()` (NEW, B2) | `probeAccount(row)` after `createAccount` or on the existing row |
-| onConnected | — | — | create/refresh `claude_accounts` row (slug, config_dir); `login_email` stays null (configuration, not probe) |
-
-`probeGeminiCli` (B2, in `connection-status.ts`, id `gemini-cli`, persisted like agy):
-research decides the cheapest command that fails clean when signed out and yields an
-identity when signed in. Default if research finds nothing better: `GEMINI_BIN -p "Reply
-with exactly: OK" --output-format json` with `timeoutMs 90_000`, identity = the active
-email read from `~/.gemini/google_accounts.json` ONLY when the call succeeded (the call is
-the proof, the file supplies the name; `detail` says so). A timeout is `unknown`, not broken.
-
-## 4. Routes — `src/routes/cli-auth.ts`, mounted `r.route("/cli-auth", cliAuth)` inside integrations.ts
-
-| verb | path | body | answer |
-|---|---|---|---|
-| GET | `/cli-auth` | — | `{ providers: CliAuthStatus[] }` all three (claude: one per live session, plus `{provider:"claude", state:"idle"}`) |
-| GET | `/cli-auth/:provider` | — | `CliAuthStatus` (claude: `?slug=`) |
-| POST | `/cli-auth/:provider/start` | claude: `{slug, config_dir}` (config_dir absolute, slug `/^[a-z0-9][a-z0-9-]{0,39}$/`) | `CliAuthStatus` 200; 400 bad input; 503 BrokerError; 409 if another session for this provider is `exchanging` |
-| POST | `/cli-auth/:provider/code` | `{session_id, code}` (claude: `+slug`) | `CliAuthStatus` with the REAL terminal state; 400/409 as §3.4 |
-| POST | `/cli-auth/:provider/cancel` | claude: `{slug}` | `CliAuthStatus` idle |
-
-Provider param not in the three → 404 `{error}`. Bodies > 16 KiB → 413 (the code is ≤ 2 KiB).
-No `code` field is ever read from a query string. Hono's request logger in index.ts logs
-method+path only — the builder verifies it does not log bodies.
-
-Also in B3: `GET /gemini-cli`, `POST /gemini-cli/probe`, and `gemini-cli` in `/connections`
-(same three-function pattern as agy). Wording: `AGY_ACTIONS.broken` and the new
-`GEMINI_CLI_ACTIONS.{broken,absent-with-binary}` say "Expand this row and press Connect —
-a Google page shows a code, paste it back here (60 s window for agy)". Google's own row and
-GitHub are untouched.
-
-## 5. Web — workstream `web`
-
-Files: `app/api-connections.ts` (+ `CliAuthStatus` type mirror, `startCliAuth`,
-`readCliAuth`, `submitCliAuthCode`, `cancelCliAuth` — bodies JSON, never query strings),
-`settings/connections.ts` (+ `GEMINI_CLI_COPY`, `geminiCliConnection()` through
-`summaryFromStatus`, no other rule changes), `settings/CliAuthConnect.tsx` (NEW),
-`settings/integrationCards.tsx` (+ `GeminiCliCard` modelled on `AgyCard`, with
-`data-gemini-cli-*` markers; `AgyCard` and `GeminiCliCard` render `<CliAuthConnect>` at the
-top of the card when the row is not `connected`), `ConnectionsPanel.tsx` (+ the
-`gemini-cli` Row under the GEMINI group; `AddAccount` gains a "Sign in here" path that
-renders `<CliAuthConnect provider="claude" slug dir>` in place of STEP 1, keeping the
-manual command below it as the fallback; `AccountCard` broken state gets the same control
-with the row's `config_dir`).
-
-`CliAuthConnect` behaviour (pinned — do not redesign):
-1. Button `Connect` (`data-cli-auth-connect=<provider>`). On click, SYNCHRONOUSLY
-   `const tab = window.open("", "_blank")` (popup blockers allow it inside the click),
-   then POST start; on `awaiting_code` set `tab.location = url`; on anything else
-   `tab.close()` and show `detail` in a `Banner tone="bad"`.
-2. State `awaiting_code`: URL in a `CommandBlock`-style copyable box
-   (`data-cli-auth-url`), a countdown `expires in 42 s` when `window_seconds` is set,
-   one `<input data-cli-auth-code type="password" autoComplete="off">`, `Submit code`,
-   `Cancel`. Poll GET every 2 s while `awaiting_code|exchanging`; stop otherwise.
-3. `exchanging`: input disabled, "checking with <provider>…".
-4. `connected`: `Banner tone="ok"` with `probe.identity`/`detail`; call the card's
-   existing refresh (`onFacts` path / `registry.load`) so the ROW chip re-renders from the
-   persisted record — the control never paints the chip itself.
-5. `expired` / `failed`: `Banner tone="bad"` with `detail` VERBATIM, button `Relaunch`
-   (`data-cli-auth-relaunch`) which is step 1 again — and the old URL box is gone (server
-   returns `url:null`; the client also clears it).
-6. Any fetch rejection → the same `Banner tone="bad"` with the verbatim error. No
-   "submitted" toast exists anywhere.
-No new tokens, no new design language; `btn()`, `Banner`, `input()` from the panel.
-
-## 6. Research (all depends_on [], workstream main, tier junior) — measured, written to `docs/plan/cli-auth/evidence-<provider>.md`
-
-Each researcher uses the tmux recipe in §3.3 by hand (`tmux -L forge-cli-auth-research`),
-records exact prompt strings, the URL regex that matched, `window_seconds` (wall clock from
-URL shown to expiry marker, or "no expiry within N min" with the capture), what the CLI
-prints for a deliberately WRONG code (verbatim), the exit status via `pane_dead_status`,
-and the cheapest signed-out probe. Nobody completes a Google/Anthropic sign-in. Gemini's
-observation cap: 45 min. Kill your sessions when done.
-
-## 7. Tests and checks
-
-- `src/lib/cli-auth.test.ts` (B1): drives the engine against
-  `scripts/checks/fixtures/cli-auth-mock.sh` (a bash CLI: prints a URL with a random
-  nonce, prompts `Enter the authorization code: `, accepts only `MOCK-OK`, exits 2 on
-  anything else, prints `timed out` after `MOCK_WINDOW` s). Cases: url state; wrong code →
-  failed with verbatim tail; right code → `connected` ONLY when the injected probe returns
-  ok (and `failed` when the probe says no even though the CLI succeeded); expiry →
-  `expired` + url null + a relaunch yields a DIFFERENT url and the old session_id is 409;
-  no tmux buffer survives; the CANARY check — paste `CANARY-<uuid>` and assert the string
-  appears in NO response field, NOT in cli-auth.log, NOT in `list-buffers`, NOT on disk
-  under the temp dir. The mock provider is registered ONLY when `CLI_AUTH_MOCK_BIN` is set.
-- `scripts/checks/check-cli-auth-code-leak.ts` (B4): static scan of
-  `src/lib/cli-auth/**`, `src/lib/cli-paths.ts`, `src/routes/cli-auth.ts` for (a) any
-  `console.*`/`log(`/`appendFile(` call whose argument expression mentions `code`,
-  (b) `send-keys` with anything but a literal `Enter`, (c) `c.req.query(` anywhere,
-  (d) `detail:`/`message:` assignments inside `submitCode` not wrapped in `scrub(`,
-  (e) `JSON.stringify(session)`; plus it RUNS the canary case above. Registered in
-  `gates-808.sh` with `gate`. Per `do-not-soften-check-secret-scan`: the check's own
-  forbidden strings live in variables, never in prose the check then reads.
-- `scripts/checks/check-cli-auth-panel.mjs` (B7): Playwright against a throwaway stack per
-  phase1871 README — throwaway forge-control from THIS worktree on a spare port (mount
-  `accounts`, `integrations` only), `FORGE_CONTROL_URL` baked into a worktree `next build`,
-  `FORGE_CONNECTION_STATUS_DIR` pointed at a temp dir so no live record is touched.
-  Drives the REAL agy row with the REAL agy binary (no sign-in is completed): Connect →
-  shot `url-state`; submit `WRONG-CODE-<uuid>` → shot `wrong-code-failed` (banner shows
-  agy's verbatim words); Connect again → wait past `window_seconds` → shot `expired`;
-  Relaunch → assert the new URL ≠ the old → shot `relaunched`. Shots to
-  `/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png`, then Read back. Traps already
-  filed: `waitUntil:"commit"`, `__Secure-` cookie needs `secure:true`, rebuild with the
-  default URL before finishing, viewport height not fullPage.
-
-## 8. Task graph (seeded by the architect; ids in the forge-control project)
-
-```
-R1 researcher gemini-cli   []                main  junior
-R2 researcher agy          []                main  junior
-R3 researcher claude       []                main  junior
-B1 builder    engine       []                main  standard   cli-paths.ts, cli-auth/{types,tmux,session,log,index}.ts, cli-auth.test.ts, fixtures/cli-auth-mock.sh
-B2 builder    providers    [R1,R2,R3,B1]     main  standard   cli-auth/providers.ts, connection-status.ts, cli-auth-providers.test.ts
-B3 builder    routes       [B2]              main  standard   routes/cli-auth.ts, routes/integrations.ts
-B4 builder    leak check   [B3]              main  junior     check-cli-auth-code-leak.ts, gates-808.sh
-B5 builder    web          []                web   standard   api-connections.ts, connections.ts, CliAuthConnect.tsx, integrationCards.tsx, ConnectionsPanel.tsx, check-connection-states.ts, check-quota-row.ts
-B6 builder    integrate web→main [B5,B4]     main  junior     (B5's write_set; STOP on conflict)
-B7 builder    browser proof [B6]             main  standard   check-cli-auth-panel.mjs, docs/plan/cli-auth/README.md
-B8 reviewer   whole diff   [B1..B7]          main  standard
-```
-
-## 9. Decisions the brief did not make (reported to the manager chat)
-
-- The Connect control sits at the TOP of the expanded card, not on the row head: the head
-  is one `<button>` and nested interactive content is invalid HTML. The head's `action`
-  sentence says "expand this row and press Connect".
-- A `gemini-cli` connection is a NEW row (status id `gemini-cli`, under the GEMINI group),
-  distinct from the API-key row.
-- `window.open` is called synchronously in the click and re-targeted after the POST.
-- Sessions are in-memory; a forge-control restart mid-login is reported as `failed`
-  with a Relaunch, never resumed.
+1. **TypeScript & Build Gates**:
+   ```bash
+   cd forge-control && pnpm install --frozen-lockfile --prod=false
+   cd ../forge-control-web && pnpm install --frozen-lockfile --prod=false
+   npx tsc --noEmit
+   npm run build
+   ```
+2. **Placeholder Assertion Check**:
+   ```bash
+   cd forge-control && ./node_modules/.bin/tsx --tsconfig ../tsconfig.checks.json ../scripts/checks/check-phase3-placeholders.ts
+   ```
+3. **Live API Verification**:
+   - `curl -s http://127.0.0.1:7700/api/files/roots` → includes `vault`, `workspace`, `uploads`, `media`.
+   - `curl -s http://127.0.0.1:7700/api/map` → returns aggregated topology with businesses, domains, processes, storage.
+   - `curl -s http://127.0.0.1:7700/api/uploads/index` → returns 84+ runs including UUID directories and non-image artifacts.
+4. **Visual Screenshots**:
+   - Capture `library` surface on desktop (1440px) and verify artifact grid, media player, and markdown viewer.
+   - Capture `map` surface in both Mind Map, Canvas, and Topology Atlas modes.
+   - Demonstrate `MediaDocumentViewer` rendering a real `.mp4` video, a real `.md` file, and a real `.png` image from the VPS.
