@@ -128,6 +128,12 @@ export interface SearchHit {
   /** Retrieval prior applied — see lib/memory-ranking.ts. Absent on graph-lane
    *  hits, whose score is synthetic rather than cosine-derived. */
   note_kind?: NoteKind;
+  /** ISO timestamp for a hit with no file behind it (`chat://…`), taken from
+   *  the indexer's `metadata.ts`. Consumers that date a hit by stat'ing its
+   *  path get `null` for a pseudo-URI and would print "date unknown" beside a
+   *  conversation whose date is perfectly well known. Absent for vault notes,
+   *  whose mtime is the more current answer. */
+  source_ts?: string;
   /** Ranking provenance, so a bad result set can be diagnosed from the API
    *  response alone instead of by re-deriving the maths. */
   explain?: RankExplain;
@@ -865,6 +871,7 @@ export async function searchMemory(
      * writes the run's creation time to `metadata.ts` precisely so it can be
      * supplied here. Left undefined for vault notes, which keep their mtime. */
     mtime_ms: pseudoPathTimestamp(row.source_path, row.source_ts),
+    source_ts: row.source_ts,
     title: row.title,
     content: row.content,
   }));
@@ -881,6 +888,9 @@ export async function searchMemory(
     score: row.score,
     chunk_index: row.chunk_index,
     note_kind: row.explain.kind,
+    ...(row.source_path.includes("://") && row.source_ts
+      ? { source_ts: row.source_ts }
+      : {}),
     explain: row.explain,
   }));
 }
