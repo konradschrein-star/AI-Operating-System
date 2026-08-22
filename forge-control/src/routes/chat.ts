@@ -1429,6 +1429,24 @@ r.post("/archive-all", async (c) => {
  *  appendMessage both use `thread = thread || …`), so checking the tail
  *  entry is enough to catch the pathological case — a rewrite that keeps
  *  the length identical — without hashing the whole array every second. */
+/** The context reading the ctx gauge would draw from a usage blob.
+ *
+ *  MUST match `downloadedTokens` in forge-control-web's context-window.ts:
+ *  input_tokens PLUS cache_read_input_tokens. A cached prefix is still context
+ *  the model carries, and on a warm turn it is nearly ALL of it — measured,
+ *  `input_tokens` came back as 2 on a chat holding 24k of cache read. Compare a
+ *  post-compaction estimate against that 2 and the never-raise guard clamps the
+ *  gauge to zero: the reassuring kind of wrong. */
+function priorContextTokens(metadata: unknown): number {
+  const running = (metadata as Record<string, unknown> | null)?.usage_running as
+    | Record<string, unknown>
+    | undefined;
+  if (!running) return Number.POSITIVE_INFINITY;
+  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
+  const sum = n(running.input_tokens) + n(running.cache_read_input_tokens);
+  return sum > 0 ? sum : Number.POSITIVE_INFINITY;
+}
+
 function prefixKey(thread: ThreadEntry[], len: number): string {
   if (len <= 0) return "0";
   const e = thread[len - 1];
@@ -1720,17 +1738,8 @@ r.post("/:id/compact", async (c) => {
      * context. Take the lesser of the two. On the fat chats this command exists
      * for, the estimate is the smaller number by orders of magnitude and this
      * guard never binds. */
-    const priorTokens = Number(
-      (
-        ((current.metadata as Record<string, unknown> | null)?.usage_running as
-          | Record<string, unknown>
-          | undefined)?.input_tokens ?? Number.POSITIVE_INFINITY
-      ),
-    );
-    const estTokens = Math.max(
-      1,
-      Math.min(Math.round(keptChars / 4), Number.isFinite(priorTokens) ? priorTokens : Infinity),
-    );
+    const priorTokens = priorContextTokens(current.metadata);
+    const estTokens = Math.max(1, Math.min(Math.round(keptChars / 4), priorTokens));
     await teamPool.query(
       `UPDATE runs
           SET metadata = (coalesce(metadata,'{}'::jsonb) - 'cc_session_id')
@@ -1811,17 +1820,8 @@ r.post("/:id/compact", async (c) => {
   );
   /* Same guard as the short-thread branch: compaction may lower the reading,
    * never raise it. */
-  const priorRunning = Number(
-    (
-      ((current.metadata as Record<string, unknown> | null)?.usage_running as
-        | Record<string, unknown>
-        | undefined)?.input_tokens ?? Number.POSITIVE_INFINITY
-    ),
-  );
-  const estTokens = Math.max(
-    1,
-    Math.min(Math.round(keptChars / 4), Number.isFinite(priorRunning) ? priorRunning : Infinity),
-  );
+  const priorRunning = priorContextTokens(current.metadata);
+  const estTokens = Math.max(1, Math.min(Math.round(keptChars / 4), priorRunning));
 
   const { rows } = await teamPool.query(
     `UPDATE runs
