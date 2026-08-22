@@ -217,6 +217,8 @@ export const fetchLimitHits = async (days = 14): Promise<LimitHit[]> => {
 /* ----------------------------------------------------------------------------
  * Inbox
  * -------------------------------------------------------------------------- */
+export type InboxStatusFilter = "open" | "resolved" | "all";
+
 interface InboxApiItem {
   id: string;
   type: string;
@@ -230,10 +232,49 @@ interface InboxApiItem {
     action_id?: string;
   }[];
   age: string;
+  /** Present only on rows a `resolved`/`all` fetch pulled in. */
+  resolved_at?: string;
+  resolved_by?: string;
+  resolution?: Record<string, unknown>;
 }
 
+/** History item — an InboxItem that carries how/when it was resolved.
+ *  routes/inbox.ts `?status=resolved|all` is the only source of these. */
+export interface InboxHistoryItem extends InboxItemUi {
+  resolved_at: string;
+  resolved_by: string;
+  resolution: Record<string, unknown>;
+}
+
+/** Zero-arg on purpose: existing call sites pass this function itself as a
+ *  react-query `queryFn`, which invokes it with a QueryFunctionContext
+ *  argument — an optional param here would collide with that positional
+ *  call and fail to typecheck. Status filtering for the Inbox surface's
+ *  tabs lives in the dedicated functions below instead. */
 export const fetchInbox = async (): Promise<InboxItemUi[]> => {
   const r = await getJson<{ count: number; items: InboxApiItem[] }>("/inbox");
+  return r.items;
+};
+
+export const fetchInboxByStatus = async (
+  status: InboxStatusFilter,
+  limit?: number,
+): Promise<InboxItemUi[]> => {
+  const qs = new URLSearchParams({ status });
+  if (limit !== undefined) qs.set("limit", String(limit));
+  const r = await getJson<{ count: number; items: InboxApiItem[] }>(
+    `/inbox?${qs}`,
+  );
+  return r.items;
+};
+
+/** Resolved history — Inbox surface's "History" tab. */
+export const fetchInboxHistory = async (
+  limit = 50,
+): Promise<InboxHistoryItem[]> => {
+  const r = await getJson<{ count: number; items: InboxHistoryItem[] }>(
+    `/inbox?status=resolved&limit=${limit}`,
+  );
   return r.items;
 };
 
