@@ -205,3 +205,57 @@ renders it as "excluded: N excalidraw". The key name is kept deliberately —
 1–5 land, every drawing with content is now classified `unexplained` with a
 detail naming `km-indexer.js:29`. That is the defect being fixed, made visible.
 It returns to zero when the indexer is patched, not before.
+
+## 4. For the graph and plan tasks (PLAN.md items 2 and 3)
+
+**The typed graph already exists — do not re-derive it.**
+`lib/excalidraw-extract.ts` exports `DrawingGraph` (`nodes`, `edges`, `legend`,
+`wikilinks`, `stats`), `buildGraph(drawing)` for a live `ExcalidrawDrawing`
+already in memory, and `extractDrawing(path, raw)` for a file. Nodes carry
+`role`, `parentId`, `isParentTitle`, `fill`, `stroke`, `strokeStyle`, `link`;
+edges carry `fromId`/`toId`/`fromLabel`/`toLabel`, `directed`, `bidirectional`,
+`label`, and are counted in `stats.unresolvedEndpoints` when an endpoint is
+bound to nothing. `excalidraw-graph.ts` should import this and add whatever it
+still needs (cycles, topological order, workstreams), not parse elements again.
+
+**PLAN.md item 2 says: "Classifies nodes into lifecycle statuses (built,
+partial, planned, gap, blocked, proposal) from Konrad's palette." Do not
+implement that as a fixed table.** Measured on the real drawings, the palette
+does not mean one thing:
+
+- `Stealth Uploader - System Map` states its own key on the canvas:
+  *"green = solid path · orange = highest-risk · dashed arrow = reads/drives"*.
+  Green there means "we know this works", not "built".
+- `Warming Timeline` uses blue/orange/green for **phases 1/2/3 in time order** —
+  the same greens, a completely different meaning.
+- `Planning Canvas` uses eight different fills for eight **subsystems**, and red
+  outline for **open questions**, with no status axis at all.
+
+A fixed green→built table would read the Warming Timeline as "phase 3 is done"
+and the Planning Canvas as "the data layer is blocked". That is exactly the
+"drawing that can be read multiple ways, silently resolved one way" failure
+Konrad asked to be rid of.
+
+What the extractor does instead, and what the plan engine should build on:
+`graph.legend` carries the drawing's own key **verbatim** when it states one
+(detected on 3 of the 9 real drawings), and every node reports `fill` as a
+colour NAME. So the plan can say *"three items are orange; this drawing's legend
+says orange = highest-risk"* — checkable — or, where there is no legend,
+*"four items are orange and this drawing does not say what orange means —
+which is it?"*, which is the ask the brief demands.
+
+## 5. Undeclared writes in this round, disclosed
+
+- `forge-control/src/lib/memory-index-health.test.ts` — the declared path
+  `index-health.test.ts` **does not exist**; this is index-health's real test
+  file. Changing the classifier without it leaves the suite red.
+- `forge-control/src/lib/vault-fixture.ts` — two comment lines that named
+  `excluded_extension` as the classification its `Draw.excalidraw.md` fixture
+  proves. Comments only; the fixture bytes are untouched.
+- `forge-control/src/lib/excalidraw-extract-cli.ts` — new, the km-indexer bridge
+  (§2). Without it the indexer needs a second implementation of the extractor.
+- `HANDOFF.md` — this file.
+- `PLAN.md` — **not authored by me.** It was already modified-uncommitted in the
+  worktree when this task started (the architect writes it after the lane
+  branches) and a `git add -A` in commit `f77d293` swept it in. Its content is
+  the architect's, unedited.
