@@ -1795,3 +1795,282 @@ export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
 
 export const fetchDayStats = (days = 90): Promise<DayStats> =>
   getJson<DayStats>(`/daily/stats?days=${days}`);
+
+/* ----------------------------------------------------------------------------
+ * LIBRARY — the run-artefact store and the file write path.
+ *
+ * `/uploads/index` is a directory sweep over /opt/ai-os/uploads; every run
+ * that ever photographed a page or dropped a patch has a row there. `count`
+ * is IMAGES (the camera strip's contract); the library reads `file_count`.
+ * -------------------------------------------------------------------------- */
+
+export interface UploadRunSummary {
+  id: string;
+  /** Images only — what the chat's camera indicator counts. */
+  count: number;
+  image_count: number;
+  artifact_count: number;
+  file_count: number;
+  latest_ts: string | null;
+}
+
+export type RunArtifactKind = "image" | "artifact";
+
+export interface RunArtifact {
+  name: string;
+  /** Server-relative url (`/api/uploads/<id>/<name>`) — prepend PROXY_ROOT
+   *  via `runArtifactUrl` before putting it in a src. */
+  url: string;
+  label: string | null;
+  /** Compact stamp from the filename convention (`20260823T0110Z`), if any. */
+  ts: string | null;
+  size: number;
+  mtime: string;
+  kind: RunArtifactKind;
+}
+
+/** Every upload/run directory, newest first. */
+export const fetchUploadRuns = async (): Promise<UploadRunSummary[]> => {
+  const r = await getJson<{ runs: UploadRunSummary[] }>("/uploads/index");
+  if (!Array.isArray(r.runs)) {
+    throw new Error("/uploads/index returned no `runs` array");
+  }
+  return r.runs;
+};
+
+/**
+ * One run directory's files. `include: "all"` adds patches, logs, JSON and
+ * transcripts to the images — the library wants all of them, the camera strip
+ * must stay on the default because it renders every entry as an `<img>`.
+ */
+export const fetchRunArtifacts = async (
+  runDirId: string,
+  include: "images" | "all" = "all",
+): Promise<RunArtifact[]> => {
+  const r = await getJson<{ shots: RunArtifact[] }>(
+    `/uploads/${encodeURIComponent(runDirId)}/shots?include=${include}`,
+  );
+  if (!Array.isArray(r.shots)) {
+    throw new Error(`/uploads/${runDirId}/shots returned no \`shots\` array`);
+  }
+  return r.shots;
+};
+
+/** Browser-usable url for a run artefact (the server url is API-relative). */
+export const runArtifactUrl = (runDirId: string, name: string): string =>
+  `${ROOT}/uploads/${encodeURIComponent(runDirId)}/${encodeURIComponent(name)}`;
+
+/** Raised when /files/write is refused because the file moved on disk since
+ *  it was loaded (Obsidian, Syncthing, or an agent wrote it first). Mirrors
+ *  CanvasConflictError — the vault never merges, so the caller must offer a
+ *  reload instead of clobbering the other writer. */
+export class FileConflictError extends Error {
+  mtime: number;
+  constructor(detail: string, mtime: number) {
+    super(detail);
+    this.name = "FileConflictError";
+    this.mtime = mtime;
+  }
+}
+
+export interface FileWriteResult {
+  ok: true;
+  root: string;
+  path: string;
+  size: number;
+  /** ms since epoch — pass back as `baseMtime` on the next save. */
+  mtime: number;
+  created: boolean;
+}
+
+/**
+ * Save an edited text file back to one of the file roots.
+ *
+ * Always pass `baseMtime` (the mtime the content was loaded with) for a file
+ * that already exists: without it the write is last-writer-wins, and vault
+ * notes are edited from Obsidian and by agents at the same time.
+ */
+export const writeFileContent = async (input: {
+  root: string;
+  path: string;
+  content: string;
+  baseMtime?: number;
+}): Promise<FileWriteResult> => {
+  const res = await fetch(`${ROOT}/files/write`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 409) {
+    const b = (await res.json().catch(() => ({}))) as {
+      detail?: string;
+      mtime?: number;
+    };
+    throw new FileConflictError(
+      b.detail ?? `${input.path} changed on disk since you opened it.`,
+      b.mtime ?? 0,
+    );
+  }
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b.error ?? `${res.status} ${res.statusText} on /files/write`);
+  }
+  return (await res.json()) as FileWriteResult;
+};
+
+/* ----------------------------------------------------------------------------
+ * MAP — the topology aggregator (/api/map).
+ *
+ * Every section is independently error-isolated server-side: the endpoint
+ * answers 200 with `ok: false` on the sections that failed, so a dark nginx
+ * parse never blanks the process list. Render per-section errors; never
+ * collapse a failed section into an empty one.
+ * -------------------------------------------------------------------------- */
+
+export interface MapSectionOk<T> {
+  ok: true;
+  checked_at: string;
+  source: string;
+  data: T;
+}
+
+export interface MapSectionFailed {
+  ok: false;
+  checked_at: string;
+  source: string;
+  error: string;
+}
+
+export type MapSection<T> = MapSectionOk<T> | MapSectionFailed;
+
+export interface MapBusinessProject {
+  name: string;
+  status: string;
+  type: string;
+  deployed: string;
+  /** null when `deployed` is not a filesystem path on this box. */
+  path_exists: boolean | null;
+}
+
+export interface MapBusinesses {
+  note: string;
+  note_mtime: string;
+  projects: MapBusinessProject[];
+  active: number;
+  archived: number;
+}
+
+export interface MapProcess {
+  name: string;
+  pid: number | null;
+  status: string;
+  restarts: number;
+  uptime_ms: number;
+  cpu_pct: number;
+  memory_bytes: number;
+  cwd: string | null;
+  script: string | null;
+}
+
+export interface MapProcesses {
+  count: number;
+  online: number;
+  processes: MapProcess[];
+}
+
+export interface MapUnit {
+  name: string;
+  active: string;
+  sub: string;
+  description: string;
+}
+
+export interface MapUnits {
+  count: number;
+  units: MapUnit[];
+}
+
+export interface MapDomain {
+  domain: string;
+  file: string;
+  ports: number[];
+  ssl: boolean;
+  upstreams: string[];
+  roots: string[];
+  ssl_expires_at: string | null;
+  ssl_days_left: number | null;
+  ssl_error: string | null;
+}
+
+export interface MapDomains {
+  dir: string;
+  files: number;
+  count: number;
+  domains: MapDomain[];
+  errors: { file: string; error: string }[];
+}
+
+export interface MapDisk {
+  mount: string;
+  total_bytes: number;
+  used_bytes: number;
+  available_bytes: number;
+  used_pct: number;
+}
+
+export interface MapStorage {
+  disks: MapDisk[];
+  memory: {
+    total_bytes: number;
+    used_bytes: number;
+    available_bytes: number;
+    used_pct: number;
+  };
+  datastores: {
+    name: string;
+    port: number;
+    listening: boolean;
+    process: string | null;
+  }[];
+  listeners: { port: number; process: string | null; address: string }[];
+}
+
+export interface MapCanvas {
+  path: string;
+  name: string;
+  folder: string;
+  mtime: string;
+  size: number;
+}
+
+export interface MapCanvases {
+  count: number;
+  canvases: MapCanvas[];
+}
+
+export interface MapTopology {
+  generated_at: string;
+  host: { name: string; ip: string };
+  /** Names of the sections that failed this fetch — render a retry for each. */
+  failed_sections: string[];
+  sections: {
+    businesses?: MapSection<MapBusinesses>;
+    processes?: MapSection<MapProcesses>;
+    units?: MapSection<MapUnits>;
+    domains?: MapSection<MapDomains>;
+    storage?: MapSection<MapStorage>;
+    canvases?: MapSection<MapCanvases>;
+  };
+}
+
+export type MapSectionName = keyof MapTopology["sections"];
+
+/** The whole map, or just the named sections (a per-section retry button). */
+export const fetchMapTopology = (
+  only?: readonly MapSectionName[],
+): Promise<MapTopology> =>
+  getJson<MapTopology>(
+    only && only.length > 0
+      ? `/map?only=${encodeURIComponent(only.join(","))}`
+      : "/map",
+  );
