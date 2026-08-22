@@ -70,6 +70,9 @@ export interface SlashContext {
   compactRun(id: string, keep?: number): Promise<{
     compacted: boolean; dropped?: number; kept?: number; was?: number;
     archive?: string; reason?: string; entries?: number;
+    /** True when the engine session was dropped — i.e. the context window
+     *  really resets on the next turn, not just our copy of the thread. */
+    session_reset?: boolean; estimated_tokens?: number;
   }>;
   /** GET /api/autonomy — guardrail rules (spend caps, kill switches). */
   fetchRules(): Promise<GuardrailRule[]>;
@@ -133,7 +136,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       ctx.sys(
         r.compacted
           ? `compacted — ${r.dropped} of ${r.was} entries archived to ${r.archive}; ` +
-            `${r.kept} kept. Durable state is in the vault (AI OS/Session State).`
+            `${r.kept} kept. ` +
+            /* Say whether the WINDOW reset, not just the transcript. Trimming
+             * our thread while the engine resumes its old session is exactly
+             * what this command used to do, and it looked identical from here.
+             * If the bar does not move, this line is what tells you why. */
+            (r.session_reset === false
+              ? "NOTE: no engine session was live, so the next turn was already starting fresh. "
+              : "Engine session dropped — the next turn starts a fresh context. ") +
+            `Durable state is in the vault (AI OS/Session State).`
           : `not compacted — ${r.reason ?? "nothing to do"}` +
             (r.entries ? ` (${r.entries} entries)` : ""),
       );

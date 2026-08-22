@@ -31,6 +31,7 @@
 import { useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { tokens } from "../../tokens";
+import { GEMINI_ACCENT, isGeminiModel } from "../gemini-identity";
 import { fetchChat } from "../../api";
 import { modelDisplay } from "../live/agentsApi";
 import {
@@ -151,7 +152,20 @@ export function ContextGauge() {
   }
 
   const pct = occ.fraction * 100;
-  const color = BAND_TOKEN[contextBand(occ.fraction)];
+  /* Engine identity while the window is CALM; pressure once it is not.
+   *
+   * Konrad asked for the Gemini context bar to read purple rather than blue.
+   * It does — up to 75%, where warn takes over and then danger. Identity and
+   * pressure are different axes, and if purple survived into the red band a
+   * reader would have to ask whether the bar is coloured because of the engine
+   * or because the window is nearly full. The engine is already legible from
+   * the model name in the title; a full window is not legible from anything
+   * else, so pressure wins the tie. Same rule as the gem quota bars. */
+  const band = contextBand(occ.fraction);
+  const gemini = isGeminiModel(occ.model);
+  const color = gemini && (band === "calm" || band === "noticed")
+    ? GEMINI_ACCENT
+    : BAND_TOKEN[band];
   const model = occ.model ? modelDisplay(occ.model) : "unknown model";
   const window = `${humanTokens(occ.windowTokens)}${occ.assumedWindow ? " (assumed)" : ""}`;
   return (

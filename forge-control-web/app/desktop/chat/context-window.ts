@@ -54,6 +54,19 @@ const MODEL_CONTEXT_WINDOWS: ReadonlyMap<string, number> = new Map([
   // Claude — current
   ["fable-5", 1_000_000],
   ["mythos-5", 1_000_000],
+  /* Gemini, via the Antigravity engine. 1M input context — and unlike every
+   * entry below it, this one is MEASURED rather than taken from a spec sheet:
+   * agy's own /context screen prints "Gemini 3.7 Flash (High) · 0/1.0M tokens".
+   * Keys keep the DOT: `normalizeModel` lower-cases and strips the snapshot
+   * date and the `claude-` prefix, and does nothing to punctuation — so
+   * `gemini-3.7-flash-high` arrives here dotted. A hyphenated key would miss
+   * every time and silently fall through to the assumed fallback, which is the
+   * quiet kind of wrong: a plausible bar drawn from a guessed denominator. */
+  ["gemini-3.7-flash-high", 1_000_000],
+  ["gemini-3.7-flash-medium", 1_000_000],
+  ["gemini-3.7-flash-low", 1_000_000],
+  ["gemini-3.7-flash", 1_000_000],
+  ["gemini-3.6-flash", 1_000_000],
   ["opus-5", 1_000_000],
   ["opus-4-8", 1_000_000],
   ["opus-4-7", 1_000_000],

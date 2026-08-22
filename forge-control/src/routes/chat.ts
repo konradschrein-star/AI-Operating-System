@@ -1690,7 +1690,51 @@ r.post("/:id/compact", async (c) => {
    * message per invocation. Found by running it twice, which is the only way
    * that class of bug shows itself. */
   if (thread.length <= keep + 1) {
-    return c.json({ compacted: false, reason: "already short", entries: thread.length });
+    /* SHORT TRANSCRIPT, FAT SESSION — still worth resetting.
+     *
+     * "Already short" is a statement about OUR copy of the thread. It says
+     * nothing about the engine session, which is where the model's context
+     * actually lives. After one compaction the thread is `keep + 1` entries
+     * forever, so every later /compact used to bail here and never drop the
+     * session again — the bar stayed pinned and the command looked broken for
+     * the second time in the same way it looked broken the first time.
+     *
+     * So: nothing to archive, nothing to rewrite, but if a session is live it
+     * still goes. That is the part Konrad is actually asking for. */
+    const live = typeof (current.metadata as Record<string, unknown> | null)?.cc_session_id === "string";
+    if (!live) {
+      return c.json({
+        compacted: false,
+        reason: "already short, and no engine session to reset",
+        entries: thread.length,
+        session_reset: false,
+      });
+    }
+    const keptChars = thread.reduce(
+      (n, e) => n + String((e as { content?: unknown }).content ?? "").length + 16,
+      0,
+    );
+    const estTokens = Math.max(1, Math.round(keptChars / 4));
+    await teamPool.query(
+      `UPDATE runs
+          SET metadata = (coalesce(metadata,'{}'::jsonb) - 'cc_session_id')
+                         || jsonb_build_object(
+                              'compacted_at', to_jsonb(now()),
+                              'usage_last_turn', jsonb_build_object(
+                                'input_tokens', $2::int, 'output_tokens', 0, 'estimated', true
+                              )
+                            ),
+              updated_at = now()
+        WHERE id = $1`,
+      [id, estTokens],
+    );
+    return c.json({
+      compacted: false,
+      reason: "already short — transcript untouched, engine session reset",
+      entries: thread.length,
+      session_reset: true,
+      estimated_tokens: estTokens,
+    });
   }
 
   const dropped = thread.length - keep;
@@ -1715,15 +1759,49 @@ r.post("/:id/compact", async (c) => {
   };
 
   const next = [marker, ...thread.slice(-keep)];
+
+  /* ── DROPPING cc_session_id IS WHAT ACTUALLY RESETS THE WINDOW ─────────────
+   *
+   * Rewriting `runs.thread` was only ever half of a compaction, and on the
+   * surface Konrad uses it was the half that does nothing. The `claude-code`
+   * engine passes `--resume <cc_session_id>` and sends ONLY the trailing user
+   * block: the history lives inside Claude Code's own session, not in our
+   * thread. So the old route shrank our copy while the model kept carrying
+   * every original turn, and the `ctx` bar — which reads `usage_last_turn`,
+   * a number the CLI reports — never moved. Konrad, 2026-08-22: "compressing
+   * still doesn't seem to work on resetting the context window."
+   *
+   * Removing the session id makes the next turn start a FRESH session, seeded
+   * from the compacted thread above. That is the reset.
+   *
+   * `usage_last_turn` is replaced with an ESTIMATE of the compacted size so the
+   * gauge moves at once instead of staying pinned to the pre-compaction figure
+   * until the next turn happens to land. It is flagged `estimated: true`, and
+   * the next real turn overwrites it with the CLI's own measurement — showing
+   * the stale number would be the more misleading of the two. */
+  const keptChars = next.reduce(
+    (n, e) => n + String((e as { content?: unknown }).content ?? "").length + 16,
+    0,
+  );
+  const estTokens = Math.max(1, Math.round(keptChars / 4));
+
   const { rows } = await teamPool.query(
     `UPDATE runs
         SET thread = $2::jsonb,
-            metadata = jsonb_set(coalesce(metadata,'{}'::jsonb), '{last_compaction}',
-                        to_jsonb($3::text), true),
+            metadata = (coalesce(metadata,'{}'::jsonb) - 'cc_session_id')
+                       || jsonb_build_object(
+                            'last_compaction', $3::text,
+                            'compacted_at', to_jsonb(now()),
+                            'usage_last_turn', jsonb_build_object(
+                              'input_tokens', $4::int,
+                              'output_tokens', 0,
+                              'estimated', true
+                            )
+                          ),
             updated_at = now()
       WHERE id = $1
-      RETURNING id`,
-    [id, JSON.stringify(next), archive],
+      RETURNING id, (metadata ? 'cc_session_id') AS still_has_session`,
+    [id, JSON.stringify(next), archive, estTokens],
   );
   if (!rows.length) return c.json({ error: "run not found" }, 404);
 
@@ -1733,6 +1811,10 @@ r.post("/:id/compact", async (c) => {
     kept: next.length,
     was: thread.length,
     archive,
+    /* The honest signal that the window was reset, not just the transcript
+     * trimmed. False here means the next turn will resume the old session. */
+    session_reset: rows[0].still_has_session === false,
+    estimated_tokens: estTokens,
   });
 });
 
