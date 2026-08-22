@@ -3,8 +3,9 @@
  *
  * POST /api/spend         — accepts SpendRow[] or single SpendRow, persists.
  * GET  /api/spend/today   — returns the daily rollup the Today screen consumes.
- * GET  /api/spend/summary — 30-day windows + area breakdown + daily series
- *                           for the Money surface (v2.3).
+ * GET  /api/spend/summary?days=N — fixed today/d7/d30 windows + an area
+ *                           breakdown and daily series over the last N days
+ *                           (default 30, clamped 1-365) for the Money surface.
  *
  * The POST endpoint is intentionally permissive: it accepts both `[row]` and
  * `row` payload shapes so gateways can fire-and-forget without ceremony.
@@ -96,7 +97,11 @@ r.get("/today", async (c) => {
 });
 
 r.get("/summary", async (c) => {
-  return c.json(await spendSummary());
+  const days = Math.min(
+    365,
+    Math.max(1, Number(c.req.query("days") ?? "30") || 30),
+  );
+  return c.json(await spendSummary(days));
 });
 
 /* Claude Code has no proactive quota API — the CLI only ever tells you
