@@ -305,6 +305,55 @@ describe("containment — the grouping Konrad's maps actually use", () => {
     );
   });
 
+  test("a box holding exactly one text is labelled by it, wherever it sits", () => {
+    // Excalidraw only binds a label when you type INTO a shape. Drag a text on
+    // top of a box — what a hand-drawn board is made of — and the file keeps
+    // them unrelated. Measured: without this rule "Drawing 2026-07-03 18.25.45"
+    // rendered twelve headings reading "(unlabelled rectangle)", each with one
+    // item beneath it.
+    const md = draw([
+      shape({ id: "box", x: 0, y: 0, width: 300, height: 200 }),
+      // Dead centre — far outside the title band at the top of the box.
+      text({ id: "t", x: 100, y: 95, width: 100, height: 20, text: "Architect" }),
+    ]);
+    const g = extractDrawing(P, md);
+    assert.equal(g.nodes.find((n) => n.id === "box")?.label, "Architect");
+    // …and it renders as one line, not a heading with a single child.
+    const rendered = renderGraphText(g);
+    assert.match(rendered, /- Architect/);
+    assert.doesNotMatch(rendered, /unlabelled rectangle/);
+  });
+
+  test("a box holding TWO texts is not labelled by either of them", () => {
+    // NEIGHBOUR of the rule above. Two texts in a box is a layout we cannot
+    // read as label-plus-content, so we do not pick a winner.
+    const md = draw([
+      shape({ id: "box", x: 0, y: 0, width: 300, height: 200 }),
+      text({ id: "t1", x: 100, y: 95, width: 100, height: 20, text: "Architect" }),
+      text({ id: "t2", x: 100, y: 140, width: 100, height: 20, text: "Manager" }),
+    ]);
+    const g = extractDrawing(P, md);
+    assert.equal(g.nodes.find((n) => n.id === "box")?.label, "");
+    const rendered = renderGraphText(g);
+    assert.match(rendered, /Architect/);
+    assert.match(rendered, /Manager/);
+  });
+
+  test("mute grandchildren are tallied too, not printed one per line", () => {
+    const els: El[] = [
+      shape({ id: "sec", x: 0, y: 0, width: 2000, height: 2000, strokeStyle: "dashed" }),
+      text({ id: "sect", x: 10, y: 10, width: 100, height: 20, text: "SECTION" }),
+      shape({ id: "card", x: 100, y: 100, width: 800, height: 800 }),
+      text({ id: "cardt", containerId: "card", text: "Usage plan" }),
+    ];
+    for (let i = 0; i < 8; i++) {
+      els.push(shape({ id: `f${i}`, type: "freedraw", x: 200 + i, y: 200, width: 5, height: 5 }));
+    }
+    const rendered = renderGraphText(extractDrawing(P, draw(els)));
+    assert.match(rendered, /8 unlabelled freedraw/);
+    assert.equal(rendered.match(/\(unlabelled freedraw\)/g), null);
+  });
+
   test("text floating ABOVE a box is not its title", () => {
     // The regression this guards: on the real map the drawing's legend sits
     // 34px above the first section and was read as that section's name.
@@ -464,6 +513,22 @@ describe("legend — the drawing's own key, quoted verbatim", () => {
       draw([text({ id: "t", text: "throughput = 4 videos per day" })]),
     );
     assert.deepEqual(g.legend, []);
+  });
+
+  test("a colour word that is not the SUBJECT of the assignment is not a legend", () => {
+    // The false positive this rule was tightened for, verbatim off
+    // "Drawing 2026-07-03 18.25.45": an equals sign, and the word "Green" —
+    // eleven words later, describing a button.
+    const note =
+      "Backlink = verified Users need to sign in He'll get visibility " +
+      "Green button saying he is verified";
+    assert.deepEqual(extractDrawing(P, draw([text({ id: "t", text: note })])).legend, []);
+    // NEIGHBOUR: the same sentence with the colour on the left of the `=` IS a
+    // key, and is kept.
+    assert.deepEqual(
+      extractDrawing(P, draw([text({ id: "t", text: "Green = verified" })])).legend,
+      ["Green = verified"],
+    );
   });
 
   test("a colour word with no assignment is NOT a legend", () => {

@@ -283,10 +283,19 @@ const SECTION_TITLE_BAND = 60;
  *  hand-drawn map reads left-to-right per band instead of zig-zagging. */
 const ROW_BAND = 40;
 
-/** A legend is a free text that both assigns a meaning (`x = y`) and names a
- *  visual channel. Anything looser matches ordinary prose on the canvas. */
+/**
+ * A legend assigns a meaning TO a visual channel: the channel is the thing on
+ * the left of the `=`.
+ *
+ * The looser form — "contains `=` somewhere, and a colour word somewhere" —
+ * was measured against the vault and produced a false positive on
+ * "Drawing 2026-07-03 18.25.45": *"Backlink = verified … Green button saying he
+ * is verified"* is a sticky note, not a key. Requiring the channel to be the
+ * subject of the assignment rejects it and still matches Konrad's real legend,
+ * *"green = solid path · orange = highest-risk · dashed arrow = reads/drives"*.
+ */
 const LEGEND_CHANNEL =
-  /\b(green|red|orange|yellow|blue|violet|purple|cyan|grey|gray|amber|dashed|dotted|solid|arrow)\b/i;
+  /\b(green|red|orange|yellow|blue|violet|purple|cyan|grey|gray|amber|dashed|dotted|solid|bold|thick|arrow|box|circle|line)\b\s*[=:]/i;
 
 const WIKILINK_RE = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
@@ -479,6 +488,27 @@ export function buildGraph(
       titleTextIds.add(pick.id);
       parentOf.set(pick.id, c.id);
     }
+  }
+
+  // --- pass 3b: a box holding exactly one piece of text, anywhere in it, is
+  // labelled by that text. Excalidraw only binds a label when you type INTO the
+  // shape; drag a text on top of a box — which is what a hand-drawn board is
+  // made of — and the two stay unrelated in the file. Without this,
+  // "Drawing 2026-07-03 18.25.45" renders 12 headings reading
+  // "(unlabelled rectangle)" each with one item under it. Strictly one text: a
+  // box with two of them has a layout we cannot read as label-plus-content.
+  for (const c of candidates) {
+    if (boundLabel.has(c.id) || titleOfContainer.has(c.id)) continue;
+    const texts = live.filter(
+      (e) =>
+        e.kind === "text" &&
+        !boundTextIds.has(e.id) &&
+        !titleTextIds.has(e.id) &&
+        parentOf.get(e.id) === c.id,
+    );
+    if (texts.length !== 1 || !tidy(texts[0].text)) continue;
+    titleOfContainer.set(c.id, tidy(texts[0].text));
+    titleTextIds.add(texts[0].id);
   }
 
   const labelOf = (id: string): string =>
@@ -755,6 +785,7 @@ function renderSiblings(
   siblings: DrawingNode[],
   children: Map<string, DrawingNode[]>,
   indent: string,
+  depth = 0,
 ): string[] {
   const out: string[] = [];
   const mute = new Map<string, number>();
@@ -765,8 +796,13 @@ function renderSiblings(
       continue;
     }
     out.push(nodeLine(n, indent));
-    for (const gk of (children.get(n.id) ?? []).sort(readingOrder)) {
-      out.push(nodeLine(gk, `${indent}  `));
+    // Recurse so the tally applies at every level: a labelled card sitting on
+    // top of eight scribbles was still printing eight "(unlabelled freedraw)"
+    // lines. Depth-capped because past three levels the indentation stops
+    // carrying meaning and a pathological drawing could nest arbitrarily.
+    const kids = children.get(n.id) ?? [];
+    if (kids.length && depth < 3) {
+      out.push(...renderSiblings(kids, children, `${indent}  `, depth + 1));
     }
   }
   for (const [kind, count] of [...mute].sort((a, b) => b[1] - a[1])) {
