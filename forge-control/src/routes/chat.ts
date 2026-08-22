@@ -1714,13 +1714,39 @@ r.post("/:id/compact", async (c) => {
       (n, e) => n + String((e as { content?: unknown }).content ?? "").length + 16,
       0,
     );
-    const estTokens = Math.max(1, Math.round(keptChars / 4));
+    /* NEVER RAISE THE BAR. The estimate is chars/4 over what survives, which on
+     * a SHORT chat can exceed the real measured figure — compaction would then
+     * make the gauge climb, which is nonsense: freeing context cannot cost
+     * context. Take the lesser of the two. On the fat chats this command exists
+     * for, the estimate is the smaller number by orders of magnitude and this
+     * guard never binds. */
+    const priorTokens = Number(
+      (
+        ((current.metadata as Record<string, unknown> | null)?.usage_running as
+          | Record<string, unknown>
+          | undefined)?.input_tokens ?? Number.POSITIVE_INFINITY
+      ),
+    );
+    const estTokens = Math.max(
+      1,
+      Math.min(Math.round(keptChars / 4), Number.isFinite(priorTokens) ? priorTokens : Infinity),
+    );
     await teamPool.query(
       `UPDATE runs
           SET metadata = (coalesce(metadata,'{}'::jsonb) - 'cc_session_id')
                          || jsonb_build_object(
                               'compacted_at', to_jsonb(now()),
                               'usage_last_turn', jsonb_build_object(
+                                'input_tokens', $2::int, 'output_tokens', 0, 'estimated', true
+                              ),
+                              /* usage_running is what the ctx gauge reads FIRST
+                               * (readContextTokens prefers it), and despite the
+                               * name it holds the LAST assistant message, not a
+                               * running total. Overwriting only usage_last_turn
+                               * left the stale pre-compaction figure winning and
+                               * the bar pinned — the exact symptom this whole
+                               * fix exists to remove. */
+                              'usage_running', jsonb_build_object(
                                 'input_tokens', $2::int, 'output_tokens', 0, 'estimated', true
                               )
                             ),
@@ -1783,7 +1809,19 @@ r.post("/:id/compact", async (c) => {
     (n, e) => n + String((e as { content?: unknown }).content ?? "").length + 16,
     0,
   );
-  const estTokens = Math.max(1, Math.round(keptChars / 4));
+  /* Same guard as the short-thread branch: compaction may lower the reading,
+   * never raise it. */
+  const priorRunning = Number(
+    (
+      ((current.metadata as Record<string, unknown> | null)?.usage_running as
+        | Record<string, unknown>
+        | undefined)?.input_tokens ?? Number.POSITIVE_INFINITY
+    ),
+  );
+  const estTokens = Math.max(
+    1,
+    Math.min(Math.round(keptChars / 4), Number.isFinite(priorRunning) ? priorRunning : Infinity),
+  );
 
   const { rows } = await teamPool.query(
     `UPDATE runs
@@ -1793,6 +1831,13 @@ r.post("/:id/compact", async (c) => {
                             'last_compaction', $3::text,
                             'compacted_at', to_jsonb(now()),
                             'usage_last_turn', jsonb_build_object(
+                              'input_tokens', $4::int,
+                              'output_tokens', 0,
+                              'estimated', true
+                            ),
+                            /* See the short-thread branch: the gauge reads
+                             * usage_running first, so it must move too. */
+                            'usage_running', jsonb_build_object(
                               'input_tokens', $4::int,
                               'output_tokens', 0,
                               'estimated', true
