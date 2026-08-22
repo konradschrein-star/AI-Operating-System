@@ -57,12 +57,28 @@ Against the real vault (read-only, no database touched):
   Canvas.excalidraw"` → `"AI OS - Life & Company OS - Planning Canvas"`;
   wikilinks `[]` → 3 real targets on `Drawing 2026-07-03 18.25.45`.
 
-Repo gate suite `scripts/checks/gates-808.sh --strict`: 25 gates, 23 executed,
-2 skipped by design (`--browser` not requested). The 6 reds in the first run
-were all `forge-control-web` gates failing on a missing `typescript` —
-devDependencies had never been installed in this worktree (`npx tsc` printed
-"This is not the tsc command you are looking for"). Installed with
-`--prod=false` and re-ran. `forge-control` gates (1, 20) are green.
+Repo gate suite `scripts/checks/gates-808.sh --strict`: **25 gates, 23 executed,
+2 skipped by design** (`--browser` not requested), **1 RED**.
+
+The first run showed 6 reds. All six were `forge-control-web` gates failing on a
+missing `typescript` — devDependencies had never been installed in this worktree
+(`npx tsc` printed *"This is not the tsc command you are looking for"*). After
+`pnpm install --frozen-lockfile --prod=false`, gates 2, 3, 9, 13 and 14 went
+green. A seventh red in the very first run (gate 20, `pnpm test`) was my own
+contention: I had the same suite running in the background. It is green in both
+clean runs.
+
+The remaining red is **gate 5, `no-raw-colours.cjs`**, and it is not mine:
+
+```
+── FAIL: 2 raw colour literal(s) with no allowlist entry ──
+  forge-control-web/app/desktop/gemini-identity.tsx:27  #8b7bf0
+  forge-control-web/app/desktop/gemini-identity.tsx:30  rgba(139, 123, 240, 0.16)
+```
+
+That gate scans `forge-control-web/app` only (`no-raw-colours.cjs:77`), and
+`git diff --name-only main...HEAD` shows this branch touches no file under it.
+I did not fix it — I do not own that file and this round adds no web code.
 
 ### Not done
 
