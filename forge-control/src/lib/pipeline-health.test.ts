@@ -28,6 +28,8 @@ import {
   classifyPhaseState,
   parsePm2Jlist,
   CONTENT_FORGE_PM2_PROCESSES,
+  PHASES,
+  phaseFor,
   type PhaseCount,
 } from "./pipeline-health.ts";
 
@@ -149,6 +151,57 @@ describe("classifyStall", () => {
     assert.throws(() => classifyStall("not a timestamp", NOW), /not a parseable timestamp/);
     assert.throws(() => classifyStall(new Date("nope"), NOW), /Invalid Date/);
     assert.throws(() => classifyStall("2026-08-04 01:01:34.885+00", Number.NaN), /finite epoch-ms/);
+  });
+});
+
+/* ========================================================================== *
+ * phaseFor — the AWAITING_UPLOADER / AWAITING_QC misclassification (round 0)
+ * ========================================================================== */
+
+describe("phaseFor", () => {
+  test("AWAITING_UPLOADER lands in publish, not qc", () => {
+    // The bug this round fixes: a bare `AWAITING` catch-all in `qc`'s pattern
+    // matched every AWAITING_* status, including this one, before `publish`
+    // ever got a look.
+    assert.equal(phaseFor("AWAITING_UPLOADER"), "publish");
+  });
+
+  test("AWAITING_QC lands in qc", () => {
+    assert.equal(phaseFor("AWAITING_QC"), "qc");
+  });
+
+  test("other AWAITING_* statuses keep landing in qc — the fix is scoped to AWAITING_UPLOADER", () => {
+    for (const status of ["AWAITING_RESEARCH", "AWAITING_PRODUCTION_VA", "AWAITING_VA_REVIEW"]) {
+      assert.equal(phaseFor(status), "qc", status);
+    }
+  });
+
+  test("AWAITING statuses that also name an assets keyword land in assets, checked before qc", () => {
+    assert.equal(phaseFor("AWAITING_IMAGE_QC"), "assets");
+    assert.equal(phaseFor("AWAITING_CLIP_REVIEW"), "assets");
+  });
+
+  test("QMS and render/publish statuses land where they always did", () => {
+    assert.equal(phaseFor("QMS_VALIDATING"), "qc");
+    assert.equal(phaseFor("ROUTING_RENDER"), "render");
+    assert.equal(phaseFor("RENDERING_FFMPEG"), "render");
+    assert.equal(phaseFor("UPLOADING"), "publish");
+    assert.equal(phaseFor("PUBLISHED"), "publish");
+  });
+
+  test("MARKED_FOR_DELETION is its own sentinel, not other", () => {
+    assert.equal(phaseFor("MARKED_FOR_DELETION"), "deleted");
+  });
+
+  test("an unrecognised status is other, never dropped", () => {
+    assert.equal(phaseFor("SOME_FUTURE_STATUS_NOBODY_WROTE_YET"), "other");
+  });
+
+  test("PHASES is in pipeline order: idea, script, voice, assets, qc, render, publish", () => {
+    assert.deepEqual(
+      PHASES.map((p) => p.key),
+      ["idea", "script", "voice", "assets", "qc", "render", "publish"],
+    );
   });
 });
 

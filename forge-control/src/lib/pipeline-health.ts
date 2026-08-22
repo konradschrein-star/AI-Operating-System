@@ -149,6 +149,93 @@ export function classifyStall(
 }
 
 /* ========================================================================== *
+ * Phase topography — which bucket a `job_status` belongs to
+ * ========================================================================== */
+
+export interface PhaseDefinition {
+  key: string;
+  label: string;
+  description: string;
+  match: RegExp;
+}
+
+/**
+ * First match wins, and the order below is the pipeline order — it is also
+ * the match-check order, so a status that would match two phases lands in
+ * whichever comes first in this array.
+ *
+ * `qc`'s pattern used to be `/(QMS|QC|AWAITING)/i` — a bare `AWAITING` catch-
+ * all that matched every `AWAITING_*` status in `job_status`, INCLUDING
+ * `AWAITING_UPLOADER`, before `publish`'s own `/UPLOAD/i` ever got a look.
+ * Content Forge's real `job_status` enum has `AWAITING_QC` (belongs here) and
+ * `AWAITING_UPLOADER` (belongs in `publish`, one gate further along) — the
+ * bare catch-all could not tell them apart and silently emptied `publish`
+ * while `qc` absorbed jobs already past it. `AWAITING_(?!UPLOADER)` keeps
+ * every other `AWAITING_*` status (`AWAITING_QC`, `AWAITING_RESEARCH`,
+ * `AWAITING_PRODUCTION_VA`, `AWAITING_VA_REVIEW`, …) exactly where it always
+ * landed, and excludes only the one status that belongs downstream.
+ */
+export const PHASES: readonly PhaseDefinition[] = [
+  {
+    key: "idea",
+    label: "Idea",
+    description: "Topic + brief, pre-script",
+    match: /^(IDEA_GENERATION|TOPIC_SELECTION|BRIEF)/i,
+  },
+  {
+    key: "script",
+    label: "Script",
+    description: "Scripting → script ready",
+    match: /^(SCRIPTING|SCRIPT_READY|SCRIPT_REVIEW)/i,
+  },
+  {
+    key: "voice",
+    label: "Voice",
+    description: "TTS generation",
+    match: /(TTS|VOICE)/i,
+  },
+  {
+    key: "assets",
+    label: "Assets",
+    description: "Image / clip / asset collection",
+    match: /(ASSET|IMAGE|CLIP|FOOTAGE|HEYGEN)/i,
+  },
+  {
+    key: "qc",
+    label: "QC",
+    description: "QMS validation + manual gates",
+    match: /(QMS|QC|AWAITING_(?!UPLOADER))/i,
+  },
+  {
+    key: "render",
+    label: "Render",
+    description: "Routing + render + stitch",
+    match: /(ROUTING_RENDER|RENDER|STITCH|FAILED_RENDER)/i,
+  },
+  {
+    key: "publish",
+    label: "Publish",
+    description: "Uploader → published",
+    match: /(UPLOAD|PUBLISH)/i,
+  },
+] as const;
+
+/**
+ * Bucket one `job_status` value into a phase key.
+ *
+ * `MARKED_FOR_DELETION` is its own sentinel — callers filter it out of the
+ * live query, but the classifier still names it rather than falling through
+ * to `other`, so a caller that forgets the filter gets an honest bucket
+ * instead of a silent miscount. Anything the array above does not match
+ * (and is not the deletion sentinel) is `other` — never dropped.
+ */
+export function phaseFor(status: string): string {
+  if (status === "MARKED_FOR_DELETION") return "deleted";
+  for (const p of PHASES) if (p.match.test(status)) return p.key;
+  return "other";
+}
+
+/* ========================================================================== *
  * Per-phase state (R65) — "no work" is not one fact, it is two
  * ========================================================================== */
 
