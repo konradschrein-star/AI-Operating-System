@@ -123,6 +123,10 @@ const TIER_MODELS: Record<TaskTier, { model: string; effort: string }> = {
   junior: { model: "claude-sonnet-5", effort: "high" },
   standard: { model: "claude-opus-5", effort: "high" },
   flagship: { model: "claude-fable-5", effort: "high" },
+  /* A different engine, not a cheaper Claude. `effort` is carried for shape
+   * only — agy takes no --effort flag, and gemini-runner never passes one; the
+   * "-high" suffix in the model id IS the thinking level. */
+  gemini: { model: "gemini-3.7-flash-high", effort: "high" },
 };
 
 export interface RoleConfig {

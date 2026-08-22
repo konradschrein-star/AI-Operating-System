@@ -48,7 +48,7 @@ const STATUSES = new Set<ProjectStatus>([
   "blocked",
   "cancelled",
 ]);
-const TIERS = new Set<TaskTier>(["fast", "junior", "standard", "flagship"]);
+const TIERS = new Set<TaskTier>(["fast", "junior", "standard", "flagship", "gemini"]);
 
 /* ── R39's workstream cap ───────────────────────────────────────────────────
  *

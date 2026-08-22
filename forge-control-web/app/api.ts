@@ -729,6 +729,11 @@ export const ENGINE_MODEL_CHOICES = [
   { value: "claude-sonnet-5", label: "Sonnet 5" },
   { value: "claude-sonnet-4-6", label: "Sonnet 4.6 (cheap)" },
   { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" },
+  /* A SECOND ENGINE, not a Claude rung: this routes to `agy` on Konrad's Google
+   * AI Pro plan, so it does not draw on the Claude usage window at all. Only
+   * gemini-3.7-flash-high is offered — Konrad, 2026-08-22: "We'll always use
+   * gemini-3.7-flash-high." */
+  { value: "gemini-3.7-flash-high", label: "Gemini 3.7 Flash (free of Claude limits)" },
 ] as const;
 
 /** The model a new chat starts on when the picker isn't touched. */

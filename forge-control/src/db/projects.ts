@@ -90,7 +90,11 @@ export type TaskStatus = "pending" | "ready" | "running" | "done" | "failed" | "
 /** Model/effort tier — see TIER_MODELS in lib/project-tick.ts. NULL = use
  *  the role file's static model:/effort: default. Only architect and
  *  builder tasks are ever assigned one. */
-export type TaskTier = "fast" | "junior" | "standard" | "flagship";
+/** ROUND 2026-08-22: `gemini` joins the tiers. It is not a rung on the Claude
+ *  ladder — it is a different ENGINE (agy, on Konrad's Google AI Pro plan), and
+ *  it exists so cheap parallelisable work stops competing for the Claude usage
+ *  window, which is the real budget. Always gemini-3.7-flash-high. */
+export type TaskTier = "fast" | "junior" | "standard" | "flagship" | "gemini";
 
 export interface Project {
   id: string;

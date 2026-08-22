@@ -27,6 +27,8 @@
  */
 
 import { spawn } from "node:child_process";
+
+import { isGeminiModel, runGemini } from "./gemini-runner.ts";
 import { createInterface } from "node:readline";
 
 const CC_BIN = process.env.CC_BIN ?? "claude";
@@ -390,6 +392,33 @@ export async function runClaudeCode(opts: {
   isCancelled?: () => Promise<boolean>;
 }): Promise<CcResult> {
   const vaultAccess = opts.vaultAccess ?? true;
+
+  /* ── Engine routing ────────────────────────────────────────────────────────
+   * This function is the one door every run goes through, so the engine choice
+   * lives here rather than at each call site. A gemini-* model id routes to
+   * `agy` and comes back in this function's own result shape, which is why
+   * chat, projects and the tickers all gained a second engine without any of
+   * them changing.
+   *
+   * The workdir is passed explicitly and is NOT optional downstream: without
+   * `--add-dir`, agy writes into its own scratch directory and still reports
+   * SUCCESS, so a worker would produce nothing while every signal said it
+   * worked. See lib/gemini-runner.ts. */
+  const requestedModel = sanitizeModel(opts.model) ?? CC_MODEL;
+  if (isGeminiModel(requestedModel)) {
+    return await runGemini({
+      prompt: opts.prompt,
+      systemPrompt: buildSystemPrompt(vaultAccess),
+      cwd: opts.cwd ?? CC_WORKSPACE,
+      addDirs: vaultAccess ? [VAULT_DIR, ...CC_ADD_DIRS] : [...CC_ADD_DIRS],
+      sessionId: opts.sessionId,
+      model: requestedModel,
+      timeoutMs: opts.timeoutMs,
+      onEvent: opts.onEvent,
+      isCancelled: opts.isCancelled,
+    });
+  }
+
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
   const allowedTools =
     opts.allowedTools && opts.allowedTools.length > 0
