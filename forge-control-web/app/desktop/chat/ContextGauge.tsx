@@ -40,6 +40,7 @@ import {
   humanTokens,
   type ContextBand,
 } from "./context-window";
+import { ChatContextPopover } from "./ChatContextPopover";
 
 /* ── The on-screen target ─────────────────────────────────────────────────
  *
@@ -169,14 +170,16 @@ export function ContextGauge() {
   const model = occ.model ? modelDisplay(occ.model) : "unknown model";
   const window = `${humanTokens(occ.windowTokens)}${occ.assumedWindow ? " (assumed)" : ""}`;
   return (
-    <Gauge
-      title={`ctx: ${humanTokens(occ.usedTokens)} / ${window} · ${model}${
-        occ.fraction >= 0.75 ? " · /compact" : ""
-      }`}
-      fill={Math.min(100, Math.max(0, pct))}
-      color={color}
-      value={`${Math.round(pct)}%`}
-    />
+    <ChatContextPopover meta={q.data?.metadata} side="top" align="center">
+      <Gauge
+        title={`ctx: ${humanTokens(occ.usedTokens)} / ${window} · ${model}${
+          occ.fraction >= 0.75 ? " · /compact" : ""
+        }`}
+        fill={Math.min(100, Math.max(0, pct))}
+        color={color}
+        value={`${Math.round(pct)}%`}
+      />
+    </ChatContextPopover>
   );
 }
 

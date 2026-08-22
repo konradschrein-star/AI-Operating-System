@@ -20,6 +20,7 @@ import {
   resumeChat,
   archiveChat,
   archiveAllChats,
+  deleteChat,
   searchChats,
   freezeFleet,
   resumeFleet,
@@ -90,6 +91,8 @@ import {
 import { secretsPollInterval, subscribeSecretRequests } from "./chat/secretLive";
 import { useRunEvents } from "./chat/useRunEvents";
 import { publishContextTarget } from "./chat/ContextGauge";
+import { ChatContextPopover } from "./chat/ChatContextPopover";
+import { contextBand, contextOccupancy, humanTokens } from "./chat/context-window";
 import {
   ResizeHandle,
   useResizablePanel,
@@ -97,7 +100,7 @@ import {
   useNarrowViewport,
   isBool,
 } from "./_ui/ResizableSplit";
-import { toastError } from "./_ui/Toasts";
+import { toast, toastError } from "./_ui/Toasts";
 import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
 
 /* ---------------------------------------------------------------------------
@@ -702,6 +705,8 @@ export function ChatSurface({
     (v): v is "team" | "files" => v === "team" || v === "files",
   );
   const [search, setSearch] = useState("");
+  const [searchScope, setSearchScope] = useState<"open" | "all">("all");
+  const [deleteTarget, setDeleteTarget] = useState<RunSummary | null>(null);
   // Lifted out of ChatThread (rather than created per-mount) so the file
   // explorer's "attach to chat" action can reach the active thread's
   // composer state directly.
@@ -712,9 +717,26 @@ export function ChatSurface({
   }, [selId]);
   const searching = search.trim().length >= 2;
   const searchQ = useQuery({
-    queryKey: ["chat", "search", search],
-    queryFn: () => searchChats(search.trim()),
+    queryKey: ["chat", "search", search, searchScope],
+    queryFn: () => searchChats(search.trim(), searchScope),
     enabled: searching,
+  });
+
+  const deleteM = useMutation({
+    mutationFn: (id: string) => deleteChat(id),
+    onSuccess: (data, id) => {
+      qc.invalidateQueries({ queryKey: ["chat", "list"] });
+      qc.invalidateQueries({ queryKey: ["chat", "search"] });
+      qc.invalidateQueries({ queryKey: ["chat", "run", id] });
+      if (selId === id) openChat(null);
+      toast(
+        "Deleted chat",
+        "ok",
+        `Permanently removed run ${id.slice(0, 8)} and ${data.embeddings_deleted} embedding chunk(s).`,
+      );
+      setDeleteTarget(null);
+    },
+    onError: (e) => toastError("Delete failed — the chat could not be removed.", e),
   });
 
   /* Open the newest chat on arrival — but NOT on a phone (round 1871).
@@ -956,7 +978,11 @@ export function ChatSurface({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="search past chats — titles + what was said…"
+              placeholder={
+                searchScope === "open"
+                  ? "search open chats…"
+                  : "search past chats — titles + what was said…"
+              }
               className="mono"
               style={{
                 flex: 1,
@@ -972,10 +998,43 @@ export function ChatSurface({
                 onClick={() => setSearch("")}
                 className="mono"
                 style={{ fontSize: 10, color: tokens.textFaint, cursor: "pointer" }}
+                title="Clear search"
               >
                 ✕
               </span>
             )}
+            <button
+              type="button"
+              onClick={() =>
+                setSearchScope((s) => (s === "open" ? "all" : "open"))
+              }
+              className="mono"
+              title={
+                searchScope === "all"
+                  ? "Scope: all historical chats (including closed). Click to search open chats only."
+                  : "Scope: open chats only. Click to search all historical chats (📖)."
+              }
+              style={{
+                fontSize: 11,
+                padding: "2px 6px",
+                borderRadius: 5,
+                border: `1px solid ${
+                  searchScope === "all" ? tokens.accent : tokens.borderSoft
+                }`,
+                background:
+                  searchScope === "all"
+                    ? tokens.primaryActionBg
+                    : "transparent",
+                color: searchScope === "all" ? tokens.accent : tokens.textFaint,
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                lineHeight: 1,
+              }}
+            >
+              📖
+            </button>
           </div>
         </div>
         {!searching && counts && (
@@ -1045,6 +1104,7 @@ export function ChatSurface({
                     setSearch("");
                   }}
                   onClose={() => archiveM.mutate(r.id)}
+                  onDelete={() => setDeleteTarget(r)}
                   closing={archiveM.isPending && archiveM.variables === r.id}
                 />
               ))}
@@ -1100,6 +1160,7 @@ export function ChatSurface({
                     setComposing(false);
                   }}
                   onClose={() => archiveM.mutate(r.id)}
+                  onDelete={() => setDeleteTarget(r)}
                   closing={archiveM.isPending && archiveM.variables === r.id}
                 />
               ))}
@@ -1121,6 +1182,24 @@ export function ChatSurface({
               )}
             </>
           )}
+        </div>
+        <div
+          className="mono"
+          title="Chats are stored in PostgreSQL runs table and indexed into vector memory (chat://<id>)."
+          style={{
+            flex: "none",
+            padding: "8px 12px",
+            fontSize: 9.5,
+            color: tokens.textGhost,
+            borderTop: `1px solid ${tokens.borderDivider}`,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            userSelect: "none",
+          }}
+        >
+          <span style={{ fontSize: 11, opacity: 0.8 }}>💾</span>
+          <span>Stored in PostgreSQL runs &amp; vector memory (chat://)</span>
         </div>
       </div>
       )}
@@ -1382,6 +1461,15 @@ export function ChatSurface({
         // one scope, no third source of "which chat is this".
         chatId={composing ? null : selId}
       />
+
+      {deleteTarget && (
+        <DeleteChatModal
+          run={deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => deleteM.mutate(deleteTarget.id)}
+          deleting={deleteM.isPending}
+        />
+      )}
     </div>
   );
 }
@@ -1391,15 +1479,31 @@ function ChatListItem({
   selected,
   onSelect,
   onClose,
+  onDelete,
   closing,
 }: {
   run: RunSummary;
   selected: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onDelete: () => void;
   closing: boolean;
 }) {
   const color = STATUS_COLOR[run.status];
+  const occ = contextOccupancy(run.metadata);
+  const occBand = occ ? contextBand(occ.fraction) : "calm";
+  const occGemini = occ ? isGeminiModel(occ.model) : false;
+  const gaugeColor =
+    occGemini && (occBand === "calm" || occBand === "noticed")
+      ? GEMINI_ACCENT
+      : occBand === "danger"
+        ? tokens.bleed
+        : occBand === "warn"
+          ? tokens.warn
+          : occBand === "noticed"
+            ? tokens.info
+            : tokens.ok;
+
   // U10: present, not truthy. A linked project with no tasks yet is a real
   // `0/0`; a chat that never started a project has no counter at all, because
   // the server omits these fields rather than zeroing them.
@@ -1425,7 +1529,7 @@ function ChatListItem({
         position: "relative",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={dot(color, run.status === "running")} />
         <span
           className="mono"
@@ -1433,6 +1537,47 @@ function ChatListItem({
         >
           {run.status}
         </span>
+        {occ && (
+          <ChatContextPopover meta={run.metadata} align="left">
+            <span
+              className="mono"
+              data-context-rail-gauge
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                fontSize: 9.5,
+                color: gaugeColor,
+                padding: "1px 5px",
+                borderRadius: 4,
+                background: tokens.bgGutter,
+                border: `1px solid ${tokens.borderSoft}`,
+                cursor: "help",
+              }}
+            >
+              <span
+                style={{
+                  width: 18,
+                  height: 4,
+                  borderRadius: 2,
+                  background: tokens.borderEmphasis,
+                  overflow: "hidden",
+                  display: "inline-block",
+                }}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    width: `${Math.min(100, Math.max(0, occ.fraction * 100))}%`,
+                    height: "100%",
+                    background: gaugeColor,
+                  }}
+                />
+              </span>
+              <span>{Math.round(occ.fraction * 100)}%</span>
+            </span>
+          </ChatContextPopover>
+        )}
         {run.archived && (
           <span
             className="mono"
@@ -1467,7 +1612,7 @@ function ChatListItem({
         )}
         <span style={{ flex: 1 }} />
         {/* One slot, two children: the age sits in flow and sizes the slot, the
-            ✕ is absolutely positioned over it. Hover swaps their opacity — no
+            action controls (🗑 + ✕) are absolutely positioned over it. Hover swaps their opacity — no
             state, no reflow. */}
         <span
           style={{
@@ -1484,25 +1629,55 @@ function ChatListItem({
             {humanAge(run.updated_at)}
           </span>
           <span
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!closing) onClose();
-            }}
-            title="Close this chat — stops the agent if it's still working, and hides it from the list. Nothing is deleted; it stays searchable."
             className="mono chat-row-x"
             style={{
               position: "absolute",
               right: 0,
               top: "50%",
               transform: "translateY(-50%)",
-              fontSize: 11,
-              color: tokens.bleed,
-              cursor: closing ? "wait" : "pointer",
-              padding: "1px 5px",
-              borderRadius: 4,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
             }}
           >
-            ✕
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              title="Permanently delete this chat — removes the database row, thread, and semantic memory vectors."
+              style={{
+                fontSize: 11,
+                color: tokens.textMuted,
+                cursor: "pointer",
+                padding: "2px 4px",
+                borderRadius: 4,
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = tokens.bleed)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = tokens.textMuted)}
+            >
+              🗑
+            </span>
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                if (!closing) onClose();
+              }}
+              title="Close this chat — stops the agent if it's still working, and hides it from the list. Nothing is deleted; it stays searchable."
+              style={{
+                fontSize: 11,
+                color: tokens.bleed,
+                cursor: closing ? "wait" : "pointer",
+                padding: "2px 4px",
+                borderRadius: 4,
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              ✕
+            </span>
           </span>
         </span>
       </div>
@@ -1538,6 +1713,198 @@ function ChatListItem({
           {run.last_message_preview}
         </div>
       )}
+    </div>
+  );
+}
+
+function DeleteChatModal({
+  run,
+  onClose,
+  onConfirm,
+  deleting,
+}: {
+  run: RunSummary;
+  onClose: () => void;
+  onConfirm: () => void;
+  deleting: boolean;
+}) {
+  return (
+    <div
+      onClick={() => {
+        if (!deleting) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0, 0, 0, 0.65)",
+        backdropFilter: "blur(2px)",
+        zIndex: 2000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="mono"
+        style={{
+          width: 480,
+          maxWidth: "100%",
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.borderEmphasis}`,
+          borderRadius: 10,
+          boxShadow: "0 16px 40px rgba(0, 0, 0, 0.6)",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div
+          style={{
+            padding: "14px 18px",
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: tokens.dangerActionBg,
+            borderLeft: `4px solid ${tokens.bleed}`,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 16 }}>⚠️</span>
+            <span
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                color: tokens.bleed,
+                letterSpacing: "0.02em",
+              }}
+            >
+              Permanently Delete Chat
+            </span>
+          </div>
+          {!deleting && (
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                background: "transparent",
+                border: "none",
+                color: tokens.textFaint,
+                fontSize: 14,
+                cursor: "pointer",
+                padding: "2px 6px",
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
+        <div style={{ padding: "16px 18px", fontSize: 12, lineHeight: 1.5 }}>
+          <p style={{ color: tokens.text, margin: "0 0 12px" }}>
+            Are you sure you want to permanently delete this conversation? This operation cannot be undone.
+          </p>
+
+          <div
+            style={{
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.borderSoft}`,
+              borderRadius: 6,
+              padding: "10px 12px",
+              marginBottom: 14,
+              fontSize: 11,
+            }}
+          >
+            <div style={{ display: "flex", marginBottom: 4 }}>
+              <span style={{ color: tokens.textFaint, width: 75, flexShrink: 0 }}>Title:</span>
+              <span
+                style={{
+                  color: tokens.text,
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {run.title || "Untitled Chat"}
+              </span>
+            </div>
+            <div style={{ display: "flex", marginBottom: 4 }}>
+              <span style={{ color: tokens.textFaint, width: 75, flexShrink: 0 }}>Run ID:</span>
+              <span style={{ color: tokens.textMuted }}>{run.id}</span>
+            </div>
+            <div style={{ display: "flex" }}>
+              <span style={{ color: tokens.textFaint, width: 75, flexShrink: 0 }}>Status:</span>
+              <span style={{ color: STATUS_COLOR[run.status] }}>{run.status}</span>
+            </div>
+          </div>
+
+          <div style={{ color: tokens.textMuted, fontSize: 11, marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, color: tokens.text, marginBottom: 6 }}>
+              Items that will be permanently removed:
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18 }}>
+              <li style={{ marginBottom: 4 }}>
+                <strong>1 PostgreSQL row</strong> in <code style={{ color: tokens.accent }}>runs</code> table (full transcript &amp; metadata)
+              </li>
+              <li>
+                <strong>All vector embeddings</strong> in <code style={{ color: tokens.accent }}>knowledge_embeddings</code> matching <code style={{ color: tokens.accent }}>chat://{run.id}</code>
+              </li>
+            </ul>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: 10,
+              paddingTop: 12,
+              borderTop: `1px solid ${tokens.borderSoft}`,
+            }}
+          >
+            <button
+              type="button"
+              disabled={deleting}
+              onClick={onClose}
+              className="mono"
+              style={{
+                padding: "6px 14px",
+                borderRadius: 6,
+                border: `1px solid ${tokens.borderEmphasis}`,
+                background: tokens.bgBody,
+                color: tokens.text,
+                fontSize: 11,
+                cursor: deleting ? "not-allowed" : "pointer",
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={deleting}
+              onClick={onConfirm}
+              className="mono"
+              style={{
+                padding: "6px 16px",
+                borderRadius: 6,
+                border: `1px solid ${tokens.dangerActionBorder}`,
+                background: tokens.dangerActionBg,
+                color: tokens.bleed,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: deleting ? "wait" : "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {deleting ? "Deleting…" : "Permanently Delete"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
