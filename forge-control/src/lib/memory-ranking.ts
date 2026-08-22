@@ -76,6 +76,7 @@ export type NoteKind =
   | "daily-recent"
   | "daily-stale"
   | "rolling-log"
+  | "chat"
   | "note";
 
 const NOTE_KIND_WEIGHT: Record<NoteKind, number> = {
@@ -84,6 +85,10 @@ const NOTE_KIND_WEIGHT: Record<NoteKind, number> = {
   "daily-recent": 1.1,
   "daily-stale": 0.85,
   "rolling-log": 0.8,
+  /* A conversation is raw material; a note is something Konrad decided was
+   * worth keeping. When both match a query the curated one should edge ahead —
+   * but only just, because the chats hold the reasoning the notes summarise. */
+  chat: 0.95,
   note: 1.0,
 };
 
@@ -102,6 +107,13 @@ const SPEC_NAME_RE = /(^|\/)(spec|specification)[^/]*\.md$/i;
  *  from the filename rather than the filesystem (dailies get touched by
  *  tooling long after the day they describe). */
 export function classifyNote(sourcePath: string, now = Date.now()): NoteKind {
+  /* `chat://<run_id>` — a conversation from `content_forge.runs.thread`,
+   * embedded by km-indexer.js. Checked first because it is a pseudo-URI with
+   * no file behind it: every path rule below assumes a vault-relative name,
+   * and its recency comes from `metadata.ts` rather than a stat (see
+   * searchMemory, which passes it as `mtime_ms`). */
+  if (sourcePath.startsWith("chat://")) return "chat";
+
   const daily = sourcePath.match(DAILY_RE);
   if (daily) {
     const stamp = Date.parse(`${daily[2]}-${daily[3]}-${daily[4]}T00:00:00Z`);

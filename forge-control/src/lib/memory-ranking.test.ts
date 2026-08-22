@@ -69,6 +69,62 @@ describe("classifyNote", () => {
   test("anything else is a plain note", () => {
     assert.equal(classifyNote("30_YouTube/Tested YTA Niches.md", NOW), "note");
   });
+
+  test("chat pseudo-URIs classify as chats, and win over the path rules", () => {
+    assert.equal(
+      classifyNote("chat://a5b13a04-8a62-42c2-a4c6-102c604656b5", NOW),
+      "chat",
+    );
+    // A run whose id happened to look like a daily or a log must NOT be
+    // dragged into those kinds: the scheme is checked before any filename
+    // rule, so a conversation about the Operator Log is still a conversation.
+    assert.equal(classifyNote("chat://Daily/2026-08-01.md", NOW), "chat");
+    assert.equal(classifyNote("chat://AI OS/Operator Log.md", NOW), "chat");
+  });
+
+  test("the other pseudo-URI schemes are untouched by the chat rule", () => {
+    // worker-task:// and hermes:// predate chats and must keep classifying as
+    // plain notes — silently reweighting them is a change nobody asked for.
+    assert.equal(classifyNote("worker-task://abc-123", NOW), "note");
+    assert.equal(classifyNote("hermes://corr-9", NOW), "note");
+  });
+});
+
+describe("chat recency", () => {
+  test("an old chat is decayed like an old note, not treated as ageless", () => {
+    // The point of threading metadata.ts through as mtime_ms: without it the
+    // ranker sees null (nothing to stat behind a pseudo-path), reads that as
+    // "age unknown", and weights a January conversation like today's.
+    const old = weightFor(
+      cand({ source_path: "chat://old", mtime_ms: NOW - 400 * DAY }),
+      NOW,
+    );
+    const fresh = weightFor(
+      cand({ source_path: "chat://fresh", mtime_ms: NOW }),
+      NOW,
+    );
+    assert.equal(old.kind, "chat");
+    assert.ok(
+      old.weight < fresh.weight,
+      `old chat (${old.weight}) should weigh less than a fresh one (${fresh.weight})`,
+    );
+  });
+
+  test("a chat with no timestamp is neutral, never boosted", () => {
+    const undated = weightFor(
+      cand({ source_path: "chat://undated", mtime_ms: null }),
+      NOW,
+    );
+    const fresh = weightFor(
+      cand({ source_path: "chat://fresh", mtime_ms: NOW }),
+      NOW,
+    );
+    assert.equal(undated.ageDays, null);
+    assert.ok(
+      undated.weight <= fresh.weight,
+      "an undated chat must not outrank a dated one",
+    );
+  });
 });
 
 describe("recencyWeight", () => {

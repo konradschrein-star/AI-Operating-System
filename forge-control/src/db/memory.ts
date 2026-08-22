@@ -797,6 +797,26 @@ export interface SearchOptions {
  * the over-fetch a query whose top 30 candidates are all one note would return
  * two results instead of a full page.
  */
+/**
+ * Age signal for a source_path that is a pseudo-URI rather than a file.
+ *
+ * Returns `undefined` for real vault notes so `weightFor()` falls through to
+ * its own `noteMtimeMs()` stat — passing an explicit value would override the
+ * live mtime with whatever the indexer happened to record. Returns `null`
+ * (not 0, not now) when a pseudo-path has no usable timestamp: the ranker
+ * treats null as "unknown age → neutral weight", which is the honest answer,
+ * where 0 would mean 1970 and Date.now() would mean brand new.
+ */
+function pseudoPathTimestamp(
+  sourcePath: string,
+  ts: string | null,
+): number | null | undefined {
+  if (!sourcePath.includes("://")) return undefined;
+  if (!ts) return null;
+  const parsed = Date.parse(ts);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 export async function searchMemory(
   query: string,
   limit = 12,
@@ -820,10 +840,12 @@ export async function searchMemory(
     chunk_index: number;
     distance: number;
     chunk_count: number | null;
+    source_ts: string | null;
   }>(
     `SELECT source_path, title, content, chunk_index,
             (embedding <=> $1::halfvec) AS distance,
-            NULLIF(metadata->>'chunk_count', '')::int AS chunk_count
+            NULLIF(metadata->>'chunk_count', '')::int AS chunk_count,
+            metadata->>'ts' AS source_ts
        FROM knowledge_embeddings
        WHERE embedding IS NOT NULL
        ORDER BY embedding <=> $1::halfvec
@@ -836,6 +858,13 @@ export async function searchMemory(
     chunk_index: row.chunk_index,
     score: 1 - row.distance, // cosine distance → similarity
     chunk_count: row.chunk_count ?? undefined,
+    /* Recency for rows with no file behind them. `noteMtimeMs()` can only stat
+     * paths under the vault, so a `chat://…` pseudo-URI resolves to null —
+     * which the ranker reads as "age unknown" and weights neutrally, letting a
+     * January conversation rank as though it were written today. km-indexer
+     * writes the run's creation time to `metadata.ts` precisely so it can be
+     * supplied here. Left undefined for vault notes, which keep their mtime. */
+    mtime_ms: pseudoPathTimestamp(row.source_path, row.source_ts),
     title: row.title,
     content: row.content,
   }));
