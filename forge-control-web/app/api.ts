@@ -603,6 +603,7 @@ export interface RunSummary {
   last_message_preview: string;
   last_role: string;
   archived: boolean;
+  metadata?: Record<string, unknown>;
   /* ── phase 400 (U10): rail rollup ────────────────────────────────────────
    * Present ONLY for chats that resolve to a project via
    * `project.metadata.origin_chat_id` (GET /api/chat, rollupChatProjects).
@@ -642,10 +643,16 @@ export const fetchChatList = async (
 };
 
 /** Search past chats — title + prompt + every message in the thread.
- *  Includes closed/archived chats so a closed conversation stays findable. */
-export const searchChats = async (q: string): Promise<RunSummary[]> => {
+ *  `scope: "all"` (default) reaches every chat ever, including closed/
+ *  archived ones — closing hides a chat from the rail but must never make
+ *  it unfindable. `scope: "open"` is the book-icon toggle: only chats still
+ *  on the rail. */
+export const searchChats = async (
+  q: string,
+  scope: "open" | "all" = "all",
+): Promise<RunSummary[]> => {
   const r = await getJson<{ q: string; runs: RunSummary[] }>(
-    `/chat/search?q=${encodeURIComponent(q)}`,
+    `/chat/search?q=${encodeURIComponent(q)}&scope=${scope}`,
   );
   return r.runs;
 };
@@ -655,6 +662,14 @@ export const archiveChat = async (id: string): Promise<RunDetail> => {
   const r = await postJson<{ run: RunDetail }>(`/chat/${id}/archive`, {});
   return r.run;
 };
+
+/** Permanently delete a chat — the run row and its indexed search trail.
+ *  NOT reversible; the caller owns confirming with Konrad before calling
+ *  this. Returns how many embedding chunks were removed alongside it. */
+export const deleteChat = async (
+  id: string,
+): Promise<{ deleted: true; embeddings_deleted: number }> =>
+  deleteJson<{ deleted: true; embeddings_deleted: number }>(`/chat/${id}`);
 
 /** Close every open chat at once. Returns how many were touched. */
 export const archiveAllChats = async (): Promise<number> => {

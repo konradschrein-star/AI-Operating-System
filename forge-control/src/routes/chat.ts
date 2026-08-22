@@ -33,6 +33,7 @@ import {
   archiveRun,
   archiveAllRuns,
   searchRuns,
+  deleteRun,
   type RunStatus,
   type ThreadEntry,
 } from "../db/runs.ts";
@@ -1406,14 +1407,20 @@ r.get("/:id/plan/doc", async (c) => {
 
 /* Search past chats — title, prompt, and every message in the thread, so a
  * word Konrad typed (or the engine replied with) is enough to find the
- * conversation, not just a title match. Includes closed/archived chats:
- * closing hides a chat from the rail but must never make it unfindable. */
+ * conversation, not just a title match.
+ *
+ * `?scope=open|all` is the book-icon toggle: "open" searches only what's
+ * still on the rail, "all" (the default, unchanged) reaches every chat ever
+ * — closing one hides it from the rail but must never make it unfindable. An
+ * unrecognised scope value is treated as "all" rather than 400ing a search
+ * box over a typo. */
 r.get("/search", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
   if (!q) return c.json({ q, runs: [] });
   const limit = Math.min(100, Math.max(1, Number(c.req.query("limit") ?? "30")));
-  const runs = await searchRuns(q, limit);
-  return c.json({ q, runs });
+  const scope = c.req.query("scope") === "open" ? "open" : "all";
+  const runs = await searchRuns(q, limit, { scope });
+  return c.json({ q, runs, scope });
 });
 
 /* Close every open chat in one shot — archives each and cancels any that
@@ -1937,6 +1944,18 @@ r.post("/:id/archive", async (c) => {
   const updated = await archiveRun(id);
   if (!updated) return c.json({ error: "run not found" }, 404);
   return c.json({ run: updated });
+});
+
+/* Permanently delete a chat: the `runs` row and its embedded search trail
+ * (see `deleteRun`'s doc-comment). Unlike `/:id/archive`, this cannot be
+ * undone — there is no confirm step here because the UI owns that; this
+ * route does exactly what it's told, once, on the id it's given. */
+r.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const result = await deleteRun(id);
+  if (!result.deleted) return c.json({ error: "run not found" }, 404);
+  return c.json({ deleted: true, embeddings_deleted: result.embeddings_deleted });
 });
 
 /* Status control: pause / resume / cancel. */

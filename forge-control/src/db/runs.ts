@@ -67,6 +67,7 @@ export interface RunSummary {
   last_message_preview: string;
   last_role: string;
   archived: boolean;
+  metadata: Record<string, unknown>;
 }
 
 export interface RunDetail extends RunSummary {
@@ -132,9 +133,11 @@ export async function listRuns(
     last_heartbeat_at: string | null;
     thread: ThreadEntry[];
     archived: boolean;
+    metadata: Record<string, unknown>;
   }>(
     `SELECT id::text, title, status, worker, budget_usd::text, spent_usd::text,
-            created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived
+            created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived,
+            metadata
        FROM runs
        WHERE (archived = false OR $3::boolean)
          AND parent_run_id IS NULL
@@ -161,6 +164,7 @@ export async function listRuns(
       last_message_preview: pv.text,
       last_role: pv.role,
       archived: row.archived,
+      metadata: row.metadata ?? {},
     };
   });
   return { runs, hasMore };
@@ -168,10 +172,20 @@ export async function listRuns(
 
 /** Full-text-ish search across title, prompt, and every message in the
  *  thread (both roles — a reply often echoes the topic the user asked
- *  about). Includes archived runs: closing a chat hides it from the
- *  default rail but it must stay findable. */
-export async function searchRuns(q: string, limit = 30): Promise<RunSummary[]> {
+ *  about).
+ *
+ *  `opts.scope`: `"all"` (the default — unchanged behaviour) includes
+ *  archived runs, because closing a chat hides it from the rail but must
+ *  never make it unfindable. `"open"` restricts the search to runs still
+ *  on the rail, for the book-icon toggle that lets Konrad search only
+ *  active chats instead of the whole history. */
+export async function searchRuns(
+  q: string,
+  limit = 30,
+  opts: { scope?: "open" | "all" } = {},
+): Promise<RunSummary[]> {
   const like = `%${q.replace(/[%_]/g, (m) => `\\${m}`)}%`;
+  const includeArchived = (opts.scope ?? "all") === "all";
   const r = await pool.query<{
     id: string;
     title: string;
@@ -184,19 +198,22 @@ export async function searchRuns(q: string, limit = 30): Promise<RunSummary[]> {
     last_heartbeat_at: string | null;
     thread: ThreadEntry[];
     archived: boolean;
+    metadata: Record<string, unknown>;
   }>(
     `SELECT id::text, title, status, worker, budget_usd::text, spent_usd::text,
-            created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived
+            created_at::text, updated_at::text, last_heartbeat_at::text, thread, archived,
+            metadata
        FROM runs
-       WHERE title ILIKE $1
+       WHERE (archived = false OR $3::boolean)
+         AND (title ILIKE $1
           OR prompt ILIKE $1
           OR EXISTS (
                SELECT 1 FROM jsonb_array_elements(thread) elem
                 WHERE elem->>'content' ILIKE $1
-             )
+             ))
        ORDER BY updated_at DESC
        LIMIT $2`,
-    [like, limit],
+    [like, limit, includeArchived],
   );
   return r.rows.map((row) => {
     const pv = previewOf(row.thread ?? []);
@@ -214,6 +231,7 @@ export async function searchRuns(q: string, limit = 30): Promise<RunSummary[]> {
       last_message_preview: pv.text,
       last_role: pv.role,
       archived: row.archived,
+      metadata: row.metadata ?? {},
     };
   });
 }
@@ -475,6 +493,55 @@ export async function archiveAllRuns(): Promise<number> {
     [NON_TERMINAL],
   );
   return r.rowCount ?? 0;
+}
+
+export interface DeleteRunResult {
+  /** False when no run with this id existed — the route's 404 signal. */
+  deleted: boolean;
+  /** Embedding chunk rows removed from `knowledge_embeddings` (a run's
+   *  transcript is chunked, so this is usually >1 even for a short chat). */
+  embeddings_deleted: number;
+}
+
+/**
+ * Permanently remove a chat: the `runs` row AND every knowledge-embedding
+ * chunk indexed under it, so a deleted chat cannot resurface in a memory
+ * search. Unlike `archiveRun` this is NOT reversible.
+ *
+ * `km-indexer.js` (`indexChatThreads`) embeds a run's thread under
+ * `source_path = 'chat://' || run.id`, one row per chunk, all sharing that
+ * exact source_path (see its header comment). The `LIKE … || '%'` arm is
+ * belt-and-braces for any future per-chunk-suffixed scheme; today's rows all
+ * match the exact form.
+ *
+ * Both deletes happen in ONE transaction: embeddings first, then the run.
+ * If the run delete failed after the embeddings were already gone, the row
+ * would survive on the rail with its search trail silently erased — a
+ * half-delete that is worse than either whole state. Either both succeed or
+ * neither does.
+ */
+export async function deleteRun(id: string): Promise<DeleteRunResult> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const emb = await client.query(
+      `DELETE FROM knowledge_embeddings
+        WHERE source_path = 'chat://' || $1
+           OR source_path LIKE 'chat://' || $1 || '%'`,
+      [id],
+    );
+    const run = await client.query(`DELETE FROM runs WHERE id = $1`, [id]);
+    await client.query("COMMIT");
+    return {
+      deleted: (run.rowCount ?? 0) > 0,
+      embeddings_deleted: emb.rowCount ?? 0,
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export interface LimitHit {
