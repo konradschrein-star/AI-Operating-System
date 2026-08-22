@@ -45,17 +45,19 @@
  * (phase0/S-A-agy-flow.md and phase4/agy-flow-affordance.md — read the second
  * one before adding any button to `AgyCard`)
  *
- *   • No "Connect agy" button, and no paste-a-code box. `agy` has no `login`
- *     subcommand; auth is implicit PKCE with
- *     `redirect_uri=https://antigravity.google/oauth-callback`, so nothing on
- *     this box catches the callback. The CLI prints a consent URL, waits a
- *     HARD-CODED 60 seconds on ONE single-use challenge, and asks for the code
- *     to be pasted into THAT process's stdin. A browser control cannot reach
- *     that stdin, and the flow is over before a human could round-trip
- *     Google's consent screen anyway. R54 explicitly permits recording this as
- *     a blocker; it explicitly forbids the pretty lie. So the card prints the
- *     verbatim command and the verbatim prompt, and offers Verify — which runs
- *     the real probe and shows its real output.
+ *   • THIS ONE WAS TRUE UNTIL THE CLI SIGN-IN BROKER EXISTED, AND IS THE ONLY
+ *     ENTRY ON THIS LIST THAT HAS EVER BEEN RETIRED. It read: no "Connect agy"
+ *     button and no paste-a-code box, because `agy` has no `login` subcommand,
+ *     auth is implicit PKCE with
+ *     `redirect_uri=https://antigravity.google/oauth-callback` so nothing on
+ *     this box catches the callback, and the code has to be pasted into THAT
+ *     process's stdin within a HARD-CODED 60 seconds. Every one of those facts
+ *     is still true. What changed is the last step of the argument: a browser
+ *     control cannot reach that stdin, but forge-control can — it runs the CLI
+ *     on a pty under tmux and pastes the code into the waiting prompt
+ *     (`PLAN.md` §3). So `AgyCard` and `GeminiCliCard` render `CliAuthConnect`,
+ *     and R54 is satisfied the way it always asked to be: the button finishes
+ *     the job, and `connected` is still produced only by a probe.
  *   • No "token present" chip on `GitHubCard`. A stored PAT is storage, not
  *     authorisation; only a 200 from `GET https://api.github.com/user`
  *     carrying a `login` produces the connected word. The two states have
@@ -95,9 +97,11 @@ import { storeSecret } from "../../api";
 import {
   fetchAgyConnection,
   fetchConnections,
+  fetchGeminiCliConnection,
   fetchGithubConnection,
   fetchGoogleConnection,
   probeAgyConnection,
+  probeGeminiCliConnection,
   probeGithubConnection,
   probeGoogleConnection,
   type AgyFlow,
@@ -107,14 +111,17 @@ import {
 } from "../../api-connections";
 import {
   agyConnection,
+  geminiCliConnection,
   githubConnection,
   probedAgo,
   type AgyFacts,
   type ConnectionSummary,
+  type GeminiCliFacts,
   type GithubFacts,
   type GoogleFacts,
   type Read,
 } from "./connections";
+import { CliAuthConnect } from "./CliAuthConnect";
 
 /* ── Wire shapes (mirror routes/integrations.ts) ─────────────────────────── */
 
@@ -226,7 +233,13 @@ function card(): CSSProperties {
   };
 }
 
-function btn(bg: string, border: string): CSSProperties {
+/* `btn`, `Banner`, `CommandBlock` and `input` are EXPORTED, and the reason is
+ * a rule rather than a convenience: `CliAuthConnect.tsx` renders inside these
+ * cards, and a control that brought its own button and its own banner would be
+ * a second design language growing inside the first one. One definition, two
+ * importers. (`input` moved here from `ConnectionsPanel.tsx`, which now imports
+ * it — same field, same style, one copy.) */
+export function btn(bg: string, border: string): CSSProperties {
   return {
     background: bg,
     border: `1px solid ${border}`,
@@ -235,6 +248,21 @@ function btn(bg: string, border: string): CSSProperties {
     cursor: "pointer",
     fontSize: 12,
     padding: "6px 12px",
+  };
+}
+
+/** The one text field on this surface. */
+export function input(): CSSProperties {
+  return {
+    background: tokens.bgGutter,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 7,
+    color: tokens.text,
+    display: "block",
+    fontSize: 12.5,
+    marginTop: 3,
+    padding: "6px 9px",
+    width: "100%",
   };
 }
 
@@ -313,7 +341,7 @@ function CardHead({
   );
 }
 
-function Banner({
+export function Banner({
   tone,
   children,
 }: {
@@ -348,8 +376,34 @@ function Banner({
   );
 }
 
-/** The re-auth affordance: a command, not a button. See the file header. */
-function CommandBlock({ command, why }: { command: string; why: string }): JSX.Element {
+/**
+ * A monospaced line to act on, with the sentence that says what to do with it.
+ *
+ * It began as the re-auth affordance — a command, not a button, because
+ * `setup.py` needs a human at a browser (see the file header). `CliAuthConnect`
+ * now shows a consent URL in the same box, so `title` and `marker` are
+ * parameters and the default is the sentence this block has always carried.
+ * Two boxes that look alike because they ARE alike; the alternative was a
+ * second copyable-box style, which is how a surface starts to look assembled
+ * out of parts.
+ */
+export function CommandBlock({
+  command,
+  why,
+  title = "Re-authorise this account (interactive — run it on the VPS):",
+  marker,
+  copyable = false,
+}: {
+  command: string;
+  why: string;
+  title?: string;
+  /** A `data-` attribute name stamped on the `<code>`, so a browser check can
+   *  find this exact box among several. */
+  marker?: string;
+  copyable?: boolean;
+}): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  const markerProps: Record<string, string> = marker === undefined ? {} : { [marker]: "true" };
   return (
     <div
       style={{
@@ -360,16 +414,36 @@ function CommandBlock({ command, why }: { command: string; why: string }): JSX.E
         padding: "10px 12px",
       }}
     >
-      <div style={{ fontSize: 12.5, marginBottom: 6, color: tokens.textBody }}>
-        Re-authorise this account (interactive — run it on the VPS):
+      <div style={{ fontSize: 12.5, marginBottom: 6, color: tokens.textBody, lineHeight: 1.5 }}>
+        {title}
       </div>
-      <code
-        className="mono"
-        style={{ fontSize: 12, color: tokens.textHi, wordBreak: "break-all" }}
-      >
-        {command}
-      </code>
-      <div style={{ fontSize: 11.5, color: tokens.textFaint, marginTop: 6 }}>{why}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <code
+          className="mono"
+          {...markerProps}
+          style={{ fontSize: 12, color: tokens.textHi, wordBreak: "break-all", flex: 1 }}
+        >
+          {command}
+        </code>
+        {copyable && (
+          <button
+            type="button"
+            data-command-copy
+            onClick={() => {
+              void navigator.clipboard?.writeText(command);
+              setCopied(true);
+            }}
+            style={btn(tokens.toolBg, tokens.border)}
+          >
+            {copied ? "copied" : "copy"}
+          </button>
+        )}
+      </div>
+      {why !== "" && (
+        <div style={{ fontSize: 11.5, color: tokens.textFaint, marginTop: 6, lineHeight: 1.5 }}>
+          {why}
+        </div>
+      )}
     </div>
   );
 }
@@ -460,7 +534,7 @@ export function resetRecheckIntervalCache(): void {
   intervalPromise = null;
 }
 
-function messageOf(e: unknown): string {
+export function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
@@ -1271,6 +1345,17 @@ export function AgyCard({
       )}
       {error && <Banner tone="bad">{error}</Banner>}
 
+      {/* THE ACTION HALF. Until this round the card's honest answer was "you
+          must do this at a terminal" — and it was honest, because nothing here
+          could reach the CLI's stdin. The broker can: it runs `agy` on a pty
+          and pastes the code into the prompt that is waiting for it. So the
+          control comes FIRST, above the diagnosis, on every state that is not
+          already signed in. The verbatim terminal steps stay below it as the
+          fallback, no longer as the only door. */}
+      {summary.state !== "connected" && (
+        <CliAuthConnect provider="agy" onConnected={() => void load()} />
+      )}
+
       {status && (
         <div
           data-agy-state
@@ -1285,22 +1370,23 @@ export function AgyCard({
 
       {status && <SummaryFields summary={summary} />}
 
-      {/* THE BLOCKER, ON SCREEN. R54 permits recording that the flow cannot be
-          completed from the browser; it forbids pretending otherwise. */}
+      {/* The flow, VERBATIM, still measured at a terminal — it is what the
+          broker automates, and it is the fallback if the broker cannot start
+          the CLI at all. R54 forbade a button that could not finish the job;
+          it never forbade one that can. */}
       {flow && (
         <Banner tone="info">
-          <strong data-agy-blocker>
-            This login cannot be completed from this browser, and the card will not
-            pretend otherwise.
+          <strong data-agy-flow>
+            What Connect does for you, and what to do if it cannot.
           </strong>
-          <div style={{ marginTop: 6 }}>{flow.why_no_button}</div>
           <div style={{ marginTop: 8 }}>
             The consent window is <strong>{flow.window_seconds} seconds</strong> and the
-            challenge is single-use, so the code has to be pasted into the same terminal
-            that printed the URL — while it is still waiting.
+            challenge is single-use, so a URL from an earlier attempt can never be
+            completed — that is why a failed attempt offers Relaunch rather than the same
+            link again.
           </div>
           <div style={{ marginTop: 10 }}>
-            <Label text="WHAT KONRAD MUST DO, AT A TERMINAL ON THIS BOX" />
+            <Label text="THE SAME THING BY HAND, AT A TERMINAL ON THIS BOX" />
             <ol
               style={{
                 margin: "6px 0 0",
@@ -1362,6 +1448,158 @@ export function AgyCard({
               probe command: {flow.probe_command}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ── Gemini CLI — the OAuth session, not the API key ─────────────────────── */
+
+/**
+ * `/usr/bin/gemini`, signed in with a Google account.
+ *
+ * ── WHY THIS IS A SECOND GEMINI CARD AND NOT A FIELD ON THE FIRST ───────
+ * `GeminiCard` above is an API KEY: a string in the secret store, billed to a
+ * Cloud project. This is an OAuth SESSION: a credential file on disk, free
+ * tier, written by the CLI's own login. They fail independently and are
+ * repaired by completely different actions, and a surface that folded them
+ * into one row would have to choose which of the two its chip was about. It
+ * had no row at all before this round, which is why there was nothing to put a
+ * Connect button on.
+ *
+ * Everything else is `AgyCard`'s shape, deliberately: one fetch, reported
+ * upward through `onFacts`, one Verify that runs the real probe, and the
+ * sign-in control on top whenever the row is not already signed in.
+ */
+export function GeminiCliCard({
+  onFacts,
+}: {
+  onFacts?: (f: Read<GeminiCliFacts>) => void;
+} = {}): JSX.Element {
+  const [status, setStatus] = useState<ConnectionStatus | null>(null);
+  const [intervalMs, setIntervalMs] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** The read's own error — see `AgyCard`'s note. */
+  const [readError, setReadError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const [res, ms] = await Promise.all([
+        fetchGeminiCliConnection(),
+        loadRecheckIntervalMs(),
+      ]);
+      setStatus(res.status);
+      setIntervalMs(ms);
+      setReadError(null);
+    } catch (e) {
+      setReadError(messageOf(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const verify = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      setStatus((await probeGeminiCliConnection()).status);
+    } catch (e) {
+      setError(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const facts: GeminiCliFacts | null =
+    status === null || intervalMs === null ? null : { status, recheckIntervalMs: intervalMs };
+  /* Facts beat a read error: a failed refresh must not erase a real reading. */
+  const read: Read<GeminiCliFacts> =
+    facts !== null ? facts : readError === null ? null : { read_error: readError };
+  const summary = geminiCliConnection(read);
+
+  useEffect(() => {
+    if (!onFacts) return;
+    if (facts === null && readError === null) return;
+    onFacts(read);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, intervalMs, readError]);
+
+  return (
+    <div data-gemini-cli-card style={card()}>
+      <CardHead
+        title="Gemini CLI"
+        note="a Google account on this box · not the API key"
+        right={
+          <button
+            data-gemini-cli-verify
+            data-busy={busy ? "true" : "false"}
+            onClick={() => void verify()}
+            disabled={busy || status?.state === "absent"}
+            style={btn(tokens.toolBg, tokens.border)}
+          >
+            {busy ? "verifying…" : "Verify"}
+          </button>
+        }
+      />
+
+      {readError && (
+        <Banner tone="bad">
+          <strong data-gemini-cli-read-error>
+            Could not read this connection&rsquo;s status.
+          </strong>{" "}
+          {readError}
+        </Banner>
+      )}
+      {error && <Banner tone="bad">{error}</Banner>}
+
+      {/* The CLI refuses to authenticate in a non-interactive session, which is
+          why nothing before the broker could sign it in from here: it needs a
+          real pty and a prompt somebody answers. The broker gives it both. */}
+      {summary.state !== "connected" && (
+        <CliAuthConnect provider="gemini-cli" onConnected={() => void load()} />
+      )}
+
+      {status && (
+        <div
+          data-gemini-cli-state
+          style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+        >
+          <StateChip summary={summary} />
+          <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
+            {checkedAgo(status.checked_at)}
+          </span>
+        </div>
+      )}
+
+      {status && <SummaryFields summary={summary} />}
+
+      {status && (
+        <div
+          style={{
+            marginTop: 12,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <Label text="LAST PROBE — VERBATIM OUTPUT" />
+          <div
+            data-gemini-cli-detail
+            style={{
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              fontSize: 12,
+              color: tokens.textBody,
+              marginTop: 4,
+            }}
+          >
+            {status.detail}
+          </div>
         </div>
       )}
     </div>

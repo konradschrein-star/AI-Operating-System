@@ -563,7 +563,11 @@ export function googleConnection(
 const AGY_COPY: ConnectionCopy = {
   id: "agy",
   title: "Antigravity CLI (agy)",
-  what: "Google's `agy` CLI, the only path from this box to Konrad's AI Ultra subscription. Signing it in needs a human at a terminal: there is no login subcommand and no callback this OS can catch.",
+  // The terminal is no longer the only door. `agy` still has no login
+  // subcommand and still catches no callback — what changed is that the OS now
+  // drives the CLI itself on a pty and pastes the code in for him, so the
+  // sentence that sent him to SSH would be false above a Connect button.
+  what: "Google's `agy` CLI, the only path from this box to Konrad's AI Ultra subscription. Sign it in from here: the OS runs the CLI, shows you Google's URL, and pastes the code you bring back into the waiting prompt.",
   labels: {
     connected: "SIGNED IN",
     unknown: "UNKNOWN",
@@ -592,6 +596,61 @@ export function agyConnection(
     );
   }
   return summaryFromStatus(AGY_COPY, f.status, {
+    nowMs,
+    intervalMs: f.recheckIntervalMs,
+  });
+}
+
+/* ── Gemini CLI — the OAuth session, NOT the API key ─────────────────────── */
+
+/**
+ * `/usr/bin/gemini`, signed in with a Google account.
+ *
+ * A SEPARATE ROW FROM THE GEMINI API KEY, deliberately, and this is the whole
+ * reason it exists rather than being folded into `geminiKeyConnection`. The key
+ * is a string in the secret store, billed to a Cloud project; this is an OAuth
+ * session on disk. Either can be present while the other is missing, either can
+ * break on its own, and a single row would have to pick one of them to report —
+ * which is how a surface ends up saying CONNECTED about a thing that is not
+ * connected. Two subjects, two rows, one renderer.
+ *
+ * Its words are `agy`'s words wherever the two mean the same thing: both are a
+ * Google CLI whose login is a URL and a pasted code, and vocabulary that
+ * differs where the meaning does not is how a reader concludes two rows are
+ * about different kinds of failure.
+ */
+const GEMINI_CLI_COPY: ConnectionCopy = {
+  id: "gemini-cli",
+  title: "Gemini CLI",
+  what: "The `gemini` command line tool, signed in with a Google account — free-tier Gemini access that costs no API credit. Not the API key above: this is a session on disk, and the two break independently.",
+  labels: {
+    connected: "SIGNED IN",
+    unknown: "UNKNOWN",
+    // The probe RAN and the CLI said no — a different sentence from "we have
+    // not asked", and the same distinction `agy` makes.
+    broken: "NOT SIGNED IN",
+    absent: "NOT INSTALLED",
+  },
+  noIdentity: "no signed-in Google account — only a live call through the CLI reveals one",
+};
+
+export interface GeminiCliFacts {
+  status: ConnectionStatusFacts;
+  recheckIntervalMs: number;
+}
+
+export function geminiCliConnection(
+  f: Read<GeminiCliFacts>,
+  nowMs: number = Date.now(),
+): ConnectionSummary {
+  if (f === null || isReadFailure(f)) {
+    return unreadSummary(
+      { id: GEMINI_CLI_COPY.id, title: GEMINI_CLI_COPY.title, what: GEMINI_CLI_COPY.what },
+      f === null ? null : f.read_error,
+      "Loading the persisted status.",
+    );
+  }
+  return summaryFromStatus(GEMINI_CLI_COPY, f.status, {
     nowMs,
     intervalMs: f.recheckIntervalMs,
   });

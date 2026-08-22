@@ -438,21 +438,29 @@ async function main(): Promise<void> {
 
   console.log("\n§6 agy and GitHub: the affordances that must NOT exist");
 
-  /* `agy` — R54's permitted outcome, asserted as an outcome rather than as a
-   * good intention. There is no Connect button and no paste-a-code input,
-   * because a browser cannot reach the stdin of the process holding the
-   * single-use challenge, and its window is 60 seconds. What there IS: the
-   * verbatim command, the verbatim prompt, and a Verify that runs the real
-   * probe. Reasoning committed at phase4/agy-flow-affordance.md. */
+  /* `agy` — R54, AND THE ONE ASSERTION IN THIS FILE THAT HAS BEEN INVERTED.
+   *
+   * It read: no Connect button and no paste-a-code input, because a browser
+   * cannot reach the stdin of the process holding the single-use challenge.
+   * Every fact in that sentence is still true and the conclusion is no longer,
+   * because the thing reaching that stdin is not the browser: the CLI sign-in
+   * broker runs `agy` on a pty under tmux and pastes the code into the waiting
+   * prompt (`PLAN.md` §3). R54 forbids a button that CANNOT finish the job —
+   * the fake success state — so the successor rule is that the button must
+   * exist and must be the broker's, and that `connected` still comes only from
+   * a probe. Both are asserted below; the old wording is kept in this comment
+   * so the inversion is legible rather than looking like a deleted guard.
+   * Reasoning: phase4/agy-flow-affordance.md, superseded by PLAN.md §0. */
   const agyMarkup = renderToStaticMarkup(<AgyCard />);
   ok(
-    "agy: no Connect/Sign-in BUTTON — that flow cannot be finished from a browser",
-    !/<button[^>]*>[^<]*(connect|sign in|log in|authorize)/i.test(agyMarkup),
-    /<button[^>]*>[^<]*(connect|sign in|log in|authorize)[^<]*/i.exec(agyMarkup)?.[0],
+    "agy: the card offers Connect, and it is the broker's control",
+    /<button[^>]*data-cli-auth-connect="agy"/.test(agyMarkup),
+    /<button[^>]*>[^<]*(connect|sign in)[^<]*/i.exec(agyMarkup)?.[0],
   );
   ok(
-    "agy: no paste-a-code input either — the code goes to the CLI's own stdin",
-    !/<input[^>]*(authoriz|auth.?code|paste)/i.test(agyMarkup),
+    "agy: …and no code field until the CLI is actually asking for one",
+    !/<input[^>]*data-cli-auth-code/.test(agyMarkup) &&
+      !/<input[^>]*(authoriz|auth.?code|paste)/i.test(agyMarkup),
   );
   ok("agy: it offers Verify, which runs the real probe", agyMarkup.includes("data-agy-verify"));
   ok(
