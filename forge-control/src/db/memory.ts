@@ -38,6 +38,11 @@ import {
 // already encodes each component separately, which is the whole reason a note
 // whose name contains "&" opens at all (see its comment in lib/vault.ts).
 import { vaultName, obsidianUri } from "../lib/vault.ts";
+import {
+  parseExcalidrawMarkdown,
+  EMPTY_DRAWING,
+  type ExcalidrawDoc,
+} from "../lib/excalidraw-md.ts";
 
 const { Pool } = pg;
 
@@ -122,7 +127,7 @@ export interface SearchHit {
   vault_path: string;
   title: string;
   snippet: string;
-  /** Weighted score (raw cosine × note-type prior × recency decay). */
+  /** Weighted score (raw cosine × note-type prior × recency decay, or lexical match score). */
   score: number;
   chunk_index: number;
   /** Retrieval prior applied — see lib/memory-ranking.ts. Absent on graph-lane
@@ -137,6 +142,11 @@ export interface SearchHit {
   /** Ranking provenance, so a bad result set can be diagnosed from the API
    *  response alone instead of by re-deriving the maths. */
   explain?: RankExplain;
+  via?: "title" | "tag" | "vector" | "graph";
+  match_type?: "exact_title" | "title_match" | "tag_match" | "vector" | "graph";
+  match_reason?: string;
+  is_empty?: boolean;
+  tags?: string[];
 }
 
 /* ============================================================================
@@ -234,6 +244,451 @@ async function embedQuery(text: string): Promise<number[] | null> {
 }
 
 /* ============================================================================
+ * Excalidraw text & structure extraction
+ * ========================================================================== */
+
+export interface ExcalidrawExtracted {
+  topic: string;
+  tags: string[];
+  wikilinks: string[];
+  textElements: string[];
+  preamble: string;
+  body: string;
+  hasContent: boolean;
+}
+
+export function extractExcalidrawContent(
+  raw: string,
+  vaultPath = "",
+): ExcalidrawExtracted {
+  const { meta } = extractFrontmatter(raw);
+  const rawTags = meta.tags;
+  const tags: string[] = Array.isArray(rawTags)
+    ? rawTags.map(String)
+    : typeof rawTags === "string" && rawTags.trim()
+      ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+  if (!tags.includes("excalidraw")) {
+    tags.push("excalidraw");
+  }
+
+  let doc: ExcalidrawDoc;
+  try {
+    doc = parseExcalidrawMarkdown(raw);
+  } catch {
+    doc = {
+      frontmatter: "",
+      preamble: "",
+      otherSections: "",
+      drawing: EMPTY_DRAWING(),
+      format: "compressed",
+    };
+  }
+
+  const textElements = (doc.drawing?.elements ?? [])
+    .filter((el) => el && el.type === "text" && typeof el.text === "string")
+    .map((el) => String(el.text).trim())
+    .filter(Boolean);
+
+  const cleanPreamble = (doc.preamble ?? "")
+    .replace(/==⚠[\s\S]*?⚠==/g, "")
+    .trim();
+
+  const sections = [cleanPreamble, doc.otherSections, textElements.join("\n\n")].filter(Boolean);
+  const body = sections.join("\n\n");
+
+  const wikilinks = extractWikilinks(body);
+  for (const el of doc.drawing?.elements ?? []) {
+    if (el && typeof el.link === "string") {
+      for (const m of el.link.matchAll(WIKILINK_RE)) {
+        const target = m[1].trim();
+        if (target && !wikilinks.includes(target)) wikilinks.push(target);
+      }
+    }
+  }
+
+  const topic =
+    typeof meta.title === "string" && meta.title.trim()
+      ? meta.title.trim()
+      : path
+          .basename(vaultPath, ".md")
+          .replace(/\.excalidraw$/i, "")
+          .replace(/_/g, " ")
+          .trim() || "Untitled Drawing";
+
+  const hasContent = body.trim().length > 0;
+
+  return {
+    topic,
+    tags,
+    wikilinks,
+    textElements,
+    preamble: cleanPreamble,
+    body,
+    hasContent,
+  };
+}
+
+/* ============================================================================
+ * Lexical Search: Disk Scan + DB Matching + Hybrid Fusion
+ * ========================================================================== */
+
+export async function scanVaultDiskMatches(
+  query: string,
+  vaultDir = VAULT_DIR,
+): Promise<SearchHit[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const qLower = q.toLowerCase();
+  const qWords = qLower.split(/\s+/).filter((w) => w.length > 0);
+
+  const entries = await readdir(vaultDir, {
+    withFileTypes: true,
+    recursive: true,
+  }).catch(() => []);
+
+  const hits: SearchHit[] = [];
+
+  for (const e of entries) {
+    if (!e.isFile() || !e.name.toLowerCase().endsWith(".md")) continue;
+    const parentAbs =
+      (e as unknown as { parentPath?: string; path?: string }).parentPath ??
+      (e as unknown as { path?: string }).path ??
+      vaultDir;
+    const abs = path.join(parentAbs, e.name);
+    const rel = path.relative(vaultDir, abs).split(path.sep).join("/");
+    const segments = rel.split("/");
+    if (segments.some((seg) => seg.startsWith("."))) continue;
+
+    const baseNoExt = path.basename(rel, ".md");
+    const cleanTopic = baseNoExt
+      .replace(/\.excalidraw$/i, "")
+      .replace(/_/g, " ")
+      .trim();
+    const topicLower = cleanTopic.toLowerCase();
+    const baseLower = baseNoExt.toLowerCase();
+    const relLower = rel.toLowerCase();
+    const slugLower = slugify(rel).toLowerCase();
+
+    const isExact =
+      topicLower === qLower ||
+      baseLower === qLower ||
+      relLower === qLower ||
+      relLower === `${qLower}.md` ||
+      slugLower === qLower;
+
+    const isSubstring =
+      !isExact &&
+      (topicLower.includes(qLower) ||
+        baseLower.includes(qLower) ||
+        relLower.includes(qLower) ||
+        (qWords.length > 1 && qWords.every((w) => topicLower.includes(w))));
+
+    let statSize = 0;
+    try {
+      const st = await stat(abs);
+      statSize = st.size;
+    } catch {
+      continue;
+    }
+
+    let is_empty = false;
+    let snippet = "";
+    let tags: string[] = [];
+    let title = cleanTopic;
+
+    if (isExact || isSubstring) {
+      if (statSize === 0) {
+        is_empty = true;
+        snippet = "(empty note)";
+      } else {
+        try {
+          const raw = await readFile(abs, "utf8");
+          if (rel.toLowerCase().endsWith(".excalidraw.md")) {
+            const ex = extractExcalidrawContent(raw, rel);
+            tags = ex.tags;
+            title = ex.topic;
+            if (!ex.hasContent) {
+              is_empty = true;
+              snippet = "(empty note)";
+            } else {
+              snippet = ex.body.slice(0, 240).trim();
+            }
+          } else {
+            const fm = extractFrontmatter(raw);
+            if (typeof fm.meta.title === "string" && fm.meta.title.trim()) {
+              title = fm.meta.title.trim();
+            }
+            const rawTags = fm.meta.tags;
+            tags = Array.isArray(rawTags)
+              ? rawTags.map(String)
+              : typeof rawTags === "string" && rawTags.trim()
+                ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
+                : [];
+            if (fm.body.trim().length === 0) {
+              is_empty = true;
+              snippet = "(empty note)";
+            } else {
+              snippet = fm.body.slice(0, 240).trim();
+            }
+          }
+        } catch {
+          is_empty = true;
+          snippet = "(empty note)";
+        }
+      }
+
+      if (isExact) {
+        hits.push({
+          slug: slugify(rel),
+          vault_path: rel,
+          title,
+          snippet,
+          score: 1.0,
+          chunk_index: 0,
+          via: "title",
+          match_type: "exact_title",
+          match_reason: is_empty
+            ? "Exact title match (empty note)"
+            : "Exact title match",
+          is_empty,
+          tags,
+        });
+      } else if (isSubstring) {
+        hits.push({
+          slug: slugify(rel),
+          vault_path: rel,
+          title,
+          snippet,
+          score: 0.92,
+          chunk_index: 0,
+          via: "title",
+          match_type: "title_match",
+          match_reason: is_empty
+            ? `Title match on "${cleanTopic}" (empty note)`
+            : `Title match on "${cleanTopic}"`,
+          is_empty,
+          tags,
+        });
+      }
+    } else if (statSize > 0) {
+      try {
+        const raw = await readFile(abs, "utf8");
+        const fm = extractFrontmatter(raw);
+        const rawTags = fm.meta.tags;
+        tags = Array.isArray(rawTags)
+          ? rawTags.map(String)
+          : typeof rawTags === "string" && rawTags.trim()
+            ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
+            : [];
+        if (
+          rel.toLowerCase().endsWith(".excalidraw.md") &&
+          !tags.includes("excalidraw")
+        ) {
+          tags.push("excalidraw");
+        }
+        const matchedTag = tags.find(
+          (t) => t.toLowerCase() === qLower || t.toLowerCase().includes(qLower),
+        );
+        if (matchedTag) {
+          const body = rel.toLowerCase().endsWith(".excalidraw.md")
+            ? extractExcalidrawContent(raw, rel).body
+            : fm.body;
+          is_empty = body.trim().length === 0;
+          snippet = is_empty ? "(empty note)" : body.slice(0, 240).trim();
+          hits.push({
+            slug: slugify(rel),
+            vault_path: rel,
+            title:
+              typeof fm.meta.title === "string" && fm.meta.title.trim()
+                ? fm.meta.title.trim()
+                : cleanTopic,
+            snippet,
+            score: 0.88,
+            chunk_index: 0,
+            via: "tag",
+            match_type: "tag_match",
+            match_reason: `Matched tag #${matchedTag}`,
+            is_empty,
+            tags,
+          });
+        }
+      } catch {
+        // ignore read error
+      }
+    }
+  }
+
+  return hits;
+}
+
+export async function findDbLexicalMatches(query: string): Promise<SearchHit[]> {
+  const q = query.trim();
+  if (!q) return [];
+  const qLower = q.toLowerCase();
+  try {
+    const res = await hcp.query<{
+      id: string;
+      topic: string;
+      vault_path: string;
+      tags: string[] | null;
+      links: string[] | null;
+      created_by: string;
+    }>(
+      `SELECT id, topic, vault_path, tags, links, created_by
+         FROM knowledge_note
+         WHERE LOWER(topic) = $1
+            OR LOWER(vault_path) = $1
+            OR LOWER(vault_path) = $1 || '.md'
+            OR topic ILIKE $2
+            OR vault_path ILIKE $2
+            OR EXISTS (SELECT 1 FROM unnest(tags) t WHERE LOWER(t) = $1 OR t ILIKE $2)
+         LIMIT 50`,
+      [qLower, `%${q}%`],
+    );
+
+    const hits: SearchHit[] = [];
+    for (const row of res.rows) {
+      const topicLower = (row.topic ?? "").toLowerCase();
+      const pathLower = (row.vault_path ?? "").toLowerCase();
+      const slugLower = slugify(row.vault_path ?? "").toLowerCase();
+      const tags = row.tags ?? [];
+
+      const isExact =
+        topicLower === qLower ||
+        pathLower === qLower ||
+        pathLower === `${qLower}.md` ||
+        slugLower === qLower;
+
+      const isSubstring =
+        !isExact &&
+        (topicLower.includes(qLower) || pathLower.includes(qLower));
+
+      const matchedTag = tags.find(
+        (t) => t.toLowerCase() === qLower || t.toLowerCase().includes(qLower),
+      );
+
+      let score = 0.7;
+      let via: "title" | "tag" = "title";
+      let match_type: "exact_title" | "title_match" | "tag_match" = "title_match";
+      let match_reason = "Title match";
+
+      if (isExact) {
+        score = 1.0;
+        via = "title";
+        match_type = "exact_title";
+        match_reason = "Exact title match";
+      } else if (isSubstring) {
+        score = 0.92;
+        via = "title";
+        match_type = "title_match";
+        match_reason = `Title match on "${row.topic}"`;
+      } else if (matchedTag) {
+        score = 0.88;
+        via = "tag";
+        match_type = "tag_match";
+        match_reason = `Matched tag #${matchedTag}`;
+      } else {
+        continue;
+      }
+
+      hits.push({
+        slug: slugify(row.vault_path),
+        vault_path: row.vault_path,
+        title: row.topic,
+        snippet: "",
+        score,
+        chunk_index: 0,
+        via,
+        match_type,
+        match_reason,
+        tags,
+      });
+    }
+    return hits;
+  } catch {
+    return [];
+  }
+}
+
+export function fuseHybridHits(
+  lexicalHits: SearchHit[],
+  vectorHits: SearchHit[],
+  opts: SearchOptions = {},
+): SearchHit[] {
+  const mergedMap = new Map<string, SearchHit>();
+
+  // 1. Lexical hits
+  for (const h of lexicalHits) {
+    mergedMap.set(h.vault_path, { ...h });
+  }
+
+  // 2. Vector hits
+  for (const v of vectorHits) {
+    const existing = mergedMap.get(v.vault_path);
+    if (!existing) {
+      mergedMap.set(v.vault_path, {
+        ...v,
+        via: v.via ?? "vector",
+        match_type: v.match_type ?? "vector",
+        match_reason: v.match_reason ?? "Semantic vector similarity",
+      });
+    } else {
+      if (existing.match_type === "exact_title") {
+        existing.score = 1.0;
+        existing.via = "title";
+        if (!existing.is_empty && v.snippet && v.snippet.length > 0) {
+          existing.snippet = v.snippet;
+        }
+        existing.match_reason = existing.is_empty
+          ? "Exact title match (empty note)"
+          : "Exact title match + semantic similarity";
+        if (v.explain) existing.explain = v.explain;
+        if (v.note_kind) existing.note_kind = v.note_kind;
+      } else if (existing.match_type === "title_match") {
+        if (v.score > 0.92) {
+          existing.score = v.score;
+        } else {
+          existing.score = 0.92;
+        }
+        if (!existing.is_empty && v.snippet && v.snippet.length > 0) {
+          existing.snippet = v.snippet;
+        }
+        existing.match_reason = `${existing.match_reason} + semantic similarity`;
+        if (v.explain) existing.explain = v.explain;
+        if (v.note_kind) existing.note_kind = v.note_kind;
+      } else if (existing.match_type === "tag_match") {
+        if (v.score > 0.88) {
+          existing.score = v.score;
+        } else {
+          existing.score = 0.88;
+        }
+        if (!existing.is_empty && v.snippet && v.snippet.length > 0) {
+          existing.snippet = v.snippet;
+        }
+        existing.match_reason = `${existing.match_reason} + semantic similarity`;
+        if (v.explain) existing.explain = v.explain;
+        if (v.note_kind) existing.note_kind = v.note_kind;
+      }
+    }
+  }
+
+  // 3. Sort hits: exact title always #1, then by score descending
+  const allHits = [...mergedMap.values()];
+  allHits.sort((a, b) => {
+    if (a.match_type === "exact_title" && b.match_type !== "exact_title") return -1;
+    if (b.match_type === "exact_title" && a.match_type !== "exact_title") return 1;
+    return b.score - a.score;
+  });
+
+  // 4. Floor filtering
+  const floor = opts.floor ?? SCORE_FLOOR;
+  const filtered = floor === 0 ? allHits : allHits.filter((h) => h.score >= floor);
+
+  return filtered;
+}
+
+/* ============================================================================
  * Vault sync — the missing half of km-indexer.js. That process only ever
  * wrote to knowledge_embeddings; knowledge_note (this module's registry) was
  * never populated from the real on-disk vault, only from Hermes fleet
@@ -249,10 +704,11 @@ export interface VaultSyncResult {
 }
 
 /** Full reconciliation pass: walk every .md file under VAULT_DIR, upsert its
- *  topic/tags/links (from frontmatter) into knowledge_note as a 'vault-sync'
- *  row, then delete any 'vault-sync' row whose file no longer exists. The
- *  DO UPDATE's WHERE guard means a hypothetical vault_path collision with a
- *  worker-authored row is left untouched rather than overwritten. */
+ *  topic/tags/links (from frontmatter or excalidraw drawing) into knowledge_note
+ *  as a 'vault-sync' row, index excalidraw text into knowledge_embeddings, then
+ *  delete any 'vault-sync' row whose file no longer exists. The DO UPDATE's WHERE
+ *  guard means a hypothetical vault_path collision with a worker-authored row is
+ *  left untouched rather than overwritten. */
 export async function syncVaultNotes(): Promise<VaultSyncResult> {
   const entries = await readdir(VAULT_DIR, {
     withFileTypes: true,
@@ -277,18 +733,32 @@ export async function syncVaultNotes(): Promise<VaultSyncResult> {
     seenPaths.push(rel);
     try {
       const raw = await readFile(abs, "utf8");
-      const { meta, body } = extractFrontmatter(raw);
-      const wikilinks = extractWikilinks(body);
-      const rawTags = meta.tags;
-      const tags = Array.isArray(rawTags)
-        ? rawTags.map(String)
-        : typeof rawTags === "string" && rawTags.trim()
-          ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
-          : [];
-      const topic =
-        typeof meta.title === "string" && meta.title.trim()
-          ? meta.title.trim()
-          : path.basename(rel, ".md").replace(/[_-]+/g, " ");
+      let topic = "";
+      let tags: string[] = [];
+      let wikilinks: string[] = [];
+      let searchableBody = "";
+
+      if (rel.toLowerCase().endsWith(".excalidraw.md")) {
+        const ex = extractExcalidrawContent(raw, rel);
+        topic = ex.topic;
+        tags = ex.tags;
+        wikilinks = ex.wikilinks;
+        searchableBody = ex.body;
+      } else {
+        const { meta, body } = extractFrontmatter(raw);
+        wikilinks = extractWikilinks(body);
+        const rawTags = meta.tags;
+        tags = Array.isArray(rawTags)
+          ? rawTags.map(String)
+          : typeof rawTags === "string" && rawTags.trim()
+            ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
+            : [];
+        topic =
+          typeof meta.title === "string" && meta.title.trim()
+            ? meta.title.trim()
+            : path.basename(rel, ".md").replace(/[_-]+/g, " ");
+        searchableBody = body;
+      }
 
       await hcp.query(
         `INSERT INTO knowledge_note (topic, vault_path, tags, links, created_by)
@@ -298,6 +768,45 @@ export async function syncVaultNotes(): Promise<VaultSyncResult> {
              WHERE knowledge_note.created_by = $5`,
         [topic, rel, tags, wikilinks, VAULT_SYNC_AUTHOR],
       );
+
+      // If it's an excalidraw file and has searchable text, index into knowledge_embeddings too
+      if (
+        rel.toLowerCase().endsWith(".excalidraw.md") &&
+        searchableBody.trim().length > 0
+      ) {
+        try {
+          const vec = await embedQuery(searchableBody.slice(0, 4000));
+          if (vec && Array.isArray(vec)) {
+            const literal = `[${vec.join(",")}]`;
+            await cf.query(
+              `DELETE FROM knowledge_embeddings WHERE source_path = $1`,
+              [rel],
+            );
+            await cf.query(
+              `INSERT INTO knowledge_embeddings (source_path, title, content, chunk_index, embedding, metadata)
+                 VALUES ($1, $2, $3, 0, $4::halfvec, $5::jsonb)`,
+              [
+                rel,
+                topic,
+                searchableBody.slice(0, 2000),
+                literal,
+                JSON.stringify({
+                  chunk_count: 1,
+                  kind: "note",
+                  tags,
+                  type: "excalidraw",
+                }),
+              ],
+            );
+          }
+        } catch (embedErr) {
+          console.warn(
+            `[vault-sync] excalidraw embed skipped for ${rel}:`,
+            embedErr instanceof Error ? embedErr.message : embedErr,
+          );
+        }
+      }
+
       upserted++;
     } catch (err) {
       errors++;
@@ -828,71 +1337,90 @@ export async function searchMemory(
   limit = 12,
   opts: SearchOptions = {},
 ): Promise<SearchHit[]> {
-  const vec = await embedQuery(query);
-  if (!vec) return [];
+  const q = query.trim();
+  if (!q) return [];
 
-  const candidateLimit = Math.min(
-    CANDIDATE_CAP,
-    Math.max(limit, limit * CANDIDATE_MULTIPLIER),
-  );
-  const snippetChars = opts.snippetChars ?? 220;
+  // 1. Lexical hits from disk scan & knowledge_note DB
+  const [diskHits, dbHits] = await Promise.all([
+    scanVaultDiskMatches(q, VAULT_DIR).catch(() => []),
+    findDbLexicalMatches(q).catch(() => []),
+  ]);
 
-  // halfvec literal: pgvector accepts a string '[v1,v2,...]' cast to halfvec.
-  const literal = `[${vec.join(",")}]`;
-  const r = await cf.query<{
-    source_path: string;
-    title: string;
-    content: string;
-    chunk_index: number;
-    distance: number;
-    chunk_count: number | null;
-    source_ts: string | null;
-  }>(
-    `SELECT source_path, title, content, chunk_index,
-            (embedding <=> $1::halfvec) AS distance,
-            NULLIF(metadata->>'chunk_count', '')::int AS chunk_count,
-            metadata->>'ts' AS source_ts
-       FROM knowledge_embeddings
-       WHERE embedding IS NOT NULL
-       ORDER BY embedding <=> $1::halfvec
-       LIMIT $2`,
-    [literal, candidateLimit],
-  );
+  const lexicalMap = new Map<string, SearchHit>();
+  for (const h of dbHits) lexicalMap.set(h.vault_path, h);
+  for (const h of diskHits) lexicalMap.set(h.vault_path, h); // disk has accurate snippet & is_empty
+  const lexicalHits = [...lexicalMap.values()];
 
-  const candidates = r.rows.map((row) => ({
-    source_path: row.source_path,
-    chunk_index: row.chunk_index,
-    score: 1 - row.distance, // cosine distance → similarity
-    chunk_count: row.chunk_count ?? undefined,
-    /* Recency for rows with no file behind them. `noteMtimeMs()` can only stat
-     * paths under the vault, so a `chat://…` pseudo-URI resolves to null —
-     * which the ranker reads as "age unknown" and weights neutrally, letting a
-     * January conversation rank as though it were written today. km-indexer
-     * writes the run's creation time to `metadata.ts` precisely so it can be
-     * supplied here. Left undefined for vault notes, which keep their mtime. */
-    mtime_ms: pseudoPathTimestamp(row.source_path, row.source_ts),
-    source_ts: row.source_ts,
-    title: row.title,
-    content: row.content,
-  }));
+  // 2. Vector hits from pgvector
+  let vectorHits: SearchHit[] = [];
+  try {
+    const vec = await embedQuery(q);
+    if (vec) {
+      const candidateLimit = Math.min(
+        CANDIDATE_CAP,
+        Math.max(limit, limit * CANDIDATE_MULTIPLIER),
+      );
+      const snippetChars = opts.snippetChars ?? 220;
+      const literal = `[${vec.join(",")}]`;
+      const r = await cf.query<{
+        source_path: string;
+        title: string;
+        content: string;
+        chunk_index: number;
+        distance: number;
+        chunk_count: number | null;
+        source_ts: string | null;
+      }>(
+        `SELECT source_path, title, content, chunk_index,
+                (embedding <=> $1::halfvec) AS distance,
+                NULLIF(metadata->>'chunk_count', '')::int AS chunk_count,
+                metadata->>'ts' AS source_ts
+           FROM knowledge_embeddings
+           WHERE embedding IS NOT NULL
+           ORDER BY embedding <=> $1::halfvec
+           LIMIT $2`,
+        [literal, candidateLimit],
+      );
 
-  return rankCandidates(candidates, {
-    limit,
-    floor: opts.floor,
-    maxPerNote: opts.maxPerNote,
-  }).map((row) => ({
-    slug: slugify(row.source_path),
-    vault_path: row.source_path,
-    title: row.title,
-    snippet: row.content.slice(0, snippetChars),
-    score: row.score,
-    chunk_index: row.chunk_index,
-    note_kind: row.explain.kind,
-    ...(row.source_path.includes("://") && row.source_ts
-      ? { source_ts: row.source_ts }
-      : {}),
-    explain: row.explain,
-  }));
+      const candidates = r.rows.map((row) => ({
+        source_path: row.source_path,
+        chunk_index: row.chunk_index,
+        score: 1 - row.distance,
+        chunk_count: row.chunk_count ?? undefined,
+        mtime_ms: pseudoPathTimestamp(row.source_path, row.source_ts),
+        source_ts: row.source_ts,
+        title: row.title,
+        content: row.content,
+      }));
+
+      vectorHits = rankCandidates(candidates, {
+        limit,
+        floor: opts.floor,
+        maxPerNote: opts.maxPerNote,
+      }).map((row) => ({
+        slug: slugify(row.source_path),
+        vault_path: row.source_path,
+        title: row.title,
+        snippet: row.content.slice(0, snippetChars),
+        score: row.score,
+        chunk_index: row.chunk_index,
+        note_kind: row.explain.kind,
+        via: "vector" as const,
+        match_type: "vector" as const,
+        match_reason: "Semantic vector similarity",
+        ...(row.source_path.includes("://") && row.source_ts
+          ? { source_ts: row.source_ts }
+          : {}),
+        explain: row.explain,
+      }));
+    }
+  } catch (err) {
+    console.error("[searchMemory] vector search error:", err instanceof Error ? err.message : err);
+  }
+
+  // 3. Hybrid fusion
+  const fused = fuseHybridHits(lexicalHits, vectorHits, opts);
+  return fused.slice(0, limit);
 }
 
 /* ============================================================================
@@ -1329,7 +1857,7 @@ const MAX_HOPS = Number(process.env.MEMORY_GRAPH_MAX_HOPS ?? "2");
 const HOP_DECAY = Number(process.env.MEMORY_GRAPH_HOP_DECAY ?? "0.65");
 
 export type SearchHitWithLane = SearchHit & {
-  via: "vector" | "graph";
+  via: "title" | "tag" | "vector" | "graph";
   hop: number;
 };
 
@@ -1489,7 +2017,7 @@ export async function searchMemoryWithGraph(
   });
   const vectorLane: SearchHitWithLane[] = vectorHits.map((h) => ({
     ...h,
-    via: "vector",
+    via: h.via ?? "vector",
     hop: 0,
   }));
 
@@ -1540,7 +2068,14 @@ export async function searchMemoryWithGraph(
       seenPaths.add(h.vault_path);
       // Diminishing weight per hop. Hop 1 keeps decay^1, hop 2 decay^2, etc.
       const decayed = h.score * Math.pow(HOP_DECAY, hop);
-      fresh.push({ ...h, score: decayed, via: "graph", hop });
+      fresh.push({
+        ...h,
+        score: decayed,
+        via: "graph",
+        match_type: "graph",
+        match_reason: "Graph entity co-occurrence",
+        hop,
+      });
     }
     if (fresh.length === 0) break;
     graphLanes.push(...fresh);

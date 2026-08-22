@@ -65,9 +65,9 @@ export interface Discrepancy extends Classification {
   in_embeddings: boolean;
 }
 
-/** km-indexer.js:29 — `EXCLUDED_EXTENSIONS = ['.excalidraw.md']`. Drawings are
- *  a JSON blob wearing a `.md` suffix; embedding them is noise, and the
- *  indexer skipping them is correct behaviour, not a bug to fix. */
+/** km-indexer.js:29 — `EXCLUDED_EXTENSIONS = ['.excalidraw.md']`. Unembedded drawings
+ *  are classified as excluded_extension; indexed Excalidraw drawings with embeddings
+ *  and registry entries reconcile as healthy (no discrepancy). */
 export const EXCLUDED_EXTENSION = ".excalidraw.md";
 
 /**

@@ -170,12 +170,10 @@ r.get("/search", async (c) => {
     floor: floor ?? SCORE_FLOOR,
     max_per_note: maxPerNote ?? MAX_CHUNKS_PER_NOTE,
   };
-  // v1.6 phase 5: ?expand=1 enables GraphRAG expansion on top of vector-only
-  // halfvec cosine. Hit shape carries `via` ('vector' | 'graph') so the UI
-  // can lane each result.
-  // v1.7 phase 1: ?hops=N controls multi-hop expansion (1-3). Defaults to
-  // server-side MEMORY_GRAPH_MAX_HOPS. Each hit also carries `hop` (0 for
-  // vector, 1..N for graph) so the UI can render the hop depth.
+  // Hybrid search: lexical exact/substring title & tag matching + pgvector cosine,
+  // plus optional GraphRAG expansion (?expand=1). Hit shape carries match_type,
+  // match_reason, is_empty, via ('title' | 'tag' | 'vector' | 'graph').
+  // ?hops=N controls multi-hop expansion (1-3). Defaults to server-side MEMORY_GRAPH_MAX_HOPS.
   const expand = c.req.query("expand") === "1";
   if (expand) {
     const hopsRaw = c.req.query("hops");
