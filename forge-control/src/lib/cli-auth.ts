@@ -141,6 +141,17 @@ interface ProviderDef {
   /** Regex that finds the consent URL in the pane. */
   urlPattern: RegExp;
   /**
+   * Query parameters the consent URL MUST contain to be usable.
+   *
+   * A terminal truncates at the pane edge, and a truncated URL is still a
+   * syntactically valid URL — it just silently drops the parameters that make
+   * the OAuth request work. Handing one to Konrad spends a click and a sign-in
+   * on a link that dies at Google. So completeness is asserted, not assumed:
+   * an incomplete match is treated as "the URL has not finished rendering",
+   * and the poll keeps going.
+   */
+  requiredUrlParams: readonly string[];
+  /**
    * The hard consent window, or null when NOBODY HAS MEASURED ONE. Null is not
    * "unlimited" — the UI must say "unmeasured" rather than draw a countdown
    * from a guess.
@@ -174,6 +185,7 @@ const PROVIDERS: Record<CliAuthProvider, ProviderDef> = {
     pastePrompt: "Or, paste the authorization code here and press Enter:",
     preUrlMenu: { marker: "Select login method", keys: ["Enter"] },
     urlPattern: /https:\/\/accounts\.google\.com\/o\/oauth2[^\s]*/,
+    requiredUrlParams: ["redirect_uri=", "response_type=", "state=", "scope="],
     windowSeconds: 60,
     expiryMarkers: ["Error: authentication timed out."],
     failureMarkers: ["invalid_grant", "invalid_request", "invalid code"],
@@ -194,6 +206,7 @@ const PROVIDERS: Record<CliAuthProvider, ProviderDef> = {
     pastePrompt: "Enter the authorization code:",
     preUrlMenu: null,
     urlPattern: /https:\/\/accounts\.google\.com\/o\/oauth2[^\s]*/,
+    requiredUrlParams: ["redirect_uri=", "response_type="],
     windowSeconds: null,
     expiryMarkers: [],
     failureMarkers: ["IneligibleTierError", "Failed to authenticate"],
@@ -219,6 +232,7 @@ const PROVIDERS: Record<CliAuthProvider, ProviderDef> = {
     pastePrompt: "",
     preUrlMenu: null,
     urlPattern: /https:\/\/claude\.ai\/[^\s]*/,
+    requiredUrlParams: [],
     windowSeconds: null,
     expiryMarkers: [],
     failureMarkers: [],
@@ -556,8 +570,15 @@ export async function startLogin(
   // be read after exit. It is also exactly why liveness is `#{pane_dead}` and
   // classification is pane CONTENT — the shell outlives the process, so
   // `has-session` would report a login that ended an hour ago as still running.
+  // WIDTH 1000 IS LOAD-BEARING, NOT A PREFERENCE.
+  // The bare TUI renders the consent URL inside its own layout and TRUNCATES it
+  // to the pane width. At 200 columns the captured URL was 198 characters and
+  // looked perfectly well-formed while missing redirect_uri, scope and state —
+  // a dead link that fails at Google with no hint as to why. At 1000 the full
+  // 704-character URL is captured. (The earlier `agy -p` measurements never saw
+  // this: print mode writes the URL raw, so it never met the TUI's layout.)
   const created = await tmux([
-    "new-session", "-d", "-s", tmuxName, "-x", "200", "-y", "50",
+    "new-session", "-d", "-s", tmuxName, "-x", "1000", "-y", "50",
     `${launch}; exec bash`,
   ]);
   if (created.code !== 0) {
@@ -597,7 +618,7 @@ export async function startLogin(
         continue;
       }
       const m = def.urlPattern.exec(pane);
-      if (m !== null) {
+      if (m !== null && urlIsComplete(def, m[0])) {
         session.url = m[0];
         session.state = "awaiting_code";
         // The window starts when the PROMPT appears, not when we spawned.
@@ -618,7 +639,7 @@ export async function startLogin(
   sessions.delete(keyOf(provider));
   return {
     httpStatus: 504,
-    status: render(null, provider, "Click Connect to try again.", `The CLI did not print a sign-in URL within 25 seconds.${tail.trim() ? `\n\nTerminal said:\n${tail.trim().slice(-600)}` : ""}`),
+    status: render(null, provider, "Click Connect to try again.", `The CLI did not print a COMPLETE sign-in URL within 25 seconds. A URL truncated by the terminal is rejected rather than published, because it would fail at Google with no explanation.${tail.trim() ? `\n\nTerminal said:\n${tail.trim().slice(-600)}` : ""}`),
   };
 }
 
@@ -628,6 +649,11 @@ export async function startLogin(
  * Expiry and failure are matched on their SPECIFIC lines, never on the shared
  * tail both paths end with.
  */
+/** Every required parameter present, or it is not a URL we will publish. */
+function urlIsComplete(def: ProviderDef, url: string): boolean {
+  return def.requiredUrlParams.every((p) => url.includes(p));
+}
+
 function classifyPane(def: ProviderDef, pane: string): "expired" | "failed" | null {
   for (const m of def.expiryMarkers) if (pane.includes(m)) return "expired";
   for (const m of def.failureMarkers) if (pane.includes(m)) return "failed";
