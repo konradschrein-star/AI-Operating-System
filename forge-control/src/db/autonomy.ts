@@ -3,6 +3,7 @@
  */
 
 import pg from "pg";
+import { isGeminiModel } from "../lib/gemini-runner.ts";
 
 const { Pool } = pg;
 
@@ -82,6 +83,13 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
        ORDER BY category, builtin DESC, id`,
   );
 
+  const rules = rulesR.rows.map((r) => {
+    if (r.id === "runtime.pause_all") {
+      return { ...r, enabled: fleet.status === "paused" };
+    }
+    return r;
+  });
+
   const tripsR = await pool.query<GuardrailTrip>(
     `SELECT t.id::text, t.rule_id, g.label AS rule_label,
             t.created_at::text AS ts, t.agent,
@@ -93,7 +101,7 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
   );
 
   const catCounts = new Map<string, number>();
-  for (const r of rulesR.rows)
+  for (const r of rules)
     catCounts.set(r.category, (catCounts.get(r.category) ?? 0) + 1);
   const categories = [...catCounts.entries()].map(([key, count]) => ({
     key,
@@ -103,7 +111,7 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
 
   return {
     fleet,
-    rules: rulesR.rows,
+    rules,
     trips: tripsR.rows,
     categories,
   };
@@ -125,6 +133,35 @@ export async function updateRule(
   }
   if (sets.length === 0) return null;
   sets.push("updated_at = now()");
+
+  if (id === "runtime.pause_all" && patch.enabled !== undefined) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const r = await client.query<GuardrailRule>(
+        `UPDATE guardrail_rules
+            SET ${sets.join(", ")}
+          WHERE id = $1
+          RETURNING id, label, description, category, enabled, builtin, config, updated_at::text`,
+        params,
+      );
+      const newStatus = patch.enabled ? "paused" : "running";
+      await client.query(
+        `UPDATE fleet_state
+            SET status = $1, updated_at = now(), updated_by = 'guardrail'
+          WHERE id = 1`,
+        [newStatus],
+      );
+      await client.query("COMMIT");
+      return r.rows[0] ?? null;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   const r = await pool.query<GuardrailRule>(
     `UPDATE guardrail_rules
         SET ${sets.join(", ")}
@@ -158,6 +195,8 @@ export interface GuardrailCheckInput {
   action: string;
   category?: string;
   rule_id?: string;
+  model?: string;
+  engine?: string;
   payload?: Record<string, unknown>;
 }
 export interface GuardrailCheckResult {
@@ -174,10 +213,36 @@ function evaluateOne(
 ): { blocked: boolean; reason?: string } {
   if (!rule.enabled) return { blocked: false };
   const cfg = rule.config ?? {};
+  const model = typeof payload.model === "string" ? payload.model : undefined;
+  const engine = typeof payload.engine === "string" ? payload.engine : undefined;
+  const isGemini = isGeminiModel(model) || engine === "gemini" || engine === "gemini-cli";
+
   switch (rule.id) {
     case "runtime.pause_all":
       return { blocked: true, reason: "Emergency pause is enabled." };
     case "spend.per_run_cap": {
+      if (isGemini) {
+        // Gemini runs are flat subscription (0 direct EUR token cost).
+        // Support model-aware token evaluation if configured:
+        const tokenCap = Number(cfg.gemini_token_cap ?? cfg.tokens_per_run_cap ?? cfg.token_cap);
+        const tokens = Number(payload.tokens ?? (payload.thread_chars ? Math.ceil(Number(payload.thread_chars) / 4) : 0));
+        if (Number.isFinite(tokenCap) && tokenCap > 0 && tokens > tokenCap) {
+          return {
+            blocked: true,
+            reason: `per-run Gemini tokens ${tokens} exceeds cap ${tokenCap}`,
+          };
+        }
+        return { blocked: false };
+      }
+      // Claude / standard runs: check token cap if configured
+      const tokenCap = Number(cfg.claude_token_cap ?? cfg.tokens_per_run_cap ?? cfg.token_cap);
+      const tokens = Number(payload.tokens ?? (payload.thread_chars ? Math.ceil(Number(payload.thread_chars) / 4) : 0));
+      if (Number.isFinite(tokenCap) && tokenCap > 0 && tokens > tokenCap) {
+        return {
+          blocked: true,
+          reason: `per-run tokens ${tokens} exceeds cap ${tokenCap}`,
+        };
+      }
       const cap = Number(cfg.cap_eur);
       const spend = Number(payload.spend_eur ?? 0);
       if (Number.isFinite(cap) && spend > cap) {
@@ -189,6 +254,10 @@ function evaluateOne(
       return { blocked: false };
     }
     case "spend.daily_cap": {
+      if (isGemini) {
+        // Gemini runs are flat subscription, not subject to EUR daily cap.
+        return { blocked: false };
+      }
       const cap = Number(cfg.cap_eur);
       const spend = Number(payload.daily_spend_eur ?? 0);
       if (Number.isFinite(cap) && spend > cap) {
@@ -232,7 +301,22 @@ function evaluateOne(
 export async function evaluateGuardrails(
   input: GuardrailCheckInput,
 ): Promise<GuardrailCheckResult> {
-  const payload = input.payload ?? {};
+  const payload: Record<string, unknown> = {
+    ...(input.payload ?? {}),
+  };
+  if (input.model !== undefined && payload.model === undefined) {
+    payload.model = input.model;
+  }
+  if (input.engine !== undefined && payload.engine === undefined) {
+    payload.engine = input.engine;
+  }
+
+  // Check fleet_state paused status
+  const fleetR = await pool.query<{ status: string }>(
+    `SELECT status FROM fleet_state WHERE id = 1`,
+  );
+  const isFleetPaused = fleetR.rows[0]?.status === "paused";
+
   const params: unknown[] = [];
   const wheres: string[] = ["enabled = true"];
   if (input.rule_id) {
@@ -249,14 +333,35 @@ export async function evaluateGuardrails(
   const rulesR = await pool.query<GuardrailRule>(sql, params);
   const rules = rulesR.rows;
 
-  if (!input.rule_id && !rules.some((r) => r.id === "runtime.pause_all")) {
-    const kill = await pool.query<GuardrailRule>(
-      `SELECT id, label, description, category, enabled, builtin,
-              config, updated_at::text
-         FROM guardrail_rules
-        WHERE id = 'runtime.pause_all' AND enabled = true`,
-    );
-    rules.unshift(...kill.rows);
+  if (isFleetPaused) {
+    if (!rules.some((r) => r.id === "runtime.pause_all")) {
+      const pauseRuleR = await pool.query<GuardrailRule>(
+        `SELECT id, label, description, category, enabled, builtin,
+                config, updated_at::text
+           FROM guardrail_rules
+          WHERE id = 'runtime.pause_all'`,
+      );
+      if (pauseRuleR.rows[0]) {
+        rules.unshift({ ...pauseRuleR.rows[0], enabled: true });
+      } else {
+        rules.unshift({
+          id: "runtime.pause_all",
+          label: "Emergency pause",
+          description: "When tripped, pauses every worker via fleet_state.",
+          category: "security",
+          enabled: true,
+          builtin: true,
+          config: {},
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+  } else if (!input.rule_id) {
+    // If fleet is running, ensure runtime.pause_all does not block unless explicitly targeted
+    const idx = rules.findIndex((r) => r.id === "runtime.pause_all");
+    if (idx >= 0) {
+      rules.splice(idx, 1);
+    }
   }
 
   for (const rule of rules) {
