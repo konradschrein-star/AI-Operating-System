@@ -402,6 +402,27 @@ export interface MemorySearchHit {
   snippet: string;
   score: number;
   chunk_index: number;
+  note_kind?: string;
+  via?: "title" | "tag" | "vector" | "graph";
+  match_type?:
+    | "exact_title"
+    | "title_match"
+    | "tag_match"
+    | "vector"
+    | "graph"
+    | "empty"
+    | "drawing"
+    | string;
+  match_reason?: string;
+  is_empty?: boolean;
+  is_drawing?: boolean;
+  tags?: string[];
+  explain?: {
+    kind?: string;
+    raw_score?: number;
+    weight?: number;
+    age_days?: number;
+  };
 }
 
 /* v1.7 phase 1+2 — expanded hit shape from /api/memory/search?expand=1.
@@ -429,7 +450,7 @@ export const TRIPLE_CATEGORIES: TripleCategory[] = [
 ];
 
 export interface MemorySearchHitWithLane extends MemorySearchHit {
-  via: "vector" | "graph";
+  via: "title" | "tag" | "vector" | "graph";
   hop: number;
 }
 
