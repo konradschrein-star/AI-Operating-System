@@ -303,3 +303,206 @@ counts for `forge-control` (75), `forge-control-web` (38) and
 `forge-executor` (5) — nothing crashed or auto-restarted because of this.
 All screenshot verification after this point used the safe pattern: a
 router-mounted, non-GET-refusing probe (see WORKLOG Round 2).
+
+## 7. Round — dropped-first-character corruption: root cause, repair table, protection
+
+Reconciled against disk first: a prior turn on this exact task had already
+written the code fix (uncommitted, found via `git status`/`git diff`) —
+`isSuspectCorruptedDrawing()` in `excalidraw-extract.ts`, wired into
+`excalidraw-graph.ts` (emits a `corrupted_labels` ambiguity, `severity:
+"warning"`) and `excalidraw-plan.ts` (prefixes the plan summary and the
+serialized markdown with a `[!CAUTION]` callout when that ambiguity is
+present), plus a regression test in `excalidraw-build.test.ts` that round-trips
+a 12-label drawing byte-identical through both markdown formats and a second
+test that deliberately corrupts index 0 of elements 1..N to prove the assertion
+actually goes red. I verified rather than rewrote: `npx tsc --noEmit` clean,
+`npx tsx --test src/lib/excalidraw-{extract,graph,build,plan}.test.ts` → **77
+pass, 0 fail**. The banner needed no UI change — `CanvasPane.tsx`'s ambiguity
+panel (line ~1817) renders any `ambiguities[]` entry generically by
+`severity`, so `corrupted_labels` already surfaces with the same warning
+styling as every other ambiguity kind.
+
+### a) What wrote them — measured, not guessed
+
+**The guilty code is not in this repository.** `git log --all --since
+2026-07-27 --until 2026-07-29` (whole history, not just this branch) returns
+zero commits, and a filesystem-wide search for scripts touching "excalidraw"
+modified in that 48h window found nothing outside the vault files themselves
+and an unrelated `/tmp/b2d/...` scratch copy. Whatever generated these two
+files ran outside `forge-ai-os` — most likely one of the Hermes
+Excalidraw-generation paths (`hermes--creative-excalidraw` skill) invoked in
+an agent session that evening, not through this repo's `lib/excalidraw-build.ts`
+write path (previously confirmed clean of `slice(1)`/`substring(1)`).
+
+**But the SHAPE of the bug is now precisely characterized**, by reading the raw
+parsed elements (not just the rendered labels) for both files:
+
+- Every text element carries either `containerId: null` (freestanding — legend
+  text, phase headers, arrow-adjacent short labels) or `containerId: <shapeId>`
+  (a label bound inside a rectangle). The corruption hits **both** kinds — this
+  is not a container-vs-standalone bug.
+- A handful of elements read as visually intact and are not: their *raw* text
+  still carries a **leading space** (`" DEVICE FINGERPRINT — DECIDED …"`,
+  `" NETWORK FINGERPRINT …"`, `" SIGN-IN + COOKIES …"`, `" DO • warm …"`,
+  `" DON'T • inject …"` — 5 elements across both files, all large all-caps
+  callout/decision boxes). A single leading space is exactly what a one-char
+  strip removes without visible damage, which is why these five looked
+  untouched at first read.
+- Three elements are genuinely untouched, no leading space, no missing letter:
+  the title of each file, and the very next element written after it
+  (`"0 · co-planning draft…"` in the System Map, `"RULES"` in the Warming
+  Timeline).
+
+**Best-supported hypothesis:** the generator wrote every label through a
+routine that stripped exactly one leading character late in the pipeline —
+most plausibly a "trim the padding space" step that assumed every label had
+been prefixed with `" "` for visual inset, when in practice only the five
+large callout boxes actually got that prefix. The title and the
+first-element-after-the-title were not routed through this step at all
+(processed before the loop began, or via a distinct "set canvas title"
+code path) — consistent with an off-by-one loop bound rather than a
+per-character bug. This is a hypothesis grounded in the measured element
+data above, not a certainty, and it is not actionable without the generating
+code, which this diagnosis could not locate.
+
+### b) Proposed repair table — DO NOT APPLY WITHOUT KONRAD'S APPROVAL
+
+All entries below are one-leading-character restorations. "High" confidence =
+the missing letter is unambiguous from grammar/spelling and matches a term
+used elsewhere in the same drawing or its sibling. "Medium" = plausible but the
+missing letter has more than one grammatical fit. Element ids are the bound
+text element's own id (not its container shape) where the label is bound;
+otherwise the free text element's id.
+
+**`Excalidraw/Stealth Uploader - System Map.excalidraw.md`**
+
+| element id | current text | proposed text | confidence |
+|---|---|---|---|
+| 49peQI6D | ` · CONTENT` | `1 · CONTENT` | High |
+| 2wrpP7mD | ` · CONTROL PLANE (VPS · out-of-band)` | `2 · CONTROL PLANE (VPS · out-of-band)` | High |
+| LFkeJnjb | ` · UPLOAD NODE (bare-metal · real GPU · residential IP)` | `3 · UPLOAD NODE (bare-metal · real GPU · residential IP)` | High |
+| lrjt92jX | ` · AUTOMATION CORE` | `4 · AUTOMATION CORE` | High |
+| cY7E30M4 | ` · PUBLISH & WARM` | `5 · PUBLISH & WARM` | High |
+| BXh8Hg11 | `ontent Forge (existing engine)` | `Content Forge (existing engine)` | High |
+| j21UuYYC | `ideo + Thumbnail + Metadata` | `Video + Thumbnail + Metadata` | High |
+| t8DeLq2e | `spect router 9:16 → Short · 16:9 → Long` | `Aspect router 9:16 → Short · 16:9 → Long` | High |
+| 72nG4SAl | `ontrol Plane scheduler · queue · approval` | `Control Plane scheduler · queue · approval` | High |
+| iidNk7j1 | `uman calendar jitter · skipped days · re-slot` | `Human calendar jitter · skipped days · re-slot` | High |
+| cBzVun0R | `I-OS bridge (out-of-band · mgmt VPN)` | `AI-OS bridge (out-of-band · mgmt VPN)` | High |
+| WqrAz2Kr | `evice: real GPU + real fingerprint (laptop)` | `Device: real GPU + real fingerprint (laptop)` | High |
+| oXFkytae | `esidential proxy geo-matched · IP stable` | `Residential proxy geo-matched · IP stable` | High |
+| sLxPMwnk | `olphin profile = IDENTITY (warm cookies)` | `Dolphin profile = IDENTITY (warm cookies)` | High |
+| xYEe6i45 | `rbita browser (YouTube session)` | `Orbita browser (YouTube session)` | Medium |
+| G0VreISM | `nput: SendInput + WindMouse + anti-center` | `Input: SendInput + WindMouse + anti-center` | High |
+| qxi3bzcQ | `erception: UIA (app) + OmniParser (page)` | `Perception: UIA (app) + OmniParser (page)` | High |
+| qSF6LowG | `oogle Sign-in once → warm · challenges` | `Google Sign-in once → warm · challenges` | High |
+| 4INNejI8 | `tudio Upload Skill Long / Short · dry-run` | `Studio Upload Skill Long / Short · dry-run` | High |
+| TJKINM2C | `ublish / Schedule` | `Publish / Schedule` | High |
+| uoNZmw88 | `arming idle browse between uploads` | `Warming idle browse between uploads` | High |
+| FRWPpSYb | `afety F5 panic · pause · dry-run` | `Safety F5 panic · pause · dry-run` | High |
+| a5uLrhIM | `ob` | `Job` | Medium |
+| TSPlD6k4 | `ull (mgmt VPN)` | `Pull (mgmt VPN)` | Medium |
+| Sevz9sTH | `rives` | `Drives` | High — matches the drawing's own legend, "dashed arrow = reads/drives" |
+| mlM5vlyr | `uth once` | `Auth once` | High |
+| G2vHrZ4B | `ET RIGHT — resolved 2026-07-28 (research + measured)` | `GET RIGHT — resolved 2026-07-28 (research + measured)` | High |
+| Mir36X8B | `RANCHES / FUTURE (multiple approaches to develop further)` | `BRANCHES / FUTURE (multiple approaches to develop further)` | High |
+| r0j0O1Jr | `ulti-platform IG · TikTok · X (same desktop stack)` | `Multi-platform IG · TikTok · X (same desktop stack)` | High |
+| H9w4mPo1 | `OS real iPhone + WDA (near-separate product)` | `iOS real iPhone + WDA (near-separate product)` | High |
+| FAv86PLH | `leet scale mini-PC nodes + orchestrator` | `Fleet scale mini-PC nodes + orchestrator` | High |
+| K2WpzAnc | `dversarial loop detector ↔ fixer until no tells` | `Adversarial loop detector ↔ fixer until no tells` | High |
+
+Duplicate node/label pairs (`49peQI6D`/`NDjflTh2`, `2wrpP7mD`/`GLcr0JeP`, etc.)
+are frame + frame-title pairs the extractor reports as two nodes for one
+visual label; the table lists the bound/free text element that actually holds
+the string once. `kcoK9I6w`, `0p0PyT4F`, `tZXbZ2Gl` (DEVICE/NETWORK
+FINGERPRINT, SIGN-IN+COOKIES) read `" DEVICE FINGERPRINT …"` etc. with a
+leading space still present — **not proposed for repair**: removing that
+space is cosmetic at most and this diagnosis cannot tell whether the space is
+itself a corruption artifact or Konrad's own original padding.
+
+**`Excalidraw/Stealth Uploader - Warming Timeline.excalidraw.md`**
+
+| element id | current text | proposed text | confidence |
+|---|---|---|---|
+| LfmLAe9R | `ne profile = one fingerprint = one static US-residential IP, kept STABLE the entire time. Never inject bought cookies.` | `One profile = one fingerprint = one static US-residential IP, kept STABLE the entire time. Never inject bought cookies.` | High |
+| H1TccKb7 | `HASE 1 · Days 1–3 LOGGED-OUT WARM` | `PHASE 1 · Days 1–3 LOGGED-OUT WARM` | High |
+| wueg5lZ9 | `HASE 2 · Day 3–4 FIRST LOGIN` | `PHASE 2 · Day 3–4 FIRST LOGIN` | High |
+| 6stpX1br | `HASE 3 · Days 4–11 WARM LOGGED-IN` | `PHASE 3 · Days 4–11 WARM LOGGED-IN` | High |
+| qEaUocW9 | `HASE 4 · Day 12+ FIRST UPLOAD` | `PHASE 4 · Day 12+ FIRST UPLOAD` | High |
+| tssKLLRj | `P + fingerprint STABLE (US residential, geo-matched)` | `IP + fingerprint STABLE (US residential, geo-matched)` | High |
+| iJtodU9J | `rowse / search / watch YouTube LOGGED-OUT` | `Browse / search / watch YouTube LOGGED-OUT` | High |
+| z9x9DIV7 | `olphin Cookie Robot builds Wave-1 jar: AEC · NID · SOCS · VISITOR_INFO1` | `Dolphin Cookie Robot builds Wave-1 jar: AEC · NID · SOCS · VISITOR_INFO1` | High |
+| XjzbQ5Ot | `ge the jar 48–72h ⛔ DO NOT log in yet` | `Age the jar 48–72h ⛔ DO NOT log in yet` | High |
+| 6sZu82ph | `anual login · human typing · local daytime hours` | `Manual login · human typing · local daytime hours` | High |
+| ZCsWAmvl | `inimal benign activity → read 2 mails → log off` | `Minimal benign activity → read 2 mails → log off` | High |
+| 9BtZl97P | `EST 24–48h ⛔ no settings changes ⛔ no upload` | `REST 24–48h ⛔ no settings changes ⛔ no upload` | Medium — `TEST`/`BEST` also fit grammatically; `REST` fits the narrative (a cooldown after manual login) best |
+| H83HK5bu | `ouTube history: watch · subscribe · like · 1 comment` | `YouTube history: watch · subscribe · like · 1 comment` | High |
+| 6kb53KnL | `oogle depth: Drive · Maps · search` | `Google depth: Drive · Maps · search` | High |
+| 95Fk8Zxu | `ay ~7 HARDEN: profile info · 2FA · backup email · clean device list` | `Day ~7 HARDEN: profile info · 2FA · backup email · clean device list` | High |
+| KOAqzrFw | `ehavior: vary times · skip a day · manual entry (no replay)` | `Behavior: vary times · skip a day · manual entry (no replay)` | High |
+| rVrGMLof | `oogle may need ~7 days after enabling 2FA before sensitive actions are frictionless` | `Google may need ~7 days after enabling 2FA before sensitive actions are frictionless` | High |
+| 0FkYzs3Q | `irst upload — MODEST (one video, normal metadata)` | `First upload — MODEST (one video, normal metadata)` | High |
+| bIReN6AY | `eep IP + fingerprint stable FOREVER` | `Keep IP + fingerprint stable FOREVER` | High |
+| n5Enmef4 | `hen normal cadence via scheduler (human calendar, warm between uploads)` | `Then normal cadence via scheduler (human calendar, warm between uploads)` | High |
+
+`Mz1gwEAI` (` DO • warm LOGGED-OUT first, …`) and `8SmmqQhn` (` DON'T • inject
+…`) have the same "leading space, not proposed for repair" caveat as the
+System Map's three callout boxes above.
+
+That is **51 proposed single-character insertions across 2 files, 0 applied.**
+Nothing in the vault has been touched. If Konrad approves, the mechanical
+application is a set of `sed`/element-text patches keyed by these element ids
+against the compressed JSON payload — happy to write and dry-run that on
+request, but not without his go-ahead per project rules.
+
+### c) Suspect-drawing protection wired end to end, and the retrieval hole
+
+Live check before touching anything: `SELECT id, source_path, metadata FROM
+knowledge_embeddings WHERE source_path ILIKE '%Stealth Uploader%'` showed both
+rows already indexed with plain metadata —
+`{"kind":"note","tags":["excalidraw"],"type":"excalidraw","chunk_count":1}`,
+no suspect marker, exactly as the operator update said. Consequence, stated
+plainly: **a vault search for "Content Forge" will never match these rows** —
+the indexed chunk text is the literal on-disk `"ontent Forge (existing
+engine)"`, and full-text/embedding search on the correct spelling has no
+reason to retrieve a chunk that never contains it. That is a real hole in
+Konrad's ability to find his own Stealth Uploader plan, not a cosmetic
+labeling issue.
+
+Two things now protect against presenting this as fact:
+
+1. **In-repo, automatic, forward-looking.** `isSuspectCorruptedDrawing()`
+   hard-matches these two file paths and also runs a general heuristic (≥3
+   labels matching a dropped-leading-character shape) over any drawing's
+   nodes, so a *future* corrupted drawing gets flagged without a path
+   hardcode. `parseDrawingGraph()` calls it unconditionally and injects a
+   `corrupted_labels` warning-severity ambiguity; `compileCanvasPlan()` reads
+   that ambiguity and prefixes both the plan summary string and the
+   serialized `.plan.md` with a `⚠️ SUSPECT DRAWING` / `[!CAUTION]` marker.
+   Verified live against the real vault files by the graph tests:
+   `excalidraw-graph.test.ts` now asserts `corrupted_labels` is present for
+   both Stealth Uploader drawings (`npx tsx --test` → pass).
+
+2. **On the two already-indexed rows** — the "corrective, not preventive" gap
+   the operator flagged. I ran a scoped, additive `UPDATE` against exactly
+   those two rows (matched by `source_path`, verified by `id` before and
+   after) merging `{"suspect_first_char_loss": true, "suspect_reason":
+   "systematic dropped-first-character label corruption on disk since
+   2026-07-28; see HANDOFF.md for repair table, not yet applied"}` into their
+   existing `metadata` JSONB — nothing else in either row was touched.
+   Confirmed after: both rows carry the new keys, `chunk_count`/`tags`/`type`
+   unchanged, row count for `source_path ILIKE '%Stealth Uploader%'` still 9
+   (2 excalidraw + 7 `Node Init` note chunks), no other row matched or moved.
+   This does not fix retrieval (the text still doesn't contain "Content
+   Forge") — it only makes every future consumer of `metadata` able to see
+   the row is suspect before trusting its content. **The real fix for
+   retrieval is the repair table in §b being applied to the vault file**,
+   which still needs Konrad's approval.
+
+I did not edit `/opt/knowledge-mcp/km-indexer.js` (still outside this repo,
+still not git-tracked, still a live process — same reasoning as §1). Its
+proposed hunks in §2 above should, when applied, also merge a suspect marker
+computed from `isSuspectCorruptedDrawing()`'s result into `meta` before the
+row is written, so a re-index doesn't silently drop the flag added here by
+hand. That is a small addition to Hunk 3 for whoever applies §2, not done here
+— out of this round's write-set and this repo's boundary.

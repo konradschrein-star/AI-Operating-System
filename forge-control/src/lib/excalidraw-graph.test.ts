@@ -217,6 +217,11 @@ describe("excalidraw-graph: real vault drawings", () => {
     const gapNodes = g.nodes.filter((n) => n.status === "gap");
     assert.ok(builtNodes.length > 0, "expected some built nodes");
     assert.ok(gapNodes.length > 0, "expected some gap/risk nodes");
+
+    // Suspect drawing protection: corrupted_labels ambiguity is flagged
+    const corruptAmb = g.ambiguities.find((a) => a.kind === "corrupted_labels");
+    assert.ok(corruptAmb, "suspect drawing must flag corrupted_labels ambiguity");
+    assert.strictEqual(corruptAmb.severity, "warning");
   });
 
   test("Stealth Uploader - Warming Timeline.excalidraw.md parses into phases", async () => {
@@ -228,5 +233,8 @@ describe("excalidraw-graph: real vault drawings", () => {
 
     assert.ok(g.nodes.length > 15);
     assert.ok(g.stats.liveElements > 0);
+
+    const corruptAmb = g.ambiguities.find((a) => a.kind === "corrupted_labels");
+    assert.ok(corruptAmb, "warming timeline must flag corrupted_labels ambiguity");
   });
 });

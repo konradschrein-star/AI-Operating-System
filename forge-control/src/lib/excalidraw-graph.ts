@@ -31,6 +31,7 @@ import {
   drawingTags,
   drawingTitle,
   isDrawingPath,
+  isSuspectCorruptedDrawing,
 } from "./excalidraw-extract.ts";
 
 /* ==========================================================================
@@ -63,7 +64,8 @@ export type AmbiguityKind =
   | "cycle"
   | "unexplained_color"
   | "unlabelled_shape"
-  | "straddling_node";
+  | "straddling_node"
+  | "corrupted_labels";
 
 export type AmbiguitySeverity = "warning" | "question" | "info";
 
@@ -529,6 +531,24 @@ export function parseDrawingGraph(
         });
       }
     }
+  }
+
+  const suspect = isSuspectCorruptedDrawing(opts.path ?? "", enrichedNodes);
+  if (
+    suspect.isSuspect ||
+    (opts.degraded && (opts.degraded.includes("Suspect") || opts.degraded.includes("corrupt")))
+  ) {
+    ambiguities.unshift({
+      id: nextAmbId("suspect"),
+      kind: "corrupted_labels",
+      severity: "warning",
+      elementIds: [],
+      label: "Suspect Drawing: First-character corruption detected",
+      description:
+        "This drawing exhibits systematic dropped-first-character label corruption (e.g. 'ontent Forge', 'HASE 1'). A proposed repair table has been prepared in HANDOFF.md pending approval.",
+      question:
+        "Drawing labels have lost their initial character (e.g. 'ontent Forge', 'HASE 1'). Do not treat derived plans as authoritative until repair is approved. Should proposed corrections be applied?",
+    });
   }
 
   return {

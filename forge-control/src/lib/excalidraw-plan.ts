@@ -365,7 +365,13 @@ export function compileCanvasPlan(graph: ParsedDrawingGraph): CanvasPlan {
   const completedCount = tasks.filter((t) => t.status === "done").length;
   const blockedCount = tasks.filter((t) => t.status === "blocked").length;
 
-  const planSummary = `Actionable execution plan compiled from drawing "${graph.title}" with ${tasks.length} tasks across ${phases.length} phases and ${workstreams.length} workstreams.`;
+  const isCorrupted =
+    graph.ambiguities.some((a) => a.kind === "corrupted_labels") ||
+    Boolean(graph.degraded && graph.degraded.includes("Suspect"));
+
+  const planSummary = isCorrupted
+    ? `⚠️ SUSPECT DRAWING: Actionable execution plan compiled from drawing "${graph.title}" with ${tasks.length} tasks across ${phases.length} phases and ${workstreams.length} workstreams. NOTE: Drawing exhibits systematic dropped-first-character label corruption; plan is provisional pending approved vault repair.`
+    : `Actionable execution plan compiled from drawing "${graph.title}" with ${tasks.length} tasks across ${phases.length} phases and ${workstreams.length} workstreams.`;
 
   const plan: CanvasPlan = {
     path: graph.path,
@@ -415,6 +421,17 @@ export function serializeCanvasPlanMarkdown(plan: CanvasPlan): string {
 
   lines.push(`# Plan: ${plan.title}`);
   lines.push("");
+
+  const hasCorrupted = plan.ambiguities.some((a) => a.kind === "corrupted_labels");
+  if (hasCorrupted) {
+    lines.push("> [!CAUTION]");
+    lines.push("> **SUSPECT DRAWING — PROVISIONAL PLAN ONLY**");
+    lines.push("> This drawing exhibits systematic dropped-first-character label corruption on disk (e.g. `ontent Forge`, `HASE 1`).");
+    lines.push("> A proposed repair table has been prepared in `HANDOFF.md` for Konrad to approve.");
+    lines.push("> Do NOT execute or present truncated labels as ground truth until repair is approved.");
+    lines.push("");
+  }
+
   lines.push(plan.summary);
   lines.push("");
 

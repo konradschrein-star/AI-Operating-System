@@ -682,6 +682,51 @@ export function isDrawingPath(vaultPath: string): boolean {
  * fall back to that and set `degraded` to the reason. A degraded reading is
  * still worth indexing; a silent one would not be.
  */
+/**
+ * Detect drawings that have systematic dropped-first-character label corruption
+ * (e.g. "ontent Forge", "HASE 1", "olphin profile").
+ */
+export function isSuspectCorruptedDrawing(
+  vaultPath = "",
+  nodes: Array<{ label?: string }> = [],
+): { isSuspect: boolean; reason?: string } {
+  const normPath = vaultPath.toLowerCase();
+  if (
+    normPath.includes("stealth uploader - system map") ||
+    normPath.includes("stealth uploader - warming timeline")
+  ) {
+    return {
+      isSuspect: true,
+      reason:
+        "Suspect drawing: systematic dropped-first-character label corruption detected on disk (e.g. 'ontent Forge', 'HASE 1'). Pending vault repair approval.",
+    };
+  }
+
+  // Heuristic check across node labels
+  const labels = nodes.map((n) => (n.label ?? "").trim()).filter(Boolean);
+  if (labels.length >= 5) {
+    let suspectCount = 0;
+    for (const label of labels) {
+      if (
+        /^[a-z][a-z0-9\s]*[A-Z]/.test(label) ||
+        /^HASE \d/.test(label) ||
+        /^[A-Z0-9\s\-_·]+\s*=\s*[A-Z]/.test(label)
+      ) {
+        suspectCount++;
+      }
+    }
+    if (suspectCount >= 3) {
+      return {
+        isSuspect: true,
+        reason:
+          "Suspect drawing: multiple labels exhibit dropped leading character patterns. Pending vault repair approval.",
+      };
+    }
+  }
+
+  return { isSuspect: false };
+}
+
 export function extractDrawing(vaultPath: string, raw: string): DrawingGraph {
   if (!isDrawingPath(vaultPath)) {
     throw new ExcalidrawExtractError(
