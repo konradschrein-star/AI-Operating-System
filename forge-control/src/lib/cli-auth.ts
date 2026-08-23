@@ -48,6 +48,7 @@ import {
   AGY_PROBE_TIMEOUT_MS,
   classifyAgyProbe,
   runCommand,
+  writeConnectionRecord,
   type CommandOutcome,
   type ConnectionRecord,
 } from "./connection-status.ts";
@@ -566,10 +567,6 @@ export async function startLogin(
   }
   const launch = `${env.join(" ")} ${def.bin}`.trim();
 
-  // `exec bash` on purpose: the pane must survive the CLI so its final lines can
-  // be read after exit. It is also exactly why liveness is `#{pane_dead}` and
-  // classification is pane CONTENT — the shell outlives the process, so
-  // `has-session` would report a login that ended an hour ago as still running.
   // WIDTH 1000 IS LOAD-BEARING, NOT A PREFERENCE.
   // The bare TUI renders the consent URL inside its own layout and TRUNCATES it
   // to the pane width. At 200 columns the captured URL was 198 characters and
@@ -579,7 +576,9 @@ export async function startLogin(
   // this: print mode writes the URL raw, so it never met the TUI's layout.)
   const created = await tmux([
     "new-session", "-d", "-s", tmuxName, "-x", "1000", "-y", "50",
-    `${launch}; exec bash`,
+    launch,
+    ";",
+    "set-option", "-t", tmuxName, "remain-on-exit", "on",
   ]);
   if (created.code !== 0) {
     return {
@@ -722,6 +721,10 @@ export async function submitCode(
     if (verdict !== null || dead) {
       const record = await probeProvider(provider);
       s.probe = toProbeView(record);
+
+      if (provider === "agy") {
+        await writeConnectionRecord("agy", record).catch(() => undefined);
+      }
 
       if (record.ok) {
         s.state = "connected";
