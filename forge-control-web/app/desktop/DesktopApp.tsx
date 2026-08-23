@@ -456,7 +456,13 @@ export function DesktopApp() {
                 onFreeze={() => freezeM.mutate()}
               />
             ))}
-          {surface === "tasks" && <ProjectsSurface />}
+          {surface === "tasks" && (
+            <ProjectsSurface
+              onNavigate={(s) => {
+                if (isSurface(s)) setSurface(s);
+              }}
+            />
+          )}
           {surface === "memory" && <MemorySurface />}
           {surface === "chat" && (
             <ChatSurface

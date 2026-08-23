@@ -22,7 +22,6 @@ import {
   PROJECT_REPO_OPTIONS,
   type Project,
   type ProjectRepo,
-  type TaskRole,
   type TaskStatus,
   type RunDetail,
 } from "../api";
@@ -38,22 +37,47 @@ import {
 import { useRunEvents } from "./chat/useRunEvents";
 import { AssistantThread } from "./chat/AssistantThread";
 
-const ROLES: TaskRole[] = ["architect", "planner", "scout", "builder", "reviewer"];
+export type TaskRole =
+  | "architect"
+  | "planner"
+  | "scout"
+  | "researcher"
+  | "builder"
+  | "reviewer"
+  | "steward"
+  | "tester";
+
+const ROLES: TaskRole[] = [
+  "architect",
+  "planner",
+  "scout",
+  "researcher",
+  "builder",
+  "reviewer",
+  "steward",
+  "tester",
+];
 
 const ROLE_LABEL: Record<TaskRole, string> = {
   architect: "Architect",
   planner: "Planner",
   scout: "Scout",
+  researcher: "Researcher",
   builder: "Builder",
   reviewer: "Reviewer",
+  steward: "Steward",
+  tester: "Tester",
 };
 
 const ROLE_COLOR: Record<TaskRole, string> = {
-  architect: tokens.decide,
-  planner: tokens.info,
-  scout: tokens.textMuted,
-  builder: tokens.accent,
-  reviewer: tokens.warn,
+  architect: tokens.roleInkArchitect,
+  planner: tokens.roleInkPlanner,
+  scout: tokens.roleInkScout,
+  researcher: tokens.roleInkResearcher,
+  builder: tokens.roleInkBuilder,
+  reviewer: tokens.roleInkReviewer,
+  steward: tokens.roleInkSteward,
+  tester: tokens.roleInkTester,
 };
 
 const STATUS_COLOR: Record<TaskStatus, string> = {
@@ -64,6 +88,27 @@ const STATUS_COLOR: Record<TaskStatus, string> = {
   failed: tokens.bleed,
   blocked: tokens.warn,
 };
+
+const STATUS_ORDER: Record<string, number> = {
+  active: 0,
+  blocked: 1,
+  paused: 2,
+  done: 3,
+  cancelled: 4,
+};
+
+export interface ManagerRollupRow {
+  project_id: string;
+  name: string;
+  status: string;
+  mode: string | null;
+  tasks_done: number;
+  tasks_total: number;
+  tokens_in: number;
+  tokens_out: number;
+  spent_usd: number;
+  last_activity_at: string | null;
+}
 
 function humanAge(ts: string | null | undefined): string {
   if (!ts) return "—";
@@ -76,7 +121,11 @@ function humanAge(ts: string | null | undefined): string {
   return `${Math.floor(s / 86400)}d`;
 }
 
-export function ProjectsSurface() {
+export function ProjectsSurface({
+  onNavigate,
+}: {
+  onNavigate?: (surface: string) => void;
+}) {
   const qc = useQueryClient();
   const boardQ = useQuery({
     queryKey: ["projects", "board"],
@@ -88,11 +137,32 @@ export function ProjectsSurface() {
     queryFn: fetchProjects,
     refetchInterval: 15_000,
   });
+  const managersQ = useQuery({
+    queryKey: ["projects", "managers"],
+    queryFn: async () => {
+      const res = await fetch("/api/proxy/projects/managers", {
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText} on /projects/managers`);
+      const data = (await res.json()) as { managers: ManagerRollupRow[] };
+      return data.managers;
+    },
+    refetchInterval: 10_000,
+  });
 
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [selTaskId, setSelTaskId] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [viewMode, setViewMode] = useState<"board" | "floor">("board");
+  const [doneExpanded, setDoneExpanded] = useState(false);
+
+  // Left rail search & filters
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "done" | "paused">("all");
+  const [repoFilter, setRepoFilter] = useState<"all" | "ai-os" | "content-forge" | "scratch">("all");
+
+  // Main board task search
+  const [taskSearchQuery, setTaskSearchQuery] = useState("");
 
   const createM = useMutation({
     mutationFn: (input: { name: string; brief: string; repo: ProjectRepo }) =>
@@ -108,57 +178,190 @@ export function ProjectsSurface() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
   });
 
+  const navigateToChat = (runId: string) => {
+    try {
+      localStorage.setItem("forge.chat.selected", JSON.stringify(runId));
+      localStorage.setItem("forge.desktop.surface", JSON.stringify("chat"));
+      window.dispatchEvent(new Event("storage"));
+      window.dispatchEvent(new CustomEvent("forge:navigate", { detail: "chat" }));
+    } catch (e) {
+      console.warn("[ProjectsSurface] navigation storage write failed", e);
+    }
+    onNavigate?.("chat");
+  };
+
   const tasks = boardQ.data ?? [];
-  const filtered = useMemo(
-    () =>
-      projectFilter
-        ? tasks.filter((t) => t.project_id === projectFilter)
-        : tasks,
-    [tasks, projectFilter],
-  );
+  const allProjects = projectsQ.data ?? [];
+
+  const managerMap = useMemo(() => {
+    const map = new Map<string, ManagerRollupRow>();
+    for (const m of managersQ.data ?? []) {
+      map.set(m.project_id, m);
+    }
+    return map;
+  }, [managersQ.data]);
+
+  // Compute fallback task counts from board tasks per project
+  const taskCountsByProject = useMemo(() => {
+    const map = new Map<string, { total: number; done: number; active: number }>();
+    for (const t of tasks) {
+      const cur = map.get(t.project_id) ?? { total: 0, done: 0, active: 0 };
+      cur.total++;
+      if (t.status === "done") cur.done++;
+      if (t.status === "running" || t.status === "ready" || t.status === "pending" || t.status === "blocked") {
+        cur.active++;
+      }
+      map.set(t.project_id, cur);
+    }
+    return map;
+  }, [tasks]);
+
+  // 1. Sort projects by active status first (active > blocked > paused > done > cancelled, then updated_at DESC)
+  const sortedProjects = useMemo(() => {
+    return [...allProjects].sort((a, b) => {
+      const orderA = STATUS_ORDER[a.status] ?? 99;
+      const orderB = STATUS_ORDER[b.status] ?? 99;
+      if (orderA !== orderB) return orderA - orderB;
+      const timeA = new Date(a.updated_at || a.created_at).getTime() || 0;
+      const timeB = new Date(b.updated_at || b.created_at).getTime() || 0;
+      return timeB - timeA;
+    });
+  }, [allProjects]);
+
+  // 2. Filter projects by search query, status filter, repo filter
+  const filteredProjects = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return sortedProjects.filter((p) => {
+      if (statusFilter === "active" && p.status !== "active" && p.status !== "blocked") {
+        return false;
+      }
+      if (statusFilter === "done" && p.status !== "done") {
+        return false;
+      }
+      if (statusFilter === "paused" && p.status !== "paused") {
+        return false;
+      }
+      if (repoFilter !== "all" && p.repo !== repoFilter) {
+        return false;
+      }
+      if (q) {
+        const matchName = p.name.toLowerCase().includes(q);
+        const matchBrief = (p.brief || "").toLowerCase().includes(q);
+        const matchRepo = p.repo.toLowerCase().includes(q);
+        const matchBranch = (p.work_branch || "").toLowerCase().includes(q);
+        if (!matchName && !matchBrief && !matchRepo && !matchBranch) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [sortedProjects, searchQuery, statusFilter, repoFilter]);
+
+  // Filter tasks for Kanban board / Floor
+  const filteredTasks = useMemo(() => {
+    let list = projectFilter
+      ? tasks.filter((t) => t.project_id === projectFilter)
+      : tasks;
+    if (taskSearchQuery.trim()) {
+      const q = taskSearchQuery.trim().toLowerCase();
+      list = list.filter(
+        (t) =>
+          t.title.toLowerCase().includes(q) ||
+          (t.project_name && t.project_name.toLowerCase().includes(q)) ||
+          (t.role && t.role.toLowerCase().includes(q)) ||
+          (t.status && t.status.toLowerCase().includes(q)) ||
+          `r${t.round}`.includes(q) ||
+          t.id.toLowerCase().includes(q),
+      );
+    }
+    return list;
+  }, [tasks, projectFilter, taskSearchQuery]);
+
+  // Distribute tasks across all 8 roles plus Done
   const columns = useMemo(() => {
     const byRole = new Map<TaskRole, ProjectBoardTask[]>(
       ROLES.map((r) => [r, []]),
     );
     const done: ProjectBoardTask[] = [];
-    for (const t of filtered) {
-      if (t.status === "done") done.push(t);
-      else byRole.get(t.role)?.push(t);
+    for (const t of filteredTasks) {
+      if (t.status === "done") {
+        done.push(t);
+      } else {
+        const role = t.role as TaskRole;
+        if (byRole.has(role)) {
+          byRole.get(role)!.push(t);
+        } else {
+          // Never drop a task with an unexpected role
+          byRole.get("builder")?.push(t);
+        }
+      }
     }
     return { byRole, done };
-  }, [filtered]);
+  }, [filteredTasks]);
 
   const runningTasks = useMemo(
-    () => filtered.filter((t) => t.status === "running" && t.run_id),
-    [filtered],
+    () => filteredTasks.filter((t) => t.status === "running" && t.run_id),
+    [filteredTasks],
   );
+
+  const activeTasksCount = useMemo(() => {
+    return tasks.filter(
+      (t) =>
+        t.status === "running" ||
+        t.status === "ready" ||
+        t.status === "blocked" ||
+        t.status === "pending",
+    ).length;
+  }, [tasks]);
 
   const selTask = tasks.find((t) => t.id === selTaskId) ?? null;
 
+  const selectedProject = useMemo(() => {
+    return allProjects.find((p) => p.id === projectFilter) ?? null;
+  }, [allProjects, projectFilter]);
+
+  const selectedProjectManager = useMemo(() => {
+    return projectFilter ? managerMap.get(projectFilter) ?? null : null;
+  }, [projectFilter, managerMap]);
+
   return (
     <div style={{ display: "flex", height: "100%", minHeight: 0 }}>
-      {/* Left rail — projects */}
+      {/* Left rail — projects search, filter, and list */}
       <div
         style={{
-          width: 240,
+          width: 260,
           flex: "none",
           borderRight: `1px solid ${tokens.borderSoft}`,
           display: "flex",
           flexDirection: "column",
           minHeight: 0,
+          background: tokens.bgBody,
         }}
       >
+        {/* Rail Header */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 9,
-            padding: "12px 14px",
-            borderBottom: `1px solid ${tokens.borderSoft}`,
+            gap: 8,
+            padding: "12px 14px 8px",
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 500, color: tokens.text }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: tokens.textHi }}>
             Projects
+          </span>
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: tokens.textMuted,
+              background: tokens.toolBg,
+              padding: "1px 5px",
+              borderRadius: 4,
+              border: `1px solid ${tokens.borderSoft}`,
+            }}
+          >
+            {allProjects.length}
           </span>
           <span style={{ flex: 1 }} />
           <button
@@ -170,39 +373,162 @@ export function ProjectsSurface() {
               background: tokens.primaryActionBg,
               border: `1px solid ${tokens.accent}`,
               borderRadius: 6,
-              padding: "4px 10px",
+              padding: "3px 8px",
               cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
             }}
+            title="Create new coding project"
           >
             + new
           </button>
         </div>
+
+        {/* Search bar */}
+        <div style={{ padding: "0 10px 8px" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              background: tokens.inputBg,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 6,
+              padding: "4px 8px",
+              gap: 6,
+            }}
+          >
+            <span style={{ fontSize: 11, color: tokens.textFaint }}>🔍</span>
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="search projects…"
+              className="mono"
+              style={{
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                fontSize: 11,
+                color: tokens.text,
+                width: "100%",
+              }}
+            />
+            {searchQuery && (
+              <span
+                onClick={() => setSearchQuery("")}
+                style={{
+                  fontSize: 11,
+                  color: tokens.textFaint,
+                  cursor: "pointer",
+                  padding: "0 2px",
+                }}
+              >
+                ×
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Filter controls: Status and Repo */}
+        <div
+          style={{
+            padding: "0 10px 8px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+            borderBottom: `1px solid ${tokens.borderSoft}`,
+          }}
+        >
+          {/* Status filter pills */}
+          <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+            <span className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, marginRight: 2 }}>
+              status:
+            </span>
+            {(["all", "active", "done", "paused"] as const).map((st) => (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  border: `1px solid ${statusFilter === st ? tokens.accent : tokens.borderSoft}`,
+                  background: statusFilter === st ? tokens.primaryActionBg : "transparent",
+                  color: statusFilter === st ? tokens.accent : tokens.textMuted,
+                }}
+              >
+                {st}
+              </button>
+            ))}
+          </div>
+
+          {/* Repo filter pills */}
+          <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+            <span className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, marginRight: 2 }}>
+              repo:
+            </span>
+            {(["all", "ai-os", "content-forge", "scratch"] as const).map((rp) => (
+              <button
+                key={rp}
+                onClick={() => setRepoFilter(rp)}
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  padding: "2px 5px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  border: `1px solid ${repoFilter === rp ? tokens.accent : tokens.borderSoft}`,
+                  background: repoFilter === rp ? tokens.primaryActionBg : "transparent",
+                  color: repoFilter === rp ? tokens.accent : tokens.textMuted,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {rp === "content-forge" ? "cf" : rp}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Project list in Rail */}
         <div style={{ flex: 1, overflowY: "auto" }}>
+          {/* All active projects selector */}
           <div
             onClick={() => setProjectFilter(null)}
             style={{
-              padding: "10px 14px",
+              padding: "9px 12px",
               cursor: "pointer",
               borderLeft: `2px solid ${!projectFilter ? tokens.accent : "transparent"}`,
               background: !projectFilter ? tokens.selectedBg : "transparent",
               fontSize: 12,
-              color: !projectFilter ? tokens.text : tokens.textMuted,
+              color: !projectFilter ? tokens.textHi : tokens.textMuted,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              borderBottom: `1px solid ${tokens.borderDivider}`,
             }}
           >
-            all active · {tasks.length} tasks
+            <span style={{ fontWeight: !projectFilter ? 600 : 400 }}>All Projects</span>
+            <span style={{ flex: 1 }} />
+            <span className="mono" style={{ fontSize: 10, color: tokens.accent }}>
+              {activeTasksCount} active
+            </span>
           </div>
-          {(projectsQ.data ?? [])
-            .filter((p) => p.status !== "done" && p.status !== "cancelled")
-            .map((p) => (
-              <ProjectListItem
-                key={p.id}
-                project={p}
-                selected={p.id === projectFilter}
-                onSelect={() => setProjectFilter(p.id)}
-                onCancel={() => cancelM.mutate(p.id)}
-              />
-            ))}
-          {(projectsQ.data ?? []).length === 0 && (
+
+          {filteredProjects.map((p) => (
+            <ProjectListItem
+              key={p.id}
+              project={p}
+              selected={p.id === projectFilter}
+              managerStats={managerMap.get(p.id)}
+              taskCountStats={taskCountsByProject.get(p.id)}
+              onSelect={() => setProjectFilter(p.id)}
+              onCancel={() => cancelM.mutate(p.id)}
+            />
+          ))}
+
+          {filteredProjects.length === 0 && (
             <div
               className="mono"
               style={{
@@ -213,15 +539,21 @@ export function ProjectsSurface() {
                 lineHeight: 1.6,
               }}
             >
-              no projects yet.
-              <br />
-              hit “+ new” to start one.
+              {allProjects.length === 0 ? (
+                <>
+                  no projects yet.
+                  <br />
+                  hit “+ new” to start one.
+                </>
+              ) : (
+                <>no matching projects found.</>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      {/* Main — Kanban or task detail */}
+      {/* Main — Kanban board, floor or task detail */}
       <div
         style={{
           flex: 1,
@@ -239,27 +571,127 @@ export function ProjectsSurface() {
             onCreate={(name, brief, repo) => createM.mutate({ name, brief, repo })}
           />
         ) : selTask ? (
-          <TaskDetail task={selTask} onClose={() => setSelTaskId(null)} />
+          <TaskDetail
+            task={selTask}
+            onClose={() => setSelTaskId(null)}
+            onNavigateToChat={navigateToChat}
+          />
         ) : (
           <>
+            {/* Main Header Strip */}
             <div
               style={{
-                padding: "12px 22px",
+                padding: "10px 18px",
                 borderBottom: `1px solid ${tokens.borderSoft}`,
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
+                flexWrap: "wrap",
               }}
             >
-              <span style={{ fontSize: 15, fontWeight: 500, color: tokens.textHi }}>
-                Projects
-              </span>
-              <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
-                {viewMode === "board"
-                  ? `architect → builder(s) → reviewer, fix cycles loop back through review · ${filtered.length} tasks`
-                  : `${runningTasks.length} agent(s) working right now`}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: tokens.textHi }}>
+                  {selectedProject ? selectedProject.name : "Projects"}
+                </span>
+                {selectedProject && (
+                  <>
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 9.5,
+                        color: tokens.textMuted,
+                        background: tokens.toolBg,
+                        padding: "1px 6px",
+                        borderRadius: 4,
+                        border: `1px solid ${tokens.borderSoft}`,
+                      }}
+                    >
+                      {selectedProject.repo}
+                    </span>
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 9.5,
+                        color:
+                          selectedProject.status === "active"
+                            ? tokens.ok
+                            : selectedProject.status === "blocked"
+                            ? tokens.warn
+                            : tokens.textFaint,
+                        border: `1px solid ${tokens.borderSoft}`,
+                        padding: "1px 6px",
+                        borderRadius: 4,
+                      }}
+                    >
+                      {selectedProject.status}
+                    </span>
+                  </>
+                )}
+              </div>
+
+              {/* Progress & Spend badge */}
+              <div className="mono" style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 8 }}>
+                {selectedProjectManager ? (
+                  <>
+                    <span>
+                      {selectedProjectManager.tasks_done}/{selectedProjectManager.tasks_total} done
+                    </span>
+                    {selectedProjectManager.spent_usd > 0 && (
+                      <span style={{ color: tokens.accent }}>
+                        ${selectedProjectManager.spent_usd.toFixed(2)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span>{filteredTasks.length} tasks</span>
+                )}
+                <span>·</span>
+                <span style={{ color: runningTasks.length > 0 ? tokens.ok : tokens.textFaint }}>
+                  {runningTasks.length} running
+                </span>
+              </div>
+
               <span style={{ flex: 1 }} />
+
+              {/* Task search on the board */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  background: tokens.inputBg,
+                  border: `1px solid ${tokens.border}`,
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                  gap: 5,
+                  width: 160,
+                }}
+              >
+                <span style={{ fontSize: 10, color: tokens.textFaint }}>🔍</span>
+                <input
+                  value={taskSearchQuery}
+                  onChange={(e) => setTaskSearchQuery(e.target.value)}
+                  placeholder="filter cards…"
+                  className="mono"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    outline: "none",
+                    fontSize: 10.5,
+                    color: tokens.text,
+                    width: "100%",
+                  }}
+                />
+                {taskSearchQuery && (
+                  <span
+                    onClick={() => setTaskSearchQuery("")}
+                    style={{ fontSize: 10, color: tokens.textFaint, cursor: "pointer" }}
+                  >
+                    ×
+                  </span>
+                )}
+              </div>
+
+              {/* View switcher [board | floor] */}
               <div
                 style={{
                   display: "flex",
@@ -275,7 +707,7 @@ export function ProjectsSurface() {
                     className="mono"
                     style={{
                       fontSize: 10.5,
-                      padding: "5px 12px",
+                      padding: "4px 10px",
                       cursor: "pointer",
                       color: viewMode === m ? tokens.accent : tokens.textMuted,
                       background: viewMode === m ? tokens.primaryActionBg : "transparent",
@@ -286,6 +718,8 @@ export function ProjectsSurface() {
                 ))}
               </div>
             </div>
+
+            {/* Content: Board or Floor */}
             {viewMode === "board" ? (
               <div
                 style={{
@@ -308,12 +742,29 @@ export function ProjectsSurface() {
                     role={role}
                     tasks={columns.byRole.get(role) ?? []}
                     onSelect={setSelTaskId}
+                    onNavigateToChat={navigateToChat}
                   />
                 ))}
-                <DoneColumn tasks={columns.done} onSelect={setSelTaskId} />
+                <DoneColumn
+                  tasks={columns.done}
+                  expanded={doneExpanded}
+                  onToggleExpand={() => setDoneExpanded((prev) => !prev)}
+                  onSelect={setSelTaskId}
+                  onNavigateToChat={navigateToChat}
+                />
               </div>
             ) : (
-              <FloorGrid tasks={runningTasks} onExpand={setSelTaskId} />
+              <FloorGrid
+                tasks={runningTasks}
+                onExpand={(id) => {
+                  const task = tasks.find((t) => t.id === id);
+                  if (task?.run_id) {
+                    navigateToChat(task.run_id);
+                  } else {
+                    setSelTaskId(id);
+                  }
+                }}
+              />
             )}
           </>
         )}
@@ -325,53 +776,103 @@ export function ProjectsSurface() {
 function ProjectListItem({
   project,
   selected,
+  managerStats,
+  taskCountStats,
   onSelect,
   onCancel,
 }: {
   project: Project;
   selected: boolean;
+  managerStats?: ManagerRollupRow;
+  taskCountStats?: { total: number; done: number; active: number };
   onSelect: () => void;
   onCancel: () => void;
 }) {
-  const color =
-    project.status === "blocked" ? tokens.warn : project.status === "paused" ? tokens.textFaint : tokens.ok;
+  const statusColorMap: Record<string, string> = {
+    active: tokens.ok,
+    blocked: tokens.warn,
+    paused: tokens.textFaint,
+    done: tokens.textMuted,
+    cancelled: tokens.bleed,
+  };
+  const color = statusColorMap[project.status] ?? tokens.textMuted;
+  const isRunning = project.status === "active";
+
+  const doneCount = managerStats?.tasks_done ?? taskCountStats?.done ?? 0;
+  const totalCount = managerStats?.tasks_total ?? taskCountStats?.total ?? 0;
+  const spentUsd = managerStats?.spent_usd ?? 0;
+
   return (
     <div
       onClick={onSelect}
       style={{
-        padding: "10px 14px",
+        padding: "9px 12px",
         cursor: "pointer",
         borderLeft: `2px solid ${selected ? tokens.accent : "transparent"}`,
         background: selected ? tokens.selectedBg : "transparent",
+        transition: "background 0.15s ease",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-        <span style={dot(color, project.status === "active")} />
+        <span style={dot(color, isRunning)} />
         <span
           style={{
             fontSize: 12.5,
-            color: selected ? tokens.text : tokens.textLabel,
+            fontWeight: selected ? 550 : 450,
+            color: selected ? tokens.textHi : tokens.textLabel,
             overflow: "hidden",
             textOverflow: "ellipsis",
             whiteSpace: "nowrap",
             flex: 1,
           }}
+          title={project.name}
         >
           {project.name}
         </span>
         <span
           onClick={(e) => {
             e.stopPropagation();
-            if (confirm(`Cancel project "${project.name}"? This removes its git worktree.`)) onCancel();
+            if (confirm(`Cancel project "${project.name}"? This removes its git worktree.`)) {
+              onCancel();
+            }
           }}
           className="mono"
-          style={{ fontSize: 10, color: tokens.textFaint, cursor: "pointer" }}
+          style={{ fontSize: 11, color: tokens.textFaint, cursor: "pointer", padding: "0 2px" }}
+          title="Cancel project"
         >
           ×
         </span>
       </div>
-      <div className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, marginTop: 3, marginLeft: 13 }}>
-        {project.repo} · {project.status}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginTop: 4,
+          marginLeft: 14,
+        }}
+      >
+        <span
+          className="mono"
+          style={{
+            fontSize: 9,
+            color: tokens.textMuted,
+            background: tokens.toolBg,
+            padding: "1px 4px",
+            borderRadius: 3,
+            border: `1px solid ${tokens.borderSoft}`,
+          }}
+        >
+          {project.repo}
+        </span>
+        <span className="mono" style={{ fontSize: 9.5, color: tokens.textFaint }}>
+          {totalCount > 0 ? `${doneCount}/${totalCount} done` : project.status}
+        </span>
+        {spentUsd > 0 && (
+          <span className="mono" style={{ fontSize: 9.5, color: tokens.accent, marginLeft: "auto" }}>
+            ${spentUsd.toFixed(2)}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -381,10 +882,12 @@ function RoleColumn({
   role,
   tasks,
   onSelect,
+  onNavigateToChat,
 }: {
   role: TaskRole;
   tasks: ProjectBoardTask[];
   onSelect: (id: string) => void;
+  onNavigateToChat: (runId: string) => void;
 }) {
   const color = ROLE_COLOR[role];
   return (
@@ -419,14 +922,28 @@ function RoleColumn({
           {tasks.length}
         </span>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 7 }}>
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: 8,
+          display: "flex",
+          flexDirection: "column",
+          gap: 7,
+        }}
+      >
         {tasks.length === 0 && (
           <div className="mono" style={{ fontSize: 10, color: tokens.textFaint, textAlign: "center", padding: 14 }}>
             —
           </div>
         )}
         {tasks.map((t) => (
-          <TaskCard key={t.id} task={t} onSelect={() => onSelect(t.id)} />
+          <TaskCard
+            key={t.id}
+            task={t}
+            onSelect={() => onSelect(t.id)}
+            onNavigateToChat={onNavigateToChat}
+          />
         ))}
       </div>
     </div>
@@ -435,15 +952,94 @@ function RoleColumn({
 
 function DoneColumn({
   tasks,
+  expanded,
+  onToggleExpand,
   onSelect,
+  onNavigateToChat,
 }: {
   tasks: ProjectBoardTask[];
+  expanded: boolean;
+  onToggleExpand: () => void;
   onSelect: (id: string) => void;
+  onNavigateToChat: (runId: string) => void;
 }) {
+  if (!expanded) {
+    return (
+      <div
+        onClick={onToggleExpand}
+        title="Click to expand Done tasks"
+        style={{
+          width: 44,
+          flex: "none",
+          background: tokens.bgCard,
+          border: `1px solid ${tokens.border}`,
+          borderRadius: 10,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "12px 6px",
+          cursor: "pointer",
+          minHeight: 0,
+          maxHeight: "100%",
+          opacity: 0.85,
+          userSelect: "none",
+          transition: "background 0.15s ease, border-color 0.15s ease",
+        }}
+      >
+        <span style={{ width: 4, height: 14, background: tokens.ok, borderRadius: 2 }} />
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.ok,
+            fontWeight: 600,
+            marginTop: 8,
+            background: tokens.okActionBg,
+            border: `1px solid ${tokens.okActionBorder}`,
+            borderRadius: 4,
+            padding: "2px 4px",
+          }}
+        >
+          {tasks.length}
+        </span>
+        <div
+          style={{
+            writingMode: "vertical-rl",
+            textOrientation: "mixed",
+            transform: "rotate(180deg)",
+            fontSize: 12,
+            fontWeight: 500,
+            color: tokens.textMuted,
+            marginTop: 16,
+            letterSpacing: "0.08em",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span>DONE</span>
+          <span style={{ fontSize: 10, color: tokens.textFaint }}>▶</span>
+        </div>
+        <span style={{ flex: 1 }} />
+        <span
+          className="mono"
+          style={{
+            fontSize: 9,
+            color: tokens.textFaint,
+            writingMode: "vertical-rl",
+            transform: "rotate(180deg)",
+          }}
+        >
+          [expand]
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
-        width: 220,
+        width: 240,
         flex: "none",
         background: tokens.bgCard,
         border: `1px solid ${tokens.border}`,
@@ -452,7 +1048,7 @@ function DoneColumn({
         flexDirection: "column",
         minHeight: 0,
         maxHeight: "100%",
-        opacity: 0.85,
+        opacity: 0.9,
       }}
     >
       <div
@@ -466,14 +1062,62 @@ function DoneColumn({
       >
         <span style={{ width: 4, height: 14, background: tokens.ok, borderRadius: 2 }} />
         <span style={{ fontSize: 13, fontWeight: 500, color: tokens.textHi }}>Done</span>
-        <span style={{ flex: 1 }} />
-        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+        <span
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.ok,
+            background: tokens.okActionBg,
+            border: `1px solid ${tokens.okActionBorder}`,
+            borderRadius: 4,
+            padding: "1px 5px",
+          }}
+        >
           {tasks.length}
         </span>
+        <span style={{ flex: 1 }} />
+        <button
+          onClick={onToggleExpand}
+          className="mono"
+          style={{
+            fontSize: 10,
+            color: tokens.textMuted,
+            background: "transparent",
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 4,
+            padding: "2px 6px",
+            cursor: "pointer",
+          }}
+          title="Collapse Done column"
+        >
+          ▼ collapse
+        </button>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 8, display: "flex", flexDirection: "column", gap: 7 }}>
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: 8,
+          display: "flex",
+          flexDirection: "column",
+          gap: 7,
+        }}
+      >
+        {tasks.length === 0 && (
+          <div
+            className="mono"
+            style={{ fontSize: 10, color: tokens.textFaint, textAlign: "center", padding: 14 }}
+          >
+            —
+          </div>
+        )}
         {tasks.map((t) => (
-          <TaskCard key={t.id} task={t} onSelect={() => onSelect(t.id)} />
+          <TaskCard
+            key={t.id}
+            task={t}
+            onSelect={() => onSelect(t.id)}
+            onNavigateToChat={onNavigateToChat}
+          />
         ))}
       </div>
     </div>
@@ -483,45 +1127,118 @@ function DoneColumn({
 function TaskCard({
   task,
   onSelect,
+  onNavigateToChat,
 }: {
   task: ProjectBoardTask;
   onSelect: () => void;
+  onNavigateToChat: (runId: string) => void;
 }) {
-  const color = STATUS_COLOR[task.status];
+  const color = STATUS_COLOR[task.status] ?? tokens.accent;
+  const roleColor = ROLE_COLOR[task.role as TaskRole] ?? tokens.accent;
+  const hasRun = Boolean(task.run_id);
+
   return (
     <div
-      onClick={onSelect}
+      onClick={() => {
+        if (hasRun && task.run_id) {
+          onNavigateToChat(task.run_id);
+        } else {
+          onSelect();
+        }
+      }}
       style={{
         background: "rgba(255,255,255,0.02)",
         border: `1px solid ${tokens.borderSoft}`,
-        borderLeft: `2px solid ${color}`,
+        borderLeft: `3px solid ${color}`,
         borderRadius: 8,
         padding: "9px 11px",
         cursor: "pointer",
+        transition: "background 0.15s ease, border-color 0.15s ease",
       }}
+      title={hasRun ? "Click to open in Chat surface" : "Click to view task brief"}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={dot(color, task.status === "running")} />
-        <span className="mono" style={{ fontSize: 9, color, letterSpacing: "0.05em" }}>
+        <span
+          className="mono"
+          style={{
+            fontSize: 9,
+            color: roleColor,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
+          {ROLE_LABEL[task.role as TaskRole] ?? task.role}
+        </span>
+        <span style={{ fontSize: 9, color: tokens.textFaint }}>·</span>
+        <span className="mono" style={{ fontSize: 9, color, letterSpacing: "0.02em" }}>
           {task.status}
         </span>
         <span style={{ flex: 1 }} />
         <span className="mono" style={{ fontSize: 9, color: tokens.textFaint }}>
-          r{task.round}{task.fix_cycle > 0 ? ` · fix ${task.fix_cycle}` : ""}
+          r{task.round}
+          {task.fix_cycle > 0 ? ` · f${task.fix_cycle}` : ""}
         </span>
       </div>
+
       <div
         style={{
           fontSize: 12,
           color: tokens.textLabel,
-          marginTop: 5,
+          marginTop: 6,
           lineHeight: 1.4,
+          fontWeight: 450,
         }}
       >
         {task.title}
       </div>
-      <div className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, marginTop: 4 }}>
-        {task.project_name} · {humanAge(task.updated_at)}
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          marginTop: 6,
+          gap: 6,
+        }}
+      >
+        <span
+          className="mono"
+          style={{
+            fontSize: 9.5,
+            color: tokens.textFaint,
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {task.project_name} · {humanAge(task.updated_at)}
+        </span>
+        {hasRun && (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              if (task.run_id) onNavigateToChat(task.run_id);
+            }}
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              color: tokens.accent,
+              background: tokens.primaryActionBg,
+              border: `1px solid ${tokens.accent}`,
+              borderRadius: 4,
+              padding: "1px 6px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
+              cursor: "pointer",
+            }}
+            title="Open in Chat surface"
+          >
+            💬 chat ↗
+          </span>
+        )}
       </div>
     </div>
   );
@@ -529,9 +1246,7 @@ function TaskCard({
 
 /* ----------------------------------------------------------------------------
  * Floor — the "factory floor" view: every currently-running agent as a live
- * mini-terminal, all visible at once. Each tile is its own SSE subscription
- * (same mechanism as the chat thread, just N of them) so you watch the
- * whole swarm churn instead of clicking into one agent at a time.
+ * mini-terminal, all visible at once.
  * -------------------------------------------------------------------------- */
 function FloorGrid({
   tasks,
@@ -611,7 +1326,7 @@ function FloorTile({
     if (el) el.scrollTop = el.scrollHeight;
   }, [thread.length]);
 
-  const color = ROLE_COLOR[task.role];
+  const color = ROLE_COLOR[task.role as TaskRole] ?? tokens.accent;
   const tail = thread.slice(-9);
 
   return (
@@ -628,6 +1343,7 @@ function FloorTile({
         cursor: "pointer",
         overflow: "hidden",
       }}
+      title="Click to open in Chat surface"
     >
       <div
         style={{
@@ -641,7 +1357,7 @@ function FloorTile({
       >
         <span style={dot(live ? tokens.ok : tokens.warn, live)} />
         <span className="mono" style={{ fontSize: 9.5, color, letterSpacing: "0.05em" }}>
-          {ROLE_LABEL[task.role].toUpperCase()}
+          {(ROLE_LABEL[task.role as TaskRole] ?? task.role).toUpperCase()}
         </span>
         <span
           style={{
@@ -696,9 +1412,11 @@ function FloorTile({
 function TaskDetail({
   task,
   onClose,
+  onNavigateToChat,
 }: {
   task: ProjectBoardTask;
   onClose: () => void;
+  onNavigateToChat: (runId: string) => void;
 }) {
   const qc = useQueryClient();
   const runId = task.run_id;
@@ -709,11 +1427,7 @@ function TaskDetail({
     enabled: !!runId,
     refetchInterval: live ? 20_000 : 3_000,
   });
-  /* The brief is NOT on the board feed any more — it was 88.2% of it, carried on
-   * every one of 149 cards to be read here, on at most one of them, and only
-   * while that one has no run yet. So it is fetched for the selected task, when
-   * that pane is the one being shown. `enabled` keeps a task that has a run from
-   * issuing the request at all. */
+  /* The brief is fetched on demand for the selected task when it has no run yet. */
   const briefQ = useQuery({
     queryKey: ["projects", "task-brief", task.id],
     queryFn: () => fetchTaskBrief(task.id),
@@ -756,10 +1470,31 @@ function TaskDetail({
             {task.project_name} · {task.title}
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: tokens.textFaint, marginTop: 2 }}>
-            {ROLE_LABEL[task.role]} · round {task.round} · {task.status}
+            {ROLE_LABEL[task.role as TaskRole] ?? task.role} · round {task.round} · {task.status}
             {runId && <span style={{ color: live ? tokens.ok : tokens.warn }}> · {live ? "live" : "polling"}</span>}
           </div>
         </div>
+        {runId && (
+          <button
+            onClick={() => onNavigateToChat(runId)}
+            className="mono"
+            style={{
+              fontSize: 11,
+              color: tokens.accent,
+              background: tokens.primaryActionBg,
+              border: `1px solid ${tokens.accent}`,
+              borderRadius: 6,
+              padding: "5px 12px",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+            title="Open in the full CHAT surface"
+          >
+            💬 Open in Chat ↗
+          </button>
+        )}
       </div>
       {runQ.data ? (
         <>
@@ -823,9 +1558,6 @@ function TaskDetail({
           <div style={{ fontSize: 13, color: tokens.textSecondary, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
             {briefQ.data}
           </div>
-          {/* Three distinguishable states, on purpose: a brief still loading, a
-              brief that FAILED to load, and a brief that is genuinely empty. An
-              `?? ""` here would render all three as the same blank pane. */}
           {briefQ.isPending && (
             <div className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
               loading the brief…
