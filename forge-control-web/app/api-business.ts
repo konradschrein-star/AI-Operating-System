@@ -338,6 +338,18 @@ export interface SpendFilters {
   applied: { provider: string | null; kind: string | null };
 }
 
+/**
+ * The response THIS repo's forge-control returns — `filters` and the daily
+ * compute split are required because the route always emits them, and
+ * defaulting a missing one to zero is a fabrication.
+ *
+ * They are still not safe to read blind. `getJson<T>` is an unchecked cast and
+ * forge-control-web restarts independently of forge-control, so a web build
+ * can face an API that predates a field (verified 2026-08-23: the deployed
+ * `/api/spend/summary` returned no `filters` key at all). MoneySurface reads
+ * both through `desktop/spend-skew.ts`, which reports absence as unknown
+ * instead of throwing or inventing a zero.
+ */
 export interface SpendSummaryResponse {
   today: SpendWindow;
   d7: SpendWindow;

@@ -15,6 +15,11 @@ import {
   type SpendAreaItem,
 } from "../api-business";
 import { fetchLimitHits, type LimitHit } from "../api";
+import {
+  spendPickLists,
+  firstIncompleteDay,
+  incompleteDayMessage,
+} from "./spend-skew";
 
 const DAILY_ALERT_EUR = 15;
 
@@ -95,6 +100,10 @@ export function MoneySurface() {
   const ledgerData: LedgerSummaryResponse | null = ledgerQ.data ?? null;
   const spendData: SpendSummaryResponse | null = spendQ.data ?? null;
   const limitHits: LimitHit[] = limitHitsQ.data ?? [];
+  /* The pick lists come from the response, and an older deployed forge-control
+   * sends no `filters` block at all — reading through it unguarded threw and
+   * took the whole surface into SurfaceErrorBoundary. See spend-skew.ts. */
+  const pickLists = spendPickLists(spendData);
   /* "0 limit hits" and "we could not ask" are different sentences. Without
    * this, a failed probe renders the reassuring green tick. */
   const limitHitsUnknown = limitHitsQ.data === undefined;
@@ -440,19 +449,21 @@ export function MoneySurface() {
 
             {/* Provider × category filters. Options come from the response's
                 own unfiltered pick lists, so they cannot drift from the data
-                and cannot strand you on an empty selection. */}
+                and cannot strand you on an empty selection. An API too old to
+                send them leaves the pickers inert rather than killing the
+                surface — spend-skew.ts, guarded on both hops. */}
             <FilterSelect
               label="provider"
               plural="providers"
               value={provider}
-              options={spendData?.filters.providers ?? []}
+              options={pickLists.providers}
               onChange={setProvider}
             />
             <FilterSelect
               label="category"
               plural="categories"
               value={kind}
-              options={spendData?.filters.kinds ?? []}
+              options={pickLists.kinds}
               onChange={setKind}
             />
             {(provider || kind) && (
@@ -1110,6 +1121,16 @@ function InteractiveDailyChart({
         tone={tokens.textFaint}
       />
     );
+  }
+
+  /* Same skew, second field: an older deployed forge-control sends daily rows
+   * with no compute split. Plotting it blind gives NaN bar heights, a "€NaN"
+   * peak label and a TypeError the moment a bar is hovered — and filling it
+   * with 0 would be the fabricated flat line fix cycle 1 removed. Refuse to
+   * draw, and name the field that is missing. */
+  const incomplete = firstIncompleteDay(daily);
+  if (incomplete) {
+    return <ProbePanel text={incompleteDayMessage(incomplete)} tone={tokens.bleed} />;
   }
 
   const CHART_H = 140;
