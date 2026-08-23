@@ -1,0 +1,11 @@
+{
+  "name": "forge-ai-os",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal AI OS — repo root. Hosts the pre-merge guard; forge-control, forge-control-web and forge-control-mcp are separate packages with their own package.json.",
+  "scripts": {
+    "guard": "bash scripts/checks/guard.sh --fast --strict",
+    "guard:full": "bash scripts/checks/guard.sh --full --strict",
+    "guard:test": "bash scripts/checks/test-guard-discrimination.sh"
+  }
+}
