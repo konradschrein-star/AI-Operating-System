@@ -214,6 +214,14 @@ export async function searchRuns(
        FROM runs
        WHERE (archived = false OR $3::boolean)
          AND (parent_run_id IS NULL OR $3::boolean)
+         -- The THIRD rail clause, and the one that made the book icon inert.
+         -- listRuns excludes project-owned runs; searchRuns did not. Measured
+         -- on live content_forge: 19 runs are on the rail, but 816 top-level
+         -- non-archived runs carry metadata.project_id. Without this clause
+         -- scope="open" searched 835 rows and returned mostly things the rail
+         -- has never shown -- while the doc comment and the tooltip both
+         -- claimed it matched the rail. All three clauses must move together.
+         AND (NOT (metadata ? 'project_id') OR $3::boolean)
          AND (title ILIKE $1
           OR prompt ILIKE $1
           OR EXISTS (
