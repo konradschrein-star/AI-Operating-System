@@ -92,3 +92,35 @@ carry the measured numbers instead of the targets.
   write set) is deliberately declined — see `PLAN.md` §4.2.
 - No screenshot taken: nothing visual changed this round. `TerminalPane.tsx`
   was not reopened.
+
+### Final verification (all run, all pasted)
+
+At `49b6262`'s parent `1d606c0` and again at `49b6262`, worktree clean:
+
+```
+bash scripts/checks/guard.sh --full
+  0 node-version PASS | 0 devdeps-forge-control PASS | 0 devdeps-forge-control-web PASS
+  1 no-raw-colours PASS | 1 dollar-sweep PASS | 1 forbidden-file-diff PASS
+  2 tsc-forge-control PASS | 2 tsc-forge-control-web PASS | 2 instrument-typecheck PASS
+  3 web-build PASS | 4 gates-808-suite PASS
+  PASS: 11   FAIL: 0   SKIP: 0
+  GUARD: GREEN — safe to merge at mode=full.          (260.61s at 49b6262)
+
+bash scripts/checks/test-guard-discrimination.sh      → exit 0
+  type error      → tsc-forge-control-web RED, restore → GREEN
+  raw colour      → no-raw-colours RED,        restore → GREEN
+  dollar literal  → dollar-sweep RED,          restore → GREEN
+
+cd forge-control && pnpm test                          → exit 0
+  # tests 1658  # pass 1658  # fail 0     (includes the 9 new cli-runner cases)
+
+cd forge-control && npx tsc --noEmit                   → exit 0
+```
+
+Three `guard.sh --full` runs the same evening took 235s, 340s and 359s as the box's
+load moved between 22 and 58 — hence the range in `docs/DEVELOPMENT.md` §4 rather
+than a single number.
+
+The only commit after the green run above is this WORKLOG.md append. No gate reads
+`WORKLOG.md`; `gates-808.sh` reads only `docs/plan/artifacts/*`, and
+`forbidden-file-diff` watches the named shared surface/engine files.
