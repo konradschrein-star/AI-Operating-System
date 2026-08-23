@@ -80,6 +80,12 @@ export function ChatContextPopover({
   const [isMounted, setIsMounted] = useState(false);
   const [position, setPosition] = useState<PopoverPosition | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  /* Separate from `timerRef` on purpose. The gauge and the card are two
+   * elements, so travelling from one to the other fires leave-then-enter; with
+   * a single timer slot the enter would cancel a close it should have been
+   * able to distinguish from an open. */
+  const closeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const unmountTimerRef = useRef<NodeJS.Timeout | null>(null);
   const anchorRef = useRef<HTMLSpanElement | null>(null);
 
   const occ: ContextOccupancy | null = contextOccupancy(meta);
@@ -88,6 +94,8 @@ export function ChatContextPopover({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
     };
   }, []);
 
@@ -137,7 +145,19 @@ export function ChatContextPopover({
 
   const handleMouseEnter = () => {
     if (disabled) return;
+    // Whatever this enter is, it cancels a pending close: the pointer is back
+    // on the gauge or has arrived on the card.
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
     if (timerRef.current) clearTimeout(timerRef.current);
+    // Already up? Re-open instantly. Re-arming the 450ms here is what made the
+    // card blink out and back on the way from the gauge to it — the round-5
+    // note. The delay exists to filter a mouse CROSSING the gauge, not to
+    // punish someone who has already waited it out.
+    if (isMounted) {
+      setIsOpen(true);
+      return;
+    }
     // Deliberate 450ms delay to prevent jitter during fast mouse traversal
     timerRef.current = setTimeout(() => {
       measure();
@@ -150,11 +170,19 @@ export function ChatContextPopover({
 
   const handleMouseLeave = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
-    setIsOpen(false);
-    // 250ms CSS fade-out before unmounting DOM nodes
-    timerRef.current = setTimeout(() => {
-      setIsMounted(false);
-    }, 250);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
+    // A grace period, not an immediate close. Gauge and card do not touch, so
+    // the pointer spends a frame or two over neither of them; closing on that
+    // frame is the blink. 120ms is long enough to cross the 6px gap and far
+    // too short to read as a hover that stayed.
+    closeTimerRef.current = setTimeout(() => {
+      setIsOpen(false);
+      // 250ms CSS fade-out before unmounting DOM nodes
+      unmountTimerRef.current = setTimeout(() => {
+        setIsMounted(false);
+      }, 250);
+    }, 120);
   };
 
   const band: ContextBand = occ ? contextBand(occ.fraction) : "calm";
