@@ -1594,6 +1594,59 @@ export interface DayTask {
   age_days: number;
   /** `carried >= 3`. Drives the "This keeps sliding" strip (§5). */
   stale: boolean;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  status?: string;
+  htmlLink?: string;
+}
+
+export interface CreateCalendarEventInput {
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  task_id?: string;
+  calendar?: string;
+}
+
+export type LifeGoalHorizon = "quarterly" | "yearly" | "aspirational" | "active" | string;
+export type LifeGoalStatus = "planned" | "in_progress" | "completed" | "paused" | "abandoned" | string;
+
+export interface LifeGoal {
+  id: string;
+  title: string;
+  status: LifeGoalStatus;
+  horizon: LifeGoalHorizon;
+  area: string | null;
+  progress: number;
+  started_day: string | null;
+  target_day: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LifeGoalInput {
+  title: string;
+  status?: LifeGoalStatus;
+  horizon?: LifeGoalHorizon;
+  area?: string | null;
+  progress?: number;
+  started_day?: string | null;
+  target_day?: string | null;
+  notes?: string | null;
 }
 
 /**
@@ -1696,9 +1749,7 @@ export const fetchDailyDay = (day?: string): Promise<DailyDayResponse> =>
     day ? `/daily?day=${encodeURIComponent(day)}` : "/daily",
   );
 
-/** Draft edit of the intent line and/or the Big 3. 409 once committed (§1) —
- *  callers surface that as "abandon instead of editing", never as a silent
- *  no-op. */
+/** Draft edit of the intent line and/or the Big 3. Fluid editing supported throughout the day. */
 export const saveDayPlan = (
   day: string,
   input: { intent?: string | null; big3?: DayGoal[] },
@@ -1773,6 +1824,9 @@ export interface DayTaskInput {
   due_day?: string | null;
   est_min?: number | null;
   notes?: string | null;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
 }
 
 export const createDayTask = (input: DayTaskInput): Promise<DayWriteResult> =>
@@ -1795,3 +1849,52 @@ export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
 
 export const fetchDayStats = (days = 90): Promise<DayStats> =>
   getJson<DayStats>(`/daily/stats?days=${days}`);
+
+export const fetchCalendarEvents = async (
+  start?: string,
+  end?: string,
+): Promise<CalendarEvent[]> => {
+  const qs = new URLSearchParams();
+  if (start) qs.set("start", start);
+  if (end) qs.set("end", end);
+  const path = qs.toString() ? `/daily/calendar?${qs.toString()}` : "/daily/calendar";
+  const r = await getJson<CalendarEvent[] | { events?: CalendarEvent[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.events)) return r.events;
+  return [];
+};
+
+export const createCalendarEvent = (
+  input: CreateCalendarEventInput,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/calendar/events", input);
+
+export const fetchLifeGoals = async (params?: {
+  horizon?: string;
+  status?: string;
+  area?: string;
+}): Promise<LifeGoal[]> => {
+  const qs = new URLSearchParams();
+  if (params?.horizon) qs.set("horizon", params.horizon);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.area) qs.set("area", params.area);
+  const path = qs.toString() ? `/daily/goals?${qs.toString()}` : "/daily/goals";
+  const r = await getJson<LifeGoal[] | { goals?: LifeGoal[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.goals)) return r.goals;
+  return [];
+};
+
+export const createLifeGoal = (
+  input: LifeGoalInput,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/goals", input);
+
+export const updateLifeGoal = (
+  id: string,
+  patch: Partial<LifeGoalInput>,
+): Promise<DayWriteResult> =>
+  patchJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`, patch);
+
+export const deleteLifeGoal = (id: string): Promise<DayWriteResult> =>
+  deleteJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`);
