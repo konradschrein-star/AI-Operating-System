@@ -40,7 +40,7 @@ const CARD_STYLE: React.CSSProperties = {
 };
 
 export function AutomationSurface() {
-  const [tab, setTab] = useState<Tab>("webhooks");
+  const [tab, setTab] = useState<Tab>("cron");
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
       <div
@@ -52,8 +52,8 @@ export function AutomationSurface() {
           alignItems: "center",
         }}
       >
-        <TabBtn label="WEBHOOKS" active={tab === "webhooks"} onClick={() => setTab("webhooks")} />
         <TabBtn label="CRON" active={tab === "cron"} onClick={() => setTab("cron")} />
+        <TabBtn label="WEBHOOKS" active={tab === "webhooks"} onClick={() => setTab("webhooks")} />
         <div
           style={{
             marginLeft: "auto",
@@ -67,6 +67,79 @@ export function AutomationSurface() {
         </div>
       </div>
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
+        {/* Purpose banner */}
+        <div
+          style={{
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 12,
+            fontSize: 12,
+            color: tokens.textSecondary,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            lineHeight: 1.4,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 16, color: tokens.accent }}>
+            schedule
+          </span>
+          <span>
+            Automation is your autonomous trigger hub — manage time-based recurring routines (Cron) and event-driven inbound endpoints (Webhooks) that dispatch AI OS runs.
+          </span>
+        </div>
+
+        {/* Cross-link banner to Settings -> Connections */}
+        <div
+          style={{
+            background: "rgba(0,0,0,0.15)",
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "8px 12px",
+            marginBottom: 16,
+            fontSize: 11.5,
+            color: tokens.textMuted,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="ms" style={{ fontSize: 15, color: tokens.textFaint }}>
+              hub
+            </span>
+            <span>
+              Looking to connect external tools, OAuth accounts, or API credentials? Manage third-party integrations in <strong style={{ color: tokens.textHi }}>Settings → Connections</strong>.
+            </span>
+          </div>
+          <a
+            href="/desktop?surface=settings&section=connections"
+            onClick={() => {
+              try {
+                localStorage.setItem("forge-control:desktop:surface", "settings");
+                window.dispatchEvent(new Event("storage"));
+              } catch {}
+            }}
+            className="mono"
+            style={{
+              fontSize: 10,
+              padding: "3px 8px",
+              background: "rgba(255,255,255,0.05)",
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 4,
+              color: tokens.accent,
+              textDecoration: "none",
+              whiteSpace: "nowrap",
+              cursor: "pointer",
+            }}
+          >
+            open connections →
+          </a>
+        </div>
+
         {tab === "webhooks" ? <WebhooksPanel /> : <CronPanel />}
       </div>
     </div>
@@ -311,10 +384,42 @@ function WebhookRow({ w, onChange }: { w: Webhook; onChange: () => void }) {
       <div style={{ fontSize: 12, color: tokens.textMuted, marginTop: 4 }}>
         {w.description ?? "—"}
       </div>
-      <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11, color: tokens.textMuted2 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8, fontSize: 11, color: tokens.textMuted2, flexWrap: "wrap" }}>
         <span>{w.total_calls} calls</span>
         <span>·</span>
         <span>last: {w.last_called_at ?? "never"}</span>
+        {w.last_run_id && (
+          <>
+            <span>·</span>
+            <a
+              href={`/desktop?surface=chat&run=${encodeURIComponent(w.last_run_id)}`}
+              onClick={() => {
+                try {
+                  localStorage.setItem("forge-control:desktop:surface", "chat");
+                  localStorage.setItem("forge-control:desktop:chat:selectedRun", w.last_run_id!);
+                  window.dispatchEvent(new Event("storage"));
+                } catch {}
+              }}
+              className="mono"
+              style={{
+                fontSize: 10,
+                padding: "1px 6px",
+                background: "rgba(56,139,253,0.12)",
+                border: `1px solid ${tokens.accent}`,
+                borderRadius: 4,
+                color: tokens.accent,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+              title={`Open run ${w.last_run_id}`}
+            >
+              <span className="ms" style={{ fontSize: 10 }}>chat</span>
+              <span>run: {w.last_run_id.slice(0, 8)}</span>
+            </a>
+          </>
+        )}
         <span>·</span>
         <span>secret: {w.secret_preview}</span>
       </div>
@@ -539,8 +644,44 @@ function CronRow({ s, onChange }: { s: CronSchedule; onChange: () => void }) {
           {s.enabled ? "● ENABLED" : "○ DISABLED"}
         </div>
       </div>
-      <div style={{ fontSize: 12, color: tokens.textMuted, marginTop: 4 }}>
-        next: {s.next_run_at} · fires: {s.total_fires} · last: {s.last_run_at ?? "never"}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: tokens.textMuted, marginTop: 4, flexWrap: "wrap" }}>
+        <span>next: {s.next_run_at}</span>
+        <span>·</span>
+        <span>fires: {s.total_fires}</span>
+        <span>·</span>
+        <span>last: {s.last_run_at ?? "never"}</span>
+        {s.last_run_id && (
+          <>
+            <span>·</span>
+            <a
+              href={`/desktop?surface=chat&run=${encodeURIComponent(s.last_run_id)}`}
+              onClick={() => {
+                try {
+                  localStorage.setItem("forge-control:desktop:surface", "chat");
+                  localStorage.setItem("forge-control:desktop:chat:selectedRun", s.last_run_id!);
+                  window.dispatchEvent(new Event("storage"));
+                } catch {}
+              }}
+              className="mono"
+              style={{
+                fontSize: 10,
+                padding: "1px 6px",
+                background: "rgba(56,139,253,0.12)",
+                border: `1px solid ${tokens.accent}`,
+                borderRadius: 4,
+                color: tokens.accent,
+                textDecoration: "none",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+              }}
+              title={`Open run ${s.last_run_id}`}
+            >
+              <span className="ms" style={{ fontSize: 10 }}>chat</span>
+              <span>run: {s.last_run_id.slice(0, 8)}</span>
+            </a>
+          </>
+        )}
       </div>
       {s.last_error && (
         <div style={{ marginTop: 6, fontSize: 11, color: tokens.bleed }}>
