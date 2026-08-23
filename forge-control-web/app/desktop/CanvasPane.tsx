@@ -1723,6 +1723,14 @@ export function CanvasPane({
                                 <span style={{ color: tokens.textMuted }}>
                                   ({u.reason.replace(/_/g, " ")})
                                 </span>
+                                {/* A drawing often repeats a pair of labels —
+                                    three identical rows are three different
+                                    edges, so carry the plan-local ids. */}
+                                <div
+                                  style={{ fontSize: 9, color: tokens.textFaint }}
+                                >
+                                  {u.task} ← {u.dependsOn}
+                                </div>
                               </div>
                             ))}
                           </div>
