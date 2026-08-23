@@ -1,0 +1,445 @@
+/**
+ * LibrarySurface.css — Dark/Light theme-aware styling for the AI OS Library
+ * artifact, deliverables and file explorer surface.
+ */
+
+.library-surface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--fg-bgBody);
+  color: var(--fg-text);
+  overflow: hidden;
+}
+
+/* ── Top Header & Control Strip ── */
+.lib-control-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--fg-bgTabBar);
+  border-bottom: 1px solid var(--fg-borderSoft);
+  flex-shrink: 0;
+}
+
+.lib-control-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.lib-control-row-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Root Tabs Segmented Control */
+.lib-root-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--fg-bgGutter);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--fg-borderSoft);
+}
+
+.lib-root-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--fg-textMuted);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+}
+
+.lib-root-tab:hover:not(.active) {
+  color: var(--fg-text);
+  background: var(--fg-rowHover);
+}
+
+.lib-root-tab.active {
+  background: var(--fg-bgCard);
+  color: var(--fg-accent);
+  box-shadow: 0 1px 4px var(--fg-overlay);
+}
+
+/* Stat Badge */
+.lib-stat-badge {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* Search Bar */
+.lib-search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 6px;
+  padding: 4px 10px;
+  min-width: 220px;
+  flex: 1;
+  max-width: 400px;
+}
+
+.lib-search-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--fg-text);
+  font-size: 11.5px;
+  width: 100%;
+}
+
+.lib-search-input::placeholder {
+  color: var(--fg-textFaint);
+}
+
+/* Filter Chips */
+.lib-filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.lib-chip-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 14px;
+  border: 1px solid var(--fg-borderSoft);
+  background: var(--fg-bgGutter);
+  color: var(--fg-textMuted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 120ms ease;
+}
+
+.lib-chip-btn:hover:not(.active) {
+  border-color: var(--fg-borderEmphasis);
+  color: var(--fg-text);
+}
+
+.lib-chip-btn.active {
+  background: var(--fg-primaryActionBg);
+  border-color: var(--fg-accent);
+  color: var(--fg-accent);
+  font-weight: 500;
+}
+
+/* View Mode Switcher (Grid vs List) */
+.lib-view-toggle {
+  display: flex;
+  align-items: center;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.lib-view-btn {
+  padding: 3px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-textMuted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 120ms ease;
+}
+
+.lib-view-btn.active {
+  background: var(--fg-bgCard);
+  color: var(--fg-accent);
+  box-shadow: 0 1px 3px var(--fg-overlay);
+}
+
+/* ── Split Layout Workspace ── */
+.lib-split-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ── Master Column (Left / Explorer) ── */
+.lib-master-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--fg-bgCard);
+  overflow: hidden;
+  border-right: 1px solid var(--fg-borderSoft);
+}
+
+.lib-breadcrumbs-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: var(--fg-bgTabBar);
+  border-bottom: 1px solid var(--fg-borderSoft);
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.lib-breadcrumb-link {
+  color: var(--fg-textMuted);
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 5px;
+}
+
+.lib-breadcrumb-link:hover {
+  color: var(--fg-accent);
+  background: var(--fg-rowHover);
+}
+
+.lib-breadcrumb-active {
+  color: var(--fg-textHi);
+  font-weight: 600;
+}
+
+.lib-items-viewport {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+/* ── Grid View ── */
+.lib-grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.lib-grid-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.lib-grid-card:hover {
+  border-color: var(--fg-borderEmphasis);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--fg-overlay);
+}
+
+.lib-grid-card.selected {
+  border-color: var(--fg-accent);
+  background: var(--fg-selectedBg);
+  box-shadow: 0 0 0 1px var(--fg-accent);
+}
+
+.lib-grid-thumb {
+  height: 90px;
+  width: 100%;
+  background: var(--fg-bgBody);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.lib-grid-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lib-grid-meta {
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lib-grid-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--fg-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-grid-sub {
+  font-size: 9.5px;
+  color: var(--fg-textFaint);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* ── List View ── */
+.lib-list-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lib-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 100ms ease;
+}
+
+.lib-list-row:hover {
+  background: var(--fg-rowHover);
+}
+
+.lib-list-row.selected {
+  background: var(--fg-rowSelected);
+  border-color: var(--fg-accent);
+}
+
+.lib-list-icon {
+  font-size: 16px;
+  color: var(--fg-textMuted);
+  flex-shrink: 0;
+}
+
+.lib-list-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--fg-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lib-list-size {
+  font-size: 10.5px;
+  color: var(--fg-textFaint);
+  flex-shrink: 0;
+  width: 65px;
+  text-align: right;
+}
+
+.lib-list-mtime {
+  font-size: 10px;
+  color: var(--fg-textGhost);
+  flex-shrink: 0;
+  width: 100px;
+  text-align: right;
+}
+
+/* ── Run Master View for Uploads ── */
+.lib-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lib-run-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.lib-run-row:hover {
+  border-color: var(--fg-borderEmphasis);
+}
+
+.lib-run-row.selected {
+  border-color: var(--fg-accent);
+  background: var(--fg-selectedBg);
+  border-left: 3px solid var(--fg-accent);
+}
+
+.lib-run-id {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-textHi);
+}
+
+.lib-run-count {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--fg-bgCard);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+}
+
+/* ── Detail Pane (Right / Viewer) ── */
+.lib-detail-pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--fg-bgBody);
+  position: relative;
+  overflow: hidden;
+}
+
+.lib-empty-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 48px 24px;
+  text-align: center;
+  gap: 14px;
+  color: var(--fg-textFaint);
+}
+
+.lib-empty-icon {
+  font-size: 48px;
+  color: var(--fg-textGhost);
+}

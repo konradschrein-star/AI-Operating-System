@@ -1,9 +1,9 @@
 /**
- * GOALS/TASKS routes — the contract in docs/spec-daily-goals.md §4, verbatim.
+ * GOALS/TASKS routes — daily planning, habits, tasks, life goals, and Google Calendar.
  *
  *   GET    /api/daily?day=YYYY-MM-DD      → { day, plan, habits[], ticks[], tasks[], score }
- *   POST   /api/daily/:day/plan           { intent?, big3? }  409 once committed
- *   POST   /api/daily/:day/commit         freezes big3; idempotent
+ *   POST   /api/daily/:day/plan           { intent?, big3? }  fluid draft editing
+ *   POST   /api/daily/:day/commit         marks morning plan committed; idempotent
  *   POST   /api/daily/:day/goal/:goalId   { status, reason? }
  *   POST   /api/daily/:day/reflect        { subjective?:1..5, reflection? }
  *   POST   /api/daily/:day/habit/:habitId { done: boolean }
@@ -14,21 +14,21 @@
  *   DELETE /api/daily/tasks/:id
  *   POST   /api/daily/rollover            { to? }  idempotent
  *
+ *   GET    /api/daily/goals?horizon=&status=&area=
+ *   POST   /api/daily/goals
+ *   PATCH  /api/daily/goals/:id
+ *   DELETE /api/daily/goals/:id
+ *
+ *   GET    /api/daily/calendar?start=...&end=...&max=...
+ *   POST   /api/daily/calendar/events     { summary, start, end, location?, description?, task_id? }
+ *
  *   GET    /api/daily/stats?days=90
  *   GET    /api/daily/habits
  *   POST   /api/daily/habits
  *   PATCH  /api/daily/habits/:id
  *
- * Thin handlers, as in routes/autonomy.ts: parse, validate, delegate to
- * db/daily.ts, shape the response. No SQL and no arithmetic here.
- *
- * ROUTE ORDER IS LOAD-BEARING. The static two-segment paths (/tasks/:id,
- * /habits/:id) are registered BEFORE the /:day/* family so that a request for
- * /tasks/<uuid> can never be matched as day="tasks".
- *
- * Every rejection says what was wrong and what would be right. `{"error":"bad
- * request"}` is banned by the spec, and rightly: a 400 he cannot act on is a
- * 500 with better manners.
+ * ROUTE ORDER IS LOAD-BEARING. The static paths (/tasks, /goals, /calendar, /habits, /stats)
+ * are registered BEFORE the /:day/* family so that static names are never matched as day params.
  */
 
 import { Hono } from "hono";
@@ -50,6 +50,11 @@ import {
   updateTask,
   deleteTask,
   rolloverTasks,
+  listLifeGoals,
+  getLifeGoal,
+  createLifeGoal,
+  updateLifeGoal,
+  deleteLifeGoal,
   dayBundle,
   dailyStats,
   PlanCommittedError,
@@ -58,17 +63,22 @@ import {
   STATS_MAX_DAYS,
   TASK_STATUSES,
   TASK_VIEWS,
+  GOAL_HORIZONS,
+  LIFE_GOAL_STATUSES,
   type Big3Goal,
   type TaskStatus,
   type TaskView,
 } from "../db/daily.ts";
 import { berlinDay, isDay, type Day } from "../lib/day-score.ts";
+import {
+  listCalendarEvents,
+  createCalendarEvent,
+} from "../lib/calendar.ts";
 
 const r = new Hono();
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Max Big 3 entries. Three, because attention is the scarce resource (§1). */
 const BIG3_MAX = 3;
 const TITLE_MAX = 300;
 const GOAL_STATUSES = ["open", "done", "abandoned"] as const;
@@ -81,15 +91,10 @@ async function readBody(c: { req: { json: () => Promise<unknown> } }): Promise<B
   return parsed && typeof parsed === "object" ? (parsed as Body) : {};
 }
 
-/** Present and not null — distinguishes "leave it" from "set it to null". */
 function has(body: Body, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(body, key) && body[key] !== undefined;
 }
 
-/**
- * An integer in [min, max], or a message naming the field, the bound and what
- * arrived. Returned rather than thrown so the handler stays flat.
- */
 function intInRange(
   value: unknown,
   field: string,
@@ -108,12 +113,6 @@ function intInRange(
   return { ok: true, value };
 }
 
-/**
- * Add the derived flag the stale strip keys on. `age_days` already arrives from
- * SQL (see TASK_COLS); `stale` is a threshold comparison and belongs next to
- * the constant that defines it, which the response also carries as `stale_at`
- * so the client never has to hardcode a 3.
- */
 function decorate<T extends { carried: number }>(task: T): T & { stale: boolean } {
   return { ...task, stale: task.carried >= STALE_AT };
 }
@@ -121,6 +120,171 @@ function decorate<T extends { carried: number }>(task: T): T & { stale: boolean 
 // ===========================================================================
 // Static paths first — see the header note on route order.
 // ===========================================================================
+
+// --- Google Calendar -------------------------------------------------------
+
+r.get("/calendar", async (c) => {
+  const start = c.req.query("start");
+  const end = c.req.query("end");
+  const maxRaw = c.req.query("max");
+
+  let max: number | undefined = undefined;
+  if (maxRaw !== undefined) {
+    const parsed = Number(maxRaw);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 250) {
+      return c.json({ error: `max must be an integer between 1 and 250, got "${maxRaw}"` }, 400);
+    }
+    max = parsed;
+  }
+
+  try {
+    const events = await listCalendarEvents({ start, end, max });
+    return c.json({ ok: true, count: events.length, events });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Failed to fetch Google Calendar events: ${msg}` }, 502);
+  }
+});
+
+r.post("/calendar/events", async (c) => {
+  const body = await readBody(c);
+
+  if (!has(body, "summary") || typeof body.summary !== "string" || !(body.summary as string).trim()) {
+    return c.json({ error: "summary is required and must be a non-empty string" }, 400);
+  }
+  if (!has(body, "start") || typeof body.start !== "string") {
+    return c.json({ error: "start is required (ISO 8601 datetime with timezone)" }, 400);
+  }
+  if (!has(body, "end") || typeof body.end !== "string") {
+    return c.json({ error: "end is required (ISO 8601 datetime with timezone)" }, 400);
+  }
+
+  try {
+    const result = await createCalendarEvent({
+      summary: (body.summary as string).trim(),
+      start: body.start as string,
+      end: body.end as string,
+      location: typeof body.location === "string" ? (body.location as string).trim() : undefined,
+      description: typeof body.description === "string" ? (body.description as string).trim() : undefined,
+    });
+
+    // Optional task linking
+    if (has(body, "task_id") && typeof body.task_id === "string" && UUID_RE.test(body.task_id)) {
+      await updateTask(body.task_id, {
+        gcal_event_id: result.id,
+        start_time: body.start as string,
+      }).catch(() => null);
+    }
+
+    return c.json({ ok: true, event: result }, 201);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: `Failed to create Google Calendar event: ${msg}` }, 502);
+  }
+});
+
+// --- Life Goals (Strategic Horizons) ---------------------------------------
+
+r.get("/goals", async (c) => {
+  const horizon = c.req.query("horizon") || undefined;
+  const status = c.req.query("status") || undefined;
+  const area = c.req.query("area") || undefined;
+
+  const goals = await listLifeGoals({ horizon, status, area });
+  return c.json({ ok: true, count: goals.length, goals });
+});
+
+r.post("/goals", async (c) => {
+  const body = await readBody(c);
+
+  if (!has(body, "title") || typeof body.title !== "string" || !(body.title as string).trim()) {
+    return c.json({ error: "title is required and must be a non-empty string" }, 400);
+  }
+  const title = (body.title as string).trim();
+  if (title.length > TITLE_MAX) {
+    return c.json({ error: `title must be at most ${TITLE_MAX} characters, got ${title.length}` }, 400);
+  }
+
+  if (has(body, "progress") && body.progress !== null) {
+    const v = intInRange(body.progress, "progress", 0, 100);
+    if (!v.ok) return c.json({ error: v.error }, 400);
+  }
+
+  for (const field of ["started_day", "target_day"]) {
+    if (has(body, field) && body[field] !== null && !isDay(body[field])) {
+      return c.json(
+        { error: `${field} must be a real calendar day as YYYY-MM-DD or null, got ${JSON.stringify(body[field])}` },
+        400,
+      );
+    }
+  }
+
+  const goal = await createLifeGoal({
+    title,
+    status: typeof body.status === "string" ? (body.status as string).trim() : undefined,
+    horizon: typeof body.horizon === "string" ? (body.horizon as string).trim() : undefined,
+    area: typeof body.area === "string" ? (body.area as string).trim() : null,
+    progress: typeof body.progress === "number" ? body.progress : undefined,
+    started_day: (body.started_day as Day | null | undefined) ?? null,
+    target_day: (body.target_day as Day | null | undefined) ?? null,
+    notes: typeof body.notes === "string" ? body.notes : null,
+  });
+
+  return c.json({ ok: true, goal }, 201);
+});
+
+r.patch("/goals/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: `invalid goal id "${id}" — expected a uuid` }, 400);
+
+  const body = await readBody(c);
+
+  if (has(body, "title")) {
+    if (typeof body.title !== "string" || !(body.title as string).trim()) {
+      return c.json({ error: "title must be a non-empty string" }, 400);
+    }
+    if ((body.title as string).length > TITLE_MAX) {
+      return c.json({ error: `title must be at most ${TITLE_MAX} characters` }, 400);
+    }
+  }
+
+  if (has(body, "progress") && body.progress !== null) {
+    const v = intInRange(body.progress, "progress", 0, 100);
+    if (!v.ok) return c.json({ error: v.error }, 400);
+  }
+
+  for (const field of ["started_day", "target_day"]) {
+    if (has(body, field) && body[field] !== null && !isDay(body[field])) {
+      return c.json(
+        { error: `${field} must be a real calendar day as YYYY-MM-DD or null, got ${JSON.stringify(body[field])}` },
+        400,
+      );
+    }
+  }
+
+  const patch: Parameters<typeof updateLifeGoal>[1] = {};
+  if (has(body, "title")) patch.title = (body.title as string).trim();
+  if (has(body, "status")) patch.status = (body.status as string).trim();
+  if (has(body, "horizon")) patch.horizon = (body.horizon as string).trim();
+  if (has(body, "area")) patch.area = body.area as string | null;
+  if (has(body, "progress")) patch.progress = body.progress as number;
+  if (has(body, "started_day")) patch.started_day = body.started_day as Day | null;
+  if (has(body, "target_day")) patch.target_day = body.target_day as Day | null;
+  if (has(body, "notes")) patch.notes = body.notes as string | null;
+
+  const goal = await updateLifeGoal(id, patch);
+  if (!goal) return c.json({ error: `goal ${id} not found` }, 404);
+  return c.json({ ok: true, goal });
+});
+
+r.delete("/goals/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: `invalid goal id "${id}" — expected a uuid` }, 400);
+
+  const ok = await deleteLifeGoal(id);
+  if (!ok) return c.json({ error: `goal ${id} not found` }, 404);
+  return c.json({ ok: true, deleted: id });
+});
 
 // --- Tasks -----------------------------------------------------------------
 
@@ -156,7 +320,6 @@ r.get("/tasks", async (c) => {
   });
 });
 
-/** Shared field validation for POST and PATCH. Returns a message or null. */
 function validateTaskFields(body: Body): string | null {
   if (has(body, "title")) {
     const t = body.title;
@@ -178,6 +341,10 @@ function validateTaskFields(body: Body): string | null {
     const v = intInRange(body.est_min, "est_min", 0, 24 * 60);
     if (!v.ok) return v.error;
   }
+  if (has(body, "duration_min") && body.duration_min !== null) {
+    const v = intInRange(body.duration_min, "duration_min", 1, 24 * 60);
+    if (!v.ok) return v.error;
+  }
   if (has(body, "carried") && body.carried !== null) {
     const v = intInRange(body.carried, "carried", 0, 999);
     if (!v.ok) return v.error;
@@ -187,9 +354,14 @@ function validateTaskFields(body: Body): string | null {
       return `${field} must be a real calendar day as YYYY-MM-DD or null, got ${JSON.stringify(body[field])}`;
     }
   }
-  for (const field of ["area", "notes"]) {
+  for (const field of ["area", "notes", "gcal_event_id"]) {
     if (has(body, field) && body[field] !== null && typeof body[field] !== "string") {
       return `${field} must be a string or null, got ${JSON.stringify(body[field])}`;
+    }
+  }
+  if (has(body, "start_time") && body.start_time !== null) {
+    if (typeof body.start_time !== "string" || Number.isNaN(Date.parse(body.start_time as string))) {
+      return "start_time must be a valid ISO timestamp or null";
     }
   }
   return null;
@@ -209,6 +381,9 @@ r.post("/tasks", async (c) => {
     due_day: (body.due_day as Day | null | undefined) ?? null,
     est_min: (body.est_min as number | null | undefined) ?? null,
     notes: (body.notes as string | null | undefined) ?? null,
+    start_time: (body.start_time as string | null | undefined) ?? null,
+    duration_min: (body.duration_min as number | null | undefined) ?? null,
+    gcal_event_id: (body.gcal_event_id as string | null | undefined) ?? null,
   });
   return c.json({ ok: true, task: decorate(task) }, 201);
 });
@@ -230,6 +405,9 @@ r.patch("/tasks/:id", async (c) => {
   if (has(body, "est_min")) patch.est_min = body.est_min as number | null;
   if (has(body, "notes")) patch.notes = body.notes as string | null;
   if (has(body, "carried")) patch.carried = body.carried as number;
+  if (has(body, "start_time")) patch.start_time = body.start_time as string | null;
+  if (has(body, "duration_min")) patch.duration_min = body.duration_min as number | null;
+  if (has(body, "gcal_event_id")) patch.gcal_event_id = body.gcal_event_id as string | null;
 
   const task = await updateTask(id, patch);
   if (!task) return c.json({ error: `task ${id} not found` }, 404);
@@ -244,11 +422,6 @@ r.delete("/tasks/:id", async (c) => {
   return c.json({ ok: true, deleted: id });
 });
 
-/**
- * The anti-graveyard sweep (§5). Safe to call repeatedly — the executor's
- * evening job calls it unconditionally at 20:30 and the morning UI may call it
- * again; the second call moves nothing and increments nothing.
- */
 r.post("/rollover", async (c) => {
   const body = await readBody(c);
   const to = has(body, "to") ? body.to : berlinDay();
@@ -271,8 +444,6 @@ r.post("/rollover", async (c) => {
 // --- Habit definitions -----------------------------------------------------
 
 r.get("/habits", async (c) => {
-  // Inactive definitions are included by default: STATS renders history, and a
-  // retired habit still owns the ticks it earned.
   const activeOnly = c.req.query("active") === "true";
   const habits = await listHabits({ activeOnly });
   return c.json({ count: habits.length, habits });
@@ -394,7 +565,6 @@ r.get("/", async (c) => {
   return c.json({ ...bundle, tasks: bundle.tasks.map(decorate), stale_at: STALE_AT });
 });
 
-/** Guard shared by every /:day/* handler. */
 function requireDay(day: string): { ok: true } | { ok: false; error: string } {
   if (!isDay(day)) {
     return {
@@ -406,9 +576,7 @@ function requireDay(day: string): { ok: true } | { ok: false; error: string } {
 }
 
 /**
- * Draft edit. 409 once committed — the freeze is the product (§1). The error
- * carries the commit timestamp so the UI can print the exact tooltip the spec
- * asks for ("committed at 08:12 — abandon instead of editing").
+ * Plan draft update. Fluid editing is permitted throughout the day.
  */
 r.post("/:day/plan", async (c) => {
   const day = c.req.param("day");
@@ -476,7 +644,7 @@ r.post("/:day/plan", async (c) => {
   }
 });
 
-/** Freeze the day. Idempotent — a second COMMIT keeps the first timestamp. */
+/** Mark morning plan committed. Idempotent. */
 r.post("/:day/commit", async (c) => {
   const day = c.req.param("day");
   const guard = requireDay(day);
@@ -486,17 +654,11 @@ r.post("/:day/commit", async (c) => {
   return c.json({
     ok: true,
     plan,
-    // So the client can tell "I just froze it" from "it was already frozen"
-    // without diffing timestamps.
     already_committed: Boolean(before?.committed_at),
   });
 });
 
-/**
- * Complete, re-open or abandon one goal. This is the ONLY legal change to a
- * committed day — the text stays where it was, which is what makes the number
- * mean anything.
- */
+/** Complete, re-open or abandon one goal. */
 r.post("/:day/goal/:goalId", async (c) => {
   const day = c.req.param("day");
   const guard = requireDay(day);
@@ -525,7 +687,7 @@ r.post("/:day/goal/:goalId", async (c) => {
   return c.json({ ok: true, plan });
 });
 
-/** The night rating. Legal after commit — it describes the day, not the plan. */
+/** The night rating. */
 r.post("/:day/reflect", async (c) => {
   const day = c.req.param("day");
   const guard = requireDay(day);
@@ -548,7 +710,7 @@ r.post("/:day/reflect", async (c) => {
   return c.json({ ok: true, plan });
 });
 
-/** Tick or untick a habit. `done: false` removes the row — see db/daily.ts. */
+/** Tick or untick a habit. */
 r.post("/:day/habit/:habitId", async (c) => {
   const day = c.req.param("day");
   const guard = requireDay(day);
@@ -561,8 +723,6 @@ r.post("/:day/habit/:habitId", async (c) => {
   if (typeof body.done !== "boolean") {
     return c.json({ error: `done must be a boolean, got ${JSON.stringify(body.done)}` }, 400);
   }
-  // Checked before the write so an unknown id is a 404 and not a foreign-key
-  // 500 — the chip is optimistic in the UI, so its error path has to be exact.
   const habit = await getHabit(habitId);
   if (!habit) return c.json({ error: `habit ${habitId} not found` }, 404);
   const ticks = await setTick(day, habitId, body.done);

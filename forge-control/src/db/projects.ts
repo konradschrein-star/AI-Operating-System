@@ -1486,6 +1486,43 @@ export async function retryTask(
   return { ok: true, task: r.rows[0], project_resumed: (p.rowCount ?? 0) > 0 };
 }
 
+/** running -> ready ON A DIFFERENT ENGINE: the repair for a task whose run
+ *  died inside the engine rather than inside the work (R870, see
+ *  lib/project-tick.ts `demoteAfterEngineFailure`).
+ *
+ *  `retryTask` cannot serve here. It only accepts 'failed'/'blocked', so using
+ *  it would mean failing the task and blocking the project first — the exact
+ *  🚫 push this path exists to avoid — and it cannot change the tier, so the
+ *  retry would land back on the engine that just dropped the work.
+ *
+ *  THE `tier = $2` TERM IS THE ONCE-ONLY GUARD, and it is the whole safety
+ *  argument. After one demotion the row no longer matches, so a task can never
+ *  ping-pong between engines however many times the fallback engine then
+ *  fails: the second failure is an ordinary failure and takes the ordinary
+ *  path. `status = 'running'` is the same optimistic-concurrency belt
+ *  `markVerdictTaskDone` uses — if the operator cancelled or retried the row
+ *  between the tick's read and this write, nothing is updated and the caller
+ *  is told so by the null.
+ *
+ *  The attempt IS counted. The engine burned a real slot and real wall-clock,
+ *  and hiding that would let a task that has already been round the houses
+ *  present itself to the operator as fresh. */
+export async function demoteTaskTier(
+  id: string,
+  from: TaskTier,
+  to: TaskTier,
+): Promise<ProjectTask | null> {
+  const r = await pool.query<ProjectTask>(
+    `UPDATE project_tasks
+        SET tier = $3, status = 'ready', run_id = NULL,
+            attempt = attempt + 1, updated_at = now()
+      WHERE id = $1 AND status = 'running' AND tier = $2
+      RETURNING ${TASK_COLS}`,
+    [id, from, to],
+  );
+  return r.rows[0] ?? null;
+}
+
 /** Retry every failed task in the EARLIEST failed GROUP — earliest by
  *  `(round, workstream)`, ordered by round then workstream name (R46). Later
  *  groups are left alone deliberately: they are gated behind this one anyway,

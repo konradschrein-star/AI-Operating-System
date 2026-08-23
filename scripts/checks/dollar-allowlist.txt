@@ -83,4 +83,78 @@ forge-control-web/app/desktop/quota/geminiLine.ts	spen[dt]	Round 1876, replacing
 forge-control-web/app/desktop/businesses-inventory.ts	signs off on spend	Line 467, the `qualified` funnel stage's CRITERION prose: a lead counts as qualified once the discovery call recorded "the named need, who does that work today, and who signs off on spend" (spec §3.2 L263). "Spend" is the PROSPECT'S budget authority — who at the target company can approve a purchase — not a euro figure this OS renders. R63 requires the criterion verbatim so a zero in the funnel can be audited against the spec. Landed round 2 (c94b10d), unlisted until round 4.
 forge-control-web/app/desktop/businesses-inventory.ts	\$197 / \$497 / \$2,497	Line 592, the `axtrelis` secondary-arm STATE sentence: "Pricing is locked in code at $197 / $497 / $2,497 one-time" (spec §2.2 L211). A third party's own PRICE LIST, transcribed from the spec — the point of the sentence is that a rigorously specified revenue model has no customers in it, which is a business finding, not agent-cost noise. U11 forbids rendering what the fleet costs Konrad; it does not forbid quoting what Konrad's own product charges. Landed round 2 (c94b10d), unlisted until round 4.
 
+# ── aios-money-and-businesses: the Money lane's own wire types ───────────────
+#
+# api-business.ts is this lane's typed client (it exists because app/api.ts is
+# the one contended file — the header says so). Its currency-shaped hits are
+# the SAME class app/api.ts is already excused for one entry up: interface
+# field names and fetcher names for the MONEY destination, which 10-ui-v3-spec
+# names as the sanctioned home for money. Nothing here is a rendered value —
+# this file has no JSX at all.
+#
+# THREE scoped patterns, not `.*` and not the file: a `$`-prefixed literal
+# amount arriving anywhere in it still fails the gate, which is the only thing
+# the gate is actually for.
+
+forge-control-web/app/api-business.ts	balance_usd|total_usd|fx_rate_usd_eur|"USD" \| "EUR"	BankAccount/BankBalancesResponse field names mirroring forge-control's /api/accounts/bank: Mercury reports in USD, E&G in EUR, so a USD field and a published FX rate are the only honest way to carry a mixed-currency treasury. Field NAMES on an interface; the file renders nothing.
+forge-control-web/app/api-business.ts	Spend(Window|AreaItem|DailyItem|SummaryResponse|SummaryQuery|Filters)	The Spend* interfaces behind MoneySurface's compute chart — identical in kind and reason to the `Spend|spend` entry app/api.ts already carries, which this file exists to avoid editing. Type declarations, not values.
+forge-control-web/app/api-business.ts	/spend/summary|fetchSpendSummaryFiltered|metered spend vs shadow	The endpoint path, its fetcher, and the section header naming what the endpoint returns. A URL and a comment; the amounts themselves are rendered by MoneySurface.tsx, which is separately and deliberately excused.
+
 forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line 440, Sparkline(): SVG polyline COORDINATES — `${x.toFixed(2)},${y.toFixed(2)}` builds a `points` attribute out of pixel positions computed from `i / values.length * W` and `H - v / max * H`. Geometry, not currency, and the twelfth false positive of the naive toFixed(2) anchor (MemorySurface score, three token-magnitude formatters, …). Came in from `main` with 553fa38, Konrad's own Goals/Tasks daily surface, and met this lane-only gate for the first time at the round-13 merge — the same shape as gate 17's pins. The pattern is the coordinate PAIR, not `.*`: a real € or $ arriving in this file still fails the gate.
+
+# ── aios-money-and-businesses fix cycle 2: the deploy-skew guards ───────────
+#
+# spend-skew.ts is a PURE module (no React, no fetch, no JSX) whose whole
+# subject is one endpoint: it decides whether /api/spend/summary's response is
+# complete enough to draw, so MoneySurface stops throwing against an API older
+# than itself. Its hits are therefore identifiers and prose ABOUT money data,
+# never a money value — the single € in it sits inside a quoted description of
+# the "€NaN" label the guard exists to prevent.
+#
+# Scoped patterns, not `.*` and not the file: a literal currency amount
+# arriving in either file still fails the gate.
+
+forge-control-web/app/desktop/spend-skew.ts	spend-skew|/api/spend/summary|spendPickLists|spendData|Spend(DailyItem|SummaryResponse)|"€NaN" peak label	Deploy-skew guards for /api/spend/summary: the exported helper names, the imported Spend* type names, the endpoint path (in the header, in the recorded curl, and in the diagnostic the chart renders instead of a series), and header prose naming `spendData.filters.providers` — the read that used to throw. The one € is the quoted "€NaN" peak label the guard prevents, not a value. MoneySurface.tsx, which does render €, is separately and deliberately excused.
+forge-control-web/app/desktop/spend-skew.test.ts	spend-skew|/api/spend/summary|spendPickLists|Spend(DailyItem|SummaryResponse)	spend-skew.ts's unit suite — the same helper and type names, plus the endpoint path in the header comment recording the curl the fixture was captured from. The captured payload's numbers are bare (353.2966, no currency mark), so a real € or $ literal arriving in this file still fails the gate.
+forge-control-web/app/api-business.ts	desktop/spend-skew\.ts	One clause of SpendSummaryResponse's doc comment, naming the module MoneySurface now reads that response through ("MoneySurface reads both through `desktop/spend-skew.ts`"). A file path in prose. The three api-business.ts rows above still bound everything else in the file, and a literal amount arriving here fails the gate.
+# ── aios-pipeline-controlroom (round 5, fix cycle 1) ─────────────────────────
+# The Pipeline control room renders two non-currency quantities the primary
+# gate cannot tell from money: a VIDEO FILE SIZE in GB, and the MINUTES A VA
+# LOGGED on a job (`content_jobs.production_va_time_spent_seconds` /
+# `uploader_va_time_spent_seconds` — an integer count of seconds, no rate, no
+# rendered amount). "Time spent" is the column's own meaning; rewording it to
+# dodge \bspen[dt] would put a vaguer label on Konrad's screen to keep a grep
+# quiet. Each row below is scoped to the exact expression, not to the file: a
+# real currency value landing in either file still fails the gate.
+forge-control-web/app/desktop/PipelineSurface.tsx	toFixed\(2\)\} GB	formatBytes(): the GB branch of a FILE-SIZE formatter (`final_video_size_bytes` → "1.42 GB"). Same false positive as teamApi.ts's fmtTokens.
+forge-control-web/app/desktop/pipeline/JobDetailDrawer.tsx	toFixed\(2\)\} GB	formatBytes(): the drawer's copy of the same FILE-SIZE formatter, used for the rendered video's size.
+forge-control-web/app/desktop/pipeline/JobDetailDrawer.tsx	Time spent: \{formatDuration\(job\.[a-z_]+_time_spent_seconds\)	The VA cards' duration label — hours a VA logged on the job, from an integer seconds column. Not money.
+forge-control-web/app/desktop/_ui/MediaDocumentViewer.tsx	Math\.max\(0\.2, Number\(\(prev \+ delta\)\.toFixed\(2\)\)\)	toFixed(2) rounds an image ZOOM LEVEL (0.2x-5x) so repeated wheel steps do not accumulate float dust — a magnification factor, not a price. Same false positive as the token-magnitude formatters already listed. The pattern is the whole expression, not `.*`: any other toFixed(2) landing in this viewer still fails.
+forge-control-web/app/desktop/map/TopologyAtlasGrid.tsx	\(tokens / 1_000_000\)\.toFixed\(2\)	toFixed(2) inside formatTokens()'s "M" branch, rendering Gemini TOKEN counts from /api/usage/quota (e.g. "9.89M"). Identical in shape and reason to the AgentActivity.tsx humanTokens() and teamApi.ts fmtTokens() entries above. Google publishes no quota denominator and forge-control attaches no price to these, so nothing on this card is currency.
+forge-control-web/app/desktop/TodaySurface.tsx	data\.spend	Round-4 fix cycle: the reviewer flagged the prior round's €/toFixed(2) rendering as an unresolved NFU1 policy conflict (a self-cited PLAN.md is not Konrad's call). Fixed by removing every visible currency figure from Today — the usage chip and overnight-diary line now show only a "% of cap" number, no €/$, and the word "usage" instead of "spend" (renamed `spendQ`→`usageQ`, `spendCapEur`→`usageCapEur`). The one hit that survives is `data.spend.cap` (×3): reading the `TodayResponse.spend` field name from api.ts, never rendered as text. Real € amounts stay exclusive to MoneySurface.tsx (already excused above). Escalated to Konrad in manager chat whether Today should get a real-currency exception instead — this file defaults to the compliant, abstracted rendering unless he says otherwise.
+
+
+
+forge-control-web/app/desktop/journal/ImageLightbox.tsx	size_bytes / \(1024 \* 1024\)\)\.toFixed\(2\)	Line 94: a BYTE-magnitude formatter — `(entry.size_bytes / (1024 * 1024)).toFixed(2)} MB` renders how large the photographed journal page is, in megabytes. Same class and same reason as the already-listed token-magnitude formatters (AgentActivity.tsx humanTokens(), teamApi.ts fmtTokens(), context-window.ts) and the goals/ui.tsx sparkline coordinates: a false positive of the naive toFixed(2) anchor, with no currency anywhere in the file. The pattern is pinned to the megabyte DIVISION, not `.*`: a real € or $ landing in this file still fails the gate. Landed round 1 of aios-journal-and-mentor, unlisted until fix cycle 1.
+# ── aios-autonomy-automation, round 5: the guardrail COCKPIT ────────────────
+#
+# AutonomySurface.tsx is where Konrad SETS the spend caps and reads the trips
+# they produced. That is the same standing exemption slash-registry.ts already
+# carries for `/rules` and `/cap` — "a control surface (a number Konrad SETS),
+# not a display of a dollar amount charged" — and the reason this project
+# exists at all: the caps were switched OFF because the estimator billed Gemini
+# at Claude's rate, and a cap you cannot see the value of is a cap you cannot
+# trust enough to turn back on.
+#
+# The two hand-rolled `€${v.toFixed(2)}` metric values that round 4's review
+# found are GONE — they now go through `fmtEur()` from settings/usageApi.ts, so
+# there is exactly one euro formatter in this app. What is left is the rule ids
+# (`spend.daily_cap`, `spend.per_run_cap`), the payload field the trip carried
+# (`spend_eur`), two metric LABELS, and two cap INPUT labels that have to name
+# their unit. None is a rendered amount this file formats itself.
+#
+# Patterns are scoped to those shapes, never `.*` and never the file: a new
+# `$`-prefixed figure, or a fresh hand-rolled euro string, still fails.
+
+forge-control-web/app/desktop/AutonomySurface.tsx	startsWith\("spend\.|rule\.id === "spend\.(daily|per_run)_cap"|p\.spend_eur !== undefined|Number\(p\.spend_eur\)|label: "(Daily )?Spend",|label="(Daily Hard|Per-Run Claude) Cap \(€\)"	The guardrail cockpit's own subject matter: the `spend.daily_cap` / `spend.per_run_cap` RULE IDS, the `spend_eur` payload field a trip carried, the "Spend" / "Daily Spend" metric labels on that trip, and the "Daily Hard Cap (€)" / "Per-Run Claude Cap (€)" input labels. A cap Konrad sets and the evidence it fired — same reason slash-registry.ts's `/cap` is listed. Every rendered euro VALUE on this surface goes through fmtEur() (settings/usageApi.ts), which is allowlisted at its own file.
+forge-control-web/app/desktop/AutonomySurface.tsx	\(chars / 1_000_000\)\.toFixed\(2\)\}M chars	extractTripMetrics()'s thread-size chip — `${(chars / 1_000_000).toFixed(2)}M chars`, a CHARACTER-magnitude formatter of the same shape and the same false positive as AgentActivity.tsx's humanTokens(), teamApi.ts's fmtTokens() and chat/context-window.ts, all three already listed. Not currency; the thread length is what the spend estimate is computed FROM.

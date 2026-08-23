@@ -48,6 +48,20 @@ export const tokens = {
 
   // accent
   accent: v("accent"),
+  /** Ink for text sitting ON an accent fill — flips per theme, unlike `text`. */
+  onAccent: v("onAccent"),
+
+  /* Media stage — the letterbox behind a <video>, the paper behind a PDF, and
+   * the chrome of the player that floats over them. Theme-INVARIANT by design
+   * (see theme.css): a video's surround is black in both palettes. Consumed by
+   * `_ui/MediaDocumentViewer.{tsx,css}`. */
+  mediaStage: v("mediaStage"),
+  mediaStageInk: v("mediaStageInk"),
+  mediaStageInkDim: v("mediaStageInkDim"),
+  mediaStageChrome: v("mediaStageChrome"),
+  mediaStageTrack: v("mediaStageTrack"),
+  mediaStageHover: v("mediaStageHover"),
+  mediaPage: v("mediaPage"),
 
   // status
   ok: v("ok"),
@@ -73,12 +87,22 @@ export const tokens = {
   // chrome that must differ per theme but isn't in the original design
   inputBg: v("inputBg"),
   overlay: v("overlay"),
+  /** Drop-shadow COLOUR for a lifted surface (modal, popover). Compose the
+   *  offsets at the call site: `boxShadow: \`0 12px 36px ${tokens.shadowLift}\``. */
+  shadowLift: v("shadowLift"),
   /** Selected list row / tool-call block — see theme.css. */
   selectedBg: v("selectedBg"),
   rowHover: v("rowHover"),
   rowSelected: v("rowSelected"),
   toolBg: v("toolBg"),
   scrollbar: v("scrollbar"),
+
+  /* Elevation. These resolve to a WHOLE `box-shadow` value, not a colour —
+   * `boxShadow: tokens.shadowCard`, never interpolated into a shadow string.
+   * A raw `rgba(0,0,0,α)` shadow is theme-blind in exactly the way a raw
+   * colour is: tuned against near-black it turns into a grey bruise on paper. */
+  shadowCard: v("shadowCard"),
+  shadowPopover: v("shadowPopover"),
 
   /* Chat transcript role identities (round 808). Two per role: `roleBg*` is
    * the message card's tint, `roleInk*` is its header line and left rule.

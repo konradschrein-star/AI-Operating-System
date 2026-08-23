@@ -1,33 +1,14 @@
 "use client";
 
 /**
- * GOALS/TASKS — daily goals, the task planner, habits, and the stats that make
- * them mean something. Replaces the `goals` placeholder.
+ * GOALS / TASKS / DAY PLANNER — Daily executive command center, habit tracking,
+ * task management, Google Calendar schedule, and strategic life goals.
  *
- * Spec: docs/spec-daily-goals.md; the API is §4 of it, served by
- * forge-control/src/routes/daily.ts. The surface exists because a Notion setup
- * died of four things, each of which has an answer here:
- *
- *   blank page every evening   the operator drafts the plan; he only commits
- *   a task graveyard           rollover plus the stale strip force a decision
- *   a 19-column checkbox wall  four short rows of chips, 390px first
- *   passive stats              SAID VS DONE, first and biggest
- *
- * This file is the shell: three tabs, the day cursor, every query and every
- * mutation. The tabs themselves live in ./goals/*.
- *
- * Two rules about the data flow, both load-bearing:
- *
- *   • Ticks are OPTIMISTIC. The habit chip and the Big-3 circle flip on touch
- *     and reconcile against the refetch; on failure they roll back and say so.
- *     A tick that waits on a round trip is a tick that stops happening.
- *   • Loading never flashes an empty state. Every query holds its previous
- *     data (`placeholderData: keepPreviousData`), so stepping a day or
- *     switching a tab dims rather than blanks — an empty state that appears
- *     for 300ms reads as data loss.
- *
- * Nothing here computes a score. §3 gives that to `lib/day-score.ts`, and the
- * ring, the heatmap and the trend all print the same server number.
+ * Provides:
+ * - 4 core views: DAY PLAN | TASKS | LIFE GOALS | HABITS & STATS.
+ * - Live Google Calendar status indicator.
+ * - Fluid inline editing for daily intent and Big 3 focus outcomes.
+ * - Responsive 390px mobile to 1680px desktop design.
  */
 
 import { useMemo, useState } from "react";
@@ -42,6 +23,7 @@ import {
   commitDay,
   createDayTask,
   deleteDayTask,
+  fetchCalendarEvents,
   fetchDailyDay,
   fetchDayStats,
   fetchDayTasks,
@@ -65,18 +47,20 @@ import { ErrorPanel, errorDetail } from "./_ui/SurfaceErrorBoundary";
 import { toastError } from "./_ui/Toasts";
 import { TodayTab, type TodayActions } from "./goals/TodayTab";
 import { TasksTab, type TaskActions } from "./goals/TasksTab";
+import { GoalsTab } from "./goals/GoalsTab";
 import { StatsTab } from "./goals/StatsTab";
 import { addDays, toDayKey } from "./goals/quick-add";
 import { TAP, formatDay, ghostButton } from "./goals/ui";
 
-type Tab = "today" | "tasks" | "stats";
-const TABS: { key: Tab; label: string }[] = [
-  { key: "today", label: "TODAY" },
-  { key: "tasks", label: "TASKS" },
-  { key: "stats", label: "STATS" },
+type Tab = "today" | "tasks" | "goals" | "stats";
+const TABS: { key: Tab; label: string; icon: string }[] = [
+  { key: "today", label: "DAY PLAN", icon: "calendar_today" },
+  { key: "tasks", label: "TASKS", icon: "task_alt" },
+  { key: "goals", label: "LIFE GOALS", icon: "flag" },
+  { key: "stats", label: "HABITS & STATS", icon: "insights" },
 ];
 const isTab = (v: unknown): v is Tab =>
-  v === "today" || v === "tasks" || v === "stats";
+  v === "today" || v === "tasks" || v === "goals" || v === "stats";
 
 export function GoalsSurface() {
   const qc = useQueryClient();
@@ -100,12 +84,14 @@ export function GoalsSurface() {
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
   });
+
   const statsQ = useQuery({
     queryKey: ["daily-stats", windowDays],
     queryFn: () => fetchDayStats(windowDays),
     enabled: tab === "stats",
     placeholderData: keepPreviousData,
   });
+
   const tasksQ = useQuery({
     queryKey: tasksKey,
     queryFn: () =>
@@ -118,9 +104,17 @@ export function GoalsSurface() {
     placeholderData: keepPreviousData,
   });
 
+  const calendarQ = useQuery({
+    queryKey: ["daily-calendar-status"],
+    queryFn: () => fetchCalendarEvents(),
+    staleTime: 60_000,
+    retry: 1,
+  });
+
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["daily"] });
     void qc.invalidateQueries({ queryKey: ["daily-stats"] });
+    void qc.invalidateQueries({ queryKey: ["life-goals"] });
   };
 
   /* ── optimistic plumbing ────────────────────────────────────────────────
@@ -246,10 +240,7 @@ export function GoalsSurface() {
   const planM = useMutation({
     mutationFn: (v: { intent: string | null; big3: DayGoal[] }) => saveDayPlan(day, v),
     onError: (e) =>
-      toastError(
-        "The draft didn't save. If this day is already committed, abandon a goal instead of editing it.",
-        e,
-      ),
+      toastError("The plan draft didn't save.", e),
     onSettled: invalidate,
   });
 
@@ -258,7 +249,7 @@ export function GoalsSurface() {
       await saveDayPlan(day, v);
       return commitDay(day);
     },
-    onError: (e) => toastError("COMMIT FAILED — the day is still a draft.", e),
+    onError: (e) => toastError("Commit failed — day is still in draft.", e),
     onSettled: invalidate,
   });
 
@@ -328,6 +319,7 @@ export function GoalsSurface() {
       taskPatchM.mutate({ id: task.id, patch: { status: next } }),
     onDelete: (task) => taskDeleteM.mutate({ id: task.id }),
     onAdd: (input) => taskAddM.mutate(input),
+    onUpdate: (id, patch) => taskPatchM.mutate({ id, patch }),
   };
 
   const todayActions: TodayActions = {
@@ -349,31 +341,67 @@ export function GoalsSurface() {
       className="slidein"
       style={{
         padding: narrow ? "12px 12px 72px" : "16px 22px 48px",
-        maxWidth: 1180,
+        maxWidth: 1240,
         margin: "0 auto",
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 15, fontWeight: 500, color: tokens.textHi }}>
-          Goals / Tasks
-        </span>
-        <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-          said vs done — the only scoreboard
-        </span>
+      {/* Top Header: Title & Google Calendar Status */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          gap: 10,
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 16, fontWeight: 600, color: tokens.textHi }}>
+            Goals & Day Command
+          </span>
+          <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
+            intent · execution · habits · momentum
+          </span>
+        </div>
+
+        {/* Google Calendar Sync Status Badge */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 8px",
+            borderRadius: 6,
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.borderDivider}`,
+          }}
+          title={calendarQ.isError ? "Calendar offline (check OAuth / google_api.py)" : "Google Calendar: konrad.schrein@gmail.com connected"}
+        >
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              backgroundColor: calendarQ.isError ? tokens.warn : tokens.ok,
+              boxShadow: calendarQ.isError ? `0 0 5px ${tokens.warn}` : `0 0 5px ${tokens.ok}`,
+              display: "inline-block",
+            }}
+          />
+          <span className="mono" style={{ fontSize: 10, color: calendarQ.isError ? tokens.warn : tokens.textSoft }}>
+            {calendarQ.isError ? "GCal Offline" : "Google Calendar Synced"}
+          </span>
+        </div>
       </div>
 
-      {/* Tabs. At 390px these are the primary navigation of the surface, so
-          they are full-width and 44px tall before they are anything else. */}
-      <div style={{ display: "flex", gap: 6, margin: "12px 0 4px" }}>
+      {/* Modern View Switcher Tabs */}
+      <div style={{ display: "flex", gap: 6, margin: "0 0 12px", overflowX: "auto" }}>
         {TABS.map((t) => {
           const on = tab === t.key;
           return (
             <button
               key={t.key}
               type="button"
-              /* Same convention as `data-nav-menu-item` in DesktopApp: a
-                 stable hook so a check script or a screenshot run can reach a
-                 tab without matching on a label that also exists in the nav. */
               data-goals-tab={t.key}
               aria-current={on ? "page" : undefined}
               onClick={() => setTab(t.key)}
@@ -385,19 +413,31 @@ export function GoalsSurface() {
                 border: `1px solid ${on ? tokens.accent : tokens.border}`,
                 background: on ? tokens.selectedBg : tokens.toolBg,
                 color: on ? tokens.accent : tokens.textMuted,
-                fontSize: 11.5,
-                letterSpacing: "0.1em",
+                fontSize: 11,
+                fontWeight: on ? 600 : 400,
+                letterSpacing: "0.08em",
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+                padding: "0 8px",
+                whiteSpace: "nowrap",
+                transition: "border-color 0.12s, background 0.12s, color 0.12s",
               }}
             >
+              <span className="ms" style={{ fontSize: 16 }}>
+                {t.icon}
+              </span>
               {t.label}
             </button>
           );
         })}
       </div>
 
+      {/* Day Step navigation when on Day Plan */}
       {tab === "today" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "10px 0 4px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 12px" }}>
           <DayStep
             icon="chevron_left"
             label="Previous day"
@@ -405,7 +445,7 @@ export function GoalsSurface() {
           />
           <span
             className="mono"
-            style={{ flex: 1, textAlign: "center", fontSize: 11.5, color: tokens.textMuted }}
+            style={{ flex: 1, textAlign: "center", fontSize: 12, fontWeight: 500, color: tokens.textMuted }}
           >
             {formatDay(day)}
             {dayQ.isFetching && <span style={{ color: tokens.textGhost }}> · syncing</span>}
@@ -423,7 +463,8 @@ export function GoalsSurface() {
         </div>
       )}
 
-      <div style={{ marginTop: 10 }}>
+      {/* Surface Content */}
+      <div>
         {tab === "today" &&
           (dayQ.isError ? (
             <ErrorPanel
@@ -465,6 +506,10 @@ export function GoalsSurface() {
               day={day}
             />
           ))}
+
+        {tab === "goals" && (
+          <GoalsTab narrow={narrow} />
+        )}
 
         {tab === "stats" &&
           (statsQ.isError ? (
@@ -514,6 +559,9 @@ function DayStep({
         background: tokens.toolBg,
         color: tokens.textMuted,
         cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
       <span className="ms" style={{ fontSize: 18 }}>

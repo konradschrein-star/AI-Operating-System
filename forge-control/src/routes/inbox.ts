@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import {
   getInboxItemPreview,
   listOpenInbox,
+  listResolvedInbox,
   resolveInbox,
   resolveAllOpenInbox,
 } from "../db/ai_os.ts";
@@ -11,11 +12,34 @@ const r = new Hono();
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/* `?status=open` (default, unchanged) | `resolved` | `all`. `all` merges both
+ * lists and re-sorts by created_at since the two source queries are each
+ * sorted on a different column (created_at vs resolved_at). */
 r.get("/", async (c) => {
   const limit = Math.min(
     200,
     Math.max(1, Number(c.req.query("limit") ?? "50")),
   );
+  const status = c.req.query("status") ?? "open";
+
+  if (status === "resolved") {
+    const items = await listResolvedInbox(limit);
+    return c.json({ count: items.length, items });
+  }
+  if (status === "all") {
+    const [open, resolved] = await Promise.all([
+      listOpenInbox(limit),
+      listResolvedInbox(limit),
+    ]);
+    const items = [...open, ...resolved].sort(
+      (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
+    );
+    return c.json({ count: items.length, items });
+  }
+  if (status !== "open") {
+    return c.json({ error: "status must be one of open|resolved|all" }, 400);
+  }
+
   const items = await listOpenInbox(limit);
   return c.json({ count: items.length, items });
 });

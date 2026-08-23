@@ -15,7 +15,7 @@
  *
  * The tree is fixed by 03-quality.md §1.2 and every file in it earns its
  * place: encoding hazards, hash fidelity, and the three index-health
- * classifications (empty_file, frontmatter_only, excluded_extension) that a
+ * classifications (empty_file, frontmatter_only, empty_drawing) that a
  * sibling task asserts against. Do not remove entries; add if you must.
  *
  * There is deliberately NO cleanup helper. This module ships beside a module
@@ -54,7 +54,9 @@ export const FIXTURE_NOTES: Readonly<Record<string, string>> = Object.freeze({
   // Frontmatter and nothing else → frontmatter_only classification.
   "Frontmatter.md": "---\ntitle: Frontmatter only\ntags: [fixture]\n---\n",
 
-  // Compound extension → excluded_extension classification.
+  // A drawing with no elements on it → empty_drawing classification. (Until
+  // 2026-08-23 this was `excluded_extension`, when every drawing was skipped
+  // rather than only the blank ones — see lib/index-health.ts.)
   "Draw.excalidraw.md":
     "---\nexcalidraw-plugin: parsed\n---\n\n# Draw\n\n## Drawing\n```json\n{\"type\":\"excalidraw\"}\n```\n",
 });
