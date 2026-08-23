@@ -279,6 +279,11 @@ export interface ParsedArgs {
   help: boolean;
 }
 
+/** Value-less switches. Listed explicitly because the generic branch below
+ *  consumes the following token as the flag's value, which would silently
+ *  eat a positional argument (`--new "git status"`). */
+export const BOOLEAN_FLAGS = new Set(["new", "force"]);
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const flags: Record<string, string | boolean | string[]> = {};
   const positional: string[] = [];
@@ -296,6 +301,10 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (key.includes("=")) {
         const [k, v] = key.split("=", 2);
         flags[k] = v;
+      } else if (BOOLEAN_FLAGS.has(key)) {
+        // A switch never eats the next token: `--new "git status"` must leave
+        // the command as a positional, not swallow it as the flag's value.
+        flags[key] = true;
       } else {
         const next = argv[i + 1];
         if (next && !next.startsWith("-")) {
@@ -497,6 +506,45 @@ ${c("OPTIONS", colors.bold)}
   }
 }
 
+/**
+ * One entry of `GET /api/runs/:id/comms` — built by `listComms()` in
+ * `forge-control/src/db/runs.ts`, which projects exactly these five keys.
+ * The message body is `content` (NOT `text`), and the sender rides in
+ * `meta.comms.from` (NOT a top-level `from`), alongside the direction and the
+ * peer's run id as written by `commsEntries()` in `lib/run-control-rules.ts`.
+ */
+export interface CommsLine {
+  role?: string;
+  content?: string;
+  ts?: string;
+  kind?: string;
+  meta?: {
+    comms?: {
+      from?: string;
+      direction?: string;
+      peer_run_id?: string | null;
+      peer_role?: string;
+    };
+  } | null;
+}
+
+export function commsLabel(entry: CommsLine): string {
+  const meta = entry.meta?.comms;
+  const from = meta?.from ?? entry.role ?? "?";
+  const arrow = meta?.direction === "out" ? "→" : "←";
+  const peer = meta?.peer_role ? `/${meta.peer_role}` : "";
+  return c(`[${arrow} ${from}${peer}]`, colors.yellow);
+}
+
+/** An entry with no `content` is a shape change, not an empty message — say so
+ *  by name instead of rendering a blank line that reads like silence. */
+export function commsText(entry: CommsLine): string {
+  if (typeof entry.content !== "string" || entry.content.length === 0) {
+    return c(`<no 'content' on this comms entry — keys: ${Object.keys(entry).join(",") || "none"}>`, colors.red);
+  }
+  return truncate(entry.content, 100);
+}
+
 export async function handleRuns(client: AiosClient, parsed: ParsedArgs): Promise<void> {
   const { action, args, flags, json, help } = parsed;
 
@@ -583,11 +631,11 @@ ${c("OPTIONS", colors.bold)}
       console.log(`  ${c("Status:", colors.dim)} ${statusBadge(String(r.status))} | ${c("Model:", colors.dim)} ${r.model || "default"} | ${c("Effort:", colors.dim)} ${r.effort || "default"}`);
       console.log(`  ${c("Created:", colors.dim)} ${r.created_at} | ${c("Completed:", colors.dim)} ${r.completed_at || "in progress"}\n`);
 
-      const comms = await client.request<{ comms: Array<Record<string, unknown>> }>(`/api/runs/${id}/comms`).catch(() => null);
+      const comms = await client.request<{ comms: CommsLine[] }>(`/api/runs/${id}/comms`).catch(() => null);
       if (comms && comms.comms && comms.comms.length > 0) {
         console.log(c(`Comms (${comms.comms.length}):`, colors.bold));
         for (const entry of comms.comms.slice(-10)) {
-          console.log(`  [${c(String(entry.from || "worker"), colors.yellow)}] ${truncate(String(entry.text || ""), 80)}`);
+          console.log(`  ${commsLabel(entry)} ${commsText(entry)}`);
         }
         console.log("");
       }
@@ -1072,6 +1120,57 @@ ${c("OPTIONS", colors.bold)}
   }
 }
 
+/**
+ * `GET /api/spend/summary` — the shape `spendSummary()` in
+ * `forge-control/src/db/spend.ts` actually returns: three fixed windows
+ * (`today`, `d7`, `d30`), a `by_area` ARRAY of provider×kind rows, and a
+ * `daily` series. There is no `days_30` and no `by_provider` map.
+ *
+ * `total_eur` is METERED spend — claude-code is excluded from it on purpose,
+ * so the €50/day cap never trips on a subscription's notional cost. That
+ * notional figure rides in a separate key: `claude_eur` on the API as it runs
+ * today, `shadow_eur` after the newer db/spend.ts split lands. Both are read;
+ * if neither is present the column prints "—" rather than an invented 0.00.
+ */
+export interface SpendWindowResponse {
+  total_eur?: number;
+  calls?: number;
+  claude_eur?: number;
+  shadow_eur?: number;
+  claude_calls?: number;
+}
+
+export interface SpendAreaRow {
+  provider?: string;
+  kind?: string;
+  total_eur?: number;
+  calls?: number;
+  units?: number;
+}
+
+export interface SpendSummaryResponse {
+  today?: SpendWindowResponse;
+  d7?: SpendWindowResponse;
+  d30?: SpendWindowResponse;
+  by_area?: SpendAreaRow[];
+  daily?: Array<{ day?: string; total_eur?: number; calls?: number }>;
+}
+
+export function isSpendWindow(w: SpendWindowResponse | undefined): boolean {
+  return Boolean(w) && typeof w?.total_eur === "number";
+}
+
+export function meteredEur(w: SpendWindowResponse | undefined): number {
+  return Number(w?.total_eur ?? 0);
+}
+
+/** "—" when the API reports no subscription figure at all — never a fake 0.00. */
+export function formatShadowEur(w: SpendWindowResponse | undefined): string {
+  if (typeof w?.claude_eur === "number") return `€${w.claude_eur.toFixed(2)}`;
+  if (typeof w?.shadow_eur === "number") return `€${w.shadow_eur.toFixed(2)}`;
+  return "—";
+}
+
 export async function handleSpend(client: AiosClient, parsed: ParsedArgs): Promise<void> {
   const { action, flags, json, help } = parsed;
 
@@ -1092,29 +1191,67 @@ ${c("OPTIONS", colors.bold)}
 
   switch (action) {
     case "summary": {
-      const res = await client.request<{
-        days_30?: { total_eur?: number; days_covered?: number };
-        today?: { total_eur?: number };
-        by_provider?: Record<string, number>;
-        by_kind?: Record<string, number>;
-      }>("/api/spend/summary");
+      const res = await client.request<SpendSummaryResponse>("/api/spend/summary");
 
       if (json) {
         console.log(JSON.stringify(res, null, 2));
         return;
       }
 
-      console.log(c("\nAI OS Spend Summary:", colors.bold));
-      console.log(`  ${c("Today:", colors.bold)} €${Number(res.today?.total_eur ?? 0).toFixed(2)}`);
-      console.log(`  ${c("30-Day Window:", colors.bold)} €${Number(res.days_30?.total_eur ?? 0).toFixed(2)}`);
+      // The windows and the breakdown are REQUIRED, not optional. Printing
+      // €0.00 because a key was renamed is exactly the "fake number is worse
+      // than a blank one" failure — so a shape mismatch is a hard error
+      // naming the keys that were actually returned.
+      const windows: Array<[label: string, key: "today" | "d7" | "d30"]> = [
+        ["Today", "today"],
+        ["7-day", "d7"],
+        ["30-day", "d30"],
+      ];
+      const missing = windows.filter(([, key]) => !isSpendWindow(res[key])).map(([, key]) => key);
+      if (missing.length > 0) {
+        throw new CliError(
+          `/api/spend/summary returned no usable window object for: ${missing.join(", ")} ` +
+            `(keys present: ${Object.keys(res).join(", ") || "none"}).`,
+          "The API response shape changed. Run 'aios spend summary --json' to see it, then update handleSpend() in forge-control/src/lib/cli-runner.ts.",
+        );
+      }
 
-      if (res.by_provider && Object.keys(res.by_provider).length > 0) {
-        console.log(`\n  ${c("By Provider (30d):", colors.bold)}`);
-        const providerRows = Object.entries(res.by_provider).map(([k, v]) => ({ provider: k, amount: `€${Number(v).toFixed(2)}` }));
-        console.log(formatTable(providerRows, [
-          { header: "Provider", get: (r) => r.provider },
-          { header: "Spend", align: "right", get: (r) => r.amount },
-        ]));
+      console.log(c("\nAI OS Spend Summary:", colors.bold));
+      console.log(
+        formatTable(windows, [
+          { header: "Window", get: ([label]) => c(label, colors.bold) },
+          { header: "Metered", align: "right", get: ([, key]) => `€${meteredEur(res[key]).toFixed(2)}` },
+          { header: "Calls", align: "right", get: ([, key]) => String(res[key]?.calls ?? 0) },
+          { header: "Claude Code", align: "right", get: ([, key]) => formatShadowEur(res[key]) },
+          { header: "Calls", align: "right", get: ([, key]) => String(res[key]?.claude_calls ?? 0) },
+        ]),
+      );
+      console.log(
+        c(
+          "  Metered = billed API spend. Claude Code = notional subscription cost, not a bill.",
+          colors.dim,
+        ),
+      );
+
+      if (!Array.isArray(res.by_area)) {
+        throw new CliError(
+          `/api/spend/summary returned no 'by_area' array (got ${typeof res.by_area}).`,
+          "The API response shape changed. Run 'aios spend summary --json' to see it, then update handleSpend() in forge-control/src/lib/cli-runner.ts.",
+        );
+      }
+      if (res.by_area.length === 0) {
+        console.log(c("\n  By Area (30d): nothing recorded — no spend_log rows in the window.", colors.dim));
+      } else {
+        console.log(`\n  ${c("By Area (30d):", colors.bold)}`);
+        console.log(
+          formatTable(res.by_area, [
+            { header: "Provider", get: (r) => c(String(r.provider), colors.magenta) },
+            { header: "Kind", get: (r) => String(r.kind) },
+            { header: "Spend", align: "right", get: (r) => `€${Number(r.total_eur ?? 0).toFixed(2)}` },
+            { header: "Calls", align: "right", get: (r) => String(r.calls ?? 0) },
+            { header: "Units", align: "right", get: (r) => String(r.units ?? 0) },
+          ]),
+        );
       }
       console.log("");
       break;
@@ -1249,13 +1386,20 @@ ${c("aios terminal", colors.bold + colors.cyan)} — Manage persistent terminal 
 ${c("USAGE", colors.bold)}
   aios terminal list
   aios terminal create [--title <title>] [--cwd <path>]
-  aios terminal run <command> [--session <id>]
+  aios terminal run <command> --session <id>
+  aios terminal run <command> --new [--title <t>] [--cwd <p>]
 
 ${c("OPTIONS", colors.bold)}
   --title <name>  Session title (default: shell)
   --cwd <path>    Working directory (default: /opt/forge-ai-os)
-  --session <id>  Target session ID
+  --session <id>  Target session ID — REQUIRED for 'run' unless --new is given
+  --new           Create a fresh session for this command instead of reusing one
   --json          Output raw JSON
+
+${c("WHY --session IS REQUIRED", colors.bold)}
+  These sessions are the same pool the desktop Terminal pane drives. Picking
+  "the first alive session" would type this command straight into whatever
+  shell Konrad has open. Name the session, or make your own with --new.
 `);
     return;
   }
@@ -1299,19 +1443,42 @@ ${c("OPTIONS", colors.bold)}
       const cmd = args.join(" ") || (flags.cmd as string) || (flags.command as string);
       if (!cmd) throw new CliError("Command required.", "Usage: aios terminal run <command>");
 
-      let sessionId = flags.session as string | undefined;
-      if (!sessionId) {
-        const listRes = await client.request<{ sessions: Array<{ id: string; alive: boolean }> }>("/api/terminal/sessions");
-        const active = listRes.sessions.find((s) => s.alive);
-        if (active) {
-          sessionId = active.id;
-        } else {
-          const createRes = await client.request<{ id: string }>("/api/terminal/sessions", {
-            method: "POST",
-            body: { title: "cli-run" },
-          });
-          sessionId = createRes.id;
-        }
+      // A terminal session is SOMEONE'S SHELL. The desktop Terminal pane drives
+      // this exact pool, so "reuse the first alive session" meant an agent's
+      // `aios terminal run` could submit into the shell Konrad is typing in.
+      // There is no ownership field on a session to check, so the CLI refuses
+      // to guess: name the session, or create one that is yours (--new).
+      const explicitSession = flags.session as string | undefined;
+      const wantsNew = Boolean(flags.new);
+      if (explicitSession && wantsNew) {
+        throw new CliError(
+          "--session and --new are mutually exclusive.",
+          "Pass --session <id> to target an existing shell, or --new to create one for this command.",
+        );
+      }
+
+      let sessionId: string;
+      if (explicitSession) {
+        sessionId = explicitSession;
+      } else if (wantsNew) {
+        const createRes = await client.request<{ id: string }>("/api/terminal/sessions", {
+          method: "POST",
+          body: { title: (flags.title as string) || "aios-cli-run", cwd: (flags.cwd as string) || "/opt/forge-ai-os" },
+        });
+        sessionId = createRes.id;
+        console.log(c(`Created session ${sessionId} for this command.`, colors.dim));
+      } else {
+        const listRes = await client
+          .request<{ sessions: Array<{ id: string; title?: string; alive: boolean }> }>("/api/terminal/sessions")
+          .catch(() => null);
+        const alive = (listRes?.sessions ?? []).filter((s) => s.alive);
+        const known = alive.length > 0
+          ? ` Alive sessions: ${alive.map((s) => `${s.id}${s.title ? ` (${s.title})` : ""}`).join(", ")}.`
+          : " No alive sessions right now.";
+        throw new CliError(
+          "'aios terminal run' needs an explicit target session — these are live interactive shells, including the one the desktop Terminal pane is attached to.",
+          `Pass --session <id> to type into a specific shell, or --new to run in a fresh session of your own.${known}`,
+        );
       }
 
       await client.request(`/api/terminal/sessions/${sessionId}/input`, {
