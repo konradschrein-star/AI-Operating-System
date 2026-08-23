@@ -32,7 +32,6 @@ const DEFAULT_PROVIDERS: ProviderSpec[] = [
   { name: "claude-pool", url: "http://127.0.0.1:8092/health", kind: "internal" },
   { name: "gemini-pool", url: "http://127.0.0.1:8090/health", kind: "internal" },
   { name: "hub-web", url: "http://127.0.0.1:3000/api/health", kind: "internal" },
-  { name: "hermes-workspace", url: "http://127.0.0.1:3010/health", kind: "internal" },
 ];
 
 function parseProviderEnv(raw: string | undefined): ProviderSpec[] | null {
