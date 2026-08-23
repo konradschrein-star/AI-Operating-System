@@ -252,5 +252,55 @@ describe("excalidraw-plan: API routes", async () => {
     assert.ok(body.plan.tasks.length > 0);
     assert.ok(body.graph.nodes.length > 0);
   });
+
+  test("POST /api/canvas/plan/save validates input and guards paths", async () => {
+    // Missing path
+    const res1 = await app.request("/api/canvas/plan/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(res1.status, 400);
+
+    // Path traversal
+    const res2 = await app.request("/api/canvas/plan/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "../../etc/passwd.excalidraw.md" }),
+    });
+    assert.strictEqual(res2.status, 400);
+
+    // Non-existent drawing
+    const res3 = await app.request("/api/canvas/plan/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "Excalidraw/NoSuchDrawing123.excalidraw.md" }),
+    });
+    assert.strictEqual(res3.status, 404);
+  });
+
+  test("POST /api/canvas/plan/to-project validates input and origin_chat_id", async () => {
+    // Missing path and plan
+    const res1 = await app.request("/api/canvas/plan/to-project", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(res1.status, 400);
+
+    // Invalid origin_chat_id (not uuid)
+    const res2 = await app.request("/api/canvas/plan/to-project", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        path: "Excalidraw/Stealth Uploader - System Map.excalidraw.md",
+        origin_chat_id: "not-a-uuid",
+      }),
+    });
+    assert.strictEqual(res2.status, 400);
+    const body2 = (await res2.json()) as { error: string };
+    assert.match(body2.error, /origin_chat_id must be a uuid/);
+  });
 });
+
 
