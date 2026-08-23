@@ -213,10 +213,16 @@ export function SecretsPanel(): JSX.Element {
       const res = await fetch(`/api/proxy/secrets/${encodeURIComponent(rotatingSecret.name)}/rotate`, {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
+        /* ALWAYS SEND BOTH FIELDS, even when blank. The modal seeds these
+           inputs from the stored tag and note, so what is in them when Rotate
+           is pressed is the intended end state — and clearing one has to mean
+           "remove it". Sending `undefined` here omits the key entirely, which
+           the route reads as "leave alone", so a tag could be changed but
+           never removed. `""` is the explicit clear; `null` works too. */
         body: JSON.stringify({
           value: formValue,
-          service_tag: formTag.trim() || undefined,
-          note: formNote.trim() || undefined,
+          service_tag: formTag.trim(),
+          note: formNote.trim(),
         }),
       });
       if (!res.ok) {
@@ -300,7 +306,7 @@ export function SecretsPanel(): JSX.Element {
             }}
             style={{
               background: tokens.accent,
-              color: "#fff",
+              color: tokens.bgBody,
               border: "none",
               borderRadius: 6,
               padding: "6px 14px",
@@ -629,7 +635,7 @@ export function SecretsPanel(): JSX.Element {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0, 0, 0, 0.7)",
+            background: tokens.overlay,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -645,7 +651,7 @@ export function SecretsPanel(): JSX.Element {
               padding: 22,
               maxWidth: 520,
               width: "100%",
-              boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+              boxShadow: `0 12px 36px ${tokens.shadowLift}`,
             }}
           >
             <div style={{ fontSize: 16, fontWeight: 600, color: tokens.textHi, marginBottom: 4 }}>
@@ -766,7 +772,7 @@ export function SecretsPanel(): JSX.Element {
                 disabled={busy === "add:submit"}
                 style={{
                   background: tokens.accent,
-                  color: "#fff",
+                  color: tokens.bgBody,
                   border: "none",
                   borderRadius: 6,
                   padding: "7px 16px",
@@ -788,7 +794,7 @@ export function SecretsPanel(): JSX.Element {
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0, 0, 0, 0.7)",
+            background: tokens.overlay,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -804,7 +810,7 @@ export function SecretsPanel(): JSX.Element {
               padding: 22,
               maxWidth: 520,
               width: "100%",
-              boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+              boxShadow: `0 12px 36px ${tokens.shadowLift}`,
             }}
           >
             <div style={{ fontSize: 16, fontWeight: 600, color: tokens.textHi, marginBottom: 4 }}>
@@ -909,7 +915,7 @@ export function SecretsPanel(): JSX.Element {
                 disabled={busy === "rotate:submit"}
                 style={{
                   background: tokens.accent,
-                  color: "#fff",
+                  color: tokens.bgBody,
                   border: "none",
                   borderRadius: 6,
                   padding: "7px 16px",

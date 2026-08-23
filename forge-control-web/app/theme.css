@@ -69,6 +69,11 @@
   /* shared, theme-aware chrome */
   --fg-scrollbar: #2a2a2e;
   --fg-overlay: rgba(0, 0, 0, 0.6);
+  /* The drop shadow under a lifted surface — a modal dialog, a popover. It is
+     the SHADOW COLOUR only, never a whole box-shadow: the offsets belong to
+     the element. Dark needs a deep shadow to separate a near-black card from a
+     near-black scrim; light needs a faint one or the card looks bruised. */
+  --fg-shadowLift: rgba(0, 0, 0, 0.5);
   --fg-inputBg: #0b0b0c;
   /* Selected list row + tool-call block. These were hardcoded (#101013 /
      #0a0a0c) at 8+ call sites, which is why selected chats and every tool
@@ -189,6 +194,7 @@ html[data-theme="light"] {
 
   --fg-scrollbar: #c9c9c4;
   --fg-overlay: rgba(0, 0, 0, 0.35);
+  --fg-shadowLift: rgba(0, 0, 0, 0.16);
   --fg-inputBg: #ffffff;
   /* Light: a selected row reads as a soft tint, and a tool block as a faint
      recessed panel — the dark values inverted rather than transplanted. */

@@ -35,6 +35,7 @@ const {
   markPending,
   isValidName,
   normalizeName,
+  coerceMetaField,
 } = await import("./secret-store.ts");
 
 /** Every audit line as a parsed object, oldest first. */
@@ -291,12 +292,43 @@ describe("rotation", () => {
     assert.equal(rotated.note, "rotated for a good reason");
   });
 
+  test("rotateSecret can clear the service tag and note with null", async () => {
+    await putSecret("to-clear", "v1", { serviceTag: "old-tag", note: "old-note" });
+    const rotated = await rotateSecret("to-clear", "v2", {
+      serviceTag: null,
+      note: null,
+    });
+    assert.equal(rotated.serviceTag, null);
+    assert.equal(rotated.note, null);
+  });
+
   test("rotateSecret on a name that was never stored throws and logs a failed audit entry", async () => {
     await assert.rejects(() => rotateSecret("never-existed", "value"));
     const audit = await readAudit();
     const entry = audit.find((e) => e.action === "rotate" && e.name === "never-existed");
     assert.ok(entry);
     assert.equal(entry.ok, false);
+  });
+});
+
+describe("coerceMetaField", () => {
+  test("preserves undefined for absent fields", () => {
+    assert.equal(coerceMetaField(undefined, "tag"), undefined);
+  });
+
+  test("coerces null and empty/whitespace string to null (clear)", () => {
+    assert.equal(coerceMetaField(null, "tag"), null);
+    assert.equal(coerceMetaField("", "tag"), null);
+    assert.equal(coerceMetaField("   ", "tag"), null);
+  });
+
+  test("trims non-empty string", () => {
+    assert.equal(coerceMetaField("  github  ", "tag"), "github");
+  });
+
+  test("throws on invalid types", () => {
+    assert.throws(() => coerceMetaField(123, "tag"), /tag must be a string, null or absent/);
+    assert.throws(() => coerceMetaField({}, "note"), /note must be a string, null or absent/);
   });
 });
 

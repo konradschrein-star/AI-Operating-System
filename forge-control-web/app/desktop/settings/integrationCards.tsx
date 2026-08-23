@@ -83,6 +83,22 @@
  *
  * Colours are `tokens.*` (CSS variables) only — no hex, no rgb, both themes.
  * There is no polling: this surface loads on mount and after each action.
+ *
+ * ── RELOAD_KEY_CONTRACT — why three cards take a `reloadKey` ─────────────
+ * `ConnectionsPanel`'s **Probe all** posts to `/api/integrations/probe-all`,
+ * which probes Google, agy and GitHub server-side and PERSISTS each record.
+ * The cards below do not know that happened: they load once on mount and
+ * after their OWN actions, so without a nudge the rows would keep showing the
+ * pre-probe reading while the store held a newer one — a surface disagreeing
+ * with the server it just asked, which is the exact defect this project is
+ * removing.
+ *
+ * So the panel bumps `reloadKey` when the batch probe returns and each of the
+ * three re-reads its GET endpoint. It is a NUDGE, not data: nothing renders
+ * it, and a card that never receives one behaves exactly as before
+ * (`undefined` is stable across renders, so the effect does not re-fire).
+ * Only the three ids `probe-all` actually probes take it — bumping the Gemini
+ * or Claude cards would refetch a reading nothing had refreshed.
  */
 
 import {
@@ -971,8 +987,11 @@ export function GeminiCard({
  */
 export function GoogleCard({
   onFacts,
+  reloadKey,
 }: {
   onFacts?: (f: Read<GoogleFacts>) => void;
+  /** Bumped by the panel's Probe all. See `RELOAD_KEY_CONTRACT` below. */
+  reloadKey?: number;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [accounts, setAccounts] = useState<GoogleAccountView[]>([]);
@@ -1009,7 +1028,7 @@ export function GoogleCard({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadKey]);
 
   const runCheck = useCallback(async () => {
     setBusy(true);
@@ -1263,8 +1282,11 @@ export function GoogleCard({
  */
 export function AgyCard({
   onFacts,
+  reloadKey,
 }: {
   onFacts?: (f: Read<AgyFacts>) => void;
+  /** Bumped by the panel's Probe all. See `RELOAD_KEY_CONTRACT`. */
+  reloadKey?: number;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [flow, setFlow] = useState<AgyFlow | null>(null);
@@ -1297,7 +1319,7 @@ export function AgyCard({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadKey]);
 
   /** The real probe: `<absolute path>/agy models`. ~0.3s, and it never opens
    *  the 60-second OAuth wait that `agy -p` does. */
@@ -1635,8 +1657,11 @@ export function GeminiCliCard({
  */
 export function GitHubCard({
   onFacts,
+  reloadKey,
 }: {
   onFacts?: (f: Read<GithubFacts>) => void;
+  /** Bumped by the panel's Probe all. See `RELOAD_KEY_CONTRACT`. */
+  reloadKey?: number;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [secretName, setSecretName] = useState<string | null>(null);
@@ -1663,7 +1688,7 @@ export function GitHubCard({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadKey]);
 
   const probe = useCallback(async () => {
     setBusy(true);
@@ -1791,9 +1816,19 @@ export function GitHubCard({
 
       {status && <SummaryFields summary={summary} />}
 
-      {/* Verified scope badges parsed from the probe response */}
-      {status && (
+      {/* Verified scope badges parsed from the probe response.
+          GATED ON `connected`, NOT on `status` — the reason this block is
+          narrower than the one below it. Every state has a `detail`, but only
+          a SUCCEEDED probe's detail carries `x-oauth-scopes`. On `absent` the
+          detail is "no secret named github-pat… is stored" and on `broken` it
+          is a 401 body, neither of which matches the header regex — so the
+          block fell through to its own "fine-grained PAT" sentence and told
+          Konrad a token he does not have is a valid one with managed
+          permissions. A permissions panel for a credential that failed to
+          authenticate has nothing true to say, so it does not render. */}
+      {summary.state === "connected" && status && (
         <div
+          data-github-scopes
           style={{
             marginTop: 12,
             background: tokens.bgGutter,

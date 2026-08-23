@@ -436,6 +436,43 @@ export async function putSecret(
   return toSecretMeta(name, s.size, meta);
 }
 
+/**
+ * Coerce a rotate/store request's optional metadata field into the tri-state
+ * `rotateSecret()` actually distinguishes.
+ *
+ * Three intentions arrive on the wire and only two of them used to survive:
+ *   • field ABSENT (`undefined`)              → leave whatever is stored alone
+ *   • field EMPTY  (`""`, `"   "`, or `null`) → CLEAR it
+ *   • field SET    (a non-blank string)       → replace it, trimmed
+ *
+ * The middle case is the one this exists for. `SecretsPanel`'s Rotate modal
+ * seeds its tag/note inputs from the stored values, so emptying a field there
+ * is an explicit "remove this", not an omission — and it was being sent as
+ * `undefined` (JSON.stringify drops the key entirely), which reads as "leave
+ * alone" and made a tag impossible to remove from the UI at all.
+ *
+ * `null` is accepted as a clear alongside `""` because that is the obvious
+ * thing an API client writes for "unset this", and silently treating it as
+ * "leave alone" is the same defect one layer down.
+ *
+ * Anything that is neither a string, `null` nor `undefined` — a number, an
+ * object — is a caller bug, so it throws with the offending type rather than
+ * being coerced into one of the three meanings.
+ */
+export function coerceMetaField(
+  raw: unknown,
+  field: string,
+): string | null | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  if (typeof raw !== "string") {
+    throw new Error(
+      `${field} must be a string, null or absent — received ${typeof raw}`,
+    );
+  }
+  return raw.trim() || null;
+}
+
 /** Replace a secret's value in place — same name, fresh ciphertext, updated
  *  `updatedAt`. Distinct from putSecret() mainly for the audit trail: a
  *  rotation is a different event than an initial store even though the

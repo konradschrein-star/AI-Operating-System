@@ -44,6 +44,7 @@
 
 import { useCallback, useMemo, useState, type CSSProperties, type JSX } from "react";
 import { tokens } from "../../tokens";
+import { probeAllConnections, type ProbeAllResponse } from "../../api-connections";
 import {
   AccountCard,
   HEALTH_STYLE,
@@ -149,6 +150,43 @@ export function ConnectionsPanel(): JSX.Element {
     [],
   );
 
+  /* PROBE ALL — one press, every probe this box can run unattended.
+   *
+   * `POST /api/integrations/probe-all` fans out to Google, agy and GitHub in
+   * parallel and persists each record, so what comes back is three real
+   * readings rather than three cached words. Three, not six: a Claude account
+   * is probed through the account registry's own verb, and the two Gemini
+   * subjects cost either money (a live `generateContent`) or a 60-second
+   * interactive window (`agy`), so neither belongs in a batch fired by one
+   * click. The strip below names what was probed, so the set is on screen
+   * rather than assumed.
+   *
+   * `reloadKey` is what makes the ROWS agree with the batch: the cards own
+   * their own reads (one fetch per subject) and would otherwise keep showing
+   * the pre-probe state. See RELOAD_KEY_CONTRACT in integrationCards.tsx. */
+  const [probeAll, setProbeAll] = useState<ProbeAllResponse | null>(null);
+  const [probeAllError, setProbeAllError] = useState<string | null>(null);
+  const [probingAll, setProbingAll] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const runProbeAll = useCallback(async () => {
+    setProbingAll(true);
+    setProbeAllError(null);
+    try {
+      const res = await probeAllConnections();
+      setProbeAll(res);
+      // Only after a real answer: a bump on failure would re-read three
+      // endpoints for nothing and make a failed batch look like activity.
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      // Verbatim (R58). `ConnectionApiError` carries the HTTP status and the
+      // body forge-control wrote, and both are the diagnostic.
+      setProbeAllError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProbingAll(false);
+    }
+  }, []);
+
   return (
     <div data-connections-panel style={{ maxWidth: 940 }}>
       <style>{PANEL_CSS}</style>
@@ -168,6 +206,13 @@ export function ConnectionsPanel(): JSX.Element {
         healthy. Where connecting needs a human at a browser, the row prints the
         exact command instead of a button that could not finish the job.
       </div>
+
+      <ProbeAllBar
+        busy={probingAll}
+        result={probeAll}
+        error={probeAllError}
+        onRun={() => void runProbeAll()}
+      />
 
       {registry.error && (
         <div
@@ -227,7 +272,7 @@ export function ConnectionsPanel(): JSX.Element {
         open={open === "google"}
         onToggle={toggle}
       >
-        <GoogleCard onFacts={setGoogle} />
+        <GoogleCard onFacts={setGoogle} reloadKey={reloadKey} />
       </Row>
 
       <GroupLabel
@@ -306,7 +351,7 @@ export function ConnectionsPanel(): JSX.Element {
         onToggle={toggle}
         verbatimError={agySummary.state === "broken" ? agyFacts?.status.detail ?? null : null}
       >
-        <AgyCard onFacts={setAgy} />
+        <AgyCard onFacts={setAgy} reloadKey={reloadKey} />
       </Row>
 
       <GroupLabel
@@ -319,7 +364,7 @@ export function ConnectionsPanel(): JSX.Element {
         onToggle={toggle}
         verbatimError={githubSummary.state === "broken" ? githubFacts?.status.detail ?? null : null}
       >
-        <GitHubCard onFacts={setGithub} />
+        <GitHubCard onFacts={setGithub} reloadKey={reloadKey} />
       </Row>
     </div>
   );
@@ -700,6 +745,161 @@ function smallBtn(): CSSProperties {
     fontSize: 12,
     padding: "5px 11px",
   };
+}
+
+/**
+ * The batch-probe control and its last result.
+ *
+ * ── WHY THE RESULT STRIP EXISTS AND IS NOT JUST "DONE ✓" ─────────────────
+ * The rows below already re-read themselves after a batch, so a naive version
+ * of this control could be a button and nothing else. It is not, for two
+ * reasons Konrad named: he cannot probe anything today, and when he can he
+ * has to be able to see WHICH probes ran. A batch that silently skips GitHub
+ * because no PAT is stored, and a batch where GitHub answered 200, look
+ * identical if the only output is the rows refreshing.
+ *
+ * So each returned connection gets a chip carrying the state the PROBE
+ * produced, and a failed one prints the upstream's verbatim `detail`
+ * underneath — the same R58 rule the rows follow. `absent` is not a failure
+ * and is not painted as one: nothing is wrong with a credential that was
+ * never supplied.
+ */
+function ProbeAllBar({
+  busy,
+  result,
+  error,
+  onRun,
+}: {
+  busy: boolean;
+  result: ProbeAllResponse | null;
+  error: string | null;
+  onRun: () => void;
+}): JSX.Element {
+  const failures = (result?.connections ?? []).filter(
+    (c) => c.state === "broken" || c.state === "unknown",
+  );
+
+  return (
+    <div
+      data-probe-all
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 12,
+        padding: "12px 14px",
+        marginBottom: 16,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          data-probe-all-run
+          onClick={onRun}
+          disabled={busy}
+          style={{
+            font: "inherit",
+            background: busy ? tokens.toolBg : tokens.primaryActionBg,
+            border: `1px solid ${busy ? tokens.border : tokens.borderEmphasis}`,
+            borderRadius: 8,
+            color: tokens.textHi,
+            cursor: busy ? "progress" : "pointer",
+            fontSize: 12.5,
+            fontWeight: 600,
+            padding: "7px 14px",
+          }}
+        >
+          {busy ? "Probing…" : "Probe all"}
+        </button>
+        <span style={{ fontSize: 12, color: tokens.textSoft, lineHeight: 1.5 }}>
+          Calls Google, <span className="mono">agy</span> and GitHub for real, in
+          parallel, and rewrites each row from what they answered.
+        </span>
+        <span style={{ flex: 1 }} />
+        {result && (
+          <span
+            className="mono"
+            data-probe-all-at
+            title={result.timestamp}
+            style={{ fontSize: 10.5, color: tokens.textFaint }}
+          >
+            LAST RUN {new Date(result.timestamp).toLocaleTimeString()}
+          </span>
+        )}
+      </div>
+
+      {error && (
+        <div
+          data-probe-all-error
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.bleed,
+            background: tokens.dangerActionBg,
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            lineHeight: 1.45,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {result.connections.map((c) => {
+            const skin = STATE_SKIN[c.state];
+            return (
+              <span
+                key={c.id}
+                className="mono"
+                data-probe-all-result={c.id}
+                data-probe-all-state={c.state}
+                style={{
+                  background: skin.bg,
+                  color: skin.fg,
+                  border: `1px solid ${tokens.borderSoft}`,
+                  borderRadius: 5,
+                  padding: "3px 8px",
+                  fontSize: 10.5,
+                }}
+              >
+                {c.id.toUpperCase()} — {c.state.toUpperCase()}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* R58 again: a chip says a probe failed, this says what it was told. */}
+      {failures.map((c) => (
+        <div
+          key={c.id}
+          data-probe-all-detail={c.id}
+          className="mono"
+          style={{
+            fontSize: 11,
+            color: tokens.textBody,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "8px 10px",
+            lineHeight: 1.45,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          <span style={{ color: tokens.textLabel }}>{c.id.toUpperCase()}: </span>
+          {c.detail}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function GroupLabel({ text, note }: { text: string; note?: string }): JSX.Element {

@@ -73,6 +73,9 @@ export const tokens = {
   // chrome that must differ per theme but isn't in the original design
   inputBg: v("inputBg"),
   overlay: v("overlay"),
+  /** Drop-shadow COLOUR for a lifted surface (modal, popover). Compose the
+   *  offsets at the call site: `boxShadow: \`0 12px 36px ${tokens.shadowLift}\``. */
+  shadowLift: v("shadowLift"),
   /** Selected list row / tool-call block — see theme.css. */
   selectedBg: v("selectedBg"),
   rowHover: v("rowHover"),

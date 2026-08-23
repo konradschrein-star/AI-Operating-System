@@ -76,6 +76,7 @@ import {
   markPending,
   isValidName,
   normalizeName,
+  coerceMetaField,
 } from "../lib/secret-store.ts";
 
 const r = new Hono();
@@ -388,8 +389,8 @@ r.post("/:name/rotate", async (c) => {
 
   let body: {
     value?: string;
-    note?: string;
-    service_tag?: string;
+    note?: unknown;
+    service_tag?: unknown;
     run_id?: string;
   };
   try {
@@ -400,12 +401,20 @@ r.post("/:name/rotate", async (c) => {
 
   const value = body.value ?? "";
   if (!value) return c.json({ error: "value is required" }, 400);
-  const rawNote = body.note;
-  const note =
-    typeof rawNote === "string" ? (rawNote.trim() || null) : undefined;
-  const rawTag = body.service_tag;
-  const serviceTag =
-    typeof rawTag === "string" ? (rawTag.trim() || null) : undefined;
+
+  /* Tri-state, via the store's own coercion so this route and the library
+   * cannot drift on what "clear it" looks like: absent ⇒ leave alone, empty
+   * or null ⇒ clear, non-blank ⇒ replace. A wrongly-typed field is a 400
+   * naming the field, not a silently ignored one. */
+  let note: string | null | undefined;
+  let serviceTag: string | null | undefined;
+  try {
+    note = coerceMetaField(body.note, "note");
+    serviceTag = coerceMetaField(body.service_tag, "service_tag");
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 400);
+  }
+
   const runId = parseRunId(body.run_id);
   if (!runId.ok) {
     return c.json({ error: "run_id must be a valid uuid" }, 400);
