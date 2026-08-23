@@ -247,13 +247,13 @@ export function LiveSurface({ data: initialData }: { data?: LiveResponse }) {
               padding: "0 16px",
               fontSize: 13,
               fontWeight: 600,
-              color: "#0b0f19",
+              color: tokens.accentInk,
               background: tokens.accent,
               border: "none",
               borderRadius: 6,
               cursor: quickCheckM.isPending ? "not-allowed" : "pointer",
               opacity: quickCheckM.isPending ? 0.75 : 1,
-              boxShadow: "0 1px 2px rgba(0, 0, 0, 0.15)",
+              boxShadow: `0 1px 2px ${tokens.shadowSm}`,
               transition: "transform 0.1s ease, opacity 0.1s ease",
             }}
           >
@@ -442,7 +442,7 @@ export function LiveSurface({ data: initialData }: { data?: LiveResponse }) {
             borderRadius: 8,
             padding: "16px 20px",
             marginBottom: 16,
-            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.2)",
+            boxShadow: `0 4px 12px ${tokens.shadowMd}`,
           }}
         >
           {/* Drawer Header */}
@@ -655,7 +655,7 @@ export function LiveSurface({ data: initialData }: { data?: LiveResponse }) {
           {showLogs && (
             <div
               style={{
-                background: "#080c14",
+                background: tokens.toolBg,
                 border: `1px solid ${tokens.border}`,
                 borderRadius: 6,
                 padding: "12px 14px",
@@ -679,7 +679,7 @@ export function LiveSurface({ data: initialData }: { data?: LiveResponse }) {
                 style={{
                   fontSize: 10.5,
                   lineHeight: 1.4,
-                  color: "#d1d5db",
+                  color: tokens.textBody,
                   margin: 0,
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-all",

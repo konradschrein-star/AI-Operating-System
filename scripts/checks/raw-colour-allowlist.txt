@@ -49,3 +49,12 @@ forge-control-web/app/desktop/chat/SlashPopover.tsx	.*	TODO: 2 hits — the popo
 forge-control-web/app/_components/GlassCard.tsx	.*	TODO: 2 hits — white-alpha fill and border. The whole glass effect assumes a dark backdrop; in light mode it washes out rather than breaking.
 forge-control-web/app/desktop/_ui/Toasts.tsx	.*	TODO: 1 hit — `rgba(0,0,0,0.35)` drop shadow. Shadow-only, cosmetic.
 forge-control-web/app/globals.css	.*	TODO: 2 hits — `background: #000` / `color: #ededee` on html,body. Currently INERT: theme.css re-declares both against `var(--fg-*)` and wins on order. Delete them when someone is in the file; they are a trap for the next reader, not a live bug.
+
+# ── Round 2 (aios-skills-live-control fix cycle 1) ───────────────────────────
+# Came in from `main` with 784e7df, met this lane at the round-2 gate run. Not
+# debt: the file is a PALETTE DEFINITION and argues the case itself in its own
+# header — "Not a token, deliberately: tokens are themed and this is a brand
+# identity that must read the same in both palettes." Engine identity is not a
+# theme axis, so a `var()` here would be the defect. Scoped to the two exported
+# constants, never `.*`: a third literal arriving in this file still fails.
+forge-control-web/app/desktop/gemini-identity.tsx	export const GEMINI_ACCENT(_SOFT)? =	The Antigravity brand violet and its wash — the one colour that must NOT follow the theme, because a reader must never wonder whether a violet bar means "Gemini" or "something is wrong". The file's own header (lines 24-30) states the rule. Definition site only.

@@ -94,7 +94,7 @@ export function AutomationSurface() {
         {/* Cross-link banner to Settings -> Connections */}
         <div
           style={{
-            background: "rgba(0,0,0,0.15)",
+            background: tokens.toolBg,
             border: `1px solid ${tokens.borderSoft}`,
             borderRadius: 8,
             padding: "8px 12px",
@@ -127,7 +127,7 @@ export function AutomationSurface() {
             style={{
               fontSize: 10,
               padding: "3px 8px",
-              background: "rgba(255,255,255,0.05)",
+              background: tokens.rowHover,
               border: `1px solid ${tokens.border}`,
               borderRadius: 4,
               color: tokens.accent,
@@ -404,7 +404,7 @@ function WebhookRow({ w, onChange }: { w: Webhook; onChange: () => void }) {
               style={{
                 fontSize: 10,
                 padding: "1px 6px",
-                background: "rgba(56,139,253,0.12)",
+                background: "rgba(var(--fg-accent-rgb), 0.12)",
                 border: `1px solid ${tokens.accent}`,
                 borderRadius: 4,
                 color: tokens.accent,
@@ -666,7 +666,7 @@ function CronRow({ s, onChange }: { s: CronSchedule; onChange: () => void }) {
               style={{
                 fontSize: 10,
                 padding: "1px 6px",
-                background: "rgba(56,139,253,0.12)",
+                background: "rgba(var(--fg-accent-rgb), 0.12)",
                 border: `1px solid ${tokens.accent}`,
                 borderRadius: 4,
                 color: tokens.accent,

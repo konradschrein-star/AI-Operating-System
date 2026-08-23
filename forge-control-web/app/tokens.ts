@@ -48,6 +48,10 @@ export const tokens = {
 
   // accent
   accent: v("accent"),
+  /** Text/icon colour that sits ON `accent`. Near-black in dark, white in
+   *  light — the two themes need opposite ink, so a literal is always wrong in
+   *  one of them. Use this for any label on an accent-filled button. */
+  accentInk: v("accentInk"),
 
   // status
   ok: v("ok"),
@@ -79,6 +83,12 @@ export const tokens = {
   rowSelected: v("rowSelected"),
   toolBg: v("toolBg"),
   scrollbar: v("scrollbar"),
+  /** Drop-shadow colours. Compose them into the offsets you need:
+   *  `boxShadow: \`0 1px 2px ${tokens.shadowSm}\``. Light mode gets a cooler,
+   *  weaker slate — plain black at dark-mode strength reads as dirt on a
+   *  paper-coloured card. */
+  shadowSm: v("shadowSm"),
+  shadowMd: v("shadowMd"),
 
   /* Chat transcript role identities (round 808). Two per role: `roleBg*` is
    * the message card's tint, `roleInk*` is its header line and left rule.
