@@ -21,6 +21,7 @@ import {
   archiveChat,
   archiveAllChats,
   deleteChat,
+  fetchChatDeletePreview,
   searchChats,
   freezeFleet,
   resumeFleet,
@@ -728,11 +729,24 @@ export function ChatSurface({
       qc.invalidateQueries({ queryKey: ["chat", "list"] });
       qc.invalidateQueries({ queryKey: ["chat", "search"] });
       qc.invalidateQueries({ queryKey: ["chat", "run", id] });
-      if (selId === id) openChat(null);
+      // A sub-run that went with the parent may have been the open thread, or
+      // may be sitting in the team panel — drop the whole tree's cached rows.
+      for (const gone of data.descendant_ids) {
+        qc.invalidateQueries({ queryKey: ["chat", "run", gone] });
+      }
+      if (selId === id || data.descendant_ids.includes(selId ?? "")) openChat(null);
+      const subRuns =
+        data.runs_deleted > 1
+          ? ` (with ${data.runs_deleted - 1} sub-run${data.runs_deleted === 2 ? "" : "s"})`
+          : "";
+      const unlinked =
+        data.tasks_unlinked > 0
+          ? ` ${data.tasks_unlinked} project task${data.tasks_unlinked === 1 ? "" : "s"} kept their card but lost the thread link.`
+          : "";
       toast(
         "Deleted chat",
         "ok",
-        `Permanently removed run ${id.slice(0, 8)} and ${data.embeddings_deleted} embedding chunk(s).`,
+        `Permanently removed run ${id.slice(0, 8)}${subRuns} and ${data.embeddings_deleted} embedding chunk(s).${unlinked}`,
       );
       setDeleteTarget(null);
     },
@@ -1011,8 +1025,8 @@ export function ChatSurface({
               className="mono"
               title={
                 searchScope === "all"
-                  ? "Scope: all historical chats (including closed). Click to search open chats only."
-                  : "Scope: open chats only. Click to search all historical chats (📖)."
+                  ? "Scope: every chat ever — closed ones and worker sub-runs included. Click to search only what is on the rail."
+                  : "Scope: chats on the rail only (open, top-level). Click to search every chat ever, closed and worker threads included (📖)."
               }
               style={{
                 fontSize: 11,
@@ -1717,6 +1731,13 @@ function ChatListItem({
   );
 }
 
+/* The confirmation the brief demands be EXACT. It cannot be written from the
+ * RunSummary alone: a chat is a tree, not a row. `GET /chat/:id/delete-preview`
+ * resolves the whole `parent_run_id` subtree server-side and counts the
+ * embedding chunks and the Kanban cards pointing into it, so what is listed
+ * here is measured rather than assumed. Until it answers, the confirm button
+ * stays disabled — offering "Delete Permanently" beside a count that is still
+ * loading is how you get a confident click on an unknown blast radius. */
 function DeleteChatModal({
   run,
   onClose,
@@ -1728,6 +1749,15 @@ function DeleteChatModal({
   onConfirm: () => void;
   deleting: boolean;
 }) {
+  const previewQ = useQuery({
+    queryKey: ["chat", "delete-preview", run.id],
+    queryFn: () => fetchChatDeletePreview(run.id),
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const preview = previewQ.data;
+  const blockedBy = preview?.running ?? [];
+  const canDelete = preview !== undefined && blockedBy.length === 0;
   return (
     <div
       onClick={() => {
@@ -1845,14 +1875,127 @@ function DeleteChatModal({
             <div style={{ fontWeight: 600, color: tokens.text, marginBottom: 6 }}>
               Items that will be permanently removed:
             </div>
-            <ul style={{ margin: 0, paddingLeft: 18 }}>
-              <li style={{ marginBottom: 4 }}>
-                <strong>1 PostgreSQL row</strong> in <code style={{ color: tokens.accent }}>runs</code> table (full transcript &amp; metadata)
-              </li>
-              <li>
-                <strong>All vector embeddings</strong> in <code style={{ color: tokens.accent }}>knowledge_embeddings</code> matching <code style={{ color: tokens.accent }}>chat://{run.id}</code>
-              </li>
-            </ul>
+            {previewQ.isPending && (
+              <div style={{ color: tokens.textFaint }}>
+                Measuring what this delete would touch…
+              </div>
+            )}
+            {previewQ.isError && (
+              <div style={{ color: tokens.bleed }}>
+                Could not measure the delete —{" "}
+                {previewQ.error instanceof Error
+                  ? previewQ.error.message
+                  : String(previewQ.error)}
+                . Nothing has been removed; deleting is disabled until this
+                answers.
+              </div>
+            )}
+            {preview && (
+              <ul style={{ margin: 0, paddingLeft: 18 }}>
+                <li style={{ marginBottom: 4 }}>
+                  <strong>
+                    {preview.runs_to_delete} row
+                    {preview.runs_to_delete === 1 ? "" : "s"}
+                  </strong>{" "}
+                  in <code style={{ color: tokens.accent }}>runs</code> — this
+                  chat
+                  {preview.descendant_count > 0
+                    ? ` and its ${preview.descendant_count} worker sub-run${
+                        preview.descendant_count === 1 ? "" : "s"
+                      }`
+                    : ""}{" "}
+                  (full transcript &amp; metadata)
+                </li>
+                <li style={{ marginBottom: preview.linked_tasks > 0 ? 4 : 0 }}>
+                  <strong>
+                    {preview.embeddings} embedding chunk
+                    {preview.embeddings === 1 ? "" : "s"}
+                  </strong>{" "}
+                  in{" "}
+                  <code style={{ color: tokens.accent }}>
+                    knowledge_embeddings
+                  </code>{" "}
+                  under{" "}
+                  <code style={{ color: tokens.accent }}>chat://{run.id}</code>
+                  {preview.descendant_count > 0
+                    ? " and each sub-run's own path"
+                    : ""}
+                </li>
+                {preview.linked_tasks > 0 && (
+                  <li>
+                    <strong>
+                      {preview.linked_tasks} project task
+                      {preview.linked_tasks === 1 ? "" : "s"} stay
+                      {preview.linked_tasks === 1 ? "s" : ""}
+                    </strong>{" "}
+                    — the Kanban card is not deleted, but its link back to this
+                    thread is cut and cannot be restored.
+                  </li>
+                )}
+              </ul>
+            )}
+            {preview && preview.descendant_count > 0 && (
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: "pointer", color: tokens.textFaint }}>
+                  Show the {preview.descendant_count} sub-run
+                  {preview.descendant_count === 1 ? "" : "s"} that go with it
+                </summary>
+                <div style={{ marginTop: 6, paddingLeft: 4 }}>
+                  {preview.descendants.map((d) => (
+                    <div
+                      key={d.id}
+                      style={{
+                        display: "flex",
+                        gap: 6,
+                        marginBottom: 2,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <span
+                        style={{ color: tokens.textFaint, flexShrink: 0 }}
+                      >
+                        {"·".repeat(d.depth)} {d.id.slice(0, 8)}
+                      </span>
+                      <span
+                        style={{
+                          color: tokens.textMuted,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {d.title || "Untitled"}
+                      </span>
+                      <span
+                        style={{ color: STATUS_COLOR[d.status], flexShrink: 0 }}
+                      >
+                        {d.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+            {blockedBy.length > 0 && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: "8px 10px",
+                  borderRadius: 6,
+                  border: `1px solid ${tokens.dangerActionBorder}`,
+                  background: tokens.dangerActionBg,
+                  color: tokens.bleed,
+                }}
+              >
+                Still running:{" "}
+                {blockedBy
+                  .map((rr) => `${rr.id.slice(0, 8)} (${rr.title || "Untitled"})`)
+                  .join(", ")}
+                . Stop {blockedBy.length === 1 ? "it" : "them"} first — deleting
+                a row a live agent is writing to loses the work without
+                stopping the agent.
+              </div>
+            )}
           </div>
 
           <div
@@ -1883,9 +2026,16 @@ function DeleteChatModal({
             </button>
             <button
               type="button"
-              disabled={deleting}
+              disabled={deleting || !canDelete}
               onClick={onConfirm}
               className="mono"
+              title={
+                blockedBy.length > 0
+                  ? "This chat, or one of its sub-runs, is still running."
+                  : !canDelete
+                    ? "Waiting for the exact count of what would be removed."
+                    : undefined
+              }
               style={{
                 padding: "6px 16px",
                 borderRadius: 6,
@@ -1894,13 +2044,20 @@ function DeleteChatModal({
                 color: tokens.bleed,
                 fontSize: 11,
                 fontWeight: 600,
-                cursor: deleting ? "wait" : "pointer",
+                opacity: deleting || canDelete ? 1 : 0.45,
+                cursor: deleting ? "wait" : canDelete ? "pointer" : "not-allowed",
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
               }}
             >
-              {deleting ? "Deleting…" : "Permanently Delete"}
+              {deleting
+                ? "Deleting…"
+                : preview
+                  ? `Permanently Delete ${preview.runs_to_delete} run${
+                      preview.runs_to_delete === 1 ? "" : "s"
+                    }`
+                  : "Permanently Delete"}
             </button>
           </div>
         </div>

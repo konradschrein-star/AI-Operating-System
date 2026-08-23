@@ -34,6 +34,8 @@ import {
   archiveAllRuns,
   searchRuns,
   deleteRun,
+  planRunDeletion,
+  RunStillRunningError,
   type RunStatus,
   type ThreadEntry,
 } from "../db/runs.ts";
@@ -1946,16 +1948,61 @@ r.post("/:id/archive", async (c) => {
   return c.json({ run: updated });
 });
 
-/* Permanently delete a chat: the `runs` row and its embedded search trail
- * (see `deleteRun`'s doc-comment). Unlike `/:id/archive`, this cannot be
- * undone — there is no confirm step here because the UI owns that; this
- * route does exactly what it's told, once, on the id it's given. */
+/* What a delete would actually remove, before anything is removed. The
+ * confirmation modal is required by the brief to "say what it will remove,
+ * and be exact", and a chat is not one row: a manager chat owns a tree of
+ * worker sub-runs, and `runs_parent_run_id_fkey` is ON DELETE SET NULL, so
+ * the alternative to deleting them is promoting them onto the rail. Read-only
+ * — safe to call on hover, on open, on every re-render. */
+r.get("/:id/delete-preview", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
+  const plan = await planRunDeletion(id);
+  if (!plan.run) return c.json({ error: "run not found" }, 404);
+  return c.json({
+    run: plan.run,
+    descendants: plan.descendants,
+    descendant_count: plan.descendants.length,
+    runs_to_delete: plan.descendants.length + 1,
+    embeddings: plan.embeddings,
+    linked_tasks: plan.linked_tasks,
+    running: plan.running,
+  });
+});
+
+/* Permanently delete a chat: the `runs` row, every sub-run beneath it, and
+ * their embedded search trail (see `deleteRun`'s doc-comment). Unlike
+ * `/:id/archive`, this cannot be undone — there is no confirm step here
+ * because the UI owns that; this route does exactly what it's told, once, on
+ * the id it's given, and refuses with 409 rather than deleting a row a live
+ * executor is still writing to. */
 r.delete("/:id", async (c) => {
   const id = c.req.param("id");
   if (!UUID_RE.test(id)) return c.json({ error: "invalid run id" }, 400);
-  const result = await deleteRun(id);
+  let result;
+  try {
+    result = await deleteRun(id);
+  } catch (e) {
+    if (e instanceof RunStillRunningError) {
+      return c.json(
+        {
+          error: "chat still running",
+          detail: e.message,
+          running: e.running.map((run) => ({ id: run.id, title: run.title })),
+        },
+        409,
+      );
+    }
+    throw e;
+  }
   if (!result.deleted) return c.json({ error: "run not found" }, 404);
-  return c.json({ deleted: true, embeddings_deleted: result.embeddings_deleted });
+  return c.json({
+    deleted: true,
+    runs_deleted: result.runs_deleted,
+    descendant_ids: result.descendant_ids,
+    embeddings_deleted: result.embeddings_deleted,
+    tasks_unlinked: result.tasks_unlinked,
+  });
 });
 
 /* Status control: pause / resume / cancel. */

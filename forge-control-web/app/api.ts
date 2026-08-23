@@ -890,13 +890,72 @@ export const archiveChat = async (id: string): Promise<RunDetail> => {
   return r.run;
 };
 
-/** Permanently delete a chat — the run row and its indexed search trail.
- *  NOT reversible; the caller owns confirming with Konrad before calling
- *  this. Returns how many embedding chunks were removed alongside it. */
-export const deleteChat = async (
+/** One run in a delete set — the chat at depth 0, its worker sub-runs below.
+ *  Shape of `GET /api/chat/:id/delete-preview` (forge-control db/runs.ts,
+ *  `RunTreeMember`). */
+export interface RunTreeMember {
+  id: string;
+  title: string;
+  status: RunStatus;
+  archived: boolean;
+  depth: number;
+}
+
+/** What deleting this chat would actually remove, resolved server-side before
+ *  anything is touched. The modal used to hardcode "1 PostgreSQL row", which
+ *  is true only of a childless chat: a manager chat owns a tree of sub-runs
+ *  and `runs.parent_run_id` is ON DELETE SET NULL, so not deleting them would
+ *  PROMOTE them onto the rail. `linked_tasks` is the opposite case — those
+ *  Kanban cards survive with their thread link cut, which is a consequence to
+ *  disclose rather than a removal. */
+export interface ChatDeletePreview {
+  run: RunTreeMember;
+  descendants: RunTreeMember[];
+  descendant_count: number;
+  runs_to_delete: number;
+  embeddings: number;
+  linked_tasks: number;
+  running: RunTreeMember[];
+}
+
+export const fetchChatDeletePreview = async (
   id: string,
-): Promise<{ deleted: true; embeddings_deleted: number }> =>
-  deleteJson<{ deleted: true; embeddings_deleted: number }>(`/chat/${id}`);
+): Promise<ChatDeletePreview> =>
+  getJson<ChatDeletePreview>(`/chat/${id}/delete-preview`);
+
+/** Permanently delete a chat — the run row, every sub-run beneath it, and
+ *  their indexed search trail. NOT reversible; the caller owns confirming
+ *  with Konrad before calling this. `tasks_unlinked` counts Kanban cards that
+ *  survived with a null `run_id`. Rejects with the API's 409 body when the
+ *  chat or one of its sub-runs is still running. */
+export interface DeleteChatResult {
+  deleted: true;
+  runs_deleted: number;
+  descendant_ids: string[];
+  embeddings_deleted: number;
+  tasks_unlinked: number;
+}
+
+export const deleteChat = async (id: string): Promise<DeleteChatResult> => {
+  // Not `deleteJson`: this is the one destructive call in the file, and its
+  // refusal path (409, chat still running) carries the reason in the body.
+  // The shared helper throws "409 Conflict on /chat/<id>", which tells Konrad
+  // nothing about WHICH run is live or why nothing was removed.
+  const res = await fetch(`${ROOT}/chat/${id}`, { method: "DELETE" });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      detail?: string;
+    } | null;
+    const reason = body?.detail ?? body?.error;
+    throw new Error(
+      reason
+        ? `${res.status} ${res.statusText} on /chat/${id}: ${reason}`
+        : `${res.status} ${res.statusText} on /chat/${id}`,
+    );
+  }
+  return (await res.json()) as DeleteChatResult;
+};
 
 /** Close every open chat at once. Returns how many were touched. */
 export const archiveAllChats = async (): Promise<number> => {

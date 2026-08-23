@@ -11,6 +11,7 @@
  */
 
 import pg from "pg";
+import type { PoolClient } from "pg";
 // Value import of the two eligibility matrices only — run-control-rules.ts is
 // pure and imports nothing, so this cannot pull pg/fs/network into a module
 // that a unit test might load. The route (round 903) imports the SAME arrays,
@@ -174,11 +175,18 @@ export async function listRuns(
  *  thread (both roles — a reply often echoes the topic the user asked
  *  about).
  *
- *  `opts.scope`: `"all"` (the default — unchanged behaviour) includes
- *  archived runs, because closing a chat hides it from the rail but must
- *  never make it unfindable. `"open"` restricts the search to runs still
- *  on the rail, for the book-icon toggle that lets Konrad search only
- *  active chats instead of the whole history. */
+ *  `opts.scope`: `"all"` (the default — unchanged behaviour) reaches every
+ *  row in `runs`: archived chats, because closing one hides it from the rail
+ *  but must never make it unfindable, AND worker sub-runs, because a manager
+ *  chat's answer often lives in the thread of the worker it spawned.
+ *
+ *  `"open"` is the book-icon's other state and means literally "still on the
+ *  rail", so it has to match `listRuns`'s predicate — `archived = false`
+ *  **and** `parent_run_id IS NULL`. Round 7's review caught the second half
+ *  missing: a term inside a worker thread came back under the "open" scope
+ *  pointing at a sub-run that is nowhere on the rail, so clicking the hit
+ *  landed on a chat the list cannot show. One bound boolean drives both arms
+ *  because both differences are the same difference. */
 export async function searchRuns(
   q: string,
   limit = 30,
@@ -205,6 +213,7 @@ export async function searchRuns(
             metadata
        FROM runs
        WHERE (archived = false OR $3::boolean)
+         AND (parent_run_id IS NULL OR $3::boolean)
          AND (title ILIKE $1
           OR prompt ILIKE $1
           OR EXISTS (
@@ -495,46 +504,242 @@ export async function archiveAllRuns(): Promise<number> {
   return r.rowCount ?? 0;
 }
 
-export interface DeleteRunResult {
-  /** False when no run with this id existed — the route's 404 signal. */
-  deleted: boolean;
-  /** Embedding chunk rows removed from `knowledge_embeddings` (a run's
-   *  transcript is chunked, so this is usually >1 even for a short chat). */
-  embeddings_deleted: number;
+/** One member of a delete set: the chat itself at depth 0, then every
+ *  sub-run beneath it. */
+export interface RunTreeMember {
+  id: string;
+  title: string;
+  status: RunStatus;
+  archived: boolean;
+  /** 0 for the chat you named, 1 for its workers, 2 for their subagents. */
+  depth: number;
+}
+
+/** Everything `DELETE /api/chat/:id` would touch, resolved before anything is
+ *  removed, so the confirmation modal can name it exactly. */
+export interface RunDeletionPlan {
+  /** Null when no run carries this id — the route's 404 signal. */
+  run: RunTreeMember | null;
+  /** Depth ≥ 1 members. These are deleted WITH the parent; see below. */
+  descendants: RunTreeMember[];
+  /** `knowledge_embeddings` chunks indexed under any member of the set. */
+  embeddings: number;
+  /** `project_tasks` rows whose `run_id` points into the set. The FK is
+   *  ON DELETE SET NULL, so these Kanban cards SURVIVE the delete with their
+   *  thread link cut — it is a consequence, not a removal, and the modal has
+   *  to say so in those words. */
+  linked_tasks: number;
+  /** Members still `running`. A live executor writing back into a row this
+   *  transaction deleted is the one state the delete refuses outright. */
+  running: RunTreeMember[];
+}
+
+/** How deep the parent_run_id walk is allowed to go before we treat the
+ *  shape as pathological. Real chains are 2 (manager → worker → subagent);
+ *  32 is far past anything legitimate and stops a cycle — `parent_run_id`
+ *  has no constraint forbidding one — from spinning forever. */
+const RUN_TREE_MAX_DEPTH = 32;
+
+const RUN_TREE_SQL = `
+  WITH RECURSIVE tree AS (
+    SELECT id, title, status, archived, 0 AS depth
+      FROM runs
+     WHERE id = $1
+    UNION ALL
+    SELECT r.id, r.title, r.status, r.archived, tree.depth + 1
+      FROM runs r
+      JOIN tree ON r.parent_run_id = tree.id
+     WHERE tree.depth < ${RUN_TREE_MAX_DEPTH}
+  )
+  SELECT id::text, title, status, archived, depth FROM tree ORDER BY depth, id`;
+
+async function resolveRunTree(
+  client: PoolClient,
+  id: string,
+): Promise<RunTreeMember[]> {
+  const r = await client.query<{
+    id: string;
+    title: string;
+    status: RunStatus;
+    archived: boolean;
+    depth: number;
+  }>(RUN_TREE_SQL, [id]);
+  const rows = r.rows.map((row) => ({ ...row, depth: Number(row.depth) }));
+  if (rows.some((row) => row.depth >= RUN_TREE_MAX_DEPTH)) {
+    throw new Error(
+      `run ${id}: parent_run_id walk hit the depth cap of ${RUN_TREE_MAX_DEPTH} — ` +
+        `the sub-run chain is either cyclic or deeper than any real one. Refusing ` +
+        `to delete a set that may be truncated.`,
+    );
+  }
+  return rows;
 }
 
 /**
- * Permanently remove a chat: the `runs` row AND every knowledge-embedding
- * chunk indexed under it, so a deleted chat cannot resurface in a memory
- * search. Unlike `archiveRun` this is NOT reversible.
+ * Read-only: what deleting this chat would actually remove. Backs
+ * `GET /api/chat/:id/delete-preview` and the confirmation modal.
  *
- * `km-indexer.js` (`indexChatThreads`) embeds a run's thread under
- * `source_path = 'chat://' || run.id`, one row per chunk, all sharing that
- * exact source_path (see its header comment). The `LIKE … || '%'` arm is
- * belt-and-braces for any future per-chunk-suffixed scheme; today's rows all
- * match the exact form.
+ * This exists because the modal used to claim "1 PostgreSQL row" for every
+ * chat, which is true only of a childless one. Run `58096061` (canvas-ux) was
+ * on the rail with 10 sub-runs and 38 embedding chunks beneath it.
+ */
+export async function planRunDeletion(id: string): Promise<RunDeletionPlan> {
+  const client = await pool.connect();
+  try {
+    const tree = await resolveRunTree(client, id);
+    const self = tree.find((m) => m.depth === 0) ?? null;
+    if (!self) {
+      return { run: null, descendants: [], embeddings: 0, linked_tasks: 0, running: [] };
+    }
+    const ids = tree.map((m) => m.id);
+    const counts = await client.query<{ embeddings: string; linked_tasks: string }>(
+      `SELECT (SELECT count(*) FROM knowledge_embeddings
+                WHERE source_path = ANY($1::text[])
+                   OR source_path LIKE ANY($2::text[]))         AS embeddings,
+              (SELECT count(*) FROM project_tasks
+                WHERE run_id = ANY($3::uuid[]))                 AS linked_tasks`,
+      [ids.map(chatSourcePath), ids.map((i) => `${chatSourcePath(i)}%`), ids],
+    );
+    const row = counts.rows[0];
+    if (!row) throw new Error(`run ${id}: delete-preview count query returned no row`);
+    return {
+      run: self,
+      descendants: tree.filter((m) => m.depth > 0),
+      embeddings: Number(row.embeddings),
+      linked_tasks: Number(row.linked_tasks),
+      running: tree.filter((m) => m.status === "running"),
+    };
+  } finally {
+    client.release();
+  }
+}
+
+/** `km-indexer.js` (`indexChatThreads`) embeds a run's thread under
+ *  `source_path = 'chat://' || run.id`, one row per chunk, all sharing that
+ *  exact source_path (see its header comment). Callers pair this with a
+ *  `LIKE … || '%'` arm as belt-and-braces for any future per-chunk-suffixed
+ *  scheme; today's rows all match the exact form. */
+function chatSourcePath(runId: string): string {
+  return `chat://${runId}`;
+}
+
+/** Thrown instead of deleting when the target or one of its sub-runs is still
+ *  `running`. The route turns this into a 409 naming the live runs — a
+ *  deleted row under a live executor is data loss with a confusing stack
+ *  trace attached, and cascading to sub-runs is exactly what made this
+ *  reachable: closing a manager chat used to be harmless to its workers. */
+export class RunStillRunningError extends Error {
+  readonly running: RunTreeMember[];
+  constructor(running: RunTreeMember[]) {
+    super(
+      `refusing to delete: ${running.length} run(s) in this thread are still running — ` +
+        running.map((r) => `${r.id} (${r.title})`).join(", "),
+    );
+    this.name = "RunStillRunningError";
+    this.running = running;
+  }
+}
+
+export interface DeleteRunResult {
+  /** False when no run with this id existed — the route's 404 signal. */
+  deleted: boolean;
+  /** `runs` rows removed: the chat plus every sub-run beneath it. */
+  runs_deleted: number;
+  /** The sub-runs that went with it, so the toast can be specific. */
+  descendant_ids: string[];
+  /** Embedding chunk rows removed from `knowledge_embeddings` across the whole
+   *  set (a run's transcript is chunked, so this is usually >1 per run). */
+  embeddings_deleted: number;
+  /** `project_tasks` rows whose `run_id` the FK set to NULL. Reported, not
+   *  removed — a Kanban card outlives the thread that produced it. */
+  tasks_unlinked: number;
+}
+
+/**
+ * Permanently remove a chat: its `runs` row, the row of every sub-run beneath
+ * it, and every knowledge-embedding chunk indexed under any of them — so a
+ * deleted chat cannot resurface, in a search result or on the rail. Unlike
+ * `archiveRun` this is NOT reversible.
  *
- * Both deletes happen in ONE transaction: embeddings first, then the run.
- * If the run delete failed after the embeddings were already gone, the row
- * would survive on the rail with its search trail silently erased — a
- * half-delete that is worse than either whole state. Either both succeed or
- * neither does.
+ * **Why the whole subtree and not just the row.** `runs_parent_run_id_fkey` is
+ * ON DELETE SET NULL. A bare `DELETE FROM runs WHERE id = $1` therefore does
+ * not delete a conversation, it PROMOTES it: `listRuns` selects
+ * `WHERE archived = false AND parent_run_id IS NULL`, so every orphaned
+ * sub-run reappears instantly as a brand-new top-level chat, thread intact,
+ * embeddings still searchable. Round 7's review measured this on live data —
+ * run `58096061` would have spawned 10 such chats carrying 38 chunks.
+ *
+ * **What deliberately survives.** `project_tasks.run_id` is also SET NULL, and
+ * that one is correct: a Kanban card is not part of the conversation. The card
+ * stays, its thread link is cut, and the count comes back in `tasks_unlinked`
+ * so the UI can say so before Konrad confirms.
+ *
+ * The whole thing is ONE transaction — embeddings first, then the rows. If the
+ * run delete failed after the embeddings were already gone, the chats would
+ * survive on the rail with their search trail silently erased, a half-delete
+ * worse than either whole state. Either all of it succeeds or none does.
  */
 export async function deleteRun(id: string): Promise<DeleteRunResult> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    const planned = await resolveRunTree(client, id);
+    if (planned.length === 0) {
+      await client.query("COMMIT");
+      return {
+        deleted: false,
+        runs_deleted: 0,
+        descendant_ids: [],
+        embeddings_deleted: 0,
+        tasks_unlinked: 0,
+      };
+    }
+
+    const running = planned.filter((m) => m.status === "running");
+    if (running.length > 0) throw new RunStillRunningError(running);
+
+    // Lock the whole set, then resolve it a second time. An FK insert takes a
+    // KEY SHARE lock on the parent it points at, which conflicts with this
+    // FOR UPDATE — so once the lock is held no new sub-run can be attached to
+    // any member. The re-resolve catches a child that landed in the window
+    // BEFORE the lock; if the set moved we abort rather than delete a stale
+    // set and silently promote whatever arrived late.
+    const ids = planned.map((m) => m.id);
+    await client.query(`SELECT 1 FROM runs WHERE id = ANY($1::uuid[]) FOR UPDATE`, [ids]);
+    const settled = await resolveRunTree(client, id);
+    if (settled.length !== planned.length) {
+      throw new Error(
+        `run ${id}: the sub-run tree changed while the delete was being prepared ` +
+          `(${planned.length} → ${settled.length} runs). Nothing was deleted; retry.`,
+      );
+    }
+
+    const tasks = await client.query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM project_tasks WHERE run_id = ANY($1::uuid[])`,
+      [ids],
+    );
     const emb = await client.query(
       `DELETE FROM knowledge_embeddings
-        WHERE source_path = 'chat://' || $1
-           OR source_path LIKE 'chat://' || $1 || '%'`,
-      [id],
+        WHERE source_path = ANY($1::text[])
+           OR source_path LIKE ANY($2::text[])`,
+      [ids.map(chatSourcePath), ids.map((i) => `${chatSourcePath(i)}%`)],
     );
-    const run = await client.query(`DELETE FROM runs WHERE id = $1`, [id]);
+    const runs = await client.query(`DELETE FROM runs WHERE id = ANY($1::uuid[])`, [ids]);
+    if (runs.rowCount !== ids.length) {
+      throw new Error(
+        `run ${id}: expected to delete ${ids.length} run row(s), deleted ` +
+          `${runs.rowCount ?? 0}. Rolling back rather than leaving a partial tree.`,
+      );
+    }
+
     await client.query("COMMIT");
     return {
-      deleted: (run.rowCount ?? 0) > 0,
+      deleted: true,
+      runs_deleted: runs.rowCount,
+      descendant_ids: planned.filter((m) => m.depth > 0).map((m) => m.id),
       embeddings_deleted: emb.rowCount ?? 0,
+      tasks_unlinked: Number(tasks.rows[0]?.count ?? 0),
     };
   } catch (e) {
     await client.query("ROLLBACK");
