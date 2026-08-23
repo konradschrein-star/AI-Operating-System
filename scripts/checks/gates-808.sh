@@ -140,8 +140,28 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # FilePreview verbatim + two-line panel edit) BEFORE it was written; landed in fc842d3.
 # Scope of the waiver: FileExplorerPanel.tsx ONLY. VaultFileList* and routes/files
 # remain forbidden, as do all engine files.
+#
+# OPERATOR WAIVER 2026-08-23 — the REST of the Files reservation is released.
+# The clause above states the ban's entire purpose: avoiding a collision with
+# project files-pane-fast-light. Verified in the projects table today — that
+# project is `done`, closed 2026-08-05, eighteen days ago. The 2026-08-16 waiver
+# released only FileExplorerPanel.tsx because that was all that was needed then,
+# not because the rest still had a reason.
+#
+# aios-library-and-map's brief then explicitly ordered a builder to EXTEND
+# forge-control/src/routes/files.ts ("find it, read it, extend it rather than
+# starting a second one"), and it did, in ad35016. The gate had therefore become
+# unsatisfiable by any correct execution of an authorised brief: it could only be
+# passed by disobeying the brief, or by a builder widening the gate — and a
+# builder widening a gate is forbidden. That is a toll, not evidence.
+#
+# RELEASED: routes/files, VaultFileList*.
+# STILL FORBIDDEN, for a live reason rather than an expired reservation:
+# project-tick, cc-runner, executor.ts, db/projects — the scheduler and the run
+# engine, where one careless edit breaks every lane at once. Those stay banned,
+# and an authorised edit to them is recorded here the same way this one is.
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
-  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects|VaultFileList|routes/files' \
+  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' \
    && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }"
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
