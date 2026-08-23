@@ -203,9 +203,17 @@ VPS2), which is escalated to the manager chat, not guessed at here.
 - While wiring it, a second version of the same defect appeared and was fixed:
   the header chip counted `domains.count` (37, which includes two `server_name _`
   catch-alls) while the ingress node counted 35. Two totals for one thing on one
-  screen. Both now call `isNamedVhost()`; the Atlas, which deliberately shows the
-  raw config including catch-alls, says "vhost entries" and labels those rows
-  `_ · catch-all, answers for no name`.
+  screen. Round 6 fixed the remaining half of it: 35 was still the number of
+  server *blocks*, and this box answers for **18 names** — `/api/map` emits one
+  row per (server_name × block), so every name with the usual `:80` redirect plus
+  `:443` TLS pair arrived twice. Both call sites now go through
+  `namedVhosts()` in `mapApi.ts`, which folds the rows by name (ports, upstreams
+  and roots unioned; `ssl` true if any block terminates TLS; certificate fields
+  taken from the block that has one, not from whichever row sorted first), so the
+  chip, the ingress label, its "Server names" fact and its children are one list
+  by construction. The Atlas, which deliberately shows the raw config including
+  catch-alls, still says "37 vhost entries" and labels those rows
+  `_ · catch-all, answers for no name` — a different set, named as such.
 - **`TopologyAtlasGrid.tsx`**: `DEFAULT_DOMAINS` and `KNOWN_DATASTORES` are
   deleted, not repaired. The reviewer's point about `domainsErr` being declared
   and never set was the tell that the fallback was the design; every column now
@@ -342,8 +350,8 @@ answers 200 and would make an authenticated shot meaningless.
 | shot | what it shows |
 |---|---|
 | `20260823T171500Z-map-atlas.png` | four live columns; real PIDs, uptimes and restart counts; real vhosts with real certificate day counts; **Ollama :11434 red / not listening** |
-| `20260823T171500Z-map-inspector.png` | the inspector on the nginx node: 19 vhost files / 35 server names / 17 with TLS / no parse errors, and a **Provenance** block naming `/etc/nginx/sites-enabled (lib/nginx-parser.ts)` and `2026-08-23T16:32:57.827Z`. No GitHub button exists to click. |
-| `20260823T164500Z-map.png` | the Mind Map: 14 vault projects, 12 pm2 groups, 5 infrastructure nodes, each with its measured status in words |
+| `20260823T164500Z-map.png` | the Mind Map — **superseded, see round 6 below**: taken before `b8fc5c3`, it shows the "37 vs 35" split that no longer exists |
+| `20260823T171500Z-map-inspector.png` | the inspector on the nginx node — **superseded, see round 6 below**: it reads "35 server names", the block count |
 | `20260823T174500Z-library-mp4.png` | an 84.5 MB `recording.mp4` playing inline, duration `01:54` read off the file, speed pills, file browser still above it with its neighbours |
 | `20260823T174500Z-library-markdown.png` | `Infrastructure - Master Map.md` rendered — headings, tables, inline code — with `edit` / `copy raw` / `wrap` / `download` |
 | `20260823T164500Z-library.png` | a real PNG in the image stage with zoom controls (the image case) |
@@ -398,3 +406,102 @@ $ git status --porcelain          # after the suite
 
 Identical to the earlier run: one RED, gate 6, the escalated operator call. The
 only commit after this run is the one adding these lines, which touches no code.
+
+## Round 6 — fix cycle 2
+
+Two items, both from the round-5 re-review. Gate 6 is deliberately untouched: it
+is an operator call awaiting Konrad, not builder work.
+
+### 1. "35 server names" counted server blocks (`2e64214`)
+
+`/api/map` emits one row per (`server_name` × server block) — the unit nginx is
+configured in — so a name with the ordinary `:80` redirect and `:443` TLS pair
+arrives twice. Measured against the live `/etc/nginx/sites-enabled` through this
+worktree's own parser:
+
+```
+$ tsx -e 'readNginxVhosts() → flatMap(domainRows)'
+files 19  rows 37  named rows 35  distinct named domains 18
+distinct with ssl in ANY block 17     ← what "With TLS" must report
+distinct whose FIRST row has ssl 15   ← what a naive dedupe would have reported
+17 names appear twice (the :80 + :443 pair); 65.108.6.149 is the only HTTP-only name
+```
+
+That last pair of lines is the reason the fix is a merge and not a
+`filter`+`Set`: for 2 of the 18 names the `:80` block sorts first, and taking the
+first row's fields would have reported a live certificate as absent.
+
+`namedVhosts()` in `map/mapApi.ts` now folds the rows by name — ports, upstreams
+and roots unioned, `ssl` true if **any** block terminates TLS, certificate fields
+taken from the block that carries one. `MapSurface.tsx:125` (the chip) and
+`mapTree.ts:339` (the ingress node, its `Server names` fact and its children) both
+read that one list, so they agree by construction rather than by two call sites
+happening to spell the same predicate. Each front door is now one child node
+instead of two, its `Ports` fact reading `80, 443`.
+
+Tests (`map/mapTree.test.ts`, 20 → 24): the fixture grew from 3 rows to 6 — a
+second name whose TLS block is listed **second** (the ordering that loses the
+certificate) and a name with no TLS block at all — and four tests pin the merge:
+one name is one node, the merged node keeps every port and the TLS block's
+certificate and upstream, "With TLS" counts names, and the chip's list is the
+ingress node's list. **They discriminate:** reverting `mapTree.ts` to the old
+row-counting expression fails 5 of the 24.
+
+```
+$ npx tsx --test app/desktop/map/mapTree.test.ts     # at 2e64214
+# tests 24
+# pass 24
+# fail 0
+
+$ …with `const real = domains.data.domains.filter(…)` restored:
+# pass 19
+# fail 5
+   not ok - the :80 and :443 blocks of one name are one node, one count
+   not ok - the merged node keeps every port and the certificate of the TLS block
+   not ok - the header chip and the ingress node count the same list
+   not ok - the nginx catch-all server is not counted as one of Konrad's domains
+   not ok - a name with no TLS block anywhere gets no link
+```
+
+### 2. Map screenshots retaken at this tip
+
+The committed `20260823T164500Z-map.png` predated `b8fc5c3` and showed the
+fixed-away "37 vs 35" split, so it was evidence for a state that no longer exists.
+Both map shots were retaken against a build of **this** tip, by the same
+read-only method as round 4 — probe on `:7629` mounting only `map`/`files`/
+`uploads` from the worktree, every non-GET refused with 405 before routing (the
+probe log's single `REFUSED POST /api/map` line is that guard firing on the
+proof request), everything else proxied verbatim to `:7700`; `next start` on
+`:3998` from a build with `FORGE_CONTROL_URL=http://127.0.0.1:7629`. Preflight:
+anonymous `GET /desktop` → **307**; authenticated `GET /api/proxy/map` → **200**
+with `failed_sections: []` and 37 domain rows, which is what proves the shot is
+of the worktree's route and not of live `:7700` (which still 404s `/api/map`).
+Both processes were killed afterwards; `ss -ltn` shows neither port.
+
+| shot (`/opt/ai-os/uploads/6d8523ebbae8/`) | what it shows |
+|---|---|
+| `20260823T192700Z-map.png` | the Mind Map at `2e64214`: header chip **`18 server names · 19 vhost files`**, the ingress node **`Nginx ingress · 18 server names`** with `Show 18 sub-items`, and the root's "all /api/map sections answered" |
+| `20260823T193000Z-map-inspector.png` | the inspector on that node: **Vhost files 19 / Server names 18 / With TLS 17 / Parse errors none**, Provenance `/etc/nginx/sites-enabled (lib/nginx-parser.ts)`, checked at `2026-08-23T17:27:41.387Z` |
+
+Both were opened and read, not merely written. The two superseded rows in the
+table above are marked as such rather than deleted — the earlier shots were
+honest evidence for the tip they were taken at.
+
+### Gate suite at this tip
+
+```
+$ bash scripts/checks/gates-808.sh --strict     # 25 gates
+ 1  0   npx tsc --noEmit — forge-control
+ 2  0   npx tsc --noEmit — forge-control-web
+ 3  0   NODE_ENV=production pnpm build — forge-control-web
+ 5  0   no-raw-colours.cjs (whole app)
+ 6  1   forbidden-file diff — three-dot main...HEAD
+ 8  0   dollar-sweep.sh
+ 20 0   pnpm test — forge-control unit suite
+ RED: 1
+```
+
+Unchanged from round 5: the one RED is gate 6, still the operator call on
+`forge-control/src/routes/files.ts` — a file this project's brief ordered edited.
+Round 6 touched no file under `forge-control/`, so it neither caused nor can
+clear it.
