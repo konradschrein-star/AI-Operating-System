@@ -23,6 +23,9 @@ import {
   DESTRUCTIVE_TARGETS,
   TERMINAL_SOURCES,
   CURATED_ADVANCE_TRANSITIONS,
+  CURATED_RETRY_TARGETS,
+  STAGE_QUEUES,
+  isQueueBackedStage,
 } from "./pipeline-transitions.ts";
 
 describe("classifyTransition — destructive targets", () => {
@@ -166,12 +169,121 @@ describe("classifyTransition — the confirmable middle", () => {
     );
   });
 
-  test("a no-op transition is refused and is not confirmable", () => {
+  test("an advance to the status the job is already in stays a hard refusal", () => {
     const v = classifyTransition("AWAITING_QC", "AWAITING_QC", "advance", true);
     assert.equal(v.allowed, false);
     if (v.allowed) return;
     assert.equal(v.httpStatus, 409);
     assert.equal(v.requiresConfirmation, false);
     assert.match(v.error, /already in status AWAITING_QC/);
+  });
+});
+
+/**
+ * Round 6's blocker: the first `from === to` rule refused re-queue/unstick and
+ * sat ABOVE the confirm fallthrough, so "Force This Retry" could not reach it
+ * either. These assert the control the brief actually asks for — "retry a
+ * failed job, re-queue, unstick" — for the exact statuses the reviewer named.
+ */
+describe("classifyTransition — re-dispatch into the current stage", () => {
+  test("every queue-backed stage may be retried into itself, unconfirmed", () => {
+    for (const stage of Object.keys(STAGE_QUEUES)) {
+      assert.deepEqual(
+        classifyTransition(stage, stage, "retry", false),
+        { allowed: true },
+        `${stage} → ${stage} is the re-queue control and must not need a force`,
+      );
+    }
+  });
+
+  test("the wedged-render case the reviewer described now dispatches", () => {
+    // Render worker died, nothing consumed queue-render-heavy, job sits in
+    // ROUTING_RENDER. Drawer → Retry Stage → "Render (ROUTING_RENDER)".
+    assert.deepEqual(
+      classifyTransition("ROUTING_RENDER", "ROUTING_RENDER", "retry", false),
+      { allowed: true },
+    );
+    // And the default "infer automatically" path, which `determineRetryStage`
+    // resolves to the job's own status for a scripted job in ASSET_COLLECTION.
+    assert.deepEqual(
+      classifyTransition("ASSET_COLLECTION", "ASSET_COLLECTION", "retry", false),
+      { allowed: true },
+    );
+  });
+
+  test("a stage with no queue is confirmable, not a dead end", () => {
+    const without = classifyTransition(
+      "AWAITING_UPLOADER",
+      "AWAITING_UPLOADER",
+      "retry",
+      false,
+    );
+    assert.equal(without.allowed, false);
+    if (without.allowed) return;
+    assert.equal(without.httpStatus, 409);
+    assert.equal(
+      without.requiresConfirmation,
+      true,
+      "Force This Retry must be able to reach it",
+    );
+    assert.match(without.error, /no worker queue/);
+
+    assert.deepEqual(
+      classifyTransition("AWAITING_UPLOADER", "AWAITING_UPLOADER", "retry", true),
+      { allowed: true },
+    );
+  });
+
+  test("a terminal or publish-claiming status is NOT re-dispatchable by the same-status door", () => {
+    // Ordering proof: these must answer with their own rule, not the new one.
+    const published = classifyTransition("PUBLISHED", "PUBLISHED", "retry", true);
+    assert.equal(published.allowed, false);
+    if (published.allowed) return;
+    assert.match(published.error, /terminal status PUBLISHED/);
+
+    const uploading = classifyTransition("UPLOADING", "UPLOADING", "retry", true);
+    assert.equal(uploading.allowed, false);
+    if (uploading.allowed) return;
+    assert.match(uploading.error, /only reachable from AWAITING_UPLOADER/);
+
+    for (const target of DESTRUCTIVE_TARGETS) {
+      const v = classifyTransition(target, target, "retry", true);
+      assert.equal(v.allowed, false, `${target} → ${target} was allowed`);
+    }
+  });
+});
+
+describe("STAGE_QUEUES is the single source of truth", () => {
+  test("the five queue-backed stages match Content Forge's dispatcher", () => {
+    // worker-orchestrator/src/utils/dispatch-next.ts, `switch (newStatus)`:
+    // these five cases are the complete set that call `queue.add()`.
+    assert.deepEqual(STAGE_QUEUES, {
+      SCRIPTING: "queue-ai-generation",
+      ASSET_COLLECTION: "queue-asset-collection",
+      QMS_VALIDATING: "queue-qms-validation",
+      ROUTING_RENDER: "queue-render-heavy",
+      CLIP_SELECTION: "queue-clip-selection",
+    });
+  });
+
+  test("every queue-backed stage is also a curated retry target", () => {
+    // Otherwise a re-dispatch would be allowed same-status but refused from a
+    // failed status, which is the inconsistency that produced round 6's dead end.
+    for (const stage of Object.keys(STAGE_QUEUES)) {
+      assert.equal(
+        CURATED_RETRY_TARGETS.has(stage),
+        true,
+        `${stage} dispatches to a queue but is not a curated retry target`,
+      );
+    }
+  });
+
+  test("isQueueBackedStage does not answer for inherited Object keys", () => {
+    // `"constructor" in STAGE_QUEUES` is true; a naive `in` check would call
+    // every unknown status queue-backed and allow a no-op retry as a dispatch.
+    assert.equal(isQueueBackedStage("constructor"), false);
+    assert.equal(isQueueBackedStage("toString"), false);
+    assert.equal(isQueueBackedStage("AWAITING_QC"), false);
+    assert.equal(isQueueBackedStage("ROUTING_RENDER"), true);
   });
 });

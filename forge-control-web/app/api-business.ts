@@ -385,6 +385,11 @@ export interface RetryJobRequest {
 export interface RetryJobSuccess {
   success: true;
   message: string;
+  /** True when the job was re-queued into the stage it was already in — the
+   *  unstick control. `old_status === new_status` by design: the status write
+   *  is the no-op and the queue dispatch is the point, so the UI must not
+   *  report it as a transition that went nowhere. */
+  redispatch?: boolean;
   old_status: string;
   new_status: string;
   retry_count: number;

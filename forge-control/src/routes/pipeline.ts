@@ -3,7 +3,7 @@ import pg from "pg";
 import { getPipeline, getWorkerHealth } from "../db/pipeline.ts";
 import { probeQueueDepths } from "../lib/redis-probe.ts";
 import { phaseFor } from "../lib/pipeline-health.ts";
-import { classifyTransition } from "../lib/pipeline-transitions.ts";
+import { classifyTransition, STAGE_QUEUES } from "../lib/pipeline-transitions.ts";
 
 const { Pool } = pg;
 
@@ -202,47 +202,126 @@ async function tryDispatchQueue(
 }
 
 /**
+ * The job row fields a queue payload can be built from. Both handlers SELECT
+ * these; the optional ones are absent on older callers rather than nullable.
+ */
+type QueuePayloadSource = {
+  title: string | null;
+  template_id: string | null;
+  initial_topic: string | null;
+  metadata: unknown;
+};
+
+/**
+ * Build the payload a Content Forge worker will actually accept.
+ *
+ * Why this is a separate, fallible step rather than an inline object: each
+ * queue is a `Queue<T>` whose worker parses the payload with a zod schema, and
+ * `queue-clip-selection` requires a `config_id` that lives in the job's
+ * metadata (`ClipSelectionPayloadSchema`, packages/contracts/src/clip-library.ts
+ * ~L313). Content Forge's own dispatcher reads `metadata.clip_config_id` and
+ * throws when it is missing (worker-orchestrator utils/dispatch-next.ts ~L138).
+ * Enqueuing `{ job_id }` there would look like a successful re-queue in the
+ * drawer and then be rejected out of sight — exactly the button-that-lies the
+ * brief forbids. So the caller resolves this BEFORE writing the status.
+ */
+function buildQueuePayload(
+  queueName: string,
+  jobId: string,
+  job: QueuePayloadSource,
+):
+  | { ok: true; payload: Record<string, unknown> }
+  | { ok: false; error: string } {
+  if (queueName === "queue-render-heavy") {
+    return { ok: true, payload: { job_id: jobId, priority: 5 } };
+  }
+  if (queueName === "queue-qms-validation") {
+    return {
+      ok: true,
+      payload: { job_id: jobId, validation_stage: "pre-render" },
+    };
+  }
+  if (queueName === "queue-ai-generation") {
+    return {
+      ok: true,
+      payload: {
+        job_id: jobId,
+        generation_type: "script",
+        template_id: job.template_id,
+        topic: (job.initial_topic ?? job.title ?? "").trim(),
+      },
+    };
+  }
+  if (queueName === "queue-clip-selection") {
+    const meta =
+      typeof job.metadata === "object" && job.metadata !== null
+        ? (job.metadata as Record<string, unknown>)
+        : {};
+    const configId = meta["clip_config_id"];
+    if (typeof configId !== "string" || !UUID_RE.test(configId)) {
+      return {
+        ok: false,
+        error: `Cannot dispatch clip selection: this job has no clip_config_id in its metadata, and queue-clip-selection rejects a payload without one. Set the clip config on the job in hub-web first.`,
+      };
+    }
+    return { ok: true, payload: { job_id: jobId, config_id: configId } };
+  }
+  return { ok: true, payload: { job_id: jobId } };
+}
+
+/**
+ * The human-friendly aliases the drawer's dropdown sends, mapped to the
+ * `job_status` enum value the server writes. Anything not listed here is
+ * accepted verbatim if it is a real status.
+ *
+ * `IDEA` is here because "IDEA" is not a `job_status` and the fallback never
+ * matched it, so the drawer's own "Idea (IDEA_GENERATION)" option used to 400.
+ */
+const STAGE_ALIASES: Record<string, string> = {
+  RENDER: "ROUTING_RENDER",
+  QC: "QMS_VALIDATING",
+  ASSETS: "ASSET_COLLECTION",
+  SCRIPT: "SCRIPTING",
+  PUBLISH: "AWAITING_UPLOADER",
+  IDEA: "IDEA_GENERATION",
+};
+
+/**
  * Normalise human-friendly stage alias to a valid job_status enum and queue.
+ *
+ * The queue is DERIVED from the resolved status via `STAGE_QUEUES` rather than
+ * hand-written per branch: the same mapping decides whether
+ * `classifyTransition` treats a same-status retry as a re-dispatch, and two
+ * copies of it would drift into a control that reports a dispatch it never made
+ * (or refuses one it could have made). A status with no entry — AWAITING_QC,
+ * AWAITING_UPLOADER, IDEA_GENERATION, the TTS stages — takes no queue action;
+ * `worker-orchestrator`'s dispatch-next.ts says the same.
  */
 function resolveStageAlias(stage: string): { status: string; queueName: string | null } | null {
   const norm = stage.trim().toUpperCase();
-  if (norm === "RENDER" || norm === "ROUTING_RENDER") {
-    return { status: "ROUTING_RENDER", queueName: "queue-render-heavy" };
+  const status = STAGE_ALIASES[norm] ?? norm;
+  if (!VALID_JOB_STATUSES.has(status)) {
+    return null;
   }
-  if (norm === "QC" || norm === "QMS_VALIDATING") {
-    return { status: "QMS_VALIDATING", queueName: "queue-qms-validation" };
-  }
-  if (norm === "ASSETS" || norm === "ASSET_COLLECTION") {
-    return { status: "ASSET_COLLECTION", queueName: "queue-asset-collection" };
-  }
-  if (norm === "SCRIPT" || norm === "SCRIPTING") {
-    return { status: "SCRIPTING", queueName: "queue-ai-generation" };
-  }
-  if (norm === "PUBLISH" || norm === "AWAITING_UPLOADER") {
-    return { status: "AWAITING_UPLOADER", queueName: null };
-  }
-  if (norm === "AWAITING_QC") {
-    return { status: "AWAITING_QC", queueName: null };
-  }
-  if (norm === "IDEA" || norm === "IDEA_GENERATION") {
-    // No queue: worker-orchestrator's dispatch-next.ts lists IDEA_GENERATION
-    // under "statuses that do not trigger queue action" (utils/dispatch-next.ts
-    // ~L244), so this is a status-only reset back to the top of the pipeline.
-    // Without this branch the drawer's own "Idea (IDEA_GENERATION)" option
-    // 400s — "IDEA" is not a job_status, so the fallback never matched it.
-    return { status: "IDEA_GENERATION", queueName: null };
-  }
-  if (norm === "CLIP_SELECTION") {
-    return { status: "CLIP_SELECTION", queueName: "queue-clip-selection" };
-  }
-  if (VALID_JOB_STATUSES.has(norm)) {
-    return { status: norm, queueName: null };
-  }
-  return null;
+  return { status, queueName: STAGE_QUEUES[status] ?? null };
+}
+
+/** Pair a target status with the queue that stage dispatches to, if any. */
+function withQueue(targetStatus: string): {
+  targetStatus: string;
+  queueName: string | null;
+} {
+  return { targetStatus, queueName: STAGE_QUEUES[targetStatus] ?? null };
 }
 
 /**
  * Determine default retry target stage and queue based on failure type and format.
+ *
+ * Note the standard fallthrough: a job that is not in a `FAILED_*` status gets
+ * `ASSET_COLLECTION` or `SCRIPTING` by script presence, which for a job wedged
+ * IN one of those two stages resolves to its own status. That is not a bug — it
+ * is the re-dispatch case, and `classifyTransition` allows it because both are
+ * queue-backed (round 6's reviewer found it refused with no way to force it).
  */
 function determineRetryStage(
   currentStatus: string,
@@ -250,58 +329,32 @@ function determineRetryStage(
   hasScript: boolean,
 ): { targetStatus: string; queueName: string | null } {
   if (currentStatus === "FAILED_RENDER") {
-    return {
-      targetStatus: "ROUTING_RENDER",
-      queueName: "queue-render-heavy",
-    };
+    return withQueue("ROUTING_RENDER");
   }
   if (currentStatus === "FAILED_QMS" || currentStatus === "DRAMA_QC_FAILED") {
-    return {
-      targetStatus: "ASSET_COLLECTION",
-      queueName: "queue-asset-collection",
-    };
+    return withQueue("ASSET_COLLECTION");
   }
   if (currentStatus === "FAILED_CLIP_SELECTION") {
-    return {
-      targetStatus: "CLIP_SELECTION",
-      queueName: "queue-clip-selection",
-    };
+    return withQueue("CLIP_SELECTION");
   }
   if (currentStatus === "FAILED_UPLOAD") {
-    return { targetStatus: "AWAITING_UPLOADER", queueName: null };
+    return withQueue("AWAITING_UPLOADER");
   }
   if (currentStatus === "FAILED_SPACE_PIPELINE") {
-    return {
-      targetStatus: "SPACE_TTS_GENERATING",
-      queueName: null,
-    };
+    return withQueue("SPACE_TTS_GENERATING");
   }
   if (currentStatus === "FAILED_DRAMA_PIPELINE") {
-    return {
-      targetStatus: "DRAMA_TTS_GENERATING",
-      queueName: null,
-    };
+    return withQueue("DRAMA_TTS_GENERATING");
   }
   if (currentStatus === "FAILED_REACTOR_PIPELINE") {
-    return {
-      targetStatus: "REACTOR_DOWNLOADING",
-      queueName: null,
-    };
+    return withQueue("REACTOR_DOWNLOADING");
   }
   if (currentStatus === "TECH_FOOTAGE_FAILED") {
-    return {
-      targetStatus: "TECH_FOOTAGE_COLLECTING",
-      queueName: null,
-    };
+    return withQueue("TECH_FOOTAGE_COLLECTING");
   }
 
   // Standard pipeline formats
-  return hasScript
-    ? {
-        targetStatus: "ASSET_COLLECTION",
-        queueName: "queue-asset-collection",
-      }
-    : { targetStatus: "SCRIPTING", queueName: "queue-ai-generation" };
+  return withQueue(hasScript ? "ASSET_COLLECTION" : "SCRIPTING");
 }
 
 /**
@@ -314,36 +367,20 @@ function determineAdvanceStage(currentStatus: string): {
 } | null {
   switch (currentStatus) {
     case "AWAITING_QC":
-      return {
-        targetStatus: "AWAITING_UPLOADER",
-        queueName: null,
-        requiresQCApproval: true,
-      };
+      return { ...withQueue("AWAITING_UPLOADER"), requiresQCApproval: true };
     case "AWAITING_IMAGE_QC":
     case "AWAITING_PRODUCTION_VA":
     case "AWAITING_VA_REVIEW":
     case "AWAITING_CLIP_REVIEW":
-      return {
-        targetStatus: "QMS_VALIDATING",
-        queueName: "queue-qms-validation",
-      };
+      return withQueue("QMS_VALIDATING");
     case "QMS_VALIDATING":
-      return {
-        targetStatus: "ROUTING_RENDER",
-        queueName: "queue-render-heavy",
-      };
+      return withQueue("ROUTING_RENDER");
     case "AWAITING_UPLOADER":
-      return { targetStatus: "UPLOADING", queueName: null };
+      return withQueue("UPLOADING");
     case "SCRIPTING":
-      return {
-        targetStatus: "ASSET_COLLECTION",
-        queueName: "queue-asset-collection",
-      };
+      return withQueue("ASSET_COLLECTION");
     case "ASSET_COLLECTION":
-      return {
-        targetStatus: "QMS_VALIDATING",
-        queueName: "queue-qms-validation",
-      };
+      return withQueue("QMS_VALIDATING");
     default:
       return null;
   }
@@ -667,12 +704,37 @@ r.post("/jobs/:id/retry", async (c) => {
       );
     }
 
+    // Resolved BEFORE the status write: if the worker would reject the payload
+    // we must not move the job into a stage nothing will pick up.
+    let payload: Record<string, unknown> | null = null;
+    if (queueName) {
+      const built = buildQueuePayload(queueName, id, job);
+      if (!built.ok) {
+        return c.json(
+          {
+            error: built.error,
+            current_status: job.status,
+            target_status: targetStatus,
+            queue_name: queueName,
+          },
+          409,
+        );
+      }
+      payload = built.payload;
+    }
+
+    const isRedispatch = job.status === targetStatus;
+
     const historyEntry = {
       from: job.status,
       to: targetStatus,
       timestamp: new Date().toISOString(),
       actor: "aios-operator",
-      reason: body.reason || `Manual retry from ${job.status}`,
+      reason:
+        body.reason ||
+        (isRedispatch
+          ? `Manual re-dispatch of ${targetStatus}`
+          : `Manual retry from ${job.status}`),
     };
 
     const updateRes = await pool.query<{
@@ -720,26 +782,16 @@ r.post("/jobs/:id/retry", async (c) => {
       dispatched: false,
     };
 
-    if (queueName) {
-      let payload: Record<string, unknown> = { job_id: id };
-      if (queueName === "queue-render-heavy") {
-        payload = { job_id: id, priority: 5 };
-      } else if (queueName === "queue-qms-validation") {
-        payload = { job_id: id, validation_stage: "pre-render" };
-      } else if (queueName === "queue-ai-generation") {
-        payload = {
-          job_id: id,
-          generation_type: "script",
-          template_id: job.template_id,
-          topic: (job.initial_topic ?? job.title ?? "").trim(),
-        };
-      }
+    if (queueName && payload) {
       queueResult = await tryDispatchQueue(queueName, `retry-${id}`, payload);
     }
 
     return c.json({
       success: true,
-      message: `Job ${id} retried (${job.status} → ${targetStatus})`,
+      redispatch: isRedispatch,
+      message: isRedispatch
+        ? `Job ${id} re-dispatched to ${queueName ?? targetStatus} (still ${targetStatus})`
+        : `Job ${id} retried (${job.status} → ${targetStatus})`,
       old_status: job.status,
       new_status: targetStatus,
       retry_count: updateRes.rows[0]?.retry_count ?? job.retry_count + 1,
@@ -986,9 +1038,17 @@ r.post("/jobs/:id/advance", async (c) => {
       status: string;
       format: string;
       assigned_uploader_va_id: string | null;
+      template_id: string | null;
+      initial_topic: string | null;
+      metadata: unknown;
     }>(
+      // template_id / initial_topic / metadata are here for `buildQueuePayload`:
+      // an explicit `target_status` can land on SCRIPTING or CLIP_SELECTION,
+      // whose payloads need them. Advance used to dispatch `{ job_id }` and the
+      // ai-generation worker would have had no template to generate against.
       `SELECT id::text, title, status::text AS status, format::text AS format,
-              assigned_uploader_va_id::text AS assigned_uploader_va_id
+              assigned_uploader_va_id::text AS assigned_uploader_va_id,
+              template_id::text AS template_id, initial_topic, metadata
          FROM content_jobs
         WHERE id = $1::uuid`,
       [id],
@@ -1060,6 +1120,25 @@ r.post("/jobs/:id/advance", async (c) => {
         },
         verdict.httpStatus,
       );
+    }
+
+    // Same pre-write resolution as retry: refuse rather than park the job in a
+    // stage whose worker would reject the payload.
+    let payload: Record<string, unknown> | null = null;
+    if (queueName) {
+      const built = buildQueuePayload(queueName, id, job);
+      if (!built.ok) {
+        return c.json(
+          {
+            error: built.error,
+            current_status: job.status,
+            target_status: newStatus,
+            queue_name: queueName,
+          },
+          409,
+        );
+      }
+      payload = built.payload;
     }
 
     let defaultUploaderId: string | null = null;
@@ -1141,13 +1220,7 @@ r.post("/jobs/:id/advance", async (c) => {
       dispatched: false,
     };
 
-    if (queueName) {
-      let payload: Record<string, unknown> = { job_id: id };
-      if (queueName === "queue-render-heavy") {
-        payload = { job_id: id, priority: 5 };
-      } else if (queueName === "queue-qms-validation") {
-        payload = { job_id: id, validation_stage: "pre-render" };
-      }
+    if (queueName && payload) {
       queueResult = await tryDispatchQueue(queueName, `advance-${id}`, payload);
     }
 

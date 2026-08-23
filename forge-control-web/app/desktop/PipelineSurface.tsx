@@ -827,6 +827,10 @@ function InteractiveJobCard({
   return (
     <div
       onClick={onClick}
+      // A stable hook for the screenshot harness: the card carries no text a
+      // script can anchor on that is not also live job data, and geometry
+      // anchors go inert the moment a column reflows.
+      data-job-card={card.id}
       style={{
         background: tokens.bgBody,
         border: `1px solid ${

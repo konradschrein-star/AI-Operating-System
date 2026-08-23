@@ -117,7 +117,11 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
       if (res.success) {
         setActionFeedback({
           tone: "ok",
-          message: `Job retried successfully: ${res.old_status} → ${res.new_status}${res.queue_dispatched ? ` (dispatched to ${res.queue_name})` : ""}`,
+          // A re-dispatch keeps its status on purpose, so "X → X" would read as
+          // "nothing happened". Say what actually happened instead.
+          message: res.redispatch
+            ? `Job re-queued into ${res.new_status}${res.queue_dispatched ? ` — dispatched to ${res.queue_name}` : ` — status clock reset, no queue behind this stage`}`
+            : `Job retried successfully: ${res.old_status} → ${res.new_status}${res.queue_dispatched ? ` (dispatched to ${res.queue_name})` : ""}`,
         });
         setShowRetryModal(false);
         setRetryNeedsConfirm(false);
@@ -990,6 +994,7 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
             </h3>
             <p style={{ fontSize: 12, color: tokens.textMuted, lineHeight: 1.45, marginBottom: 14 }}>
               Reset this job&apos;s status to restart execution. If left blank, the server will infer the appropriate stage based on the failure.
+              Picking the stage the job is already in re-queues it there — that is how you unstick a job whose worker died mid-stage.
             </p>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
