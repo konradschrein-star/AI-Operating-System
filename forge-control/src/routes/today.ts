@@ -77,6 +77,7 @@ r.get("/", async (c) => {
   // The cap is shown either way so the user always sees the budget ceiling.
   const rollup = await todaySpendRollup().catch(() => ({
     total_eur: 0,
+    shadow_eur: 0,
     row_count: 0,
     by_provider: [],
   }));

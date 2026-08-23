@@ -2,6 +2,8 @@
  * /api/ledger — the cash ledger.
  *
  * GET  /api/ledger/summary?days=30  — net cash per arm. The headline number.
+ * GET  /api/ledger/entries?arm=&limit=&offset= — recent ledger rows for the
+ *                                     Money surface's transaction list.
  * POST /api/ledger/entries          — record one entry (revenue, payroll, fee).
  * POST /api/ledger/import/spend-log — pull infra cost from content_forge.
  *
@@ -19,8 +21,10 @@ import {
   ARMS,
   type Arm,
   type Direction,
+  type LedgerEntry,
   type LedgerEntryInput,
 } from "../db/ledger.ts";
+import { aiOsPool } from "../db/ai-os-pool.ts";
 
 const r = new Hono();
 
@@ -96,6 +100,74 @@ r.get("/summary", async (c) => {
   const days = Math.min(Math.max(Number(c.req.query("days") ?? 30) || 30, 1), 365);
   try {
     return c.json({ summary: await summary(days) });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
+r.get("/entries", async (c) => {
+  const armQuery = c.req.query("arm");
+  if (armQuery !== undefined && !ARM_SET.has(armQuery)) {
+    return c.json({ error: `arm must be one of: ${ARMS.join(", ")}` }, 400);
+  }
+  const limit = Math.min(
+    200,
+    Math.max(1, Number(c.req.query("limit") ?? "50") || 50),
+  );
+  const offset = Math.max(0, Number(c.req.query("offset") ?? "0") || 0);
+
+  try {
+    const params: unknown[] = [limit, offset];
+    let where = "";
+    if (armQuery) {
+      where = "WHERE arm = $3";
+      params.push(armQuery);
+    }
+    const res = await aiOsPool().query<{
+      id: string;
+      occurred_on: string;
+      direction: Direction;
+      amount: string;
+      currency: string;
+      amount_eur: string | null;
+      arm: Arm;
+      category: string;
+      counterparty: string | null;
+      memo: string | null;
+      is_cash: boolean;
+      source: string;
+      external_ref: string | null;
+      created_at: Date;
+    }>(
+      `SELECT id, occurred_on::text AS occurred_on, direction,
+              amount::text AS amount, currency, amount_eur::text AS amount_eur,
+              arm, category, counterparty, memo, is_cash, source,
+              external_ref, created_at
+         FROM ledger_entries
+         ${where}
+        ORDER BY occurred_on DESC, created_at DESC
+        LIMIT $1 OFFSET $2`,
+      params,
+    );
+
+    const entries: LedgerEntry[] = res.rows.map((row) => ({
+      id: row.id,
+      occurredOn: row.occurred_on,
+      direction: row.direction,
+      amount: Number(row.amount),
+      currency: row.currency,
+      amountEur: row.amount_eur === null ? null : Number(row.amount_eur),
+      arm: row.arm,
+      category: row.category,
+      counterparty: row.counterparty,
+      memo: row.memo,
+      isCash: row.is_cash,
+      source: row.source,
+      externalRef: row.external_ref,
+      createdAt: row.created_at,
+    }));
+
+    return c.json({ entries, limit, offset });
   } catch (err) {
     return c.json({ error: (err as Error).message }, 500);
   }

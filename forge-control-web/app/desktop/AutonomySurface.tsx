@@ -11,9 +11,21 @@ import {
   resolveTrip,
   type GuardrailRule,
   type GuardrailTrip,
+  type AutonomyResponse,
 } from "../api";
 import { jumpToRun, type NavigateTo } from "./deep-link";
 import { fmtEur } from "./settings/usageApi";
+
+/** Mirrors DEFAULT_GEMINI_DAILY_TOKEN_CAP in forge-control's db/autonomy.ts.
+ *  Used ONLY as the input's placeholder before the server's own number lands;
+ *  every rendered figure comes from `gemini_daily`, which the server measures. */
+const GEMINI_DAILY_TOKEN_CAP_FALLBACK = 25_000_000;
+
+function fmtTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
 
 const CATEGORY_COLOR: Record<string, string> = {
   financial: tokens.warn,
@@ -239,6 +251,16 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
       qc.invalidateQueries({ queryKey: ["autonomy"] });
     },
   });
+  const resolveM = useMutation({
+    mutationFn: async (tripId: string) => {
+      const res = await fetch(`/api/autonomy/trips/${encodeURIComponent(tripId)}/resolve`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to resolve trip");
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["autonomy"] }),
+  });
 
   const ruleToggleM = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
@@ -440,6 +462,30 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
           padding: "18px 24px 40px",
         }}
       >
+        {/* Purpose banner */}
+        <div
+          style={{
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 16,
+            fontSize: 12,
+            color: tokens.textSecondary,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            lineHeight: 1.4,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 16, color: tokens.accent }}>
+            shield
+          </span>
+          <span>
+            Autonomy is your operational safety cockpit — enforce execution boundaries, manage model-specific token budgets (Claude subscription windows vs. high-throughput Gemini quota), and triage tripped guardrails.
+          </span>
+        </div>
+
         {/* Synchronized Fleet Freeze Hero */}
         <div
           style={{
@@ -619,6 +665,7 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
               <RuleRow
                 key={rule.id}
                 rule={rule}
+                geminiDaily={q.data?.gemini_daily ?? null}
                 isSaving={savingRuleId === rule.id}
                 onToggle={() =>
                   ruleToggleM.mutate({ id: rule.id, enabled: !rule.enabled })
@@ -754,11 +801,14 @@ export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
  * -------------------------------------------------------------------------- */
 function RuleRow({
   rule,
+  geminiDaily,
   onToggle,
   onSaveConfig,
   isSaving,
 }: {
   rule: GuardrailRule;
+  /** Today's measured Gemini draw, or null when the server could not read it. */
+  geminiDaily?: AutonomyResponse["gemini_daily"];
   onToggle: () => void;
   onSaveConfig: (config: Record<string, unknown>) => Promise<void>;
   isSaving: boolean;
@@ -1511,6 +1561,23 @@ function TripRow({
         >
           {humanAge(trip.ts)}
         </span>
+        {!trip.resolved && onResolve && (
+          <button
+            onClick={onResolve}
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              padding: "2px 8px",
+              background: tokens.okActionBg,
+              border: `1px solid ${tokens.ok}`,
+              borderRadius: 4,
+              color: tokens.ok,
+              cursor: "pointer",
+            }}
+          >
+            Resolve
+          </button>
+        )}
       </div>
 
       {/* Diagnostic Reason Banner */}

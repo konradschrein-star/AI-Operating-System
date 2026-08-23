@@ -83,8 +83,45 @@ forge-control-web/app/desktop/quota/geminiLine.ts	spen[dt]	Round 1876, replacing
 forge-control-web/app/desktop/businesses-inventory.ts	signs off on spend	Line 467, the `qualified` funnel stage's CRITERION prose: a lead counts as qualified once the discovery call recorded "the named need, who does that work today, and who signs off on spend" (spec §3.2 L263). "Spend" is the PROSPECT'S budget authority — who at the target company can approve a purchase — not a euro figure this OS renders. R63 requires the criterion verbatim so a zero in the funnel can be audited against the spec. Landed round 2 (c94b10d), unlisted until round 4.
 forge-control-web/app/desktop/businesses-inventory.ts	\$197 / \$497 / \$2,497	Line 592, the `axtrelis` secondary-arm STATE sentence: "Pricing is locked in code at $197 / $497 / $2,497 one-time" (spec §2.2 L211). A third party's own PRICE LIST, transcribed from the spec — the point of the sentence is that a rigorously specified revenue model has no customers in it, which is a business finding, not agent-cost noise. U11 forbids rendering what the fleet costs Konrad; it does not forbid quoting what Konrad's own product charges. Landed round 2 (c94b10d), unlisted until round 4.
 
+# ── aios-money-and-businesses: the Money lane's own wire types ───────────────
+#
+# api-business.ts is this lane's typed client (it exists because app/api.ts is
+# the one contended file — the header says so). Its currency-shaped hits are
+# the SAME class app/api.ts is already excused for one entry up: interface
+# field names and fetcher names for the MONEY destination, which 10-ui-v3-spec
+# names as the sanctioned home for money. Nothing here is a rendered value —
+# this file has no JSX at all.
+#
+# THREE scoped patterns, not `.*` and not the file: a `$`-prefixed literal
+# amount arriving anywhere in it still fails the gate, which is the only thing
+# the gate is actually for.
+
+forge-control-web/app/api-business.ts	balance_usd|total_usd|fx_rate_usd_eur|"USD" \| "EUR"	BankAccount/BankBalancesResponse field names mirroring forge-control's /api/accounts/bank: Mercury reports in USD, E&G in EUR, so a USD field and a published FX rate are the only honest way to carry a mixed-currency treasury. Field NAMES on an interface; the file renders nothing.
+forge-control-web/app/api-business.ts	Spend(Window|AreaItem|DailyItem|SummaryResponse|SummaryQuery|Filters)	The Spend* interfaces behind MoneySurface's compute chart — identical in kind and reason to the `Spend|spend` entry app/api.ts already carries, which this file exists to avoid editing. Type declarations, not values.
+forge-control-web/app/api-business.ts	/spend/summary|fetchSpendSummaryFiltered|metered spend vs shadow	The endpoint path, its fetcher, and the section header naming what the endpoint returns. A URL and a comment; the amounts themselves are rendered by MoneySurface.tsx, which is separately and deliberately excused.
+
 forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line 440, Sparkline(): SVG polyline COORDINATES — `${x.toFixed(2)},${y.toFixed(2)}` builds a `points` attribute out of pixel positions computed from `i / values.length * W` and `H - v / max * H`. Geometry, not currency, and the twelfth false positive of the naive toFixed(2) anchor (MemorySurface score, three token-magnitude formatters, …). Came in from `main` with 553fa38, Konrad's own Goals/Tasks daily surface, and met this lane-only gate for the first time at the round-13 merge — the same shape as gate 17's pins. The pattern is the coordinate PAIR, not `.*`: a real € or $ arriving in this file still fails the gate.
 
+# ── Round 2 (aios-skills-live-control fix cycle 1) ───────────────────────────
+# toFixed(2) on the three UNIX load averages read live from /proc/loadavg
+# (`host.cpu.load_1m` / `_5m` / `_15m`). A dimensionless queue-length figure.
+forge-control-web/app/desktop/ControlSurface.tsx	load_1m\.toFixed\(2\)|load_5m\.toFixed\(2\)|load_15m\.toFixed\(2\)	toFixed(2) on the three UNIX load averages read live from /proc/loadavg (`host.cpu.load_1m` / `_5m` / `_15m`). A dimensionless queue-length figure, the thirteenth false positive of the naive toFixed(2) anchor after MemorySurface's relevance score, three token-magnitude formatters and goals/ui.tsx's SVG coordinates. The pattern names the three fields, so a toFixed(2) on anything else in this file still fails.
+
+# ── aios-money-and-businesses fix cycle 2: the deploy-skew guards ───────────
+#
+# spend-skew.ts is a PURE module (no React, no fetch, no JSX) whose whole
+# subject is one endpoint: it decides whether /api/spend/summary's response is
+# complete enough to draw, so MoneySurface stops throwing against an API older
+# than itself. Its hits are therefore identifiers and prose ABOUT money data,
+# never a money value — the single € in it sits inside a quoted description of
+# the "€NaN" label the guard exists to prevent.
+#
+# Scoped patterns, not `.*` and not the file: a literal currency amount
+# arriving in either file still fails the gate.
+
+forge-control-web/app/desktop/spend-skew.ts	spend-skew|/api/spend/summary|spendPickLists|spendData|Spend(DailyItem|SummaryResponse)|"€NaN" peak label	Deploy-skew guards for /api/spend/summary: the exported helper names, the imported Spend* type names, the endpoint path (in the header, in the recorded curl, and in the diagnostic the chart renders instead of a series), and header prose naming `spendData.filters.providers` — the read that used to throw. The one € is the quoted "€NaN" peak label the guard prevents, not a value. MoneySurface.tsx, which does render €, is separately and deliberately excused.
+forge-control-web/app/desktop/spend-skew.test.ts	spend-skew|/api/spend/summary|spendPickLists|Spend(DailyItem|SummaryResponse)	spend-skew.ts's unit suite — the same helper and type names, plus the endpoint path in the header comment recording the curl the fixture was captured from. The captured payload's numbers are bare (353.2966, no currency mark), so a real € or $ literal arriving in this file still fails the gate.
+forge-control-web/app/api-business.ts	desktop/spend-skew\.ts	One clause of SpendSummaryResponse's doc comment, naming the module MoneySurface now reads that response through ("MoneySurface reads both through `desktop/spend-skew.ts`"). A file path in prose. The three api-business.ts rows above still bound everything else in the file, and a literal amount arriving here fails the gate.
 # ── aios-pipeline-controlroom (round 5, fix cycle 1) ─────────────────────────
 # The Pipeline control room renders two non-currency quantities the primary
 # gate cannot tell from money: a VIDEO FILE SIZE in GB, and the MINUTES A VA

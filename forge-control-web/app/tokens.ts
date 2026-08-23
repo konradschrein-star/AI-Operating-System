@@ -48,6 +48,10 @@ export const tokens = {
 
   // accent
   accent: v("accent"),
+  /** Text/icon colour that sits ON `accent`. Near-black in dark, white in
+   *  light — the two themes need opposite ink, so a literal is always wrong in
+   *  one of them. Use this for any label on an accent-filled button. */
+  accentInk: v("accentInk"),
   /** Ink for text sitting ON an accent fill — flips per theme, unlike `text`. */
   onAccent: v("onAccent"),
 
@@ -100,6 +104,19 @@ export const tokens = {
   rowSelected: v("rowSelected"),
   toolBg: v("toolBg"),
   scrollbar: v("scrollbar"),
+  /** Drop-shadow colours. Compose them into the offsets you need:
+   *  `boxShadow: \`0 1px 2px ${tokens.shadowSm}\``. Light mode gets a cooler,
+   *  weaker slate — plain black at dark-mode strength reads as dirt on a
+   *  paper-coloured card. */
+  shadowSm: v("shadowSm"),
+  shadowMd: v("shadowMd"),
+
+  /* Elevation. These resolve to a WHOLE `box-shadow` value, not a colour —
+   * `boxShadow: tokens.shadowCard`, never interpolated into a shadow string.
+   * A raw `rgba(0,0,0,α)` shadow is theme-blind in exactly the way a raw
+   * colour is: tuned against near-black it turns into a grey bruise on paper. */
+  shadowCard: v("shadowCard"),
+  shadowPopover: v("shadowPopover"),
 
   /* Chat transcript role identities (round 808). Two per role: `roleBg*` is
    * the message card's tint, `roleInk*` is its header line and left rule.

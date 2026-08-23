@@ -1,16 +1,78 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { tokens } from "../tokens";
 import {
   fetchSkills,
   fetchSkill,
   runCuratorAudit,
+  toggleSkill,
+  bulkToggleSkills,
   type SkillSummary,
   type SkillLifecycle,
   type CuratorAuditResult,
 } from "../api";
+
+/** Fallback only. The real reason travels per-skill in `protected_reason`,
+ *  written next to the id in skills-curator.ts's DEFAULT_PROTECTED_IDS, so the
+ *  surface can say WHY this particular toggle is locked instead of pointing at
+ *  a source file Konrad cannot open from here. */
+const PROTECTED_TOOLTIP =
+  "Protected — a core OS workflow. Can't be disabled from here.";
+
+function protectedTitle(s: { protected: boolean; protected_reason: string | null }) {
+  if (!s.protected) return undefined;
+  return s.protected_reason
+    ? `Protected — ${s.protected_reason}`
+    : PROTECTED_TOOLTIP;
+}
+
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+/** Small enable/disable pill — a real toggle, not decoration. Stops
+ *  propagation so it works inside a clickable card without also selecting
+ *  the skill underneath it. */
+function EnableToggle({
+  enabled,
+  disabled,
+  title,
+  pending,
+  onChange,
+}: {
+  enabled: boolean;
+  disabled?: boolean;
+  title?: string;
+  pending?: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      title={title}
+      disabled={disabled || pending}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onChange(!enabled);
+      }}
+      className="mono"
+      style={{
+        fontSize: 9,
+        letterSpacing: "0.06em",
+        borderRadius: 4,
+        padding: "2px 7px",
+        border: `1px solid ${enabled ? `${tokens.ok}55` : tokens.border}`,
+        background: enabled ? `${tokens.ok}15` : "transparent",
+        color: disabled ? tokens.textFaint : enabled ? tokens.ok : tokens.textMuted,
+        cursor: disabled ? "not-allowed" : pending ? "wait" : "pointer",
+        opacity: pending ? 0.6 : 1,
+      }}
+    >
+      {pending ? "…" : disabled ? "LOCKED" : enabled ? "ACTIVE" : "DISABLED"}
+    </button>
+  );
+}
 
 const SOURCE_LABEL: Record<string, { label: string; color: string }> = {
   hermes: { label: "hermes", color: tokens.decide },
@@ -32,6 +94,7 @@ const LIFECYCLE_LABEL: Record<SkillLifecycle, string> = {
 };
 
 export function SkillsSurface() {
+  const qc = useQueryClient();
   const listQ = useQuery({
     queryKey: ["skills", "list"],
     queryFn: fetchSkills,
@@ -39,6 +102,32 @@ export function SkillsSurface() {
   const [cat, setCat] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [selId, setSelId] = useState<string | null>(null);
+  // Ids currently mid-toggle, for the "…" pending state on their pill.
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+
+  const toggleMut = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      toggleSkill(id, enabled),
+    onMutate: ({ id }) =>
+      setPendingIds((prev) => new Set(prev).add(id)),
+    onSettled: (_data, _err, { id }) => {
+      setPendingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      qc.invalidateQueries({ queryKey: ["skills"] });
+    },
+  });
+
+  const bulkMut = useMutation({
+    mutationFn: ({ category, enabled }: { category: string; enabled: boolean }) =>
+      bulkToggleSkills({ category }, enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["skills"] }),
+  });
+
+  const disableCategory = (category: string) =>
+    bulkMut.mutate({ category, enabled: false });
   // Detail-panel mode: "skill" shows the selected SKILL.md; "audit" shows the
   // last curator audit report. Mutually exclusive — selecting a skill flips
   // back to "skill", clicking Run Audit flips to "audit".
@@ -71,6 +160,14 @@ export function SkillsSurface() {
     if (audit) for (const e of audit.lifecycle) m.set(e.id, e.lifecycle);
     return m;
   }, [audit]);
+
+  /** The protected set, unfiltered — the CONTEXT COST card names it whatever
+   *  category or search the list is currently narrowed to, because "what can I
+   *  not turn off" is a property of the catalog, not of the current view. */
+  const protectedSkills = useMemo<SkillSummary[]>(
+    () => (listQ.data?.skills ?? []).filter((s) => s.protected),
+    [listQ.data],
+  );
 
   const filtered = useMemo<SkillSummary[]>(() => {
     const all = listQ.data?.skills ?? [];
@@ -107,6 +204,67 @@ export function SkillsSurface() {
           overflowY: "auto",
         }}
       >
+        {listQ.data?.token_estimate && (
+          <div
+            style={{
+              margin: "0 12px 12px",
+              padding: "9px 10px",
+              borderRadius: 6,
+              border: `1px solid ${tokens.borderSoft}`,
+              background: tokens.bgCard,
+            }}
+          >
+            <div
+              className="mono"
+              style={{
+                fontSize: 9,
+                color: tokens.textFaint,
+                letterSpacing: "0.08em",
+                marginBottom: 5,
+              }}
+            >
+              CONTEXT COST
+            </div>
+            <div
+              className="mono"
+              style={{ fontSize: 13, color: tokens.textHi, marginBottom: 2 }}
+            >
+              ~{fmtTokens(listQ.data.token_estimate.current_tokens)} tok
+            </div>
+            <div
+              className="mono"
+              style={{ fontSize: 9.5, color: tokens.textMuted }}
+            >
+              {listQ.data.token_estimate.enabled_count} active ·{" "}
+              {listQ.data.token_estimate.disabled_count} disabled
+            </div>
+            {listQ.data.token_estimate.savings_tokens > 0 && (
+              <div
+                className="mono"
+                style={{ fontSize: 9.5, color: tokens.ok, marginTop: 3 }}
+              >
+                saving ~{fmtTokens(listQ.data.token_estimate.savings_tokens)} tok
+                /turn
+              </div>
+            )}
+            {protectedSkills.length > 0 && (
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  color: tokens.decide,
+                  marginTop: 5,
+                  cursor: "help",
+                }}
+                title={protectedSkills
+                  .map((s) => `${s.id} — ${s.protected_reason ?? "protected"}`)
+                  .join("\n\n")}
+              >
+                {protectedSkills.length} protected · can&apos;t be disabled
+              </div>
+            )}
+          </div>
+        )}
         <div
           className="mono"
           style={{
@@ -121,6 +279,7 @@ export function SkillsSurface() {
         <CatItem
           label="ALL"
           count={listQ.data?.count ?? 0}
+          enabledCount={listQ.data?.token_estimate?.enabled_count}
           active={!cat}
           onClick={() => setCat(null)}
         />
@@ -129,6 +288,7 @@ export function SkillsSurface() {
             key={c.key}
             label={c.key}
             count={c.count}
+            enabledCount={c.enabled_count}
             active={cat === c.key}
             onClick={() => setCat(c.key)}
           />
@@ -170,6 +330,34 @@ export function SkillsSurface() {
           >
             {filtered.length}
           </span>
+          {(() => {
+            const appleCat = listQ.data?.categories.find((c) => c.key === "apple");
+            if (!appleCat) return null;
+            const allDisabled = appleCat.enabled_count === 0;
+            return (
+              <button
+                onClick={() => disableCategory("apple")}
+                disabled={bulkMut.isPending || allDisabled}
+                title="Disable all skills in the 'apple' category — macOS/iOS automation is useless on this Linux VPS"
+                className="mono"
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${tokens.border}`,
+                  borderRadius: 6,
+                  padding: "6px 10px",
+                  color: allDisabled ? tokens.textFaint : tokens.textMuted,
+                  fontSize: 10.5,
+                  letterSpacing: "0.04em",
+                  cursor: allDisabled ? "default" : "pointer",
+                  outline: "none",
+                }}
+              >
+                {allDisabled
+                  ? `macOS/Apple disabled (${appleCat.count})`
+                  : `Disable macOS/Apple Skills (${appleCat.count})`}
+              </button>
+            );
+          })()}
           <span style={{ flex: 1 }} />
           <input
             ref={searchRef}
@@ -303,28 +491,36 @@ export function SkillsSurface() {
                       GUARDED
                     </span>
                   )}
-                  {(() => {
-                    const lc = lifecycleById.get(s.id);
-                    if (!lc) return null;
-                    const color = LIFECYCLE_COLOR[lc];
-                    return (
-                      <span
-                        className="mono"
-                        title={`curator: ${lc}`}
-                        style={{
-                          fontSize: 9,
-                          color,
-                          border: `1px solid ${color}55`,
-                          borderRadius: 4,
-                          padding: "1px 5px",
-                          letterSpacing: "0.08em",
-                          marginLeft: "auto",
-                        }}
-                      >
-                        {LIFECYCLE_LABEL[lc]}
-                      </span>
-                    );
-                  })()}
+                  <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                    {(() => {
+                      const lc = lifecycleById.get(s.id);
+                      if (!lc) return null;
+                      const color = LIFECYCLE_COLOR[lc];
+                      return (
+                        <span
+                          className="mono"
+                          title={`curator: ${lc}`}
+                          style={{
+                            fontSize: 9,
+                            color,
+                            border: `1px solid ${color}55`,
+                            borderRadius: 4,
+                            padding: "1px 5px",
+                            letterSpacing: "0.08em",
+                          }}
+                        >
+                          {LIFECYCLE_LABEL[lc]}
+                        </span>
+                      );
+                    })()}
+                    <EnableToggle
+                      enabled={s.enabled}
+                      disabled={s.protected}
+                      pending={pendingIds.has(s.id)}
+                      title={protectedTitle(s)}
+                      onChange={(next) => toggleMut.mutate({ id: s.id, enabled: next })}
+                    />
+                  </span>
                 </div>
                 <div
                   style={{
@@ -463,7 +659,31 @@ export function SkillsSurface() {
                     GUARDED
                   </span>
                 )}
+                <span style={{ marginLeft: "auto" }}>
+                  <EnableToggle
+                    enabled={detailQ.data.enabled}
+                    disabled={detailQ.data.protected}
+                    pending={pendingIds.has(detailQ.data.id)}
+                    title={protectedTitle(detailQ.data)}
+                    onChange={(next) =>
+                      toggleMut.mutate({ id: detailQ.data.id, enabled: next })
+                    }
+                  />
+                </span>
               </div>
+              {detailQ.data.protected && (
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: tokens.decide,
+                    marginTop: 8,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  PROTECTED — {detailQ.data.protected_reason ?? PROTECTED_TOOLTIP}
+                </div>
+              )}
               <div
                 style={{
                   fontSize: 16,
@@ -791,14 +1011,20 @@ function AuditPanel({
 function CatItem({
   label,
   count,
+  enabledCount,
   active,
   onClick,
 }: {
   label: string;
   count: number;
+  enabledCount?: number;
   active: boolean;
   onClick: () => void;
 }) {
+  // Fraction only when it's informative (some disabled) — plain count
+  // otherwise, so a fully-active category doesn't clutter with "20/20".
+  const showFraction =
+    typeof enabledCount === "number" && enabledCount < count;
   return (
     <div
       onClick={onClick}
@@ -821,8 +1047,14 @@ function CatItem({
         {label}
       </span>
       <span style={{ flex: 1 }} />
-      <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-        {count}
+      <span
+        className="mono"
+        style={{
+          fontSize: 10,
+          color: showFraction ? tokens.warn : tokens.textFaint,
+        }}
+      >
+        {showFraction ? `${enabledCount}/${count}` : count}
       </span>
     </div>
   );

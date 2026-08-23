@@ -24,6 +24,7 @@ import {
 } from "../db/claude-accounts.ts";
 import { probeAll, probeAccount, readCredentialSnapshot } from "../lib/accounts.ts";
 import { effectiveHealth, rankAccounts } from "../lib/account-health.ts";
+import { getBankBalances } from "../lib/mercury.ts";
 
 const r = new Hono();
 
@@ -160,6 +161,16 @@ r.get("/", async (c) => {
 r.get("/health", async (c) => {
   const p = await ping();
   return c.json(p, p.ok ? 200 : 503);
+});
+
+r.get("/bank", async (c) => {
+  try {
+    const balances = await getBankBalances();
+    return c.json(balances);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return c.json({ error: "bank balance retrieval failed", detail: message }, 500);
+  }
 });
 
 r.post("/probe", async (c) => {

@@ -18,7 +18,6 @@ import {
   resumeFleet,
   emptyToday,
   emptyLive,
-  emptyControl,
 } from "../api";
 import { TodaySurface } from "./TodaySurface";
 import { InboxSurface } from "./InboxSurface";
@@ -363,7 +362,6 @@ export function DesktopApp() {
               />
             ) : (
               <ControlSurface
-                data={controlQ.data ?? emptyControl}
                 onFreeze={() => freezeM.mutate()}
               />
             ))}

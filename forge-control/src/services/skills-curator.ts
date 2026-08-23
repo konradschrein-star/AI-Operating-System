@@ -37,17 +37,48 @@ const CURATOR_TIMEOUT_MS = Number(process.env.CURATOR_TIMEOUT_MS ?? "180000");
 // Built-ins that should never be archived/consolidated automatically.
 //
 // Three layers, all OR'd together:
-//   1. DEFAULT_PROTECTED_IDS — hardcoded local-fallback. These are Konrad's
-//      personal user:* skills; harmless on the VPS where USER_SKILLS_DIR is
-//      empty, but they keep the local catalog safe out-of-the-box.
-//   2. CURATOR_PROTECTED_IDS env var — comma-separated list, set per-host.
-//      Use this on the VPS to protect specific hermes:* IDs the user
-//      considers load-bearing.
+//   1. DEFAULT_PROTECTED_IDS — hardcoded local-fallback, keyed by the id the
+//      catalog actually exposes, with the REASON each one is load-bearing.
+//   2. CURATOR_PROTECTED_IDS env var — comma-separated list, set per-host,
+//      for ids this file cannot know about.
 //   3. frontmatter `protected: true` on the skill itself — per-skill escape
 //      hatch that travels with the SKILL.md file. Same mechanic as `pinned`
 //      but explicit about intent (pinned ≈ "show me first", protected ≈
 //      "never suggest archiving").
-const DEFAULT_PROTECTED_IDS = ["user:graphify", "user:gemini-video-review", "user:plan"];
+//
+// ── WHY THIS LIST CHANGED ───────────────────────────────────────────────────
+// It used to read ["user:graphify", "user:gemini-video-review", "user:plan"],
+// described in this comment as "harmless on the VPS where USER_SKILLS_DIR is
+// empty". USER_SKILLS_DIR is NOT empty on this VPS: `listSkills()` discovers
+// 142 skills, 51 of them `user:`-sourced (measured 2026-08-23), and NONE of
+// those three ids exists in it. So the built-in layer protected exactly zero
+// real skills and every one of the 142 — including `user:brainstorming`, whose
+// own description opens "You MUST use this before any creative work" — was
+// one click from being disabled out of every agent's context.
+//
+// The replacement ids are the fleet's own working discipline: the skills this
+// OS's system prompts and project briefs tell every worker to run. Each was
+// verified present in the live catalog, and `skills-curator.test.ts` asserts
+// that — a protected id that stops resolving is a dead guard, and the test is
+// how the next reader finds out instead of the next incident.
+const DEFAULT_PROTECTED_IDS: Record<string, string> = {
+  "user:brainstorming":
+    "Its own description opens \"You MUST use this before any creative work\" — every builder is told to run it before designing a feature.",
+  "user:verification-before-completion":
+    "The fleet's don't-report-done-without-evidence discipline. Disabling it removes the workflow that stops a worker claiming a green gate it never ran.",
+  "user:systematic-debugging":
+    "The 4-phase root-cause procedure workers are told to follow instead of guessing at a fix.",
+  "user:test-driven-development":
+    "Enforces RED-GREEN-REFACTOR. Named directly in builder briefs.",
+  "user:writing-plans":
+    "How a planner turns a goal into bite-sized tasks with real file paths — the shape the project engine consumes.",
+  "user:executing-plans":
+    "The other half of the planning pair: running a written plan with review checkpoints.",
+  "user:using-superpowers":
+    "The loader the other superpowers skills route through. Disabling it degrades them all at once, silently.",
+  "user:goal":
+    "Launches long-horizon autonomous work on this OS's own forge-control project engine. Konrad types /goal; without the skill the command has no instructions behind it.",
+};
 
 function parseProtectedEnv(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -57,10 +88,34 @@ function parseProtectedEnv(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
-const PROTECTED_SKILL_IDS = new Set([
-  ...DEFAULT_PROTECTED_IDS,
-  ...parseProtectedEnv(process.env.CURATOR_PROTECTED_IDS),
+const ENV_PROTECTED_REASON =
+  "Protected by this host's CURATOR_PROTECTED_IDS environment variable.";
+
+const PROTECTED_SKILL_REASONS = new Map<string, string>([
+  ...Object.entries(DEFAULT_PROTECTED_IDS),
+  ...parseProtectedEnv(process.env.CURATOR_PROTECTED_IDS).map(
+    (id) => [id, ENV_PROTECTED_REASON] as const,
+  ),
 ]);
+
+/** The ids the built-in layer protects. Exported so a test can assert every
+ *  one of them still resolves against the live catalog. */
+export const PROTECTED_SKILL_ID_LIST: string[] = [
+  ...PROTECTED_SKILL_REASONS.keys(),
+];
+
+/** Same protection list the curator uses to exempt skills from archival —
+ *  reused by the toggle routes so a skill Konrad has marked load-bearing
+ *  can't be disabled (and dropped from agent context) either. */
+export function isProtectedSkill(id: string): boolean {
+  return PROTECTED_SKILL_REASONS.has(id);
+}
+
+/** Why this skill is protected, in one sentence, for the UI to print.
+ *  `null` for an unprotected skill — the caller decides how to say nothing. */
+export function protectedSkillReason(id: string): string | null {
+  return PROTECTED_SKILL_REASONS.get(id) ?? null;
+}
 
 export type Lifecycle = "active" | "stale" | "archive_candidate" | "protected";
 
@@ -125,7 +180,7 @@ async function classifyLifecycle(): Promise<SkillLifecycleEntry[]> {
 
     const days = Math.floor((now - mtime) / (1000 * 60 * 60 * 24));
     let lifecycle: Lifecycle;
-    if (PROTECTED_SKILL_IDS.has(s.id) || pinned || frontmatterProtected) {
+    if (isProtectedSkill(s.id) || pinned || frontmatterProtected) {
       lifecycle = "protected";
     } else if (days >= ARCHIVE_AFTER_DAYS) {
       lifecycle = "archive_candidate";

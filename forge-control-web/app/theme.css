@@ -89,6 +89,25 @@
   --fg-rowHover: rgba(91, 141, 239, 0.06);
   --fg-rowSelected: rgba(91, 141, 239, 0.12);
   --fg-toolBg: #0a0a0c;
+  /* ── Round 2 additions (aios-skills-live-control fix cycle 1) ────────────
+     accentInk — the text colour that sits ON `--fg-accent`. The two themes
+     need OPPOSITE ink: dark's accent (#5b8def) is a light blue that carries
+     near-black text, light's (#2c62d4) is a deep blue that carries white. A
+     literal is wrong in exactly one theme, which is how LiveSurface's primary
+     button shipped `#0b0f19` and AutonomySurface's shipped `#fff`.
+     shadow*  — drop-shadow colours. A shadow is not decoration in light mode:
+     `rgba(0,0,0,0.2)` under a white card is a smudge, so light gets a cooler,
+     softer slate instead of the dark theme's plain black. */
+  --fg-accentInk: #0b0f19;
+  --fg-shadowSm: rgba(0, 0, 0, 0.15);
+  --fg-shadowMd: rgba(0, 0, 0, 0.2);
+
+  /* Elevation. Whole box-shadow values, not colours: a shadow that follows the
+     theme has to change spread as well as alpha, and a card lifted off a
+     near-black surface needs a different shape from one lifted off paper.
+     Dark: barely-there on the card, heavy under a floating panel. */
+  --fg-shadowCard: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --fg-shadowPopover: 0 8px 24px rgba(0, 0, 0, 0.5);
 
   /* ── Chat transcript: one identity per agent role (round 808) ─────────────
      Konrad, reading the manager chat: "pls colorcode the messages from the
@@ -234,6 +253,18 @@ html[data-theme="light"] {
   --fg-rowHover: rgba(44, 98, 212, 0.06);
   --fg-rowSelected: rgba(44, 98, 212, 0.10);
   --fg-toolBg: #f2f2ee;
+  /* accentInk inverts: white on the light theme's deeper accent. shadows go
+     cool slate and lighter — black at 0.2 reads as dirt on a paper surface. */
+  --fg-accentInk: #ffffff;
+  --fg-shadowSm: rgba(15, 23, 42, 0.10);
+  --fg-shadowMd: rgba(15, 23, 42, 0.16);
+
+  /* Elevation, light. On paper a shadow is the ONLY thing separating a card
+     from its background, so the card shadow gets more presence here than in
+     dark — where the surface tint already does that work — and the popover
+     shadow gets less alpha but more spread, or it reads as a smudge. */
+  --fg-shadowCard: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --fg-shadowPopover: 0 10px 28px rgba(0, 0, 0, 0.18);
 
   /* White on light's #2c62d4 accent — 5.00:1. The dark block's near-black ink
      would measure 4.20:1 on the same fill, which is why this one flips and the
