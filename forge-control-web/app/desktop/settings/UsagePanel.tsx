@@ -197,26 +197,11 @@ export function UsagePanel(): JSX.Element {
     <div data-usage-panel style={{ maxWidth: 940 }}>
       <style>{PANEL_CSS}</style>
 
-      <ShadowCostNote series={series.data ?? null} rate={rate.data ?? null} />
-
+      {/* Quota meters and activity gauges directly at the top */}
       <QuotaCard
         snapshot={quota.data ?? null}
         error={quota.error}
         onRefresh={refreshQuota}
-      />
-
-      <RateCard
-        rate={rate.data ?? null}
-        error={rate.error}
-        onSaved={(next) => {
-          // Price the whole panel at the new rate immediately — the euros are
-          // derived client-side from shadow_usd, so no refetch is needed for
-          // them. The series is invalidated anyway so its server-side `eur`
-          // fields (unused here, but part of the cached payload) do not sit
-          // stale in the cache for another five minutes.
-          qc.setQueryData(["usage", "rate"], next);
-          void qc.invalidateQueries({ queryKey: ["usage", "series"] });
-        }}
       />
 
       {series.error instanceof Error && (
@@ -224,7 +209,7 @@ export function UsagePanel(): JSX.Element {
       )}
 
       {series.isLoading && !series.data && (
-        <div style={{ ...cardStyle(), textAlign: "center", color: tokens.textFaint }}>
+        <div style={{ ...cardStyle(), textAlign: "center", color: tokens.textFaint, margin: "14px 0" }}>
           <span className="mono" style={{ fontSize: 12 }}>
             loading usage history…
           </span>
@@ -233,7 +218,9 @@ export function UsagePanel(): JSX.Element {
 
       {series.data && eurPerUsd !== null && hourly && daily && weekly && (
         <>
-          <MetricToggle metric={metric} onChange={setMetric} />
+          <div style={{ marginTop: 16 }}>
+            <MetricToggle metric={metric} onChange={setMetric} />
+          </div>
 
           <ChartCard
             unit="HOURS"
@@ -258,6 +245,24 @@ export function UsagePanel(): JSX.Element {
           <WeeklyCard slots={weekly} metric={metric} eurPerUsd={eurPerUsd} />
         </>
       )}
+
+      <div style={{ marginTop: 16 }}>
+        <RateCard
+          rate={rate.data ?? null}
+          error={rate.error}
+          onSaved={(next) => {
+            // Price the whole panel at the new rate immediately — the euros are
+            // derived client-side from shadow_usd, so no refetch is needed for
+            // them. The series is invalidated anyway so its server-side `eur`
+            // fields (unused here, but part of the cached payload) do not sit
+            // stale in the cache for another five minutes.
+            qc.setQueryData(["usage", "rate"], next);
+            void qc.invalidateQueries({ queryKey: ["usage", "series"] });
+          }}
+        />
+      </div>
+
+      <ShadowCostNote series={series.data ?? null} rate={rate.data ?? null} />
     </div>
   );
 }
@@ -273,68 +278,86 @@ function ShadowCostNote({
   series: UsageSeries | null;
   rate: RateSetting | null;
 }): JSX.Element {
+  const [open, setOpen] = useState(false);
   const through = series?.sampled_through ?? null;
   return (
     <div
       style={{
-        background: tokens.invariantBg,
-        border: `1px solid ${tokens.invariantBorder}`,
+        background: tokens.bgGutter,
+        border: `1px solid ${tokens.borderSoft}`,
         borderRadius: 10,
-        padding: "13px 15px",
+        padding: "10px 14px",
+        marginTop: 18,
         marginBottom: 16,
-        fontSize: 12.5,
-        lineHeight: 1.55,
+        fontSize: 12,
+        lineHeight: 1.5,
       }}
     >
       <div
-        className="mono"
-        style={{ fontSize: 10.5, color: tokens.textLabel, marginBottom: 6 }}
-      >
-        SHADOW COST — NOT AN INVOICE
-      </div>
-      <div style={{ color: tokens.textBody }}>
-        Every euro below is what these tokens <em>would</em> have cost on the
-        metered API. The subscription is flat-rate: none of this is money you
-        paid. The quota bars are the number that actually constrains you.
-      </div>
-      <div style={{ marginTop: 8, color: tokens.warn }}>
-        Token bars are not final until a run stops talking. A run&apos;s whole
-        rollup sits in the hour of its last billed turn, so when a long-idle
-        run resumes, its tokens move forward and the older hour gives them up
-        at the next hourly tick — a bar you read today can shrink tomorrow.
-        Until round 1356 the old hour kept them too, and the same run was
-        counted twice; that is now repaired on every tick. Tokens still
-        under-count when the executor restarts mid-run. Cost figures are
-        unaffected either way — summed per turn, never folded.
-      </div>
-      <div
-        className="mono"
+        onClick={() => setOpen((v) => !v)}
         style={{
-          marginTop: 8,
-          fontSize: 11,
-          color: tokens.textFaint,
           display: "flex",
-          flexWrap: "wrap",
-          gap: "4px 14px",
+          alignItems: "center",
+          justifyContent: "space-between",
+          cursor: "pointer",
+          userSelect: "none",
         }}
       >
-        <span>
-          attribution: {series ? series.attribution : "—"}
-        </span>
-        <span>
-          sampled through:{" "}
-          {through === null
-            ? series
-              ? "never — the hourly sampler has not written a bucket yet"
-              : "—"
-            : `${stampFor(Date.parse(through))} (${ago(through)})`}
-        </span>
-        {rate && (
-          <span>
-            rate: {rate.eur_per_usd} €/$ ({rate.source === "default" ? "default" : "set by you"})
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span
+            className="mono"
+            style={{ fontSize: 10.5, color: tokens.textLabel, fontWeight: 600 }}
+          >
+            SHADOW PRICING & SAMPLER METHODOLOGY
           </span>
-        )}
+          <span style={{ fontSize: 11.5, color: tokens.textMuted }}>
+            (Flat subscription · Not an invoice)
+          </span>
+        </div>
+        <span className="mono" style={{ fontSize: 11, color: tokens.textGhost }}>
+          {open ? "▾ collapse" : "▸ expand notes"}
+        </span>
       </div>
+
+      {open && (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${tokens.borderDivider}` }}>
+          <div style={{ color: tokens.textBody }}>
+            Every euro above is what these tokens <em>would</em> have cost on the
+            metered API. Konrad pays flat subscriptions: none of this is money billed.
+            The quota gauges above are the numbers that actually constrain you.
+          </div>
+          <div style={{ marginTop: 8, color: tokens.textSoft, fontSize: 11.5 }}>
+            Token bars reflect last billed turns per run; rollups consolidate on the hourly sampler tick.
+            Tokens under-count if the executor restarts mid-run. Cost figures are summed per turn.
+          </div>
+          <div
+            className="mono"
+            style={{
+              marginTop: 8,
+              fontSize: 10.5,
+              color: tokens.textFaint,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "4px 14px",
+            }}
+          >
+            <span>attribution: {series ? series.attribution : "—"}</span>
+            <span>
+              sampled through:{" "}
+              {through === null
+                ? series
+                  ? "never (awaiting first hourly tick)"
+                  : "—"
+                : `${stampFor(Date.parse(through))} (${ago(through)})`}
+            </span>
+            {rate && (
+              <span>
+                rate: {rate.eur_per_usd} €/$ ({rate.source === "default" ? "default" : "set by you"})
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

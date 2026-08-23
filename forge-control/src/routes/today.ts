@@ -49,8 +49,20 @@ function mapHermesToFleet(): TodayPayload["fleet"] {
       status = w.status === "running" && !!hb ? "render" : "idle";
       stateLabel = status;
     } else {
-      status = w.status === "running" ? "idle" : "idle";
-      stateLabel = "idle";
+      // Was `w.status === "running" ? "idle" : "idle"` — a tautology that
+      // forced every general-purpose worker to "idle" no matter what it was
+      // doing, AND it would've been the wrong signal even fixed naively:
+      // `w.status` ("running") just means the worker's tmux session is
+      // alive, not that it's on a task — every worker in `workers` is
+      // "running" whether it's mid-task or sitting idle. The real busy
+      // signal is the heartbeat's own `state` (schema: 'idle' | 'running' |
+      // 'blocked' | 'needs-input' | 'done') — "active" only when that says
+      // so. `stateLabel` is already the real state from the default above
+      // (hbStateRaw || w.status).
+      status =
+        hbStateRaw && hbStateRaw !== "idle" && hbStateRaw !== "done"
+          ? "active"
+          : "idle";
     }
 
     return { name: w.id, state: stateLabel, status };

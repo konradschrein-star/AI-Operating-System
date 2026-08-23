@@ -40,6 +40,7 @@ import capabilities from "./routes/capabilities.ts";
 import tasks from "./routes/tasks.ts";
 import integrations from "./routes/integrations.ts";
 import daily from "./routes/daily.ts";
+import journal from "./routes/journal.ts";
 import terminal from "./routes/terminal.ts";
 import map from "./routes/map.ts";
 import { startCronTick } from "./lib/cron-tick.ts";
@@ -143,6 +144,9 @@ app.get("/", (c) =>
       "/api/usage/series",
       "/api/usage/rate (GET, PUT)",
       "/api/map (?only=businesses,processes,units,domains,storage,canvases)",
+      "/api/journal/day?day=YYYY-MM-DD",
+      "/api/journal/upload",
+      "/api/journal/entries/:id",
     ],
   }),
 );
@@ -216,6 +220,9 @@ app.route("/api/integrations", integrations);
 // The Daily system (docs/SPEC-DAILY-SURFACE.md): evening plan, tasks, habits,
 // day score. Backs the GOALS/TASKS surface that replaced the placeholder.
 app.route("/api/daily", daily);
+// JOURNAL surface (aios-journal-and-mentor): paper-photo capture, dated and
+// indexed over the same /opt/ai-os/uploads/ tree chat attachments use.
+app.route("/api/journal", journal);
 app.route("/api/terminal", terminal);
 // The MAP surface's aggregator: businesses (vault), PM2, systemd, nginx
 // ingress, storage/datastores and planning canvases in one payload, each

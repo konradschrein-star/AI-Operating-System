@@ -14,7 +14,7 @@
  *
  * THE GOVERNING RULE (03-quality.md §2.1): every assertion is flipped across
  * its boundary in BOTH directions. A classifier that returned today's constants
- * would satisfy "excluded_extension fires on an .excalidraw.md"; it would not
+ * would satisfy "empty_drawing fires on an .excalidraw.md"; it would not
  * survive "…and the neighbouring input does NOT produce that reason", nor
  * "a set where every absence is explained yields unexplained_count 0, and
  * adding ONE ordinary note makes it 1".
@@ -64,32 +64,75 @@ describe("classify — the five reasons, each flipped against its neighbour", ()
     assert.equal(classify(healthy()), null);
   });
 
-  test("excluded_extension fires on .excalidraw.md, not on .md", () => {
+  test("a drawing WITH content is unexplained, not excluded", () => {
+    // The 2026-08-23 reversal. A drawing used to be classified
+    // `excluded_extension` — "km-indexer.js:29 skips these and is right to".
+    // Now that lib/excalidraw-extract.ts renders a drawing as text, an
+    // unindexed one is a real gap and has to be counted as one.
     const drawing = healthy({
       path: "20_Coding/Architecture.excalidraw.md",
+      bytes: 33107,
+      hasBody: true,
       inEmbeddings: false,
     });
     const verdict = classify(drawing);
-    assert.equal(verdict?.reason, "excluded_extension");
-    assert.equal(verdict?.detail, "km-indexer.js:29 EXCLUDED_EXTENSIONS");
+    assert.equal(verdict?.reason, "unexplained");
+    // The detail names the extractor AND the exclusion still in force upstream,
+    // so the operator can check both claims.
+    assert.match(verdict?.detail ?? "", /excalidraw-extract\.ts/);
+    assert.match(verdict?.detail ?? "", /EXCLUDED_EXTENSIONS/);
 
-    // NEIGHBOUR: identical in every respect but the extension. Same absence,
-    // different reason — so the rule is reading the path, not returning a
-    // constant.
-    const plain = healthy({ path: "20_Coding/Architecture.md", inEmbeddings: false });
+    // NEIGHBOUR: identical in every respect but the extension. Same reason,
+    // different detail — a plain note's absence is not blamed on km-indexer.
+    const plain = healthy({
+      path: "20_Coding/Architecture.md",
+      bytes: 33107,
+      hasBody: true,
+      inEmbeddings: false,
+    });
     assert.equal(classify(plain)?.reason, "unexplained");
+    assert.doesNotMatch(classify(plain)?.detail ?? "", /EXCLUDED_EXTENSIONS/);
   });
 
-  test("excluded_extension is case-insensitive but not a substring match", () => {
+  test("empty_drawing fires on a blank .excalidraw.md, not on a blank .md", () => {
+    const blank = healthy({
+      path: "20_Coding/Blank.excalidraw.md",
+      bytes: 527,
+      hasBody: false,
+      inEmbeddings: false,
+    });
+    assert.equal(classify(blank)?.reason, "empty_drawing");
+    assert.match(classify(blank)?.detail ?? "", /527 bytes/);
+
+    // NEIGHBOUR: same emptiness, ordinary extension → the other reason. The two
+    // are separate because the remedy is: draw something / write something.
+    const note = healthy({
+      path: "20_Coding/Blank.md",
+      bytes: 527,
+      hasBody: false,
+      inEmbeddings: false,
+    });
+    assert.equal(classify(note)?.reason, "frontmatter_only");
+  });
+
+  test("the drawing rule is case-insensitive but not a substring match", () => {
     assert.equal(
-      classify(healthy({ path: "a/B.EXCALIDRAW.MD", inEmbeddings: false }))?.reason,
-      "excluded_extension",
+      classify(
+        healthy({ path: "a/B.EXCALIDRAW.MD", hasBody: false, inEmbeddings: false }),
+      )?.reason,
+      "empty_drawing",
     );
-    // NEIGHBOUR: the marker appears, but not as the suffix.
+    // NEIGHBOUR: the marker appears, but not as the suffix — so it is an
+    // ordinary note and gets the ordinary reason.
     assert.equal(
-      classify(healthy({ path: "a/excalidraw.md.backup.md", inEmbeddings: false }))
-        ?.reason,
-      "unexplained",
+      classify(
+        healthy({
+          path: "a/excalidraw.md.backup.md",
+          hasBody: false,
+          inEmbeddings: false,
+        }),
+      )?.reason,
+      "frontmatter_only",
     );
   });
 
@@ -178,7 +221,7 @@ describe("classify — the five reasons, each flipped against its neighbour", ()
 
   test("EVERY reason carries a non-empty detail — none is null or 'unknown'", () => {
     const inputs: FileFacts[] = [
-      healthy({ path: "a.excalidraw.md", inEmbeddings: false }),
+      healthy({ path: "a.excalidraw.md", hasBody: false, inEmbeddings: false }),
       healthy({ path: "b.md", bytes: 0, hasBody: false, inEmbeddings: false }),
       healthy({ path: "c.md", bytes: 40, hasBody: false, inEmbeddings: false }),
       healthy({ path: "d.md", inDisk: false }),
@@ -198,8 +241,8 @@ describe("classify — the five reasons, each flipped against its neighbour", ()
     assert.deepEqual(
       [...seen].sort(),
       [
+        "empty_drawing",
         "empty_file",
-        "excluded_extension",
         "frontmatter_only",
         "stale_row_file_missing",
         "unexplained",
@@ -221,7 +264,8 @@ function explainedVault(): ReconcileInput {
       files: [
         { path: "90_AI_OS/Spec.md", bytes: 5000, hasBody: null },
         { path: "30_YouTube/Plan.md", bytes: 3000, hasBody: null },
-        { path: "20_Coding/Arch.excalidraw.md", bytes: 120000, hasBody: null },
+        // A blank drawing: 120 KB of geometry the extractor finds no label in.
+        { path: "20_Coding/Arch.excalidraw.md", bytes: 120000, hasBody: false },
         { path: "Untitled.md", bytes: 0, hasBody: null },
         { path: "brand guidelines.md", bytes: 57, hasBody: false },
       ],
@@ -248,7 +292,7 @@ describe("reconcile — unexplained_count is the whole product", () => {
   test("every absence explained ⇒ unexplained_count === 0", () => {
     const h = reconcile(explainedVault());
     assert.equal(h.unexplained_count, 0);
-    assert.equal(countByReason(h, "excluded_extension"), 1);
+    assert.equal(countByReason(h, "empty_drawing"), 1);
     assert.equal(countByReason(h, "empty_file"), 1);
     assert.equal(countByReason(h, "frontmatter_only"), 1);
     assert.equal(countByReason(h, "stale_row_file_missing"), 1);
@@ -284,14 +328,14 @@ describe("reconcile — unexplained_count is the whole product", () => {
   test("counts are DERIVED — a different vault yields different numbers", () => {
     const input = explainedVault();
     input.disk.files.push(
-      { path: "a.excalidraw.md", bytes: 10, hasBody: null },
-      { path: "b.excalidraw.md", bytes: 10, hasBody: null },
+      { path: "a.excalidraw.md", bytes: 10, hasBody: false },
+      { path: "b.excalidraw.md", bytes: 10, hasBody: false },
     );
     const h = reconcile(input);
-    assert.equal(countByReason(h, "excluded_extension"), 3);
+    assert.equal(countByReason(h, "empty_drawing"), 3);
     assert.equal(h.disk.md_files, 7);
     // The 15/10/1/1 of 2026-08-18 appear nowhere in the implementation.
-    assert.notEqual(countByReason(h, "excluded_extension"), 15);
+    assert.notEqual(countByReason(h, "empty_drawing"), 15);
   });
 
   test("every discrepancy carries a non-null reason and a non-empty detail", () => {

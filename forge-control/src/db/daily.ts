@@ -1,10 +1,11 @@
 /**
- * Daily goals / habits / task planner data access.
- * Schema: db/migrations/0042_daily_goals.sql. Spec: docs/spec-daily-goals.md.
+ * Daily goals / habits / task planner / life goals data access.
+ * Schema: db/migrations/0042_daily_goals.sql, 0043_goals_and_calendar.sql.
+ * Spec: docs/spec-daily-goals.md.
  *
  * All SQL for the GOALS/TASKS surface lives here; routes/daily.ts is thin.
  *
- * Two conventions carried over from db/reminders.ts, both load-bearing:
+ * Conventions carried over from db/reminders.ts:
  *
  *   1. A module-local pg.Pool on DATABASE_URL (content_forge — the same
  *      database as reminders/runs/ui_dismissals).
@@ -108,10 +109,34 @@ export interface DayTask {
   carried: number;
   notes: string | null;
   done_at: string | null;
+  start_time: string | null;
+  duration_min: number | null;
+  gcal_event_id: string | null;
   created_at: string;
   updated_at: string;
   /** Calendar days since creation, in Berlin terms. > 14 is bad news (§6). */
   age_days: number;
+}
+
+export type GoalHorizon = "quarterly" | "yearly" | "long_term";
+export type LifeGoalStatus = "planned" | "in_progress" | "done" | "parked" | "abandoned";
+
+export const GOAL_HORIZONS: readonly string[] = ["quarterly", "yearly", "long_term"];
+export const LIFE_GOAL_STATUSES: readonly string[] = ["planned", "in_progress", "done", "parked", "abandoned"];
+
+export interface LifeGoal {
+  id: string;
+  title: string;
+  status: string;
+  horizon: string;
+  area: string | null;
+  progress: number;
+  started_day: Day | null;
+  target_day: Day | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /** carried >= STALE_AT puts a task in the "do it or kill it" strip (§5). */
@@ -125,18 +150,19 @@ const HABIT_COLS = `id::text, key, label, icon, grp, polarity, weight, sort,
                     active, created_at::text`;
 
 /**
- * `age_days` is computed in SQL rather than from created_at in Node. The text
- * form Postgres hands back for a timestamptz ("2026-08-18 22:14:45.96+00") is
- * not ISO-8601; Date.parse() happens to accept it via V8's lenient fallback
- * parser, which is a dependency no one should carry for a number the UI renders
- * as a warning chip. Postgres has the date type — let it subtract.
+ * `age_days` is computed in SQL rather than from created_at in Node.
  */
 const TASK_COLS = `id::text, title, area, importance, status, planned_day::text,
                    due_day::text, est_min, carried, notes, done_at::text,
+                   start_time::text, duration_min, gcal_event_id,
                    created_at::text, updated_at::text,
                    ((now() AT TIME ZONE 'Europe/Berlin')::date
                     - (created_at AT TIME ZONE 'Europe/Berlin')::date)::int
                      AS age_days`;
+
+const LIFE_GOAL_COLS = `id::text, title, status, horizon, area, progress,
+                         started_day::text, target_day::text, completed_at::text,
+                         notes, created_at::text, updated_at::text`;
 
 /** Phone order: the four rows appear top to bottom as the day runs. */
 const GRP_ORDER = `CASE grp WHEN 'morning' THEN 0 WHEN 'body' THEN 1
@@ -144,9 +170,7 @@ const GRP_ORDER = `CASE grp WHEN 'morning' THEN 0 WHEN 'body' THEN 1
                             ELSE 4 END`;
 
 /**
- * Thrown when a draft edit lands on a committed day. The freeze is the product
- * (spec §1) — a plan may be completed or explicitly abandoned after commit,
- * never quietly rewritten to match what happened.
+ * Retained for backward-compatibility if referenced.
  */
 export class PlanCommittedError extends Error {
   constructor(
@@ -175,11 +199,6 @@ export async function getPlan(day: Day): Promise<DayPlan | null> {
 
 /**
  * Normalise a caller-supplied Big 3 into stored shape.
- *
- * Ids are minted here when absent so that goal status updates have something
- * stable to address; an id the caller already sent (a re-ordered draft) is
- * preserved, and with it the status/done_at the goal already carried — an
- * evening re-plan must not un-tick a goal that was already done.
  */
 export function normaliseBig3(
   input: Array<Partial<Big3Goal> & { text: string }>,
@@ -199,13 +218,8 @@ export function normaliseBig3(
 }
 
 /**
- * Draft edit. Only the fields actually supplied move — an absent field is
- * "leave it", not "clear it", because treating a missing key as a delete is how
- * a partial write from a half-loaded client wipes a plan.
- *
- * The `WHERE day_plans.committed_at IS NULL` on the conflict branch is the
- * enforcement, not the route's pre-check: zero rows back can only mean "the row
- * existed and was committed", because a missing row would have inserted.
+ * Fluid draft edit. Updating plan text, intent, and goals remains allowed even
+ * after morning commit so the user can adapt freely throughout the day.
  */
 export async function upsertPlanDraft(
   day: Day,
@@ -227,22 +241,17 @@ export async function upsertPlanDraft(
             generated_at = CASE WHEN $4::text IS NULL THEN day_plans.generated_at
                                 ELSE now() END,
             updated_at   = now()
-      WHERE day_plans.committed_at IS NULL
      RETURNING ${PLAN_COLS}`,
     [day, big3, patch.intent ?? null, patch.generatedBy ?? null],
   );
   const row = r.rows[0];
-  if (!row) {
-    const current = await getPlan(day);
-    throw new PlanCommittedError(day, current?.committed_at ?? "unknown");
-  }
+  if (!row) throw new Error(`upsertPlanDraft(${day}): upsert returned no row`);
   return row;
 }
 
 /**
- * Freeze the day. Idempotent: a second call keeps the ORIGINAL committed_at,
- * because "committed at 08:12" is evidence, and re-stamping it would let a
- * 23:00 re-commit launder a day's worth of hindsight.
+ * Freeze the day / mark morning plan committed.
+ * Idempotent: a second call keeps the original committed_at.
  */
 export async function commitDay(day: Day): Promise<DayPlan> {
   const r = await pool.query<DayPlan>(
@@ -259,9 +268,7 @@ export async function commitDay(day: Day): Promise<DayPlan> {
 }
 
 /**
- * Set one goal's status. Legal before AND after commit — this is the only way a
- * committed day is allowed to change. Returns null when the day or the goal
- * does not exist, so the route can 404 with the right noun.
+ * Set one goal's status. Legal before AND after commit.
  */
 export async function setGoalStatus(
   day: Day,
@@ -278,9 +285,7 @@ export async function setGoalStatus(
   next[idx] = {
     ...goal,
     status,
-    // done_at is a fact about the tick, so untaking the tick clears it.
     done_at: status === "done" ? (goal.done_at ?? new Date().toISOString()) : null,
-    // The reason belongs to the abandonment; re-opening the goal retracts it.
     reason: status === "abandoned" ? reason : null,
   };
   const r = await pool.query<DayPlan>(
@@ -292,7 +297,7 @@ export async function setGoalStatus(
   return r.rows[0] ?? null;
 }
 
-/** Night rating + reflection. Absent fields are left alone, as in the draft. */
+/** Night rating + reflection. */
 export async function reflect(
   day: Day,
   patch: { subjective?: number | null; reflection?: string | null },
@@ -331,7 +336,6 @@ export async function getHabit(id: string): Promise<Habit | null> {
   return r.rows[0] ?? null;
 }
 
-/** Returns null when `key` is taken — the route turns that into a 409. */
 export async function createHabit(input: {
   key: string;
   label: string;
@@ -360,11 +364,6 @@ export async function createHabit(input: {
   return r.rows[0] ?? null;
 }
 
-/**
- * Edit or deactivate. There is deliberately no deleteHabit: habit_logs cascade
- * on delete, so removing a habit would silently rewrite every historical day
- * score that counted it. `active = false` is the retirement.
- */
 export async function updateHabit(
   id: string,
   patch: Partial<Pick<Habit, "label" | "icon" | "grp" | "polarity" | "weight" | "sort" | "active">>,
@@ -399,12 +398,6 @@ export async function listTicks(day: Day): Promise<HabitTick[]> {
   return r.rows;
 }
 
-/**
- * Tick or untick. `done: false` DELETES the row rather than storing false: an
- * absent row is the schema's "not done" (§2), and keeping both a missing row
- * and a `done = false` row would give one fact two representations that every
- * future query would have to agree about.
- */
 export async function setTick(day: Day, habitId: string, done: boolean): Promise<HabitTick[]> {
   if (done) {
     await pool.query(
@@ -426,16 +419,6 @@ export type TaskView = "today" | "week" | "backlog" | "all";
 
 export const TASK_VIEWS: readonly TaskView[] = ["today", "week", "backlog", "all"];
 
-/**
- * `today` deliberately includes OVERDUE open work (planned_day < today), not
- * only planned_day = today. Rollover normally sweeps those forward, but between
- * midnight and the next rollover call they are still today's problem, and a
- * list that hides them is the Notion task graveyard rebuilt.
- *
- * Scoring does NOT use this widening — task_pct counts planned_day = day
- * exactly (see dayBundle), so a day's score cannot change retroactively when
- * yesterday's slippage lands on it.
- */
 export async function listTasks(opts: {
   view?: TaskView;
   area?: string;
@@ -488,12 +471,16 @@ export async function createTask(input: {
   due_day?: Day | null;
   est_min?: number | null;
   notes?: string | null;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
 }): Promise<DayTask> {
   const r = await pool.query<DayTask>(
     `INSERT INTO day_tasks (title, area, importance, status, planned_day, due_day,
-                            est_min, notes, done_at)
+                            est_min, notes, start_time, duration_min, gcal_event_id, done_at)
      VALUES ($1, $2::text, COALESCE($3::smallint, 2), COALESCE($4::text, 'todo'),
              $5::date, $6::date, $7::smallint, $8::text,
+             $9::timestamptz, COALESCE($10::smallint, 30), $11::text,
              CASE WHEN $4::text = 'done' THEN now() ELSE NULL END)
      RETURNING ${TASK_COLS}`,
     [
@@ -505,6 +492,9 @@ export async function createTask(input: {
       input.due_day ?? null,
       input.est_min ?? null,
       input.notes ?? null,
+      input.start_time ?? null,
+      input.duration_min ?? null,
+      input.gcal_event_id ?? null,
     ],
   );
   const row = r.rows[0];
@@ -512,16 +502,6 @@ export async function createTask(input: {
   return row;
 }
 
-/**
- * Patch a task. Only supplied keys move, and `null` IS a legal value here
- * (unlike the plan draft) because unscheduling a task by clearing planned_day
- * is a real gesture the TASKS view offers — the caller must be able to say
- * "make it null" as distinct from "leave it".
- *
- * `carried` is patchable so the stale strip's "Do it today" can reset the
- * counter in the same request that re-plans the task; without it the strip
- * would re-appear the next morning for a task he had just pinned.
- */
 export async function updateTask(
   id: string,
   patch: {
@@ -534,6 +514,9 @@ export async function updateTask(
     est_min?: number | null;
     notes?: string | null;
     carried?: number;
+    start_time?: string | null;
+    duration_min?: number | null;
+    gcal_event_id?: string | null;
   },
 ): Promise<DayTask | null> {
   const sets: string[] = [];
@@ -550,11 +533,11 @@ export async function updateTask(
   if (patch.est_min !== undefined) put("est_min", patch.est_min, "::smallint");
   if (patch.notes !== undefined) put("notes", patch.notes, "::text");
   if (patch.carried !== undefined) put("carried", patch.carried, "::smallint");
+  if (patch.start_time !== undefined) put("start_time", patch.start_time, "::timestamptz");
+  if (patch.duration_min !== undefined) put("duration_min", patch.duration_min, "::smallint");
+  if (patch.gcal_event_id !== undefined) put("gcal_event_id", patch.gcal_event_id, "::text");
   if (patch.status !== undefined) {
     put("status", patch.status, "::text");
-    // done_at moves in the SAME statement as status so the two can never
-    // disagree: a 'done' row always carries its completion timestamp (the stats
-    // output chart folds on it), and un-doing clears it.
     vals.push(patch.status);
     sets.push(
       `done_at = CASE WHEN $${vals.length}::text = 'done'
@@ -575,14 +558,6 @@ export async function deleteTask(id: string): Promise<boolean> {
   return (r.rowCount ?? 0) > 0;
 }
 
-/**
- * The anti-graveyard sweep (§5). Every open task planned BEFORE `to` moves onto
- * `to` and its carried counter goes up by one.
- *
- * Idempotent by construction rather than by a ledger: after the first call
- * every affected row has planned_day = to, so `planned_day < to` matches
- * nothing on the second. Five calls in one morning still yield carried = 1.
- */
 export async function rolloverTasks(to: Day): Promise<DayTask[]> {
   const r = await pool.query<DayTask>(
     `UPDATE day_tasks
@@ -594,6 +569,125 @@ export async function rolloverTasks(to: Day): Promise<DayTask[]> {
     [to],
   );
   return r.rows;
+}
+
+// ---------------------------------------------------------------------------
+// Life Goals
+// ---------------------------------------------------------------------------
+
+export async function listLifeGoals(opts: {
+  horizon?: string;
+  status?: string;
+  area?: string;
+} = {}): Promise<LifeGoal[]> {
+  const where: string[] = [];
+  const vals: unknown[] = [];
+  const put = (v: unknown): string => {
+    vals.push(v);
+    return `$${vals.length}`;
+  };
+
+  if (opts.horizon) where.push(`horizon = ${put(opts.horizon)}`);
+  if (opts.status) where.push(`status = ${put(opts.status)}`);
+  if (opts.area) where.push(`area = ${put(opts.area)}`);
+
+  const r = await pool.query<LifeGoal>(
+    `SELECT ${LIFE_GOAL_COLS} FROM life_goals
+     ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+     ORDER BY CASE horizon WHEN 'quarterly' THEN 0 WHEN 'yearly' THEN 1 ELSE 2 END,
+              progress DESC, created_at ASC`,
+    vals,
+  );
+  return r.rows;
+}
+
+export async function getLifeGoal(id: string): Promise<LifeGoal | null> {
+  const r = await pool.query<LifeGoal>(
+    `SELECT ${LIFE_GOAL_COLS} FROM life_goals WHERE id = $1`,
+    [id],
+  );
+  return r.rows[0] ?? null;
+}
+
+export async function createLifeGoal(input: {
+  title: string;
+  status?: string | null;
+  horizon?: string | null;
+  area?: string | null;
+  progress?: number | null;
+  started_day?: Day | null;
+  target_day?: Day | null;
+  notes?: string | null;
+}): Promise<LifeGoal> {
+  const r = await pool.query<LifeGoal>(
+    `INSERT INTO life_goals (title, status, horizon, area, progress, started_day, target_day, notes, completed_at)
+     VALUES ($1, COALESCE($2::text, 'planned'), COALESCE($3::text, 'quarterly'),
+             $4::text, COALESCE($5::smallint, 0), $6::date, $7::date, $8::text,
+             CASE WHEN $2::text = 'done' THEN now() ELSE NULL END)
+     RETURNING ${LIFE_GOAL_COLS}`,
+    [
+      input.title,
+      input.status ?? null,
+      input.horizon ?? null,
+      input.area ?? null,
+      input.progress ?? null,
+      input.started_day ?? null,
+      input.target_day ?? null,
+      input.notes ?? null,
+    ],
+  );
+  const row = r.rows[0];
+  if (!row) throw new Error("createLifeGoal: insert returned no row");
+  return row;
+}
+
+export async function updateLifeGoal(
+  id: string,
+  patch: {
+    title?: string;
+    status?: string;
+    horizon?: string;
+    area?: string | null;
+    progress?: number;
+    started_day?: Day | null;
+    target_day?: Day | null;
+    notes?: string | null;
+  },
+): Promise<LifeGoal | null> {
+  const sets: string[] = [];
+  const vals: unknown[] = [id];
+  const put = (col: string, v: unknown, cast = ""): void => {
+    vals.push(v);
+    sets.push(`${col} = $${vals.length}${cast}`);
+  };
+
+  if (patch.title !== undefined) put("title", patch.title);
+  if (patch.status !== undefined) {
+    put("status", patch.status, "::text");
+    vals.push(patch.status);
+    sets.push(
+      `completed_at = CASE WHEN $${vals.length}::text = 'done' THEN COALESCE(life_goals.completed_at, now()) ELSE NULL END`,
+    );
+  }
+  if (patch.horizon !== undefined) put("horizon", patch.horizon, "::text");
+  if (patch.area !== undefined) put("area", patch.area, "::text");
+  if (patch.progress !== undefined) put("progress", patch.progress, "::smallint");
+  if (patch.started_day !== undefined) put("started_day", patch.started_day, "::date");
+  if (patch.target_day !== undefined) put("target_day", patch.target_day, "::date");
+  if (patch.notes !== undefined) put("notes", patch.notes, "::text");
+
+  if (sets.length === 0) return getLifeGoal(id);
+  const r = await pool.query<LifeGoal>(
+    `UPDATE life_goals SET ${sets.join(", ")}, updated_at = now()
+      WHERE id = $1 RETURNING ${LIFE_GOAL_COLS}`,
+    vals,
+  );
+  return r.rows[0] ?? null;
+}
+
+export async function deleteLifeGoal(id: string): Promise<boolean> {
+  const r = await pool.query(`DELETE FROM life_goals WHERE id = $1`, [id]);
+  return (r.rowCount ?? 0) > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -609,12 +703,6 @@ export interface DayBundle {
   score: DayScore & { provisional: boolean };
 }
 
-/**
- * Everything one day needs.
- *
- * `provisional` is true for today: the score is real but the day is not over,
- * and the UI must say so rather than let a 10:00 number read as a verdict.
- */
 export async function dayBundle(day: Day, today: Day): Promise<DayBundle> {
   const [plan, habits, ticks, tasks, tickHistory] = await Promise.all([
     getPlan(day),
@@ -632,11 +720,7 @@ export async function dayBundle(day: Day, today: Day): Promise<DayBundle> {
     else byHabit.set(row.habit_id, [row.day]);
   }
 
-  // Scoring counts only tasks planned for THIS day — see listTasks on why the
-  // widened "today" view is not the scoring set.
   const dayTasks = tasks.filter((t) => t.planned_day === day);
-  // An uncommitted plan has no denominator: nothing was "said" yet, so there is
-  // nothing to score against and goal_pct renormalises away (§3).
   const committedBig3 = plan?.committed_at ? plan.big3 : [];
 
   const score = computeDayScore({
@@ -669,13 +753,6 @@ interface TickRow {
   habit_id: string;
 }
 
-/**
- * Every tick ever, for streak and rate maths.
- *
- * Unbounded on purpose: `best` streak is an all-time claim, and windowing it
- * would silently shrink a record he actually set. The bound is physical —
- * 18 habits × 365 days is under 7k rows a year, projected to two columns.
- */
 async function allTickHistory(): Promise<TickRow[]> {
   const r = await pool.query<TickRow>(
     `SELECT day::text, habit_id::text FROM habit_logs WHERE done ORDER BY day`,
@@ -718,14 +795,6 @@ export interface DailyStats {
 export const STATS_DEFAULT_DAYS = 90;
 export const STATS_MAX_DAYS = 366;
 
-/**
- * The STATS tab in one call.
- *
- * Day scores are recomputed here from stored rows rather than cached on
- * day_plans. A cached score is a second copy of the formula that goes stale the
- * moment a habit's weight changes — and the whole point of §3 is that there is
- * exactly one formula, evaluated in exactly one place.
- */
 export async function dailyStats(days: number, today: Day): Promise<DailyStats> {
   const from = shiftDay(today, -(days - 1));
   const window = daysBack(today, days).reverse();
@@ -752,8 +821,6 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
         GROUP BY planned_day`,
       [from, today],
     ),
-    // Folded in Berlin terms, not UTC: a task finished at 00:40 local belongs
-    // to the day he was awake for, which is the day the bar chart shows.
     pool.query<{ day: Day; n: number }>(
       `SELECT (done_at AT TIME ZONE 'Europe/Berlin')::date::text AS day,
               count(*)::int AS n
@@ -774,7 +841,6 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
 
   const activeIds = new Set(habits.map((h) => h.id));
   const weightOf = new Map(habits.map((h) => [h.id, h.weight]));
-  /** day → Σ weight of ticked ACTIVE habits. A retired habit does not score. */
   const doneWeightByDay = new Map<Day, number>();
   const daysByHabit = new Map<string, Day[]>();
   for (const row of tickHistory) {
@@ -798,9 +864,6 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
     const planned = plannedByDay.get(day);
     const doneWeight = doneWeightByDay.get(day) ?? 0;
     const s = computeDayScore({
-      // Reconstructed rather than row-by-row: computeDayScore consumes weight
-      // sums, and one "done" bucket plus one "not done" bucket reproduces them
-      // exactly — same formula, same module, 90× fewer objects.
       habits:
         totalWeight > 0
           ? [
@@ -844,8 +907,6 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
   let goalsDone = 0;
   let abandoned = 0;
   for (const p of plans.rows) {
-    // Only committed days count. An uncommitted draft was never "said", and
-    // scoring it would let the evening job's suggestions damage his record.
     if (!p.committed_at) continue;
     for (const g of p.big3) {
       committed++;
@@ -854,9 +915,6 @@ export async function dailyStats(days: number, today: Day): Promise<DailyStats> 
     }
   }
 
-  // The day streak is scoped to the requested window on purpose: it answers
-  // "how am I doing lately", and a 90-day question should not silently depend
-  // on data outside the 90 days it charted.
   const fulfilledDays = dayRows
     .filter((d) => d.score !== null && d.score >= FULFILLED_AT)
     .map((d) => d.day);

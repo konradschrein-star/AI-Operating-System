@@ -840,6 +840,7 @@ export async function readAgySubstrate(nowMs: number = Date.now()): Promise<AgyS
  * `forge:ui` secret block — never a brief, a chat message, a log line, a URL
  * or a query string.
  */
+export const GITHUB_PAT_PRIMARY = "github-pat-konrad";
 export const GITHUB_PAT_SECRET = "github-pat";
 
 /** Overridable so a test can point the probe at a local throwaway server and
@@ -1234,19 +1235,23 @@ export function agyBinIsAbsolute(): boolean {
 }
 
 /**
- * Resolve the GitHub PAT, and say plainly what is there when it is not the one
- * we want. The store on this box already holds `github-pat-konrad` and
- * `github-pat-shane`; picking one of those silently would be a guess about
- * which account Konrad means, and this lane exists to stop exactly that class
- * of confident invention. So: the canonical name only, with the near misses
- * NAMED in the absent detail so the next step is obvious.
+ * Resolve the GitHub PAT.
+ * Checks `github-pat-konrad` first, then `github-pat`, or returns near-miss candidates from listSecrets().
  */
 export async function resolveGithubToken(
   listNames: () => Promise<string[]>,
   readSecret: (name: string) => Promise<string | null>,
-): Promise<{ token: string } | { token: null; candidates: string[] }> {
+): Promise<{ token: string; name?: string } | { token: null; candidates: string[] }> {
+  const konradStored = await readSecret(GITHUB_PAT_PRIMARY);
+  if (konradStored !== null && konradStored.trim() !== "") {
+    return { token: konradStored.trim(), name: GITHUB_PAT_PRIMARY };
+  }
+
   const stored = await readSecret(GITHUB_PAT_SECRET);
-  if (stored !== null && stored.trim() !== "") return { token: stored.trim() };
+  if (stored !== null && stored.trim() !== "") {
+    return { token: stored.trim(), name: GITHUB_PAT_SECRET };
+  }
+
   const names = await listNames();
   return {
     token: null,
@@ -1327,3 +1332,134 @@ export async function recheckAllConnections(deps: {
   }
   return results;
 }
+
+/* ── Canonical Action Text Constants ────────────────────────────────────── */
+
+export const GOOGLE_ACTIONS = {
+  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+  unknown: "Press Test connection to run a real token refresh plus a Gmail profile call.",
+  broken: `Re-authorise at a terminal: ${GOOGLE_REAUTH_COMMAND}`,
+} as const;
+
+export const AGY_ACTIONS = {
+  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+  unknown: "Press Probe to run the CLI and see what it says.",
+  broken: `Sign in at a terminal on this box: run \`${AGY_SIGNIN_COMMAND}\`, open the printed Google URL in a browser, and paste the authorization code back into the terminal within 60 seconds. There is no login subcommand and no browser flow this OS can drive for you.`,
+} as const;
+
+export const GITHUB_ACTIONS = {
+  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
+  unknown: "Press Probe to make a real GET https://api.github.com/user with the stored token.",
+  broken: `The stored token was rejected. Mint a new personal access token on GitHub and store it through the secure panel under the name \`${GITHUB_PAT_SECRET}\` — never paste it into a chat.`,
+} as const;
+
+export const GITHUB_ABSENT_ACTION = `Store a GitHub personal access token through the secure panel (POST /api/secrets) under the name \`${GITHUB_PAT_SECRET}\` or \`${GITHUB_PAT_PRIMARY}\`. The value must never travel through a chat message, a brief, a log line or a URL.`;
+
+/* ── Parallel Probe-All ─────────────────────────────────────────────────── */
+
+export interface ProbeAllResult {
+  connections: ConnectionStatus[];
+  timestamp: string;
+}
+
+export async function probeAllConnections(deps: {
+  listSecretNames: () => Promise<string[]>;
+  readSecret: (name: string) => Promise<string | null>;
+  probeGoogleFn?: (opts?: { fetchImpl?: typeof fetch; timeoutMs?: number }) => Promise<GoogleProbeResult>;
+  probeAgyFn?: (opts?: { env?: NodeJS.ProcessEnv }) => Promise<ConnectionRecord>;
+  probeGithubFn?: (token: string, opts?: HttpProbeOptions) => Promise<ConnectionRecord>;
+  writeRecordFn?: (id: string, record: ConnectionRecord) => Promise<ConnectionRecord>;
+  now?: number;
+  intervalMs?: number;
+}): Promise<ProbeAllResult> {
+  const nowMs = deps.now ?? Date.now();
+  const timestamp = new Date(nowMs).toISOString();
+  const intervalMs = deps.intervalMs ?? connectionRecheckIntervalMs();
+  const clock: RenderClock = { now: nowMs, intervalMs };
+  const writeRec = deps.writeRecordFn ?? writeConnectionRecord;
+  const doProbeGoogle = deps.probeGoogleFn ?? probeGoogle;
+  const doProbeAgy = deps.probeAgyFn ?? probeAgy;
+  const doProbeGithub = deps.probeGithubFn ?? probeGithub;
+
+  const probeGoogleTask = async (): Promise<ConnectionStatus> => {
+    const tokenPath = googleTokenPath();
+    let filePresent = false;
+    try {
+      await access(tokenPath, FS.R_OK);
+      filePresent = true;
+    } catch {
+      filePresent = false;
+    }
+    if (!filePresent) {
+      return absentConnectionStatus(
+        "google",
+        `No credential file at ${tokenPath} — the Google tooling on this box has never been connected.`,
+        `Run \`${GOOGLE_REAUTH_COMMAND}\` at a terminal and complete the consent in a browser.`,
+      );
+    }
+    const result = await doProbeGoogle();
+    const stored = await writeRec("google", result.record);
+    return buildConnectionStatus("google", stored, clock, GOOGLE_ACTIONS);
+  };
+
+  const probeAgyTask = async (): Promise<ConnectionStatus> => {
+    const isPresent = await agyBinaryPresent().catch(() => false);
+    if (!isPresent) {
+      return absentConnectionStatus(
+        "agy",
+        `${AGY_BIN} is not present or not executable — the Antigravity CLI is not installed on this box.`,
+        `Install the Antigravity CLI so that ${AGY_BIN} exists, then run \`${AGY_SIGNIN_COMMAND}\` once to sign in.`,
+      );
+    }
+    const record = await doProbeAgy();
+    const stored = await writeRec("agy", record);
+    return buildConnectionStatus("agy", stored, clock, AGY_ACTIONS);
+  };
+
+  const probeGithubTask = async (): Promise<ConnectionStatus> => {
+    const resolved = await resolveGithubToken(deps.listSecretNames, deps.readSecret);
+    if (resolved.token === null) {
+      const near =
+        resolved.candidates.length === 0
+          ? ""
+          : ` The store does hold ${resolved.candidates.map((n) => `\`${n}\``).join(", ")}, but this probe will not guess which account you mean — store the one you want under \`${GITHUB_PAT_SECRET}\` or \`${GITHUB_PAT_PRIMARY}\`.`;
+      return absentConnectionStatus(
+        "github",
+        `No secret named \`${GITHUB_PAT_PRIMARY}\` or \`${GITHUB_PAT_SECRET}\` is stored, so there is nothing to authorise with.${near}`,
+        GITHUB_ABSENT_ACTION,
+      );
+    }
+    const record = await doProbeGithub(resolved.token);
+    const stored = await writeRec("github", record);
+    return buildConnectionStatus("github", stored, clock, GITHUB_ACTIONS);
+  };
+
+  const settled = await Promise.allSettled([
+    probeGoogleTask(),
+    probeAgyTask(),
+    probeGithubTask(),
+  ]);
+
+  const ids: readonly ConnectionId[] = ["google", "agy", "github"];
+  const connections: ConnectionStatus[] = [];
+
+  for (let i = 0; i < settled.length; i++) {
+    const item = settled[i];
+    const id = ids[i];
+    if (item.status === "fulfilled") {
+      connections.push(item.value);
+    } else {
+      connections.push({
+        id,
+        state: "unknown",
+        identity: null,
+        checked_at: null,
+        detail: `Probe failed: ${item.reason instanceof Error ? item.reason.message : String(item.reason)}`,
+        action: "Retry the probe.",
+      });
+    }
+  }
+
+  return { connections, timestamp };
+}
+
