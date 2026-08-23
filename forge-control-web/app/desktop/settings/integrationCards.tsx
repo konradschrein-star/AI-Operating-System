@@ -1224,7 +1224,17 @@ export function GoogleCard({
         </Banner>
       )}
 
-      {reauth && <CommandBlock command={reauth.command} why={reauth.why} />}
+      {reauth && (
+        <div style={{ marginTop: 12 }}>
+          <CommandBlock command={reauth.command} why={reauth.why} />
+          <div style={{ marginTop: 6, fontSize: 11.5, color: tokens.textSoft }}>
+            To print the OAuth consent URL directly without an interactive terminal:{" "}
+            <code className="mono" style={{ color: tokens.textHi }}>
+              python3 /opt/ai-os/google-setup/setup.py --auth-url
+            </code>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1747,10 +1757,91 @@ export function GitHubCard({
           <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
             {checkedAgo(status.checked_at)}
           </span>
+          {status.identity && (
+            <span style={{ fontSize: 13, color: tokens.textHi }}>
+              Verified as <strong className="mono" style={{ color: tokens.ok }}>@{status.identity}</strong>
+            </span>
+          )}
+        </div>
+      )}
+
+      {secretName && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <span className="mono" style={{ fontSize: 10.5, color: tokens.textLabel }}>
+            VAULT BINDING:
+          </span>
+          <span
+            className="mono"
+            style={{
+              fontSize: 11,
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.borderSoft}`,
+              borderRadius: 4,
+              padding: "2px 7px",
+              color: tokens.textHi,
+            }}
+          >
+            {secretName}
+          </span>
+          <span style={{ fontSize: 11.5, color: tokens.textMuted }}>
+            (AES-256-GCM encrypted in secret store)
+          </span>
         </div>
       )}
 
       {status && <SummaryFields summary={summary} />}
+
+      {/* Verified scope badges parsed from the probe response */}
+      {status && (
+        <div
+          style={{
+            marginTop: 12,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <Label text="TOKEN PERMISSIONS & SCOPES" />
+          {(() => {
+            const match = status.detail.match(/x-oauth-scopes:\s*([^\n\r.]+)/i);
+            const raw = match && match[1] ? match[1].trim() : "";
+            const isAbsentOrEmpty = !raw || raw.toLowerCase().includes("header absent") || raw.toLowerCase().includes("present but empty");
+            const scopes = isAbsentOrEmpty ? [] : raw.split(",").map((s) => s.trim()).filter(Boolean);
+
+            if (scopes.length > 0) {
+              return (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                  {scopes.map((s) => (
+                    <span
+                      key={s}
+                      className="mono"
+                      style={{
+                        background: tokens.bgCard,
+                        border: `1px solid ${tokens.borderEmphasis}`,
+                        borderRadius: 4,
+                        padding: "2px 8px",
+                        fontSize: 11,
+                        color: tokens.ok,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              );
+            }
+            return (
+              <div style={{ fontSize: 12, color: tokens.textSoft, marginTop: 4 }}>
+                {isAbsentOrEmpty
+                  ? "Fine-grained PAT (permissions managed via GitHub token settings page) or classic token without extra scopes."
+                  : raw}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* R56: the login and the scopes come out of the probe's own answer and
           are printed verbatim, because "which scopes does this token actually
