@@ -629,6 +629,27 @@ export interface MemorySearchHit {
   snippet: string;
   score: number;
   chunk_index: number;
+  note_kind?: string;
+  via?: "title" | "tag" | "vector" | "graph";
+  match_type?:
+    | "exact_title"
+    | "title_match"
+    | "tag_match"
+    | "vector"
+    | "graph"
+    | "empty"
+    | "drawing"
+    | string;
+  match_reason?: string;
+  is_empty?: boolean;
+  is_drawing?: boolean;
+  tags?: string[];
+  explain?: {
+    kind?: string;
+    raw_score?: number;
+    weight?: number;
+    age_days?: number;
+  };
 }
 
 /* v1.7 phase 1+2 — expanded hit shape from /api/memory/search?expand=1.
@@ -656,7 +677,7 @@ export const TRIPLE_CATEGORIES: TripleCategory[] = [
 ];
 
 export interface MemorySearchHitWithLane extends MemorySearchHit {
-  via: "vector" | "graph";
+  via: "title" | "tag" | "vector" | "graph";
   hop: number;
 }
 
@@ -1865,6 +1886,59 @@ export interface DayTask {
   age_days: number;
   /** `carried >= 3`. Drives the "This keeps sliding" strip (§5). */
   stale: boolean;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  status?: string;
+  htmlLink?: string;
+}
+
+export interface CreateCalendarEventInput {
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  task_id?: string;
+  calendar?: string;
+}
+
+export type LifeGoalHorizon = "quarterly" | "yearly" | "aspirational" | "active" | string;
+export type LifeGoalStatus = "planned" | "in_progress" | "completed" | "paused" | "abandoned" | string;
+
+export interface LifeGoal {
+  id: string;
+  title: string;
+  status: LifeGoalStatus;
+  horizon: LifeGoalHorizon;
+  area: string | null;
+  progress: number;
+  started_day: string | null;
+  target_day: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LifeGoalInput {
+  title: string;
+  status?: LifeGoalStatus;
+  horizon?: LifeGoalHorizon;
+  area?: string | null;
+  progress?: number;
+  started_day?: string | null;
+  target_day?: string | null;
+  notes?: string | null;
 }
 
 /**
@@ -1967,9 +2041,7 @@ export const fetchDailyDay = (day?: string): Promise<DailyDayResponse> =>
     day ? `/daily?day=${encodeURIComponent(day)}` : "/daily",
   );
 
-/** Draft edit of the intent line and/or the Big 3. 409 once committed (§1) —
- *  callers surface that as "abandon instead of editing", never as a silent
- *  no-op. */
+/** Draft edit of the intent line and/or the Big 3. Fluid editing supported throughout the day. */
 export const saveDayPlan = (
   day: string,
   input: { intent?: string | null; big3?: DayGoal[] },
@@ -2044,6 +2116,9 @@ export interface DayTaskInput {
   due_day?: string | null;
   est_min?: number | null;
   notes?: string | null;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
 }
 
 export const createDayTask = (input: DayTaskInput): Promise<DayWriteResult> =>
@@ -2066,3 +2141,174 @@ export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
 
 export const fetchDayStats = (days = 90): Promise<DayStats> =>
   getJson<DayStats>(`/daily/stats?days=${days}`);
+
+/* ----------------------------------------------------------------------------
+ * Journal surface (paper-first capture, day retrospective & decisions)
+ * -------------------------------------------------------------------------- */
+export type JournalEntryType = "paper_photo" | string;
+export type OcrStatus = "unavailable" | "pending" | "done" | "failed" | string;
+
+export interface JournalEntry {
+  id: string;
+  day: string;
+  type: JournalEntryType;
+  upload_id: string | null;
+  file_path: string | null;
+  file_url: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  ocr_text: string | null;
+  ocr_status: OcrStatus;
+  caption: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JournalDayResponse {
+  day: string;
+  count: number;
+  entries: JournalEntry[];
+}
+
+export interface JournalUploadResponse {
+  ok: boolean;
+  entry: JournalEntry;
+  vault: {
+    appended: boolean;
+    path?: string;
+    reason?: string;
+  };
+}
+
+export interface JournalDeleteResponse {
+  ok: boolean;
+  entry: JournalEntry;
+}
+
+export const fetchJournalDay = async (
+  day?: string,
+): Promise<JournalDayResponse> => {
+  const path = day
+    ? `/journal/day?day=${encodeURIComponent(day)}`
+    : "/journal/day";
+  return getJson<JournalDayResponse>(path);
+};
+
+export const uploadJournalPaper = async (
+  file: File | Blob,
+  options?: { day?: string; caption?: string; fileName?: string },
+): Promise<JournalUploadResponse> => {
+  const form = new FormData();
+  const name =
+    options?.fileName ??
+    (file instanceof File ? file.name : "journal-paper.png");
+  form.append("file", file, name);
+  if (options?.day) form.append("day", options.day);
+  if (options?.caption) form.append("caption", options.caption);
+
+  const res = await fetch(`${ROOT}/journal/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      j.error ?? `${res.status} ${res.statusText} on /journal/upload`,
+    );
+  }
+  return (await res.json()) as JournalUploadResponse;
+};
+
+export const deleteJournalEntry = async (
+  id: string,
+): Promise<JournalDeleteResponse> => {
+  return deleteJson<JournalDeleteResponse>(
+    `/journal/entries/${encodeURIComponent(id)}`,
+  );
+};
+
+export interface DecisionEntry {
+  id: string;
+  ts: string;
+  kind:
+    | "dispatch"
+    | "breaker"
+    | "degrade"
+    | "escalate"
+    | "unstick"
+    | "resolve"
+    | "freeze"
+    | "resume"
+    | "guardrail"
+    | "manager"
+    | "user"
+    | string;
+  actor: string;
+  action: string;
+  payload?: Record<string, unknown>;
+  inbox_item_id?: string | null;
+  related_job_id?: string | null;
+}
+
+export const fetchDecisionsForDay = async (
+  day: string,
+  limit = 200,
+): Promise<DecisionEntry[]> => {
+  const path = `/decisions?day=${encodeURIComponent(day)}&limit=${limit}`;
+  const r = await getJson<{ count: number; decisions: DecisionEntry[] }>(path);
+  if (!r || !Array.isArray(r.decisions)) {
+    throw new Error(
+      `GET ${path}: expected {count, decisions:[...]}, got ${typeof r}`,
+    );
+  }
+  return r.decisions;
+};
+export const fetchCalendarEvents = async (
+  start?: string,
+  end?: string,
+): Promise<CalendarEvent[]> => {
+  const qs = new URLSearchParams();
+  if (start) qs.set("start", start);
+  if (end) qs.set("end", end);
+  const path = qs.toString() ? `/daily/calendar?${qs.toString()}` : "/daily/calendar";
+  const r = await getJson<CalendarEvent[] | { events?: CalendarEvent[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.events)) return r.events;
+  return [];
+};
+
+export const createCalendarEvent = (
+  input: CreateCalendarEventInput,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/calendar/events", input);
+
+export const fetchLifeGoals = async (params?: {
+  horizon?: string;
+  status?: string;
+  area?: string;
+}): Promise<LifeGoal[]> => {
+  const qs = new URLSearchParams();
+  if (params?.horizon) qs.set("horizon", params.horizon);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.area) qs.set("area", params.area);
+  const path = qs.toString() ? `/daily/goals?${qs.toString()}` : "/daily/goals";
+  const r = await getJson<LifeGoal[] | { goals?: LifeGoal[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.goals)) return r.goals;
+  return [];
+};
+
+export const createLifeGoal = (
+  input: LifeGoalInput,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/goals", input);
+
+export const updateLifeGoal = (
+  id: string,
+  patch: Partial<LifeGoalInput>,
+): Promise<DayWriteResult> =>
+  patchJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`, patch);
+
+export const deleteLifeGoal = (id: string): Promise<DayWriteResult> =>
+  deleteJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`);

@@ -1,51 +1,273 @@
-# WORKLOG: aios-autonomy-automation (Round 0 Architect)
+# WORKLOG — aios-journal-and-mentor
 
-## Completed
-- Audited codebase and findings docs: `/opt/ai-os/workspace/audits/autonomy.md`, `automation.md`, `connections-candidates.md`.
-- Verified spend estimation root cause in `forge-control/src/executor.ts:575` and `forge-control/src/lib/gemini-runner.ts`.
-- Verified emergency pause vs fleet freeze desynchronization across `AutonomySurface.tsx`, `db/autonomy.ts`, and `db/ai_os.ts`.
-- Clarified product scope for the Automation surface: retains scheduled loops (Cron) and inbound events (Webhooks), adding cross-link to Settings -> Connections for credentials/OAuth.
-- Formulated full architecture plan in `PLAN.md` and product decisions in `HANDOFF.md`.
-- Verified dependency installation and typecheck baseline (`npx tsc --noEmit` exits 0 in `forge-control-web`).
-- Created and fanned out the downstream task graph (5 builders + 1 reviewer join) in `forge-control`.
-- Dispatched architecture findings report to manager chat `2ef126b7-d6d9-4a55-a8e7-d9acf0508645`.
-- **Task 1 (Round 0 Builder):**
-  - Updated `forge-control/src/executor.ts`: pre-flight spend calculation is model/engine-aware using `isGeminiModel(run.metadata?.model)`. Sets `estSpendEur = 0` and `dailySpendEur = 0` for Gemini runs on flat subscription, preventing false trips of EUR spend caps.
-  - Updated `forge-control/src/db/autonomy.ts`: `evaluateOne` skips EUR spend caps for Gemini runs while supporting model-aware token limit evaluation (`gemini_token_cap`, `tokens_per_run_cap`).
-  - Updated `forge-control/src/db/ai_os.ts`: `setFleetState` atomically updates `guardrail_rules` (`runtime.pause_all` enabled state).
-  - Updated `forge-control/src/db/autonomy.ts`: `updateRule` atomically synchronizes `fleet_state` when `runtime.pause_all` is toggled. `getAutonomy` ensures `runtime.pause_all` matches `fleet_state.status === 'paused'`. `evaluateGuardrails` checks `fleet_state` paused status and blocks dispatch when frozen.
-  - Updated `forge-control/src/routes/autonomy.ts`: `/check` forwards `model` and `engine` to `evaluateGuardrails`.
-  - Verified with comprehensive test script (`/scratch/verify-round0.ts`): all assertions passed.
-  - Typecheck in `forge-control` (`pnpm run typecheck`) exited 0.
+## Round 0 (Architect) — 2026-08-23
+- Analyzed brief, audit findings (/opt/ai-os/workspace/audits/journal.md), existing codebase, and live endpoints.
+- Designed 2-column split architecture for JournalSurface.tsx:
+  - Left Pane (55%): Retrospective & Paper Journal Hub (paper photo upload to /opt/ai-os/uploads/, zoomable lightbox gallery, CAS Obsidian Daily/YYYY-MM-DD.md ## Journal editor, date-filtered decisions).
+  - Right Pane (45%): Interactive Mentor Agent Deck (reusing AssistantThread.tsx chat plumbing, PERSONA.md framing, two-way debriefing).
+  - Header: Date stepper, streak/accountability metrics, and live toggle switch wired to mentor-evening cron (ID: 90577448-93f4-41dd-a991-14885c74644c).
+- Drafted re-runnable migration 0043_journal_entries.sql specification.
+- Documented complete architecture, ownership invariants, and task plan in PLAN.md.
+- Dispatched 4 tasks via forge-control project API:
+  - Task 1 (Builder, Junior): Backend journal migration, db module, routes, and decisions date filter. (ID: 95b00d42-4425-4024-8538-3966b307968e)
+  - Task 2 (Builder, Standard): Frontend journal client API and retrospective paper/vault pane. (ID: 8af894fb-7308-4078-99b0-414aca31e157)
+  - Task 3 (Builder, Standard): Frontend mentor agent deck, live cron switch, journal surface assembly and nav. (ID: 1e302c5f-9d75-456a-8cea-9bbec56e33b7)
+  - Task 4 (Reviewer, Standard): Full surface integration review & visual verification. (ID: d84f2048-0c72-45cc-a0cf-f24633b4d6d2)
+- Reported findings and completion to manager run 2ef126b7-d6d9-4a55-a8e7-d9acf0508645.
 
-- **Task 3 (Frontend API Client & Type Definitions, `9af2c679-f533-497a-9079-ef7c537cb2d5`):**
-  - Found the work already present but uncommitted in the worktree (a prior attempt at this task apparently died mid-turn — see project brief's OUTPUT BUDGET warning). Verified it field-for-field against the live backend (`forge-control/src/db/autonomy.ts`, `db/webhooks.ts`, `db/cron.ts`, `routes/cron.ts`, `routes/autonomy.ts`) rather than redoing it blind.
-  - `forge-control-web/app/api.ts`: added `resolveTrip(id)` -> `POST /autonomy/trips/:id/resolve`, `triggerScheduleRun(id)` -> `POST /cron/:id/run`; `createWebhook` now returns `raw_secret`/`secret_once` (unmasked once, on create, matching `routes/webhooks.ts:80`).
-  - `GuardrailCategory` union added, matching the DB CHECK constraint (`financial|destructive|communication|security|deployment|custom` — `db/migrations/0021_ai_os_tables.sql:119`) exactly.
-  - `GuardrailRule.created_at` and `GuardrailTrip.resolution_note`/`created_at` added as optional: both columns exist on the tables but the current `getAutonomy()` SELECTs don't project them, so `?` is correct today and forward-compatible if a later task widens the query.
-  - Cleaned one redundancy left by the prior attempt: `CreateWebhookResult` had re-declared `raw_secret`/`secret_once` that `Webhook` already carries optionally — collapsed to `export type CreateWebhookResult = Webhook`.
-  - Verified: `npx tsc --noEmit` clean, `npm run build` exits 0 (see route table in commit). `git diff --stat` confirms only `app/api.ts` touched — write-set matches the brief exactly, nothing undeclared.
-  - Committed as `c113e48`.
+## Round 1 (Builder: Frontend Journal Client & Retrospective Components) — 2026-08-23
+- Implemented typed API client functions in `forge-control-web/app/api.ts`:
+  - `fetchJournalDay(day)`: retrieves day timeline and indexed entries.
+  - `uploadJournalPaper(file, options)`: multipart form upload linked to `/journal/upload` and daily note append.
+  - `deleteJournalEntry(id)`: deletes journal timeline index entry.
+  - `fetchDecisionsForDay(day, limit)`: retrieves day-filtered decisions list.
+- Implemented frontend retrospective components in `forge-control-web/app/desktop/journal/`:
+  - `PaperCaptureDeck.tsx`: drag-and-drop & file selector for paper journal photographs, thumbnail gallery, OCR status indicators, delete action, upload states (loading/empty/error/populated).
+  - `ImageLightbox.tsx`: high-resolution full-screen modal with zoom, pan, rotate, keyboard shortcuts, and OCR drawer.
+  - `JournalVaultEditor.tsx`: CAS Markdown editor syncing section `## Journal` in `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` with conflict handling.
+  - `DailyDecisionsStream.tsx`: day-filtered decision stream with expandable payloads and actor badges.
+  - `JournalRetrospectivePane.tsx`: container composing paper capture, vault editor, and decisions stream with TanStack Query.
+- Verification:
+  - `npx tsc --noEmit`: 0 errors.
+  - `npm run build`: compiled successfully, static pages generated (10/10), exit code 0.
+  - Zero raw color literals (all styling uses `app/tokens.ts`).
 
-- **Task 4 (Frontend Autonomy Surface Cockpit, `5f42eb2f-9cc6-4c30-9350-8500a3d78156`):**
-  - Found a complete, uncommitted implementation already in the worktree (another prior turn that died before committing — see OUTPUT BUDGET warning). Reviewed it in full rather than rewriting: `AutonomySurface.tsx` had grown from 468 to 1949 lines.
-  - Verified field-for-field against `app/api.ts`'s `GuardrailRule`/`GuardrailTrip`/`AutonomyResponse` types (all match exactly, including the optional `resolution_note`/`created_at`) and against `app/tokens.ts` (every `tokens.*` key used exists; `dot()` call signature matches; zero raw color/hex literals in the file).
-  - Verified against the live `/api/autonomy` payload: `runtime.pause_all` rule, `git.force_push` with `protected_branches`, `spend.daily_cap`/`spend.per_run_cap` with `cap_eur`/`gemini_token_cap`, `agent.spawn_cap` with `max`, and trip `payload._reason`/`spend_eur`/`thread_chars`/`daily_spend_eur` all present exactly as the component expects.
-  - Confirms all 5 brief requirements are implemented: (1) fleet freeze hero reads `q.data.fleet.status` directly, no separate state; (2) inline-editable rule config — `NumberControl` for `cap_eur`/token caps/`max`, tag editor for `protected_branches`, generic key/value + "add parameter" for anything else, dirty-tracking Save/Discard bar calling `updateRule()`; (3) category rail filters both `filteredRules` and `allCategoryTrips` via `inferTripCategory()` (trips lack a category column, so it's inferred from `rule_id`/`attempted_action` prefixes, falling back to the rule's own category when known); (4) trip cards show `payload._reason`, spend/token/branch metrics, an engine badge (Gemini/Claude Opus/Sonnet/Haiku/forge-executor/Probe), a `resolveTrip()`-backed Resolve button, and a `/desktop?surface=chat&chat=<run_id>` deep link; (5) `AutonomySkeleton`, `AutonomyError` with retry, per-list empty states, and the populated view are all implemented.
-  - Ran verification myself (not inherited from the prior turn's claims): `pnpm install --frozen-lockfile --prod=false`, `npx tsc --noEmit` (clean), `npm run build` (exit 0, full route table produced). Started a throwaway `next start -p 7863` from this worktree (copied `.env.local` from the live checkout read-only, needed `AUTH_TRUST_HOST`/`AUTH_SECRET`/`AUTH_URL`; port 7855/7861 were already held by other lanes' orphaned processes, avoided both) and shot the populated autonomy surface in both dark and light themes — no white-on-white, all 9 live rules and 24 live trips render correctly, editable controls show live values (protected branches `main`/`master`/`prod`, caps `100`/`50`/`1000000`/`100000`, spawn cap `8`). Screenshots at `/opt/ai-os/uploads/0e2627dd053f/20260823T030500Z-autonomy.png` (dark) and `-autonomy-light.png`. Server stopped after shooting.
-  - No undeclared writes — only `AutonomySurface.tsx` (my declared write-set) and this `WORKLOG.md` changed.
 
-## Next Tasks
-- Task 5: `93308377-4b46-4dc9-a2fb-5f45bdba4b42` (Frontend Automation Surface Routines & Webhooks)
-- Task 6: `6ee24269-274c-446c-8b9e-18418ad383e2` (Reviewer Join: End-to-End Verification & Full Diff Review)
+## Round 5 (Builder: Fix cycle 1) — 2026-08-23
 
-- **Round 5 (Fix cycle 1 — the reviewer's three findings):**
-  - **Finding 1 — dead deep links.** Confirmed the reviewer's diagnosis before building: `grep -rn "useSearchParams\|location.search" forge-control-web/app` returns nothing outside `signin`, and `DesktopApp.tsx:252` holds the surface in `usePersistentState("forge.desktop.surface")`. All five `<a href="/desktop?surface=…">` were inert.
-    - New `forge-control-web/app/desktop/deep-link.ts`: `openChatRun(runId, navigate)` writes `forge.chat.selected` (JSON-encoded, the exact shape `usePersistentState` parses) and removes `forge.chat.navStack`, then calls the shell's `onNav("chat")`. It THROWS on a non-uuid and on a storage failure, and does not navigate after either — landing on the manager chat while claiming to have opened run X is the defect, not a fallback. `jumpToRun` is the click-handler wrapper that turns that throw into a `toastError`. `openSettings` does the surface half only and says so: `SettingsSurface` keeps its section in an unpersisted `useState`, so there is no `tab=connections` to honour and pretending otherwise would be a second dead link.
-    - Safe because `ChatSurface` is conditionally rendered and therefore MOUNTS on arrival, and its auto-select effect is guarded by `if (!selId …)` (`ChatSurface.tsx:729`) — a pre-written id is honoured, not clobbered.
-    - `AutonomySurface`/`AutomationSurface` now take a REQUIRED `onNav`, threaded to `TripRow`, `HeaderContextBanner`, `RoutineCard`, `WebhookCard`. The five anchors became `<button>`s with the same token styling. `DesktopApp.tsx` changed only on the two render lines this project owns.
-  - **Finding 2 — dollar-sweep.** The two hand-rolled `€${v.toFixed(2)}` in `extractTripMetrics` now call `fmtEur()` from `settings/usageApi.ts`, so the app has one euro formatter. What remains on the surface is not a formatted amount: the `spend.daily_cap`/`spend.per_run_cap` rule ids, the `spend_eur` payload field, two metric labels, two cap-input labels that must name their unit, and a char-magnitude `toFixed(2)`. Two rows added to `dollar-allowlist.txt`, each pattern pinned to the surrounding code (not the file, not `.*`), so a genuinely new euro string in this file still fails. Gate 8: PASS, 127 hits, all allowlisted.
-  - **Finding 3 — the executor.ts pin.** `project-tick.test.ts:1414` asserted `git diff PRIOR_SHA -- executor.ts` was empty. That proxy fails on ANY future edit for ANY reason, has no expiry, and would fail on `main` after this branch merges. Narrowed to the property it stood in for — the child's cwd still comes from `run.metadata.workspace_dir`, in exactly one place — with the pinned revision still `git show`n so "unchanged since 4244b20" is proved, not asserted.
-  - **New test.** `scripts/checks/check-deep-link.ts`, 25 assertions, registered as gate 17 in `gates-808.sh`. It proves the drill-in reset THROUGH `restoredNavStack()` rather than through the raw key, covers four non-uuid inputs and a storage failure, and greps both surfaces so the dead `href` form cannot return. It found a real hit on its first run: `AutomationSurface`'s own header comment quoted the forbidden attribute, so the comment now describes it instead.
-  - **Verification, all run, all output recorded.** `npx tsc --noEmit` clean in both packages. `gates-808.sh --strict`: 26 gates, 24 executed, 2 skipped-by-design (browser), **RED 2** — gate 5 `no-raw-colours` (2 literals in `gemini-identity.tsx`, which `git diff main...HEAD` proves this branch does not touch) and gate 6 `forbidden-file diff`. Gate 8 and gate 21 (`pnpm test`, now 1649/1649) were the two reds this round set out to clear and both are green.
-  - **Browser proof, against this worktree's own build on a throwaway `:7419`, never the live app.** Clicking `Last Run #27bfa160 →` on AUTOMATION moved `forge.desktop.surface` from `"automation"` to `"chat"` and `forge.chat.selected` from `null` to `"27bfa160-779b-432a-a67a-d040a3ab5d14"`, and the screenshot shows the forge-watchdog transcript open with `cron · watchdog: content forge` in the right rail. `View Run in Chat` on AUTONOMY landed on `2ef126b7…`, the run id in that trip's payload. `Settings → Connections` landed on `"settings"`. Shots: `/opt/ai-os/uploads/b7e9dd717a91/20260823T103200Z-*.png`. Server stopped by PID afterwards.
+Addressed all four blocking findings from round 4's review, plus its informational #5
+and one gate red the review did not name.
+
+### 1. `db/migrations/0043_journal_entries.sql` — the false "applied by hand" claim
+- Verified the reviewer's claim independently (read-only):
+  `SELECT to_regclass('public.journal_entries')` against live `content_forge` returns
+  NULL, while `daily_goals` and `ui_dismissals` are both present. The header's
+  "Applied by hand, twice ... against content_forge" was **false**. Removed, not softened.
+- **Did NOT apply it to live `content_forge`.** `docs/tools/deploy-playbook.md` §6 step 4
+  assigns "apply any pending migrations added by the project ... before restarting either
+  process" to the DEPLOY phase, and the worktree-only policy forbids a build task writing
+  to the live database. This is the one finding I have deliberately *not* closed the way
+  the reviewer worded it; see the escalation to the manager chat.
+- Proved re-runnability **for real**, on a per-run scratch database created and dropped by
+  the same shell (`journal_mig_probe_$$`, then `journal_mig_recheck_$$`), never on
+  `content_forge`:
+  ```
+  --- apply 1 ---  CREATE TABLE / CREATE INDEX          exit=0
+  --- apply 2 ---  NOTICE: relation "journal_entries" already exists, skipping
+                   NOTICE: relation "journal_entries_day_idx" already exists, skipping
+                                                        exit=0
+  --- table present --- journal_entries
+  ```
+  Re-ran after editing the header (it now contains `$$`, which psql could in principle
+  lex as a dollar-quote — it does not; both applies still exit 0).
+- The header now states the pre-deploy state plainly: the three journal endpoints fail
+  against a missing relation until deploy runs the migration.
+
+### 2. `MentorCronSwitch.tsx` — raw colour literal
+- `boxShadow: "0 1px 3px rgba(0,0,0,0.2)"` → `boxShadow: 0 0 0 1px ${tokens.textGhost}`.
+- The literal was not only a gate failure, it was **inert where it mattered**: in dark
+  mode the knob is `#000` on a `#222226` track when disarmed, and a black drop shadow
+  adds nothing to a black knob. `textGhost` is `#48484e` dark / `#a6a6ae` light, so the
+  ring separates the knob from both track colours in both palettes.
+- Verified visually in all four combinations (dark/light x armed/disarmed) — see below.
+
+### 3. `DailyDecisionsStream.tsx` — dollar-sweep red, and invented copy underneath it
+- The old empty-state copy promised decisions are recorded "when inbox items are resolved,
+  morning goals are committed, spend caps trip, or agent supervisors act". Grepped every
+  writer: `INSERT INTO decisions` appears **twice** in the whole repo — `db/ai_os.ts:472`
+  (inbox resolution, kind `resolve`) and `db/ai_os.ts:687` `appendDecision`, whose only
+  callers are `routes/fleet.ts:14/22` (`freeze`/`resume`). Morning-goal commits and cap
+  trips write **nothing**. Two of the four promises were invented — which matches the
+  reviewer's live-data observation that only `resolve|resume|freeze` exist.
+- So this was reworded rather than allowlisted: an allowlist entry would have left false
+  copy on the screen. New text names the three real writers.
+- Followed [[checker-names-its-own-forbidden-strings]]: the explanatory comment
+  deliberately does not quote the flagged word, because the gate greps raw file text and
+  would have fired on the explanation.
+
+### 3b. `ImageLightbox.tsx:94` — a SECOND dollar-sweep red the review did not name
+- With finding 3 fixed, `dollar-sweep.sh` was still RED on
+  `(entry.size_bytes / (1024 * 1024)).toFixed(2)} MB` — a megabyte formatter, unlisted.
+- Added a scoped entry to `scripts/checks/dollar-allowlist.txt`, pinned to the megabyte
+  DIVISION and not `.*`, justified the same way the existing token-magnitude formatter
+  entries are (AgentActivity `humanTokens()`, teamApi `fmtTokens()`, context-window) and
+  the goals/ui sparkline coordinates. A real currency symbol landing in that file still
+  fails the gate.
+
+### 4. `JournalVaultEditor.tsx` — the stale-day autosave
+- Added a `useEffect` cleanup keyed on `vaultPath` that clears `autoSaveTimerRef`, plus a
+  `scheduledForPath` argument to `handleSave` that abandons a write whose target stopped
+  being current. Belt and braces: the cleanup is the fix, the guard survives a change in
+  effect ordering.
+- **`key={day}` at the call site would NOT have fixed this** (the reviewer offered it as
+  an alternative): unmounting a component does not cancel a pending `setTimeout`.
+- **The reviewer's finding is real but narrower than stated, and the first test I wrote
+  for it was inert.** Type → switch day → wait PASSES on the unfixed build: the timer's
+  callback is guarded by `isDirtyRef.current`, and the day switch runs `loadDailyNote`,
+  which sets `isDirty` false. On a fast local API that disarms the stale timer on its own.
+  The defect is reachable when the new day's read is SLOW, or throws a non-404 (that catch
+  branch sets `loadError` and never touches `isDirty`).
+- Reproduced it by stalling the second `GET /vault/file` past the 2s debounce, which is
+  exactly that condition. Both runs, same test, same conditions:
+  ```
+  UNFIXED (cleanup effect count: 0)
+    day before: Sun, 23 Aug 2026 (Today)
+    stepped day after 591ms (debounce is 2000ms)
+    day after:  Sat, 22 Aug 2026 (Yesterday)
+    PUT /vault/file attempts: 1
+      body.path = Daily/2026-08-23.md          <-- the OLD day
+    RESULT: FAIL
+
+  FIXED
+    day before: Sun, 23 Aug 2026 (Today)
+    stepped day after 630ms (debounce is 2000ms)
+    day after:  Sat, 22 Aug 2026 (Yesterday)
+    PUT /vault/file attempts: 0
+    RESULT: PASS
+  ```
+  Every non-GET was aborted in the browser, so no request reached the real vault.
+
+### 5. `DailyDecisionsStream.tsx` — the informational `as` cast
+- Replaced `dec.kind as Parameters<typeof decisionKindColor>[0]` with a real narrowing
+  (`MODELLED_DECISION_KINDS` + `kindColorFor`) that falls back to `tokens.textMuted`.
+  `decisionKindColor` has no `default` branch, so an unmodelled kind returned `undefined`
+  and produced `border: 1px solid undefined`. The cast hid that; the narrowing does not.
+
+### 6. Finding 6 (DesktopApp.tsx scope) — no action
+- The reviewer flagged but did not block: retiring the placeholder required removing
+  `"journal"` from `PlaceholderKey` and its `PLACEHOLDER_SURFACES` entry. Those lines are
+  journal-only and reverting them would re-break the surface. Left as landed.
+
+### Verification actually run (all output pasted above or below)
+```
+forge-control-web:  npx tsc --noEmit      exit 0
+forge-control:      npx tsc --noEmit      exit 0
+forge-control-web:  npm run build         exit 0, 12/12 routes
+forge-control:      pnpm test             1650 tests, 1650 pass, 0 fail
+scripts/checks/dollar-sweep.sh            PASS
+node scripts/checks/no-raw-colours.cjs    FAIL: 2 — BOTH in gemini-identity.tsx,
+    which `git diff main...HEAD` shows is untouched by this branch (it came from main
+    at 784e7df) and which is not in raw-colour-allowlist.txt. The red predates this
+    work; MentorCronSwitch.tsx no longer appears in the report at all.
+```
+Screenshots (worktree build on a throwaway `next start`, port 7873 — never the live app),
+in `/opt/ai-os/uploads/f74da418cd82/`, all opened and looked at:
+`20260823T-fixcycle1-dark-journal.png` (whole surface),
+`20260823T-knob-{dark,light}-{armed,disarmed}.png`,
+`20260823T-decisions-empty-{dark,light}.png`.
+
+The armed-knob and empty-decisions shots required stubbing GET responses in the browser
+(`enabled:true` on the cron read; `{count:0,decisions:[]}` on the decisions read), because
+the live `mentor-evening` schedule is genuinely `enabled:false` and the live :7700 runs the
+OLD forge-control, whose `/decisions` ignores `?day=`. Toggling the real cron or writing
+real rows to force those states is not something a build task may do.
+
+### Left for deploy
+- **`db/migrations/0043_journal_entries.sql` must be applied to `content_forge`.** Until
+  it is, `/api/journal/day`, `/api/journal/upload` and `DELETE /api/journal/entries/:id`
+  fail against a missing relation, and the paper-capture deck renders its error state
+  (confirmed in the full-surface screenshot: "Failed to load paper scans: 404 Not Found").
+
+## Round 7 — fix cycle 2 (round 6 re-review) — 2026-08-23
+
+Three findings, all from round 6's `NEEDS_FIXES`.
+
+### 1. Migration number collided with `main` — renumbered 0043 → 0045
+`main` at `9d6ac5e` ships `db/migrations/0043_gemini_tier.sql`; git does not conflict
+because the filenames differ, so every in-lane check stayed green while the collision was
+already certain. Confirmed the way the reviewer did, and then re-confirmed after the fix:
+
+```
+MT=$(git merge-tree --write-tree main HEAD | head -1)
+git ls-tree --name-only "$MT" db/migrations/     # before: 0043_gemini_tier + 0043_journal_entries
+```
+
+**0044 was not available.** `project/2bbf2879` (aios-goals-day-system) had already
+committed `0044_goals_and_calendar.sql` at `70cfa21` — checked every branch
+(`git ls-tree` per branch) and every sibling worktree before choosing. Took **0045**;
+`project/8c591d6c` (engine-task-graph) still holds a `0043` and needs 0046 or later. That
+coordination went to the manager chat, because it changes what another lane must do.
+
+```
+sha256sum db/migrations/0043_journal_entries.sql
+  47b32b9c88d70fbe69d1da222f798a7dc655703ebfbe8cf87ba57b5633586715
+git mv db/migrations/0043_journal_entries.sql db/migrations/0045_journal_entries.sql
+sha256sum db/migrations/0045_journal_entries.sql
+  47b32b9c88d70fbe69d1da222f798a7dc655703ebfbe8cf87ba57b5633586715   # move changed no bytes
+```
+
+The file's own provenance header was updated in the SAME commit (`78316b1`), so the
+committed digest differs from the one above only by that header edit. No
+`KNOWN_COLLISIONS` entry was added — main's gate forbids growing that map.
+
+**Proof the blocker is cleared** — main's gate (`scripts/checks/check-migration-numbers.ts`,
+which this branch predates) run against the merged file set:
+
+```
+check-migration-numbers: PASS — 25 migration(s), every number unique, highest 0045.
+exit=0
+```
+
+Live code pointer updated too: `forge-control/src/db/journal.ts:2` named the old file.
+`PLAN.md` keeps its `0043` lines — they record what was planned — with a dated amendment
+at the end pointing at the current name. WORKLOG history above is likewise left as
+written.
+
+### 2. The header's live-state claim had gone false — replaced with a stamped reading
+`NOT YET APPLIED TO content_forge` was true when written and stale within minutes; the
+relation was created out of band. Measured it myself, read-only:
+
+```
+$ date -u +%Y-%m-%dT%H:%M:%SZ
+2026-08-23T16:50:12Z
+$ docker exec content-forge-postgres psql -U postgres -d content_forge -tAc \
+    "SELECT to_regclass('public.journal_entries')::text, (SELECT count(*) FROM journal_entries)"
+journal_entries|0
+```
+(`psql -U postgres` on the host fails — 5432 is a published docker port, not a peer socket,
+and pm2's `DATABASE_URL` password is rejected; `docker exec` is the route that works.)
+14 columns and `journal_entries_day_idx`, matching this file exactly.
+
+The header now carries the command, the timestamp and the verbatim output under a heading
+that says it is a measurement and not a standing fact, plus an explicit instruction that
+**deploy re-runs `to_regclass` rather than trusting the sentence**. The endpoint paragraph
+is now conditional on that re-measure instead of asserting a pre-deploy state.
+
+Re-runnability re-proved AFTER the rename and the header rewrite (a re-run is what proves
+the file still parses), on a per-run scratch DB created and dropped by the same shell:
+
+```
+scratch db: journal_mig_probe_2391043   at 2026-08-23T16:51:47Z
+CREATE DATABASE
+--- apply 1 -> CREATE TABLE / CREATE INDEX, exit=0
+--- apply 2 -> CREATE TABLE
+             NOTICE:  relation "journal_entries" already exists, skipping
+             NOTICE:  relation "journal_entries_day_idx" already exists, skipping
+             CREATE INDEX, exit=0
+--- shape: 14 columns
+DROP DATABASE   (scratch dropped)
+```
+content_forge was never written to by this lane.
+
+### 3. Ledger gap — disclosed, not amended
+`scripts/checks/dollar-allowlist.txt` (round 5) and this round's four files are in no
+task's declared `write_set`; this fix-cycle row declared `{}`. Per the standing ruling a
+`done` row is not amended — the gap IS the finding. Disclosed in the manager chat, in the
+final report, and here.
+
+### Gates actually run — `bash scripts/checks/gates-808.sh --strict`
+25 gates, 23 executed, 2 skipped by design (browser harness, no `--browser`). **RED: 1**,
+exit 1 — gate 5 `no-raw-colours.cjs`, and it is the SAME inherited red round 6 reported:
+
+```
+forge-control-web/app/desktop/gemini-identity.tsx:27  #8b7bf0
+forge-control-web/app/desktop/gemini-identity.tsx:30  rgba(139, 123, 240, 0.16)
+── FAIL: 2 raw colour literal(s) with no allowlist entry ──
+```
+`git diff --name-only main...HEAD` does not list that file — it came from main and is
+outside this lane's write-set. Everything else green, including gate 1/2 `tsc --noEmit`
+exit 0 in both packages, gate 3 `NODE_ENV=production pnpm build` exit 0, gate 20
+`pnpm test` exit 0.
+
+No screenshots this round: nothing rendered changed — the diff is one SQL header, one file
+rename, one code comment and two markdown files.

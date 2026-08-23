@@ -228,6 +228,39 @@ export function inputStyle(): CSSProperties {
   };
 }
 
+export function textareaStyle(): CSSProperties {
+  return {
+    width: "100%",
+    minHeight: TAP,
+    padding: "9px 12px",
+    borderRadius: 8,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.inputBg,
+    color: tokens.text,
+    fontSize: 13,
+    outline: "none",
+    resize: "vertical",
+    fontFamily: "inherit",
+    lineHeight: 1.45,
+  };
+}
+
+export function borderlessTextareaStyle(): CSSProperties {
+  return {
+    width: "100%",
+    minHeight: 24,
+    padding: "4px 4px",
+    border: "none",
+    background: "transparent",
+    color: tokens.text,
+    fontSize: 13,
+    outline: "none",
+    resize: "none",
+    fontFamily: "inherit",
+    lineHeight: 1.45,
+  };
+}
+
 /* ── the score ring ──────────────────────────────────────────────────────── */
 
 /**
