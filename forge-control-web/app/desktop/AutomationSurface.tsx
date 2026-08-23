@@ -278,9 +278,13 @@ const NOTIFY_OPTIONS = [
 
 /** `onNav` is the shell's surface switcher, threaded down to every "open this
  *  run in chat" affordance and to the Connections pointer in the banner. It is
- *  REQUIRED: those links were `<a href="/desktop?surface=…">` until round 5 and
- *  did nothing at all, because this console is one route whose surface is React
- *  state (see ./deep-link for the whole story). */
+ *  REQUIRED: until round 5 those links were plain anchors pointing at
+ *  `/desktop?surface=…` and did nothing at all, because this console is one
+ *  route whose surface is React state and nothing reads the query string (see
+ *  ./deep-link for the whole story). The dead attribute is described here
+ *  rather than quoted, because check-deep-link.ts greps these two files for it
+ *  and a checker that matches its own documentation is a checker that fails
+ *  when someone explains it better. */
 export function AutomationSurface({ onNav }: { onNav: NavigateTo }) {
   // Requirement 1: Switch default tab to CRON (Scheduled Routines)
   const [tab, setTab] = useState<Tab>("cron");
