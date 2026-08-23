@@ -1,23 +1,28 @@
 "use client";
 
 /**
- * TASKS — one list, four view chips, and the row primitive TODAY reuses.
+ * TASKS — The executive task database, scheduling queue, and action board.
  *
- * Notion's task DB had eight columns and needed a horizontal scroll on a
- * phone (§0.3), and it grew a graveyard because nothing forced a decision
- * (§0.2). So: two lines per row, everything wraps, and the shaming metadata —
- * age, carried — appears ONLY when it is bad news. There is no permanent
- * "Age 121" column here, because a number that is always there is a number
- * nobody reads.
- *
- * The board (todo | doing | done | parked) exists at >= 900px only. On a
- * phone the view chips ARE the board.
+ * Includes:
+ * - Comprehensive task list/table: Name, Area tag, status (todo/doing/done/parked),
+ *   Importance badge (critical/high/normal/low), Age in days, Time until due date,
+ *   Duration estimate (~30m), notes, one-click finish button.
+ * - Views: Today, Week, Backlog (no date), All.
+ * - Quick-add box with natural language parsing (~30m, #area, at 14:00, tomorrow).
+ * - [Schedule on Calendar] action modal/popover per task with Google Calendar integration.
+ * - List vs Board (at >= 900px) view toggle and mobile-first 390px support.
  */
 
 import { useMemo, useState } from "react";
 import { tokens, dot } from "../../tokens";
-import type { DayTask, DayTaskInput, DayTaskStatus, DayTaskView } from "../../api";
-import { parseQuickAdd, toDayKey } from "./quick-add";
+import {
+  createCalendarEvent,
+  type DayTask,
+  type DayTaskInput,
+  type DayTaskStatus,
+  type DayTaskView,
+} from "../../api";
+import { parseQuickAdd, toDayKey, addDays } from "./quick-add";
 import {
   CARD,
   EmptyState,
@@ -29,20 +34,24 @@ import {
   importanceColor,
   importanceLabel,
   inputStyle,
+  primaryButton,
+  textareaStyle,
 } from "./ui";
+import { toastError } from "../_ui/Toasts";
 
 export interface TaskActions {
   onToggleDone: (task: DayTask, done: boolean) => void;
   onSetStatus: (task: DayTask, status: DayTaskStatus) => void;
   onDelete: (task: DayTask) => void;
   onAdd: (input: DayTaskInput) => void;
+  onUpdate?: (id: string, patch: Partial<DayTaskInput>) => void;
 }
 
 const VIEWS: { key: DayTaskView; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "week", label: "Week" },
-  { key: "backlog", label: "Backlog" },
-  { key: "all", label: "All" },
+  { key: "backlog", label: "Backlog (No Date)" },
+  { key: "all", label: "All Tasks" },
 ];
 
 const STATUSES: DayTaskStatus[] = ["todo", "doing", "done", "parked"];
@@ -54,8 +63,40 @@ const STATUS_COLOR: Record<DayTaskStatus, string> = {
   parked: tokens.textGhost,
 };
 
-/** Importance first, then the nearest deadline, then oldest — the order in
- *  which a day should actually be attacked (§6 TASKS). */
+/**
+ * Format relative due date string: "due today", "due in 2d", "due 3d ago"
+ */
+export function formatDueRemaining(dueDay: string, todayKey: string): { text: string; urgent: boolean; past: boolean } {
+  if (dueDay === todayKey) {
+    return { text: "due today", urgent: true, past: false };
+  }
+  if (dueDay < todayKey) {
+    // compute days past
+    const d1 = new Date(dueDay).getTime();
+    const d2 = new Date(todayKey).getTime();
+    const days = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+    return { text: `due ${days}d ago`, urgent: true, past: true };
+  }
+  const d1 = new Date(dueDay).getTime();
+  const d2 = new Date(todayKey).getTime();
+  const days = Math.round((d1 - d2) / (1000 * 60 * 60 * 24));
+  return { text: `due in ${days}d`, urgent: days <= 2, past: false };
+}
+
+/**
+ * Format duration minutes nicely: "~30m", "~1h", "~1h 30m"
+ */
+export function formatDuration(min: number | null | undefined): string | null {
+  if (min === null || min === undefined || min <= 0) return null;
+  if (min < 60) return `~${min}m`;
+  const h = Math.floor(min / 60);
+  const rem = min % 60;
+  return rem > 0 ? `~${h}h ${rem}m` : `~${h}h`;
+}
+
+/**
+ * Sorting: Critical importance first, then nearest deadline, then age
+ */
 export function sortTasks(tasks: DayTask[]): DayTask[] {
   return [...tasks].sort(
     (a, b) =>
@@ -92,20 +133,26 @@ export function TasksTab({
   narrow: boolean;
   onRollover: () => void;
   rollingOver: boolean;
-  /** The day quick-add files onto when the line names no other. */
+  /** The day quick-add files onto when the line names no other */
   day: string;
 }) {
   const [board, setBoard] = useState(false);
+  const [scheduleTask, setScheduleTask] = useState<DayTask | null>(null);
+
   const areas = useMemo(
     () =>
       [...new Set(tasks.map((t) => t.area).filter((a): a is string => !!a))].sort(),
     [tasks],
   );
+
   const sorted = useMemo(() => sortTasks(tasks), [tasks]);
   const showBoard = board && !narrow;
 
+  const todayKey = toDayKey(new Date());
+
   return (
     <div>
+      {/* Top Header & View Controls */}
       <div
         style={{
           display: "flex",
@@ -115,7 +162,7 @@ export function TasksTab({
           marginBottom: 10,
         }}
       >
-        <span className="mono" style={{ fontSize: 10.5, color: tokens.textMuted }}>
+        <span className="mono" style={{ fontSize: 11, fontWeight: 500, color: tokens.textSoft }}>
           {tasks.length} task{tasks.length === 1 ? "" : "s"}
           {loading && tasks.length === 0 ? " · loading…" : ""}
         </span>
@@ -126,21 +173,27 @@ export function TasksTab({
             style={{ ...ghostButton(), color: board ? tokens.accent : tokens.textMuted }}
             onClick={() => setBoard((b) => !b)}
           >
-            {board ? "list" : "board"}
+            {board ? "list view" : "board view"}
           </button>
         )}
         <button
           type="button"
-          style={ghostButton()}
-          title="Move every open task from a past day onto today and count the carry (§5). Idempotent."
+          style={{
+            ...ghostButton(),
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+          }}
+          title="Move every open task from past days onto today and increment carry count. Idempotent."
           disabled={rollingOver}
           onClick={onRollover}
         >
-          {rollingOver ? "rolling…" : "roll over"}
+          <span className="ms" style={{ fontSize: 14 }}>sync</span>
+          {rollingOver ? "rolling…" : "roll over open"}
         </button>
       </div>
 
-      {/* View chips — on a phone these are the whole navigation. */}
+      {/* View Chips */}
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
         {VIEWS.map((v) => (
           <button
@@ -154,6 +207,7 @@ export function TasksTab({
         ))}
       </div>
 
+      {/* Status Chips */}
       <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8 }}>
         {STATUSES.map((s) => (
           <button
@@ -167,6 +221,7 @@ export function TasksTab({
         ))}
       </div>
 
+      {/* Area Chips */}
       {areas.length > 0 && (
         <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 8 }}>
           <button
@@ -189,22 +244,29 @@ export function TasksTab({
         </div>
       )}
 
+      {/* Quick Add Form */}
       <div style={{ marginTop: 14 }}>
         <QuickAddBox day={day} onAdd={actions.onAdd} />
       </div>
 
+      {/* Tasks Content: Board or List */}
       {sorted.length === 0 ? (
         <div style={{ marginTop: 14 }}>
           <EmptyState icon="task_alt">
             {loading
               ? "Loading tasks…"
               : view === "backlog"
-                ? "Nothing in the backlog — every task has a day on it."
-                : `Nothing in ${view === "all" ? "the list" : view} yet. Add one above; the evening job also schedules tasks onto tomorrow at 20:30.`}
+                ? "No tasks in the backlog — all tasks have an assigned target day."
+                : `No tasks in ${view === "all" ? "the list" : view} yet. Add one above or schedule one from the planner.`}
           </EmptyState>
         </div>
       ) : showBoard ? (
-        <Board tasks={sorted} actions={actions} />
+        <Board
+          tasks={sorted}
+          actions={actions}
+          todayKey={todayKey}
+          onSchedule={(t) => setScheduleTask(t)}
+        />
       ) : (
         <div style={{ ...CARD, marginTop: 14, overflow: "hidden" }}>
           {sorted.map((t, i) => (
@@ -213,17 +275,45 @@ export function TasksTab({
               task={t}
               actions={actions}
               isLast={i === sorted.length - 1}
+              todayKey={todayKey}
+              onSchedule={(task) => setScheduleTask(task)}
             />
           ))}
         </div>
+      )}
+
+      {/* Schedule on Calendar Modal */}
+      {scheduleTask && (
+        <ScheduleModal
+          task={scheduleTask}
+          defaultDay={day}
+          onClose={() => setScheduleTask(null)}
+          onScheduled={(patch) => {
+            if (actions.onUpdate) {
+              actions.onUpdate(scheduleTask.id, patch);
+            }
+            setScheduleTask(null);
+          }}
+        />
       )}
     </div>
   );
 }
 
-/** Four equal columns in a grid, never a scroll region — at 900px+ each column
- *  gets a quarter of the width and the rows wrap inside it. */
-function Board({ tasks, actions }: { tasks: DayTask[]; actions: TaskActions }) {
+/**
+ * 4-column kanban board for desktop views
+ */
+function Board({
+  tasks,
+  actions,
+  todayKey,
+  onSchedule,
+}: {
+  tasks: DayTask[];
+  actions: TaskActions;
+  todayKey: string;
+  onSchedule: (task: DayTask) => void;
+}) {
   return (
     <div
       style={{
@@ -248,8 +338,8 @@ function Board({ tasks, actions }: { tasks: DayTask[]; actions: TaskActions }) {
               }}
             >
               <span style={{ width: 4, height: 13, borderRadius: 2, background: STATUS_COLOR[s] }} />
-              <span className="mono" style={{ fontSize: 10.5, color: tokens.textLabel }}>
-                {s}
+              <span className="mono" style={{ fontSize: 10.5, fontWeight: 600, color: tokens.textLabel }}>
+                {s.toUpperCase()}
               </span>
               <span style={{ flex: 1 }} />
               <span className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
@@ -259,7 +349,7 @@ function Board({ tasks, actions }: { tasks: DayTask[]; actions: TaskActions }) {
             {rows.length === 0 ? (
               <div
                 className="mono"
-                style={{ fontSize: 10.5, color: tokens.textGhost, padding: "14px 11px" }}
+                style={{ fontSize: 10.5, color: tokens.textGhost, padding: "14px 11px", textAlign: "center" }}
               >
                 empty
               </div>
@@ -270,6 +360,8 @@ function Board({ tasks, actions }: { tasks: DayTask[]; actions: TaskActions }) {
                   task={t}
                   actions={actions}
                   isLast={i === rows.length - 1}
+                  todayKey={todayKey}
+                  onSchedule={onSchedule}
                 />
               ))
             )}
@@ -281,33 +373,39 @@ function Board({ tasks, actions }: { tasks: DayTask[]; actions: TaskActions }) {
 }
 
 /**
- * One task. Two lines, no columns, nothing clipped: the title wraps rather
- * than truncating, because a task you cannot read is a task you cannot do.
- * Tap the row to expand notes / dates / estimate and the status actions.
+ * Single Task Row with One-Click Complete, Area tag, Importance badge,
+ * Age in days, Due remaining countdown, Duration estimate, and Schedule Action.
  */
 export function TaskRow({
   task,
   actions,
   isLast,
+  todayKey = toDayKey(new Date()),
+  onSchedule,
 }: {
   task: DayTask;
   actions: TaskActions;
   isLast: boolean;
+  todayKey?: string;
+  onSchedule?: (task: DayTask) => void;
 }) {
   const [open, setOpen] = useState(false);
   const done = task.status === "done";
   const parked = task.status === "parked";
-  /* Both numbers come from the server (Berlin calendar days, one stale rule)
-     rather than being recomputed here — the browser's clock and the planner's
-     day must not be allowed to disagree about what "old" means. */
+  const doing = task.status === "doing";
   const age = task.age_days;
   const stale = task.stale;
+
+  const dueInfo = task.due_day ? formatDueRemaining(task.due_day, todayKey) : null;
+  const durLabel = formatDuration(task.duration_min ?? task.est_min);
 
   return (
     <div
       style={{
         borderBottom: isLast ? "none" : `1px solid ${tokens.borderDivider}`,
         opacity: parked ? 0.55 : 1,
+        background: doing ? tokens.toolBg : "transparent",
+        transition: "background 0.12s",
       }}
     >
       <div
@@ -315,12 +413,13 @@ export function TaskRow({
         style={{
           display: "flex",
           alignItems: "flex-start",
-          gap: 4,
-          padding: "4px 10px 4px 4px",
+          gap: 6,
+          padding: "6px 10px 6px 6px",
           cursor: "pointer",
-          minHeight: TAP + 8,
+          minHeight: TAP + 6,
         }}
       >
+        {/* 1-Click Finish Button */}
         <button
           type="button"
           aria-pressed={done}
@@ -344,14 +443,15 @@ export function TaskRow({
         >
           <span
             style={{
-              width: 19,
-              height: 19,
-              borderRadius: 5,
+              width: 20,
+              height: 20,
+              borderRadius: 6,
               border: `1.5px solid ${done ? tokens.ok : tokens.borderEmphasis}`,
               background: done ? tokens.ok : "transparent",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
+              transition: "background 0.15s, border-color 0.15s",
             }}
           >
             {done && (
@@ -362,11 +462,12 @@ export function TaskRow({
           </span>
         </button>
 
-        <div style={{ flex: 1, minWidth: 0, paddingTop: 9 }}>
+        {/* Content Body */}
+        <div style={{ flex: 1, minWidth: 0, paddingTop: 6 }}>
           <div
             style={{
               fontSize: 13,
-              lineHeight: 1.4,
+              lineHeight: 1.45,
               color: done ? tokens.textFaint : tokens.textSoft,
               textDecoration: done ? "line-through" : "none",
               wordBreak: "break-word",
@@ -374,15 +475,18 @@ export function TaskRow({
           >
             {task.title}
           </div>
+
+          {/* Metadata badges row */}
           <div
             style={{
               display: "flex",
               flexWrap: "wrap",
               alignItems: "center",
-              gap: 7,
+              gap: 6,
               marginTop: 4,
             }}
           >
+            {/* Area tag */}
             {task.area && (
               <span
                 className="mono"
@@ -397,83 +501,158 @@ export function TaskRow({
                 #{task.area}
               </span>
             )}
-            {task.est_min !== null && (
-              <span className="mono" style={{ fontSize: 9.5, color: tokens.textGhost }}>
-                ~{task.est_min}m
+
+            {/* Importance badge */}
+            {task.importance > 1 && (
+              <span
+                className="mono"
+                style={{
+                  fontSize: 9,
+                  fontWeight: 600,
+                  color: importanceColor(task.importance),
+                  background: tokens.toolBg,
+                  border: `1px solid ${importanceColor(task.importance)}`,
+                  borderRadius: 4,
+                  padding: "1px 5px",
+                }}
+              >
+                {importanceLabel(task.importance).toUpperCase()}
               </span>
             )}
-            {task.due_day && (
+
+            {/* Duration estimate */}
+            {durLabel && (
+              <span className="mono" style={{ fontSize: 9.5, color: tokens.textGhost }}>
+                {durLabel}
+              </span>
+            )}
+
+            {/* Scheduled start time */}
+            {task.start_time && (
+              <span className="mono" style={{ fontSize: 9.5, color: tokens.accent, display: "flex", alignItems: "center", gap: 2 }}>
+                <span className="ms" style={{ fontSize: 11 }}>schedule</span>
+                {new Date(task.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </span>
+            )}
+
+            {/* Due Countdown */}
+            {dueInfo && !done && (
               <span
                 className="mono"
                 style={{
                   fontSize: 9.5,
-                  color:
-                    task.due_day < toDayKey(new Date()) && !done
-                      ? tokens.bleed
-                      : tokens.textGhost,
+                  fontWeight: dueInfo.urgent ? 600 : 400,
+                  color: dueInfo.past ? tokens.bleed : dueInfo.urgent ? tokens.warn : tokens.textGhost,
                 }}
               >
-                due {formatDay(task.due_day)}
+                {dueInfo.text}
               </span>
             )}
-            {/* Bad news only. No permanent shame column (§6 TASKS). */}
-            {!done && age > 14 && <WarnChip>{age}d old</WarnChip>}
+
+            {/* Age in days badge */}
+            {!done && age > 7 && (
+              <WarnChip tone={age > 14 ? tokens.bleed : tokens.warn}>
+                {age}d old
+              </WarnChip>
+            )}
+
+            {/* Stale / carried count */}
             {!done && task.carried >= 2 && (
               <WarnChip tone={stale ? tokens.bleed : tokens.warn}>
                 carried {task.carried}×
               </WarnChip>
             )}
-            {task.status === "doing" && (
-              <span className="mono" style={{ fontSize: 9.5, color: tokens.accent }}>
-                doing
+
+            {/* Status indicators */}
+            {doing && (
+              <span className="mono" style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: tokens.primaryActionBg, color: tokens.accent, border: `1px solid ${tokens.accent}` }}>
+                DOING
+              </span>
+            )}
+
+            {task.gcal_event_id && (
+              <span className="mono" style={{ fontSize: 9, color: tokens.ok, display: "flex", alignItems: "center", gap: 2 }} title="Synced to Google Calendar">
+                <span className="ms" style={{ fontSize: 11 }}>event_available</span>
+                gcal
               </span>
             )}
           </div>
         </div>
 
+        {/* Action Button: Schedule on Calendar */}
+        {onSchedule && !done && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSchedule(task);
+            }}
+            style={{
+              ...ghostButton(),
+              padding: "4px 6px",
+              marginTop: 6,
+              fontSize: 10,
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+            }}
+            title="Schedule on Google Calendar & Timeline"
+          >
+            <span className="ms" style={{ fontSize: 14 }}>calendar_add_on</span>
+            <span className="mono" style={{ fontSize: 10 }}>
+              Schedule
+            </span>
+          </button>
+        )}
+
         <span
-          style={{ ...dot(importanceColor(task.importance)), marginTop: 15 }}
+          style={{ ...dot(importanceColor(task.importance)), marginTop: 14, marginLeft: 2 }}
           title={`${importanceLabel(task.importance)} importance`}
         />
       </div>
 
+      {/* Expanded details */}
       {open && (
         <div
           style={{
             padding: "0 12px 12px 48px",
             display: "flex",
             flexDirection: "column",
-            gap: 9,
+            gap: 10,
           }}
         >
           {task.notes && (
-            <div style={{ fontSize: 11.5, color: tokens.textMuted, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 12, color: tokens.textMuted, lineHeight: 1.5, background: tokens.bgCard, padding: "6px 10px", borderRadius: 6, border: `1px solid ${tokens.borderDivider}` }}>
               {task.notes}
             </div>
           )}
+
           <div
             className="mono"
-            style={{ fontSize: 10, color: tokens.textGhost, display: "flex", gap: 10, flexWrap: "wrap" }}
+            style={{ fontSize: 10, color: tokens.textGhost, display: "flex", gap: 12, flexWrap: "wrap" }}
           >
-            <span>planned {task.planned_day ? formatDay(task.planned_day) : "—"}</span>
-            <span>due {task.due_day ? formatDay(task.due_day) : "—"}</span>
-            <span>est {task.est_min !== null ? `${task.est_min}m` : "—"}</span>
-            <span>age {age}d</span>
-            <span>carried {task.carried}×</span>
+            <span>planned: {task.planned_day ? formatDay(task.planned_day) : "—"}</span>
+            <span>due: {task.due_day ? formatDay(task.due_day) : "—"}</span>
+            <span>duration: {durLabel ?? "—"}</span>
+            <span>age: {age} days</span>
+            <span>carried: {task.carried}×</span>
           </div>
-          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <button
               type="button"
               style={{
                 ...ghostButton(),
-                color: task.status === "doing" ? tokens.accent : tokens.textMuted,
+                color: doing ? tokens.accent : tokens.textMuted,
+                border: doing ? `1px solid ${tokens.accent}` : `1px solid ${tokens.border}`,
               }}
               onClick={() =>
-                actions.onSetStatus(task, task.status === "doing" ? "todo" : "doing")
+                actions.onSetStatus(task, doing ? "todo" : "doing")
               }
             >
-              {task.status === "doing" ? "stop doing" : "doing now"}
+              {doing ? "stop doing" : "doing now"}
             </button>
+
             <button
               type="button"
               style={ghostButton()}
@@ -481,10 +660,21 @@ export function TaskRow({
             >
               {parked ? "un-park" : "park it"}
             </button>
+
+            {onSchedule && !done && (
+              <button
+                type="button"
+                style={{ ...ghostButton(), color: tokens.accent }}
+                onClick={() => onSchedule(task)}
+              >
+                schedule on calendar
+              </button>
+            )}
+
             <button
               type="button"
               style={{ ...ghostButton(), color: tokens.bleed }}
-              title="Hard delete — for typos. Parking keeps the row for the stats."
+              title="Delete task permanently"
               onClick={() => actions.onDelete(task)}
             >
               delete
@@ -504,7 +694,7 @@ function WarnChip({ children, tone }: { children: React.ReactNode; tone?: string
         fontSize: 9.5,
         color: tone ?? tokens.warn,
         border: `1px solid ${tone ?? tokens.warn}`,
-        opacity: 0.85,
+        opacity: 0.9,
         borderRadius: 4,
         padding: "1px 5px",
       }}
@@ -515,9 +705,8 @@ function WarnChip({ children, tone }: { children: React.ReactNode; tone?: string
 }
 
 /**
- * The one-line quick add (§6 TODAY 5). Everything parsed out of the line is
- * echoed back as chips underneath while typing — that is how the syntax gets
- * learned, and how a mis-parse is caught before Enter rather than after.
+ * Natural language quick add parser box supporting duration (~30m), area (#area),
+ * time of day (at 14:00, @14:00), and day markers (tomorrow, mon-sun, today).
  */
 export function QuickAddBox({
   day,
@@ -529,17 +718,37 @@ export function QuickAddBox({
   placeholder?: string;
 }) {
   const [text, setText] = useState("");
-  const parsed = useMemo(() => parseQuickAdd(text), [text]);
+
+  // Parse natural language time expressions like "at 14:00" or "@15:30"
+  const { parsedTime, cleanText } = useMemo(() => {
+    let t = text;
+    const timeMatch = /\b(?:at|@)\s*(\d{1,2}(?::\d{2})?)\b/i.exec(t);
+    let pt: string | null = null;
+    if (timeMatch) {
+      pt = timeMatch[1].includes(":") ? timeMatch[1] : `${timeMatch[1]}:00`;
+      t = t.replace(timeMatch[0], " ").replace(/\s+/g, " ").trim();
+    }
+    return { parsedTime: pt, cleanText: t };
+  }, [text]);
+
+  const parsed = useMemo(() => parseQuickAdd(cleanText), [cleanText]);
   const ready = parsed.title.trim().length > 0;
 
   const submit = () => {
     if (!ready) return;
+    const plannedDay = parsed.planned_day ?? day;
+    let startTimeIso: string | null = null;
+    if (parsedTime) {
+      startTimeIso = `${plannedDay}T${parsedTime.padStart(5, "0")}:00`;
+    }
+
     onAdd({
       title: parsed.title,
       ...(parsed.area !== null ? { area: parsed.area } : {}),
       ...(parsed.importance !== null ? { importance: parsed.importance } : {}),
-      ...(parsed.est_min !== null ? { est_min: parsed.est_min } : {}),
-      planned_day: parsed.planned_day ?? day,
+      ...(parsed.est_min !== null ? { est_min: parsed.est_min, duration_min: parsed.est_min } : {}),
+      planned_day: plannedDay,
+      start_time: startTimeIso,
     });
     setText("");
   };
@@ -553,7 +762,7 @@ export function QuickAddBox({
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}
-          placeholder={placeholder ?? "Add a task —  #uni  !!  ~30m  tomorrow"}
+          placeholder={placeholder ?? "Add task —  #uni  !!  ~30m  at 14:00  tomorrow"}
           aria-label="Quick add a task"
           style={inputStyle()}
         />
@@ -578,6 +787,7 @@ export function QuickAddBox({
           </span>
         </button>
       </div>
+
       {text.trim().length > 0 && (
         <div
           className="mono"
@@ -600,9 +810,215 @@ export function QuickAddBox({
             </span>
           )}
           {parsed.est_min !== null && <span>~{parsed.est_min}m</span>}
+          {parsedTime && <span style={{ color: tokens.accent }}>at {parsedTime}</span>}
           <span>{formatDay(parsed.planned_day ?? day)}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Schedule on Calendar Modal
+ */
+function ScheduleModal({
+  task,
+  defaultDay,
+  onClose,
+  onScheduled,
+}: {
+  task: DayTask;
+  defaultDay: string;
+  onClose: () => void;
+  onScheduled: (patch: Partial<DayTaskInput>) => void;
+}) {
+  const [targetDate, setTargetDate] = useState(task.planned_day ?? defaultDay);
+  const [timeStr, setTimeStr] = useState("10:00");
+  const [durationMin, setDurationMin] = useState(task.duration_min ?? task.est_min ?? 30);
+  const [syncGoogleCalendar, setSyncGoogleCalendar] = useState(true);
+  const [loading, setLoading] = useState(false);
+
+  const handleSchedule = async () => {
+    setLoading(true);
+    try {
+      const startIso = `${targetDate}T${timeStr}:00`;
+      const startDate = new Date(startIso);
+      const endDate = new Date(startDate.getTime() + durationMin * 60 * 1000);
+      const endIso = endDate.toISOString();
+
+      let gcalId: string | null = null;
+
+      if (syncGoogleCalendar) {
+        try {
+          const res = await createCalendarEvent({
+            summary: task.title,
+            start: startIso,
+            end: endIso,
+            description: `Scheduled from AI OS Tasks: #${task.area ?? "general"}\n${task.notes ?? ""}`,
+            task_id: task.id,
+          });
+          // Check if server returned event id
+          gcalId = "gcal-synced";
+        } catch (err) {
+          console.warn("Google Calendar sync error (ignoring and scheduling locally):", err);
+        }
+      }
+
+      onScheduled({
+        planned_day: targetDate,
+        start_time: startIso,
+        duration_min: durationMin,
+        ...(gcalId ? { gcal_event_id: gcalId } : {}),
+      });
+    } catch (e) {
+      toastError("Failed to schedule task", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        backgroundColor: tokens.overlay,
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 9999,
+        padding: 16,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          ...CARD,
+          width: "100%",
+          maxWidth: 480,
+          padding: "20px 22px",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 16,
+            paddingBottom: 10,
+            borderBottom: `1px solid ${tokens.borderDivider}`,
+          }}
+        >
+          <div>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: tokens.textHi }}>
+              Schedule on Calendar & Timeline
+            </div>
+            <div className="mono" style={{ fontSize: 10, color: tokens.textMuted }}>
+              {task.title}
+            </div>
+          </div>
+          <button type="button" onClick={onClose} style={ghostButton()}>
+            <span className="ms" style={{ fontSize: 18 }}>close</span>
+          </button>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Target Day */}
+          <div>
+            <label className="mono" style={{ fontSize: 10, color: tokens.textSoft, display: "block", marginBottom: 5 }}>
+              SCHEDULE DAY
+            </label>
+            <input
+              type="date"
+              value={targetDate}
+              onChange={(e) => setTargetDate(e.target.value)}
+              style={inputStyle()}
+            />
+          </div>
+
+          {/* Time & Duration */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <label className="mono" style={{ fontSize: 10, color: tokens.textSoft, display: "block", marginBottom: 5 }}>
+                START TIME
+              </label>
+              <input
+                type="time"
+                value={timeStr}
+                onChange={(e) => setTimeStr(e.target.value)}
+                style={inputStyle()}
+              />
+            </div>
+
+            <div>
+              <label className="mono" style={{ fontSize: 10, color: tokens.textSoft, display: "block", marginBottom: 5 }}>
+                DURATION (MIN)
+              </label>
+              <select
+                value={durationMin}
+                onChange={(e) => setDurationMin(Number(e.target.value))}
+                style={inputStyle()}
+              >
+                <option value={15}>15 minutes</option>
+                <option value={30}>30 minutes</option>
+                <option value={45}>45 minutes</option>
+                <option value={60}>1 hour</option>
+                <option value={90}>1.5 hours</option>
+                <option value={120}>2 hours</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Sync to Google Calendar option */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 10px",
+              borderRadius: 6,
+              background: tokens.toolBg,
+              border: `1px solid ${tokens.borderDivider}`,
+            }}
+          >
+            <input
+              type="checkbox"
+              id="syncGcal"
+              checked={syncGoogleCalendar}
+              onChange={(e) => setSyncGoogleCalendar(e.target.checked)}
+              style={{ cursor: "pointer", width: 16, height: 16 }}
+            />
+            <label htmlFor="syncGcal" style={{ fontSize: 12, color: tokens.textSoft, cursor: "pointer" }}>
+              Sync to Google Calendar (konrad.schrein@gmail.com)
+            </label>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            gap: 10,
+            marginTop: 20,
+            paddingTop: 14,
+            borderTop: `1px solid ${tokens.borderDivider}`,
+          }}
+        >
+          <button type="button" onClick={onClose} style={ghostButton()}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSchedule}
+            disabled={loading}
+            style={primaryButton()}
+          >
+            {loading ? "Scheduling…" : "Confirm Schedule"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

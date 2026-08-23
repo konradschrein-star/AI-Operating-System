@@ -48,10 +48,15 @@ import {
   putSecret,
 } from "../lib/secret-store.ts";
 import {
+  AGY_ACTIONS,
   AGY_BIN,
   AGY_PROBE_ARGS,
   AGY_SIGNIN_COMMAND,
+  GITHUB_ABSENT_ACTION,
+  GITHUB_ACTIONS,
+  GITHUB_PAT_PRIMARY,
   GITHUB_PAT_SECRET,
+  GOOGLE_ACTIONS,
   GOOGLE_REAUTH_COMMAND,
   absentConnectionStatus,
   agyBinaryPresent,
@@ -59,6 +64,7 @@ import {
   connectionRecheckIntervalMs,
   googleTokenPath,
   probeAgy,
+  probeAllConnections,
   probeGithub,
   probeGoogle,
   readConnectionRecord,
@@ -614,12 +620,6 @@ interface GoogleCheck {
   upstream: string | null;
 }
 
-const GOOGLE_ACTIONS = {
-  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
-  unknown: "Press Test connection to run a real token refresh plus a Gmail profile call.",
-  broken: `Re-authorise at a terminal: ${GOOGLE_REAUTH_COMMAND}`,
-} as const;
-
 function googleCheckFromRecord(record: ConnectionRecord | null): GoogleCheck | null {
   if (record === null) return null;
   return {
@@ -790,12 +790,6 @@ r.post("/google/test", async (c) => {
 
 /* ── agy / Antigravity CLI (R52) ─────────────────────────────────────────── */
 
-const AGY_ACTIONS = {
-  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
-  unknown: "Press Probe to run the CLI and see what it says.",
-  broken: `Sign in at a terminal on this box: run \`${AGY_SIGNIN_COMMAND}\`, open the printed Google URL in a browser, and paste the authorization code back into the terminal within 60 seconds. There is no login subcommand and no browser flow this OS can drive for you.`,
-} as const;
-
 /** The affordance, in one object, so the panel prints facts rather than a
  *  guess at how a CLI login usually works. Every line here is something
  *  phase0/S-A-agy-flow.md OBSERVED. */
@@ -915,16 +909,6 @@ r.post("/agy/probe", async (c) => {
   }
 });
 
-/* ── GitHub (R55, R56) ───────────────────────────────────────────────────── */
-
-const GITHUB_ACTIONS = {
-  connected: "Nothing to do. The next scheduled re-check will refresh the timestamp.",
-  unknown: "Press Probe to make a real GET https://api.github.com/user with the stored token.",
-  broken: `The stored token was rejected. Mint a new personal access token on GitHub and store it through the secure panel under the name \`${GITHUB_PAT_SECRET}\` — never paste it into a chat.`,
-} as const;
-
-const GITHUB_ABSENT_ACTION = `Store a GitHub personal access token through the secure panel (POST /api/secrets) under the name \`${GITHUB_PAT_SECRET}\`. The value must never travel through a chat message, a brief, a log line or a URL.`;
-
 async function secretNames(): Promise<string[]> {
   return (await listSecrets()).map((s) => s.name);
 }
@@ -933,19 +917,22 @@ async function secretNames(): Promise<string[]> {
  *  never leaves this function's caller and is never returned, logged or
  *  echoed — only the NAME appears anywhere in a response. */
 async function githubToken(): Promise<
-  { token: string } | { token: null; status: ConnectionStatus }
+  { token: string; secret_name: string } | { token: null; status: ConnectionStatus; secret_name: string }
 > {
   const resolved = await resolveGithubToken(secretNames, getSecret);
-  if (resolved.token !== null) return { token: resolved.token };
+  if (resolved.token !== null) {
+    return { token: resolved.token, secret_name: resolved.name ?? GITHUB_PAT_SECRET };
+  }
   const near =
     resolved.candidates.length === 0
       ? ""
-      : ` The store does hold ${resolved.candidates.map((n) => `\`${n}\``).join(", ")}, but this probe will not guess which account you mean — store the one you want under \`${GITHUB_PAT_SECRET}\`.`;
+      : ` The store does hold ${resolved.candidates.map((n) => `\`${n}\``).join(", ")}, but this probe will not guess which account you mean — store the one you want under \`${GITHUB_PAT_SECRET}\` or \`${GITHUB_PAT_PRIMARY}\`.`;
   return {
     token: null,
+    secret_name: GITHUB_PAT_SECRET,
     status: absentConnectionStatus(
       GITHUB_ID,
-      `No secret named \`${GITHUB_PAT_SECRET}\` is stored, so there is nothing to authorise with.${near}`,
+      `No secret named \`${GITHUB_PAT_PRIMARY}\` or \`${GITHUB_PAT_SECRET}\` is stored, so there is nothing to authorise with.${near}`,
       GITHUB_ABSENT_ACTION,
     ),
   };
@@ -976,11 +963,11 @@ r.get("/github", async (c) => {
   }
 
   if (resolved.token === null) {
-    return c.json({ status: resolved.status, secret_name: GITHUB_PAT_SECRET });
+    return c.json({ status: resolved.status, secret_name: resolved.secret_name });
   }
   return c.json({
     status: buildConnectionStatus(GITHUB_ID, record, clock(), GITHUB_ACTIONS),
-    secret_name: GITHUB_PAT_SECRET,
+    secret_name: resolved.secret_name,
   });
 });
 
@@ -1003,7 +990,7 @@ r.post("/github/probe", async (c) => {
     );
   }
   if (resolved.token === null) {
-    return c.json({ status: resolved.status, secret_name: GITHUB_PAT_SECRET }, 400);
+    return c.json({ status: resolved.status, secret_name: resolved.secret_name }, 400);
   }
 
   const record = await probeGithub(resolved.token);
@@ -1024,7 +1011,7 @@ r.post("/github/probe", async (c) => {
 
   return c.json({
     status: buildConnectionStatus(GITHUB_ID, stored, clock(), GITHUB_ACTIONS),
-    secret_name: GITHUB_PAT_SECRET,
+    secret_name: resolved.secret_name,
   });
 });
 
@@ -1082,6 +1069,29 @@ r.get("/connections", async (c) => {
     errors,
     recheck_interval_ms: connectionRecheckIntervalMs(),
   });
+});
+
+/**
+ * POST /api/integrations/probe-all — parallel probe of all registered integrations.
+ * Runs all probes concurrently via Promise.allSettled, commits records atomically
+ * to /opt/ai-os/.secrets/status/<id>.json, and returns { connections: ConnectionStatus[], timestamp: string }.
+ */
+r.post("/probe-all", async (c) => {
+  try {
+    const result = await probeAllConnections({
+      listSecretNames: secretNames,
+      readSecret: getSecret,
+    });
+    return c.json(result);
+  } catch (err) {
+    return c.json(
+      {
+        error: "could not complete parallel probe",
+        detail: (err as Error).message,
+      },
+      500,
+    );
+  }
 });
 
 export default r;

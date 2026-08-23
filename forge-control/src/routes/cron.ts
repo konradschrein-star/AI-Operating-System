@@ -11,6 +11,7 @@ import {
   updateSchedule,
   deleteSchedule,
   validateCronExpr,
+  fireScheduleById,
 } from "../db/cron.ts";
 import { nextFireFromExpr } from "../lib/cron-parser.ts";
 
@@ -145,6 +146,20 @@ r.delete("/:id", async (c) => {
   const ok = await deleteSchedule(id);
   if (!ok) return c.json({ error: "schedule not found" }, 404);
   return c.json({ deleted: true });
+});
+
+r.post("/:id/run", async (c) => {
+  const id = c.req.param("id");
+  if (!UUID_RE.test(id)) return c.json({ error: "invalid schedule id" }, 400);
+  const s = await getScheduleById(id);
+  if (!s) return c.json({ error: "schedule not found" }, 404);
+  try {
+    const run_id = await fireScheduleById(id);
+    return c.json({ ok: true, run_id });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return c.json({ error: `failed to fire schedule: ${msg}` }, 500);
+  }
 });
 
 export default r;

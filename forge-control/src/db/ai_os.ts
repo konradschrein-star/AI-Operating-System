@@ -144,14 +144,30 @@ export async function setFleetState(
   status: FleetStatus,
   updatedBy = "user",
 ): Promise<FleetState> {
-  const r = await pool.query<FleetState>(
-    `UPDATE fleet_state
-        SET status = $1, updated_at = now(), updated_by = $2
-      WHERE id = 1
-      RETURNING status, updated_at::text AS updated_at, updated_by`,
-    [status, updatedBy],
-  );
-  return r.rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const r = await client.query<FleetState>(
+      `UPDATE fleet_state
+          SET status = $1, updated_at = now(), updated_by = $2
+        WHERE id = 1
+        RETURNING status, updated_at::text AS updated_at, updated_by`,
+      [status, updatedBy],
+    );
+    await client.query(
+      `UPDATE guardrail_rules
+          SET enabled = $1, updated_at = now()
+        WHERE id = 'runtime.pause_all'`,
+      [status === "paused"],
+    );
+    await client.query("COMMIT");
+    return r.rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /* ============================================================================
@@ -687,14 +703,29 @@ export async function replyToHcpIfMirrored(opts: {
  * Decisions
  * ========================================================================== */
 
-export async function listDecisions(limit = 50): Promise<Decision[]> {
+/**
+ * `day`, given alone, scopes to one Europe/Berlin calendar day (the JOURNAL
+ * timeline's per-day decisions stream) — matched via `AT TIME ZONE`, not a JS
+ * UTC-midnight range, for the same reason lib/day-score.ts's berlinDay() exists:
+ * this box's clock is UTC and a naive range would put entries between
+ * 22:00–00:00 UTC on the wrong day. `from`/`to` are a raw timestamptz range for
+ * callers that already have instants. Both may be passed; `day` takes
+ * precedence when it disagrees with a `from`/`to` that spans multiple days.
+ */
+export async function listDecisions(
+  limit = 50,
+  filters: { day?: string; from?: string; to?: string } = {},
+): Promise<Decision[]> {
   const r = await pool.query<Decision>(
     `SELECT id, ts::text AS ts, kind, actor, action, payload,
             inbox_item_id, related_job_id
        FROM decisions
+      WHERE ($2::date IS NULL OR (ts AT TIME ZONE 'Europe/Berlin')::date = $2::date)
+        AND ($3::timestamptz IS NULL OR ts >= $3::timestamptz)
+        AND ($4::timestamptz IS NULL OR ts < $4::timestamptz)
       ORDER BY ts DESC
       LIMIT $1`,
-    [limit],
+    [limit, filters.day ?? null, filters.from ?? null, filters.to ?? null],
   );
   return r.rows;
 }

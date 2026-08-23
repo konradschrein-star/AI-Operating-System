@@ -118,7 +118,7 @@ export const NAV: NavItem[] = [
   { key: "autonomy", label: "AUTONOMY", group: "ai" },
   { key: "automation", label: "AUTOMATION", group: "ai" },
   { key: "goals", label: "GOALS/TASKS", group: "recall" },
-  { key: "journal", label: "JOURNAL", group: "recall", unbuilt: true },
+  { key: "journal", label: "JOURNAL", group: "recall" },
   { key: "map", label: "MAP", group: "recall", unbuilt: true },
 ];
 

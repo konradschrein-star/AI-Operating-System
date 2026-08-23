@@ -289,6 +289,46 @@ export const fetchGeminiCliConnection = (): Promise<GeminiCliConnectionResponse>
 export const probeGeminiCliConnection = (): Promise<GeminiCliConnectionResponse> =>
   callConnections<GeminiCliConnectionResponse>("/gemini-cli/probe", { method: "POST" });
 
+export interface ProbeAllResponse {
+  connections: ConnectionStatus[];
+  timestamp: string;
+}
+
+/**
+ * Parallel probe of all registered integrations.
+ * POST /api/integrations/probe-all
+ */
+export const probeAllConnections = (): Promise<ProbeAllResponse> =>
+  callConnections<ProbeAllResponse>("/probe-all", { method: "POST" });
+
+export interface GeminiReachabilityModel {
+  id: string;
+  display_name: string | null;
+  input_token_limit: number | null;
+  output_token_limit: number | null;
+}
+
+export type GeminiTestVerdict =
+  | {
+      ok: true;
+      models: GeminiReachabilityModel[];
+      count: number;
+      truncated: boolean;
+      checked_at: string;
+    }
+  | {
+      ok: false;
+      reason: string;
+      message: string;
+      http_status: number | null;
+      upstream: string | null;
+      checked_at: string;
+    };
+
+/** Test the stored Gemini API key against Google's models endpoint. */
+export const probeGeminiKey = (): Promise<GeminiTestVerdict> =>
+  callConnections<GeminiTestVerdict>("/gemini/test", { method: "POST" });
+
 /* ════════════════════════════════════════════════════════════════════════════
  * THE CLI SIGN-IN BROKER — `PLAN.md` §3.2 (the shape) and §4 (the verbs).
  *
