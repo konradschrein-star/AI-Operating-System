@@ -368,3 +368,33 @@ changes. Every other file below is disclosed here and in the final report:
 | `map/mapApi.ts`, `map/mapTree.ts`, `map/mapTree.test.ts` | new — the live contract, the mapper, its tests |
 | `scripts/checks/dollar-allowlist.txt` | finding 5, verbatim as asked |
 | `scripts/checks/raw-colour-allowlist.txt` | finding 4's residue: one legitimate-carrier line |
+
+### Re-verified at the committed tip
+
+The gate-suite output quoted above was produced one commit before the last one.
+Because a suite run that predates the code it certifies proves nothing, the whole
+thing was re-run at **`b8fc5c3`**, the tip this report describes:
+
+```
+$ npx tsc --noEmit; echo "TSC EXIT=$?"
+TSC EXIT=0
+
+$ npm run build | tail -4
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
+$ npx tsx --test app/desktop/map/mapTree.test.ts
+# tests 20
+# pass 20
+# fail 0
+
+$ bash scripts/checks/gates-808.sh --strict
+ 6  1      forbidden-file diff — three-dot main...HEAD
+ RED: 1
+
+$ git status --porcelain          # after the suite
+(empty)
+```
+
+Identical to the earlier run: one RED, gate 6, the escalated operator call. The
+only commit after this run is the one adding these lines, which touches no code.
