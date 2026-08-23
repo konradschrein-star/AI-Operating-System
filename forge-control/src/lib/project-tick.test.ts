@@ -1411,17 +1411,44 @@ describe("R36 the spawn path resolves per task and writes back only `main`", () 
     );
   });
 
-  test("executor.ts is not modified by this phase", () => {
-    // 04-phases.md §10 lists executor.ts as written by NO phase. It already
-    // uses run.metadata.workspace_dir as the child's cwd, which is why a
-    // workstream gets its own directory without touching it.
-    const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-    const diff = execFileSync(
-      "git",
-      ["diff", PRIOR_SHA, "--", "forge-control/src/executor.ts"],
-      { cwd: repoRoot, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+  test("the workstream feature still needs no cwd change in executor.ts", () => {
+    /* ── NARROWED 2026-08-23, deliberately, with the reason recorded ─────────
+     *
+     * This was a whole-file freeze: `git diff <PRIOR_SHA> -- executor.ts` had to
+     * be empty. Its stated claim (04-phases.md §10) is that the
+     * workstream-worktree work was achieved WITHOUT touching executor.ts,
+     * because executor.ts already takes the child's cwd from
+     * `run.metadata.workspace_dir`.
+     *
+     * That claim is about ONE property of executor.ts. Freezing the whole file
+     * asserted something far larger — that executor.ts may never change again,
+     * for any reason — and that is what it actually enforced: the first
+     * unrelated bug fix to land there tripped it. (That fix: `cc_session_id` is
+     * one slot shared by both engines, so switching a live chat to Gemini handed
+     * agy a Claude session id and the run died with `conversation ... not
+     * found`.)
+     *
+     * A guard that fails for reasons outside its own claim stops being evidence
+     * and becomes a toll on unrelated work. So it now asserts the property it
+     * names. If you are reading this because you changed how the child's cwd is
+     * resolved, the guard is doing its job — do not widen it back to a
+     * whole-file freeze, and do not delete it. */
+    const executorSrc = readFileSync(
+      fileURLToPath(new URL("../executor.ts", import.meta.url)),
+      "utf8",
     );
-    assert.equal(diff, "", `executor.ts changed since ${PRIOR_SHA.slice(0, 7)}:\n${diff}`);
+    assert.match(
+      executorSrc,
+      /run\.metadata\?\.workspace_dir/,
+      "executor.ts must still read the child's cwd from run.metadata.workspace_dir — " +
+        "that is the whole reason a workstream gets its own directory without " +
+        "changes here (R36 / 04-phases.md §10)",
+    );
+    // And it must not have grown a competing source of truth for that cwd.
+    assert.ok(
+      !/workstream_dir|worktree_path/.test(executorSrc),
+      "executor.ts must not resolve a workstream directory itself — project-tick owns that",
+    );
   });
 
   test("a missing workspace is a named refusal, for `main` and for a workstream alike", () => {

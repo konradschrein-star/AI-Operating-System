@@ -27,6 +27,7 @@ import {
   CcResumeError,
   type CcEvent,
 } from "./lib/cc-runner.ts";
+import { engineForModel, resumableSession } from "./lib/engine-session.ts";
 import { ingestEvent, finalizeRollup } from "./lib/run-rollup.ts";
 import {
   resolveAccount,
@@ -492,16 +493,39 @@ async function appendThreadEntry(id: string, entry: ThreadEntry): Promise<void> 
   );
 }
 
-async function saveCcSession(id: string, sessionId: string): Promise<void> {
+/* ── A session id belongs to an ENGINE, not to the run ───────────────────────
+ *
+ * `cc_session_id` is one slot shared by both engines, and this function used to
+ * stamp `'engine': 'claude-code'` unconditionally. So a Gemini run wrote agy's
+ * conversation id into that slot and labelled it Claude, and the resume path
+ * read the slot back without checking whose id it was.
+ *
+ * Konrad hit the visible half on 2026-08-23: switching a live chat to Gemini
+ * killed the run with
+ *   agy returned status ERROR ... conversation "6b1c2951-…" not found
+ * because that is a *Claude* session id and agy keeps its own conversation
+ * store. The mirror image is worse because it is silent — handing
+ * `claude --resume` an agy conversation id.
+ *
+ * So the producing engine is recorded beside the id, and `resumableSession()`
+ * only hands back an id the engine about to run actually minted. Switching
+ * engines mid-chat now starts a fresh conversation instead of failing, which is
+ * the honest behaviour: the two engines cannot share context anyway. */
+async function saveCcSession(
+  id: string,
+  sessionId: string,
+  engine: string,
+): Promise<void> {
   await pool.query(
     `UPDATE runs
         SET metadata = COALESCE(metadata, '{}'::jsonb) ||
-                       jsonb_build_object('cc_session_id', $2::text, 'engine', 'claude-code'),
+                       jsonb_build_object('cc_session_id', $2::text, 'engine', $3::text),
             updated_at = now()
       WHERE id = $1`,
-    [id, sessionId],
+    [id, sessionId, engine],
   );
 }
+
 
 async function addRunSpend(id: string, usd: number): Promise<void> {
   await pool.query(
@@ -823,14 +847,17 @@ async function processWithClaudeCode(
   timeoutMs: number,
 ): Promise<void> {
   const thread = run.thread ?? [];
-  const priorSession =
-    typeof run.metadata?.cc_session_id === "string"
-      ? (run.metadata.cc_session_id as string)
-      : null;
+  // `model` is read BEFORE the session id on purpose: which engine is about to
+  // run decides whether the stored session id is ours to resume at all.
   const model =
     typeof run.metadata?.model === "string"
       ? (run.metadata.model as string)
       : null;
+  const engineNow = engineForModel(model);
+  const priorSession = resumableSession(
+    run.metadata as Record<string, unknown> | null,
+    engineNow,
+  );
   const effort =
     typeof run.metadata?.effort === "string"
       ? (run.metadata.effort as string)
@@ -956,7 +983,7 @@ async function processWithClaudeCode(
     ingestEvent(run.id, e);
     if (e.type === "init" && e.sessionId) {
       const sid = e.sessionId;
-      enqueue(() => saveCcSession(run.id, sid));
+      enqueue(() => saveCcSession(run.id, sid, engineNow));
     } else if (e.type === "assistant_text" && e.text) {
       const entry: ThreadEntry = {
         role: "assistant",
@@ -1141,7 +1168,7 @@ async function processWithClaudeCode(
       : null;
 
   if (result.sessionId) {
-    await saveCcSession(run.id, result.sessionId).catch((e) =>
+    await saveCcSession(run.id, result.sessionId, engineNow).catch((e) =>
       console.warn(`[executor] save session failed: ${e.message}`),
     );
   }
