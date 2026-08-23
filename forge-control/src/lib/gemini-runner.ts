@@ -45,7 +45,7 @@
 
 import { spawn } from "node:child_process";
 
-import type { CcEvent, CcResult } from "./cc-runner.ts";
+import { CcResumeError, type CcEvent, type CcResult } from "./cc-runner.ts";
 import { recordSpend } from "../db/spend.ts";
 
 /** Absolute. pm2's PATH has no /root/.local/bin — that export lives in
@@ -219,6 +219,10 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
       }
 
       if (env2 === null) {
+        if (opts.sessionId && /conversation.*not found/i.test(stderr)) {
+          reject(new CcResumeError(`resume ${opts.sessionId} failed: ${stderr.trim()}`));
+          return;
+        }
         reject(
           new Error(
             `agy produced no parseable JSON (exit ${code}).${stderr.trim() ? ` STDERR: ${stderr.trim().slice(0, 400)}` : ""}`,
@@ -245,6 +249,10 @@ export async function runGemini(opts: GeminiRunOptions): Promise<CcResult> {
       const text = env2.response ?? "";
 
       if (env2.status !== undefined && env2.status !== "SUCCESS" && text.trim() === "") {
+        if (opts.sessionId && /conversation.*not found/i.test(stderr)) {
+          reject(new CcResumeError(`resume ${opts.sessionId} failed: ${stderr.trim()}`));
+          return;
+        }
         reject(
           new Error(
             `agy returned status ${env2.status} with no response text.` +
