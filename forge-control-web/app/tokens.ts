@@ -80,6 +80,13 @@ export const tokens = {
   toolBg: v("toolBg"),
   scrollbar: v("scrollbar"),
 
+  /* Elevation. These resolve to a WHOLE `box-shadow` value, not a colour —
+   * `boxShadow: tokens.shadowCard`, never interpolated into a shadow string.
+   * A raw `rgba(0,0,0,α)` shadow is theme-blind in exactly the way a raw
+   * colour is: tuned against near-black it turns into a grey bruise on paper. */
+  shadowCard: v("shadowCard"),
+  shadowPopover: v("shadowPopover"),
+
   /* Chat transcript role identities (round 808). Two per role: `roleBg*` is
    * the message card's tint, `roleInk*` is its header line and left rule.
    * Both palettes live in theme.css, where the ink is a var() pointing at the

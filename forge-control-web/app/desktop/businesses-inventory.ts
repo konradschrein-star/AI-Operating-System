@@ -39,14 +39,20 @@ export interface Venture {
   defaultNextAction: string;
   launchpad: LaunchpadLink[];
   properties: VentureProperty[];
-  metrics: {
-    label1: string;
-    value1: string | number;
-    label2: string;
-    value2: string | number;
-    label3: string;
-    value3: string | number;
-  };
+  /**
+   * STATED metrics only — business facts transcribed from the vault, never a
+   * copy of something an API can answer. Zero to three of them; a venture whose
+   * card fills a slot from a live probe simply omits that slot rather than
+   * carrying a frozen number the probe would shadow. Round 2 carried
+   * `"5 In Flight"` and `"1,053"` here — that hour's live readings, transcribed
+   * into the source, still on screen when the probe was down.
+   */
+  metrics: StatedMetric[];
+}
+
+export interface StatedMetric {
+  label: string;
+  value: string;
 }
 
 export interface BottleneckItem {
@@ -71,16 +77,17 @@ export const VENTURES: Venture[] = [
     status: "active",
     statusLabel: "Active Sourcing",
     pricing: "£49/mo (Layer 1 Listings)",
+    /* Carries NO prospect count: the card reads that live from
+     * ai_os.entities and prefixes this sentence with it. A number here would
+     * be the one that survives a failed probe. */
     defaultNextAction:
-      "1,053 enriched company entities ready in DB. First 100 cold outreach calls not yet initiated.",
-    metrics: {
-      label1: "Sourced Prospects",
-      value1: "1,053",
-      label2: "Contacted",
-      value2: "0",
-      label3: "Pricing Tier",
-      value3: "£49/mo",
-    },
+      "First 100 cold outreach calls not yet initiated.",
+    metrics: [
+      /* Twenty CRM is not wired into this OS, so "how many were contacted" has
+       * no live source. It is 0 because Konrad states outbound has not started
+       * — a fact, badged STATED, not a zeroed-out reading. */
+      { label: "Contacted", value: "0" },
+    ],
     launchpad: [
       {
         label: "Open Site",
@@ -143,16 +150,16 @@ export const VENTURES: Venture[] = [
     status: "active",
     statusLabel: "Active Production",
     pricing: "AdSense / Sponsorships",
+    /* Same rule as directory: job counts and stall counts come from
+     * /api/pipeline, so they are not written down here. What is left is the
+     * standing instruction that holds whether or not the probe answers. */
     defaultNextAction:
-      "5 of 5 jobs stalled >48h in QC. Human review required in Hub Web.",
-    metrics: {
-      label1: "Active Channels",
-      value1: "3 Channels",
-      label2: "Pipeline Jobs",
-      value2: "5 In Flight",
-      label3: "QC Stalled (>48h)",
-      value3: "5 Stalled",
-    },
+      "QC is the human-review gate for this pipeline — clear it in Hub Web.",
+    metrics: [
+      /* TheSkyLab, KarmaBiker, AI Senior — the channel fleet itself, not a
+       * count of anything the pipeline reports. */
+      { label: "Active Channels", value: "3 Channels" },
+    ],
     launchpad: [
       {
         label: "Hub Web",
@@ -228,14 +235,11 @@ export const VENTURES: Venture[] = [
     pricing: "$197 / $497 / $2,497",
     defaultNextAction:
       "Cloudflare DNS for app.axtrelis.com returns 404 — route to VPS2 container.",
-    metrics: {
-      label1: "Seed Plans",
-      value1: "5 Generated",
-      label2: "Live Customers",
-      value2: "0 Customers",
-      label3: "Pricing Tiers",
-      value3: "$197 / $497 / $2,497",
-    },
+    metrics: [
+      { label: "Seed Plans", value: "5 Generated" },
+      { label: "Live Customers", value: "0 Customers" },
+      { label: "Pricing Tiers", value: "$197 / $497 / $2,497" },
+    ],
     launchpad: [
       {
         label: "Review App",
@@ -295,14 +299,11 @@ export const VENTURES: Venture[] = [
     statusLabel: "Paused / Dormant",
     pricing: "Consulting Retainers",
     defaultNextAction: "Paused — focus on YouTube and Directory.",
-    metrics: {
-      label1: "Portfolio Web",
-      value1: "200 OK",
-      label2: "ShiftSync Tool",
-      value2: "502 Stopped",
-      label3: "Active Focus",
-      value3: "Dormant",
-    },
+    metrics: [
+      { label: "Portfolio Web", value: "200 OK" },
+      { label: "ShiftSync Tool", value: "502 Stopped" },
+      { label: "Active Focus", value: "Dormant" },
+    ],
     launchpad: [
       {
         label: "Portfolio Site",

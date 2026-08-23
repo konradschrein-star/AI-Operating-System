@@ -6,6 +6,18 @@
  * Visualizes Konrad's 4 core ventures with high-impact venture cards,
  * live telemetry probes (entities identity registry, content_jobs pipeline),
  * one-click launchpad actions, and cross-portfolio bottleneck resolution.
+ *
+ * PROVENANCE IS PART OF THE RENDER. Every number on this surface is one of
+ * two things and says which:
+ *   LIVE    — read from an API this render, badged `LIVE`;
+ *   STATED  — a business fact transcribed into businesses-inventory.ts from
+ *             the vault, badged `STATED`.
+ * A live reading that has not arrived renders `probing…`; one whose fetch
+ * failed renders `unreachable` with the error. It NEVER renders as a number.
+ * Round 2 shipped `{total: 5, stalled: 5, qcCount: 5}` as the pipeline's
+ * pending/failed default — the live values of that hour, frozen into the
+ * source, indistinguishable on screen from a real reading. That is the whole
+ * reason `Probe<T>` below exists: a fallback number is a lie with a timestamp.
  */
 
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
@@ -58,6 +70,11 @@ const STATUS_CONFIG: Record<
   },
 };
 
+/** Tones for the stated metrics, in slot order — the same reading order the
+ *  round-2 card had (headline, secondary, pricing) without hardcoding which
+ *  venture gets which. */
+const STATED_TONES = [tokens.textHi, tokens.stuck, tokens.accent];
+
 const SEVERITY_CONFIG: Record<
   BottleneckItem["severity"],
   { label: string; fg: string; bg: string; border: string }
@@ -81,6 +98,32 @@ const SEVERITY_CONFIG: Record<
     border: tokens.borderSoft,
   },
 };
+
+/**
+ * The three states a live reading can be in. There is deliberately no fourth
+ * state carrying a "default" value: a caller that wants a number has to name
+ * what it renders when there isn't one.
+ */
+type Probe<T> =
+  | { state: "pending" }
+  | { state: "error"; message: string }
+  | { state: "ok"; value: T };
+
+interface PipelineReading {
+  total: number;
+  stalled: number;
+  /** null when the server reports no `qc` phase at all — NOT a zero, and not
+   *  `stalled_total` standing in for it. */
+  qcCount: number | null;
+  thresholdHours: number;
+}
+
+interface DirectoryReading {
+  /** `kind = 'company'` rows on the directory arm. A real 0 stays 0. */
+  companies: number;
+  /** All rows on the arm, companies + persons. */
+  total: number;
+}
 
 export function BusinessesSurface() {
   const [filter, setFilter] = useState<"all" | "active" | "other">("all");
@@ -107,24 +150,55 @@ export function BusinessesSurface() {
     return VENTURES;
   }, [filter]);
 
-  const liveDirectoryCount = useMemo(() => {
-    if (entitiesQ.data?.by_arm?.directory) {
-      return entitiesQ.data.by_arm.directory.companies || entitiesQ.data.by_arm.directory.total || 1053;
-    }
-    return 1053;
-  }, [entitiesQ.data]);
+  /* Counted from the inventory, never typed into a label — a fifth venture
+   * would otherwise land on a page still announcing four. */
+  const activeCount = VENTURES.filter((v) => v.status === "active").length;
+  const otherCount = VENTURES.length - activeCount;
 
-  const pipelineMetrics = useMemo(() => {
-    if (!pipelineQ.data) {
-      return { total: 5, stalled: 5, qcCount: 5 };
+  /* `by_arm` is grouped server-side, so an arm with no rows is ABSENT from the
+   * map rather than present as 0 — absent therefore means "the registry
+   * answered, and it holds nothing for this arm", which is a real 0. What must
+   * never happen is `companies || total || <a number from last week>`: `||`
+   * cannot tell a genuine 0 from a missing reading, and round 2's version
+   * overwrote a real zero with a hardcoded 1053 while still badging it LIVE. */
+  const directoryProbe = useMemo<Probe<DirectoryReading>>(() => {
+    if (entitiesQ.data) {
+      const arm = entitiesQ.data.by_arm?.directory;
+      return {
+        state: "ok",
+        value: { companies: arm?.companies ?? 0, total: arm?.total ?? 0 },
+      };
     }
-    const qcPhase = pipelineQ.data.phases.find((p) => p.key === "qc");
-    return {
-      total: pipelineQ.data.total,
-      stalled: pipelineQ.data.stalled_total,
-      qcCount: qcPhase?.count ?? pipelineQ.data.stalled_total,
-    };
-  }, [pipelineQ.data]);
+    if (entitiesQ.isError) {
+      return {
+        state: "error",
+        message: entitiesQ.error?.message ?? "entities registry unreachable",
+      };
+    }
+    return { state: "pending" };
+  }, [entitiesQ.data, entitiesQ.isError, entitiesQ.error]);
+
+  const pipelineProbe = useMemo<Probe<PipelineReading>>(() => {
+    if (pipelineQ.data) {
+      const qcPhase = pipelineQ.data.phases.find((p) => p.key === "qc");
+      return {
+        state: "ok",
+        value: {
+          total: pipelineQ.data.total,
+          stalled: pipelineQ.data.stalled_total,
+          qcCount: qcPhase ? qcPhase.count : null,
+          thresholdHours: pipelineQ.data.stall_threshold_hours,
+        },
+      };
+    }
+    if (pipelineQ.isError) {
+      return {
+        state: "error",
+        message: pipelineQ.error?.message ?? "pipeline probe unreachable",
+      };
+    }
+    return { state: "pending" };
+  }, [pipelineQ.data, pipelineQ.isError, pipelineQ.error]);
 
   return (
     <div
@@ -158,7 +232,7 @@ export function BusinessesSurface() {
                 padding: "2px 6px",
               }}
             >
-              4 PORTFOLIO ARMS
+              {VENTURES.length} PORTFOLIO ARMS
             </span>
           </div>
           <div
@@ -191,21 +265,21 @@ export function BusinessesSurface() {
             onClick={() => setFilter("all")}
             style={filterBtnStyle(filter === "all")}
           >
-            All Ventures (4)
+            All Ventures ({VENTURES.length})
           </button>
           <button
             type="button"
             onClick={() => setFilter("active")}
             style={filterBtnStyle(filter === "active")}
           >
-            Active Commercial (2)
+            Active Commercial ({activeCount})
           </button>
           <button
             type="button"
             onClick={() => setFilter("other")}
             style={filterBtnStyle(filter === "other")}
           >
-            Pre-Launch / Paused (2)
+            Pre-Launch / Paused ({otherCount})
           </button>
         </div>
       </div>
@@ -221,29 +295,38 @@ export function BusinessesSurface() {
       >
         <PortfolioSummaryTile
           title="Active Ventures"
-          value="2 Commercial"
+          origin="stated"
+          value={`${activeCount} Commercial`}
           detail="Directory (£49/mo) & YouTube Studio"
           tone={tokens.ok}
         />
         <PortfolioSummaryTile
           title="Prospects & Leads"
-          value={`${liveDirectoryCount.toLocaleString()} Enriched`}
-          detail={
-            entitiesQ.data ? "Live from ai_os.entities" : "1,053 in DB · Ready for outreach"
+          origin="live"
+          probe={directoryProbe}
+          renderValue={(v) => `${v.companies.toLocaleString()} Enriched`}
+          renderDetail={(v) =>
+            `Live from ai_os.entities · ${v.total.toLocaleString()} rows on the directory arm`
           }
           tone={tokens.accent}
-          isLive={!!entitiesQ.data}
         />
         <PortfolioSummaryTile
           title="Pipeline In Flight"
-          value={`${pipelineMetrics.total} Video Jobs`}
-          detail={`${pipelineMetrics.stalled} stalled >48h in QC review`}
-          tone={pipelineMetrics.stalled > 0 ? tokens.bleed : tokens.ok}
-          isLive={!!pipelineQ.data}
+          origin="live"
+          probe={pipelineProbe}
+          renderValue={(v) => `${v.total} Video Jobs`}
+          renderDetail={(v) =>
+            `${v.stalled} stalled >${v.thresholdHours}h${
+              v.qcCount === null ? "" : ` · ${v.qcCount} in QC review`
+            }`
+          }
+          toneFor={(v) => (v.stalled > 0 ? tokens.bleed : tokens.ok)}
+          tone={tokens.accent}
         />
         <PortfolioSummaryTile
           title="SaaS & Consulting"
-          value="Pre-Launch / Paused"
+          origin="stated"
+          value={`${otherCount} Pre-Launch / Paused`}
           detail="Axtrelis SaaS + ShiftSync Dormant"
           tone={tokens.warn}
         />
@@ -262,11 +345,10 @@ export function BusinessesSurface() {
           <VentureCard
             key={venture.key}
             venture={venture}
-            pipelineData={venture.key === "creator" ? pipelineQ.data : undefined}
-            isPipelinePending={venture.key === "creator" && pipelineQ.isPending}
-            pipelineError={venture.key === "creator" && pipelineQ.isError ? pipelineQ.error?.message : undefined}
+            pipelineProbe={venture.key === "creator" ? pipelineProbe : undefined}
             onRetryPipeline={venture.key === "creator" ? () => void pipelineQ.refetch() : undefined}
-            liveProspectsCount={venture.key === "directory" ? liveDirectoryCount : undefined}
+            directoryProbe={venture.key === "directory" ? directoryProbe : undefined}
+            onRetryDirectory={venture.key === "directory" ? () => void entitiesQ.refetch() : undefined}
           />
         ))}
       </div>
@@ -323,7 +405,7 @@ export function BusinessesSurface() {
             </div>
           </div>
           <span className="mono" style={{ fontSize: 10.5, color: tokens.textFaint }}>
-            4 strategic items identified
+            {CROSS_PORTFOLIO_BOTTLENECKS.length} strategic items identified
           </span>
         </div>
 
@@ -343,38 +425,44 @@ export function BusinessesSurface() {
 
 function VentureCard({
   venture,
-  pipelineData,
-  isPipelinePending,
-  pipelineError,
+  pipelineProbe,
   onRetryPipeline,
-  liveProspectsCount,
+  directoryProbe,
+  onRetryDirectory,
 }: {
   venture: Venture;
-  pipelineData?: BusinessPipelineResponse;
-  isPipelinePending?: boolean;
-  pipelineError?: string;
+  pipelineProbe?: Probe<PipelineReading>;
   onRetryPipeline?: () => void;
-  liveProspectsCount?: number;
+  directoryProbe?: Probe<DirectoryReading>;
+  onRetryDirectory?: () => void;
 }) {
   const [showProps, setShowProps] = useState(false);
   const statusCfg = STATUS_CONFIG[venture.status];
 
-  // Dynamic next action and metrics resolution
+  /* The next action is the one line Konrad acts on, so a live probe upgrades
+   * it with the real count and a dead probe leaves the inventory's own
+   * sentence standing — which carries no number, precisely so a failed fetch
+   * cannot dress last week's figure up as today's. */
   const resolvedNextAction = useMemo(() => {
-    if (venture.key === "creator") {
-      if (pipelineData) {
-        if (pipelineData.stalled_total > 0) {
-          return `${pipelineData.stalled_total} of ${pipelineData.total} jobs stalled >${pipelineData.stall_threshold_hours}h in QC. Human review required in Hub Web.`;
-        }
-        return `All ${pipelineData.total} jobs active with no stalls >${pipelineData.stall_threshold_hours}h. Ready for next production batch.`;
+    if (pipelineProbe?.state === "ok") {
+      const p = pipelineProbe.value;
+      if (p.stalled > 0) {
+        return `${p.stalled} of ${p.total} jobs stalled >${p.thresholdHours}h in QC. Human review required in Hub Web.`;
       }
-      return venture.defaultNextAction;
+      return `All ${p.total} jobs active with no stalls >${p.thresholdHours}h. Ready for next production batch.`;
     }
-    if (venture.key === "directory" && liveProspectsCount !== undefined) {
-      return `${liveProspectsCount.toLocaleString()} enriched company entities ready in DB. First 100 cold outreach calls not yet initiated.`;
+    if (directoryProbe?.state === "ok") {
+      return `${directoryProbe.value.companies.toLocaleString()} enriched company entities ready in DB. ${venture.defaultNextAction}`;
     }
     return venture.defaultNextAction;
-  }, [venture, pipelineData, liveProspectsCount]);
+  }, [venture, pipelineProbe, directoryProbe]);
+
+  const probeError =
+    pipelineProbe?.state === "error"
+      ? { label: "Pipeline", message: pipelineProbe.message, retry: onRetryPipeline }
+      : directoryProbe?.state === "error"
+        ? { label: "Entities registry", message: directoryProbe.message, retry: onRetryDirectory }
+        : null;
 
   return (
     <div
@@ -386,7 +474,7 @@ function VentureCard({
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
-        boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+        boxShadow: tokens.shadowCard,
       }}
     >
       <div>
@@ -462,73 +550,69 @@ function VentureCard({
             marginBottom: 14,
           }}
         >
-          {venture.key === "directory" ? (
+          {directoryProbe && (
+            <MetricTile
+              label="Sourced Prospects"
+              value={probeText(directoryProbe, (v) => v.companies.toLocaleString())}
+              origin="live"
+              tone={directoryProbe.state === "ok" ? tokens.textHi : tokens.textFaint}
+            />
+          )}
+
+          {venture.metrics.map((m, i) => (
+            <MetricTile
+              key={m.label}
+              label={m.label}
+              value={m.value}
+              origin="stated"
+              tone={
+                venture.status === "paused" || venture.status === "dormant"
+                  ? tokens.textFaint
+                  : STATED_TONES[i % STATED_TONES.length]
+              }
+            />
+          ))}
+
+          {directoryProbe && (
+            <MetricTile
+              label="Pricing"
+              value={venture.pricing}
+              origin="stated"
+              tone={tokens.accent}
+            />
+          )}
+
+          {pipelineProbe && (
             <>
-              <MetricTile
-                label="Sourced Prospects"
-                value={(liveProspectsCount ?? 1053).toLocaleString()}
-                tone={tokens.textHi}
-              />
-              <MetricTile label="Contacted" value="0" tone={tokens.stuck} />
-              <MetricTile label="Pricing" value={venture.pricing} tone={tokens.accent} />
-            </>
-          ) : venture.key === "creator" ? (
-            <>
-              <MetricTile
-                label="Active Channels"
-                value="3 Channels"
-                tone={tokens.textHi}
-              />
               <MetricTile
                 label="Pipeline Jobs"
-                value={
-                  pipelineData
-                    ? `${pipelineData.total} Jobs`
-                    : isPipelinePending
-                      ? "Probing…"
-                      : "5 In Flight"
-                }
-                tone={tokens.text}
+                value={probeText(pipelineProbe, (v) => `${v.total} Jobs`)}
+                origin="live"
+                tone={pipelineProbe.state === "ok" ? tokens.text : tokens.textFaint}
               />
               <MetricTile
-                label="QC Stalled (>48h)"
-                value={
-                  pipelineData
-                    ? `${pipelineData.stalled_total} Stalled`
-                    : isPipelinePending
-                      ? "Probing…"
-                      : "5 Stalled"
+                label={
+                  pipelineProbe.state === "ok"
+                    ? `QC Stalled (>${pipelineProbe.value.thresholdHours}h)`
+                    : "QC Stalled"
                 }
+                value={probeText(pipelineProbe, (v) => `${v.stalled} Stalled`)}
+                origin="live"
                 tone={
-                  (pipelineData?.stalled_total ?? 5) > 0
-                    ? tokens.bleed
-                    : tokens.ok
+                  pipelineProbe.state === "ok"
+                    ? pipelineProbe.value.stalled > 0
+                      ? tokens.bleed
+                      : tokens.ok
+                    : tokens.textFaint
                 }
-              />
-            </>
-          ) : (
-            <>
-              <MetricTile
-                label={venture.metrics.label1}
-                value={String(venture.metrics.value1)}
-                tone={tokens.textHi}
-              />
-              <MetricTile
-                label={venture.metrics.label2}
-                value={String(venture.metrics.value2)}
-                tone={venture.status === "paused" ? tokens.textFaint : tokens.stuck}
-              />
-              <MetricTile
-                label={venture.metrics.label3}
-                value={String(venture.metrics.value3)}
-                tone={tokens.accent}
               />
             </>
           )}
         </div>
 
-        {/* Pipeline Error state banner (if probe failed) */}
-        {pipelineError && (
+        {/* Probe error banner — the live tiles above read `unreachable`, this
+            says why and offers the retry. */}
+        {probeError && (
           <div
             style={{
               padding: "8px 10px",
@@ -539,15 +623,16 @@ function VentureCard({
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              gap: 8,
             }}
           >
             <span className="mono" style={{ fontSize: 10.5, color: tokens.bleed }}>
-              Pipeline probe error: {pipelineError}
+              {probeError.label} probe error: {probeError.message}
             </span>
-            {onRetryPipeline && (
+            {probeError.retry && (
               <button
                 type="button"
-                onClick={onRetryPipeline}
+                onClick={probeError.retry}
                 className="mono"
                 style={smallBtnStyle}
               >
@@ -658,19 +743,92 @@ function VentureCard({
  * Subcomponents & Helper Primitives
  * ========================================================================== */
 
-function PortfolioSummaryTile({
-  title,
-  value,
-  detail,
-  tone,
-  isLive,
-}: {
-  title: string;
-  value: string;
-  detail: string;
-  tone: string;
-  isLive?: boolean;
-}) {
+/** The one place a probe becomes a string. `pending` and `error` get WORDS,
+ *  never a number, so no reader can mistake either for a reading. */
+function probeText<T>(probe: Probe<T>, render: (value: T) => string): string {
+  if (probe.state === "ok") return render(probe.value);
+  return probe.state === "pending" ? "probing…" : "unreachable";
+}
+
+type ValueOrigin = "live" | "stated";
+
+/** `stated` — a business fact transcribed from the vault into
+ *  businesses-inventory.ts. `live` — read from an API this render. Rendered as
+ *  a badge on every tile so the two can never be confused by eye. */
+function OriginBadge({ origin, probe }: { origin: ValueOrigin; probe?: Probe<unknown> }) {
+  const spec =
+    origin === "stated"
+      ? { text: "STATED", fg: tokens.textFaint, bg: tokens.toolBg, border: tokens.borderSoft }
+      : probe?.state === "ok"
+        ? { text: "LIVE", fg: tokens.ok, bg: tokens.okActionBg, border: tokens.okActionBorder }
+        : probe?.state === "error"
+          ? { text: "UNREACHABLE", fg: tokens.bleed, bg: tokens.dangerActionBg, border: tokens.dangerActionBorder }
+          : { text: "PROBING", fg: tokens.textFaint, bg: tokens.toolBg, border: tokens.borderSoft };
+
+  return (
+    <span
+      className="mono"
+      style={{
+        fontSize: 8.5,
+        color: spec.fg,
+        background: spec.bg,
+        border: `1px solid ${spec.border}`,
+        borderRadius: 3,
+        padding: "0 4px",
+        flex: "none",
+      }}
+    >
+      {spec.text}
+    </span>
+  );
+}
+
+type PortfolioSummaryTileProps<T> =
+  | {
+      title: string;
+      origin: "stated";
+      value: string;
+      detail: string;
+      tone: string;
+    }
+  | {
+      title: string;
+      origin: "live";
+      probe: Probe<T>;
+      renderValue: (value: T) => string;
+      renderDetail: (value: T) => string;
+      /** Tone while the reading has not arrived, or when it carries no signal. */
+      tone: string;
+      /** Tone once a reading exists — e.g. red only when something is stalled. */
+      toneFor?: (value: T) => string;
+    };
+
+function PortfolioSummaryTile<T>(props: PortfolioSummaryTileProps<T>) {
+  const { title, origin, tone } = props;
+
+  let value: string;
+  let detail: string;
+  let toneResolved = tone;
+
+  if (props.origin === "stated") {
+    value = props.value;
+    detail = props.detail;
+  } else if (props.probe.state === "ok") {
+    value = props.renderValue(props.probe.value);
+    detail = props.renderDetail(props.probe.value);
+    toneResolved = props.toneFor ? props.toneFor(props.probe.value) : tone;
+  } else if (props.probe.state === "pending") {
+    value = "probing…";
+    detail = "waiting on the first reading";
+    toneResolved = tokens.textFaint;
+  } else {
+    value = "unreachable";
+    detail = props.probe.message;
+    toneResolved = tokens.bleed;
+  }
+
+  const probe = props.origin === "live" ? (props.probe as Probe<unknown>) : undefined;
+
   return (
     <div
       style={{
@@ -699,34 +857,21 @@ function PortfolioSummaryTile({
         >
           {title}
         </span>
-        {isLive && (
-          <span
-            className="mono"
-            style={{
-              fontSize: 8.5,
-              color: tokens.ok,
-              background: tokens.okActionBg,
-              border: `1px solid ${tokens.okActionBorder}`,
-              borderRadius: 3,
-              padding: "0 4px",
-            }}
-          >
-            LIVE
-          </span>
-        )}
+        <OriginBadge origin={origin} probe={probe} />
       </div>
       <div
         className="mono"
         style={{
           fontSize: 16,
           fontWeight: 700,
-          color: tone,
+          color: toneResolved,
           marginBottom: 2,
         }}
       >
         {value}
       </div>
       <div
+        title={detail}
         style={{
           fontSize: 11,
           color: tokens.textMuted,
@@ -746,20 +891,26 @@ function MetricTile({
   label,
   value,
   tone,
+  origin,
 }: {
   label: string;
   value: string;
   tone: string;
+  origin: ValueOrigin;
 }) {
   return (
-    <div>
+    <div style={{ minWidth: 0 }}>
       <div
         className="mono"
+        title={value}
         style={{
           fontSize: 14,
           fontWeight: 600,
           color: tone,
           lineHeight: 1.2,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
         }}
       >
         {value}
@@ -767,6 +918,9 @@ function MetricTile({
       <div
         className="mono"
         style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
           fontSize: 9,
           color: tokens.textLabel,
           letterSpacing: "0.06em",
@@ -774,7 +928,14 @@ function MetricTile({
           marginTop: 3,
         }}
       >
-        {label}
+        <span
+          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {label}
+        </span>
+        <span style={{ color: tokens.textGhost, letterSpacing: 0, flex: "none" }}>
+          {origin === "live" ? "· live" : "· stated"}
+        </span>
       </div>
     </div>
   );

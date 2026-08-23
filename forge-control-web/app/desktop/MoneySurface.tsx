@@ -60,6 +60,11 @@ export function MoneySurface() {
   const [timeframe, setTimeframe] = useState<TimeframeOption>(30);
   const [computeMode, setComputeMode] = useState<ComputeMode>("all");
   const [selectedLimitHits, setSelectedLimitHits] = useState(false);
+  /* null = every provider / every kind. Sent to the server, which narrows
+   * `by_area` and `daily` in SQL — filtering client-side would leave the
+   * "Peak" and call counts computed over rows the chart no longer draws. */
+  const [provider, setProvider] = useState<string | null>(null);
+  const [kind, setKind] = useState<string | null>(null);
 
   // Queries
   const bankQ = useQuery({
@@ -75,8 +80,8 @@ export function MoneySurface() {
   });
 
   const spendQ = useQuery({
-    queryKey: ["spend-summary", timeframe],
-    queryFn: () => fetchSpendSummaryFiltered(timeframe),
+    queryKey: ["spend-summary", timeframe, provider, kind],
+    queryFn: () => fetchSpendSummaryFiltered({ days: timeframe, provider, kind }),
     refetchInterval: 60_000,
   });
 
@@ -435,6 +440,42 @@ export function MoneySurface() {
                 Shadow Only
               </button>
             </div>
+
+            {/* Provider × category filters. Options come from the response's
+                own unfiltered pick lists, so they cannot drift from the data
+                and cannot strand you on an empty selection. */}
+            <FilterSelect
+              label="provider"
+              value={provider}
+              options={spendData?.filters.providers ?? []}
+              onChange={setProvider}
+            />
+            <FilterSelect
+              label="category"
+              value={kind}
+              options={spendData?.filters.kinds ?? []}
+              onChange={setKind}
+            />
+            {(provider || kind) && (
+              <button
+                onClick={() => {
+                  setProvider(null);
+                  setKind(null);
+                }}
+                className="mono"
+                style={{
+                  border: `1px solid ${tokens.border}`,
+                  background: tokens.toolBg,
+                  color: tokens.textMuted,
+                  borderRadius: 5,
+                  fontSize: 10,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                clear
+              </button>
+            )}
           </div>
 
           {/* Compact Quota Limit Hits Pill */}
@@ -483,7 +524,7 @@ export function MoneySurface() {
                   background: tokens.bgCard,
                   border: `1px solid ${tokens.borderEmphasis}`,
                   borderRadius: 8,
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+                  boxShadow: tokens.shadowPopover,
                   padding: 12,
                 }}
               >
@@ -529,6 +570,22 @@ export function MoneySurface() {
         {/* Compute Totals Bar */}
         <ComputeSummaryStrip spendData={spendData} mode={computeMode} />
 
+        {(provider || kind) && (
+          <div
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              color: tokens.textFaint,
+              marginBottom: 8,
+              lineHeight: 1.4,
+            }}
+          >
+            Filtered to {provider ?? "every provider"} × {kind ?? "every category"}.
+            The three totals above stay portfolio-wide — only the chart and the
+            breakdown below are narrowed.
+          </div>
+        )}
+
         {/* Chart + Breakdown 2-Column Grid */}
         <div
           style={{
@@ -544,10 +601,21 @@ export function MoneySurface() {
             daily={spendData?.daily ?? []}
             mode={computeMode}
             timeframe={timeframe}
+            isPending={spendQ.isPending}
+            error={spendQ.isError ? (spendQ.error as Error).message : null}
+            filterLabel={
+              provider || kind
+                ? `${provider ?? "all"} × ${kind ?? "all"}`
+                : null
+            }
           />
 
           {/* Area Breakdown */}
-          <AreaBreakdown areas={spendData?.by_area ?? []} />
+          <AreaBreakdown
+            areas={spendData?.by_area ?? []}
+            isPending={spendQ.isPending}
+            error={spendQ.isError ? (spendQ.error as Error).message : null}
+          />
         </div>
       </section>
     </div>
@@ -555,6 +623,70 @@ export function MoneySurface() {
 }
 
 /** ── Sub-Components ── */
+
+/** A native select, styled to the console's chrome. `options` is whatever the
+ *  server said exists in the window — an empty list disables the control
+ *  rather than offering a choice of nothing. */
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string | null;
+  options: string[];
+  onChange: (next: string | null) => void;
+}) {
+  const active = value !== null;
+  return (
+    <select
+      aria-label={label}
+      value={value ?? "all"}
+      disabled={options.length === 0}
+      onChange={(e) => onChange(e.target.value === "all" ? null : e.target.value)}
+      className="mono"
+      style={{
+        background: active ? tokens.primaryActionBg : tokens.bgCard,
+        color: active ? tokens.accent : tokens.textMuted,
+        border: `1px solid ${active ? tokens.accent : tokens.border}`,
+        borderRadius: 6,
+        fontSize: 10,
+        padding: "3px 6px",
+        cursor: options.length === 0 ? "default" : "pointer",
+      }}
+    >
+      <option value="all">{`all ${label}s`}</option>
+      {options.map((o) => (
+        <option key={o} value={o}>
+          {o}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Pending and failed both have to look like themselves. An empty array
+ *  rendered as "no data" would tell Konrad he spent nothing when in fact the
+ *  API never answered. */
+function ProbePanel({ text, tone }: { text: string; tone: string }) {
+  return (
+    <div
+      className="mono"
+      style={{
+        background: tokens.bgCard,
+        border: `1px dashed ${tokens.border}`,
+        borderRadius: 8,
+        padding: 24,
+        fontSize: 10.5,
+        color: tone,
+        textAlign: "center",
+      }}
+    >
+      {text}
+    </div>
+  );
+}
 
 function TreasuryCard({ account, fxRate }: { account: BankAccount; fxRate: number }) {
   const isUsd = account.currency === "USD";
@@ -804,29 +936,32 @@ function InteractiveDailyChart({
   daily,
   mode,
   timeframe,
+  isPending,
+  error,
+  filterLabel,
 }: {
   daily: SpendDailyItem[];
   mode: ComputeMode;
   timeframe: number;
+  isPending: boolean;
+  error: string | null;
+  filterLabel: string | null;
 }) {
   const [hoveredDay, setHoveredDay] = useState<SpendDailyItem | null>(null);
 
+  if (error) return <ProbePanel text={`Spend series unreachable: ${error}`} tone={tokens.bleed} />;
+  if (isPending) return <ProbePanel text="reading the compute series…" tone={tokens.textFaint} />;
+
   if (daily.length === 0) {
     return (
-      <div
-        className="mono"
-        style={{
-          background: tokens.bgCard,
-          border: `1px dashed ${tokens.border}`,
-          borderRadius: 8,
-          padding: 24,
-          fontSize: 11,
-          color: tokens.textFaint,
-          textAlign: "center",
-        }}
-      >
-        No compute logs recorded in the selected {timeframe}-day window.
-      </div>
+      <ProbePanel
+        text={
+          filterLabel
+            ? `No compute logs matching ${filterLabel} in the selected ${timeframe}-day window.`
+            : `No compute logs recorded in the selected ${timeframe}-day window.`
+        }
+        tone={tokens.textFaint}
+      />
     );
   }
 
@@ -834,8 +969,8 @@ function InteractiveDailyChart({
 
   const getDayValue = (d: SpendDailyItem) => {
     if (mode === "metered") return d.total_eur;
-    if (mode === "shadow") return d.shadow_eur ?? 0;
-    return d.total_compute_eur ?? (d.total_eur + (d.shadow_eur ?? 0));
+    if (mode === "shadow") return d.shadow_eur;
+    return d.total_compute_eur;
   };
 
   const values = daily.map(getDayValue);
@@ -873,7 +1008,7 @@ function InteractiveDailyChart({
               {eur(getDayValue(hoveredDay))}
             </span>{" "}
             <span style={{ color: tokens.textMuted }}>
-              ({hoveredDay.calls} calls · Metered: {eur(hoveredDay.total_eur)} · Shadow: {eur(hoveredDay.shadow_eur ?? 0)})
+              ({hoveredDay.calls} calls · Metered: {eur(hoveredDay.total_eur)} · Shadow: {eur(hoveredDay.shadow_eur)})
             </span>
           </div>
         ) : (
@@ -956,24 +1091,19 @@ function InteractiveDailyChart({
   );
 }
 
-function AreaBreakdown({ areas }: { areas: SpendAreaItem[] }) {
+function AreaBreakdown({
+  areas,
+  isPending,
+  error,
+}: {
+  areas: SpendAreaItem[];
+  isPending: boolean;
+  error: string | null;
+}) {
+  if (error) return <ProbePanel text={`Breakdown unreachable: ${error}`} tone={tokens.bleed} />;
+  if (isPending) return <ProbePanel text="reading the breakdown…" tone={tokens.textFaint} />;
   if (areas.length === 0) {
-    return (
-      <div
-        className="mono"
-        style={{
-          background: tokens.bgCard,
-          border: `1px dashed ${tokens.border}`,
-          borderRadius: 8,
-          padding: 24,
-          fontSize: 10.5,
-          color: tokens.textFaint,
-          textAlign: "center",
-        }}
-      >
-        No breakdown telemetry recorded.
-      </div>
-    );
+    return <ProbePanel text="No breakdown telemetry recorded." tone={tokens.textFaint} />;
   }
 
   const max = Math.max(...areas.map((a) => a.total_eur), 0.0001);

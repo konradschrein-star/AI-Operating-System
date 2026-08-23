@@ -306,12 +306,32 @@ export interface SpendAreaItem {
   units: number;
 }
 
+/**
+ * `shadow_eur` and `total_compute_eur` are REQUIRED, matching what
+ * `db/spend.ts` actually returns. They were optional here, which meant every
+ * chart read them as `x ?? 0` — a server that stopped sending them would draw
+ * a flat zero line for Claude's compute rather than fail, and nobody would
+ * know the difference. If they are ever genuinely absent, that is a broken
+ * server and it should surface as one.
+ */
 export interface SpendDailyItem {
   day: string;
+  /** Metered spend — every provider except claude-code. */
   total_eur: number;
-  shadow_eur?: number;
-  total_compute_eur?: number;
+  /** claude-code's notional price. Flat-rate subscription, never billed. */
+  shadow_eur: number;
+  /** `total_eur + shadow_eur` — how much compute RAN, never a cash total. */
+  total_compute_eur: number;
   calls: number;
+}
+
+/** The pick lists and the current selection, both from the server. `providers`
+ *  and `kinds` are unfiltered, so narrowing to one provider never empties the
+ *  picker you would need to get back out. */
+export interface SpendFilters {
+  providers: string[];
+  kinds: string[];
+  applied: { provider: string | null; kind: string | null };
 }
 
 export interface SpendSummaryResponse {
@@ -320,10 +340,23 @@ export interface SpendSummaryResponse {
   d30: SpendWindow;
   by_area: SpendAreaItem[];
   daily: SpendDailyItem[];
+  filters: SpendFilters;
 }
 
-export const fetchSpendSummaryFiltered = (days?: number) => {
-  const qs = days !== undefined ? `?days=${encodeURIComponent(days)}` : "";
-  return getJson<SpendSummaryResponse>(`/spend/summary${qs}`);
+export interface SpendSummaryQuery {
+  days?: number;
+  /** null / omitted = every provider. */
+  provider?: string | null;
+  /** null / omitted = every kind. */
+  kind?: string | null;
+}
+
+export const fetchSpendSummaryFiltered = (query: SpendSummaryQuery = {}) => {
+  const params = new URLSearchParams();
+  if (query.days !== undefined) params.set("days", String(query.days));
+  if (query.provider) params.set("provider", query.provider);
+  if (query.kind) params.set("kind", query.kind);
+  const qs = params.toString();
+  return getJson<SpendSummaryResponse>(`/spend/summary${qs ? `?${qs}` : ""}`);
 };
 

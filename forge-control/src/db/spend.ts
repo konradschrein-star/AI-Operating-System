@@ -122,15 +122,50 @@ export interface SpendSummary {
     total_compute_eur: number;
     calls: number;
   }>;
+  /** What the caller could have picked and what it did pick. `providers` and
+   *  `kinds` are the UNFILTERED distinct sets over the horizon, so a UI can
+   *  build its dropdowns from the same response that answers the query —
+   *  filtering to `gemini` must not make every other provider vanish from the
+   *  picker, which is how a filter becomes a trap you cannot get out of. */
+  filters: {
+    providers: string[];
+    kinds: string[];
+    applied: { provider: string | null; kind: string | null };
+  };
+}
+
+export interface SpendSummaryFilters {
+  provider?: string | null;
+  kind?: string | null;
 }
 
 /** The Money surface's one query fan-out: window totals, provider×kind
  *  breakdown, and a daily series. today/d7/d30 are fixed reference windows
  *  regardless of `days`; by_area and daily use the requested horizon, so a
  *  caller filtering to "this week" gets a week of chart data, not a month.
- *  today uses the UTC day boundary (consistent with todaySpendRollup). */
-export async function spendSummary(days = 30): Promise<SpendSummary> {
+ *  today uses the UTC day boundary (consistent with todaySpendRollup).
+ *
+ *  `filters.provider` / `filters.kind` narrow ONLY `by_area` and `daily` — the
+ *  three window totals stay whole-portfolio on purpose. A headline that moved
+ *  with the chart's filter would let a reader answer "what am I spending?"
+ *  with one provider's slice and never notice; the chart is the thing being
+ *  sliced, and the headline is the thing it is sliced out of. */
+export async function spendSummary(
+  days = 30,
+  filters: SpendSummaryFilters = {},
+): Promise<SpendSummary> {
   const horizonDays = Math.min(365, Math.max(1, Math.trunc(days) || 30));
+  const provider = filters.provider ?? null;
+  const kind = filters.kind ?? null;
+  /* $2/$3 are always bound, so one prepared shape serves every combination —
+   * `$2::text IS NULL OR provider = $2` is the filter and its own bypass. */
+  const filterArgs: [number, string | null, string | null] = [
+    horizonDays,
+    provider,
+    kind,
+  ];
+  const FILTER_SQL =
+    "AND ($2::text IS NULL OR provider = $2) AND ($3::text IS NULL OR kind = $3)";
   const windows = await pool.query<{
     today_eur: string;
     today_calls: string;
@@ -174,9 +209,10 @@ export async function spendSummary(days = 30): Promise<SpendSummary> {
             COALESCE(SUM(units), 0)::text      AS units
        FROM spend_log
       WHERE created_at >= now() - ($1::int * interval '1 day')
+      ${FILTER_SQL}
       GROUP BY provider, kind
       ORDER BY SUM(amount_eur) DESC, COUNT(*) DESC`,
-    [horizonDays],
+    filterArgs,
   );
   const daily = await pool.query<{
     day: string;
@@ -190,8 +226,16 @@ export async function spendSummary(days = 30): Promise<SpendSummary> {
             COUNT(*)::text                     AS calls
        FROM spend_log
       WHERE created_at >= now() - ($1::int * interval '1 day')
+      ${FILTER_SQL}
       GROUP BY 1
       ORDER BY 1`,
+    filterArgs,
+  );
+  /* Deliberately UNFILTERED: these populate the pickers. Bound to $1 only. */
+  const options = await pool.query<{ provider: string; kind: string }>(
+    `SELECT DISTINCT provider, kind
+       FROM spend_log
+      WHERE created_at >= now() - ($1::int * interval '1 day')`,
     [horizonDays],
   );
 
@@ -233,6 +277,11 @@ export async function spendSummary(days = 30): Promise<SpendSummary> {
         calls: Number(r.calls),
       };
     }),
+    filters: {
+      providers: [...new Set(options.rows.map((r) => r.provider))].sort(),
+      kinds: [...new Set(options.rows.map((r) => r.kind))].sort(),
+      applied: { provider, kind },
+    },
   };
 }
 
