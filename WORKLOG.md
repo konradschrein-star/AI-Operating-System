@@ -167,3 +167,107 @@ real rows to force those states is not something a build task may do.
   it is, `/api/journal/day`, `/api/journal/upload` and `DELETE /api/journal/entries/:id`
   fail against a missing relation, and the paper-capture deck renders its error state
   (confirmed in the full-surface screenshot: "Failed to load paper scans: 404 Not Found").
+
+## Round 7 — fix cycle 2 (round 6 re-review) — 2026-08-23
+
+Three findings, all from round 6's `NEEDS_FIXES`.
+
+### 1. Migration number collided with `main` — renumbered 0043 → 0045
+`main` at `9d6ac5e` ships `db/migrations/0043_gemini_tier.sql`; git does not conflict
+because the filenames differ, so every in-lane check stayed green while the collision was
+already certain. Confirmed the way the reviewer did, and then re-confirmed after the fix:
+
+```
+MT=$(git merge-tree --write-tree main HEAD | head -1)
+git ls-tree --name-only "$MT" db/migrations/     # before: 0043_gemini_tier + 0043_journal_entries
+```
+
+**0044 was not available.** `project/2bbf2879` (aios-goals-day-system) had already
+committed `0044_goals_and_calendar.sql` at `70cfa21` — checked every branch
+(`git ls-tree` per branch) and every sibling worktree before choosing. Took **0045**;
+`project/8c591d6c` (engine-task-graph) still holds a `0043` and needs 0046 or later. That
+coordination went to the manager chat, because it changes what another lane must do.
+
+```
+sha256sum db/migrations/0043_journal_entries.sql
+  47b32b9c88d70fbe69d1da222f798a7dc655703ebfbe8cf87ba57b5633586715
+git mv db/migrations/0043_journal_entries.sql db/migrations/0045_journal_entries.sql
+sha256sum db/migrations/0045_journal_entries.sql
+  47b32b9c88d70fbe69d1da222f798a7dc655703ebfbe8cf87ba57b5633586715   # move changed no bytes
+```
+
+The file's own provenance header was updated in the SAME commit (`78316b1`), so the
+committed digest differs from the one above only by that header edit. No
+`KNOWN_COLLISIONS` entry was added — main's gate forbids growing that map.
+
+**Proof the blocker is cleared** — main's gate (`scripts/checks/check-migration-numbers.ts`,
+which this branch predates) run against the merged file set:
+
+```
+check-migration-numbers: PASS — 25 migration(s), every number unique, highest 0045.
+exit=0
+```
+
+Live code pointer updated too: `forge-control/src/db/journal.ts:2` named the old file.
+`PLAN.md` keeps its `0043` lines — they record what was planned — with a dated amendment
+at the end pointing at the current name. WORKLOG history above is likewise left as
+written.
+
+### 2. The header's live-state claim had gone false — replaced with a stamped reading
+`NOT YET APPLIED TO content_forge` was true when written and stale within minutes; the
+relation was created out of band. Measured it myself, read-only:
+
+```
+$ date -u +%Y-%m-%dT%H:%M:%SZ
+2026-08-23T16:50:12Z
+$ docker exec content-forge-postgres psql -U postgres -d content_forge -tAc \
+    "SELECT to_regclass('public.journal_entries')::text, (SELECT count(*) FROM journal_entries)"
+journal_entries|0
+```
+(`psql -U postgres` on the host fails — 5432 is a published docker port, not a peer socket,
+and pm2's `DATABASE_URL` password is rejected; `docker exec` is the route that works.)
+14 columns and `journal_entries_day_idx`, matching this file exactly.
+
+The header now carries the command, the timestamp and the verbatim output under a heading
+that says it is a measurement and not a standing fact, plus an explicit instruction that
+**deploy re-runs `to_regclass` rather than trusting the sentence**. The endpoint paragraph
+is now conditional on that re-measure instead of asserting a pre-deploy state.
+
+Re-runnability re-proved AFTER the rename and the header rewrite (a re-run is what proves
+the file still parses), on a per-run scratch DB created and dropped by the same shell:
+
+```
+scratch db: journal_mig_probe_2391043   at 2026-08-23T16:51:47Z
+CREATE DATABASE
+--- apply 1 -> CREATE TABLE / CREATE INDEX, exit=0
+--- apply 2 -> CREATE TABLE
+             NOTICE:  relation "journal_entries" already exists, skipping
+             NOTICE:  relation "journal_entries_day_idx" already exists, skipping
+             CREATE INDEX, exit=0
+--- shape: 14 columns
+DROP DATABASE   (scratch dropped)
+```
+content_forge was never written to by this lane.
+
+### 3. Ledger gap — disclosed, not amended
+`scripts/checks/dollar-allowlist.txt` (round 5) and this round's four files are in no
+task's declared `write_set`; this fix-cycle row declared `{}`. Per the standing ruling a
+`done` row is not amended — the gap IS the finding. Disclosed in the manager chat, in the
+final report, and here.
+
+### Gates actually run — `bash scripts/checks/gates-808.sh --strict`
+25 gates, 23 executed, 2 skipped by design (browser harness, no `--browser`). **RED: 1**,
+exit 1 — gate 5 `no-raw-colours.cjs`, and it is the SAME inherited red round 6 reported:
+
+```
+forge-control-web/app/desktop/gemini-identity.tsx:27  #8b7bf0
+forge-control-web/app/desktop/gemini-identity.tsx:30  rgba(139, 123, 240, 0.16)
+── FAIL: 2 raw colour literal(s) with no allowlist entry ──
+```
+`git diff --name-only main...HEAD` does not list that file — it came from main and is
+outside this lane's write-set. Everything else green, including gate 1/2 `tsc --noEmit`
+exit 0 in both packages, gate 3 `NODE_ENV=production pnpm build` exit 0, gate 20
+`pnpm test` exit 0.
+
+No screenshots this round: nothing rendered changed — the diff is one SQL header, one file
+rename, one code comment and two markdown files.

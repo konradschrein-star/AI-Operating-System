@@ -193,3 +193,19 @@ Build `JournalSurface.tsx` as a **2-column split retrospective workspace**: the 
   3. Verify Next.js build (`npx tsc --noEmit` and `npm run build` in `forge-control-web`).
   4. Run screenshot harness: `node /opt/ai-os/workspace/shots-aios.mjs` with `SHOT_SURFACES=journal` and visually verify rendered state.
   5. Confirm real backend API responses (`/api/journal/day`, `/api/cron`, `/api/decisions`).
+
+---
+
+## Amendment — 2026-08-23 (round 7, fix cycle 2)
+
+**The migration is `db/migrations/0045_journal_entries.sql`, not `0043_...`.**
+Every reference to `0043_journal_entries.sql` above is the number the file was
+planned and built under; it was renumbered on 2026-08-23 after round 6's review
+found that `main` ships its own `0043_gemini_tier.sql` and that two sibling
+lanes each held a third and fourth `0043`. The plan lines are left as written
+rather than rewritten — they record what was planned — and this amendment is
+the pointer to the current name. `0044` was unavailable (`project/2bbf2879`
+committed `0044_goals_and_calendar.sql` at `70cfa21`), so this lane took `0045`.
+Nothing else about the migration changed: `sha256sum` before and after the
+`git mv` both read `47b32b9c…86715`, and the only edit was to the file's own
+provenance header.
