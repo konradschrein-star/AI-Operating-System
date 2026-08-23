@@ -4,6 +4,26 @@ This playbook is the hands-on, step-by-step guide for developers and agent lanes
 
 ---
 
+## 0. How to invoke `aios` (do this before any example below)
+
+`aios` is a `bin` entry in `forge-control/package.json`. Nothing links it automatically, so **bare `aios` is `command not found` until someone installs it**. Every runnable block in this playbook therefore uses the always-true form:
+
+```bash
+node forge-control/bin/aios.mjs guard fast          # from the repo or worktree root
+node /opt/forge-ai-os/forge-control/bin/aios.mjs guard fast   # from anywhere
+```
+
+Working in an interactive shell on this box and want the short form? One-time install, pointing at the **live checkout**:
+
+```bash
+ln -sf /opt/forge-ai-os/forge-control/bin/aios.mjs /usr/local/bin/aios
+command -v aios && aios terminal list      # verify
+```
+
+Agent lanes must not do that from a worktree — `/usr/local/bin` is shared, and a symlink into a worktree hijacks Konrad's `aios` and dies with the worktree. In the quick-reference table of §7 commands are written as `aios …` for readability; prefix them with `node forge-control/bin/aios.mjs` if you skipped the install.
+
+---
+
 ## 1. Quickstart: Worktree Setup & Dependencies
 
 All development occurs within isolated git worktrees created off `main`.
@@ -85,15 +105,16 @@ Runs preflight checks, token purity scanner (`no-raw-colours`), currency scanner
 bash scripts/checks/guard.sh --fast
 
 # Or via aios CLI:
-aios guard fast
+node forge-control/bin/aios.mjs guard fast
 ```
+Measured on this VPS under real load (~10 lanes, load average 17-26 on 16 cores, 2026-08-23): the cached instrument typecheck inside it takes **15-19s**, not the <2s `PLAN.md` §1.1 targets. Those targets assume an idle box; check `uptime` before treating a slow run as a regression.
 
 ### Full Pre-Merge Guard
 Runs everything in `--fast` plus Next.js production build (`pnpm build`) and the complete functional gate suite (`gates-808.sh`):
 ```bash
 bash scripts/checks/guard.sh --full
 # Or:
-aios guard full
+node forge-control/bin/aios.mjs guard full
 ```
 
 ### Strict Mode (CI Gate)
@@ -101,7 +122,7 @@ Fails if any check is skipped:
 ```bash
 bash scripts/checks/guard.sh --full --strict
 # Or:
-aios guard strict
+node forge-control/bin/aios.mjs guard strict
 ```
 
 ### How to Resolve Guard Failures:
@@ -141,11 +162,15 @@ For all UI and surface changes, visual verification with screenshots is mandator
    ```
 2. Run the screenshot harness with targeted surface and timestamp:
    ```bash
-   SHOT_SURFACES=terminal,projects SHOT_STAMP=$(date -u +%Y%m%d%T) SHOT_OUT=/opt/ai-os/uploads/$FORGE_RUN_ID      node /opt/ai-os/workspace/shots-aios.mjs
+   SHOT_SURFACES=terminal,projects \
+   SHOT_STAMP=$(date -u +%Y%m%dT%H%M%SZ) \
+   SHOT_OUT=/opt/ai-os/uploads/$FORGE_RUN_ID \
+     node /opt/ai-os/workspace/shots-aios.mjs
    ```
-3. Or use the `aios` CLI:
+   The stamp must be colon-free compact UTC ISO-8601. `date -u +%Y%m%d%T` yields `2026082316:53:40` — wrong; `date -u +%Y%m%dT%H%M%SZ` yields `20260823T171055Z` — right.
+3. Or use the `aios` CLI — the surface is positional, there is no `--url`/`--label`:
    ```bash
-   aios screenshots take --url "http://127.0.0.1:7701/desktop" --label "my-surface"
+   node forge-control/bin/aios.mjs screenshots take projects --out /opt/ai-os/uploads/$FORGE_RUN_ID
    ```
 4. Verify the screenshot exists on disk and open/inspect it before claiming visual verification.
 
@@ -160,7 +185,7 @@ The `aios` command (`forge-control/bin/aios.mjs`) provides unified CLI tooling:
 | `aios projects list` | List all agent coding projects | `aios projects list` |
 | `aios projects create` | Create new multi-agent project | `aios projects create "UI Redesign" --brief "Update styles"` |
 | `aios projects pause/resume` | Control project execution | `aios projects pause 323661ce` |
-| `aios runs list` | List background agent runs | `aios runs list --status running` |
+| `aios runs list` | List background agent runs | `aios runs list --project <id> --limit 10` — no `--status` filter |
 | `aios runs message` | Send message into an active run | `aios runs message <id> "Proceed with phase 2"` |
 | `aios tasks list` | List tasks in project task graphs | `aios tasks list --project 323661ce` |
 | `aios tasks retry` | Retry a failed task | `aios tasks retry <task-id>` |
@@ -168,10 +193,10 @@ The `aios` command (`forge-control/bin/aios.mjs`) provides unified CLI tooling:
 | `aios vault today` | View today's daily log note | `aios vault today` |
 | `aios vault append` | Append entry to vault note | `aios vault append "Daily/2026-08-23" "### Note
 Done."` |
-| `aios pipeline status` | Check Content Forge BullMQ queues | `aios pipeline status` |
-| `aios spend summary` | Audit token & LLM costs | `aios spend summary --days 7` |
+| `aios pipeline status` | Check Content Forge BullMQ queues | `aios pipeline status` (topics: `aios pipeline topics list`) |
+| `aios spend summary` | Audit token & LLM costs (3 fixed windows + provider×kind) | `aios spend summary` — no `--days` flag exists |
 | `aios terminal list` | List active VPS tmux shells | `aios terminal list` |
-| `aios terminal run` | Run command in persistent shell | `aios terminal run <session-id> "git status"` |
+| `aios terminal run` | Run a command in a shell you name | `aios terminal run "git status" --session <id>` — `--session` is mandatory; use `--new` for a fresh one |
 | `aios guard fast/full` | Execute code guard pre-merge gate | `aios guard fast` |
 
 ---

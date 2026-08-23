@@ -102,3 +102,46 @@ graph TD
   - Role: `reviewer` | Tier: `standard` | Workstream: `main`
   - Depends on: `[Task 1, Task 2, Task 3, Task 4]`
   - Write set: `[]`
+
+---
+
+## 4. Amendments — round 2 (fix cycle 1), 2026-08-23
+
+Appended, not rewritten: the sections above record what round 0 *planned*, and
+nothing in them is edited retroactively. This section records where reality
+diverged.
+
+### 4.1 §1.1's performance targets are not met on this host
+
+`PLAN.md` §1.1 promises "~12-15s cold, <2s hot" for
+`scripts/checks/check-instrument-typecheck.sh`. Measured on the live VPS on
+2026-08-23 at load average 17-26 on 16 cores (i.e. a normal night with ~10
+agent lanes running):
+
+| Run | Measured |
+|---|---|
+| warm cache | 19.4s |
+| immediately re-run (fully hot) | 15.5s |
+| cold cache | ~91s (round-1 reviewer's measurement, at load 32-47) |
+
+The targets were set assuming an idle machine. Under contention the cost is
+dominated by process-start latency — the script's five self-test process
+starts alone (3 `tsc` canaries + 2 suppression scanners), which no amount of
+caching inside the compile loop can remove. **Treat §1.1's numbers as an
+idle-box ceiling, not an acceptance criterion**; `docs/DEVELOPMENT.md` §4
+carries the measured table and the instruction to check `uptime` before
+calling a slow run a regression.
+
+### 4.2 Write-set disclosure for `scripts/checks/raw-colour-allowlist.txt`
+
+Round 1 wrote `scripts/checks/raw-colour-allowlist.txt` (commit `9cf15e9`),
+which appears in none of the five write sets above. Round 2 wrote it again
+(pinning the over-broad entry that write introduced).
+
+The round-1 reviewer asked that the path be added to whichever task's write
+set owns it. **Declined, deliberately.** The operator has ruled that a task's
+declared write set is never amended after the fact ("A ledger you may edit
+after the fact stops being evidence", `AI OS/Operator Decisions.md`): the
+declared-vs-written gap is the only signal that a collision happened, and
+editing the declaration deletes that signal. The undeclared write is disclosed
+here and in `WORKLOG.md` instead, which is where disclosures belong.
