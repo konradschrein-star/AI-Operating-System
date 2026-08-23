@@ -279,6 +279,20 @@ export interface PushPlanToProjectInput {
   architect_tier?: TaskTier;
   origin_chat_id?: string;
   plan?: CanvasPlan;
+  /** Create the project even though some dependency edges cannot be written.
+   *  Only ever set from an explicit acknowledgement — the default refusal is
+   *  what stops a drawing being seeded as a task graph it does not describe. */
+  allow_unresolved_dependencies?: boolean;
+}
+
+/** One `depends_on` edge the plan carries but `project_tasks` cannot hold —
+ *  it closes a cycle, or points at a task that is not in the plan. */
+export interface UnresolvedPlanDependency {
+  task: string;
+  taskTitle: string;
+  dependsOn: string;
+  dependsOnTitle: string | null;
+  reason: "cycle" | "unknown_task";
 }
 
 export interface PushPlanToProjectResponse {
@@ -287,6 +301,25 @@ export interface PushPlanToProjectResponse {
   architectTask: Record<string, unknown>;
   tasks: Record<string, unknown>[];
   tasksCount: number;
+  /** Always present. Non-empty only when the push carried
+   *  `allow_unresolved_dependencies` — these edges were left out. */
+  droppedDependencies: UnresolvedPlanDependency[];
+}
+
+/** The 409 from `/canvas/plan/to-project`, carried as a typed error so the UI
+ *  can offer "create anyway" instead of showing a bare status line. The shared
+ *  `postJson` throws away the response body, which is precisely the diagnostic
+ *  the caller needs here, so this one endpoint reads its own failure. */
+export class UnresolvedDependenciesError extends Error {
+  readonly unresolved: UnresolvedPlanDependency[];
+  readonly hint: string;
+
+  constructor(message: string, unresolved: UnresolvedPlanDependency[], hint: string) {
+    super(message);
+    this.name = "UnresolvedDependenciesError";
+    this.unresolved = unresolved;
+    this.hint = hint;
+  }
 }
 
 export const getCanvasPlan = (path: string) =>
@@ -295,8 +328,36 @@ export const getCanvasPlan = (path: string) =>
 export const saveCanvasPlan = (input: SaveCanvasPlanInput) =>
   postJson<SaveCanvasPlanResponse>("/canvas/plan/save", input);
 
-export const pushPlanToProject = (input: PushPlanToProjectInput) =>
-  postJson<PushPlanToProjectResponse>("/canvas/plan/to-project", input);
+export async function pushPlanToProject(
+  input: PushPlanToProjectInput,
+): Promise<PushPlanToProjectResponse> {
+  const path = "/canvas/plan/to-project";
+  const res = await fetch(`${ROOT}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      reason?: string;
+      unresolvable?: UnresolvedPlanDependency[];
+      hint?: string;
+    } | null;
+    if (body?.reason === "unresolvable_dependencies") {
+      throw new UnresolvedDependenciesError(
+        body.error ?? "this plan has dependencies that cannot be written as a task graph",
+        body.unresolvable ?? [],
+        body.hint ?? "",
+      );
+    }
+    throw new Error(body?.error ?? `409 Conflict on ${path}`);
+  }
+
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  return (await res.json()) as PushPlanToProjectResponse;
+}
 
 
 /* ----------------------------------------------------------------------------

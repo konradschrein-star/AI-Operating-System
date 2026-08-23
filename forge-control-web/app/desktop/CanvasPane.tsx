@@ -35,6 +35,8 @@ import {
   saveCanvasPlan,
   pushPlanToProject,
   CanvasConflictError,
+  UnresolvedDependenciesError,
+  type UnresolvedPlanDependency,
   type CanvasListItem,
   type CanvasPlanResponse,
   type PlanTask,
@@ -162,6 +164,17 @@ function relTime(ms: number): string {
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
   if (diff < 7 * 86_400_000) return `${Math.round(diff / 86_400_000)}d ago`;
   return `${Math.round(diff / (7 * 86_400_000))}w ago`;
+}
+
+/** "3 cycles, 1 dangling arrow" — the shape of what is unresolved, so the
+ *  push dialog says WHY it is asking rather than just how many times. */
+function ambiguitySummary(ambiguities: GraphAmbiguity[]): string {
+  const counts = new Map<string, number>();
+  for (const a of ambiguities) counts.set(a.kind, (counts.get(a.kind) ?? 0) + 1);
+  return Array.from(counts.entries())
+    .sort(([, a], [, b]) => b - a)
+    .map(([kind, n]) => `${n} ${kind.replace(/_/g, " ")}${n === 1 ? "" : "s"}`)
+    .join(", ");
 }
 
 function getRoleTokens(role: TaskRole) {
@@ -297,8 +310,18 @@ export function CanvasPane({
   const [pushResult, setPushResult] = useState<{
     projectId: string;
     tasksCount: number;
+    dropped: UnresolvedPlanDependency[];
   } | null>(null);
   const [pushErr, setPushErr] = useState<string | null>(null);
+  /** Konrad has read the plan's open questions and still wants the project.
+   *  A drawing that reads two ways must not become a task graph by accident,
+   *  so this is a deliberate act, not a default. */
+  const [ambiguityAck, setAmbiguityAck] = useState(false);
+  /** Edges the API refused to write (409). Non-null means the last push was
+   *  rejected and the only way forward is an explicit "omit them" decision. */
+  const [pushBlockers, setPushBlockers] = useState<
+    UnresolvedPlanDependency[] | null
+  >(null);
 
   // Workstream filter for visual plan view
   const [selectedWorkstream, setSelectedWorkstream] = useState<string | null>(
@@ -452,30 +475,59 @@ export function CanvasPane({
     }
   }, [path, planMarkdownEdit, fetchPlan]);
 
-  const handlePushProject = useCallback(async () => {
-    if (!path && !planData?.plan) return;
-    setPushingProject(true);
-    setPushErr(null);
-    try {
-      const res = await pushPlanToProject({
-        path: path ?? undefined,
-        name: projectName.trim() || undefined,
-        repo: projectRepo,
-        architect_tier: architectTier,
-        base_branch: baseBranch.trim() || undefined,
-        plan: planData?.plan,
-      });
-      const proj = res.project as { id?: string } | undefined;
-      setPushResult({
-        projectId: proj?.id ?? "created",
-        tasksCount: res.tasksCount || res.tasks?.length || 0,
-      });
-    } catch (e) {
-      setPushErr(String((e as Error).message ?? e));
-    } finally {
-      setPushingProject(false);
-    }
-  }, [path, planData, projectName, projectRepo, architectTier, baseBranch]);
+  /** Push the derived plan into a real project.
+   *
+   *  `allowUnresolved` is only ever true on a second, explicit attempt: the
+   *  API refuses by default when the plan carries dependency edges it cannot
+   *  write, and this pane surfaces that refusal edge by edge rather than
+   *  quietly seeding a task graph that does not match the drawing. */
+  const handlePushProject = useCallback(
+    async (allowUnresolved: boolean) => {
+      if (!path && !planData?.plan) return;
+      setPushingProject(true);
+      setPushErr(null);
+      setPushBlockers(null);
+      try {
+        const res = await pushPlanToProject({
+          path: path ?? undefined,
+          name: projectName.trim() || undefined,
+          repo: projectRepo,
+          architect_tier: architectTier,
+          base_branch: baseBranch.trim() || undefined,
+          plan: planData?.plan,
+          allow_unresolved_dependencies: allowUnresolved || undefined,
+        });
+        const proj = res.project as { id?: string } | undefined;
+        setPushResult({
+          projectId: proj?.id ?? "created",
+          tasksCount: res.tasksCount || res.tasks?.length || 0,
+          dropped: res.droppedDependencies ?? [],
+        });
+      } catch (e) {
+        if (e instanceof UnresolvedDependenciesError) {
+          setPushBlockers(e.unresolved);
+          setPushErr(e.message);
+        } else {
+          setPushErr(String((e as Error).message ?? e));
+        }
+      } finally {
+        setPushingProject(false);
+      }
+    },
+    [path, planData, projectName, projectRepo, architectTier, baseBranch],
+  );
+
+  // A plan refresh invalidates any acknowledgement of its open questions and
+  // any refusal that referred to the previous compilation.
+  useEffect(() => {
+    setAmbiguityAck(false);
+    setPushBlockers(null);
+  }, [planData]);
+
+  const planAmbiguities = planData?.plan?.ambiguities ?? [];
+  /** Open questions must be seen before a drawing becomes executed work. */
+  const pushNeedsAck = planAmbiguities.length > 0 && !ambiguityAck;
+  const pushDisabled = pushingProject || !projectName.trim() || pushNeedsAck;
 
   // Adopt an external write (Obsidian / the agent / another tab). Only ever
   // called on a clean pane — a dirty pane must reach the 409 banner instead, so
@@ -1134,6 +1186,10 @@ export function CanvasPane({
                       setPushDialogOpen(true);
                       setPushResult(null);
                       setPushErr(null);
+                      setPushBlockers(null);
+                      // Re-arm the gate on every open: an acknowledgement is
+                      // about the plan in front of him now, not a past one.
+                      setAmbiguityAck(false);
                       setProjectName(planData?.plan?.title || "");
                     }}
                     disabled={!planData?.plan || planData.plan.tasks.length === 0}
@@ -1337,6 +1393,40 @@ export function CanvasPane({
                         ✓ Project created successfully with {pushResult.tasksCount} tasks
                         seeded in topological order!
                       </div>
+                      {/* Never let a lossy push read as a clean one. */}
+                      {pushResult.dropped.length > 0 && (
+                        <div
+                          className="mono"
+                          style={{
+                            background: tokens.dangerActionBg,
+                            border: `1px solid ${tokens.dangerActionBorder}`,
+                            borderRadius: 6,
+                            padding: "8px 10px",
+                            color: tokens.bleed,
+                            fontSize: 10.5,
+                            lineHeight: 1.4,
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 4,
+                          }}
+                        >
+                          <span>
+                            {pushResult.dropped.length} dependenc
+                            {pushResult.dropped.length === 1 ? "y was" : "ies were"}{" "}
+                            omitted — the seeded graph does not carry{" "}
+                            {pushResult.dropped.length === 1 ? "this edge" : "these edges"}:
+                          </span>
+                          {pushResult.dropped.map((u) => (
+                            <span
+                              key={`${u.task}<-${u.dependsOn}`}
+                              style={{ color: tokens.textSecondary }}
+                            >
+                              {u.taskTitle} ← {u.dependsOnTitle ?? u.dependsOn} (
+                              {u.reason.replace(/_/g, " ")})
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <div
                         className="mono"
                         style={{ fontSize: 10.5, color: tokens.textMuted }}
@@ -1504,7 +1594,164 @@ export function CanvasPane({
                         </div>
                       )}
 
-                      {pushErr && (
+                      {/* Ambiguity gate. A drawing that reads two ways must
+                          not become a task graph by accident — the whole
+                          point of the plan engine is that it asks instead of
+                          guessing, so the push asks too. */}
+                      {planAmbiguities.length > 0 && (
+                        <div
+                          style={{
+                            background: tokens.freezeBgWarn,
+                            border: `1px solid ${tokens.freezeBorderWarn}`,
+                            borderLeft: `4px solid ${tokens.warn}`,
+                            borderRadius: 6,
+                            padding: "8px 10px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                          }}
+                        >
+                          <span
+                            className="mono"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: tokens.warn,
+                              letterSpacing: "0.06em",
+                            }}
+                          >
+                            {planAmbiguities.length} UNRESOLVED{" "}
+                            {planAmbiguities.length === 1 ? "QUESTION" : "QUESTIONS"}
+                          </span>
+                          <div
+                            style={{
+                              fontSize: 10.5,
+                              color: tokens.textSecondary,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            This drawing can still be read more than one way:{" "}
+                            {ambiguitySummary(planAmbiguities)}. The plan lists each
+                            one under “Ambiguities &amp; Open Questions”. Seeding now
+                            executes one reading of the drawing.
+                          </div>
+                          <label
+                            style={{
+                              display: "flex",
+                              alignItems: "flex-start",
+                              gap: 6,
+                              cursor: "pointer",
+                              fontSize: 10.5,
+                              color: tokens.textHi,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={ambiguityAck}
+                              onChange={(e) => setAmbiguityAck(e.target.checked)}
+                              style={{ marginTop: 2, accentColor: tokens.warn }}
+                            />
+                            <span>
+                              I have read the open questions and want to create the
+                              project anyway.
+                            </span>
+                          </label>
+                        </div>
+                      )}
+
+                      {/* The API refused: it found dependency edges it cannot
+                          write. Name every one of them, then let him decide. */}
+                      {pushBlockers && pushBlockers.length > 0 && (
+                        <div
+                          style={{
+                            background: tokens.dangerActionBg,
+                            border: `1px solid ${tokens.dangerActionBorder}`,
+                            borderRadius: 6,
+                            padding: "8px 10px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 6,
+                          }}
+                        >
+                          <span
+                            className="mono"
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              color: tokens.bleed,
+                              letterSpacing: "0.06em",
+                            }}
+                          >
+                            {pushBlockers.length} DEPENDENC
+                            {pushBlockers.length === 1 ? "Y" : "IES"} CANNOT BE SEEDED
+                          </span>
+                          <div
+                            style={{
+                              fontSize: 10.5,
+                              color: tokens.textSecondary,
+                              lineHeight: 1.4,
+                            }}
+                          >
+                            Nothing was created. Fix the drawing, or create the
+                            project with{" "}
+                            {pushBlockers.length === 1 ? "this edge" : "these edges"}{" "}
+                            left out — a cycle would otherwise wedge the project,
+                            because neither task can ever become ready.
+                          </div>
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 3,
+                            }}
+                          >
+                            {pushBlockers.map((u) => (
+                              <div
+                                key={`${u.task}<-${u.dependsOn}`}
+                                className="mono"
+                                style={{
+                                  fontSize: 10,
+                                  color: tokens.textHi,
+                                  background: tokens.bgCard,
+                                  border: `1px solid ${tokens.borderSoft}`,
+                                  borderRadius: 4,
+                                  padding: "4px 6px",
+                                }}
+                              >
+                                {u.taskTitle} ← {u.dependsOnTitle ?? u.dependsOn}{" "}
+                                <span style={{ color: tokens.textMuted }}>
+                                  ({u.reason.replace(/_/g, " ")})
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                          <button
+                            onClick={() => void handlePushProject(true)}
+                            disabled={pushingProject}
+                            className="mono"
+                            style={{
+                              alignSelf: "flex-start",
+                              fontSize: 10.5,
+                              color: tokens.bleed,
+                              background: "transparent",
+                              border: `1px solid ${tokens.dangerActionBorder}`,
+                              borderRadius: 6,
+                              padding: "4px 10px",
+                              cursor: pushingProject ? "not-allowed" : "pointer",
+                              opacity: pushingProject ? 0.6 : 1,
+                            }}
+                          >
+                            {pushingProject
+                              ? "Creating…"
+                              : `Create anyway, omitting ${pushBlockers.length} ${
+                                  pushBlockers.length === 1 ? "edge" : "edges"
+                                }`}
+                          </button>
+                        </div>
+                      )}
+
+                      {pushErr && !pushBlockers && (
                         <div
                           className="mono"
                           style={{
@@ -1543,9 +1790,16 @@ export function CanvasPane({
                           Cancel
                         </button>
                         <button
-                          onClick={handlePushProject}
-                          disabled={pushingProject || !projectName.trim()}
+                          onClick={() => void handlePushProject(false)}
+                          disabled={pushDisabled}
                           className="mono"
+                          title={
+                            pushNeedsAck
+                              ? `Acknowledge the ${planAmbiguities.length} open question(s) first`
+                              : !projectName.trim()
+                                ? "A project name is required"
+                                : "Create a project in forge-control from this plan"
+                          }
                           style={{
                             fontSize: 11,
                             color: tokens.accent,
@@ -1553,12 +1807,8 @@ export function CanvasPane({
                             border: `1px solid ${tokens.accent}`,
                             borderRadius: 6,
                             padding: "4px 12px",
-                            cursor:
-                              pushingProject || !projectName.trim()
-                                ? "not-allowed"
-                                : "pointer",
-                            opacity:
-                              pushingProject || !projectName.trim() ? 0.6 : 1,
+                            cursor: pushDisabled ? "not-allowed" : "pointer",
+                            opacity: pushDisabled ? 0.6 : 1,
                           }}
                         >
                           {pushingProject ? "Creating…" : "Create Project"}
