@@ -66,7 +66,7 @@ r.post("/", async (c) => {
     return c.json({ error: `slug "${slug}" already exists` }, 409);
   }
 
-  const w = await createWebhook({
+  const { webhook, raw_secret } = await createWebhook({
     slug,
     name,
     description: body.description,
@@ -75,9 +75,9 @@ r.post("/", async (c) => {
     worker_label: body.worker_label,
     enabled: body.enabled,
   });
-  // Return the *full* secret one time on create so the user can copy it.
+  // Return the *full* unmasked secret one time on create so the user can copy it.
   // Subsequent fetches only show the preview.
-  return c.json({ webhook: w, secret_once: w.secret_preview }, 201);
+  return c.json({ webhook, raw_secret, secret_once: raw_secret }, 201);
 });
 
 r.patch("/:id", async (c) => {
