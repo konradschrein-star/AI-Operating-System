@@ -1411,17 +1411,61 @@ describe("R36 the spawn path resolves per task and writes back only `main`", () 
     );
   });
 
-  test("executor.ts is not modified by this phase", () => {
-    // 04-phases.md §10 lists executor.ts as written by NO phase. It already
-    // uses run.metadata.workspace_dir as the child's cwd, which is why a
-    // workstream gets its own directory without touching it.
+  test("executor.ts still takes the child's cwd from run.metadata.workspace_dir", () => {
+    // 04-phases.md §10 lists executor.ts as written by NO phase, and until
+    // round 5 of aios-autonomy-automation this test spelled that as
+    // `git diff PRIOR_SHA -- executor.ts` being EMPTY.
+    //
+    // That proxy has now outlived its subject. A later project — one whose
+    // brief names `forge-control/src/executor.ts` explicitly, to make the
+    // pre-flight spend estimate engine-aware so a Gemini run on a flat
+    // subscription stops tripping the EUR cap — edits the guardrail block
+    // ~line 575. The edit is authorized, it is nowhere near the cwd, and a
+    // diff-emptiness pin cannot tell the two apart: it fails on ANY future
+    // edit to this file for ANY reason, on this branch and on `main` after
+    // the merge, with no expiry and nothing to fix.
+    //
+    // So the pin is narrowed to the PROPERTY it was standing in for: a
+    // workstream gets its own directory because the child's cwd comes from
+    // `run.metadata.workspace_dir`, and phase 4C therefore did not have to
+    // touch this file. That is what a regression would break, and it is
+    // asserted directly against the file instead of inferred from a diff.
+    // The `git show` of the pinned revision stays, so the claim "this is how
+    // it read before phase 4C, unchanged" is still proved rather than
+    // asserted.
     const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
-    const diff = execFileSync(
-      "git",
-      ["diff", PRIOR_SHA, "--", "forge-control/src/executor.ts"],
-      { cwd: repoRoot, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 },
+    const read = (rev: string | null): string =>
+      rev === null
+        ? readFileSync(new URL("../executor.ts", import.meta.url), "utf8")
+        : execFileSync("git", ["show", `${rev}:forge-control/src/executor.ts`], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            maxBuffer: 8 * 1024 * 1024,
+          });
+
+    const CWD_BLOCK = `  const cwd =
+    typeof run.metadata?.workspace_dir === "string"
+      ? (run.metadata.workspace_dir as string)
+      : null;`;
+
+    const prior = read(PRIOR_SHA);
+    assert.ok(
+      prior.includes(CWD_BLOCK),
+      `the cwd block is not in executor.ts at ${PRIOR_SHA.slice(0, 7)} — the pin below would be ` +
+        "vacuous, asserting a shape that never existed rather than one that survived",
     );
-    assert.equal(diff, "", `executor.ts changed since ${PRIOR_SHA.slice(0, 7)}:\n${diff}`);
+
+    const current = read(null);
+    assert.ok(
+      current.includes(CWD_BLOCK),
+      "executor.ts no longer resolves the child's cwd from run.metadata.workspace_dir — a " +
+        "workstream would run in the shared CC_WORKSPACE and phase 4C's whole mechanism is gone",
+    );
+    assert.equal(
+      current.split("run.metadata?.workspace_dir").length - 1,
+      1,
+      "run.metadata?.workspace_dir must be read in exactly one place in executor.ts",
+    );
   });
 
   test("a missing workspace is a named refusal, for `main` and for a workstream alike", () => {
