@@ -57,162 +57,6 @@ const STATUS_OPTIONS: { key: LifeGoalStatus; label: string; color: string }[] = 
 /**
  * Fallback seed data matching Obsidian `/opt/obsidian-vault/Mentor/Profile/Goals & Aspirations.md`
  */
-const SEED_GOALS: LifeGoal[] = [
-  {
-    id: "seed-1",
-    title: "Break the shipping drought: publish video output again",
-    status: "in_progress",
-    horizon: "quarterly",
-    area: "business",
-    progress: 15,
-    started_day: "2026-07-03",
-    target_day: "2026-09-30",
-    completed_at: null,
-    notes: "Pipeline sat at zero across every phase; last publish was May 31. Committed to: queue 3+ ideas, ship 1 published video, and add an alert so it can't silently zero again.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-2",
-    title: "Get the AI OS Console operational",
-    status: "in_progress",
-    horizon: "quarterly",
-    area: "tech",
-    progress: 45,
-    started_day: "2026-06-14",
-    target_day: "2026-09-15",
-    completed_at: null,
-    notes: "A single pane of glass over Hermes + Content Forge + the side apps. Phase 1 backend (forge-control :7700) is live; frontend shipping tonight.",
-    created_at: "2026-06-14T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-3",
-    title: "Stabilise core infra",
-    status: "planned",
-    horizon: "quarterly",
-    area: "tech",
-    progress: 0,
-    started_day: null,
-    target_day: "2026-10-01",
-    completed_at: null,
-    notes: "Worker-orchestrator and hub-web crash-loop; the VEO image/video farm is half-broken.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-4",
-    title: "Reach positive ROI on the YouTube venture within ~6 months",
-    status: "planned",
-    horizon: "yearly",
-    area: "business",
-    progress: 5,
-    started_day: null,
-    target_day: "2026-12-31",
-    completed_at: null,
-    notes: "Deemed 'pretty easy for an internet business.' Currently -$300/week.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-5",
-    title: "Scale the VA operation from 5 toward 50",
-    status: "planned",
-    horizon: "yearly",
-    area: "business",
-    progress: 10,
-    started_day: null,
-    target_day: "2027-03-31",
-    completed_at: null,
-    notes: "Funded through Shane, gated on a CMS deal ($6k + 15% rev share) and the render pipeline.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-6",
-    title: "Own search-based content real estate in German + Nordic markets",
-    status: "planned",
-    horizon: "yearly",
-    area: "business",
-    progress: 0,
-    started_day: null,
-    target_day: "2027-02-28",
-    completed_at: null,
-    notes: "Before English competitors can hire translators — a 6–18 month window.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-7",
-    title: "Multi-language arbitrage",
-    status: "planned",
-    horizon: "yearly",
-    area: "business",
-    progress: 0,
-    started_day: null,
-    target_day: "2027-06-30",
-    completed_at: null,
-    notes: "Replicate proven English formats into German, Nordic, French, Spanish via AI dubbing.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-8",
-    title: "Full-scale content studio",
-    status: "planned",
-    horizon: "long_term",
-    area: "business",
-    progress: 0,
-    started_day: null,
-    target_day: "2027-12-31",
-    completed_at: null,
-    notes: "12+ channels, multi-language ops, Tier 3/4 (~$28–32k/month burn at 50 VAs).",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-9",
-    title: "Relocate to a low-tax jurisdiction (Cyprus)",
-    status: "planned",
-    horizon: "long_term",
-    area: "personal",
-    progress: 0,
-    started_day: null,
-    target_day: "2027-12-31",
-    completed_at: null,
-    notes: "Budgeted ~$2,500/mo; revenue routed US LLCs → Cyprus LLC → Jersey. Living standards won't be inflated to not loose focus.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-10",
-    title: "Build a durable AI co-founder",
-    status: "in_progress",
-    horizon: "long_term",
-    area: "tech",
-    progress: 30,
-    started_day: "2026-07-01",
-    target_day: "2027-12-31",
-    completed_at: null,
-    notes: "An Obsidian-linked agent with business memory, without typical context-window-dementia.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-  {
-    id: "seed-11",
-    title: "Financial independence via automated compounding systems",
-    status: "in_progress",
-    horizon: "long_term",
-    area: "financial",
-    progress: 20,
-    started_day: null,
-    target_day: "2028-12-31",
-    completed_at: null,
-    notes: "Build machines that earn without linear labor, so he can operate from anywhere on his own terms.",
-    created_at: "2026-07-03T00:00:00Z",
-    updated_at: "2026-08-23T00:00:00Z",
-  },
-];
 
 export function GoalsTab({ narrow }: { narrow: boolean }) {
   const qc = useQueryClient();
@@ -227,7 +71,20 @@ export function GoalsTab({ narrow }: { narrow: boolean }) {
     queryFn: () => fetchLifeGoals(),
   });
 
-  const rawGoals = goalsQ.data && goalsQ.data.length > 0 ? goalsQ.data : SEED_GOALS;
+  /* ── No fabricated fallback ──────────────────────────────────────────────
+   *
+   * This read `goalsQ.data?.length ? goalsQ.data : SEED_GOALS` — a hardcoded
+   * copy of Konrad's 11 goals, rendered with progress values, statuses and
+   * dates whenever the fetch failed or returned empty. It was invisible in
+   * every healthy screenshot because migration 0044 seeds the SAME 11 goals
+   * into `life_goals`, so the live and the fake case looked identical.
+   *
+   * Two things made it worse than a stale display: he could not tell the
+   * backend was down, and an edit made against a phantom row (`id: "seed-4"`)
+   * would PATCH an id that does not exist. The real goals live in the database
+   * — an empty list here means the fetch failed or the table is empty, and the
+   * surface must say so rather than invent one. */
+  const rawGoals = goalsQ.data ?? [];
 
   const updateGoalM = useMutation({
     mutationFn: (v: { id: string; patch: Partial<LifeGoalInput> }) =>
@@ -395,7 +252,24 @@ export function GoalsTab({ narrow }: { narrow: boolean }) {
       </div>
 
       {/* Goal Horizon Sections */}
-      {filteredGoals.length === 0 ? (
+      {/* Four states, told apart. "No goals match the selected filters" was the
+          ONLY empty message, so a failed fetch read as "you have no goals" —
+          which is how the fabricated SEED_GOALS fallback hid here in the first
+          place. An honest error beats a confident empty list. */}
+      {goalsQ.isLoading ? (
+        <EmptyState icon="flag">Loading goals…</EmptyState>
+      ) : goalsQ.isError ? (
+        <EmptyState icon="flag">
+          Could not load goals — {String((goalsQ.error as Error)?.message ?? "the request failed")}.
+          Your goals are in the database; this is a fetch failure, not an empty list.
+        </EmptyState>
+      ) : rawGoals.length === 0 ? (
+        <EmptyState icon="flag">
+          No goals recorded yet. Migration 0044 seeds them from
+          Mentor/Profile/Goals &amp; Aspirations.md — if this is unexpected, check
+          that it was applied.
+        </EmptyState>
+      ) : filteredGoals.length === 0 ? (
         <EmptyState icon="flag">
           No goals match the selected filters.
         </EmptyState>
