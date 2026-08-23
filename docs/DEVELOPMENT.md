@@ -128,7 +128,7 @@ Measured 2026-08-23 on the live VPS with ~10 agent lanes running — load averag
 
 | Run | Measured | PLAN.md target |
 |---|---|---|
-| `guard.sh --full` (11 checks, incl. web build + gates-808) | **3m55s** | — |
+| `guard.sh --full` (11 checks, incl. web build + gates-808) | **3m55s - 6m00s** (3 runs) | — |
 | `check-instrument-typecheck.sh`, warm cache | **19.4s** | <15s cold |
 | `check-instrument-typecheck.sh`, immediately re-run | **15.5s** | <2s hot |
 | `check-instrument-typecheck.sh`, cold cache | ~91s (round-1 reviewer's measurement, load 32-47) | <15s |
