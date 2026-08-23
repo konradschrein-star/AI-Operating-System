@@ -1,347 +1,211 @@
-# PLAN — connect-clis-from-settings
+# Architecture Plan: Money and Businesses Surfaces (`aios-money-and-businesses`)
 
-Project fbfdf435 · branch project/fbfdf435 · architect round 0 · 2026-08-22
+## Executive Recommendations
 
-## 0. Recommendation, in one paragraph
+1. **Spend Number & Accounting Truth:**
+   - **Recommendation:** Separate metered out-of-pocket invoice spend from flat-rate subscription shadow compute across all backend queries and UI layers. Fix `db/spend.ts` so `spendSummary()` and `todaySpendRollup()` never conflate Claude flat subscription shadow rate with metered invoice spend against the €50 cap, while including real compute activity in the daily time-series chart. Connect the `ai_os.ledger_entries` cash ledger to the Money surface to display real business cashflow (revenue, contractor costs, infrastructure).
+   - **Reasoning:** Konrad is on flat-rate subscriptions for Claude Pro/Team/Max and Google AI Pro, not per-token metered billing. Reporting a notional shadow price as cash spend trips false budget alarms and confuses the operator, while filtering it out of daily charts results in an empty black box.
+   - **Rejected Alternatives:**
+     - *Dropping shadow pricing entirely:* Rejected; tracking token burn velocity and model usage is critical for infrastructure health.
+     - *Inventing per-run cost allocations:* Rejected; `usage_hourly` is box-wide and fabricating per-run figures would violate the accuracy policy.
 
-Build ONE pty-backed login broker in forge-control (`src/lib/cli-auth/`) that owns a
-tmux session per provider on a DEDICATED tmux socket (`tmux -L forge-cli-auth`) with
-`remain-on-exit on`, so the CLI runs with NO shell behind it: when it exits the pane
-stays readable (`#{pane_dead}=1`, final screen intact) and can never become a bash
-prompt that swallows a pasted code. Verified on this box (tmux 3.4) during planning.
-Three provider definitions (`agy`, `gemini-cli`, `claude`) are DATA — binary, args,
-env, URL regex, prompt string, success/failure/expiry markers, `window_seconds`,
-probe function — and the engine is the same code path for all three. Routes live at
-`/api/integrations/cli-auth/*` as a sub-router mounted from `routes/integrations.ts`.
-The code arrives only in a POST body, goes to the pane through a 0600 temp file via
-`load-buffer` + `paste-buffer -d`, the file is `shred -u`'d, and every string that
-leaves the lib after the paste is passed through `scrub(text, code)` first.
-`connected` is produced ONLY by the existing probe (`probeAgy`, a new
-`probeGeminiCli`, `probeAccount`) writing a `ConnectionRecord` with `checked_at` —
-so the panel's R57 invariant (unprobed = amber) holds with zero new renderer code.
-The web side adds a `CliAuthConnect` control inside each connectable row's expanded
-body, reusing the panel's `Banner`/`btn()`/`CommandBlock` pieces.
+2. **Bank Connectivity & Treasury Strip:**
+   - **Recommendation:** Implement a direct 1st-party read-only REST connector for Mercury Bank (`https://api.mercury.com/api/v1/accounts`) using a token stored in `ai_os.secrets` (`MERCURY_API_TOKEN`). For European accounts (E&G Private Bank, Volksbank), provide GoCardless Bank Account Data (formerly Nordigen) open banking schema + a manual balance override / CSV import capability.
+   - **Reasoning:** Mercury provides an official, zero-cost, permanent read-only API token that requires no aggregator. German private banks like E&G lack self-serve developer APIs and require PSD2 open-banking aggregation or manual balance input.
+   - **Rejected Alternatives:**
+     - *Screen-scraping Volksbank/E&G via browser bots:* Rejected; fragile, violates banking TOS, and Konrad explicitly confirmed Volksbank is not needed.
+     - *Plaid for EU banks:* Rejected; expensive minimum commitments compared to GoCardless's free tier.
 
-Rejected alternatives (one line each):
-- `exec bash` behind the CLI (the operator's scripts): keeps the pane but turns it into
-  a shell — that is exactly how a code was pasted into bash on 2026-08-19.
-- node-pty / a PTY in-process: no tmux dependency, but untested here, a native module
-  under pm2, and loses the operator's ability to `tmux attach` to see what happened.
-- A localhost callback listener + SSH tunnel: impossible — redirect_uris are
-  `codeassist.google.com/authcode` and `antigravity.google/oauth-callback`.
-- Putting the code in the secret store and polling it (authcode-feed.sh): one more
-  place the code rests on disk, and it needs a second process; the broker pastes
-  synchronously from the request handler instead.
-- A second status shape for "connecting": the panel already has
-  `state·identity·checked_at·detail·action`; the broker's GET reuses `detail`/`action`
-  words and adds only what a live session needs.
+3. **Money Surface Overhaul (Shrunk & Interactive):**
+   - **Recommendation:** Replace defensive multi-line disclaimer text with a compact, high-density two-tiered cockpit:
+     - **Tier 1 (Top ~40%):** Treasury & Bank Balances (Mercury Operating/Treasury/Tax Reserve + E&G in native currencies and EUR equivalent) + 30D Cashflow by business arm from `/api/ledger/summary`.
+     - **Tier 2 (Bottom ~60%):** Shrunk AI Compute Cockpit with interactive daily spend chart (timeframe: 7D/14D/30D/90D, mode toggle: All Compute / Metered Only / Shadow Only, breakdown by Provider/Kind) and compact quota limit pill.
+   - **Reasoning:** Shrinks visual noise by >60%, delivers the requested daily trend visualization, and provides immediate visibility into actual bank balances.
+   - **Rejected Alternatives:**
+     - *Full double-entry ERP accounting UI:* Rejected; over-engineered for a solo operator needing cashflow awareness.
 
-## 1. What exists (read, not remembered)
+4. **Businesses Surface Overhaul (Executive Portfolio Hub):**
+   - **Recommendation:** Completely eliminate the 1,485-line spec litigator, markdown section citations (§10 Q3), and 22-row server port accordion. Replace with 4 focused **Venture Cards** grounded in live data:
+     1. **The Jersey / UK Directory:** 1,053 prospects live from `ai_os.entities`, £49/mo pricing, Next Action: launch 100-call batch, Links to Twenty CRM, Repo, etc.
+     2. **TheSkyLab / YouTube Studio:** 3 channels, live job pipeline metrics from `/api/pipeline`, Next Action: review stalled QC jobs, Links to Hub Web, ReelForge, Pipeline.
+     3. **Axtrelis (Business Plan Hub):** Visa SaaS ($197/$497/$2,497 tiers), 5 seed plans, Pre-Launch status, Next Action: Cloudflare DNS for `app.axtrelis.com`, Links to Review app, Funnel v9, Repo.
+     4. **Schreiner Content Systems / Consulting:** Agency & consulting services, ShiftSync, Status: Paused/Dormant.
+     Plus a **Cross-Portfolio Bottlenecks & Action Center** at the bottom.
+   - **Reasoning:** Gives the page a real job answering: what is each business, is it alive, what did it earn/cost, what is the next action, and where do I open its tools.
+   - **Rejected Alternatives:**
+     - *Keeping the funnel spine with spec quotes:* Rejected; verbatim rejected by Konrad as unreadable.
+     - *Treating AI OS infrastructure as a commercial venture:* Rejected; AI OS is the operating machine, not a revenue product.
 
-- `forge-control/src/routes/integrations.ts` — GET `/agy|/google|/github|/gemini|/connections`,
-  POST `/agy/probe`. Every status comes from `buildConnectionStatus()` /
-  `absentConnectionStatus()` in `lib/connection-status.ts`; records persist at
-  `/opt/ai-os/.secrets/status/<id>.json` (`FORGE_CONNECTION_STATUS_DIR`). `AGY_ACTIONS.broken`
-  currently tells Konrad to sign in at a terminal — that sentence must change.
-- `lib/connection-status.ts` exports `runCommand(bin,args,{timeoutMs,env})` which already
-  spawns with `stdio ["ignore","pipe","pipe"]` and resolves on close — REUSE it for every
-  probe and every tmux invocation that is not a long-lived pane. `AGY_BIN` lives there
-  (line ~435) with `access(X_OK)`. No `CLAUDE_BIN`/`GEMINI_BIN` constants exist yet.
-- `routes/accounts.ts` + `db/claude-accounts.ts` (`claude_accounts` table, ai_os DB) +
-  `lib/accounts.ts` (`probeAccount`, `createAccount`). POST `/api/accounts` creates a row and
-  probes it. `reauth_command` = `CLAUDE_CONFIG_DIR=<dir> claude auth login --claudeai`.
-- Web: `app/api-connections.ts` (`ROOT = "/api/proxy/integrations"`), `settings/connections.ts`
-  (`summaryFromStatus`, the ONE renderer; `ConnectionSummary.action` is a string),
-  `ConnectionsPanel.tsx` (`Row` head is a single `<button>` — NOTHING interactive may be
-  nested in it; the body is kept mounted and hidden), `integrationCards.tsx`
-  (`Banner`, `btn()`, `Chip`, `CardHead`, `CommandBlock`, `StateChip`, `AgyCard` with
-  `data-agy-verify`), `accountRegistry.tsx` (`useAccountRegistry().create()`).
-- There is NO Gemini CLI row today. `GET /gemini` is the API KEY. A `gemini-cli`
-  connection id must be added end to end (status record, probe, row) or there is
-  nothing to put a Connect button on.
-- `/root/ai-os/gemini/{auth.sh,agy-login.sh,agy-watch.sh,authcode-feed.sh}`: the proven
-  primitives are `capture-pane -p -J` + grep for the live prompt, `load-buffer`/`paste-buffer`,
-  `shred -u`. Keep the log line format of `state/authcode-feed.log`:
-  `HH:MM:SS [<session>/<name>] <message>`. DEFECT TO NOT COPY: `authcode-feed.sh` logs
-  `pane now: <last pane line>` 8 s after the paste — the pane echoes the code (verified:
-  pasted `abc` shows as `Enter the code: abc`), so that line can log the code.
-- Binaries (absolute): `/root/.local/bin/agy` 1.1.18, `/usr/bin/gemini` 0.55.1 (symlink
-  into node_modules), `/usr/bin/claude` 2.1.239 (symlink), `/usr/bin/tmux` 3.4,
-  `/usr/bin/shred`. pm2's PATH has none of `/root/.local/bin`.
-- Browser proof recipe that works on this repo: `docs/plan/artifacts/phase1871/README.md`
-  (worktree `next build` with `FORGE_CONTROL_URL=<throwaway api>`, `next start -p 7780`,
-  NextAuth cookie minted with salt = cookie name, `FORGE_SESSION_COOKIE`). Single-router
-  throwaway API pattern: `scripts/checks/serve-v3-7798.ts`.
-- Unit tests: `forge-control/package.json` → `tsx --test src/lib/*.test.ts` (TOP-LEVEL
-  glob: a test under `src/lib/cli-auth/` does NOT run; put tests at `src/lib/cli-auth*.test.ts`).
-- Gate suite: `scripts/checks/gates-808.sh`, `gate "<name>" <cmd>` helper at line 53.
+---
 
-## 2. Ownership (the four questions)
+## 1. Spend Number Deep Dive: Root Cause & Evidence
 
-| question | answer |
-|---|---|
-| what owns state | `lib/cli-auth/session.ts`: an in-memory `Map<provider, Session>` (ONE live session per provider, replaced on every start) + the tmux server `-L forge-cli-auth` as the source of truth for "is the CLI still asking". Durable outcome state is NOT here: it is the existing `ConnectionRecord` written by the probe. |
-| what dispatches work | The HTTP handlers, synchronously: `start` spawns the tmux session and polls the pane for the URL; `code` pastes and polls the pane to a terminal outcome, then runs the probe, then answers. No queue, no cron. |
-| what happens on failure | Every failure is a state (`failed`/`expired`) with the CLI's own last lines (scrubbed) in `detail`, or an HTTP 5xx when THE BROKER could not do its job (tmux missing, shred missing, pane unreadable). Nothing is retried silently. A forge-control restart loses the in-memory map; GET then reports an orphan tmux session as `failed` "broker restarted — press Relaunch", and `start` kills it. |
-| how Konrad sees it broke | The row he is already looking at: chip + `detail` verbatim, plus the `cli-auth.log` line. The probe after success is the same probe the row renders, so a lie is structurally impossible. |
+### The Discrepancy
+- `/api/today` reported: `spend: €102.47 of €50 cap` (now €132.98).
+- `/api/spend/summary` reported: `today.total_eur: €0.00`, `today.claude_eur: €132.98`.
+- Daily Spend Chart rendered: Blank black box showing only `08-22 | peak €0.01 | 08-22`.
 
-## 3. The broker — `forge-control/src/lib/cli-auth/`
+### Evidence & Root Causes
+1. **Claude Code Shadow Price Ingest:**
+   - In `forge-control/src/executor.ts:1150-1158`, after each Claude execution turn, the runner calls:
+     ```typescript
+     await recordSpend([{
+       provider: "claude-code",
+       kind: "llm_output",
+       amount_eur: result.costUsd * USD_EUR,
+       units: result.numTurns,
+       meta: { run_id: run.id, usd: result.costUsd },
+     }]);
+     ```
+   - `result.costUsd` is calculated using standard token rates ($3/M input, $15/M output for Sonnet 3.7). However, Konrad pays a flat monthly subscription. No marginal euros leave his account.
+2. **Google Gemini Ingest:**
+   - In `forge-control/src/lib/gemini-runner.ts:279`, Gemini calls log `amount_eur: 0` because of the Google AI Pro subscription, storing raw token counts in `units`.
+3. **The `/api/today` Query Bug:**
+   - In `forge-control/src/db/spend.ts:216-223` (`todaySpendRollup`), the SQL query sums `amount_eur` across **all** providers without filtering out `claude-code`.
+   - As a result, `routes/today.ts` took the €132.98 shadow rate, treated it as out-of-pocket invoice cost against `SPEND_CAP_EUR = 50`, and falsely reported an over-budget status.
+4. **The Daily Spend Chart Bug:**
+   - In `forge-control/src/db/spend.ts:173`, the `daily` query hardcoded `WHERE provider <> 'claude-code'`.
+   - Because 99.9% of LLM execution runs via `claude-code` and Gemini rows have `amount_eur = 0`, the query returned zero euros for every single day, completely flatlining the chart.
 
-### 3.1 `src/lib/cli-paths.ts` (NEW, shared — the single place a CLI path is written)
+### The Fix
+- `db/spend.ts` will explicitly compute:
+  - `metered_eur`: Sum where `provider NOT IN ('claude-code', 'gemini-subscription')` (real invoices: ElevenLabs, OpenAI API, RunPod, etc.).
+  - `shadow_eur`: Sum of flat-rate compute value.
+  - `total_compute_eur`: `metered_eur + shadow_eur`.
+- Daily series returns `{ day, metered_eur, shadow_eur, total_eur, calls }` so the UI can render either total compute burn or metered spend with a single toggle.
+- `/api/today` will compare `metered_eur` against the €50 out-of-pocket spend cap, with shadow compute displayed as a secondary metric.
 
-```ts
-export const AGY_BIN    = "/root/.local/bin/agy";      // MUST equal connection-status.AGY_BIN (test asserts)
-export const GEMINI_BIN = "/usr/bin/gemini";
-export const CLAUDE_BIN = "/usr/bin/claude";
-export const TMUX_BIN   = "/usr/bin/tmux";
-export const SHRED_BIN  = "/usr/bin/shred";
-/** true | false | null — null when the errno is neither ENOENT nor EACCES (cannot decide). */
-export async function binPresent(bin: string): Promise<boolean | null>;
-```
-B2 makes `connection-status.ts` import `AGY_BIN` from here (one constant, two importers).
+---
 
-### 3.2 `src/lib/cli-auth/types.ts`
+## 2. Bank Connectivity Research Note
 
-```ts
-export type CliAuthProvider = "agy" | "gemini-cli" | "claude";
-export type CliAuthState =
-  "idle" | "starting" | "awaiting_code" | "exchanging" | "connected" | "expired" | "failed";
+| Institution | Type / Jurisdiction | API Method | Protocol / Auth | Cost | Feasibility & Recommendation |
+|---|---|---|---|---|---|
+| **Mercury (3 accounts)** | Business Checking & Treasury (US) | Direct 1st-Party REST API (`api.mercury.com/api/v1/accounts`) | Bearer Token (`MERCURY_API_TOKEN`) generated from Mercury Dashboard | **$0 / Free** (included with account) | **Immediate / High Feasibility:** Implement native `/api/accounts/mercury` route. Read token from secret store. Fetches live balances in seconds with 100% reliability. |
+| **E&G Private Bank (Bankhaus Ellwanger & Geiger)** | Private Bank (Germany / EU) | PSD2 Open Banking Aggregator (GoCardless Bank Account Data) | OAuth Requisition Redirect / 90-day consent | Free tier (up to 50 requisitions) / ~€0.05/mo | **Medium Feasibility:** Implement GoCardless connector shell + immediate manual balance override / CSV import in UI for private bank accounts. |
+| **Volksbank** | Cooperative Bank (Germany / EU) | PSD2 Open Banking (GoCardless) / FinTS | GoCardless / FinTS (requires TAN) | Free tier on GoCardless | **Optional / Excluded:** Konrad explicitly confirmed Volksbank is not needed. Exclude from active scope. |
 
-export interface ProviderDef {
-  id: CliAuthProvider;
-  bin: string;                       // from cli-paths
-  args: readonly string[];
-  env: (input: StartInput) => NodeJS.ProcessEnv;   // e.g. NO_BROWSER=true, CLAUDE_CONFIG_DIR
-  cwd: string;                       // a scratch dir, never the repo
-  urlRegex: RegExp;                  // first match on the joined pane = the URL
-  prompt: string;                    // substring that means "asking for the code NOW"
-  successMarkers: readonly string[]; // pane substrings meaning the exchange succeeded
-  failureMarkers: readonly string[]; // pane substrings meaning the code was rejected
-  expiryMarkers: readonly string[];  // e.g. "timed out"
-  window_seconds: number | null;     // measured by research; null = no expiry observed
-  exchangeTimeoutMs: number;         // how long to wait after paste before calling it failed
-  probe: (input: StartInput) => Promise<ConnectionRecord>;   // the EXISTING probe
-  onConnected?: (input: StartInput, rec: ConnectionRecord) => Promise<void>; // claude: registry row
-}
+### Secret Management Rule
+Never ask Konrad to paste bank tokens into chat. The UI will render secure secret triggers (`POST /api/secrets` with `name: "MERCURY_API_TOKEN"`), and the backend reads encrypted credentials from `lib/secret-store.ts`.
 
-export interface StartInput { slug?: string; config_dir?: string }   // claude only
+---
 
-export interface CliAuthStatus {          // GET shape — SAME words as a connection row
-  provider: CliAuthProvider;
-  state: CliAuthState;
-  session_id: string | null;
-  url: string | null;                     // ONLY while state === "awaiting_code"; null otherwise, always
-  prompt: string | null;
-  window_seconds: number | null;
-  started_at: string | null;
-  expires_at: string | null;              // started_at + window, or null
-  detail: string;                         // human, scrubbed, verbatim CLI tail where useful
-  action: string;                         // the exact next click, in the panel's voice
-  probe: ConnectionRecord | null;         // set only after a post-success probe ran
-}
-```
+## 3. Surface Redesign Specifications
 
-### 3.3 `src/lib/cli-auth/tmux.ts` — the only file that spells `tmux`
+### 3.1 Money Surface (`MoneySurface.tsx`)
+1. **Header & Timeframe Controls:**
+   - Title: `Money · Financial Cockpit`
+   - Period Selectors: `[7D]` `[14D]` `[30D]` `[90D]` `[YTD]`
+   - Refresh / Sync button.
+2. **Treasury & Bank Balances Strip (Top):**
+   - Live account cards:
+     - `Mercury Operating ($ USD)`: Live balance + sync status dot.
+     - `Mercury Treasury ($ USD)`: Live balance + sync status dot.
+     - `Mercury Tax Reserve ($ USD)`: Live balance + sync status dot.
+     - `E&G Private Bank (€ EUR)`: Live/manual balance.
+   - Aggregate banner: `Total Liquid Treasury: €X,XXX (EUR equivalent at current FX)`.
+3. **Cashflow & Ledger Summary (Middle):**
+   - 3 high-density metric tiles: `Revenue In (MTD)`, `Expenses Out (MTD)`, `Net Cashflow`.
+   - Arm distribution bar: `Axtrelis` | `YouTube` | `Infra` | `Personal`.
+4. **AI Compute & Telemetry Cockpit (Bottom):**
+   - Controls: View Mode `[All Compute (Default) ▾ | Metered Only | Shadow Only]`, Grouping `[By Provider ▾ | By Kind]`.
+   - Daily Spend Chart: Render interactive bar chart across selected window. Hover reveals date, EUR, and call counts.
+   - Where It Goes: Shrunk progress meter breakdown.
+   - Quota Alert Pill: Compact badge `[1 Quota Hit in 14d]` expanding stack trace on click.
 
-- Socket: every call is `TMUX_BIN -L forge-cli-auth …` via `runCommand` (5 s timeout).
-- `startPane(name, bin, args, env, cwd)`:
-  `new-session -d -s <name> -x 240 -y 50 -c <cwd> -e K=V… -- <bin> <args…> \; set-option -t <name> remain-on-exit on`
-  (one tmux invocation, so the option is set before the process can exit). NO shell,
-  NO `exec bash`. `-e` sets env per session (tmux ≥3.2); the pane command is `bin` directly.
-- `capture(name)` → `capture-pane -p -J -S - -E - -t <name>` joined lines.
-- `paneState(name)` → `display-message -p -t <name> '#{pane_dead} #{pane_dead_status}'`
-  (status may lag `pane_dead` by a tick — re-read once; treat empty as unknown, never 0).
-- `pasteFile(name, path)` → `load-buffer -b <rand> <path>` then `paste-buffer -d -b <rand> -t <name>`
-  then `send-keys -t <name> Enter`. `-d` deletes the buffer; `list-buffers` is asserted
-  empty afterwards (test + runtime check → 500 if a buffer survived).
-- `kill(name)` → `kill-session -t <name>`; `exists(name)` → `has-session` (used ONLY to
-  decide whether to kill/orphan-report, NEVER as "alive").
-- Session names: `cli-auth-<provider>` (claude: `cli-auth-claude-<slug>`).
+### 3.2 Businesses Surface (`BusinessesSurface.tsx`)
+1. **Portfolio Overview Strip:**
+   - Active Commercial Ventures: 3 Commercial + 1 Consulting.
+   - MTD Revenue / Spend overview from ledger.
+2. **4 Venture Cards:**
+   - **The Jersey / UK Directory (`directory`):**
+     - Tagline: B2B Local Marketplace & Services Introducer (£49/mo tier).
+     - Live Metrics: 1,053 Sourced Prospects (live from `ai_os.entities`), 0 Contacted, £0 MRR.
+     - Bottleneck / Next Action: "1,053 enriched company entities ready in DB. First 100 cold outreach calls not yet initiated."
+     - Launchpad Links: `[Open Site ↗]`, `[Twenty CRM ↗]`, `[Repo ↗]`, `[Projects ↗]`.
+   - **TheSkyLab / YouTube Studio (`creator`):**
+     - Tagline: Faceless Video Publishing & Content Factory (TheSkyLab, KarmaBiker, AI Senior).
+     - Live Metrics: 3 Channels, 5 Jobs in Flight, 5 Stalled in QC, 0 Published this month.
+     - Bottleneck / Next Action: "5 of 5 jobs stalled >48h in QC. Human review required in Hub Web."
+     - Launchpad Links: `[Hub Web ↗]`, `[ReelForge ↗]`, `[Pipeline ↗]`, `[Repo ↗]`.
+   - **Axtrelis / Business Plan Hub (`axtrelis`):**
+     - Tagline: Investor Visa Business Plan SaaS ($197 / $497 / $2,497).
+     - Live Metrics: 5 Seed Plans Generated, 0 Live Customers, Status: `PRE-LAUNCH`.
+     - Bottleneck / Next Action: "Cloudflare DNS for app.axtrelis.com returns 404 — route to VPS2 container."
+     - Launchpad Links: `[Review App ↗]`, `[Funnel v9 ↗]`, `[Repo ↗]`.
+   - **Schreiner Content Systems (`personal`):**
+     - Tagline: Personal Brand, Consulting & Custom MVPs (ShiftSync).
+     - Metrics: Portfolio site 200 OK, ShiftSync 502, Status: `PAUSED`.
+     - Bottleneck / Next Action: "Paused — all focus on YouTube and Directory."
+     - Launchpad Links: `[Portfolio Site ↗]`, `[Docs ↗]`.
+3. **Cross-Portfolio Bottlenecks & Action Center:**
+   - Highlight top blockers across the portfolio requiring operator action.
 
-### 3.4 `src/lib/cli-auth/session.ts` — the state machine
+---
 
-```
-start(provider, input)
-  ├ binPresent(bin) !== true  → throw BrokerError(503, "<bin> not executable")
-  ├ kill any existing session for provider (fresh PKCE: the old url is dead by construction)
-  ├ startPane(); state=starting; session_id = randomUUID()
-  ├ poll capture() every 250 ms ≤ 20 s for urlRegex
-  │    ├ match     → state=awaiting_code, url, started_at, expires_at
-  │    ├ pane dead → state=failed, detail = scrubbed tail (12 lines)
-  │    └ 20 s     → state=failed, detail="no URL within 20 s", pane tail
-  └ returns CliAuthStatus  (POST /start → 200 with it; 503 on BrokerError)
+## 4. File Ownership & Boundary Compliance
 
-status(provider)                         — pure read, ALWAYS re-inspects the pane:
-  ├ no record & no tmux session          → idle
-  ├ no record & tmux session exists      → failed "broker restarted; press Relaunch" (orphan)
-  ├ awaiting_code & pane shows expiryMarker or now > expires_at+grace(5 s) → expired (url:=null)
-  ├ awaiting_code & pane dead            → failed (url:=null)
-  └ otherwise the stored state
+We touch strictly the files owned by this project:
+- `forge-control-web/app/desktop/MoneySurface.tsx`
+- `forge-control-web/app/desktop/BusinessesSurface.tsx`
+- `forge-control-web/app/desktop/businesses-inventory.ts`
+- `forge-control-web/app/api-business.ts`
+- `forge-control/src/routes/spend.ts`
+- `forge-control/src/routes/ledger.ts`
+- `forge-control/src/routes/entities.ts`
+- `forge-control/src/routes/accounts.ts` / `forge-control/src/lib/mercury.ts`
+- `forge-control/src/db/spend.ts`
+- `forge-control/src/db/entities.ts`
 
-submitCode(provider, session_id, code)
-  ├ session_id !== live.session_id      → 409 {state, detail:"that url is stale; relaunch"}  ← PKCE rule IN CODE
-  ├ status() !== awaiting_code           → 409 with the real status (expired/failed/idle)
-  ├ capture() must contain def.prompt NOW, else 409 "CLI is not asking" (tmux-has-session trap)
-  ├ code: trim, reject if /\s/ or length ∉ [8, 2048] → 400 (never echo it)
-  ├ mkdtemp(0700) + writeFile(0600) → pasteFile → shred -u (spawn SHRED_BIN) → rmdir
-  ├ state=exchanging; poll capture() every 300 ms ≤ exchangeTimeoutMs:
-  │    successMarker → run def.probe(); probe.ok ? connected (+onConnected) : failed
-  │                    detail="CLI reported success but the probe says: <probe.detail>"
-  │    failureMarker | pane dead with non-zero status → failed, detail = scrubbed tail
-  │    expiryMarker  → expired
-  │    timeout       → failed "no verdict within N s", scrubbed tail
-  ├ on connected/expired/failed: kill the tmux session (nothing left to read; the
-  │   scrubbed tail is already in detail)
-  └ returns the REAL outcome CliAuthStatus
+We do NOT touch:
+- `forge-control-web/app/desktop/nav-items.ts`
+- `forge-control-web/app/desktop/DesktopApp.tsx` (beyond existing imports)
+- Any files owned by parallel lanes.
 
-cancel(provider) → kill session, state=idle
-```
-- `scrub(text, code)` = `text.split(code).join("<code>")`, applied to every `detail`,
-  every log line, every thrown message AFTER the code exists. The `code` variable lives
-  only inside `submitCode`; it is never stored on the Session object.
-- Hard lifetime: a session older than 15 min is killed by `status()` → `expired`.
-- Log: `/opt/ai-os/state/cli-auth.log` (dir from `CLI_AUTH_STATE_DIR`), format
-  `HH:MM:SS [cli-auth-<provider>/<session_id8>] <message>`, messages fixed strings:
-  `started`, `url shown`, `code delivered (<n> bytes, redacted)`, `connected as <identity>`,
-  `failed: <scrubbed tail first line>`, `expired`, `cancelled`. Never a pane dump.
+---
 
-### 3.5 `src/lib/cli-auth/providers.ts` — filled by research (§6), defaults below
+## 5. Execution Graph & Tasks
 
-| field | agy | gemini-cli | claude |
-|---|---|---|---|
-| bin/args | `AGY_BIN -p "Reply with exactly: OK"` | `GEMINI_BIN` (bare TUI) | `CLAUDE_BIN auth login --claudeai` |
-| env | inherit + `PATH+=/root/.local/bin` | `NO_BROWSER=true`, unset `GEMINI_API_KEY`,`GOOGLE_API_KEY` | `CLAUDE_CONFIG_DIR=<config_dir>` |
-| urlRegex | `https://accounts\.google\.com/o/oauth2\S+` | same | research (claude.ai/oauth/authorize…) |
-| prompt | `paste the authorization code here and press Enter` | `Enter the authorization code:` | research |
-| window_seconds | 60 (re-measure) | research (null if none within the observation cap) | research |
-| probe | `probeAgy()` | `probeGeminiCli()` (NEW, B2) | `probeAccount(row)` after `createAccount` or on the existing row |
-| onConnected | — | — | create/refresh `claude_accounts` row (slug, config_dir); `login_email` stays null (configuration, not probe) |
-
-`probeGeminiCli` (B2, in `connection-status.ts`, id `gemini-cli`, persisted like agy):
-research decides the cheapest command that fails clean when signed out and yields an
-identity when signed in. Default if research finds nothing better: `GEMINI_BIN -p "Reply
-with exactly: OK" --output-format json` with `timeoutMs 90_000`, identity = the active
-email read from `~/.gemini/google_accounts.json` ONLY when the call succeeded (the call is
-the proof, the file supplies the name; `detail` says so). A timeout is `unknown`, not broken.
-
-## 4. Routes — `src/routes/cli-auth.ts`, mounted `r.route("/cli-auth", cliAuth)` inside integrations.ts
-
-| verb | path | body | answer |
-|---|---|---|---|
-| GET | `/cli-auth` | — | `{ providers: CliAuthStatus[] }` all three (claude: one per live session, plus `{provider:"claude", state:"idle"}`) |
-| GET | `/cli-auth/:provider` | — | `CliAuthStatus` (claude: `?slug=`) |
-| POST | `/cli-auth/:provider/start` | claude: `{slug, config_dir}` (config_dir absolute, slug `/^[a-z0-9][a-z0-9-]{0,39}$/`) | `CliAuthStatus` 200; 400 bad input; 503 BrokerError; 409 if another session for this provider is `exchanging` |
-| POST | `/cli-auth/:provider/code` | `{session_id, code}` (claude: `+slug`) | `CliAuthStatus` with the REAL terminal state; 400/409 as §3.4 |
-| POST | `/cli-auth/:provider/cancel` | claude: `{slug}` | `CliAuthStatus` idle |
-
-Provider param not in the three → 404 `{error}`. Bodies > 16 KiB → 413 (the code is ≤ 2 KiB).
-No `code` field is ever read from a query string. Hono's request logger in index.ts logs
-method+path only — the builder verifies it does not log bodies.
-
-Also in B3: `GET /gemini-cli`, `POST /gemini-cli/probe`, and `gemini-cli` in `/connections`
-(same three-function pattern as agy). Wording: `AGY_ACTIONS.broken` and the new
-`GEMINI_CLI_ACTIONS.{broken,absent-with-binary}` say "Expand this row and press Connect —
-a Google page shows a code, paste it back here (60 s window for agy)". Google's own row and
-GitHub are untouched.
-
-## 5. Web — workstream `web`
-
-Files: `app/api-connections.ts` (+ `CliAuthStatus` type mirror, `startCliAuth`,
-`readCliAuth`, `submitCliAuthCode`, `cancelCliAuth` — bodies JSON, never query strings),
-`settings/connections.ts` (+ `GEMINI_CLI_COPY`, `geminiCliConnection()` through
-`summaryFromStatus`, no other rule changes), `settings/CliAuthConnect.tsx` (NEW),
-`settings/integrationCards.tsx` (+ `GeminiCliCard` modelled on `AgyCard`, with
-`data-gemini-cli-*` markers; `AgyCard` and `GeminiCliCard` render `<CliAuthConnect>` at the
-top of the card when the row is not `connected`), `ConnectionsPanel.tsx` (+ the
-`gemini-cli` Row under the GEMINI group; `AddAccount` gains a "Sign in here" path that
-renders `<CliAuthConnect provider="claude" slug dir>` in place of STEP 1, keeping the
-manual command below it as the fallback; `AccountCard` broken state gets the same control
-with the row's `config_dir`).
-
-`CliAuthConnect` behaviour (pinned — do not redesign):
-1. Button `Connect` (`data-cli-auth-connect=<provider>`). On click, SYNCHRONOUSLY
-   `const tab = window.open("", "_blank")` (popup blockers allow it inside the click),
-   then POST start; on `awaiting_code` set `tab.location = url`; on anything else
-   `tab.close()` and show `detail` in a `Banner tone="bad"`.
-2. State `awaiting_code`: URL in a `CommandBlock`-style copyable box
-   (`data-cli-auth-url`), a countdown `expires in 42 s` when `window_seconds` is set,
-   one `<input data-cli-auth-code type="password" autoComplete="off">`, `Submit code`,
-   `Cancel`. Poll GET every 2 s while `awaiting_code|exchanging`; stop otherwise.
-3. `exchanging`: input disabled, "checking with <provider>…".
-4. `connected`: `Banner tone="ok"` with `probe.identity`/`detail`; call the card's
-   existing refresh (`onFacts` path / `registry.load`) so the ROW chip re-renders from the
-   persisted record — the control never paints the chip itself.
-5. `expired` / `failed`: `Banner tone="bad"` with `detail` VERBATIM, button `Relaunch`
-   (`data-cli-auth-relaunch`) which is step 1 again — and the old URL box is gone (server
-   returns `url:null`; the client also clears it).
-6. Any fetch rejection → the same `Banner tone="bad"` with the verbatim error. No
-   "submitted" toast exists anywhere.
-No new tokens, no new design language; `btn()`, `Banner`, `input()` from the panel.
-
-## 6. Research (all depends_on [], workstream main, tier junior) — measured, written to `docs/plan/cli-auth/evidence-<provider>.md`
-
-Each researcher uses the tmux recipe in §3.3 by hand (`tmux -L forge-cli-auth-research`),
-records exact prompt strings, the URL regex that matched, `window_seconds` (wall clock from
-URL shown to expiry marker, or "no expiry within N min" with the capture), what the CLI
-prints for a deliberately WRONG code (verbatim), the exit status via `pane_dead_status`,
-and the cheapest signed-out probe. Nobody completes a Google/Anthropic sign-in. Gemini's
-observation cap: 45 min. Kill your sessions when done.
-
-## 7. Tests and checks
-
-- `src/lib/cli-auth.test.ts` (B1): drives the engine against
-  `scripts/checks/fixtures/cli-auth-mock.sh` (a bash CLI: prints a URL with a random
-  nonce, prompts `Enter the authorization code: `, accepts only `MOCK-OK`, exits 2 on
-  anything else, prints `timed out` after `MOCK_WINDOW` s). Cases: url state; wrong code →
-  failed with verbatim tail; right code → `connected` ONLY when the injected probe returns
-  ok (and `failed` when the probe says no even though the CLI succeeded); expiry →
-  `expired` + url null + a relaunch yields a DIFFERENT url and the old session_id is 409;
-  no tmux buffer survives; the CANARY check — paste `CANARY-<uuid>` and assert the string
-  appears in NO response field, NOT in cli-auth.log, NOT in `list-buffers`, NOT on disk
-  under the temp dir. The mock provider is registered ONLY when `CLI_AUTH_MOCK_BIN` is set.
-- `scripts/checks/check-cli-auth-code-leak.ts` (B4): static scan of
-  `src/lib/cli-auth/**`, `src/lib/cli-paths.ts`, `src/routes/cli-auth.ts` for (a) any
-  `console.*`/`log(`/`appendFile(` call whose argument expression mentions `code`,
-  (b) `send-keys` with anything but a literal `Enter`, (c) `c.req.query(` anywhere,
-  (d) `detail:`/`message:` assignments inside `submitCode` not wrapped in `scrub(`,
-  (e) `JSON.stringify(session)`; plus it RUNS the canary case above. Registered in
-  `gates-808.sh` with `gate`. Per `do-not-soften-check-secret-scan`: the check's own
-  forbidden strings live in variables, never in prose the check then reads.
-- `scripts/checks/check-cli-auth-panel.mjs` (B7): Playwright against a throwaway stack per
-  phase1871 README — throwaway forge-control from THIS worktree on a spare port (mount
-  `accounts`, `integrations` only), `FORGE_CONTROL_URL` baked into a worktree `next build`,
-  `FORGE_CONNECTION_STATUS_DIR` pointed at a temp dir so no live record is touched.
-  Drives the REAL agy row with the REAL agy binary (no sign-in is completed): Connect →
-  shot `url-state`; submit `WRONG-CODE-<uuid>` → shot `wrong-code-failed` (banner shows
-  agy's verbatim words); Connect again → wait past `window_seconds` → shot `expired`;
-  Relaunch → assert the new URL ≠ the old → shot `relaunched`. Shots to
-  `/opt/ai-os/uploads/$FORGE_RUN_ID/<stamp>-<label>.png`, then Read back. Traps already
-  filed: `waitUntil:"commit"`, `__Secure-` cookie needs `secure:true`, rebuild with the
-  default URL before finishing, viewport height not fullPage.
-
-## 8. Task graph (seeded by the architect; ids in the forge-control project)
-
-```
-R1 researcher gemini-cli   []                main  junior
-R2 researcher agy          []                main  junior
-R3 researcher claude       []                main  junior
-B1 builder    engine       []                main  standard   cli-paths.ts, cli-auth/{types,tmux,session,log,index}.ts, cli-auth.test.ts, fixtures/cli-auth-mock.sh
-B2 builder    providers    [R1,R2,R3,B1]     main  standard   cli-auth/providers.ts, connection-status.ts, cli-auth-providers.test.ts
-B3 builder    routes       [B2]              main  standard   routes/cli-auth.ts, routes/integrations.ts
-B4 builder    leak check   [B3]              main  junior     check-cli-auth-code-leak.ts, gates-808.sh
-B5 builder    web          []                web   standard   api-connections.ts, connections.ts, CliAuthConnect.tsx, integrationCards.tsx, ConnectionsPanel.tsx, check-connection-states.ts, check-quota-row.ts
-B6 builder    integrate web→main [B5,B4]     main  junior     (B5's write_set; STOP on conflict)
-B7 builder    browser proof [B6]             main  standard   check-cli-auth-panel.mjs, docs/plan/cli-auth/README.md
-B8 reviewer   whole diff   [B1..B7]          main  standard
+```mermaid
+graph TD
+    T1["Task 1 (Junior): Backend Spend & Ledger API<br/>db/spend.ts, routes/spend.ts, routes/ledger.ts"]
+    T2["Task 2 (Junior): Backend Mercury & Treasury API<br/>lib/mercury.ts, routes/accounts.ts"]
+    T3["Task 3 (Junior): Backend Entities & Business Client<br/>db/entities.ts, routes/entities.ts, api-business.ts"]
+    
+    T4["Task 4 (Standard): Frontend Money Surface Redesign<br/>app/desktop/MoneySurface.tsx"]
+    T5["Task 5 (Standard): Frontend Businesses Surface Redesign<br/>app/desktop/BusinessesSurface.tsx, businesses-inventory.ts"]
+    
+    T6["Task 6 (Standard): Verification, Screenshots & Review<br/>tsc, build, shots-aios.mjs harness"]
+    
+    T1 --> T4
+    T2 --> T4
+    T3 --> T5
+    T4 --> T6
+    T5 --> T6
 ```
 
-## 9. Decisions the brief did not make (reported to the manager chat)
-
-- The Connect control sits at the TOP of the expanded card, not on the row head: the head
-  is one `<button>` and nested interactive content is invalid HTML. The head's `action`
-  sentence says "expand this row and press Connect".
-- A `gemini-cli` connection is a NEW row (status id `gemini-cli`, under the GEMINI group),
-  distinct from the API-key row.
-- `window.open` is called synchronously in the click and re-targeted after the POST.
-- Sessions are in-memory; a forge-control restart mid-login is reported as `failed`
-  with a Relaunch, never resumed.
+### Task Specifications
+1. **Task 1: Backend Spend & Ledger API Overhaul**
+   - Role: `builder` | Tier: `junior` | Workstream: `main` | Depends on: `[]`
+   - Write set: `["forge-control/src/db/spend.ts", "forge-control/src/routes/spend.ts", "forge-control/src/routes/ledger.ts"]`
+   - Scope: Fix `spendSummary()` timeframe filtering and daily compute series aggregation. Separate metered vs shadow compute. Add `GET /api/ledger/entries`.
+2. **Task 2: Backend Mercury & Bank Accounts Integration**
+   - Role: `builder` | Tier: `junior` | Workstream: `main` | Depends on: `[]`
+   - Write set: `["forge-control/src/lib/mercury.ts", "forge-control/src/routes/accounts.ts"]`
+   - Scope: Implement Mercury REST client reading `MERCURY_API_TOKEN` secret. Return 3 Mercury balances ($ USD) and EUR equivalent. Add GoCardless/manual account shells. Expose `/api/accounts/bank`.
+3. **Task 3: Backend Entities Endpoint & Typed Business Client**
+   - Role: `builder` | Tier: `junior` | Workstream: `main` | Depends on: `[]`
+   - Write set: `["forge-control/src/db/entities.ts", "forge-control/src/routes/entities.ts", "forge-control-web/app/api-business.ts"]`
+   - Scope: Implement `GET /api/entities` and `GET /api/entities/summary` in forge-control. Add typed API methods in `api-business.ts` for entities, ledger, spend, and treasury.
+4. **Task 4: Frontend Money Surface Redesign**
+   - Role: `builder` | Tier: `standard` | Workstream: `main` | Depends on: `[Task 1, Task 2]`
+   - Write set: `["forge-control-web/app/desktop/MoneySurface.tsx"]`
+   - Scope: Rebuild `MoneySurface.tsx` into a high-density two-tier financial cockpit: Treasury Strip (Mercury 3x + E&G) + Cashflow Summary + AI Compute Cockpit with interactive daily chart and filters.
+5. **Task 5: Frontend Businesses Surface Redesign**
+   - Role: `builder` | Tier: `standard` | Workstream: `main` | Depends on: `[Task 3]`
+   - Write set: `["forge-control-web/app/desktop/BusinessesSurface.tsx", "forge-control-web/app/desktop/businesses-inventory.ts"]`
+   - Scope: Rebuild `BusinessesSurface.tsx` with 4 executive Venture Cards (Directory with 1,053 live prospects, YouTube with pipeline metrics, Axtrelis with $197-$2497 tiers, Schreiner Systems), Cross-Portfolio Bottlenecks, and clean tool links. Clean up `businesses-inventory.ts`.
+6. **Task 6: Verification, Visual Screenshots & Final Review**
+   - Role: `reviewer` | Tier: `standard` | Workstream: `main` | Depends on: `[Task 4, Task 5]`
+   - Write set: `[]`
+   - Scope: Run `tsc --noEmit` and `npm run build` on both `forge-control-web` and `forge-control`. Execute screenshot harness `shots-aios.mjs` for `money` and `businesses`. Inspect screenshots to verify layout, numbers, and zero-dummy policy.
