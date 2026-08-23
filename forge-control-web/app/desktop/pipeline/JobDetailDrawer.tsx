@@ -66,6 +66,13 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
   const [retryStage, setRetryStage] = useState<string>("");
   const [retryReason, setRetryReason] = useState<string>("");
 
+  // Set when the server answered 409 `requires_confirmation` — the move is
+  // legal but off the curated path, so the same click has to be made twice on
+  // purpose. Cleared whenever the chosen target changes, so a confirmation
+  // never carries over to a different transition than the one it was given for.
+  const [retryNeedsConfirm, setRetryNeedsConfirm] = useState(false);
+  const [advanceNeedsConfirm, setAdvanceNeedsConfirm] = useState(false);
+
   const [showAdvanceModal, setShowAdvanceModal] = useState(false);
   const [advanceStatus, setAdvanceStatus] = useState<string>("");
   const [advanceReason, setAdvanceReason] = useState<string>("");
@@ -113,12 +120,19 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
           message: `Job retried successfully: ${res.old_status} → ${res.new_status}${res.queue_dispatched ? ` (dispatched to ${res.queue_name})` : ""}`,
         });
         setShowRetryModal(false);
+        setRetryNeedsConfirm(false);
         queryClient.invalidateQueries({ queryKey: ["business", "pipeline"] });
         onJobUpdated?.();
       } else {
+        setRetryNeedsConfirm(res.requires_confirmation === true);
+        if (res.current_status) {
+          // The row moved under this screen; pull the truth back immediately
+          // rather than leaving a stale status under an error message.
+          queryClient.invalidateQueries({ queryKey: ["business", "pipeline"] });
+        }
         setActionFeedback({
-          tone: "error",
-          message: `Retry failed (${res.status}): ${res.error}${res.details ? ` — ${res.details}` : ""}`,
+          tone: res.requires_confirmation === true ? "warn" : "error",
+          message: `Retry ${res.requires_confirmation === true ? "needs confirmation" : "failed"} (${res.status}): ${res.error}${res.details ? ` — ${res.details}` : ""}`,
         });
       }
     },
@@ -139,12 +153,17 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
           message: `Job advanced successfully: ${res.old_status} → ${res.new_status}`,
         });
         setShowAdvanceModal(false);
+        setAdvanceNeedsConfirm(false);
         queryClient.invalidateQueries({ queryKey: ["business", "pipeline"] });
         onJobUpdated?.();
       } else {
+        setAdvanceNeedsConfirm(res.requires_confirmation === true);
+        if (res.current_status) {
+          queryClient.invalidateQueries({ queryKey: ["business", "pipeline"] });
+        }
         setActionFeedback({
-          tone: "error",
-          message: `Advance failed (${res.status}): ${res.error}${res.details ? ` — ${res.details}` : ""}`,
+          tone: res.requires_confirmation === true ? "warn" : "error",
+          message: `Advance ${res.requires_confirmation === true ? "needs confirmation" : "failed"} (${res.status}): ${res.error}${res.details ? ` — ${res.details}` : ""}`,
         });
       }
     },
@@ -213,7 +232,7 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
         zIndex: 900,
         display: "flex",
         justifyContent: "flex-end",
-        background: "rgba(0, 0, 0, 0.55)",
+        background: tokens.overlay,
         backdropFilter: "blur(2px)",
       }}
       onClick={(e) => {
@@ -229,7 +248,7 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
           borderLeft: `1px solid ${tokens.border}`,
           display: "flex",
           flexDirection: "column",
-          boxShadow: "-8px 0 32px rgba(0, 0, 0, 0.4)",
+          boxShadow: `-8px 0 32px ${tokens.overlay}`,
           minHeight: 0,
           overflow: "hidden",
         }}
@@ -980,7 +999,10 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                 </label>
                 <select
                   value={retryStage}
-                  onChange={(e) => setRetryStage(e.target.value)}
+                  onChange={(e) => {
+                    setRetryStage(e.target.value);
+                    setRetryNeedsConfirm(false);
+                  }}
                   style={{
                     width: "100%",
                     padding: "8px 10px",
@@ -1043,6 +1065,9 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                       body: {
                         target_stage: retryStage || undefined,
                         reason: retryReason || undefined,
+                        // What this screen was showing when Konrad decided.
+                        expected_status: job?.status,
+                        confirm: retryNeedsConfirm || undefined,
                       },
                     });
                   }}
@@ -1051,7 +1076,12 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                     padding: "7px 16px",
                     background: tokens.accent,
                     border: "none",
-                    color: "#fff",
+                    // Ink on a filled accent button: `bgBody` is the page
+                    // colour, so it is near-black on the dark palette's light
+                    // accent and near-white on the light palette's deep blue.
+                    // A literal #fff is only legible in one of the two themes
+                    // (SecretField.tsx settled this the same way).
+                    color: tokens.bgBody,
                     borderRadius: 6,
                     fontSize: 12,
                     fontWeight: 600,
@@ -1059,7 +1089,11 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                     opacity: retryMutation.isPending ? 0.6 : 1,
                   }}
                 >
-                  {retryMutation.isPending ? "Retrying..." : "Confirm Retry"}
+                  {retryMutation.isPending
+                    ? "Retrying..."
+                    : retryNeedsConfirm
+                      ? "Force This Retry"
+                      : "Confirm Retry"}
                 </button>
               </div>
             </div>
@@ -1084,7 +1118,10 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                 </label>
                 <select
                   value={advanceStatus}
-                  onChange={(e) => setAdvanceStatus(e.target.value)}
+                  onChange={(e) => {
+                    setAdvanceStatus(e.target.value);
+                    setAdvanceNeedsConfirm(false);
+                  }}
                   style={{
                     width: "100%",
                     padding: "8px 10px",
@@ -1168,6 +1205,8 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                         target_status: advanceStatus || undefined,
                         feedback: advanceFeedback || undefined,
                         reason: advanceReason || undefined,
+                        expected_status: job?.status,
+                        confirm: advanceNeedsConfirm || undefined,
                       },
                     });
                   }}
@@ -1176,7 +1215,7 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                     padding: "7px 16px",
                     background: tokens.ok,
                     border: "none",
-                    color: "#fff",
+                    color: tokens.bgBody,
                     borderRadius: 6,
                     fontSize: 12,
                     fontWeight: 600,
@@ -1184,7 +1223,11 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                     opacity: advanceMutation.isPending ? 0.6 : 1,
                   }}
                 >
-                  {advanceMutation.isPending ? "Advancing..." : "Confirm Advance"}
+                  {advanceMutation.isPending
+                    ? "Advancing..."
+                    : advanceNeedsConfirm
+                      ? "Force This Advance"
+                      : "Confirm Advance"}
                 </button>
               </div>
             </div>
@@ -1297,6 +1340,18 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                       body: {
                         role: assignRole,
                         user_id: selectedVaUserId || null,
+                        // The assignment this screen was showing. If someone
+                        // else reassigned the job in the meantime the server
+                        // 409s instead of silently undoing them.
+                        ...(assignRole === "production"
+                          ? {
+                              expected_production_va_id:
+                                job?.assigned_production_va_id ?? null,
+                            }
+                          : {
+                              expected_uploader_va_id:
+                                job?.assigned_uploader_va_id ?? null,
+                            }),
                       },
                     });
                   }}
@@ -1305,7 +1360,12 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                     padding: "7px 16px",
                     background: tokens.accent,
                     border: "none",
-                    color: "#fff",
+                    // Ink on a filled accent button: `bgBody` is the page
+                    // colour, so it is near-black on the dark palette's light
+                    // accent and near-white on the light palette's deep blue.
+                    // A literal #fff is only legible in one of the two themes
+                    // (SecretField.tsx settled this the same way).
+                    color: tokens.bgBody,
                     borderRadius: 6,
                     fontSize: 12,
                     fontWeight: 600,
@@ -1526,7 +1586,7 @@ function ModalBackdrop({ children, onClose }: { children: React.ReactNode; onClo
         bottom: 0,
         left: 0,
         zIndex: 1000,
-        background: "rgba(0, 0, 0, 0.65)",
+        background: tokens.overlay,
         backdropFilter: "blur(3px)",
         display: "flex",
         alignItems: "center",

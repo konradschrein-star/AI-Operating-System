@@ -84,3 +84,16 @@ forge-control-web/app/desktop/businesses-inventory.ts	signs off on spend	Line 46
 forge-control-web/app/desktop/businesses-inventory.ts	\$197 / \$497 / \$2,497	Line 592, the `axtrelis` secondary-arm STATE sentence: "Pricing is locked in code at $197 / $497 / $2,497 one-time" (spec §2.2 L211). A third party's own PRICE LIST, transcribed from the spec — the point of the sentence is that a rigorously specified revenue model has no customers in it, which is a business finding, not agent-cost noise. U11 forbids rendering what the fleet costs Konrad; it does not forbid quoting what Konrad's own product charges. Landed round 2 (c94b10d), unlisted until round 4.
 
 forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line 440, Sparkline(): SVG polyline COORDINATES — `${x.toFixed(2)},${y.toFixed(2)}` builds a `points` attribute out of pixel positions computed from `i / values.length * W` and `H - v / max * H`. Geometry, not currency, and the twelfth false positive of the naive toFixed(2) anchor (MemorySurface score, three token-magnitude formatters, …). Came in from `main` with 553fa38, Konrad's own Goals/Tasks daily surface, and met this lane-only gate for the first time at the round-13 merge — the same shape as gate 17's pins. The pattern is the coordinate PAIR, not `.*`: a real € or $ arriving in this file still fails the gate.
+
+# ── aios-pipeline-controlroom (round 5, fix cycle 1) ─────────────────────────
+# The Pipeline control room renders two non-currency quantities the primary
+# gate cannot tell from money: a VIDEO FILE SIZE in GB, and the MINUTES A VA
+# LOGGED on a job (`content_jobs.production_va_time_spent_seconds` /
+# `uploader_va_time_spent_seconds` — an integer count of seconds, no rate, no
+# rendered amount). "Time spent" is the column's own meaning; rewording it to
+# dodge \bspen[dt] would put a vaguer label on Konrad's screen to keep a grep
+# quiet. Each row below is scoped to the exact expression, not to the file: a
+# real currency value landing in either file still fails the gate.
+forge-control-web/app/desktop/PipelineSurface.tsx	toFixed\(2\)\} GB	formatBytes(): the GB branch of a FILE-SIZE formatter (`final_video_size_bytes` → "1.42 GB"). Same false positive as teamApi.ts's fmtTokens.
+forge-control-web/app/desktop/pipeline/JobDetailDrawer.tsx	toFixed\(2\)\} GB	formatBytes(): the drawer's copy of the same FILE-SIZE formatter, used for the rendered video's size.
+forge-control-web/app/desktop/pipeline/JobDetailDrawer.tsx	Time spent: \{formatDuration\(job\.[a-z_]+_time_spent_seconds\)	The VA cards' duration label — hours a VA logged on the job, from an integer seconds column. Not money.

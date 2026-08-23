@@ -329,6 +329,13 @@ export interface MutationFailure {
   status: number;
   error: string;
   details?: string;
+  /** 409 only. `true` means the transition is legal but off the curated path:
+   *  the same request with `confirm: true` will be accepted. `false`/absent
+   *  means the server refused outright and re-sending will not help. */
+  requires_confirmation?: boolean;
+  /** 409 only. What the row actually holds now — the server read it back
+   *  after refusing, so this is the truth to reload against, not a guess. */
+  current_status?: string;
 }
 
 async function postBusinessRaw(
@@ -345,12 +352,19 @@ async function postBusinessRaw(
 }
 
 function toMutationFailure(status: number, payload: unknown, path: string): MutationFailure {
-  const err = payload as BusinessApiError | null;
+  const err = payload as
+    | (BusinessApiError & {
+        requires_confirmation?: boolean;
+        current_status?: string;
+      })
+    | null;
   return {
     success: false,
     status,
     error: err?.error ?? `${status} on ${path}`,
     details: err?.details,
+    requires_confirmation: err?.requires_confirmation,
+    current_status: err?.current_status,
   };
 }
 
@@ -359,6 +373,13 @@ export interface RetryJobRequest {
    *  Omit to let the server infer the retry target from the failure. */
   target_stage?: string;
   reason?: string;
+  /** The status this screen was showing. The server 409s instead of acting if
+   *  a Content Forge worker moved the job in the meantime — the operator's
+   *  click was a decision about a state that no longer exists. */
+  expected_status?: string;
+  /** Re-send a 409 that came back `requires_confirmation: true`. Never
+   *  unlocks a destructive target; those are refused 403 either way. */
+  confirm?: boolean;
 }
 
 export interface RetryJobSuccess {
@@ -390,6 +411,10 @@ export interface AssignJobRequest {
   /** …or set one role and the user to fill it. */
   role?: "production" | "uploader";
   user_id?: string | null;
+  /** The assignments this screen was showing (`null` = "was unassigned").
+   *  The server 409s rather than reverting someone else's reassignment. */
+  expected_production_va_id?: string | null;
+  expected_uploader_va_id?: string | null;
 }
 
 export interface AssignJobSuccess {
@@ -420,6 +445,10 @@ export interface AdvanceJobRequest {
   reason?: string;
   /** Recorded as `qc_feedback` when the advance is a QC approval. */
   feedback?: string;
+  /** See `RetryJobRequest.expected_status`. */
+  expected_status?: string;
+  /** See `RetryJobRequest.confirm`. */
+  confirm?: boolean;
 }
 
 export interface AdvanceJobSuccess {
