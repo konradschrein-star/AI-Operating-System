@@ -108,7 +108,7 @@ export const NAV: NavItem[] = [
   { key: "chat", label: "CHAT", group: "operator" },
   { key: "tasks", label: "PROJECTS", group: "work" },
   { key: "pipeline", label: "PIPELINE", group: "work" },
-  { key: "library", label: "LIBRARY", group: "work", unbuilt: true },
+  { key: "library", label: "LIBRARY", group: "work" },
   { key: "money", label: "MONEY", group: "work" },
   { key: "businesses", label: "BUSINESSES", group: "work" },
   { key: "skills", label: "SKILLS", group: "ai" },
@@ -119,7 +119,7 @@ export const NAV: NavItem[] = [
   { key: "automation", label: "AUTOMATION", group: "ai" },
   { key: "goals", label: "GOALS/TASKS", group: "recall" },
   { key: "journal", label: "JOURNAL", group: "recall", unbuilt: true },
-  { key: "map", label: "MAP", group: "recall", unbuilt: true },
+  { key: "map", label: "MAP", group: "recall" },
 ];
 
 /** The unbuilt destinations, read off the model rather than listed a second
