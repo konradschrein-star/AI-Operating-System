@@ -167,3 +167,30 @@ the colour gate and says nothing about the other two files.
 **For whoever merges this branch:** delete the `gemini-identity.tsx` row at
 line 36 in favour of main's pair, and expect to resolve `PLAN.md` and
 `WORKLOG.md` by hand.
+
+### Inherited RED on the merged tree — attributed, not mine
+
+Prompted by a sibling lane's note that `main` is red on gate 8. Measured, both
+runs pasted:
+
+```
+bash scripts/checks/dollar-sweep.sh            (this branch, HEAD 005cdbf)
+  dollar-sweep.sh: PASS — every primary-gate hit is on the allowlist.   exit 0
+
+bash <merged tree>/scripts/checks/dollar-sweep.sh   (merge-tree of main + HEAD)
+  FAIL  forge-control-web/app/desktop/goals/GoalsTab.tsx:113,127,169,183
+        → no allowlist entry covers this hit
+  dollar-sweep.sh: FAIL — unlisted currency-shaped hit(s).              exit 1
+```
+
+The four hits are Konrad's own goal notes (`-$300/week`, `$6k + 15% rev share`,
+`~$28–32k/month burn`, `~$2,500/mo`) in `goals/GoalsTab.tsx`, landed on `main`
+by the goals lane. **This branch's diff touches seven files and that is not one
+of them** — `PLAN.md`, `WORKLOG.md`, `docs/DEVELOPMENT.md`,
+`docs/how-to-develop.md`, `forge-control/src/lib/cli-runner.ts`,
+`forge-control/src/lib/cli-runner.test.ts`,
+`scripts/checks/raw-colour-allowlist.txt`.
+
+So: gate 8 is green here and will be red the moment this branch meets main,
+through no change of this lane's. It needs sentence-scoped allowlist rows from
+whoever owns `GoalsTab.tsx` — not from here, and not a `.*` row.
