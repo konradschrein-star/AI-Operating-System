@@ -482,8 +482,8 @@ export function DesktopApp() {
           )}
           {surface === "skills" && <SkillsSurface />}
           {surface === "pipeline" && <PipelineSurface />}
-          {surface === "autonomy" && <AutonomySurface />}
-          {surface === "automation" && <AutomationSurface />}
+          {surface === "autonomy" && <AutonomySurface onNav={setSurface} />}
+          {surface === "automation" && <AutomationSurface onNav={setSurface} />}
           {surface === "money" && <MoneySurface />}
           {surface === "settings" && <SettingsSurface />}
           {surface === "businesses" && <BusinessesSurface />}

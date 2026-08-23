@@ -27,6 +27,7 @@ import {
   type CronSchedule,
   type CreateWebhookResult,
 } from "../api";
+import { jumpToRun, openSettings, type NavigateTo } from "./deep-link";
 
 type Tab = "cron" | "webhooks";
 
@@ -275,7 +276,12 @@ const NOTIFY_OPTIONS = [
  * Main Component
  * -------------------------------------------------------------------------- */
 
-export function AutomationSurface() {
+/** `onNav` is the shell's surface switcher, threaded down to every "open this
+ *  run in chat" affordance and to the Connections pointer in the banner. It is
+ *  REQUIRED: those links were `<a href="/desktop?surface=…">` until round 5 and
+ *  did nothing at all, because this console is one route whose surface is React
+ *  state (see ./deep-link for the whole story). */
+export function AutomationSurface({ onNav }: { onNav: NavigateTo }) {
   // Requirement 1: Switch default tab to CRON (Scheduled Routines)
   const [tab, setTab] = useState<Tab>("cron");
 
@@ -298,7 +304,7 @@ export function AutomationSurface() {
       }}
     >
       {/* Requirement 2: Header context banner */}
-      <HeaderContextBanner />
+      <HeaderContextBanner onNav={onNav} />
 
       {/* Top Tab Bar Rail */}
       <div
@@ -336,7 +342,11 @@ export function AutomationSurface() {
 
       {/* Main Surface Body */}
       <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: 16 }}>
-        {tab === "cron" ? <ScheduledRoutinesPanel /> : <InboundWebhooksPanel />}
+        {tab === "cron" ? (
+          <ScheduledRoutinesPanel onNav={onNav} />
+        ) : (
+          <InboundWebhooksPanel onNav={onNav} />
+        )}
       </div>
     </div>
   );
@@ -346,7 +356,7 @@ export function AutomationSurface() {
  * Header Context Banner
  * -------------------------------------------------------------------------- */
 
-function HeaderContextBanner() {
+function HeaderContextBanner({ onNav }: { onNav: NavigateTo }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
 
@@ -368,16 +378,26 @@ function HeaderContextBanner() {
         <span>
           Looking for external API credentials & accounts? Manage Connected
           Services in{" "}
-          <a
-            href="/desktop?surface=settings&tab=connections"
+          {/* SettingsSurface keeps its open section in a plain `useState` with
+              no storage key, so there is nothing to pre-select — this lands on
+              the settings index with CONNECTIONS one row away, and the label
+              says so rather than promising a tab. */}
+          <button
+            type="button"
+            onClick={() => openSettings(onNav)}
             style={{
+              font: "inherit",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
               color: tokens.accent,
               textDecoration: "underline",
               fontWeight: 500,
             }}
           >
             Settings &rarr; Connections
-          </a>
+          </button>
         </span>
       </div>
       <button
@@ -432,7 +452,7 @@ function TabBtn({
  * Scheduled Routines Panel (Cron)
  * ========================================================================== */
 
-function ScheduledRoutinesPanel() {
+function ScheduledRoutinesPanel({ onNav }: { onNav: NavigateTo }) {
   const qc = useQueryClient();
   const listQ = useQuery({ queryKey: ["cron"], queryFn: fetchSchedules });
 
@@ -486,9 +506,16 @@ function ScheduledRoutinesPanel() {
           >
             <div style={{ fontSize: 12, color: tokens.textHi }}>
               ✓ Routine <strong>{triggeredRun.name}</strong> triggered! Run ID:{" "}
-              <a
-                href={`/desktop?surface=chat&chat=${encodeURIComponent(triggeredRun.run_id)}`}
+              <button
+                type="button"
+                onClick={() => jumpToRun(triggeredRun.run_id, onNav)}
+                title={`Open run ${triggeredRun.run_id} in chat`}
                 style={{
+                  font: "inherit",
+                  background: "transparent",
+                  border: "none",
+                  padding: 0,
+                  cursor: "pointer",
                   color: tokens.accent,
                   fontWeight: 600,
                   textDecoration: "underline",
@@ -496,7 +523,7 @@ function ScheduledRoutinesPanel() {
                 }}
               >
                 {triggeredRun.run_id.slice(0, 8)} &rarr; Open in Chat
-              </a>
+              </button>
             </div>
             <button
               style={{
@@ -576,6 +603,7 @@ function ScheduledRoutinesPanel() {
               <RoutineCard
                 key={s.id}
                 s={s}
+                onNav={onNav}
                 onEdit={() => setModalState({ open: true, schedule: s })}
                 onTriggered={(run_id) =>
                   setTriggeredRun({ name: s.name, run_id })
@@ -623,15 +651,21 @@ function RoutineCard({
   onEdit,
   onTriggered,
   onChange,
+  onNav,
 }: {
   s: CronSchedule;
   onEdit: () => void;
   onTriggered: (run_id: string) => void;
   onChange: () => void;
+  onNav: NavigateTo;
 }) {
   const [busy, setBusy] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  /* Bound to a local so the click handler closes over a `string` and not a
+     nullable property — TypeScript drops a property narrowing inside a
+     callback, and `!` would hide exactly the case worth checking. */
+  const lastRunId = s.last_run_id;
 
   const toggle = async () => {
     setBusy(true);
@@ -789,19 +823,26 @@ function RoutineCard({
         <span>{s.total_fires} total fires</span>
         <span>·</span>
         <span>Last: {formatInBerlin(s.last_run_at)}</span>
-        {s.last_run_id && (
+        {lastRunId && (
           <>
             <span>·</span>
-            <a
-              href={`/desktop?surface=chat&chat=${encodeURIComponent(s.last_run_id)}`}
+            <button
+              type="button"
+              onClick={() => jumpToRun(lastRunId, onNav)}
+              title={`Open run ${lastRunId} in chat`}
               style={{
+                font: "inherit",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
                 color: tokens.accent,
                 textDecoration: "underline",
                 fontWeight: 500,
               }}
             >
-              Last Run #{s.last_run_id.slice(0, 8)} &rarr;
-            </a>
+              Last Run #{lastRunId.slice(0, 8)} &rarr;
+            </button>
           </>
         )}
       </div>
@@ -1272,7 +1313,7 @@ function ScheduleModal({
  * Inbound Webhooks Panel
  * ========================================================================== */
 
-function InboundWebhooksPanel() {
+function InboundWebhooksPanel({ onNav }: { onNav: NavigateTo }) {
   const qc = useQueryClient();
   const listQ = useQuery({
     queryKey: ["webhooks"],
@@ -1478,6 +1519,7 @@ function InboundWebhooksPanel() {
               <WebhookCard
                 key={w.id}
                 w={w}
+                onNav={onNav}
                 onEdit={() => setModalState({ open: true, webhook: w })}
                 onOpenSimulator={() =>
                   setSimulatorState({ open: true, webhook: w })
@@ -1542,16 +1584,20 @@ function WebhookCard({
   onEdit,
   onOpenSimulator,
   onChange,
+  onNav,
 }: {
   w: Webhook;
   onEdit: () => void;
   onOpenSimulator: () => void;
   onChange: () => void;
+  onNav: NavigateTo;
 }) {
   const [busy, setBusy] = useState(false);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [actionErr, setActionErr] = useState<string | null>(null);
+  /* Same reason as RoutineCard's: a local binding, not a `!`. */
+  const lastRunId = w.last_run_id;
 
   const fullPath = `/webhooks/in/${w.slug}`;
 
@@ -1705,19 +1751,26 @@ function WebhookCard({
             <span>Worker: {w.worker_label}</span>
           </>
         )}
-        {w.last_run_id && (
+        {lastRunId && (
           <>
             <span>·</span>
-            <a
-              href={`/desktop?surface=chat&chat=${encodeURIComponent(w.last_run_id)}`}
+            <button
+              type="button"
+              onClick={() => jumpToRun(lastRunId, onNav)}
+              title={`Open run ${lastRunId} in chat`}
               style={{
+                font: "inherit",
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
                 color: tokens.accent,
                 textDecoration: "underline",
                 fontWeight: 500,
               }}
             >
-              Last Run #{w.last_run_id.slice(0, 8)} &rarr;
-            </a>
+              Last Run #{lastRunId.slice(0, 8)} &rarr;
+            </button>
           </>
         )}
       </div>

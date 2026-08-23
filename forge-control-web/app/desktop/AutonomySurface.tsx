@@ -12,6 +12,8 @@ import {
   type GuardrailRule,
   type GuardrailTrip,
 } from "../api";
+import { jumpToRun, type NavigateTo } from "./deep-link";
+import { fmtEur } from "./settings/usageApi";
 
 const CATEGORY_COLOR: Record<string, string> = {
   financial: tokens.warn,
@@ -147,7 +149,7 @@ function extractTripMetrics(trip: GuardrailTrip): TripMetric[] {
     if (!Number.isNaN(val)) {
       list.push({
         label: "Spend",
-        value: `€${val.toFixed(2)}`,
+        value: fmtEur(val),
         isSpend: true,
       });
     }
@@ -158,7 +160,7 @@ function extractTripMetrics(trip: GuardrailTrip): TripMetric[] {
     if (!Number.isNaN(val)) {
       list.push({
         label: "Daily Spend",
-        value: `€${val.toFixed(2)}`,
+        value: fmtEur(val),
       });
     }
   }
@@ -207,7 +209,11 @@ function extractTripMetrics(trip: GuardrailTrip): TripMetric[] {
   return list;
 }
 
-export function AutonomySurface() {
+/** `onNav` is the shell's surface switcher. It is REQUIRED, not optional: the
+ *  trip rows offer "view this run in chat", and a surface that silently
+ *  renders a dead affordance when the prop is missing is exactly the defect
+ *  round 4's review found (see ./deep-link). */
+export function AutonomySurface({ onNav }: { onNav: NavigateTo }) {
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["autonomy"],
@@ -733,6 +739,7 @@ export function AutonomySurface() {
                 trip={t}
                 isResolving={resolvingTripId === t.id}
                 onResolve={() => resolveTripM.mutate(t.id)}
+                onNav={onNav}
               />
             ))}
           </div>
@@ -1430,10 +1437,12 @@ function TripRow({
   trip,
   isResolving,
   onResolve,
+  onNav,
 }: {
   trip: GuardrailTrip;
   isResolving: boolean;
   onResolve: () => void;
+  onNav: NavigateTo;
 }) {
   const engine = getEngineBadge(trip);
   const metrics = extractTripMetrics(trip);
@@ -1576,9 +1585,17 @@ function TripRow({
         }}
       >
         {runId ? (
-          <a
-            href={`/desktop?surface=chat&chat=${encodeURIComponent(runId)}`}
+          /* Not an <a>: this console is one route and the surface is React
+             state, so an href to `/desktop?surface=chat` reloads and lands
+             wherever you already were. `jumpToRun` writes the chat surface's
+             own storage key and flips the surface — see ./deep-link. */
+          <button
+            type="button"
+            onClick={() => jumpToRun(runId, onNav)}
+            title={`Open run ${runId} in chat`}
             style={{
+              font: "inherit",
+              cursor: "pointer",
               textDecoration: "none",
               display: "inline-flex",
               alignItems: "center",
@@ -1595,7 +1612,7 @@ function TripRow({
               chat
             </span>
             <span>View Run in Chat ↗</span>
-          </a>
+          </button>
         ) : (
           <div />
         )}
