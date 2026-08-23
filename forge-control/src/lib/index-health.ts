@@ -31,7 +31,7 @@
  * ========================================================================== */
 
 export type DiscrepancyReason =
-  | "excluded_extension"
+  | "empty_drawing"
   | "empty_file"
   | "frontmatter_only"
   | "stale_row_file_missing"
@@ -65,10 +65,29 @@ export interface Discrepancy extends Classification {
   in_embeddings: boolean;
 }
 
-/** km-indexer.js:29 — `EXCLUDED_EXTENSIONS = ['.excalidraw.md']`. Unembedded drawings
- *  are classified as excluded_extension; indexed Excalidraw drawings with embeddings
- *  and registry entries reconcile as healthy (no discrepancy). */
-export const EXCLUDED_EXTENSION = ".excalidraw.md";
+/**
+ * Obsidian-Excalidraw drawings.
+ *
+ * THIS CONSTANT CHANGED MEANING (2026-08-23). It used to be
+ * `EXCLUDED_EXTENSION`, and a drawing on disk with no embedding row was
+ * classified `excluded_extension` — "km-indexer.js:29 skips these, and it is
+ * right to". That judgement was half true. It was right about the FILE: 480 KB
+ * of LZString-packed geometry embeds as noise. It was wrong about the DRAWING:
+ * "Stealth Uploader - System Map" holds 44 labelled shapes, 12 bound arrows and
+ * a legend, and none of it was searchable by anything.
+ *
+ * `lib/excalidraw-extract.ts` now reads that structure out (33 KB of file → 3.9
+ * KB of semantic text), so a drawing is an INDEXABLE NOTE. An unindexed one is
+ * a real gap and is reported as `unexplained` like any other. Only a drawing
+ * with nothing on it earns an exclusion, under its own reason.
+ */
+export const DRAWING_EXTENSION = ".excalidraw.md";
+
+/** True for the paths whose body must be measured through the drawing
+ *  extractor rather than by stripping frontmatter. */
+export function isDrawing(path: string): boolean {
+  return path.toLowerCase().endsWith(DRAWING_EXTENSION);
+}
 
 /**
  * Explain one file's position across the three stores, or `null` when there
@@ -112,20 +131,25 @@ export function classify(f: FileFacts): Classification | null {
     return null;
   }
 
-  // On disk, not embedded. One of the four deliberate exclusions, or the
-  // headline.
-  if (f.path.toLowerCase().endsWith(EXCLUDED_EXTENSION)) {
-    return {
-      reason: "excluded_extension",
-      detail: "km-indexer.js:29 EXCLUDED_EXTENSIONS",
-    };
-  }
-
+  // On disk, not embedded. One of the deliberate exclusions, or the headline.
   if (f.bytes === 0) {
     return { reason: "empty_file", detail: "0 bytes" };
   }
 
   if (!f.hasBody) {
+    // Nothing to embed. Two different operational facts share that outcome and
+    // they get two different reasons, because the remedy differs: a
+    // frontmatter-only note wants prose written into it, an empty drawing wants
+    // something drawn on it.
+    if (isDrawing(f.path)) {
+      return {
+        reason: "empty_drawing",
+        detail:
+          `${f.bytes} bytes of Excalidraw payload from which ` +
+          `lib/excalidraw-extract.ts recovered no label and no prose — the ` +
+          `canvas is blank or every element on it is deleted`,
+      };
+    }
     // Non-zero bytes with nothing left after the frontmatter fence. A file of
     // pure whitespace lands here too — it is the same operational fact (bytes
     // on disk, no content to embed) and the byte count in `detail` keeps the
@@ -136,7 +160,17 @@ export function classify(f: FileFacts): Classification | null {
     };
   }
 
-  // A real note, with real content, that no index explains. THE HEADLINE.
+  // Real content that no index explains. THE HEADLINE.
+  if (isDrawing(f.path)) {
+    return {
+      reason: "unexplained",
+      detail:
+        `${f.bytes} bytes of Excalidraw with labels, containment or arrows ` +
+        `that lib/excalidraw-extract.ts can render as text, on disk, with no ` +
+        `rows in content_forge.knowledge_embeddings — km-indexer.js:29 still ` +
+        `lists ${DRAWING_EXTENSION} in EXCLUDED_EXTENSIONS`,
+    };
+  }
   return {
     reason: "unexplained",
     detail:
@@ -235,18 +269,18 @@ export function reconcile(input: ReconcileInput): IndexHealth {
       inEmbeddings: embeddingSet.has(p),
     };
 
-    // The frontmatter_only decision is the only one that needs a measured
-    // body. Refuse to classify without one instead of defaulting.
-    const needsBody =
-      facts.inDisk &&
-      !facts.inEmbeddings &&
-      facts.bytes > 0 &&
-      !p.toLowerCase().endsWith(EXCLUDED_EXTENSION);
+    // frontmatter_only and empty_drawing both need a measured body. Refuse to
+    // classify without one instead of defaulting. Drawings USED to be exempt
+    // here because they were excluded outright; now they are the case that
+    // most needs the measurement, since "has content" is the whole question.
+    const needsBody = facts.inDisk && !facts.inEmbeddings && facts.bytes > 0;
     if (needsBody && onDisk?.hasBody === null) {
       throw new IndexHealthInputError(
         `index-health: hasBody was not measured for "${p}", but the file is on ` +
-          `disk (${facts.bytes} bytes), absent from the embeddings index and not an ` +
-          `${EXCLUDED_EXTENSION} drawing — the frontmatter_only decision needs it. ` +
+          `disk (${facts.bytes} bytes) and absent from the embeddings index — ` +
+          `the ${
+            isDrawing(p) ? "empty_drawing" : "frontmatter_only"
+          } decision needs it. ` +
           `Widen the candidate set in indexHealth() rather than defaulting it.`,
       );
     }
@@ -344,7 +378,15 @@ export interface MemoryCounts {
   embedded_files: number;
   /** Chunk rows in content_forge.knowledge_embeddings. */
   embedded_chunks: number;
-  /** Files on disk with no embedding row, by the reason they have none. */
+  /**
+   * Files on disk with no embedding row, by the reason they have none.
+   *
+   * `excalidraw` counts BLANK drawings only (reason `empty_drawing`). A drawing
+   * with something on it is no longer an exclusion — it is an indexable note,
+   * and an unindexed one shows up in `unexplained_count` where it belongs. The
+   * key keeps its name because `forge-control-web/app/api-vault.ts` and the
+   * Memory surface read it; renaming it is theirs to do, not ours.
+   */
   excluded: { excalidraw: number; empty: number; frontmatter_only: number };
   /** Embedding source_paths whose file is gone from disk. */
   stale_embedding_rows: number;

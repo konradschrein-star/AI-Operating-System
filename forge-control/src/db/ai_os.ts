@@ -144,14 +144,30 @@ export async function setFleetState(
   status: FleetStatus,
   updatedBy = "user",
 ): Promise<FleetState> {
-  const r = await pool.query<FleetState>(
-    `UPDATE fleet_state
-        SET status = $1, updated_at = now(), updated_by = $2
-      WHERE id = 1
-      RETURNING status, updated_at::text AS updated_at, updated_by`,
-    [status, updatedBy],
-  );
-  return r.rows[0];
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const r = await client.query<FleetState>(
+      `UPDATE fleet_state
+          SET status = $1, updated_at = now(), updated_by = $2
+        WHERE id = 1
+        RETURNING status, updated_at::text AS updated_at, updated_by`,
+      [status, updatedBy],
+    );
+    await client.query(
+      `UPDATE guardrail_rules
+          SET enabled = $1, updated_at = now()
+        WHERE id = 'runtime.pause_all'`,
+      [status === "paused"],
+    );
+    await client.query("COMMIT");
+    return r.rows[0];
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /* ============================================================================
