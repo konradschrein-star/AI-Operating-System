@@ -43,3 +43,39 @@ We maintain **Automation** as the home for **Autonomous Routines & Inbound Event
 2. **Cron Immediate Execution (`[Run Now]`):** Added `POST /api/cron/:id/run` and `fireScheduleById` to trigger a routine on demand.
 3. **Local Time & Humanized Schedules:** Displays schedules in Berlin local time (`Europe/Berlin`) with humanized labels (*"Daily at 21:30 Berlin Time"*).
 4. **Direct Run Linkage:** `last_run_id` links directly to `/desktop?surface=chat&chat=<id>`.
+
+---
+
+## 6. Round 5 correction — "Direct Run Linkage" did not link (fix cycle 1)
+
+§3 item 4 above claimed `last_run_id` "links directly to `/desktop?surface=chat&chat=<id>`".
+It did not, and could not: **this console is one route.** Which surface you see is React
+state persisted to `localStorage` under `forge.desktop.surface`; nothing in the app reads
+`location.search` (`useSearchParams` appears nowhere outside `signin`). An anchor to
+`/desktop?surface=…` therefore triggers a full reload that drops the query string and
+restores whatever surface you were already on. All five such links across the two
+surfaces were inert. Round 4's reviewer found it; round 5 fixed it.
+
+**The mechanism now used** — `forge-control-web/app/desktop/deep-link.ts` — is the one the
+app already uses to survive F5: write the destination into the target surface's own
+storage key, then flip the surface through the `onNav` callback the shell hands down.
+`openChatRun` writes `forge.chat.selected` and clears `forge.chat.navStack` (a stack left
+standing from another chat would assert that its worker belongs to the run being opened);
+`ChatSurface` mounts on arrival and honours it, because its "open the newest chat"
+effect is guarded by `if (!selId …)`.
+
+**Open item for whoever owns `DesktopApp.tsx` / `SettingsSurface.tsx`** — not taken here
+because this project does not own those files:
+
+1. **`?surface=` is still not a thing.** If Konrad ever wants to bookmark or share a link
+   into a surface, `DesktopApp` needs to read `?surface=` / `?chat=` on mount and seed the
+   two storage keys from it. `deep-link.ts` is where that logic should live so the two
+   paths cannot diverge.
+2. **`Settings → Connections` lands on the settings index, not on CONNECTIONS.**
+   `SettingsSurface.tsx:142` holds its open section in a plain `useState` with no storage
+   key, so there is nothing to pre-write. Giving that `useState` a `usePersistentState`
+   key (e.g. `forge.settings.section`) is a two-line change in a file another lane is in;
+   `deep-link.ts`'s `openSettings` is the one place that would then take the section name.
+
+Both are deliberate one-click-shorts, documented rather than faked. A link that pretends
+to a tab this app has never had is the same class of defect as the one just removed.
