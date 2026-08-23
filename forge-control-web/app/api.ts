@@ -1795,3 +1795,126 @@ export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
 
 export const fetchDayStats = (days = 90): Promise<DayStats> =>
   getJson<DayStats>(`/daily/stats?days=${days}`);
+
+/* ----------------------------------------------------------------------------
+ * Journal surface (paper-first capture, day retrospective & decisions)
+ * -------------------------------------------------------------------------- */
+export type JournalEntryType = "paper_photo" | string;
+export type OcrStatus = "unavailable" | "pending" | "done" | "failed" | string;
+
+export interface JournalEntry {
+  id: string;
+  day: string;
+  type: JournalEntryType;
+  upload_id: string | null;
+  file_path: string | null;
+  file_url: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  ocr_text: string | null;
+  ocr_status: OcrStatus;
+  caption: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JournalDayResponse {
+  day: string;
+  count: number;
+  entries: JournalEntry[];
+}
+
+export interface JournalUploadResponse {
+  ok: boolean;
+  entry: JournalEntry;
+  vault: {
+    appended: boolean;
+    path?: string;
+    reason?: string;
+  };
+}
+
+export interface JournalDeleteResponse {
+  ok: boolean;
+  entry: JournalEntry;
+}
+
+export const fetchJournalDay = async (
+  day?: string,
+): Promise<JournalDayResponse> => {
+  const path = day
+    ? `/journal/day?day=${encodeURIComponent(day)}`
+    : "/journal/day";
+  return getJson<JournalDayResponse>(path);
+};
+
+export const uploadJournalPaper = async (
+  file: File | Blob,
+  options?: { day?: string; caption?: string; fileName?: string },
+): Promise<JournalUploadResponse> => {
+  const form = new FormData();
+  const name =
+    options?.fileName ??
+    (file instanceof File ? file.name : "journal-paper.png");
+  form.append("file", file, name);
+  if (options?.day) form.append("day", options.day);
+  if (options?.caption) form.append("caption", options.caption);
+
+  const res = await fetch(`${ROOT}/journal/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      j.error ?? `${res.status} ${res.statusText} on /journal/upload`,
+    );
+  }
+  return (await res.json()) as JournalUploadResponse;
+};
+
+export const deleteJournalEntry = async (
+  id: string,
+): Promise<JournalDeleteResponse> => {
+  return deleteJson<JournalDeleteResponse>(
+    `/journal/entries/${encodeURIComponent(id)}`,
+  );
+};
+
+export interface DecisionEntry {
+  id: string;
+  ts: string;
+  kind:
+    | "dispatch"
+    | "breaker"
+    | "degrade"
+    | "escalate"
+    | "unstick"
+    | "resolve"
+    | "freeze"
+    | "resume"
+    | "guardrail"
+    | "manager"
+    | "user"
+    | string;
+  actor: string;
+  action: string;
+  payload?: Record<string, unknown>;
+  inbox_item_id?: string | null;
+  related_job_id?: string | null;
+}
+
+export const fetchDecisionsForDay = async (
+  day: string,
+  limit = 200,
+): Promise<DecisionEntry[]> => {
+  const path = `/decisions?day=${encodeURIComponent(day)}&limit=${limit}`;
+  const r = await getJson<{ count: number; decisions: DecisionEntry[] }>(path);
+  if (!r || !Array.isArray(r.decisions)) {
+    throw new Error(
+      `GET ${path}: expected {count, decisions:[...]}, got ${typeof r}`,
+    );
+  }
+  return r.decisions;
+};

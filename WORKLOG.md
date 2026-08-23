@@ -14,3 +14,21 @@
   - Task 3 (Builder, Standard): Frontend mentor agent deck, live cron switch, journal surface assembly and nav. (ID: 1e302c5f-9d75-456a-8cea-9bbec56e33b7)
   - Task 4 (Reviewer, Standard): Full surface integration review & visual verification. (ID: d84f2048-0c72-45cc-a0cf-f24633b4d6d2)
 - Reported findings and completion to manager run 2ef126b7-d6d9-4a55-a8e7-d9acf0508645.
+
+## Round 1 (Builder: Frontend Journal Client & Retrospective Components) — 2026-08-23
+- Implemented typed API client functions in `forge-control-web/app/api.ts`:
+  - `fetchJournalDay(day)`: retrieves day timeline and indexed entries.
+  - `uploadJournalPaper(file, options)`: multipart form upload linked to `/journal/upload` and daily note append.
+  - `deleteJournalEntry(id)`: deletes journal timeline index entry.
+  - `fetchDecisionsForDay(day, limit)`: retrieves day-filtered decisions list.
+- Implemented frontend retrospective components in `forge-control-web/app/desktop/journal/`:
+  - `PaperCaptureDeck.tsx`: drag-and-drop & file selector for paper journal photographs, thumbnail gallery, OCR status indicators, delete action, upload states (loading/empty/error/populated).
+  - `ImageLightbox.tsx`: high-resolution full-screen modal with zoom, pan, rotate, keyboard shortcuts, and OCR drawer.
+  - `JournalVaultEditor.tsx`: CAS Markdown editor syncing section `## Journal` in `/opt/obsidian-vault/Daily/YYYY-MM-DD.md` with conflict handling.
+  - `DailyDecisionsStream.tsx`: day-filtered decision stream with expandable payloads and actor badges.
+  - `JournalRetrospectivePane.tsx`: container composing paper capture, vault editor, and decisions stream with TanStack Query.
+- Verification:
+  - `npx tsc --noEmit`: 0 errors.
+  - `npm run build`: compiled successfully, static pages generated (10/10), exit code 0.
+  - Zero raw color literals (all styling uses `app/tokens.ts`).
+
