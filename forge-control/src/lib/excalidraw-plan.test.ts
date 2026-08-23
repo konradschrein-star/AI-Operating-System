@@ -199,3 +199,58 @@ describe("excalidraw-plan: real vault drawings", () => {
     assert.ok(sampleTask.brief.includes("Status:"));
   });
 });
+
+describe("excalidraw-plan: API routes", async () => {
+  const { Hono } = await import("hono");
+  const canvasRouter = (await import("../routes/canvas.ts")).default;
+  const app = new Hono();
+  app.route("/api/canvas", canvasRouter);
+
+  test("GET /api/canvas/plan rejects missing path", async () => {
+    const res = await app.request("/api/canvas/plan");
+    assert.strictEqual(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /path required/);
+  });
+
+  test("GET /api/canvas/plan rejects path traversal", async () => {
+    const res = await app.request("/api/canvas/plan?path=../../etc/passwd.excalidraw.md");
+    assert.strictEqual(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /escapes the vault/);
+  });
+
+  test("GET /api/canvas/plan rejects non-excalidraw files", async () => {
+    const res = await app.request("/api/canvas/plan?path=Notes/SomeNote.md");
+    assert.strictEqual(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /not a drawing/);
+  });
+
+  test("GET /api/canvas/plan returns 404 for non-existent drawing", async () => {
+    const res = await app.request("/api/canvas/plan?path=Excalidraw/NoSuchFile123.excalidraw.md");
+    assert.strictEqual(res.status, 404);
+  });
+
+  test("GET /api/canvas/plan derives plan for real vault drawing", async () => {
+    const VAULT_DIR = process.env.OBSIDIAN_VAULT_DIR ?? "/opt/obsidian-vault";
+    const testPath = path.join(VAULT_DIR, "Excalidraw/Stealth Uploader - System Map.excalidraw.md");
+    try {
+      await access(testPath);
+    } catch {
+      return;
+    }
+
+    const res = await app.request("/api/canvas/plan?path=Excalidraw/Stealth Uploader - System Map.excalidraw.md");
+    assert.strictEqual(res.status, 200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      plan: { tasks: unknown[]; phases: unknown[] };
+      graph: { nodes: unknown[]; edges: unknown[] };
+    };
+    assert.strictEqual(body.ok, true);
+    assert.ok(body.plan.tasks.length > 0);
+    assert.ok(body.graph.nodes.length > 0);
+  });
+});
+
