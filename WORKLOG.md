@@ -85,3 +85,35 @@ I did not fix it — I do not own that file and this round adds no web code.
 - `/opt/knowledge-mcp/km-indexer.js` — deliberately not edited. Reasons and the
   five exact hunks are in `HANDOFF.md` §1–2.
 - No screenshot: this round is backend only and touches no surface.
+
+## Round 1 — Builder: Drawing Structure Parser and Actionable Plan Engine
+
+### What I built
+
+| file | state |
+|---|---|
+| `forge-control/src/lib/excalidraw-graph.ts` | new, 570 lines — spatial DAG parser with container hierarchies, proximity arrow snapping, legend-driven status inference, and explicit ambiguity detection (cycles, dangling arrows, unlabelled shapes, unconnected nodes, unexplained colours) |
+| `forge-control/src/lib/excalidraw-graph.test.ts` | new, 232 lines — 6 test suites covering synthetic fixtures (legend overrides, proximity resolution, cycle detection, ambiguity discovery) and real vault drawings (`Stealth Uploader - System Map`, `Stealth Uploader - Warming Timeline`) |
+| `forge-control/src/lib/excalidraw-plan.ts` | new, 470 lines — actionable plan compilation (topological phase sorting, container-to-workstream grouping, role/tier selection heuristics, task briefs, write_set inference, and bidirectional Markdown serialization with prominent Ambiguities & Open Questions) |
+| `forge-control/src/lib/excalidraw-plan.test.ts` | new, 306 lines — 11 tests covering synthetic DAG compilation, workstream grouping, ambiguity rendering, real vault drawings, and full route testing for `GET /api/canvas/plan`, `POST /api/canvas/plan/save`, and `POST /api/canvas/plan/to-project` |
+| `forge-control/src/routes/canvas.ts` | updated (+226 lines) — added `GET /api/canvas/plan`, `POST /api/canvas/plan/save`, and `POST /api/canvas/plan/to-project` with input validation, vault path escaping guards, topological task creation, and workspace provisioning |
+
+### Design decisions worth knowing
+
+- **Ambiguities are surfaced as questions, never guessed.** Dangling arrows, cycles, unconnected nodes, unlabelled elements, and unmapped colors produce concrete questions in an explicit "Ambiguities & Open Questions" block.
+- **Proximity arrow resolution.** Endpoints within 50px of candidate shapes are snapped to closest shapes with tie-breaking safeguards.
+- **Topological DAG layering for phases.** Phase numbers are derived from in-degree dependency depth so prerequisite steps are scheduled in earlier rounds.
+- **Real vault testing.** Unit tests parse actual vault drawings (such as `Stealth Uploader - System Map.excalidraw.md`) into phased tasks and workstreams.
+
+### Verified — commands run, output observed
+
+```
+cd forge-control
+npx tsc --noEmit                                           → clean, exit 0
+npx tsx --test src/lib/excalidraw-*.test.ts                 → pass 54 / fail 0 (7 suites)
+pnpm --filter forge-control test                           → pass 1701 / fail 0
+
+cd forge-control-web
+npx tsc --noEmit                                           → clean, exit 0
+```
+
