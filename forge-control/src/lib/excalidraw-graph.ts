@@ -332,6 +332,7 @@ export function parseDrawingGraph(
     title?: string;
     tags?: string[];
     prose?: string;
+    degraded?: string | null;
   } = {},
 ): ParsedDrawingGraph {
   const base = buildGraph(drawing);
@@ -540,7 +541,7 @@ export function parseDrawingGraph(
     nodes: enrichedNodes,
     edges: enrichedEdges,
     ambiguities,
-    degraded: base.degraded ?? null,
+    degraded: opts.degraded ?? null,
     stats: {
       ...base.stats,
       totalNodes: enrichedNodes.length,
