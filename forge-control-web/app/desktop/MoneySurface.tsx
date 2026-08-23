@@ -95,6 +95,9 @@ export function MoneySurface() {
   const ledgerData: LedgerSummaryResponse | null = ledgerQ.data ?? null;
   const spendData: SpendSummaryResponse | null = spendQ.data ?? null;
   const limitHits: LimitHit[] = limitHitsQ.data ?? [];
+  /* "0 limit hits" and "we could not ask" are different sentences. Without
+   * this, a failed probe renders the reassuring green tick. */
+  const limitHitsUnknown = limitHitsQ.data === undefined;
 
   // 4 Standard Treasury Accounts normalization
   const treasuryAccounts = useMemo(() => {
@@ -139,20 +142,32 @@ export function MoneySurface() {
     ];
   }, [bankData]);
 
-  const totalLiquidEur = bankData?.total_liquid_eur ?? treasuryAccounts.reduce((s, a) => s + (a.balance_eur || 0), 0);
-  const totalUsd = bankData?.total_usd ?? treasuryAccounts.reduce((s, a) => s + (a.balance_usd || 0), 0);
-  const fxRate = bankData?.fx_rate_usd_eur ?? 1.08;
+  /* An UNLINKED account has an unknown balance, not a zero one. The route
+   * fills `balance_*: 0` for the three Mercury accounts and E&G because the
+   * shape needs a number, but nothing has ever read them — rendering that as
+   * "$0.00" tells Konrad his accounts are empty. Only a linked account
+   * contributes to a total, and the tile says how many did. */
+  const linkedAccounts = treasuryAccounts.filter(
+    (a) => a.status === "active" || a.status === "manual",
+  );
+  const treasuryKnown = linkedAccounts.length > 0;
+  const totalLiquidEur = linkedAccounts.reduce((s, a) => s + a.balance_eur, 0);
+  const totalUsd = linkedAccounts.reduce((s, a) => s + a.balance_usd, 0);
+  /* The published rate, with its provenance, or nothing. forge-control has no
+   * FX feed — it ships a constant — so the rate is rendered with the word
+   * "static" attached rather than as a quote. */
+  const fxRate: number | null = bankData?.fx_rate_usd_eur ?? null;
+  const fxNote =
+    fxRate === null
+      ? ""
+      : ` (FX ${fxRate.toFixed(2)}${
+          bankData?.fx_rate_source === "live_quote" ? "" : " · static, not a quote"
+        })`;
 
-  const ledgerSummary = ledgerData?.summary ?? {
-    since: "",
-    until: "",
-    byArm: [],
-    totalInEur: 0,
-    totalOutEur: 0,
-    netEur: 0,
-    shadowEur: 0,
-    unconvertedRows: 0,
-  };
+  const ledgerSummary = ledgerData?.summary ?? null;
+  const ledgerError = ledgerQ.isError ? (ledgerQ.error as Error).message : null;
+  const bankError = bankQ.isError ? (bankQ.error as Error).message : null;
+  const spendError = spendQ.isError ? (spendQ.error as Error).message : null;
 
   const isLoading = bankQ.isLoading || ledgerQ.isLoading || spendQ.isLoading;
 
@@ -202,29 +217,47 @@ export function MoneySurface() {
               TOTAL LIQUID TREASURY
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 2 }}>
-              <span className="mono" style={{ fontSize: 24, fontWeight: 600, color: tokens.textHi }}>
-                {eur(totalLiquidEur)}
+              <span
+                className="mono"
+                style={{
+                  fontSize: 24,
+                  fontWeight: 600,
+                  color: bankError || !treasuryKnown ? tokens.textFaint : tokens.textHi,
+                }}
+              >
+                {bankError
+                  ? "unreachable"
+                  : treasuryKnown
+                    ? eur(totalLiquidEur)
+                    : "unknown"}
               </span>
               <span className="mono" style={{ fontSize: 12, color: tokens.textMuted }}>
-                ≈ {usd(totalUsd)} (FX: {fxRate.toFixed(2)})
+                {bankError
+                  ? bankError
+                  : treasuryKnown
+                    ? `≈ ${usd(totalUsd)}${fxNote}`
+                    : "no account is linked yet — nothing has been read"}
               </span>
             </div>
           </div>
           <div className="mono" style={{ fontSize: 10, color: tokens.textFaint }}>
-            4 Accounts · Mercury API + Private Banking
+            {linkedAccounts.length} of {treasuryAccounts.length} accounts linked ·
+            Mercury API + Private Banking
           </div>
         </div>
 
-        {/* 4 Accounts Grid */}
+        {/* 4 Accounts Grid. minmax(0, 1fr), not 1fr: a bare `1fr` floors at
+            min-content, so the long "credential required…" status line pushed
+            the fourth card past the container edge. */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
             gap: 10,
           }}
         >
           {treasuryAccounts.map((acc) => (
-            <TreasuryCard key={acc.id} account={acc} fxRate={fxRate} />
+            <TreasuryCard key={acc.id} account={acc} unreachable={bankError} />
           ))}
         </div>
       </section>
@@ -247,85 +280,49 @@ export function MoneySurface() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(3, 1fr)",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
             gap: 10,
             marginBottom: 12,
           }}
         >
-          <div
-            style={{
-              background: tokens.bgCard,
-              border: `1px solid ${tokens.border}`,
-              borderRadius: 8,
-              padding: "12px 14px",
-            }}
-          >
-            <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
-              REVENUE IN (MTD)
-            </div>
-            <div
-              className="mono"
-              style={{ fontSize: 20, fontWeight: 600, color: tokens.ok, marginTop: 4 }}
-            >
-              +{eur(ledgerSummary.totalInEur)}
-            </div>
-            <div className="mono" style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4 }}>
-              Cash collected from clients & sales
-            </div>
-          </div>
-
-          <div
-            style={{
-              background: tokens.bgCard,
-              border: `1px solid ${tokens.border}`,
-              borderRadius: 8,
-              padding: "12px 14px",
-            }}
-          >
-            <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
-              EXPENSES OUT (MTD)
-            </div>
-            <div
-              className="mono"
-              style={{ fontSize: 20, fontWeight: 600, color: tokens.bleed, marginTop: 4 }}
-            >
-              -{eur(ledgerSummary.totalOutEur)}
-            </div>
-            <div className="mono" style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4 }}>
-              Operations, payroll & infra costs
-            </div>
-          </div>
-
-          <div
-            style={{
-              background: tokens.bgCard,
-              border: `1px solid ${tokens.border}`,
-              borderRadius: 8,
-              padding: "12px 14px",
-            }}
-          >
-            <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
-              NET CASHFLOW
-            </div>
-            <div
-              className="mono"
-              style={{
-                fontSize: 20,
-                fontWeight: 600,
-                color: ledgerSummary.netEur >= 0 ? tokens.ok : tokens.bleed,
-                marginTop: 4,
-              }}
-            >
-              {ledgerSummary.netEur >= 0 ? `+${eur(ledgerSummary.netEur)}` : `-${eur(Math.abs(ledgerSummary.netEur))}`}
-            </div>
-            <div className="mono" style={{ fontSize: 10, color: tokens.textMuted, marginTop: 4 }}>
-              {ledgerSummary.netEur >= 0 ? "Net positive cash trajectory" : "Net operating outflow"}
-            </div>
-          </div>
+          <CashTile
+            label="REVENUE IN (MTD)"
+            error={ledgerError}
+            value={ledgerSummary && `+${eur(ledgerSummary.totalInEur)}`}
+            tone={tokens.ok}
+            detail="Cash collected from clients & sales"
+          />
+          <CashTile
+            label="EXPENSES OUT (MTD)"
+            error={ledgerError}
+            value={ledgerSummary && `-${eur(ledgerSummary.totalOutEur)}`}
+            tone={tokens.bleed}
+            detail="Operations, payroll & infra costs"
+          />
+          <CashTile
+            label="NET CASHFLOW"
+            error={ledgerError}
+            value={
+              ledgerSummary &&
+              (ledgerSummary.netEur >= 0
+                ? `+${eur(ledgerSummary.netEur)}`
+                : `-${eur(Math.abs(ledgerSummary.netEur))}`)
+            }
+            tone={
+              ledgerSummary && ledgerSummary.netEur < 0 ? tokens.bleed : tokens.ok
+            }
+            detail={
+              ledgerSummary === null
+                ? "no reading yet"
+                : ledgerSummary.netEur >= 0
+                  ? "Net positive cash trajectory"
+                  : "Net operating outflow"
+            }
+          />
         </div>
 
         {/* Arm Segmented Distribution Bar */}
-        <ArmDistributionBar byArm={ledgerSummary.byArm} />
+        <ArmDistributionBar byArm={ledgerSummary?.byArm ?? []} error={ledgerError} />
       </section>
 
       {/* ── BOTTOM SECTION: Shrunk AI Compute Cockpit ── */}
@@ -446,12 +443,14 @@ export function MoneySurface() {
                 and cannot strand you on an empty selection. */}
             <FilterSelect
               label="provider"
+              plural="providers"
               value={provider}
               options={spendData?.filters.providers ?? []}
               onChange={setProvider}
             />
             <FilterSelect
               label="category"
+              plural="categories"
               value={kind}
               options={spendData?.filters.kinds ?? []}
               onChange={setKind}
@@ -486,8 +485,18 @@ export function MoneySurface() {
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
-                border: `1px solid ${limitHits.length > 0 ? tokens.freezeBorderWarn : tokens.freezeBorderOk}`,
-                background: limitHits.length > 0 ? tokens.freezeBgWarn : tokens.freezeBgOk,
+                border: `1px solid ${
+                  limitHitsUnknown
+                    ? tokens.borderSoft
+                    : limitHits.length > 0
+                      ? tokens.freezeBorderWarn
+                      : tokens.freezeBorderOk
+                }`,
+                background: limitHitsUnknown
+                  ? tokens.toolBg
+                  : limitHits.length > 0
+                    ? tokens.freezeBgWarn
+                    : tokens.freezeBgOk,
                 borderRadius: 14,
                 padding: "3px 10px",
                 cursor: "pointer",
@@ -495,20 +504,30 @@ export function MoneySurface() {
             >
               <div
                 style={dot(
-                  limitHits.length > 0 ? tokens.warn : tokens.ok,
-                  limitHits.length > 0,
+                  limitHitsUnknown
+                    ? tokens.textFaint
+                    : limitHits.length > 0
+                      ? tokens.warn
+                      : tokens.ok,
+                  !limitHitsUnknown && limitHits.length > 0,
                 )}
               />
               <span
                 className="mono"
                 style={{
                   fontSize: 10.5,
-                  color: limitHits.length > 0 ? tokens.warn : tokens.ok,
+                  color: limitHitsUnknown
+                    ? tokens.textFaint
+                    : limitHits.length > 0
+                      ? tokens.warn
+                      : tokens.ok,
                 }}
               >
-                {limitHits.length === 0
-                  ? "✓ 0 Claude limit hits (14d)"
-                  : `⚠ ${limitHits.length} limit hits in 14d`}
+                {limitHitsUnknown
+                  ? "Claude limit hits — unknown"
+                  : limitHits.length === 0
+                    ? "✓ 0 Claude limit hits (14d)"
+                    : `⚠ ${limitHits.length} limit hits in 14d`}
               </span>
             </button>
 
@@ -568,7 +587,7 @@ export function MoneySurface() {
         </div>
 
         {/* Compute Totals Bar */}
-        <ComputeSummaryStrip spendData={spendData} mode={computeMode} />
+        <ComputeSummaryStrip spendData={spendData} error={spendError} />
 
         {(provider || kind) && (
           <div
@@ -629,11 +648,14 @@ export function MoneySurface() {
  *  rather than offering a choice of nothing. */
 function FilterSelect({
   label,
+  plural,
   value,
   options,
   onChange,
 }: {
   label: string;
+  /** Written out rather than `${label}s` — that produced "all categorys". */
+  plural: string;
   value: string | null;
   options: string[];
   onChange: (next: string | null) => void;
@@ -656,7 +678,7 @@ function FilterSelect({
         cursor: options.length === 0 ? "default" : "pointer",
       }}
     >
-      <option value="all">{`all ${label}s`}</option>
+      <option value="all">{`all ${plural}`}</option>
       {options.map((o) => (
         <option key={o} value={o}>
           {o}
@@ -688,8 +710,74 @@ function ProbePanel({ text, tone }: { text: string; tone: string }) {
   );
 }
 
-function TreasuryCard({ account, fxRate }: { account: BankAccount; fxRate: number }) {
+/** One cashflow figure, or the reason there isn't one. `value === null` means
+ *  the ledger has not answered yet; `error` means it failed. Neither renders
+ *  as €0.00 — a zero here would read as "no money moved", which is a
+ *  materially different claim from "we could not look". */
+function CashTile({
+  label,
+  value,
+  detail,
+  tone,
+  error,
+}: {
+  label: string;
+  value: string | null;
+  detail: string;
+  tone: string;
+  error: string | null;
+}) {
+  const unresolved = error !== null || value === null;
+  return (
+    <div
+      style={{
+        background: tokens.bgCard,
+        border: `1px solid ${tokens.border}`,
+        borderRadius: 8,
+        padding: "12px 14px",
+      }}
+    >
+      <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
+        {label}
+      </div>
+      <div
+        className="mono"
+        style={{
+          fontSize: 20,
+          fontWeight: 600,
+          color: error ? tokens.bleed : unresolved ? tokens.textFaint : tone,
+          marginTop: 4,
+        }}
+      >
+        {error ? "unreachable" : (value ?? "reading…")}
+      </div>
+      <div
+        className="mono"
+        title={error ?? detail}
+        style={{
+          fontSize: 10,
+          color: tokens.textMuted,
+          marginTop: 4,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {error ?? detail}
+      </div>
+    </div>
+  );
+}
+
+function TreasuryCard({
+  account,
+  unreachable,
+}: {
+  account: BankAccount;
+  unreachable: string | null;
+}) {
   const isUsd = account.currency === "USD";
+  const linked = account.status === "active" || account.status === "manual";
   const statusColor =
     account.status === "active"
       ? tokens.ok
@@ -697,13 +785,24 @@ function TreasuryCard({ account, fxRate }: { account: BankAccount; fxRate: numbe
       ? tokens.info
       : tokens.warn;
 
-  const nativeFormatted = isUsd
-    ? usd(account.balance_usd ?? account.current_balance)
-    : eur(account.balance_eur ?? account.current_balance);
+  /* An unlinked account's balance fields are placeholders the route had to
+   * fill, not readings. Formatting them as currency is the single most
+   * misleading thing this surface could do. */
+  const nativeFormatted = unreachable
+    ? "unreachable"
+    : !linked
+      ? "not linked"
+      : isUsd
+        ? usd(account.balance_usd)
+        : eur(account.balance_eur);
 
-  const convertedFormatted = isUsd
-    ? `≈ ${eur(account.balance_eur || (account.balance_usd || 0) / fxRate)}`
-    : `≈ ${usd(account.balance_usd || (account.balance_eur || 0) * fxRate)}`;
+  const convertedFormatted = unreachable
+    ? unreachable
+    : !linked
+      ? (account.status_detail ?? "no balance has been read")
+      : isUsd
+        ? `≈ ${eur(account.balance_eur)}`
+        : `≈ ${usd(account.balance_usd)}`;
 
   return (
     <div
@@ -744,12 +843,31 @@ function TreasuryCard({ account, fxRate }: { account: BankAccount; fxRate: numbe
       </div>
 
       <div style={{ marginTop: 10 }}>
-        <div className="mono" style={{ fontSize: 17, fontWeight: 600, color: tokens.textHi }}>
+        <div
+          className="mono"
+          style={{
+            fontSize: 17,
+            fontWeight: 600,
+            color: unreachable
+              ? tokens.bleed
+              : linked
+                ? tokens.textHi
+                : tokens.textFaint,
+          }}
+        >
           {nativeFormatted}
         </div>
         <div
           className="mono"
-          style={{ fontSize: 10, color: tokens.textMuted, marginTop: 2 }}
+          title={convertedFormatted}
+          style={{
+            fontSize: 10,
+            color: tokens.textMuted,
+            marginTop: 2,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
         >
           {convertedFormatted}
         </div>
@@ -758,7 +876,30 @@ function TreasuryCard({ account, fxRate }: { account: BankAccount; fxRate: numbe
   );
 }
 
-function ArmDistributionBar({ byArm }: { byArm: LedgerSummaryResponse["summary"]["byArm"] }) {
+function ArmDistributionBar({
+  byArm,
+  error,
+}: {
+  byArm: LedgerSummaryResponse["summary"]["byArm"];
+  error: string | null;
+}) {
+  if (error) {
+    return (
+      <div
+        className="mono"
+        style={{
+          background: tokens.bgCard,
+          border: `1px dashed ${tokens.dangerActionBorder}`,
+          borderRadius: 8,
+          padding: "10px 14px",
+          fontSize: 10.5,
+          color: tokens.bleed,
+        }}
+      >
+        Ledger unreachable: {error}
+      </div>
+    );
+  }
   if (!byArm || byArm.length === 0) {
     return (
       <div
@@ -848,86 +989,92 @@ function ArmDistributionBar({ byArm }: { byArm: LedgerSummaryResponse["summary"]
   );
 }
 
+/** The three headline compute figures. They are ALWAYS the whole portfolio —
+ *  the provider/category filter narrows the chart below, never these. */
 function ComputeSummaryStrip({
   spendData,
-  mode,
+  error,
 }: {
   spendData: SpendSummaryResponse | null;
-  mode: ComputeMode;
+  error: string | null;
 }) {
-  const meteredToday = spendData?.today.total_eur ?? 0;
-  const shadowToday = spendData?.today.claude_eur ?? 0;
-  const totalComputeToday = meteredToday + shadowToday;
-
-  const meteredD30 = spendData?.d30.total_eur ?? 0;
-  const shadowD30 = spendData?.d30.claude_eur ?? 0;
-  const totalComputeD30 = meteredD30 + shadowD30;
+  const tiles: Array<{ label: string; tone: string; value: string; detail: string }> =
+    spendData === null
+      ? [
+          { label: "METERED BILLED (REAL CASH)", tone: tokens.textHi, value: "", detail: "" },
+          { label: "CLAUDE SHADOW (SUBSCRIPTION)", tone: tokens.stuck, value: "", detail: "" },
+          { label: "TOTAL COMPUTE FOOTPRINT", tone: tokens.accent, value: "", detail: "" },
+        ]
+      : [
+          {
+            label: "METERED BILLED (REAL CASH)",
+            tone: tokens.textHi,
+            value: eur(spendData.d30.total_eur),
+            detail: `Today: ${eur(spendData.today.total_eur)} · ${spendData.d30.calls} billed calls`,
+          },
+          {
+            label: "CLAUDE SHADOW (SUBSCRIPTION)",
+            tone: tokens.stuck,
+            value: eur(spendData.d30.claude_eur),
+            detail: `Today: ${eur(spendData.today.claude_eur)} · ${spendData.d30.claude_calls} calls`,
+          },
+          {
+            label: "TOTAL COMPUTE FOOTPRINT",
+            tone: tokens.accent,
+            value: eur(spendData.d30.total_eur + spendData.d30.claude_eur),
+            detail: `Today: ${eur(spendData.today.total_eur + spendData.today.claude_eur)} (Shadow + Metered)`,
+          },
+        ];
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(3, 1fr)",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
         gap: 10,
         marginBottom: 8,
       }}
     >
-      <div
-        style={{
-          background: tokens.bgCard,
-          border: `1px solid ${tokens.border}`,
-          borderRadius: 8,
-          padding: "10px 12px",
-        }}
-      >
-        <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
-          METERED BILLED (REAL CASH)
+      {tiles.map((t) => (
+        <div
+          key={t.label}
+          style={{
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
+            {t.label}
+          </div>
+          <div
+            className="mono"
+            style={{
+              fontSize: 17,
+              fontWeight: 600,
+              color: error ? tokens.bleed : spendData ? t.tone : tokens.textFaint,
+              marginTop: 3,
+            }}
+          >
+            {error ? "unreachable" : spendData ? t.value : "reading…"}
+          </div>
+          <div
+            className="mono"
+            title={error ?? t.detail}
+            style={{
+              fontSize: 9.5,
+              color: tokens.textMuted,
+              marginTop: 2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {error ?? (spendData ? t.detail : "waiting on the first reading")}
+          </div>
         </div>
-        <div className="mono" style={{ fontSize: 17, fontWeight: 600, color: tokens.textHi, marginTop: 3 }}>
-          {eur(meteredD30)}
-        </div>
-        <div className="mono" style={{ fontSize: 9.5, color: tokens.textMuted, marginTop: 2 }}>
-          Today: {eur(meteredToday)} · {spendData?.d30.calls ?? 0} billed calls
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: tokens.bgCard,
-          border: `1px solid ${tokens.border}`,
-          borderRadius: 8,
-          padding: "10px 12px",
-        }}
-      >
-        <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
-          CLAUDE SHADOW (SUBSCRIPTION)
-        </div>
-        <div className="mono" style={{ fontSize: 17, fontWeight: 600, color: tokens.stuck, marginTop: 3 }}>
-          {eur(shadowD30)}
-        </div>
-        <div className="mono" style={{ fontSize: 9.5, color: tokens.textMuted, marginTop: 2 }}>
-          Today: {eur(shadowToday)} · {spendData?.d30.claude_calls ?? 0} calls
-        </div>
-      </div>
-
-      <div
-        style={{
-          background: tokens.bgCard,
-          border: `1px solid ${tokens.border}`,
-          borderRadius: 8,
-          padding: "10px 12px",
-        }}
-      >
-        <div className="mono" style={{ fontSize: 9, color: tokens.textFaint, letterSpacing: "0.06em" }}>
-          TOTAL COMPUTE FOOTPRINT
-        </div>
-        <div className="mono" style={{ fontSize: 17, fontWeight: 600, color: tokens.accent, marginTop: 3 }}>
-          {eur(totalComputeD30)}
-        </div>
-        <div className="mono" style={{ fontSize: 9.5, color: tokens.textMuted, marginTop: 2 }}>
-          Today: {eur(totalComputeToday)} (Shadow + Metered)
-        </div>
-      </div>
+      ))}
     </div>
   );
 }

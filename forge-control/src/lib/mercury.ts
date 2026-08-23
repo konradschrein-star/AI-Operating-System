@@ -13,7 +13,19 @@
 import { getSecret } from "./secret-store.ts";
 
 export const MERCURY_API_URL = "https://api.mercury.com/api/v1/accounts";
+
+/**
+ * A STATIC rate, not a quote. Nothing here fetches an FX feed, so every
+ * USD→EUR figure this module produces is an approximation at this constant,
+ * and `fx_rate_source` says so in the response — a consumer that renders
+ * "≈ €X" without that qualifier is publishing a made-up number as a fact.
+ *
+ * Currently inert: no account is linked, so no conversion is performed. It
+ * stops being inert the moment MERCURY_API_TOKEN lands.
+ */
 export const USD_EUR_FX_RATE = 1.08;
+export type FxRateSource = "static_fallback" | "live_quote";
+export const USD_EUR_FX_SOURCE: FxRateSource = "static_fallback";
 
 export type AccountStatus = "active" | "unlinked" | "error" | "manual";
 export type AccountType = "checking" | "savings" | "treasury" | "private_banking";
@@ -48,6 +60,9 @@ export interface BankBalancesResponse {
   total_liquid_eur: number;
   total_usd: number;
   fx_rate_usd_eur: number;
+  /** Where `fx_rate_usd_eur` came from. `static_fallback` means it is a
+   *  constant in this file, NOT a quote — render it as such. */
+  fx_rate_source: FxRateSource;
   as_of: string;
 }
 
@@ -345,6 +360,7 @@ export async function getBankBalances(): Promise<BankBalancesResponse> {
     total_liquid_eur: totalLiquidEur,
     total_usd: totalUsd,
     fx_rate_usd_eur: USD_EUR_FX_RATE,
+    fx_rate_source: USD_EUR_FX_SOURCE,
     as_of: new Date().toISOString(),
   };
 }

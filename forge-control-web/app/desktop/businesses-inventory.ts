@@ -55,15 +55,24 @@ export interface StatedMetric {
   value: string;
 }
 
+/** Which live reading, if any, quantifies a bottleneck. The surface renders it
+ *  as a badged chip beside the title; the title itself stays true with no
+ *  number in it, so a dead probe costs the row its count and nothing else. */
+export type BottleneckCountSource = "pipelineStalled" | "directoryCompanies";
+
 export interface BottleneckItem {
   id: string;
   ventureKey: VentureKey;
   ventureTitle: string;
   severity: "critical" | "warning" | "info";
+  /** No numbers. Round 2 wrote "5 Video Jobs Stalled" and "1,053 Sourced
+   *  Prospects" here — that hour's readings, permanent. */
   title: string;
   status: string;
   impact: string;
   recommendedAction: string;
+  countSource?: BottleneckCountSource;
+  countLabel?: string;
   actionLabel?: string;
   actionUrl?: string;
 }
@@ -348,10 +357,12 @@ export const CROSS_PORTFOLIO_BOTTLENECKS: BottleneckItem[] = [
     ventureKey: "creator",
     ventureTitle: "TheSkyLab / YouTube Studio",
     severity: "critical",
-    title: "5 Video Jobs Stalled >48h in QC Review",
-    status: "5 finished video renders awaiting human QC sign-off in Hub Web.",
+    title: "Video Jobs Stalled >48h in QC Review",
+    status: "Finished video renders awaiting human QC sign-off in Hub Web.",
     impact: "Publishing pipeline is completely stalled; render & publish stages cannot advance.",
     recommendedAction: "Open Hub Web, review QC queue, and approve or reject stalled jobs.",
+    countSource: "pipelineStalled",
+    countLabel: "stalled now",
     actionLabel: "Open Hub Web ↗",
     actionUrl: "https://hub.schreinercontentsystems.com",
   },
@@ -360,10 +371,12 @@ export const CROSS_PORTFOLIO_BOTTLENECKS: BottleneckItem[] = [
     ventureKey: "directory",
     ventureTitle: "The Jersey / UK Directory",
     severity: "warning",
-    title: "1,053 Sourced Prospects with 0 Outreach Initiated",
-    status: "1,053 enriched company profiles loaded in DB, but cold outbound has not started.",
+    title: "Sourced Prospects with 0 Outreach Initiated",
+    status: "Enriched company profiles are loaded in DB, but cold outbound has not started.",
     impact: "£49/mo subscription revenue cannot begin until the first 100 discovery calls take place.",
     recommendedAction: "Initiate initial 100-call test outreach campaign via Twenty CRM.",
+    countSource: "directoryCompanies",
+    countLabel: "sourced",
     actionLabel: "Open Twenty CRM ↗",
     actionUrl: "https://crm.167-233-145-218.sslip.io",
   },

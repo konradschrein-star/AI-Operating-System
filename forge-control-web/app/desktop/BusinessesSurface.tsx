@@ -411,7 +411,17 @@ export function BusinessesSurface() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {CROSS_PORTFOLIO_BOTTLENECKS.map((item) => (
-            <BottleneckRow key={item.id} item={item} />
+            <BottleneckRow
+              key={item.id}
+              item={item}
+              count={
+                item.countSource === "pipelineStalled"
+                  ? mapProbe(pipelineProbe, (v) => v.stalled)
+                  : item.countSource === "directoryCompanies"
+                    ? mapProbe(directoryProbe, (v) => v.companies)
+                    : undefined
+              }
+            />
           ))}
         </div>
       </section>
@@ -743,6 +753,11 @@ function VentureCard({
  * Subcomponents & Helper Primitives
  * ========================================================================== */
 
+/** Narrow a probe to one of its fields, preserving pending/error. */
+function mapProbe<T, U>(probe: Probe<T>, pick: (value: T) => U): Probe<U> {
+  return probe.state === "ok" ? { state: "ok", value: pick(probe.value) } : probe;
+}
+
 /** The one place a probe becomes a string. `pending` and `error` get WORDS,
  *  never a number, so no reader can mistake either for a reading. */
 function probeText<T>(probe: Probe<T>, render: (value: T) => string): string {
@@ -992,7 +1007,13 @@ function LaunchpadButton({ link }: { link: LaunchpadLink }) {
   );
 }
 
-function BottleneckRow({ item }: { item: BottleneckItem }) {
+function BottleneckRow({
+  item,
+  count,
+}: {
+  item: BottleneckItem;
+  count?: Probe<number>;
+}) {
   const sev = SEVERITY_CONFIG[item.severity];
 
   return (
@@ -1031,6 +1052,23 @@ function BottleneckRow({ item }: { item: BottleneckItem }) {
           >
             {sev.label}
           </span>
+          {count?.state === "ok" && (
+            <span
+              className="mono"
+              title={`${item.countLabel ?? "count"} — read live`}
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: sev.fg,
+                background: sev.bg,
+                border: `1px solid ${sev.border}`,
+                borderRadius: 4,
+                padding: "1px 6px",
+              }}
+            >
+              {count.value.toLocaleString()} {item.countLabel ?? ""}
+            </span>
+          )}
           <span
             style={{
               fontSize: 13,

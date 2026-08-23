@@ -281,6 +281,10 @@ export interface BankBalancesResponse {
   total_liquid_eur: number;
   total_usd: number;
   fx_rate_usd_eur: number;
+  /** `static_fallback` = a constant in forge-control, not a quote. Render the
+   *  qualifier: a converted balance from a made-up rate is a fabricated
+   *  figure, and reads exactly like a measured one. */
+  fx_rate_source: "static_fallback" | "live_quote";
   as_of: string;
 }
 
@@ -307,16 +311,16 @@ export interface SpendAreaItem {
 }
 
 /**
- * `shadow_eur` and `total_compute_eur` are REQUIRED, matching what
- * `db/spend.ts` actually returns. They were optional here, which meant every
- * chart read them as `x ?? 0` — a server that stopped sending them would draw
- * a flat zero line for Claude's compute rather than fail, and nobody would
- * know the difference. If they are ever genuinely absent, that is a broken
- * server and it should surface as one.
+ * `shadow_eur` and `total_compute_eur` are REQUIRED, matching what the server
+ * actually returns. They were optional here, which meant every chart read them
+ * as `x ?? 0` — a server that stopped sending them would draw a flat zero line
+ * for Claude's compute rather than fail, and nobody would know the difference.
+ * If they are ever genuinely absent, that is a broken server and it should
+ * surface as one.
  */
 export interface SpendDailyItem {
   day: string;
-  /** Metered spend — every provider except claude-code. */
+  /** Metered cost in EUR — every provider except claude-code. */
   total_eur: number;
   /** claude-code's notional price. Flat-rate subscription, never billed. */
   shadow_eur: number;
