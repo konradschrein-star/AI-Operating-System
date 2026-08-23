@@ -97,6 +97,11 @@ export async function lookupBySlug(slug: string): Promise<Webhook | null> {
   return r.rows[0] ?? null;
 }
 
+export interface WebhookCreated {
+  webhook: WebhookPublic;
+  raw_secret: string;
+}
+
 export async function createWebhook(input: {
   slug: string;
   name: string;
@@ -105,7 +110,8 @@ export async function createWebhook(input: {
   title_template?: string;
   worker_label?: string;
   enabled?: boolean;
-}): Promise<WebhookPublic> {
+}): Promise<WebhookCreated> {
+  const secret = newSecret();
   const r = await pool.query<Webhook>(
     `INSERT INTO webhooks (slug, name, description, secret, enabled,
                            prompt_template, title_template, worker_label)
@@ -118,14 +124,17 @@ export async function createWebhook(input: {
       input.slug,
       input.name,
       input.description ?? null,
-      newSecret(),
+      secret,
       input.enabled ?? true,
       input.prompt_template,
       input.title_template ?? null,
       input.worker_label ?? null,
     ],
   );
-  return publicView(r.rows[0]);
+  return {
+    webhook: publicView(r.rows[0]),
+    raw_secret: r.rows[0].secret,
+  };
 }
 
 export async function updateWebhook(

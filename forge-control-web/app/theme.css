@@ -69,6 +69,11 @@
   /* shared, theme-aware chrome */
   --fg-scrollbar: #2a2a2e;
   --fg-overlay: rgba(0, 0, 0, 0.6);
+  /* The drop shadow under a lifted surface — a modal dialog, a popover. It is
+     the SHADOW COLOUR only, never a whole box-shadow: the offsets belong to
+     the element. Dark needs a deep shadow to separate a near-black card from a
+     near-black scrim; light needs a faint one or the card looks bruised. */
+  --fg-shadowLift: rgba(0, 0, 0, 0.5);
   --fg-inputBg: #0b0b0c;
   /* Selected list row + tool-call block. These were hardcoded (#101013 /
      #0a0a0c) at 8+ call sites, which is why selected chats and every tool
@@ -132,6 +137,26 @@
   --fg-roleInkSteward: var(--fg-stuck);
   --fg-roleInkTester: var(--fg-bleed);
   --fg-roleInkUnknown: var(--fg-textMuted);
+
+  /* ── Ink on an accent fill ───────────────────────────────────────────────
+     A filled accent button needs ink chosen against the ACCENT, not against
+     the page. Dark's #5b8def wants near-black (8.6:1); light's #2c62d4 wants
+     white (5.0:1) — so this is the one pair here that genuinely differs. */
+  --fg-onAccent: #0b0b0d;
+
+  /* ── Media stage (MediaDocumentViewer) ───────────────────────────────────
+     Theme-INVARIANT on purpose, which is why they are declared once here and
+     not overridden below. A video letterbox is black and a PDF page is white
+     paper in both themes; tinting either to match the chrome misrepresents
+     the media. They are tokens rather than literals so the viewer's stylesheet
+     stays free of raw colour and one edit restyles every player at once. */
+  --fg-mediaStage: #000000;
+  --fg-mediaStageInk: #f4f4f5;
+  --fg-mediaStageInkDim: #cccccc;
+  --fg-mediaStageChrome: rgba(15, 17, 23, 0.9);
+  --fg-mediaStageTrack: rgba(255, 255, 255, 0.2);
+  --fg-mediaStageHover: rgba(255, 255, 255, 0.15);
+  --fg-mediaPage: #ffffff;
 }
 
 /* html[...] rather than a bare attribute selector: this must outrank v2.css's
@@ -195,6 +220,7 @@ html[data-theme="light"] {
 
   --fg-scrollbar: #c9c9c4;
   --fg-overlay: rgba(0, 0, 0, 0.35);
+  --fg-shadowLift: rgba(0, 0, 0, 0.16);
   --fg-inputBg: #ffffff;
   /* Light: a selected row reads as a soft tint, and a tool block as a faint
      recessed panel — the dark values inverted rather than transplanted. */
@@ -209,6 +235,11 @@ html[data-theme="light"] {
      shadow gets less alpha but more spread, or it reads as a smudge. */
   --fg-shadowCard: 0 1px 3px rgba(0, 0, 0, 0.08);
   --fg-shadowPopover: 0 10px 28px rgba(0, 0, 0, 0.18);
+
+  /* White on light's #2c62d4 accent — 5.00:1. The dark block's near-black ink
+     would measure 4.20:1 on the same fill, which is why this one flips and the
+     media-stage tokens above it do not. */
+  --fg-onAccent: #ffffff;
 
   /* Role identities, light. Pale washes rather than near-black tints — the
      same treatment `freezeBg*` and `primaryActionBg` already get. Only ONE

@@ -287,7 +287,12 @@ export async function spendSummary(
 
 /** Sum + breakdown of today's spend in UTC. UTC chosen because gateways
  *  run on VPS time and the cap is a daily reset, not a tz-localized total.
- *  Always returns a row, even when there's nothing logged yet. */
+ *  Always returns a row, even when there's nothing logged yet.
+ *
+ *  Excludes `claude-code` — same rule as spendSummary() above: it's flat-rate
+ *  subscription usage shadow-priced at metered rates, not real cash burn. Left
+ *  in, it made the Today screen report a false 244%-over-cap emergency
+ *  against genuine metered spend of €0. */
 export async function todaySpendRollup(): Promise<DailySpendRollup> {
   const totals = await pool.query<{
     total_eur: string;
@@ -299,7 +304,8 @@ export async function todaySpendRollup(): Promise<DailySpendRollup> {
             COUNT(*)::text AS row_count
        FROM spend_log
       WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
-                          AT TIME ZONE 'UTC'`,
+                          AT TIME ZONE 'UTC'
+        AND provider <> 'claude-code'`,
   );
   const byProvider = await pool.query<{
     provider: string;
@@ -312,6 +318,7 @@ export async function todaySpendRollup(): Promise<DailySpendRollup> {
        FROM spend_log
       WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
                           AT TIME ZONE 'UTC'
+        AND provider <> 'claude-code'
       GROUP BY provider
       ORDER BY SUM(amount_eur) DESC`,
   );

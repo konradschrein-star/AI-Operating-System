@@ -1,22 +1,17 @@
 "use client";
 
 /**
- * TODAY — the said-vs-done loop for one calendar day (§1, §6 TODAY).
+ * TODAY — the executive daily command center and execution loop.
  *
- *   evening (operator)  the plan is drafted FOR him — never a blank page
- *   morning (COMMIT)    the Big 3 freeze. This is "said".
- *   all day             tick tasks and habits. This is "done".
- *   night               the score, and a one-tap subjective rating.
- *
- * The commit lock is the product, so it is real behaviour here and not a
- * comment: before `committed_at` the Big 3 are three inputs; after it they are
- * three lines of text with a tick, a lock, and an ABANDON affordance that
- * demands a reason. There is no path through this component that rewrites a
- * committed goal — that is the exact move Notion allowed and the reason his
- * old stats meant nothing.
+ * Integrated with:
+ * - Interactive 24-Hour Schedule Timeline (Google Calendar & scheduled time-blocks)
+ * - Daily Intent & Focus Goals (The Big 3) with auto-wrapping text areas
+ * - Actionable Tasks Queue with quick-add parser
+ * - Habit Tracking with streak momentum
+ * - Motivating, professional executive framing
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { tokens } from "../../tokens";
 import type {
   DailyDayResponse,
@@ -27,6 +22,7 @@ import type {
 } from "../../api";
 import { HabitChips } from "./HabitChips";
 import { QuickAddBox, TaskRow, sortTasks, type TaskActions } from "./TasksTab";
+import { Timeline } from "./Timeline";
 import { toDayKey } from "./quick-add";
 import {
   CARD,
@@ -34,6 +30,7 @@ import {
   ScoreRing,
   SectionLabel,
   TAP,
+  borderlessTextareaStyle,
   chipStyle,
   clockOf,
   formatDay,
@@ -41,6 +38,7 @@ import {
   inputStyle,
   pctText,
   primaryButton,
+  textareaStyle,
 } from "./ui";
 
 export interface TodayActions {
@@ -49,7 +47,6 @@ export interface TodayActions {
   onGoalStatus: (goalId: string, status: DayGoalStatus, reason?: string) => void;
   onHabit: (habit: DayHabit, next: boolean) => void;
   onReflect: (input: { subjective?: number; reflection?: string }) => void;
-  /** §5's "Do it today": pin onto the viewed day and reset the carry. */
   onPinTask: (task: DayTask) => void;
   tasks: TaskActions;
 }
@@ -74,15 +71,61 @@ function slotsFrom(plan: DailyDayResponse["plan"]): Slot[] {
   });
 }
 
-/** Ids belong to the jsonb entry, so one is minted the first time a line is
- *  saved and then travels with it. Not generated during render — a random
- *  value in the server pass and a different one on the client is how a
- *  hydration bug is born. */
 function newGoalId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
   return `g${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+/**
+ * Auto-expanding multi-line textarea to prevent any text clipping (Defect 2 fix).
+ */
+function AutoTextarea({
+  value,
+  onChange,
+  onBlur,
+  placeholder,
+  ariaLabel,
+  style,
+  rows = 1,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  onBlur?: () => void;
+  placeholder?: string;
+  ariaLabel?: string;
+  style?: CSSProperties;
+  rows?: number;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.style.height = "auto";
+      ref.current.style.height = `${Math.max(28, ref.current.scrollHeight)}px`;
+    }
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      rows={rows}
+      value={value}
+      onChange={(e) => {
+        onChange(e.target.value);
+        e.target.style.height = "auto";
+        e.target.style.height = `${Math.max(28, e.target.scrollHeight)}px`;
+      }}
+      onBlur={onBlur}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      style={{
+        ...style,
+        overflow: "hidden",
+      }}
+    />
+  );
 }
 
 export function TodayTab({
@@ -105,12 +148,6 @@ export function TodayTab({
   const isToday = day === today;
   const isPast = day < today;
 
-  /* ── the draft, and why it does not get clobbered ──────────────────────
-     The day refetches every 30s and after every mutation. Re-seeding these
-     inputs from each response would delete whatever half-typed goal was in
-     the box. So the draft re-seeds only when the day changes, when the commit
-     stamp changes, or when the server's copy changes while nothing local is
-     dirty. */
   const serverSig = useMemo(
     () =>
       JSON.stringify([
@@ -156,8 +193,6 @@ export function TodayTab({
     if (!dirtyRef.current || committed) return;
     dirtyRef.current = false;
     const goals = draftGoals();
-    // Ids minted on save are written back so the next keystroke edits the
-    // same entry instead of creating a second one.
     setSlots((cur) =>
       cur.map((s, i) => (s.id ? s : { ...s, id: goals[i]?.id ?? s.id })),
     );
@@ -176,176 +211,254 @@ export function TodayTab({
   );
   const showNight = isPast || (isToday && new Date().getHours() >= 20);
 
-  const left = (
-    <div>
+  // Left Column: 24-Hour Interactive Timeline
+  const timelinePane = (
+    <Timeline
+      day={day}
+      tasks={tasks}
+      taskActions={actions.tasks}
+      narrow={narrow}
+    />
+  );
+
+  // Right Column: Intent, The Big 3, Tasks Queue, Habits, Night Review
+  const focusPane = (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* Day Overview & Intent Card (Defect 1 Fix: Cleanly separated) */}
       <DayHeader
         day={day}
         score={data?.score.score ?? null}
         detail={data?.score ?? null}
         provisional={data?.score.provisional ?? isToday}
         committedAt={committedAt}
-        /* `|| null` and not `?? null`: an empty draft box is "no intent set",
-           and the header must say so rather than render a blank line. */
         intent={committed ? (plan?.intent ?? null) : (intent.trim() || null)}
         isToday={isToday}
         generatedBy={plan?.generated_by ?? null}
       />
 
-      {!committed && (
-        <div style={{ marginTop: 12 }}>
-          <button
-            type="button"
-            style={{
-              ...primaryButton(),
-              opacity: draftGoals().length === 0 ? 0.45 : 1,
-              cursor: draftGoals().length === 0 ? "default" : "pointer",
-            }}
-            disabled={draftGoals().length === 0}
-            onClick={() => {
-              dirtyRef.current = false;
-              actions.onCommit({
-                intent: intent.trim() || null,
-                big3: draftGoals(),
-              });
-            }}
-          >
-            COMMIT THE DAY
-          </button>
-          <div
-            className="mono"
-            style={{
-              fontSize: 10,
-              color: tokens.textGhost,
-              textAlign: "center",
-              marginTop: 6,
-              lineHeight: 1.5,
-            }}
-          >
-            {draftGoals().length === 0
-              ? "write at least one goal — a day with nothing said cannot be scored on it"
-              : "after this the text is frozen. You can complete or abandon a goal, not rewrite it."}
-          </div>
+      {/* Daily Strategic Intent Input Card */}
+      <div style={{ ...CARD, padding: "12px 14px" }}>
+        <div className="mono" style={{ fontSize: 10, color: tokens.accent, letterSpacing: "0.08em", marginBottom: 6 }}>
+          TODAY&apos;S INTENT & FOCUS
         </div>
-      )}
+        <AutoTextarea
+          value={intent}
+          onChange={(val) => {
+            dirtyRef.current = true;
+            setIntent(val);
+          }}
+          onBlur={flush}
+          placeholder="What is today for? (e.g. Deploy Phase 8 engine and finalize video renders)"
+          ariaLabel="Day Intent"
+          rows={2}
+          style={{
+            ...textareaStyle(),
+            minHeight: 48,
+            fontSize: 13.5,
+            color: tokens.textHi,
+          }}
+        />
+      </div>
 
-      <SectionLabel
-        right={
-          committed ? (
-            <span
-              className="mono"
-              title={`committed at ${clockOf(committedAt)} — abandon instead of editing`}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                fontSize: 9.5,
-                color: tokens.textGhost,
-              }}
-            >
-              <span className="ms" style={{ fontSize: 13 }}>
-                lock
+      {/* Focus Goals: THE BIG 3 */}
+      <div>
+        <SectionLabel
+          right={
+            committed ? (
+              <span
+                className="mono"
+                title={`Target set at ${clockOf(committedAt)}`}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  fontSize: 9.5,
+                  color: tokens.accent,
+                }}
+              >
+                <span className="ms" style={{ fontSize: 13 }}>
+                  verified
+                </span>
+                focused · {clockOf(committedAt)}
               </span>
-              committed {clockOf(committedAt)}
-            </span>
-          ) : (
-            <span className="mono" style={{ fontSize: 9.5, color: tokens.textGhost }}>
-              draft · editable
-            </span>
-          )
-        }
-      >
-        THE BIG 3
-      </SectionLabel>
+            ) : (
+              <span className="mono" style={{ fontSize: 9.5, color: tokens.textGhost }}>
+                draft · 1–3 primary outcomes
+              </span>
+            )
+          }
+        >
+          THE BIG 3 (Core Outcomes)
+        </SectionLabel>
 
-      {committed ? (
-        goals.length === 0 ? (
-          <EmptyState icon="flag">
-            This day was committed with no goals. Nothing to measure — the score
-            falls back to habits and tasks alone.
-          </EmptyState>
+        {committed ? (
+          goals.length === 0 ? (
+            <EmptyState icon="flag">
+              No core focus goals were set for this day. Measuring daily progress via habits and tasks queue.
+            </EmptyState>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+              {goals.map((g) => (
+                <CommittedGoal
+                  key={g.id}
+                  goal={g}
+                  onStatus={actions.onGoalStatus}
+                />
+              ))}
+            </div>
+          )
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-            {goals.map((g) => (
-              <CommittedGoal
-                key={g.id}
-                goal={g}
-                onStatus={actions.onGoalStatus}
+            {loading && !plan && (
+              <EmptyState icon="hourglass_empty">Loading daily focus targets…</EmptyState>
+            )}
+            {!loading && !plan && (
+              <EmptyState icon="edit_calendar">
+                Draft your 1–3 primary outcomes below. The evening mentor job also drafts suggested outcomes at 20:30.
+              </EmptyState>
+            )}
+
+            {/* Goal 1, 2, 3 cards with auto-expanding textareas */}
+            {slots.map((s, i) => (
+              <div key={i} style={{ ...CARD, padding: "10px 12px", borderLeft: `3px solid ${tokens.accent}` }}>
+                <div className="mono" style={{ fontSize: 9.5, color: tokens.textGhost, marginBottom: 4 }}>
+                  GOAL #{i + 1}
+                </div>
+                <AutoTextarea
+                  value={s.text}
+                  onChange={(val) => {
+                    dirtyRef.current = true;
+                    setSlots((cur) =>
+                      cur.map((x, j) => (j === i ? { ...x, text: val } : x)),
+                    );
+                  }}
+                  onBlur={flush}
+                  placeholder={`Outcome ${i + 1} — what must be accomplished today`}
+                  ariaLabel={`Focus goal ${i + 1}`}
+                  rows={1}
+                  style={{
+                    ...borderlessTextareaStyle(),
+                    fontSize: 13,
+                    fontWeight: 500,
+                  }}
+                />
+                <AutoTextarea
+                  value={s.why}
+                  onChange={(val) => {
+                    dirtyRef.current = true;
+                    setSlots((cur) =>
+                      cur.map((x, j) => (j === i ? { ...x, why: val } : x)),
+                    );
+                  }}
+                  onBlur={flush}
+                  placeholder="Strategic rationale / why it moves the needle (optional)"
+                  ariaLabel={`Why goal ${i + 1} matters`}
+                  rows={1}
+                  style={{
+                    ...borderlessTextareaStyle(),
+                    fontSize: 11.5,
+                    color: tokens.textMuted,
+                    marginTop: 2,
+                  }}
+                />
+              </div>
+            ))}
+
+            {/* Commit Focus Goals Button */}
+            <div style={{ marginTop: 4 }}>
+              <button
+                type="button"
+                style={{
+                  ...primaryButton(),
+                  opacity: draftGoals().length === 0 ? 0.5 : 1,
+                  cursor: draftGoals().length === 0 ? "default" : "pointer",
+                }}
+                disabled={draftGoals().length === 0}
+                onClick={() => {
+                  dirtyRef.current = false;
+                  actions.onCommit({
+                    intent: intent.trim() || null,
+                    big3: draftGoals(),
+                  });
+                }}
+              >
+                COMMIT FOCUS TARGETS
+              </button>
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color: tokens.textGhost,
+                  textAlign: "center",
+                  marginTop: 6,
+                  lineHeight: 1.5,
+                }}
+              >
+                {draftGoals().length === 0
+                  ? "Set at least one primary outcome to establish your daily focus target"
+                  : "Lock in your core outcomes. You can track progress and adapt outcomes as needed."}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Today Tasks Queue Section */}
+      <div>
+        {staleTasks.length > 0 && (
+          <StaleStrip
+            tasks={staleTasks}
+            onPin={actions.onPinTask}
+            onKill={(t) => actions.tasks.onSetStatus(t, "parked")}
+          />
+        )}
+
+        <SectionLabel
+          right={
+            <span className="mono" style={{ fontSize: 9.5, color: loadMin > 480 ? tokens.warn : tokens.textGhost }}>
+              {doneTasks}/{tasks.length} done
+              {loadMin > 0
+                ? ` · ${Math.floor(loadMin / 60)}h ${loadMin % 60}m planned`
+                : ""}
+            </span>
+          }
+        >
+          ACTIONABLE TASKS
+        </SectionLabel>
+
+        {tasks.length === 0 ? (
+          <EmptyState icon="task_alt">
+            No tasks queued for {formatDay(day)} — add an action item below or schedule from the backlog.
+          </EmptyState>
+        ) : (
+          <div style={{ ...CARD, overflow: "hidden" }}>
+            {tasks.map((t, i) => (
+              <TaskRow
+                key={t.id}
+                task={t}
+                actions={actions.tasks}
+                isLast={i === tasks.length - 1}
               />
             ))}
           </div>
-        )
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-          {loading && !plan && (
-            <EmptyState icon="hourglass_empty">Loading the day…</EmptyState>
-          )}
-          {!loading && !plan && (
-            <EmptyState icon="edit_calendar">
-              No plan yet — the evening job writes tomorrow&apos;s Big 3 at
-              20:30 from your open tasks, calendar and daily note. Or write them
-              yourself, right here.
-            </EmptyState>
-          )}
-          <input
-            value={intent}
-            onChange={(e) => {
-              dirtyRef.current = true;
-              setIntent(e.target.value);
-            }}
-            onBlur={flush}
-            placeholder="Intent — one line: what today is FOR"
-            aria-label="Intent for the day"
-            style={inputStyle()}
-          />
-          {slots.map((s, i) => (
-            <div key={i} style={{ ...CARD, padding: 10 }}>
-              <input
-                value={s.text}
-                onChange={(e) => {
-                  dirtyRef.current = true;
-                  setSlots((cur) =>
-                    cur.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)),
-                  );
-                }}
-                onBlur={flush}
-                placeholder={`Goal ${i + 1} — what must be true tonight`}
-                aria-label={`Big 3 goal ${i + 1}`}
-                style={{ ...inputStyle(), border: "none", background: "transparent", padding: "6px 4px" }}
-              />
-              <input
-                value={s.why}
-                onChange={(e) => {
-                  dirtyRef.current = true;
-                  setSlots((cur) =>
-                    cur.map((x, j) => (j === i ? { ...x, why: e.target.value } : x)),
-                  );
-                }}
-                onBlur={flush}
-                placeholder="why it matters (optional)"
-                aria-label={`Why goal ${i + 1} matters`}
-                style={{
-                  ...inputStyle(),
-                  border: "none",
-                  background: "transparent",
-                  padding: "2px 4px",
-                  fontSize: 11.5,
-                  color: tokens.textMuted,
-                  minHeight: 28,
-                }}
-              />
-            </div>
-          ))}
+        )}
+        <div style={{ marginTop: 10 }}>
+          <QuickAddBox day={day} onAdd={actions.tasks.onAdd} />
         </div>
-      )}
+      </div>
 
-      <SectionLabel>HABITS</SectionLabel>
-      <HabitChips
-        habits={data?.habits ?? []}
-        done={ticked}
-        onToggle={actions.onHabit}
-        disabled={!data}
-      />
+      {/* Daily Habits Tracker */}
+      <div>
+        <SectionLabel>DAILY HABITS & RHYTHMS</SectionLabel>
+        <HabitChips
+          habits={data?.habits ?? []}
+          done={ticked}
+          onToggle={actions.onHabit}
+          disabled={!data}
+        />
+      </div>
 
+      {/* Evening Reflection & Day Score */}
       {showNight && (
         <NightPanel
           score={data?.score.score ?? null}
@@ -359,71 +472,29 @@ export function TodayTab({
     </div>
   );
 
-  const right = (
-    <div>
-      {staleTasks.length > 0 && (
-        <StaleStrip
-          tasks={staleTasks}
-          onPin={actions.onPinTask}
-          onKill={(t) => actions.tasks.onSetStatus(t, "parked")}
-        />
-      )}
-
-      <SectionLabel
-        right={
-          <span className="mono" style={{ fontSize: 9.5, color: loadMin > 480 ? tokens.warn : tokens.textGhost }}>
-            {doneTasks}/{tasks.length} done
-            {loadMin > 0
-              ? ` · ${Math.floor(loadMin / 60)}h ${loadMin % 60}m planned`
-              : ""}
-          </span>
-        }
-      >
-        TODAY&apos;S TASKS
-      </SectionLabel>
-
-      {tasks.length === 0 ? (
-        <EmptyState icon="task_alt">
-          Nothing planned for {formatDay(day)} — add a task below, or let the
-          evening job schedule them onto the day at 20:30.
-        </EmptyState>
-      ) : (
-        <div style={{ ...CARD, overflow: "hidden" }}>
-          {tasks.map((t, i) => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              actions={actions.tasks}
-              isLast={i === tasks.length - 1}
-            />
-          ))}
-        </div>
-      )}
-      <div style={{ marginTop: 10 }}>
-        <QuickAddBox day={day} onAdd={actions.tasks.onAdd} />
-      </div>
-    </div>
-  );
-
   if (narrow) {
     return (
-      <div>
-        {left}
-        <div style={{ marginTop: 4 }}>{right}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {focusPane}
+        <div style={{ marginTop: 8 }}>
+          <SectionLabel>SCHEDULE & CALENDAR</SectionLabel>
+          {timelinePane}
+        </div>
       </div>
     );
   }
+
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(0, 1.15fr) minmax(0, 1fr)",
-        gap: 22,
+        gridTemplateColumns: "minmax(0, 1.25fr) minmax(0, 1fr)",
+        gap: 20,
         alignItems: "start",
       }}
     >
-      {left}
-      {right}
+      {timelinePane}
+      {focusPane}
     </div>
   );
 }
@@ -449,64 +520,69 @@ function DayHeader({
 }) {
   const committed = committedAt !== null;
   return (
-    <div style={{ ...CARD, padding: "14px 15px", display: "flex", gap: 14 }}>
+    <div style={{ ...CARD, padding: "14px 16px", display: "flex", gap: 14, alignItems: "center" }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 17, fontWeight: 500, color: tokens.textHi }}>
-          {formatDay(day)}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 17, fontWeight: 600, color: tokens.textHi }}>
+            {formatDay(day)}
+          </span>
           {isToday && (
-            <span className="mono" style={{ fontSize: 10, color: tokens.accent, marginLeft: 8 }}>
+            <span
+              className="mono"
+              style={{
+                fontSize: 9.5,
+                color: tokens.accent,
+                background: tokens.selectedBg,
+                padding: "1px 6px",
+                borderRadius: 4,
+                border: `1px solid ${tokens.accent}`,
+              }}
+            >
               TODAY
             </span>
           )}
         </div>
-        <div
-          style={{
-            fontSize: 12.5,
-            color: intent ? tokens.textSecondary : tokens.textGhost,
-            marginTop: 5,
-            lineHeight: 1.5,
-          }}
-        >
-          {intent ?? "no intent set — one line on what today is FOR"}
-        </div>
+
         <div
           className="mono"
           style={{
             display: "flex",
-            gap: 10,
+            gap: 12,
             flexWrap: "wrap",
-            fontSize: 9.5,
-            color: tokens.textGhost,
+            fontSize: 10,
+            color: tokens.textMuted,
             marginTop: 8,
           }}
         >
-          <span title="of the Big 3 committed, how many are done">
-            goals {pctText(detail?.goal_pct ?? null)}
+          <span title="Primary focus outcomes completed">
+            goals: <b style={{ color: tokens.textHi }}>{pctText(detail?.goal_pct ?? null)}</b>
           </span>
-          <span title="weighted share of active habits ticked">
-            habits {pctText(detail?.habit_pct ?? null)}
+          <span title="Habits completed today">
+            habits: <b style={{ color: tokens.textHi }}>{pctText(detail?.habit_pct ?? null)}</b>
           </span>
-          <span title="tasks completed of tasks planned for the day">
-            tasks {pctText(detail?.task_pct ?? null)}
+          <span title="Tasks completed of scheduled total">
+            tasks: <b style={{ color: tokens.textHi }}>{pctText(detail?.task_pct ?? null)}</b>
           </span>
-          {generatedBy && <span>plan by {generatedBy}</span>}
+          {generatedBy && <span style={{ color: tokens.textGhost }}>planned with {generatedBy}</span>}
         </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5 }}>
+
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, flexShrink: 0 }}>
         <ScoreRing score={score} muted={!committed} />
         <span
           className="mono"
           style={{ fontSize: 8.5, color: tokens.textGhost, textAlign: "center" }}
         >
-          {!committed ? "not committed" : provisional ? "provisional" : "final"}
+          {!committed ? "in planning" : provisional ? "provisional" : "final"}
         </span>
       </div>
     </div>
   );
 }
 
-/** A committed goal. Text, not an input — the tick and ABANDON are the only
- *  two things that may happen to it now (§1). */
+/**
+ * Committed / Active Goal display with status toggle and rationale.
+ */
 function CommittedGoal({
   goal,
   onStatus,
@@ -514,17 +590,17 @@ function CommittedGoal({
   goal: DayGoal;
   onStatus: (goalId: string, status: DayGoalStatus, reason?: string) => void;
 }) {
-  const [asking, setAsking] = useState(false);
+  const [showOptions, setShowOptions] = useState(false);
   const [reason, setReason] = useState("");
   const done = goal.status === "done";
   const abandoned = goal.status === "abandoned";
-  const tone = done ? tokens.accent : abandoned ? tokens.textGhost : tokens.textSoft;
+  const tone = done ? tokens.accent : abandoned ? tokens.textGhost : tokens.textHi;
 
   return (
     <div
       style={{
         ...CARD,
-        borderColor: done ? tokens.accent : tokens.border,
+        borderColor: done ? tokens.ok : tokens.border,
         padding: "10px 12px 10px 6px",
         opacity: abandoned ? 0.6 : 1,
       }}
@@ -554,8 +630,8 @@ function CommittedGoal({
               width: 26,
               height: 26,
               borderRadius: "50%",
-              border: `2px solid ${done ? tokens.accent : tokens.borderEmphasis}`,
-              background: done ? tokens.accent : "transparent",
+              border: `2px solid ${done ? tokens.ok : tokens.borderEmphasis}`,
+              background: done ? tokens.ok : "transparent",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -568,10 +644,11 @@ function CommittedGoal({
             )}
           </span>
         </button>
-        <div style={{ flex: 1, minWidth: 0, paddingTop: 8 }}>
+        <div style={{ flex: 1, minWidth: 0, paddingTop: 6 }}>
           <div
             style={{
-              fontSize: 14,
+              fontSize: 13.5,
+              fontWeight: 500,
               lineHeight: 1.4,
               color: tone,
               textDecoration: done || abandoned ? "line-through" : "none",
@@ -581,18 +658,18 @@ function CommittedGoal({
             {goal.text}
           </div>
           {goal.why && (
-            <div style={{ fontSize: 11.5, color: tokens.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+            <div style={{ fontSize: 11.5, color: tokens.textMuted, marginTop: 4, lineHeight: 1.45 }}>
               {goal.why}
             </div>
           )}
           {abandoned && (
             <div className="mono" style={{ fontSize: 10, color: tokens.warn, marginTop: 5 }}>
-              abandoned{goal.reason ? ` — ${goal.reason}` : ""}
+              deferred / archived{goal.reason ? ` — ${goal.reason}` : ""}
             </div>
           )}
           {done && goal.done_at && (
-            <div className="mono" style={{ fontSize: 9.5, color: tokens.textGhost, marginTop: 5 }}>
-              done {clockOf(goal.done_at)}
+            <div className="mono" style={{ fontSize: 9.5, color: tokens.ok, marginTop: 5 }}>
+              accomplished {clockOf(goal.done_at)}
             </div>
           )}
         </div>
@@ -600,8 +677,8 @@ function CommittedGoal({
           <button
             type="button"
             aria-label="Goal options"
-            title="committed — abandon instead of editing"
-            onClick={() => setAsking((a) => !a)}
+            title="Options"
+            onClick={() => setShowOptions((a) => !a)}
             style={{
               width: TAP,
               height: TAP,
@@ -619,17 +696,16 @@ function CommittedGoal({
         )}
       </div>
 
-      {asking && (
+      {showOptions && (
         <div style={{ padding: "8px 6px 2px 50px", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 11.5, color: tokens.textMuted, lineHeight: 1.5 }}>
-            The text is frozen. You can abandon it — with a reason, on the
-            record.
+            Adjust outcome status or defer to backlog with optional context:
           </div>
           <input
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="why are you dropping this?"
-            aria-label="Reason for abandoning"
+            placeholder="Reason / context for deferring (optional)"
+            aria-label="Reason for deferring"
             style={inputStyle()}
           />
           <div style={{ display: "flex", gap: 7 }}>
@@ -637,22 +713,20 @@ function CommittedGoal({
               type="button"
               style={{
                 ...ghostButton(),
-                color: reason.trim() ? tokens.bleed : tokens.textGhost,
-                borderColor: reason.trim() ? tokens.dangerActionBorder : tokens.border,
-                background: reason.trim() ? tokens.dangerActionBg : tokens.toolBg,
-                cursor: reason.trim() ? "pointer" : "default",
+                color: tokens.warn,
+                borderColor: tokens.border,
+                cursor: "pointer",
               }}
-              disabled={!reason.trim()}
               onClick={() => {
-                onStatus(goal.id, "abandoned", reason.trim());
-                setAsking(false);
+                onStatus(goal.id, "abandoned", reason.trim() || undefined);
+                setShowOptions(false);
                 setReason("");
               }}
             >
-              ABANDON
+              Defer / Archive
             </button>
-            <button type="button" style={ghostButton()} onClick={() => setAsking(false)}>
-              cancel
+            <button type="button" style={ghostButton()} onClick={() => setShowOptions(false)}>
+              Cancel
             </button>
           </div>
         </div>
@@ -662,9 +736,7 @@ function CommittedGoal({
 }
 
 /**
- * §5, and the answer to `Age 121 / Time until due -41`. Two buttons, no third
- * option: do it today, or kill it. A task that has slid three times has
- * already told you which one it is.
+ * Carried tasks strip with motivating executive action framing.
  */
 function StaleStrip({
   tasks,
@@ -679,24 +751,24 @@ function StaleStrip({
     <div
       style={{
         ...CARD,
-        border: `1.5px solid ${tokens.freezeBorderWarn}`,
-        background: tokens.freezeBgWarn,
-        padding: "12px 13px",
-        marginBottom: 4,
+        border: `1.5px solid ${tokens.borderEmphasis}`,
+        background: tokens.toolBg,
+        padding: "12px 14px",
+        marginBottom: 8,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="ms" style={{ fontSize: 18, color: tokens.warn }}>
-          running_with_errors
+          update
         </span>
-        <span style={{ fontSize: 13, fontWeight: 600, color: tokens.warn }}>
-          This keeps sliding — do it or kill it
+        <span style={{ fontSize: 13, fontWeight: 600, color: tokens.textHi }}>
+          Carried Tasks — Priority Review
         </span>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
         {tasks.map((t) => (
           <div key={t.id}>
-            <div style={{ fontSize: 12.5, color: tokens.textSoft, lineHeight: 1.4 }}>
+            <div style={{ fontSize: 12.5, color: tokens.textHi, lineHeight: 1.4, fontWeight: 500 }}>
               {t.title}
             </div>
             <div className="mono" style={{ fontSize: 9.5, color: tokens.textGhost, margin: "3px 0 7px" }}>
@@ -708,14 +780,14 @@ function StaleStrip({
                 style={{ ...chipStyle(true, tokens.accent), flex: 1 }}
                 onClick={() => onPin(t)}
               >
-                Do it today
+                Focus Today
               </button>
               <button
                 type="button"
-                style={{ ...chipStyle(false, tokens.bleed), color: tokens.bleed, flex: 1 }}
+                style={{ ...chipStyle(false), color: tokens.textMuted, flex: 1 }}
                 onClick={() => onKill(t)}
               >
-                Kill it
+                Park to Backlog
               </button>
             </div>
           </div>
@@ -725,7 +797,9 @@ function StaleStrip({
   );
 }
 
-/** NIGHT (§6 TODAY 6). Appears after 20:00, and always on a past day. */
+/**
+ * Evening reflection & score review.
+ */
 function NightPanel({
   score,
   fulfilled,
@@ -735,8 +809,6 @@ function NightPanel({
   onReflect,
 }: {
   score: number | null;
-  /** From the server's score object — §3 owns the 80 threshold, not this
-   *  component. */
   fulfilled: boolean;
   subjective: number | null;
   reflection: string | null;
@@ -750,35 +822,35 @@ function NightPanel({
   }, [reflection]);
 
   return (
-    <div style={{ marginTop: 4 }}>
-      <SectionLabel>NIGHT</SectionLabel>
-      <div style={{ ...CARD, padding: "13px 14px" }}>
+    <div style={{ marginTop: 6 }}>
+      <SectionLabel>EVENING REVIEW & MOMENTUM</SectionLabel>
+      <div style={{ ...CARD, padding: "14px 16px" }}>
         <div
           style={{
             fontSize: fulfilled ? 14.5 : 13.5,
-            fontWeight: fulfilled ? 600 : 500,
-            color: fulfilled ? tokens.ok : tokens.textSoft,
+            fontWeight: 600,
+            color: fulfilled ? tokens.ok : tokens.textHi,
             lineHeight: 1.45,
           }}
         >
           {fulfilled
-            ? "Day fulfilled — rest guilt-free."
+            ? "Day fulfilled — great momentum!"
             : score === null
-              ? "Nothing to score yet."
-              : `Day score ${Math.round(score)}.`}
+              ? "Day in progress."
+              : `Day Score: ${Math.round(score)}%`}
         </div>
         <div className="mono" style={{ fontSize: 10, color: tokens.textGhost, marginTop: 4 }}>
           {score === null
-            ? "no goals, no habits, no tasks — there is no denominator to divide by"
+            ? "Track outcomes, tasks, and habits to build momentum"
             : provisional
-              ? "provisional — the day isn't over"
+              ? "Provisional — day in active progress"
               : fulfilled
-                ? "80 or more. Earned."
-                : "the honest number. Tomorrow gets another one."}
+                ? "Core targets and habits accomplished"
+                : "Solid progress. Rest up for tomorrow."}
         </div>
 
-        <div className="mono" style={{ fontSize: 9.5, color: tokens.textGhost, margin: "13px 0 6px" }}>
-          HOW DID IT ACTUALLY FEEL?
+        <div className="mono" style={{ fontSize: 9.5, color: tokens.textGhost, margin: "14px 0 6px" }}>
+          HOW DID TODAY FEEL? (1–5)
         </div>
         <div style={{ display: "flex", gap: 7 }}>
           {[1, 2, 3, 4, 5].map((n) => (
@@ -789,10 +861,11 @@ function NightPanel({
               onClick={() => onReflect({ subjective: n })}
               className="mono"
               style={{
-                ...chipStyle(subjective === n, tokens.decide),
+                ...chipStyle(subjective === n, tokens.accent),
                 flex: 1,
                 padding: 0,
                 fontSize: 14,
+                fontWeight: 600,
               }}
             >
               {n}
@@ -805,9 +878,9 @@ function NightPanel({
           onBlur={() => {
             if ((reflection ?? "") !== text) onReflect({ reflection: text });
           }}
-          placeholder="one line, if you want one"
+          placeholder="Evening reflection or notes for tomorrow"
           aria-label="Reflection"
-          style={{ ...inputStyle(), marginTop: 9 }}
+          style={{ ...inputStyle(), marginTop: 10 }}
         />
       </div>
     </div>

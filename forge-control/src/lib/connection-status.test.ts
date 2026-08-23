@@ -29,10 +29,14 @@ import { join, isAbsolute } from "node:path";
 import { AddressInfo } from "node:net";
 
 import {
+  AGY_ACTIONS,
   AGY_BIN,
   AGY_PROBE_ARGS,
   DEFAULT_CONNECTION_RECHECK_INTERVAL_MS,
+  GITHUB_ACTIONS,
+  GITHUB_PAT_PRIMARY,
   GITHUB_PAT_SECRET,
+  GOOGLE_ACTIONS,
   STALE_FACTOR,
   absentConnectionStatus,
   agyBinIsAbsolute,
@@ -43,8 +47,13 @@ import {
   connectionRecheckIntervalMs,
   connectionStatusDir,
   formatAge,
+  googleTokenPath,
+  probeAgy,
+  probeAllConnections,
   probeGithub,
+  probeGoogle,
   readConnectionRecord,
+  recheckAllConnections,
   renderState,
   resolveGithubToken,
   runCommand,
@@ -753,6 +762,29 @@ describe("R56 — GitHub status comes from a real GET /user", () => {
 describe("R55 — the PAT is resolved by one canonical name and never guessed", () => {
   test("the canonical name is the one the forge:ui secret block writes", () => {
     assert.equal(GITHUB_PAT_SECRET, "github-pat");
+    assert.equal(GITHUB_PAT_PRIMARY, "github-pat-konrad");
+  });
+
+  test("a stored github-pat-konrad is used as primary", async () => {
+    const resolved = await resolveGithubToken(
+      async () => ["github-pat-konrad", "github-pat"],
+      async (n) => (n === "github-pat-konrad" ? "ghp_KONRAD\n" : n === "github-pat" ? "ghp_DEFAULT\n" : null),
+    );
+    assert.equal(resolved.token, "ghp_KONRAD");
+    if ("name" in resolved) {
+      assert.equal(resolved.name, GITHUB_PAT_PRIMARY);
+    }
+  });
+
+  test("falls back to github-pat when github-pat-konrad is missing", async () => {
+    const resolved = await resolveGithubToken(
+      async () => ["github-pat"],
+      async (n) => (n === "github-pat" ? "ghp_DEFAULT\n" : null),
+    );
+    assert.equal(resolved.token, "ghp_DEFAULT");
+    if ("name" in resolved) {
+      assert.equal(resolved.name, GITHUB_PAT_SECRET);
+    }
   });
 
   test("a stored github-pat is used", async () => {
@@ -804,3 +836,259 @@ describe("R58 — verbatim upstream errors", () => {
     assert.match(withUpstream("refused", 503, null), /UPSTREAM HTTP 503: \(no body\)/);
   });
 });
+
+/* ========================================================================== *
+ * probeGoogle — spend refresh token and verify profile
+ * ========================================================================== */
+
+describe("probeGoogle — spends refresh token and verifies Gmail profile", () => {
+  let tmpTokenDir = "";
+  const envBefore = process.env.GOOGLE_TOKEN_PATH;
+
+  before(async () => {
+    tmpTokenDir = await mkdtemp(join(tmpdir(), "google-token-test-"));
+  });
+
+  after(async () => {
+    if (envBefore === undefined) delete process.env.GOOGLE_TOKEN_PATH;
+    else process.env.GOOGLE_TOKEN_PATH = envBefore;
+    await rm(tmpTokenDir, { recursive: true, force: true });
+  });
+
+  test("missing credential file returns no_credential with ok:false", async () => {
+    process.env.GOOGLE_TOKEN_PATH = join(tmpTokenDir, "non-existent.json");
+    const res = await probeGoogle();
+    assert.equal(res.record.ok, false);
+    assert.equal(res.reason, "no_credential");
+    assert.match(res.record.detail, /Could not read the Google credential/);
+  });
+
+  test("incomplete credential file returns incomplete_credential with ok:false", async () => {
+    const p = join(tmpTokenDir, "incomplete.json");
+    await writeFile(p, JSON.stringify({ client_id: "id" }), { mode: 0o600 });
+    process.env.GOOGLE_TOKEN_PATH = p;
+    const res = await probeGoogle();
+    assert.equal(res.record.ok, false);
+    assert.equal(res.reason, "incomplete_credential");
+    assert.match(res.record.detail, /missing the refresh token/);
+  });
+
+  test("token endpoint returning invalid_grant is classified as invalid_grant with verbatim body", async () => {
+    const p = join(tmpTokenDir, "token.json");
+    await writeFile(
+      p,
+      JSON.stringify({
+        client_id: "cid",
+        client_secret: "csecret",
+        refresh_token: "rtoken",
+        token_uri: "https://mock.oauth/token",
+      }),
+      { mode: 0o600 },
+    );
+    process.env.GOOGLE_TOKEN_PATH = p;
+
+    const mockFetch = async () => {
+      return new Response(JSON.stringify({ error: "invalid_grant", error_description: "Token has been expired or revoked." }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const res = await probeGoogle({ fetchImpl: mockFetch as unknown as typeof fetch });
+    assert.equal(res.record.ok, false);
+    assert.equal(res.reason, "invalid_grant");
+    assert.equal(res.http_status, 400);
+    assert.match(res.record.detail, /invalid_grant/);
+    assert.match(res.record.detail, /UPSTREAM HTTP 400/);
+  });
+
+  test("successful refresh + gmail profile returns verified identity and ok:true", async () => {
+    const p = join(tmpTokenDir, "valid-token.json");
+    await writeFile(
+      p,
+      JSON.stringify({
+        client_id: "cid",
+        client_secret: "csecret",
+        refresh_token: "rtoken",
+        token_uri: "https://mock.oauth/token",
+      }),
+      { mode: 0o600 },
+    );
+    process.env.GOOGLE_TOKEN_PATH = p;
+
+    const mockFetch = async (url: string | URL | Request) => {
+      const urlStr = url.toString();
+      if (urlStr.includes("oauth") || urlStr.includes("token")) {
+        return new Response(JSON.stringify({ access_token: "ya29.mock_access_token" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ emailAddress: "konrad.schrein@gmail.com" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const res = await probeGoogle({ fetchImpl: mockFetch as unknown as typeof fetch });
+    assert.equal(res.record.ok, true);
+    assert.equal(res.record.identity, "konrad.schrein@gmail.com");
+    assert.equal(res.http_status, 200);
+    assert.match(res.record.detail, /Gmail answered HTTP 200/);
+    assert.notEqual(res.record.checked_at, null);
+  });
+});
+
+/* ========================================================================== *
+ * probeAgy — runs real CLI probe
+ * ========================================================================== */
+
+describe("probeAgy — executes agy probe and returns ConnectionRecord", () => {
+  test("probeAgy returns a ConnectionRecord with checked_at and boolean ok", async () => {
+    const record = await probeAgy();
+    assert.equal(typeof record.ok, "boolean");
+    assert.equal(typeof record.detail, "string");
+    assert.notEqual(record.checked_at, null);
+    assert.ok(Date.parse(record.checked_at!) > 0);
+  });
+});
+
+/* ========================================================================== *
+ * probeAllConnections — parallel probe of all registered connections
+ * ========================================================================== */
+
+describe("probeAllConnections — parallel probing and persistence", () => {
+  let statusDir = "";
+  let tokenDir = "";
+  const statusEnvBefore = process.env.FORGE_CONNECTION_STATUS_DIR;
+  const tokenEnvBefore = process.env.GOOGLE_TOKEN_PATH;
+
+  before(async () => {
+    statusDir = await mkdtemp(join(tmpdir(), "probe-all-status-"));
+    tokenDir = await mkdtemp(join(tmpdir(), "probe-all-token-"));
+    process.env.FORGE_CONNECTION_STATUS_DIR = statusDir;
+    process.env.GOOGLE_TOKEN_PATH = join(tokenDir, "token.json");
+    await writeFile(
+      process.env.GOOGLE_TOKEN_PATH,
+      JSON.stringify({
+        client_id: "cid",
+        client_secret: "csecret",
+        refresh_token: "rtoken",
+      }),
+      { mode: 0o600 },
+    );
+  });
+
+  after(async () => {
+    if (statusEnvBefore === undefined) delete process.env.FORGE_CONNECTION_STATUS_DIR;
+    else process.env.FORGE_CONNECTION_STATUS_DIR = statusEnvBefore;
+    if (tokenEnvBefore === undefined) delete process.env.GOOGLE_TOKEN_PATH;
+    else process.env.GOOGLE_TOKEN_PATH = tokenEnvBefore;
+    await rm(statusDir, { recursive: true, force: true });
+    await rm(tokenDir, { recursive: true, force: true });
+  });
+
+  test("runs all probes concurrently via Promise.allSettled and returns full status list", async () => {
+    const freshIso = new Date().toISOString();
+    const mockProbeGoogle = async () => ({
+      record: rec({ ok: true, identity: "konrad.schrein@gmail.com", detail: "Google OK", checked_at: freshIso }),
+      reason: null,
+      http_status: 200,
+      upstream: null,
+    });
+    const mockProbeAgy = async () => rec({ ok: true, identity: null, detail: "Agy models listed", checked_at: freshIso });
+    const mockProbeGithub = async () => rec({ ok: true, identity: "konradschreiner", detail: "GitHub 200 OK", checked_at: freshIso });
+
+    const result = await probeAllConnections({
+      listSecretNames: async () => ["github-pat-konrad"],
+      readSecret: async (name) => (name === "github-pat-konrad" ? "ghp_KONRAD_TOKEN" : null),
+      probeGoogleFn: mockProbeGoogle,
+      probeAgyFn: mockProbeAgy,
+      probeGithubFn: mockProbeGithub,
+    });
+
+    assert.equal(Array.isArray(result.connections), true);
+    assert.equal(result.connections.length, 3);
+    assert.notEqual(result.timestamp, null);
+
+    const ids = result.connections.map((c) => c.id);
+    assert.deepEqual(ids, ["google", "agy", "github"]);
+
+    const google = result.connections.find((c) => c.id === "google")!;
+    assert.equal(google.state, "connected");
+    assert.equal(google.identity, "konrad.schrein@gmail.com");
+
+    const agy = result.connections.find((c) => c.id === "agy")!;
+    assert.equal(agy.state, "connected");
+
+    const github = result.connections.find((c) => c.id === "github")!;
+    assert.equal(github.state, "connected");
+    assert.equal(github.identity, "konradschreiner");
+
+    // Proves atomic disk persistence
+    const googleStored = await readConnectionRecord("google");
+    assert.equal(googleStored?.ok, true);
+    assert.equal(googleStored?.identity, "konrad.schrein@gmail.com");
+
+    const agyStored = await readConnectionRecord("agy");
+    assert.equal(agyStored?.ok, true);
+
+    const githubStored = await readConnectionRecord("github");
+    assert.equal(githubStored?.ok, true);
+    assert.equal(githubStored?.identity, "konradschreiner");
+  });
+
+  test("handles absent substrate for Google and GitHub gracefully", async () => {
+    // Point google token path to non-existent file
+    const oldPath = process.env.GOOGLE_TOKEN_PATH;
+    process.env.GOOGLE_TOKEN_PATH = join(tokenDir, "absent.json");
+
+    try {
+      const mockProbeAgy = async () => rec({ ok: true, detail: "Agy OK", checked_at: new Date().toISOString() });
+      const result = await probeAllConnections({
+        listSecretNames: async () => [],
+        readSecret: async () => null,
+        probeAgyFn: mockProbeAgy,
+      });
+
+      const google = result.connections.find((c) => c.id === "google")!;
+      assert.equal(google.state, "absent");
+      assert.equal(google.checked_at, null);
+
+      const github = result.connections.find((c) => c.id === "github")!;
+      assert.equal(github.state, "absent");
+      assert.equal(github.checked_at, null);
+    } finally {
+      process.env.GOOGLE_TOKEN_PATH = oldPath;
+    }
+  });
+
+  test("isolated execution: probe failure in one does not abort other probes", async () => {
+    const freshIso = new Date().toISOString();
+    const explodingGoogle = async () => {
+      throw new Error("Google probe exploded");
+    };
+    const mockProbeAgy = async () => rec({ ok: true, detail: "Agy OK", checked_at: freshIso });
+    const mockProbeGithub = async () => rec({ ok: true, identity: "konradschrein-star", detail: "GitHub OK", checked_at: freshIso });
+
+    const result = await probeAllConnections({
+      listSecretNames: async () => ["github-pat-konrad"],
+      readSecret: async (name) => (name === "github-pat-konrad" ? "ghp_TOKEN" : null),
+      probeGoogleFn: explodingGoogle as unknown as typeof probeGoogle,
+      probeAgyFn: mockProbeAgy,
+      probeGithubFn: mockProbeGithub,
+    });
+
+    assert.equal(result.connections.length, 3);
+    const google = result.connections.find((c) => c.id === "google")!;
+    assert.equal(google.state, "unknown");
+    assert.match(google.detail, /Google probe exploded/);
+
+    const agy = result.connections.find((c) => c.id === "agy")!;
+    assert.equal(agy.state, "connected");
+
+    const github = result.connections.find((c) => c.id === "github")!;
+    assert.equal(github.state, "connected");
+  });
+});
+
