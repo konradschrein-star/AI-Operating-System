@@ -36,6 +36,11 @@ import {
 } from "../api-perf";
 import { useRunEvents } from "./chat/useRunEvents";
 import { AssistantThread } from "./chat/AssistantThread";
+/* Opening a card's chat on the CHAT surface goes through the shared helper
+ * rather than a second copy of the same three localStorage writes — see the
+ * note above `navigateToChat`. It arrived on main in the autonomy lane and
+ * `scripts/checks/check-deep-link.ts` is its executable contract. */
+import { jumpToRun } from "./deep-link";
 
 export type TaskRole =
   | "architect"
@@ -139,7 +144,10 @@ function humanAge(ts: string | null | undefined): string {
 export function ProjectsSurface({
   onNavigate,
 }: {
-  onNavigate?: (surface: string) => void;
+  /* Required, not optional: without it a card click has nowhere to go, and a
+   * silently-ignored jump is the defect `deep-link.ts` exists to remove.
+   * `DesktopApp` is the only caller (DesktopApp.tsx:404) and always passes it. */
+  onNavigate: (surface: string) => void;
 }) {
   const qc = useQueryClient();
   const boardQ = useQuery({
@@ -194,16 +202,22 @@ export function ProjectsSurface({
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
   });
 
+  /* Konrad's complaint: "if I click on one of the chats it shouldn't be
+   * opening up in the project chat, it should open up in the chat section."
+   * The first version of this wrote the two keys here by hand. Main has since
+   * landed `deep-link.ts` for exactly this jump, and it is stricter in three
+   * ways this copy was not: it rejects a value that is not a run uuid before
+   * it can reach `forge.chat.selected`, it clears `forge.chat.navStack` so a
+   * drill-in stored against a DIFFERENT chat cannot claim that worker belongs
+   * to the run being opened, and on a storage failure it refuses to navigate
+   * instead of warning to the console and landing on the manager thread while
+   * claiming to have opened the run. `jumpToRun` is the click-handler wrapper:
+   * the failure becomes a toast naming the run, not an exception that takes
+   * the board down. `forge.desktop.surface` is not written here any more —
+   * `DesktopApp`'s `setSurface` is a `usePersistentState` on that same key
+   * (DesktopApp.tsx:196), so the shell persists it. */
   const navigateToChat = (runId: string) => {
-    try {
-      localStorage.setItem("forge.chat.selected", JSON.stringify(runId));
-      localStorage.setItem("forge.desktop.surface", JSON.stringify("chat"));
-      window.dispatchEvent(new Event("storage"));
-      window.dispatchEvent(new CustomEvent("forge:navigate", { detail: "chat" }));
-    } catch (e) {
-      console.warn("[ProjectsSurface] navigation storage write failed", e);
-    }
-    onNavigate?.("chat");
+    jumpToRun(runId, onNavigate);
   };
 
   const tasks = boardQ.data ?? [];
