@@ -115,7 +115,7 @@ For any new check or validator:
 3. **Clean Up**: Remove the scratch defect.
 4. **Verify Recovery (Green Probe)**: Execute the check again and assert that it returns exit code `0` (PASS).
 
-The automated suite `scripts/checks/test-guard-discrimination.sh` (runnable via `aios guard test-discrimination`) validates that `guard.sh` discriminates against:
+The automated suite `scripts/checks/test-guard-discrimination.sh` — run directly with `bash scripts/checks/test-guard-discrimination.sh`; there is **no** `aios guard test-discrimination` subcommand, the CLI's `guard` action only recognizes `fast`/`full`/`strict` and silently falls back to `--fast` for anything else — validates that `guard.sh` discriminates against:
 - TypeScript type errors (`_guard-scratch-typeerror.ts`)
 - Raw hex color literals (`_guard-scratch-colour.tsx`)
 - Dollar-denominated price strings (`_guard-scratch-dollar.tsx`)
@@ -220,7 +220,7 @@ Pre-merge verification and discrimination tests:
 - `aios guard fast` — Run static rules, token purity, and typechecking (< 30s).
 - `aios guard full` — Run complete suite including web build and functional checks.
 - `aios guard strict` — Run full suite, failing on any skipped check.
-- `aios guard test-discrimination` — Run negative control proof across all defect classes.
+- `bash scripts/checks/test-guard-discrimination.sh` — Run negative control proof across all defect classes. No `aios guard` action wraps this yet; passing an unrecognized action (e.g. `aios guard test-discrimination`) silently falls back to `--fast` instead of erroring, so do not rely on the CLI for this one.
 
 ---
 

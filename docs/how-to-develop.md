@@ -123,9 +123,10 @@ Before relying on a newly introduced check or validation rule, prove that it **d
 Run the automated discrimination suite anytime:
 ```bash
 bash scripts/checks/test-guard-discrimination.sh
-# Or:
-aios guard test-discrimination
 ```
+There is **no** `aios guard test-discrimination` subcommand — `handleGuard()` in
+`cli-runner.ts` only recognizes `fast`/`full`/`strict` as actions and silently
+falls back to `--fast` for anything else. Invoke the script directly.
 
 ---
 
