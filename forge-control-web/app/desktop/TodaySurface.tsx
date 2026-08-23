@@ -7,7 +7,7 @@
  * It answers in a single dense glance without clicking:
  *   1. What is today for? (The Big 3 Said vs Done commitment)
  *   2. What am I doing today? (Habits + Tasks + Intent)
- *   3. What happened overnight / is anything on fire? (Spend, Pipeline funnel, Fleet, Alerts)
+ *   3. What happened overnight / is anything on fire? (Usage, Pipeline funnel, Fleet, Alerts)
  *   4. What needs human judgment right now? (Actionable 1-click Inbox stream)
  *
  * Design constraints:
@@ -45,7 +45,6 @@ import {
   type DayHabit,
   type DayTask,
   type PipelinePhase,
-  type SpendSummaryResponse,
   type TodayResponse,
 } from "../api";
 import type { Surface } from "./nav-items";
@@ -155,8 +154,8 @@ export function TodaySurface({
     refetchInterval: 15_000,
   });
 
-  const spendQ = useQuery({
-    queryKey: ["spend-summary"],
+  const usageQ = useQuery({
+    queryKey: ["today-usage-summary"],
     queryFn: fetchSpendSummary,
     placeholderData: keepPreviousData,
     refetchInterval: 60_000,
@@ -412,8 +411,21 @@ export function TodaySurface({
     return 0;
   }, [pipelineQ.data, data.shipped]);
 
-  const meteredSpendEur = spendQ.data?.today?.total_eur ?? 0;
-  const claudeShadowEur = spendQ.data?.today?.claude_eur ?? 0;
+  const meteredUsageEur = usageQ.data?.today?.total_eur ?? 0;
+  const claudeShadowEur = usageQ.data?.today?.claude_eur ?? 0;
+
+  // NFU1 ("no dollars anywhere") means Today never renders a currency figure —
+  // real amounts live only on the Money surface (see HANDOFF.md: escalated
+  // to Konrad whether Today should get an exception instead).
+  const usageCapEur = useMemo(() => {
+    if (data.spend?.cap) {
+      const match = data.spend.cap.match(/\d+/);
+      if (match) return parseInt(match[0], 10);
+    }
+    return 50;
+  }, [data.spend?.cap]);
+
+  const usagePct = usageCapEur > 0 ? Math.round((meteredUsageEur / usageCapEur) * 100) : 0;
 
   // Pipeline phases
   const pipelinePhases: PipelinePhase[] = useMemo(() => {
@@ -611,23 +623,21 @@ export function TodaySurface({
           <span className="mono">{bleedCount} bleed</span>
         </button>
 
-        {/* Metered Spend vs Cap */}
+        {/* Metered Usage vs Cap — no currency figure renders here (NFU1); real amounts live on Money. */}
         <button
           type="button"
           onClick={() => onNav("money")}
-          style={chipStyle(meteredSpendEur > 50, tokens.bleed)}
+          style={chipStyle(usagePct > 100, tokens.bleed)}
           title={
             claudeShadowEur > 0
-              ? `Metered spend: €${meteredSpendEur.toFixed(2)} / €50 cap. (Claude flat subscription shadow: €${claudeShadowEur.toFixed(2)})`
-              : `Metered spend: €${meteredSpendEur.toFixed(2)} / €50 cap.`
+              ? `Metered usage: ${usagePct}% of daily cap (Claude flat-subscription cost excluded). Exact figures on Money.`
+              : `Metered usage: ${usagePct}% of daily cap. Exact figures on Money.`
           }
         >
           <span className="ms" style={{ fontSize: 15, color: tokens.textMuted }}>
-            euro
+            bolt
           </span>
-          <span className="mono">
-            €{meteredSpendEur.toFixed(2)} / €50 spend
-          </span>
+          <span className="mono">USAGE {usagePct}% OF CAP</span>
         </button>
 
         {/* Shipped Count */}
@@ -1429,7 +1439,7 @@ export function TodaySurface({
               className="mono"
               style={{ fontSize: 10, color: tokens.textSecondary }}
             >
-              · {stuckCount === 0 ? "0 runs failed" : `${stuckCount} alert(s)`} · €{meteredSpendEur.toFixed(2)} metered spend · {pipelineTotal} pipeline jobs
+              · {stuckCount === 0 ? "0 runs failed" : `${stuckCount} alert(s)`} · {usagePct}% usage · {pipelineTotal} pipeline jobs
             </span>
           </div>
           <button
