@@ -82,6 +82,14 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
        ORDER BY category, builtin DESC, id`,
   );
 
+  // Synchronize runtime.pause_all enabled flag with fleet_state status
+  const rules = rulesR.rows.map((r) => {
+    if (r.id === "runtime.pause_all" && fleet.status === "paused") {
+      return { ...r, enabled: true };
+    }
+    return r;
+  });
+
   const tripsR = await pool.query<GuardrailTrip>(
     `SELECT t.id::text, t.rule_id, g.label AS rule_label,
             t.created_at::text AS ts, t.agent,
@@ -93,7 +101,7 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
   );
 
   const catCounts = new Map<string, number>();
-  for (const r of rulesR.rows)
+  for (const r of rules)
     catCounts.set(r.category, (catCounts.get(r.category) ?? 0) + 1);
   const categories = [...catCounts.entries()].map(([key, count]) => ({
     key,
@@ -103,7 +111,7 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
 
   return {
     fleet,
-    rules: rulesR.rows,
+    rules,
     trips: tripsR.rows,
     categories,
   };
@@ -132,6 +140,15 @@ export async function updateRule(
       RETURNING id, label, description, category, enabled, builtin, config, updated_at::text`,
     params,
   );
+
+  // Synchronize fleet_state when runtime.pause_all is toggled
+  if (id === "runtime.pause_all" && patch.enabled !== undefined) {
+    await pool.query(
+      `UPDATE fleet_state SET status = $1, updated_at = now(), updated_by = 'autonomy' WHERE id = 1`,
+      [patch.enabled ? "paused" : "running"],
+    );
+  }
+
   return r.rows[0] ?? null;
 }
 
@@ -178,20 +195,60 @@ function evaluateOne(
     case "runtime.pause_all":
       return { blocked: true, reason: "Emergency pause is enabled." };
     case "spend.per_run_cap": {
-      const cap = Number(cfg.cap_eur);
-      const spend = Number(payload.spend_eur ?? 0);
-      if (Number.isFinite(cap) && spend > cap) {
+      const isGemini =
+        payload.is_gemini === true ||
+        payload.provider === "gemini" ||
+        (typeof payload.model === "string" && payload.model.startsWith("gemini-"));
+
+      const tokens = Number(
+        payload.tokens ??
+          (payload.thread_chars ? Math.ceil(Number(payload.thread_chars) / 4) : 0),
+      );
+
+      if (isGemini) {
+        // High-throughput Gemini quota (default 1M tokens per run)
+        const geminiTokenCap = Number(cfg.gemini_token_cap ?? 1_000_000);
+        if (Number.isFinite(geminiTokenCap) && geminiTokenCap > 0 && tokens > geminiTokenCap) {
+          return {
+            blocked: true,
+            reason: `Gemini run tokens (${tokens.toLocaleString()}) exceed per-run token cap (${geminiTokenCap.toLocaleString()})`,
+          };
+        }
+        return { blocked: false };
+      }
+
+      // Claude subscription window budget (default 100k tokens per run)
+      const claudeTokenCap = Number(cfg.claude_token_cap ?? 100_000);
+      if (Number.isFinite(claudeTokenCap) && claudeTokenCap > 0 && tokens > claudeTokenCap) {
         return {
           blocked: true,
-          reason: `per-run spend EUR ${spend} exceeds cap EUR ${cap}`,
+          reason: `Claude run tokens (${tokens.toLocaleString()}) exceed per-run token cap (${claudeTokenCap.toLocaleString()})`,
+        };
+      }
+
+      // Optional EUR cap check for Claude runs if cap_eur is explicitly configured (>0)
+      const capEur = Number(cfg.cap_eur);
+      const spendEur = Number(payload.spend_eur ?? 0);
+      if (Number.isFinite(capEur) && capEur > 0 && spendEur > capEur) {
+        return {
+          blocked: true,
+          reason: `per-run spend EUR ${spendEur} exceeds cap EUR ${capEur}`,
         };
       }
       return { blocked: false };
     }
     case "spend.daily_cap": {
+      const isGemini =
+        payload.is_gemini === true ||
+        payload.provider === "gemini" ||
+        (typeof payload.model === "string" && payload.model.startsWith("gemini-"));
+      if (isGemini) {
+        // Gemini runs are covered by flat quota / subscription (0 EUR), exempt from daily EUR cap
+        return { blocked: false };
+      }
       const cap = Number(cfg.cap_eur);
       const spend = Number(payload.daily_spend_eur ?? 0);
-      if (Number.isFinite(cap) && spend > cap) {
+      if (Number.isFinite(cap) && cap > 0 && spend > cap) {
         return {
           blocked: true,
           reason: `daily spend EUR ${spend} exceeds cap EUR ${cap}`,
@@ -249,7 +306,24 @@ export async function evaluateGuardrails(
   const rulesR = await pool.query<GuardrailRule>(sql, params);
   const rules = rulesR.rows;
 
-  if (!input.rule_id && !rules.some((r) => r.id === "runtime.pause_all")) {
+  // Check fleet_state to ensure fleet freeze is synchronized with emergency pause
+  const fleetCheck = await pool.query<{ status: string }>(
+    `SELECT status FROM fleet_state WHERE id = 1`,
+  );
+  const isFleetPaused = fleetCheck.rows[0]?.status === "paused";
+
+  if (isFleetPaused && !rules.some((r) => r.id === "runtime.pause_all")) {
+    rules.unshift({
+      id: "runtime.pause_all",
+      label: "Emergency pause",
+      description: "Fleet is paused via fleet_state.",
+      category: "security",
+      enabled: true,
+      builtin: true,
+      config: {},
+      updated_at: new Date().toISOString(),
+    });
+  } else if (!input.rule_id && !rules.some((r) => r.id === "runtime.pause_all")) {
     const kill = await pool.query<GuardrailRule>(
       `SELECT id, label, description, category, enabled, builtin,
               config, updated_at::text

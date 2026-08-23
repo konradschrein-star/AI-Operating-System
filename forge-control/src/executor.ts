@@ -27,6 +27,7 @@ import {
   CcResumeError,
   type CcEvent,
 } from "./lib/cc-runner.ts";
+import { isGeminiModel } from "./lib/gemini-runner.ts";
 import { ingestEvent, finalizeRollup } from "./lib/run-rollup.ts";
 import {
   resolveAccount,
@@ -565,30 +566,49 @@ async function processRun(run: ClaimedRun): Promise<void> {
   const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
   const guardRunning = engine === "claude-code";
 
-  // Guardrail pre-flight: spend cap + runtime kill switch on the chat path.
-  // Rough thread-char → EUR estimate so spend.per_run_cap can bite before a
-  // long burn (real spend is recorded by claude-pool; this is preemptive).
+  // Guardrail pre-flight: model-aware token budgeting (Claude vs Gemini)
+  // Claude subscription windows cap vs high-throughput Gemini quota.
+  // Replaces the monolithic 0.04 EUR/kchar formula so Gemini runs are not blocked.
   const threadChars = (run.thread ?? []).reduce(
     (n, e) => n + String(e.content ?? "").length,
     0,
   );
-  const estSpendEur = Math.max(0.01, (threadChars / 1000) * 0.04);
+  const estTokens = Math.max(1, Math.ceil(threadChars / 4));
+  const model =
+    typeof run.metadata?.model === "string"
+      ? (run.metadata.model as string)
+      : null;
+  const tier =
+    typeof run.metadata?.tier === "string"
+      ? (run.metadata.tier as string)
+      : null;
+  const isGemini =
+    isGeminiModel(model) || tier === "gemini" || engine === "gemini";
+
+  const estSpendEur = isGemini ? 0 : Math.max(0.01, (threadChars / 1000) * 0.04);
   // v1.9: today's actual rolled-up spend from spend_log so the
   // spend.daily_cap guardrail can finally trip when it should. Failures
   // here MUST NOT block the run — fall back to estimating from this turn
   // alone if the rollup query fails.
-  const dailySpendEur = await todaySpendRollup()
-    .then((r) => r.total_eur + estSpendEur)
-    .catch(() => estSpendEur);
+  const dailySpendEur = isGemini
+    ? 0
+    : await todaySpendRollup()
+        .then((r) => r.total_eur + estSpendEur)
+        .catch(() => estSpendEur);
+
   const guard = await evaluateGuardrails({
     agent: "forge-executor",
-    action: "claude-pool.run",
+    action: isGemini ? "gemini-pool.run" : "claude-pool.run",
     category: "financial",
     payload: {
       run_id: run.id,
+      is_gemini: isGemini,
+      provider: isGemini ? "gemini" : "claude",
+      model: model ?? (isGemini ? "gemini-3.7-flash-high" : "claude"),
+      tokens: estTokens,
+      thread_chars: threadChars,
       spend_eur: estSpendEur,
       daily_spend_eur: dailySpendEur,
-      thread_chars: threadChars,
       bypass_blanket: true,
     },
   }).catch((e) => {
