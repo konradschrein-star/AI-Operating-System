@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { tokens } from "../tokens";
 import {
   fetchMemoryList,
@@ -71,6 +73,190 @@ const CATEGORY_COLOR: Record<MemoryCategory, string> = {
 /** Compact integers with a thin space so "3412 chunks" reads as a number. */
 function n(value: number): string {
   return value.toLocaleString("en-US");
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Wikilinks Preprocessing & Resolution
+ * Handles [[Target]], [[Target|Alias]], [[Target#Heading]], [[#Heading]],
+ * and table-escaped [[Target\|Alias]].
+ * ──────────────────────────────────────────────────────────────────────────*/
+function preprocessWikilinks(md: string): string {
+  if (!md) return "";
+  return md.replace(
+    /(```[\s\S]*?```|`[^`\n]*`)|\[\[([\s\S]*?)\]\]/g,
+    (match, codeBlock, wikilinkContent) => {
+      if (codeBlock) return codeBlock;
+      if (!wikilinkContent) return match;
+      const raw = wikilinkContent.trim();
+      let targetPart = raw;
+      let labelPart = raw;
+      if (raw.includes("\\|")) {
+        const parts = raw.split("\\|");
+        targetPart = parts[0].trim();
+        labelPart = parts.slice(1).join("|").trim();
+      } else if (raw.includes("|")) {
+        const parts = raw.split("|");
+        targetPart = parts[0].trim();
+        labelPart = parts.slice(1).join("|").trim();
+      }
+      const cleanTarget = targetPart.replace(/\\+$/, "").trim();
+      const cleanLabel = labelPart.replace(/\\+$/, "").trim();
+      return `[${cleanLabel || cleanTarget}](wikilink://${encodeURIComponent(cleanTarget)})`;
+    },
+  );
+}
+
+function normalizeWikilinkTarget(raw: string): string {
+  // Strip from first # anchor, strip trailing backslashes, strip .md, trim
+  return raw
+    .split("#")[0]
+    .replace(/\\+$/, "")
+    .replace(/\.md$/i, "")
+    .trim();
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Obsidian Callout Block Renderer
+ * Supports > [!NOTE], > [!TIP], > [!WARNING], > [!IMPORTANT], > [!CAUTION]
+ * ──────────────────────────────────────────────────────────────────────────*/
+function CalloutBlock({ children }: { children?: React.ReactNode }) {
+  let isCallout = false;
+  let calloutType = "";
+  let calloutTitle = "";
+  let remainingChildren: React.ReactNode = children;
+
+  const childArray = React.Children.toArray(children);
+  if (childArray.length > 0) {
+    const firstChild = childArray[0];
+    if (
+      React.isValidElement(firstChild) &&
+      firstChild.props &&
+      (firstChild.props as { children?: React.ReactNode }).children
+    ) {
+      const pChildren = React.Children.toArray(
+        (firstChild.props as { children?: React.ReactNode }).children,
+      );
+      if (typeof pChildren[0] === "string") {
+        const match = pChildren[0].match(/^\[!([A-Za-z0-9_-]+)\](?:\s+(.*))?/);
+        if (match) {
+          isCallout = true;
+          calloutType = match[1].toUpperCase();
+          calloutTitle = match[2] || calloutType;
+
+          const restOfFirst = pChildren.slice(1);
+          const firstPWithoutCallout =
+            restOfFirst.length > 0 ? (
+              <p key="p-0" style={{ margin: "4px 0 0 0" }}>
+                {restOfFirst}
+              </p>
+            ) : null;
+
+          remainingChildren = [
+            firstPWithoutCallout,
+            ...childArray.slice(1),
+          ].filter(Boolean);
+        }
+      }
+    }
+  }
+
+  if (isCallout) {
+    let calloutColor = tokens.info;
+    let calloutBg = "rgba(56, 189, 248, 0.08)";
+    let calloutBorder = "rgba(56, 189, 248, 0.28)";
+    let iconName = "info";
+
+    if (["TIP", "HINT", "SUCCESS", "DONE", "CHECK"].includes(calloutType)) {
+      calloutColor = tokens.ok;
+      calloutBg = "rgba(34, 197, 94, 0.08)";
+      calloutBorder = "rgba(34, 197, 94, 0.28)";
+      iconName = "check_circle";
+    } else if (["WARNING", "WARN", "ATTENTION"].includes(calloutType)) {
+      calloutColor = tokens.warn;
+      calloutBg = "rgba(245, 158, 11, 0.08)";
+      calloutBorder = "rgba(245, 158, 11, 0.28)";
+      iconName = "warning";
+    } else if (
+      ["IMPORTANT", "DECIDE", "KEY", "CRITICAL"].includes(calloutType)
+    ) {
+      calloutColor = tokens.decide;
+      calloutBg = "rgba(168, 85, 247, 0.08)";
+      calloutBorder = "rgba(168, 85, 247, 0.28)";
+      iconName = "priority_high";
+    } else if (
+      ["CAUTION", "DANGER", "ERROR", "BUG", "FAILURE"].includes(calloutType)
+    ) {
+      calloutColor = tokens.stuck;
+      calloutBg = "rgba(239, 68, 68, 0.08)";
+      calloutBorder = "rgba(239, 68, 68, 0.28)";
+      iconName = "report";
+    }
+
+    return (
+      <div
+        style={{
+          margin: "12px 0",
+          border: `1px solid ${calloutBorder}`,
+          borderLeft: `4px solid ${calloutColor}`,
+          borderRadius: 6,
+          background: calloutBg,
+          padding: "10px 14px",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            color: calloutColor,
+            fontWeight: 600,
+            fontSize: 12.5,
+            marginBottom:
+              remainingChildren && React.Children.count(remainingChildren) > 0
+                ? 6
+                : 0,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 16, color: calloutColor }}>
+            {iconName}
+          </span>
+          <span
+            className="mono"
+            style={{
+              textTransform: "uppercase",
+              fontSize: 11,
+              letterSpacing: "0.06em",
+            }}
+          >
+            {calloutTitle}
+          </span>
+        </div>
+        {remainingChildren && (
+          <div
+            style={{ fontSize: 13, lineHeight: 1.6, color: tokens.textBody }}
+          >
+            {remainingChildren}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <blockquote
+      style={{
+        borderLeft: `3px solid ${tokens.borderEmphasis}`,
+        background: tokens.toolBg,
+        padding: "10px 14px",
+        borderRadius: "0 6px 6px 0",
+        margin: "10px 0",
+        color: tokens.textSecondary,
+        fontStyle: "italic",
+      }}
+    >
+      {children}
+    </blockquote>
+  );
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -164,6 +350,7 @@ export function MemorySurface() {
 
   /* ── editor state ─────────────────────────────────────────────────────── */
   const [editing, setEditing] = useState(false);
+  const [showProperties, setShowProperties] = useState(true);
   const [loaded, setLoaded] = useState<LoadedFile | null>(null);
   const [draft, setDraft] = useState<string>("");
   const [saveState, setSaveState] = useState<SaveState>({ kind: "idle" });
@@ -220,36 +407,88 @@ export function MemorySurface() {
   /** One PUT. `base` is passed in explicitly and is NEVER re-derived here —
    *  the only way to save against a newer base is Konrad clicking the labelled
    *  overwrite button, which passes it. */
-  async function put(base: string, content: string) {
-    if (!note) return;
-    setSaveState({ kind: "saving" });
-    try {
-      const r = await saveVaultFile({
-        path: note.vault_path,
-        content,
-        base_sha256: base,
-      });
-      if (r.kind === "conflict") {
-        setSaveState({ kind: "conflict", conflict: r.value });
-        return;
+  const put = useCallback(
+    async (base: string, content: string) => {
+      if (!note) return;
+      setSaveState({ kind: "saving" });
+      try {
+        const r = await saveVaultFile({
+          path: note.vault_path,
+          content,
+          base_sha256: base,
+        });
+        if (r.kind === "conflict") {
+          setSaveState({ kind: "conflict", conflict: r.value });
+          return;
+        }
+        // Adopt the server's hash as the new base so a second edit works without
+        // a reload. The content we adopt is what we sent, which is what is now
+        // on disk.
+        setLoaded({ content, sha256: r.value.sha256, bytes: r.value.bytes });
+        setDraft(content);
+        setSaveState({
+          kind: "saved",
+          sha256: r.value.sha256,
+          bytes: r.value.bytes,
+          snapshot: r.value.snapshot,
+        });
+      } catch (e) {
+        // NOT a catch-and-default: nothing is substituted, the failure becomes a
+        // persistent visible state and the draft is untouched (R24).
+        setSaveState({ kind: "error", ...describeError(e) });
       }
-      // Adopt the server's hash as the new base so a second edit works without
-      // a reload. The content we adopt is what we sent, which is what is now
-      // on disk.
-      setLoaded({ content, sha256: r.value.sha256, bytes: r.value.bytes });
-      setDraft(content);
-      setSaveState({
-        kind: "saved",
-        sha256: r.value.sha256,
-        bytes: r.value.bytes,
-        snapshot: r.value.snapshot,
+    },
+    [note],
+  );
+
+  // Cmd+S / Ctrl+S keyboard shortcut to save in editor
+  useEffect(() => {
+    if (!editing || !isVaultNote || loaded === null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (dirty && saveState.kind !== "saving") {
+          void put(loaded.sha256, draft);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [editing, isVaultNote, loaded, dirty, saveState.kind, draft, put]);
+
+  // Clickable wikilinks resolver
+  const handleWikilinkClick = useCallback(
+    (rawTarget: string) => {
+      const clean = normalizeWikilinkTarget(rawTarget);
+      if (!clean) return;
+      const cleanLower = clean.toLowerCase();
+      const cleanBaseLower = (clean.split("/").pop() ?? clean).toLowerCase();
+
+      // Find best match among loaded notes
+      const match = allNotes.find((n) => {
+        if (n.slug.toLowerCase() === cleanLower) return true;
+        if (n.topic.toLowerCase() === cleanLower) return true;
+        if (
+          n.vault_path.toLowerCase() === cleanLower ||
+          n.vault_path.toLowerCase() === `${cleanLower}.md`
+        )
+          return true;
+        const noteBase = (n.topic.split("/").pop() ?? n.topic).toLowerCase();
+        if (noteBase === cleanBaseLower) return true;
+        const pathBase = (n.vault_path.split("/").pop() ?? n.vault_path)
+          .replace(/\.md$/i, "")
+          .toLowerCase();
+        return pathBase === cleanBaseLower;
       });
-    } catch (e) {
-      // NOT a catch-and-default: nothing is substituted, the failure becomes a
-      // persistent visible state and the draft is untouched (R24).
-      setSaveState({ kind: "error", ...describeError(e) });
-    }
-  }
+
+      if (match) {
+        setSelSlug(match.slug);
+      } else {
+        setSelSlug(clean);
+      }
+    },
+    [allNotes],
+  );
 
   async function copyPath(path: string) {
     try {
@@ -412,10 +651,7 @@ export function MemorySurface() {
           )}
         </div>
 
-        {/* Real vault files vs Hermes fleet-worker status briefs — these
-            used to be silently mixed in one list under "Obsidian vault",
-            which is why every note looked broken (agent briefs have no
-            file on disk to open). R29's filter control. */}
+        {/* Real vault files vs Hermes fleet-worker status briefs — clarified copy */}
         <div style={{ display: "flex", gap: 4, padding: "0 4px 4px" }}>
           {(["vault", "agent"] as const).map((s) => (
             <div
@@ -430,15 +666,16 @@ export function MemorySurface() {
                 flex: 1,
                 textAlign: "center",
                 fontSize: 10,
-                padding: "5px 0",
+                padding: "6px 0",
                 borderRadius: 5,
                 cursor: "pointer",
+                fontWeight: source === s ? 600 : 400,
                 color: source === s ? tokens.text : tokens.textFaint,
                 background: source === s ? tokens.selectedBg : "transparent",
                 border: `1px solid ${source === s ? tokens.borderEmphasis : "transparent"}`,
               }}
             >
-              {s === "vault" ? "Vault" : "Agent"}
+              {s === "vault" ? "Obsidian Vault" : "Agent Briefs"}
             </div>
           ))}
         </div>
@@ -447,8 +684,8 @@ export function MemorySurface() {
           style={{ ...railLabel, padding: "0 4px 10px", lineHeight: 1.5 }}
         >
           {source === "vault"
-            ? "showing the vault half of the split above"
-            : "showing the agent half — these rows' vault_path is a self-declared label, not a file"}
+            ? "Obsidian notes on disk (/opt/obsidian-vault) — editable markdown & wikilinks"
+            : "Worker memories written directly to DB by Hermes fleet workers (read-only briefs)"}
         </div>
 
         {/* folder partition — replaces the seven category chips */}
@@ -848,9 +1085,43 @@ export function MemorySurface() {
               )}
               {searchHits.map((h) => {
                 const laneColor = LANE_COLOR(h);
+                const isDrawing =
+                  h.vault_path.endsWith(".excalidraw.md") || !!h.is_drawing;
+                const isEmpty = !!h.is_empty || h.match_type === "empty";
+
+                // Determine match badge label and color
+                let badgeLabel = "VECTOR";
+                let badgeColor = tokens.ok;
+
+                if (
+                  h.match_type === "exact_title" ||
+                  (q && h.title.toLowerCase() === q.toLowerCase())
+                ) {
+                  badgeLabel = "EXACT TITLE";
+                  badgeColor = tokens.ok;
+                } else if (
+                  h.match_type === "title_match" ||
+                  h.via === "title"
+                ) {
+                  badgeLabel = "TITLE MATCH";
+                  badgeColor = tokens.accent;
+                } else if (h.match_type === "tag_match" || h.via === "tag") {
+                  badgeLabel = "TAG MATCH";
+                  badgeColor = tokens.info;
+                } else if (isEmpty) {
+                  badgeLabel = "EMPTY NOTE";
+                  badgeColor = tokens.warn;
+                } else if (isDrawing) {
+                  badgeLabel = "DRAWING";
+                  badgeColor = tokens.decide;
+                } else if (h.via === "graph") {
+                  badgeLabel = `GRAPH ${h.hop}-HOP`;
+                  badgeColor = tokens.warn;
+                }
+
                 return (
                   <div
-                    key={`${h.slug}_${h.chunk_index}_${h.hop}`}
+                    key={`${h.slug}_${h.chunk_index}_${h.hop ?? 0}`}
                     onClick={() => {
                       setSelSlug(h.slug);
                       setQ("");
@@ -859,17 +1130,27 @@ export function MemorySurface() {
                       padding: "11px 14px",
                       cursor: "pointer",
                       borderBottom: `1px solid ${tokens.borderDivider}`,
-                      borderLeft: `3px solid ${laneColor}`,
+                      borderLeft: `3px solid ${badgeColor}`,
+                      background:
+                        h.slug === slugInView
+                          ? tokens.selectedBg
+                          : "transparent",
                     }}
                   >
                     <div
-                      style={{ display: "flex", alignItems: "baseline", gap: 8 }}
+                      style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        gap: 8,
+                      }}
                     >
                       <span
                         style={{
                           fontSize: 12.5,
                           color: tokens.textLabel,
                           lineHeight: 1.4,
+                          fontWeight:
+                            badgeLabel === "EXACT TITLE" ? 600 : 400,
                         }}
                       >
                         {h.title}
@@ -878,14 +1159,31 @@ export function MemorySurface() {
                       <span
                         className="mono"
                         style={{
-                          fontSize: 9,
-                          color: laneColor,
+                          fontSize: 8.5,
+                          color: badgeColor,
                           letterSpacing: "0.06em",
-                          textTransform: "uppercase",
+                          border: `1px solid ${badgeColor}`,
+                          borderRadius: 3,
+                          padding: "1px 5px",
                         }}
                       >
-                        {LANE_LABEL(h)}
+                        {badgeLabel}
                       </span>
+                      {isDrawing && (
+                        <span
+                          className="mono"
+                          style={{
+                            fontSize: 8.5,
+                            color: tokens.info,
+                            letterSpacing: "0.06em",
+                            border: `1px solid ${tokens.info}`,
+                            borderRadius: 3,
+                            padding: "1px 5px",
+                          }}
+                        >
+                          CANVAS
+                        </span>
+                      )}
                       <span
                         className="mono"
                         style={{ fontSize: 9.5, color: laneColor }}
@@ -897,16 +1195,21 @@ export function MemorySurface() {
                       className="mono"
                       style={{
                         fontSize: 10,
-                        color: tokens.textFaint,
+                        color: isEmpty ? tokens.warn : tokens.textFaint,
                         marginTop: 4,
                         lineHeight: 1.4,
+                        fontStyle: isEmpty ? "italic" : "normal",
                         display: "-webkit-box",
                         WebkitLineClamp: 2,
                         WebkitBoxOrient: "vertical",
                         overflow: "hidden",
                       }}
                     >
-                      {h.snippet}
+                      {isEmpty
+                        ? "(empty note — 0 bytes on disk)"
+                        : h.match_reason
+                          ? `${h.match_reason} · ${h.snippet}`
+                          : h.snippet}
                     </div>
                   </div>
                 );
@@ -1045,28 +1348,73 @@ export function MemorySurface() {
                 {note.category}
               </span>
               <span style={{ flex: 1 }} />
-              {/* Until 2026-08-19 this said "edit" and did nothing at all. */}
+              {/* Read / Edit Switcher */}
               {isVaultNote && (
-                <span
-                  onClick={() => {
-                    if (editing && dirty) return; // never discard his text
-                    setEditing(!editing);
-                  }}
-                  className="mono"
+                <div
                   style={{
-                    fontSize: 10,
-                    color: editing ? tokens.accent : tokens.textMuted,
-                    cursor: editing && dirty ? "not-allowed" : "pointer",
-                    opacity: editing && dirty ? 0.5 : 1,
+                    display: "flex",
+                    alignItems: "center",
+                    background: tokens.toolBg,
+                    border: `1px solid ${tokens.borderSoft}`,
+                    borderRadius: 6,
+                    padding: 2,
+                    gap: 2,
                   }}
-                  title={
-                    editing && dirty
-                      ? "save or revert first — closing would discard your text"
-                      : undefined
-                  }
                 >
-                  {editing ? "close editor" : "edit"}
-                </span>
+                  <div
+                    onClick={() => {
+                      if (editing && dirty) return; // never discard his text
+                      setEditing(false);
+                    }}
+                    className="mono"
+                    style={{
+                      fontSize: 10.5,
+                      padding: "3px 10px",
+                      borderRadius: 4,
+                      cursor: editing && dirty ? "not-allowed" : "pointer",
+                      color: !editing ? tokens.textHi : tokens.textMuted,
+                      background: !editing ? tokens.selectedBg : "transparent",
+                      border: `1px solid ${!editing ? tokens.borderEmphasis : "transparent"}`,
+                    }}
+                    title={
+                      editing && dirty
+                        ? "save or revert first — closing would discard your text"
+                        : undefined
+                    }
+                  >
+                    👁 Read
+                  </div>
+                  <div
+                    onClick={() => setEditing(true)}
+                    className="mono"
+                    style={{
+                      fontSize: 10.5,
+                      padding: "3px 10px",
+                      borderRadius: 4,
+                      cursor: "pointer",
+                      color: editing ? tokens.textHi : tokens.textMuted,
+                      background: editing ? tokens.selectedBg : "transparent",
+                      border: `1px solid ${editing ? tokens.borderEmphasis : "transparent"}`,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                    }}
+                  >
+                    <span>✏️ Edit</span>
+                    {dirty && (
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: tokens.warn,
+                          display: "inline-block",
+                        }}
+                        title="Unsaved changes"
+                      />
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -1113,17 +1461,7 @@ export function MemorySurface() {
               <span style={{ flex: 1 }} />
 
               {/* ── R25/R26/R27 ─────────────────────────────────────────────
-                  Until 2026-08-19 this was a <div> with cursor:"pointer" and
-                  NO onClick, NO href and no handler of any kind. Konrad had
-                  been clicking it for a week. B2a's DOM dump proves it.
-
-                  The href is `note.obsidian_uri`, built SERVER-SIDE by
-                  obsidianUri() (lib/vault.ts), which keeps the .md extension
-                  and encodeURIComponents each path component separately. It is
-                  NOT rebuilt here: a second implementation of an encoding rule
-                  is a second implementation that drifts, and a literal "&" in a
-                  path terminates the file parameter, so Obsidian opens nothing
-                  at all. */}
+                  Obsidian URI & Copy path fallback */}
               {note.obsidian_uri !== null && (
                 <a
                   href={note.obsidian_uri}
@@ -1153,8 +1491,7 @@ export function MemorySurface() {
                 </a>
               )}
 
-              {/* R27 — the fallback, because a machine with no Obsidian has no
-                  other way to reach the note. */}
+              {/* R27 — the fallback */}
               {isVaultNote && (
                 <span
                   onClick={() => void copyPath(note.vault_path)}
@@ -1184,9 +1521,7 @@ export function MemorySurface() {
               )}
             </div>
 
-            {/* R26 — THE PRECONDITION, AS VISIBLE TEXT, BEFORE THE CLICK, AND
-                IT NAMES THE VAULT. Not a tooltip, not a title attribute, not on
-                hover: R26's failure column names all three. */}
+            {/* R26 — THE PRECONDITION */}
             {isVaultNote && (
               <div
                 className="mono"
@@ -1194,14 +1529,12 @@ export function MemorySurface() {
                   fontSize: 9.5,
                   color: tokens.textFaint,
                   lineHeight: 1.6,
-                  marginBottom: 16,
+                  marginBottom: 14,
                 }}
               >
                 Open in Obsidian only works on a machine running Obsidian with a
                 vault named “{note.vault_name}” — this server does not run
-                Obsidian, and the name comes from the vault directory on THIS
-                host, so it may differ from the folder name on yours. If it does
-                nothing, use Copy vault path instead.
+                Obsidian. If it does nothing, use Copy vault path instead.
               </div>
             )}
 
@@ -1232,8 +1565,7 @@ export function MemorySurface() {
               </div>
             )}
 
-            {/* Agent briefs have no file. Say so, and offer no control that
-                would 400. */}
+            {/* Agent briefs info banner */}
             {!isVaultNote && (
               <div
                 className="mono"
@@ -1254,33 +1586,210 @@ export function MemorySurface() {
               </div>
             )}
 
-            {note.tags.length > 0 && (
+            {/* ── Obsidian Properties Inspector Card ────────────────────── */}
+            <div
+              style={{
+                background: tokens.toolBg,
+                border: `1px solid ${tokens.borderSoft}`,
+                borderRadius: 8,
+                padding: "10px 14px",
+                marginBottom: 18,
+              }}
+            >
               <div
+                onClick={() => setShowProperties(!showProperties)}
                 style={{
                   display: "flex",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  marginBottom: 18,
+                  alignItems: "center",
+                  gap: 8,
+                  cursor: "pointer",
+                  userSelect: "none",
                 }}
               >
-                {note.tags.map((t, j) => (
-                  <span
-                    key={j}
-                    className="mono"
+                <span
+                  className="ms"
+                  style={{
+                    fontSize: 14,
+                    color: tokens.textMuted,
+                    transform: showProperties ? "rotate(90deg)" : "rotate(0deg)",
+                    transition: "transform 0.15s ease",
+                  }}
+                >
+                  chevron_right
+                </span>
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    color: tokens.textFaint,
+                    fontWeight: 600,
+                  }}
+                >
+                  Properties (
+                  {Object.keys(note.frontmatter || {}).length +
+                    (note.tags && note.tags.length > 0 ? 1 : 0) +
+                    1}
+                  )
+                </span>
+                <span style={{ flex: 1 }} />
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 9.5,
+                    color: CATEGORY_COLOR[note.category],
+                    background: "rgba(var(--v2-accent-rgb, 140, 100, 255), 0.08)",
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    border: `1px solid ${tokens.borderSoft}`,
+                  }}
+                >
+                  {note.category}
+                </span>
+              </div>
+
+              {showProperties && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                  }}
+                >
+                  {/* Category / Type */}
+                  <div
                     style={{
-                      fontSize: 10,
-                      color: tokens.info,
-                      background: "#0a1316",
-                      border: "1px solid #16323a",
-                      borderRadius: 5,
-                      padding: "3px 8px",
+                      display: "flex",
+                      alignItems: "baseline",
+                      gap: 10,
+                      fontSize: 11.5,
                     }}
                   >
-                    #{t.replace(/^#/, "")}
-                  </span>
-                ))}
-              </div>
-            )}
+                    <span
+                      className="mono"
+                      style={{
+                        width: 90,
+                        flexShrink: 0,
+                        color: tokens.textFaint,
+                        fontSize: 10,
+                      }}
+                    >
+                      type
+                    </span>
+                    <span
+                      className="mono"
+                      style={{
+                        color: CATEGORY_COLOR[note.category],
+                        fontSize: 11,
+                      }}
+                    >
+                      {note.category}
+                    </span>
+                  </div>
+
+                  {/* Tags */}
+                  {note.tags && note.tags.length > 0 && (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "baseline",
+                        gap: 10,
+                        fontSize: 11.5,
+                      }}
+                    >
+                      <span
+                        className="mono"
+                        style={{
+                          width: 90,
+                          flexShrink: 0,
+                          color: tokens.textFaint,
+                          fontSize: 10,
+                        }}
+                      >
+                        tags
+                      </span>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 5,
+                          flex: 1,
+                        }}
+                      >
+                        {note.tags.map((t, idx) => (
+                          <span
+                            key={idx}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const tagClean = t.replace(/^#/, "");
+                              setQ(tagClean);
+                            }}
+                            title="Click to search tag"
+                            className="mono"
+                            style={{
+                              fontSize: 10,
+                              color: tokens.info,
+                              background: "#0a1316",
+                              border: "1px solid #16323a",
+                              borderRadius: 4,
+                              padding: "2px 7px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            #{t.replace(/^#/, "")}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Dynamic Frontmatter Properties */}
+                  {note.frontmatter &&
+                    Object.entries(note.frontmatter).map(([k, v]) => {
+                      if (k === "tags") return null;
+                      const displayVal =
+                        typeof v === "object" && v !== null
+                          ? JSON.stringify(v)
+                          : String(v);
+                      return (
+                        <div
+                          key={k}
+                          style={{
+                            display: "flex",
+                            alignItems: "baseline",
+                            gap: 10,
+                            fontSize: 11.5,
+                          }}
+                        >
+                          <span
+                            className="mono"
+                            style={{
+                              width: 90,
+                              flexShrink: 0,
+                              color: tokens.textFaint,
+                              fontSize: 10,
+                            }}
+                          >
+                            {k}
+                          </span>
+                          <span
+                            className="mono"
+                            style={{
+                              color: tokens.textLabel,
+                              flex: 1,
+                              wordBreak: "break-all",
+                            }}
+                          >
+                            {displayVal}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
 
             {/* ── BODY: reader, or the editor ─────────────────────────────── */}
             {editing && isVaultNote ? (
@@ -1288,7 +1797,11 @@ export function MemorySurface() {
                 {fileQ.isLoading && (
                   <div
                     className="mono"
-                    style={{ fontSize: 11, color: tokens.textFaint, padding: "18px 0" }}
+                    style={{
+                      fontSize: 11,
+                      color: tokens.textFaint,
+                      padding: "18px 0",
+                    }}
                   >
                     reading the file from disk…
                   </div>
@@ -1322,7 +1835,7 @@ export function MemorySurface() {
                       className="mono"
                       style={{
                         width: "100%",
-                        minHeight: 420,
+                        minHeight: 440,
                         resize: "vertical",
                         background: tokens.inputBg,
                         border: `1px solid ${dirty ? tokens.accent : tokens.border}`,
@@ -1362,15 +1875,21 @@ export function MemorySurface() {
                           border: `1px solid ${dirty ? tokens.okActionBorder : tokens.borderSoft}`,
                         }}
                       >
-                        {saveState.kind === "saving" ? "saving…" : "Save to vault"}
+                        {saveState.kind === "saving"
+                          ? "saving…"
+                          : "Save to vault"}
                       </span>
                       <span
                         className="mono"
                         style={{ fontSize: 9.5, color: tokens.textFaint }}
                       >
                         {dirty ? "unsaved changes" : "no unsaved changes"} ·{" "}
-                        {n(draft.length)} characters · base sha256{" "}
-                        {loaded.sha256.slice(0, 12)}…
+                        {n(draft.length)} characters ·{" "}
+                        {n(draft.split(/\s+/).filter(Boolean).length)} words ·{" "}
+                        base sha256 {loaded.sha256.slice(0, 12)}… ·{" "}
+                        <span style={{ color: tokens.textMuted }}>
+                          (Cmd+S / Ctrl+S)
+                        </span>
                       </span>
                       {displaced !== null && (
                         <span
@@ -1408,12 +1927,7 @@ export function MemorySurface() {
                       </div>
                     )}
 
-                    {/* ── R24: LOUD AND PERSISTENT ────────────────────────────
-                        The editor above still holds his text — nothing below
-                        clears the draft or resets `dirty`. The status and the
-                        server's own message are both in the string, because
-                        api-vault.ts's error carries both rather than throwing
-                        the body away the way api.ts:29 does. */}
+                    {/* ── R24: LOUD AND PERSISTENT ──────────────────────────── */}
                     {saveState.kind === "error" && (
                       <div
                         style={{
@@ -1464,12 +1978,7 @@ export function MemorySurface() {
                       </div>
                     )}
 
-                    {/* ── R23: THE CONFLICT ───────────────────────────────────
-                        Both versions, stacked, both labelled, and NOTHING
-                        happens until he chooses. No merge under any heuristic,
-                        no silent retry with the new base — that is a clobber
-                        wearing a retry costume and it is the single behaviour
-                        R23 exists to forbid. Every path keeps his text. */}
+                    {/* ── R23: THE CONFLICT ─────────────────────────────────── */}
                     {saveState.kind === "conflict" && (
                       <div
                         style={{
@@ -1612,8 +2121,9 @@ export function MemorySurface() {
                               border: `1px solid ${tokens.dangerActionBorder}`,
                             }}
                           >
-                            Keep mine — overwrite the {n(saveState.conflict.current_bytes)}{" "}
-                            bytes now on disk
+                            Keep mine — overwrite the{" "}
+                            {n(saveState.conflict.current_bytes)} bytes now on
+                            disk
                           </span>
                           {saveState.conflict.current_content_truncated ? (
                             <span
@@ -1634,8 +2144,6 @@ export function MemorySurface() {
                           ) : (
                             <span
                               onClick={() => {
-                                // His text is DISPLACED, never destroyed: the
-                                // restore link above brings it back.
                                 setDisplaced(draft);
                                 setDraft(saveState.conflict.current_content);
                                 setLoaded({
@@ -1656,7 +2164,8 @@ export function MemorySurface() {
                                 border: `1px solid ${tokens.borderEmphasis}`,
                               }}
                             >
-                              Take theirs — load the disk version into the editor
+                              Take theirs — load the disk version into the
+                              editor
                             </span>
                           )}
                           <span
@@ -1680,36 +2189,323 @@ export function MemorySurface() {
                 )}
               </div>
             ) : (
+              /* ── RICH MARKDOWN READER (ReactMarkdown + remarkGfm + Wikilinks + Callouts) ── */
               <div
                 style={{
                   background: tokens.bgCard,
                   border: `1px solid ${tokens.border}`,
                   borderRadius: 8,
-                  padding: "16px 18px",
+                  padding: "20px 22px",
                   marginBottom: 22,
+                  color: tokens.textBody,
                 }}
               >
-                <pre
-                  style={{
-                    fontFamily: "inherit",
-                    fontSize: 14,
-                    color: tokens.textLabel,
-                    lineHeight: 1.66,
-                    margin: 0,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {note.body.slice(0, 4000)}
-                  {note.body.length > 4000 && (
-                    <span
-                      style={{ color: tokens.textMuted }}
-                    >{`\n\n… ${n(note.body.length - 4000)} more characters`}</span>
-                  )}
-                </pre>
+                {note.body ? (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      a: ({ href, children, ...props }) => {
+                        if (href?.startsWith("wikilink://")) {
+                          const rawTarget = decodeURIComponent(
+                            href.replace("wikilink://", ""),
+                          );
+                          return (
+                            <span
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleWikilinkClick(rawTarget);
+                              }}
+                              title={`Open note: ${rawTarget}`}
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 2,
+                                color: tokens.decide,
+                                background:
+                                  "rgba(var(--v2-accent-rgb, 140, 100, 255), 0.08)",
+                                border:
+                                  "1px solid rgba(var(--v2-accent-rgb, 140, 100, 255), 0.25)",
+                                borderRadius: 4,
+                                padding: "0.5px 5px",
+                                cursor: "pointer",
+                                textDecoration: "none",
+                                fontSize: "0.94em",
+                                fontFamily:
+                                  "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+                                fontWeight: 500,
+                                verticalAlign: "baseline",
+                              }}
+                            >
+                              <span style={{ opacity: 0.5, fontSize: "0.85em" }}>
+                                [[
+                              </span>
+                              {children}
+                              <span style={{ opacity: 0.5, fontSize: "0.85em" }}>
+                                ]]
+                              </span>
+                            </span>
+                          );
+                        }
+                        if (href?.startsWith("obsidian://")) {
+                          return (
+                            <a
+                              href={href}
+                              style={{
+                                color: tokens.decide,
+                                textDecoration: "underline",
+                              }}
+                              {...props}
+                            >
+                              {children}
+                            </a>
+                          );
+                        }
+                        return (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: tokens.accent,
+                              textDecoration: "underline",
+                            }}
+                            {...props}
+                          >
+                            {children}
+                          </a>
+                        );
+                      },
+                      blockquote: CalloutBlock,
+                      h1: ({ children }) => (
+                        <h1
+                          style={{
+                            fontSize: 20,
+                            fontWeight: 600,
+                            margin: "20px 0 10px",
+                            color: tokens.textHi,
+                            borderBottom: `1px solid ${tokens.borderDivider}`,
+                            paddingBottom: 6,
+                          }}
+                        >
+                          {children}
+                        </h1>
+                      ),
+                      h2: ({ children }) => (
+                        <h2
+                          style={{
+                            fontSize: 16.5,
+                            fontWeight: 600,
+                            margin: "18px 0 8px",
+                            color: tokens.textHi,
+                            borderBottom: `1px solid ${tokens.borderSoft}`,
+                            paddingBottom: 4,
+                          }}
+                        >
+                          {children}
+                        </h2>
+                      ),
+                      h3: ({ children }) => (
+                        <h3
+                          style={{
+                            fontSize: 14.5,
+                            fontWeight: 600,
+                            margin: "14px 0 6px",
+                            color: tokens.textLabel,
+                          }}
+                        >
+                          {children}
+                        </h3>
+                      ),
+                      h4: ({ children }) => (
+                        <h4
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            margin: "12px 0 4px",
+                            color: tokens.textSecondary,
+                          }}
+                        >
+                          {children}
+                        </h4>
+                      ),
+                      p: ({ children }) => (
+                        <p
+                          style={{
+                            margin: "0 0 10px 0",
+                            lineHeight: 1.68,
+                            color: tokens.textBody,
+                          }}
+                        >
+                          {children}
+                        </p>
+                      ),
+                      ul: ({ children }) => (
+                        <ul
+                          style={{
+                            margin: "0 0 10px 22px",
+                            padding: 0,
+                            color: tokens.textBody,
+                          }}
+                        >
+                          {children}
+                        </ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol
+                          style={{
+                            margin: "0 0 10px 22px",
+                            padding: 0,
+                            color: tokens.textBody,
+                          }}
+                        >
+                          {children}
+                        </ol>
+                      ),
+                      li: ({ children }) => (
+                        <li style={{ margin: "3px 0", lineHeight: 1.6 }}>
+                          {children}
+                        </li>
+                      ),
+                      input: ({ type, checked, ...props }) => {
+                        if (type === "checkbox") {
+                          return (
+                            <input
+                              type="checkbox"
+                              disabled
+                              checked={checked}
+                              style={{
+                                marginRight: 6,
+                                accentColor: tokens.accent,
+                                verticalAlign: "middle",
+                              }}
+                              {...props}
+                            />
+                          );
+                        }
+                        return <input type={type} checked={checked} {...props} />;
+                      },
+                      code: ({ children, className, ...props }) => {
+                        const inline = !className;
+                        if (inline) {
+                          return (
+                            <code
+                              style={{
+                                fontFamily:
+                                  "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+                                fontSize: "0.92em",
+                                background:
+                                  "rgba(var(--v2-accent-rgb, 140, 100, 255), 0.08)",
+                                padding: "1px 5px",
+                                borderRadius: 4,
+                                color: "var(--v2-accent-secondary, #b392f0)",
+                              }}
+                              {...props}
+                            >
+                              {children}
+                            </code>
+                          );
+                        }
+                        return (
+                          <code
+                            className={className}
+                            style={{
+                              fontFamily:
+                                "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+                              fontSize: 12,
+                              color: tokens.textLabel,
+                              background: "transparent",
+                            }}
+                            {...props}
+                          >
+                            {children}
+                          </code>
+                        );
+                      },
+                      pre: ({ children }) => (
+                        <pre
+                          style={{
+                            background: tokens.toolBg,
+                            border: `1px solid ${tokens.borderSoft}`,
+                            borderRadius: 7,
+                            padding: "12px 14px",
+                            overflowX: "auto",
+                            fontSize: 12,
+                            lineHeight: 1.55,
+                            margin: "0 0 10px 0",
+                          }}
+                        >
+                          {children}
+                        </pre>
+                      ),
+                      table: ({ children }) => (
+                        <div style={{ overflowX: "auto", margin: "12px 0" }}>
+                          <table
+                            style={{
+                              borderCollapse: "collapse",
+                              fontSize: 12,
+                              width: "100%",
+                            }}
+                          >
+                            {children}
+                          </table>
+                        </div>
+                      ),
+                      th: ({ children }) => (
+                        <th
+                          style={{
+                            textAlign: "left",
+                            padding: "7px 10px",
+                            borderBottom: `2px solid ${tokens.borderEmphasis}`,
+                            background: tokens.bgGutter,
+                            color: tokens.textLabel,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {children}
+                        </th>
+                      ),
+                      td: ({ children }) => (
+                        <td
+                          style={{
+                            padding: "6px 10px",
+                            borderBottom: `1px solid ${tokens.borderDivider}`,
+                            color: tokens.textBody,
+                          }}
+                        >
+                          {children}
+                        </td>
+                      ),
+                      hr: () => (
+                        <hr
+                          style={{
+                            border: 0,
+                            borderTop: `1px solid ${tokens.borderDivider}`,
+                            margin: "18px 0",
+                          }}
+                        />
+                      ),
+                    }}
+                  >
+                    {preprocessWikilinks(note.body)}
+                  </ReactMarkdown>
+                ) : (
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 11.5,
+                      color: tokens.textFaint,
+                      fontStyle: "italic",
+                      padding: "12px 0",
+                    }}
+                  >
+                    (empty note — 0 bytes on disk)
+                  </div>
+                )}
               </div>
             )}
 
+            {/* ── Wikilinks Section ─────────────────────────────────────── */}
             {note.wikilinks.length > 0 && (
               <>
                 <div
@@ -1734,7 +2530,7 @@ export function MemorySurface() {
                   {note.wikilinks.map((l, j) => (
                     <div
                       key={j}
-                      onClick={() => setSelSlug(l)}
+                      onClick={() => handleWikilinkClick(l)}
                       className="mono"
                       style={{
                         fontSize: 10.5,

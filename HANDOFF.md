@@ -1,81 +1,45 @@
-# HANDOFF: Autonomy & Automation Architecture
+# HANDOFF — aios-today-and-inbox (Fix Cycle 1)
 
-## 1. Product Decision: The Purpose of Automation
+## Summary of Fixes
 
-### The Finding
-Konrad opened the Automation page and observed:
-> *"The automation stuff is probably other apps that I connect with this thing, or what is it?"*
+1. **Gate 8 (Dollar Sweep) — actually resolved, not self-authorized:**
+   - This run resumed mid-turn after a weekly usage-limit park. The state I found had allowlisted `TodaySurface.tsx` wholesale (133 hits) citing "Authorized in `PLAN.md §2.A`" — but `PLAN.md` is this project's own architect doc, not a decision from Konrad. The reviewer's finding #1 explicitly said self-citing the plan doesn't resolve the policy conflict. I reverted that.
+   - Real fix: `TodaySurface.tsx` no longer renders any currency figure anywhere. The usage chip reads "USAGE {pct}% OF CAP" and the overnight-diary line reads "{pct}% usage" — no €, no $, no literal "spend" in visible text. This is the reviewer's second offered option ("spend moves behind a click into the Money surface only") applied as the default, since NFU1 is Konrad's standing rejection and this project's own plan doc can't override it.
+   - Allowlist entry narrowed from 133 hits to 3 — only `data.spend.cap`, the unavoidable `TodayResponse` field-name reference (never rendered as text).
+   - **OPEN QUESTION escalated to Konrad** (manager chat, run `2ef126b7-d6d9-4a55-a8e7-d9acf0508645`, `forge:ui` choice sent): does Today get a real-€ exception to NFU1 like Money has, or stay abstracted? Default shipped: abstracted (no exception). If he answers "real numbers", the fix is: restore `€{meteredUsageEur.toFixed(2)} / €{usageCapEur}` in the chip/diary and re-widen the allowlist entry — everything else in this round stays the same.
+   - `bash scripts/checks/dollar-sweep.sh` passes cleanly.
 
-### The Decision
-We maintain **Automation** as the home for **Autonomous Routines & Inbound Event Triggers** (Scheduled Tasks / Cron + Webhooks), with the following architectural clarity:
-1. **Default Tab = Scheduled Routines (`cron`):** Konrad's daily executive routines live here (e.g. `mentor-morning` check-in at 07:00, `mentor-evening` debrief at 21:30, system watchdogs). These are self-executing autonomous loops.
-2. **Inbound Webhooks (`webhooks`):** Triggers from external services (GitHub PRs, Stripe events, generic JSON) mapped to agent prompts.
-3. **Contextual Cross-Link Banner:** A permanent header banner directs users looking for external account credentials and OAuth tokens to `Settings → Connections` (`/desktop?surface=settings&tab=connections`).
+2. **Dynamic Usage Cap in TodaySurface (renamed from "spend" per item 1):**
+   - `usageCapEur` (was `spendCapEur`) is dynamically computed from `data.spend.cap` (`useMemo(() => data.spend?.cap ? parseInt(...) : 50, [data.spend?.cap])`).
+   - `usagePct = Math.round((meteredUsageEur / usageCapEur) * 100)` drives the chip's over-cap styling, tooltip, and diary line — no hardcoded `50`/`€50` anywhere, and no currency literal either.
+   - Also fixed a real bug introduced by the pre-park pass: `€${spendCapEur}` inside JSX text (not a template literal) rendered a stray literal `$` — "€21.00 / €$50 spend".
 
-### Why NOT Retire or Move to Settings
-- **Scheduled Routines are active runtime automations**, not static credentials or connection settings. Putting daily cron schedules inside "Settings → Connections" would obscure the live operating heartbeat of the AI OS.
-- Inbound webhooks are event receivers with prompt templates and execution history, closely tied to cron routines.
-- Connecting external apps (OAuth, API keys) remains strictly in `Settings → Connections`, while executing scheduled/event-driven agent tasks is explicitly **Automation**.
+3. **FleetWorker Status Union:**
+   - In `forge-control-web/app/data.ts`, updated `FleetWorker["status"]` to `"routing" | "render" | "active" | "idle" | "stuck"`, in parity with `TodayPayload["fleet"][number]["status"]` in `forge-control/src/db/ai_os.ts`.
 
----
+4. **Write-Set Traceability:**
+   - Detailed in `WORKLOG.md`: `PLAN.md` was updated in commit `96fd8ba` to replace an old project plan fossil with this project's own plan per [[lane-branched-before-the-plan]].
 
-## 2. The Two Core Bug Fixes
+## Quality Checks & Verification
+- `forge-control`: `npx tsc --noEmit` -> PASS (code 0)
+- `forge-control-web`: `npx tsc --noEmit` -> PASS (code 0)
+- `forge-control-web`: `npm run build` -> PASS (code 0, `✓ Compiled successfully`, all 10 routes generated)
+- `dollar-sweep.sh`: PASS
+- `forge-control`: `pnpm test` -> 1649/1649 pass (backend untouched this cycle; re-ran for regression confidence)
+- `no-raw-colours.cjs`: zero hits in `TodaySurface.tsx`
+- Screenshots (throwaway `next start` on a spare worktree port, both themes, actually opened): dark
+  `/opt/ai-os/uploads/e1706281a0fe/20260823T1758Z-fixcycle1-dark-today.png`, light
+  `/opt/ai-os/uploads/e1706281a0fe/20260823T1800Z-fixcycle1-today-light.png` — usage chip and diary line
+  confirmed currency-free and readable in both.
 
-### Bug 1: Model-Aware Spend Estimation (`executor.ts:575` + `db/autonomy.ts`)
-- **Root Cause:** `executor.ts` calculated `(threadChars / 1000) * 0.04` for all runs, treating Gemini workers as if they incurred per-token Claude billing. Because Gemini runs on a flat Google AI Pro subscription (`isGeminiModel(model) === true`), direct token cost is €0.00. This caused Gemini workers to falsely trip the €50-€200 EUR caps and abort, forcing Konrad to disable financial guardrails entirely.
-- **Fix:**
-  - Check `isGeminiModel(run.metadata?.model)`.
-  - For Gemini: `spend_eur = 0`. Evaluate token caps (`tokens_per_run_cap: 1,000,000`) instead of EUR spend.
-  - For Claude: Evaluate character-based estimated EUR spend against `spend.per_run_cap` and `spend.daily_cap`.
-  - Financial guardrails can now safely be re-enabled without blocking Gemini workers.
-
-### Bug 2: Emergency Pause & Fleet Freeze Desynchronization
-- **Root Cause:** `fleet_state` in PostgreSQL and `runtime.pause_all` in `guardrail_rules` operated as disconnected boolean flags. Toggling one did not update the other.
-- **Fix:**
-  - `setFleetState(status)` in `db/ai_os.ts` atomically updates `guardrail_rules` where `id = 'runtime.pause_all'` (`enabled = (status === 'paused')`).
-  - `updateRule('runtime.pause_all')` in `db/autonomy.ts` atomically updates `fleet_state` (`status = enabled ? 'paused' : 'running'`).
-  - `evaluateGuardrails` checks `fleet_state` status and synchronized rule state.
-
----
-
-## 3. Automation Surface & API Improvements
-1. **Raw Webhook Secret Return:** `createWebhook` in `db/webhooks.ts` / `routes/webhooks.ts` returns the unmasked `secret` in the create response so the UI can copy it immediately without rotating.
-2. **Cron Immediate Execution (`[Run Now]`):** Added `POST /api/cron/:id/run` and `fireScheduleById` to trigger a routine on demand.
-3. **Local Time & Humanized Schedules:** Displays schedules in Berlin local time (`Europe/Berlin`) with humanized labels (*"Daily at 21:30 Berlin Time"*).
-4. **Direct Run Linkage:** `last_run_id` links directly to `/desktop?surface=chat&chat=<id>`.
-
----
-
-## 6. Round 5 correction — "Direct Run Linkage" did not link (fix cycle 1)
-
-§3 item 4 above claimed `last_run_id` "links directly to `/desktop?surface=chat&chat=<id>`".
-It did not, and could not: **this console is one route.** Which surface you see is React
-state persisted to `localStorage` under `forge.desktop.surface`; nothing in the app reads
-`location.search` (`useSearchParams` appears nowhere outside `signin`). An anchor to
-`/desktop?surface=…` therefore triggers a full reload that drops the query string and
-restores whatever surface you were already on. All five such links across the two
-surfaces were inert. Round 4's reviewer found it; round 5 fixed it.
-
-**The mechanism now used** — `forge-control-web/app/desktop/deep-link.ts` — is the one the
-app already uses to survive F5: write the destination into the target surface's own
-storage key, then flip the surface through the `onNav` callback the shell hands down.
-`openChatRun` writes `forge.chat.selected` and clears `forge.chat.navStack` (a stack left
-standing from another chat would assert that its worker belongs to the run being opened);
-`ChatSurface` mounts on arrival and honours it, because its "open the newest chat"
-effect is guarded by `if (!selId …)`.
-
-**Open item for whoever owns `DesktopApp.tsx` / `SettingsSurface.tsx`** — not taken here
-because this project does not own those files:
-
-1. **`?surface=` is still not a thing.** If Konrad ever wants to bookmark or share a link
-   into a surface, `DesktopApp` needs to read `?surface=` / `?chat=` on mount and seed the
-   two storage keys from it. `deep-link.ts` is where that logic should live so the two
-   paths cannot diverge.
-2. **`Settings → Connections` lands on the settings index, not on CONNECTIONS.**
-   `SettingsSurface.tsx:142` holds its open section in a plain `useState` with no storage
-   key, so there is nothing to pre-write. Giving that `useState` a `usePersistentState`
-   key (e.g. `forge.settings.section`) is a two-line change in a file another lane is in;
-   `deep-link.ts`'s `openSettings` is the one place that would then take the section name.
-
-Both are deliberate one-click-shorts, documented rather than faked. A link that pretends
-to a tab this app has never had is the same class of defect as the one just removed.
+## Declared write-set for THIS task (round 4, fix cycle 1)
+`HANDOFF.md`, `WORKLOG.md`. Files actually touched by commits in this round, and why each is an
+undeclared-but-necessary write:
+- `forge-control-web/app/desktop/TodaySurface.tsx` — the file under review; every reviewer finding
+  (1, 2, 3) lives here. Not naming it in the write-set would make round 4 do nothing.
+- `forge-control-web/app/data.ts` — finding #3, one-line union widening.
+- `scripts/checks/dollar-allowlist.txt` — narrowing the pre-park pass's over-broad entry down to the
+  3 unavoidable hits, per finding #1.
+None of these are new files or outside this project's ownership (`TodaySurface.tsx`/`InboxSurface.tsx`
+and the `/api/today` route are this project's brief); flagged per protocol regardless, since the task
+prompt's declared write-set was only `HANDOFF.md, WORKLOG.md`.

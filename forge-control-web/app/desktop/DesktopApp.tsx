@@ -35,6 +35,9 @@ import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { GoalsSurface } from "./GoalsSurface";
+import { JournalSurface } from "./JournalSurface";
+import { LibrarySurface } from "./LibrarySurface";
+import { MapSurface } from "./MapSurface";
 import { QuotaRow } from "./quota/QuotaRow";
 import {
   ResizeHandle,
@@ -111,7 +114,10 @@ import {
 /** The keys this branch renders. `search` is in `SURFACES` but not in `NAV`;
  *  the other three (`journal`, `map`, `library`) are `NAV` entries carrying
  *  `unbuilt: true`. `goals` was a fourth until round 8 — see the note above. */
-type PlaceholderKey = "journal" | "map" | "library" | "search";
+/* Only `search` remains. JOURNAL was built on main; MAP and LIBRARY were built
+ * by this lane. Each side's copy block described the other's surface as
+ * "not built yet" — both were true separately and neither is true merged. */
+type PlaceholderKey = "search";
 
 interface PlaceholderCopy {
   tag: string;
@@ -132,45 +138,6 @@ interface PlaceholderCopy {
 }
 
 const PLACEHOLDER_SURFACES: Record<PlaceholderKey, PlaceholderCopy> = {
-  journal: {
-    tag: "JOURNAL",
-    state: "unbuilt",
-    headline: "JOURNAL is not built yet.",
-    subhead:
-      "Nothing failed to load here. This screen was never written — though, unlike GOALS, most of what it would show is already being recorded.",
-    purpose:
-      "A retrospective day view: a date strip to pick a day, the decisions taken that day, and narrative entries written by the machine rather than by hand.",
-    needs:
-      "A JournalSurface, and a date range on the /api/decisions route that already exists. The decisions log is not a wish: content_forge.decisions holds 120 rows written by the inbox resolve path, mounted and readable today, and no screen in this app reads them. Only the auto-written entries would need anything new — and a recurring LLM cost per day.",
-    scheduling:
-      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs the first two thirds at 1 round, 2 builders and no migration, and recommends dropping the auto-written entries rather than carrying a promise nobody intends to fund.",
-  },
-  map: {
-    tag: "MAP",
-    state: "unbuilt",
-    headline: "MAP is not built yet.",
-    subhead:
-      "Nothing failed to load here. This screen was never written, although three quarters of what it would show is already being measured elsewhere.",
-    purpose:
-      "An infrastructure inventory: what is running, on which host, behind which domain, writing to which volume, through which external provider.",
-    needs:
-      "A routes/map.ts aggregator and a MapSurface. Three of its four columns have live producers today — /api/pm2/list (24 processes, 19 online), /api/systemd/units (97 units) and /api/system/stats. Only domains has none: 19 nginx vhosts sit on disk and nothing parses them.",
-    scheduling:
-      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs it at 1 round, 3 builders and no migration — but says it should be built only after this project's connection probes land, so the provider column reuses that status contract instead of forking a second one.",
-  },
-  library: {
-    tag: "LIBRARY",
-    state: "unbuilt",
-    headline: "LIBRARY is not built yet.",
-    subhead:
-      "Nothing failed to load here, and this is not an empty grid. The screen was never written — the store behind it is not empty at all.",
-    purpose:
-      "The artefact store: what this OS itself produced — run screenshots, reports and generated outputs. The earlier copy promised scripts, voices, clips and templates; that is Content Forge's material and PIPELINE already owns it.",
-    needs:
-      "Only the screen. GET /api/uploads/index is mounted and answers over the artefact store in /opt/ai-os/uploads — more than 400 files when this screen was written (measured 2026-08-18; the store is live and every run adds to it, so read that as a floor and not as today's count). No new route, no table and no producer would have to be built — which is why this backing store was chosen over the four that were rejected.",
-    scheduling:
-      "Nobody is working on it, and os-usable-for-work does not build it. The artefact-store reading is a default taken on 2026-08-18 because the question went unanswered; your ruling overrides it, and overriding it is cheap while nothing is built. Costed at 1 round, 2 builders, no migration.",
-  },
   search: {
     tag: "SEARCH",
     state: "unreachable",
@@ -451,6 +418,13 @@ export function DesktopApp() {
               `main`'s 553fa38 line, carried forward unmodified — this merge is
               the integration that brings it in. */}
           {surface === "goals" && <GoalsSurface />}
+          {surface === "journal" && <JournalSurface />}
+          {surface === "library" && <LibrarySurface />}
+          {surface === "map" && (
+            <MapSurface
+              onNavigateSurface={(s) => isSurface(s) && setSurface(s)}
+            />
+          )}
           {isPlaceholderKey(surface) && (
             <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
           )}

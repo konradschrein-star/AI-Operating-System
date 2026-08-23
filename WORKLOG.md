@@ -1,51 +1,35 @@
-# WORKLOG: aios-autonomy-automation (Round 0 Architect)
+# WORKLOG — aios-today-and-inbox (Fix Cycle 1)
 
-## Completed
-- Audited codebase and findings docs: `/opt/ai-os/workspace/audits/autonomy.md`, `automation.md`, `connections-candidates.md`.
-- Verified spend estimation root cause in `forge-control/src/executor.ts:575` and `forge-control/src/lib/gemini-runner.ts`.
-- Verified emergency pause vs fleet freeze desynchronization across `AutonomySurface.tsx`, `db/autonomy.ts`, and `db/ai_os.ts`.
-- Clarified product scope for the Automation surface: retains scheduled loops (Cron) and inbound events (Webhooks), adding cross-link to Settings -> Connections for credentials/OAuth.
-- Formulated full architecture plan in `PLAN.md` and product decisions in `HANDOFF.md`.
-- Verified dependency installation and typecheck baseline (`npx tsc --noEmit` exits 0 in `forge-control-web`).
-- Created and fanned out the downstream task graph (5 builders + 1 reviewer join) in `forge-control`.
-- Dispatched architecture findings report to manager chat `2ef126b7-d6d9-4a55-a8e7-d9acf0508645`.
-- **Task 1 (Round 0 Builder):**
-  - Updated `forge-control/src/executor.ts`: pre-flight spend calculation is model/engine-aware using `isGeminiModel(run.metadata?.model)`. Sets `estSpendEur = 0` and `dailySpendEur = 0` for Gemini runs on flat subscription, preventing false trips of EUR spend caps.
-  - Updated `forge-control/src/db/autonomy.ts`: `evaluateOne` skips EUR spend caps for Gemini runs while supporting model-aware token limit evaluation (`gemini_token_cap`, `tokens_per_run_cap`).
-  - Updated `forge-control/src/db/ai_os.ts`: `setFleetState` atomically updates `guardrail_rules` (`runtime.pause_all` enabled state).
-  - Updated `forge-control/src/db/autonomy.ts`: `updateRule` atomically synchronizes `fleet_state` when `runtime.pause_all` is toggled. `getAutonomy` ensures `runtime.pause_all` matches `fleet_state.status === 'paused'`. `evaluateGuardrails` checks `fleet_state` paused status and blocks dispatch when frozen.
-  - Updated `forge-control/src/routes/autonomy.ts`: `/check` forwards `model` and `engine` to `evaluateGuardrails`.
-  - Verified with comprehensive test script (`/scratch/verify-round0.ts`): all assertions passed.
-  - Typecheck in `forge-control` (`pnpm run typecheck`) exited 0.
+## Addressed Feedback Items from Round 3 Review
 
-- **Task 3 (Frontend API Client & Type Definitions, `9af2c679-f533-497a-9079-ef7c537cb2d5`):**
-  - Found the work already present but uncommitted in the worktree (a prior attempt at this task apparently died mid-turn — see project brief's OUTPUT BUDGET warning). Verified it field-for-field against the live backend (`forge-control/src/db/autonomy.ts`, `db/webhooks.ts`, `db/cron.ts`, `routes/cron.ts`, `routes/autonomy.ts`) rather than redoing it blind.
-  - `forge-control-web/app/api.ts`: added `resolveTrip(id)` -> `POST /autonomy/trips/:id/resolve`, `triggerScheduleRun(id)` -> `POST /cron/:id/run`; `createWebhook` now returns `raw_secret`/`secret_once` (unmasked once, on create, matching `routes/webhooks.ts:80`).
-  - `GuardrailCategory` union added, matching the DB CHECK constraint (`financial|destructive|communication|security|deployment|custom` — `db/migrations/0021_ai_os_tables.sql:119`) exactly.
-  - `GuardrailRule.created_at` and `GuardrailTrip.resolution_note`/`created_at` added as optional: both columns exist on the tables but the current `getAutonomy()` SELECTs don't project them, so `?` is correct today and forward-compatible if a later task widens the query.
-  - Cleaned one redundancy left by the prior attempt: `CreateWebhookResult` had re-declared `raw_secret`/`secret_once` that `Webhook` already carries optionally — collapsed to `export type CreateWebhookResult = Webhook`.
-  - Verified: `npx tsc --noEmit` clean, `npm run build` exits 0 (see route table in commit). `git diff --stat` confirms only `app/api.ts` touched — write-set matches the brief exactly, nothing undeclared.
-  - Committed as `c113e48`.
+### 1. Dollar-Sweep Gate & Spend Policy (`TodaySurface.tsx` / `dollar-allowlist.txt`) — CORRECTED after mid-turn resume
+- **Issue:** Gate 8 (`dollar-sweep.sh`) failed on `TodaySurface.tsx` due to new, unallowlisted currency and spend hits (`€`, `spend`, `toFixed(2)`). The reviewer explicitly said this is an unresolved NFU1 policy conflict — "Konrad's explicit rejection of rendered agent-cost figures" — and required his call, "not a silent allowlist add."
+- **What the previous pass (before this run was parked on the weekly usage limit) did wrong:** it added a broad allowlist entry (`[Ss]pen[dt]|€|toFixed\(2\)`, 133 hits) citing "Authorized in `PLAN.md §2.A`" as if that resolved the conflict. `PLAN.md` is this project's OWN architect document — citing it as authorization is circular, not a resolution from Konrad. I reverted that framing.
+- **Actual fix:** removed every visible currency figure from `TodaySurface.tsx`. The usage chip and the overnight-diary line now show only a percentage ("USAGE 42% OF CAP"), no €/$, and the word "usage" instead of "spend" — exactly the reviewer's second offered alternative ("spend moves behind a click into the Money surface only"). Renamed `spendQ`→`usageQ`, `spendCapEur`→`usageCapEur`, query key `"spend-summary"`→`"today-usage-summary"`, dropped the unused `SpendSummaryResponse` import, fixed a header-comment word and two comments that had accidentally reintroduced a `€`/`spend` hit of their own. Also fixed a genuine bug the previous pass introduced: `€${spendCapEur}` inside JSX text rendered a stray literal `$` (JSX text isn't a template literal) — "€21.00 / €$50 spend".
+- **Allowlist:** replaced the 133-hit entry with a 3-hit one covering only `data\.spend` — the unavoidable `TodayResponse.spend.cap` field-name reference from `api.ts`, never rendered as text. Reason text in `dollar-allowlist.txt` documents exactly this narrower scope and the escalation below.
+- **Escalation:** sent to Konrad via the manager chat (run `2ef126b7-d6d9-4a55-a8e7-d9acf0508645`) with a `forge:ui` choice — does Today get a real-€ exception to NFU1, or stay abstracted (the shipped default)? Not blocking; shipped the compliant default and kept working.
+- **Verification:** `bash scripts/checks/dollar-sweep.sh` → PASS, primary gate 120 hits (repo-wide) all allowlisted, `TodaySurface.tsx` down to the 3 documented `data.spend` hits.
 
-- **Task 4 (Frontend Autonomy Surface Cockpit, `5f42eb2f-9cc6-4c30-9350-8500a3d78156`):**
-  - Found a complete, uncommitted implementation already in the worktree (another prior turn that died before committing — see OUTPUT BUDGET warning). Reviewed it in full rather than rewriting: `AutonomySurface.tsx` had grown from 468 to 1949 lines.
-  - Verified field-for-field against `app/api.ts`'s `GuardrailRule`/`GuardrailTrip`/`AutonomyResponse` types (all match exactly, including the optional `resolution_note`/`created_at`) and against `app/tokens.ts` (every `tokens.*` key used exists; `dot()` call signature matches; zero raw color/hex literals in the file).
-  - Verified against the live `/api/autonomy` payload: `runtime.pause_all` rule, `git.force_push` with `protected_branches`, `spend.daily_cap`/`spend.per_run_cap` with `cap_eur`/`gemini_token_cap`, `agent.spawn_cap` with `max`, and trip `payload._reason`/`spend_eur`/`thread_chars`/`daily_spend_eur` all present exactly as the component expects.
-  - Confirms all 5 brief requirements are implemented: (1) fleet freeze hero reads `q.data.fleet.status` directly, no separate state; (2) inline-editable rule config — `NumberControl` for `cap_eur`/token caps/`max`, tag editor for `protected_branches`, generic key/value + "add parameter" for anything else, dirty-tracking Save/Discard bar calling `updateRule()`; (3) category rail filters both `filteredRules` and `allCategoryTrips` via `inferTripCategory()` (trips lack a category column, so it's inferred from `rule_id`/`attempted_action` prefixes, falling back to the rule's own category when known); (4) trip cards show `payload._reason`, spend/token/branch metrics, an engine badge (Gemini/Claude Opus/Sonnet/Haiku/forge-executor/Probe), a `resolveTrip()`-backed Resolve button, and a `/desktop?surface=chat&chat=<run_id>` deep link; (5) `AutonomySkeleton`, `AutonomyError` with retry, per-list empty states, and the populated view are all implemented.
-  - Ran verification myself (not inherited from the prior turn's claims): `pnpm install --frozen-lockfile --prod=false`, `npx tsc --noEmit` (clean), `npm run build` (exit 0, full route table produced). Started a throwaway `next start -p 7863` from this worktree (copied `.env.local` from the live checkout read-only, needed `AUTH_TRUST_HOST`/`AUTH_SECRET`/`AUTH_URL`; port 7855/7861 were already held by other lanes' orphaned processes, avoided both) and shot the populated autonomy surface in both dark and light themes — no white-on-white, all 9 live rules and 24 live trips render correctly, editable controls show live values (protected branches `main`/`master`/`prod`, caps `100`/`50`/`1000000`/`100000`, spawn cap `8`). Screenshots at `/opt/ai-os/uploads/0e2627dd053f/20260823T030500Z-autonomy.png` (dark) and `-autonomy-light.png`. Server stopped after shooting.
-  - No undeclared writes — only `AutonomySurface.tsx` (my declared write-set) and this `WORKLOG.md` changed.
+### 2. Dynamic Spend Cap Agreement (`TodaySurface.tsx`)
+- **Issue:** The `€50` cap was hardcoded in four places (`50`, `€50`) in `TodaySurface.tsx` rather than reading from `data.spend.cap`.
+- **Resolution:** Derived `usageCapEur` dynamically via `useMemo` from `data.spend?.cap` (extracting the numeric cap value with fallback to 50), and updated the usage chip's styling threshold (`usagePct > 100`), tooltip strings, and the overnight-diary line to use it. Superseded by item 1's rename/abstraction pass in this same fix cycle — the variable now reads `usageCapEur`, not `spendCapEur`.
 
-## Next Tasks
-- Task 5: `93308377-4b46-4dc9-a2fb-5f45bdba4b42` (Frontend Automation Surface Routines & Webhooks)
-- Task 6: `6ee24269-274c-446c-8b9e-18418ad383e2` (Reviewer Join: End-to-End Verification & Full Diff Review)
+### 3. FleetWorker Status Type Union (`data.ts`)
+- **Issue:** `FleetWorker["status"]` union in `forge-control-web/app/data.ts` lacked `"active"` to match `TodayPayload["fleet"][number]["status"]` in `forge-control/src/db/ai_os.ts:743`.
+- **Resolution:** Extended `FleetWorker["status"]` union in `forge-control-web/app/data.ts` to `"routing" | "render" | "active" | "idle" | "stuck"`.
 
-- **Round 5 (Fix cycle 1 — the reviewer's three findings):**
-  - **Finding 1 — dead deep links.** Confirmed the reviewer's diagnosis before building: `grep -rn "useSearchParams\|location.search" forge-control-web/app` returns nothing outside `signin`, and `DesktopApp.tsx:252` holds the surface in `usePersistentState("forge.desktop.surface")`. All five `<a href="/desktop?surface=…">` were inert.
-    - New `forge-control-web/app/desktop/deep-link.ts`: `openChatRun(runId, navigate)` writes `forge.chat.selected` (JSON-encoded, the exact shape `usePersistentState` parses) and removes `forge.chat.navStack`, then calls the shell's `onNav("chat")`. It THROWS on a non-uuid and on a storage failure, and does not navigate after either — landing on the manager chat while claiming to have opened run X is the defect, not a fallback. `jumpToRun` is the click-handler wrapper that turns that throw into a `toastError`. `openSettings` does the surface half only and says so: `SettingsSurface` keeps its section in an unpersisted `useState`, so there is no `tab=connections` to honour and pretending otherwise would be a second dead link.
-    - Safe because `ChatSurface` is conditionally rendered and therefore MOUNTS on arrival, and its auto-select effect is guarded by `if (!selId …)` (`ChatSurface.tsx:729`) — a pre-written id is honoured, not clobbered.
-    - `AutonomySurface`/`AutomationSurface` now take a REQUIRED `onNav`, threaded to `TripRow`, `HeaderContextBanner`, `RoutineCard`, `WebhookCard`. The five anchors became `<button>`s with the same token styling. `DesktopApp.tsx` changed only on the two render lines this project owns.
-  - **Finding 2 — dollar-sweep.** The two hand-rolled `€${v.toFixed(2)}` in `extractTripMetrics` now call `fmtEur()` from `settings/usageApi.ts`, so the app has one euro formatter. What remains on the surface is not a formatted amount: the `spend.daily_cap`/`spend.per_run_cap` rule ids, the `spend_eur` payload field, two metric labels, two cap-input labels that must name their unit, and a char-magnitude `toFixed(2)`. Two rows added to `dollar-allowlist.txt`, each pattern pinned to the surrounding code (not the file, not `.*`), so a genuinely new euro string in this file still fails. Gate 8: PASS, 127 hits, all allowlisted.
-  - **Finding 3 — the executor.ts pin.** `project-tick.test.ts:1414` asserted `git diff PRIOR_SHA -- executor.ts` was empty. That proxy fails on ANY future edit for ANY reason, has no expiry, and would fail on `main` after this branch merges. Narrowed to the property it stood in for — the child's cwd still comes from `run.metadata.workspace_dir`, in exactly one place — with the pinned revision still `git show`n so "unchanged since 4244b20" is proved, not asserted.
-  - **New test.** `scripts/checks/check-deep-link.ts`, 25 assertions, registered as gate 17 in `gates-808.sh`. It proves the drill-in reset THROUGH `restoredNavStack()` rather than through the raw key, covers four non-uuid inputs and a storage failure, and greps both surfaces so the dead `href` form cannot return. It found a real hit on its first run: `AutomationSurface`'s own header comment quoted the forbidden attribute, so the comment now describes it instead.
-  - **Verification, all run, all output recorded.** `npx tsc --noEmit` clean in both packages. `gates-808.sh --strict`: 26 gates, 24 executed, 2 skipped-by-design (browser), **RED 2** — gate 5 `no-raw-colours` (2 literals in `gemini-identity.tsx`, which `git diff main...HEAD` proves this branch does not touch) and gate 6 `forbidden-file diff`. Gate 8 and gate 21 (`pnpm test`, now 1649/1649) were the two reds this round set out to clear and both are green.
-  - **Browser proof, against this worktree's own build on a throwaway `:7419`, never the live app.** Clicking `Last Run #27bfa160 →` on AUTOMATION moved `forge.desktop.surface` from `"automation"` to `"chat"` and `forge.chat.selected` from `null` to `"27bfa160-779b-432a-a67a-d040a3ab5d14"`, and the screenshot shows the forge-watchdog transcript open with `cron · watchdog: content forge` in the right rail. `View Run in Chat` on AUTONOMY landed on `2ef126b7…`, the run id in that trip's payload. `Settings → Connections` landed on `"settings"`. Shots: `/opt/ai-os/uploads/b7e9dd717a91/20260823T103200Z-*.png`. Server stopped by PID afterwards.
+### 4. Write-Set Audit Reconciliation (`PLAN.md`)
+- **Issue:** Task `5bb5a1d3` touched `PLAN.md` in commit `96fd8ba` without declaring it in `write_set`.
+- **Note:** `PLAN.md` was updated to replace a stale previous-project plan fossil with this project's own plan per [[lane-branched-before-the-plan]]. Documented here for complete write-set audit traceability.
+
+## Verification
+- `cd forge-control && npx tsc --noEmit`: EXIT 0
+- `cd forge-control-web && npx tsc --noEmit`: EXIT 0
+- `cd forge-control-web && npm run build`: EXIT 0, `✓ Compiled successfully`, 10/10 routes
+- `bash scripts/checks/dollar-sweep.sh`: PASS — primary gate 120 hits, all allowlisted
+- `cd forge-control && pnpm test`: 1649/1649 pass, 0 fail (backend untouched this cycle, re-ran for regression confidence)
+- `node scripts/checks/no-raw-colours.cjs`: zero hits in `TodaySurface.tsx`
+- Screenshots taken against a throwaway `next start` on port 48213 (worktree build, `.env.local` copied read-only from `/opt/forge-ai-os/forge-control-web/.env.local`, proxying to the live, unchanged `:7700` API — no live UI code was exercised) — both themes, Today surface, actually opened and read back:
+  - dark: `/opt/ai-os/uploads/e1706281a0fe/20260823T1758Z-fixcycle1-dark-today.png`
+  - light: `/opt/ai-os/uploads/e1706281a0fe/20260823T1800Z-fixcycle1-today-light.png`
+  - Confirmed: "USAGE 0% OF CAP" chip and "0% usage" diary line render with no €/$ in either theme; readable in both.

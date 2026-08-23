@@ -435,3 +435,39 @@ export async function fetchMemoryNoteV2(
   );
   return r.note;
 }
+
+/* ============================================================================
+ * Search Hit Types (v2.3)
+ * ==========================================================================*/
+
+export interface MemorySearchHitV2 {
+  slug: string;
+  vault_path: string;
+  title: string;
+  snippet: string;
+  score: number;
+  chunk_index: number;
+  note_kind?: string;
+  via?: "title" | "tag" | "vector" | "graph";
+  match_type?:
+    | "exact_title"
+    | "title_match"
+    | "tag_match"
+    | "vector"
+    | "graph"
+    | "empty"
+    | "drawing"
+    | string;
+  match_reason?: string;
+  is_empty?: boolean;
+  is_drawing?: boolean;
+  tags?: string[];
+  hop?: number;
+  explain?: {
+    kind?: string;
+    raw_score?: number;
+    weight?: number;
+    age_days?: number;
+  };
+}
+

@@ -191,6 +191,39 @@ export async function listOpenInbox(limit = 50): Promise<InboxItem[]> {
   })) as InboxItem[];
 }
 
+export interface ResolvedInboxItem extends InboxItem {
+  resolved_at: string;
+  resolved_by: string;
+  resolution: Record<string, unknown>;
+}
+
+/** History tab (audit finding: resolved rows exist — 178 of them at last
+ *  count — but nothing in the UI could ever reach them). `age` is measured
+ *  from `resolved_at` here, not `created_at` like the open-item shape: what
+ *  the history view answers is "how long ago was this handled", not "how
+ *  old was the item when it landed". */
+export async function listResolvedInbox(
+  limit = 50,
+): Promise<ResolvedInboxItem[]> {
+  const r = await pool.query(
+    `SELECT id, type, status, title, ask, tried, actions, source,
+            related_job_id, related_worker_id, escalation_count,
+            created_at::text AS created_at,
+            resolved_at::text AS resolved_at,
+            resolved_by,
+            resolution
+       FROM inbox_items
+      WHERE resolved_at IS NOT NULL
+      ORDER BY resolved_at DESC
+      LIMIT $1`,
+    [limit],
+  );
+  return r.rows.map((row) => ({
+    ...row,
+    age: humanAge(row.resolved_at),
+  })) as ResolvedInboxItem[];
+}
+
 /* ============================================================================
  * Inbox preview — JOIN against content_jobs so the desktop/mobile inbox card
  * can show video player + scene thumbs + stats instead of just title + buttons.
@@ -356,7 +389,12 @@ export async function getInboxItemPreview(
   let video: InboxPreview["video"] = null;
   if (sizeMb > 0 || durationSec > 0) {
     video = {
-      url: `/api/media/job/${row.job_id}/final.mp4`,
+      // No `/api` prefix: the client always prepends `/api/proxy`
+      // (next.config.mjs rewrites `/api/proxy/:path*` to the forge-control
+      // `/api/:path*`), so an `/api`-prefixed url here doubled up into
+      // `/api/proxy/api/media/...` → forge-control saw `GET /api/api/media/...`
+      // and 404'd. Verified: routes/media.ts mounts at `/api/media`.
+      url: `/media/job/${row.job_id}/final.mp4`,
       poster_url: null,
       duration_sec: durationSec,
       size_mb: sizeMb,
@@ -383,7 +421,7 @@ export async function getInboxItemPreview(
     scenes.push({
       index: typeof s.scene_index === "number" ? s.scene_index : i,
       thumb_url: thumbBasename
-        ? `/api/media/job/${row.job_id}/asset/${thumbBasename}`
+        ? `/media/job/${row.job_id}/asset/${thumbBasename}`
         : null,
       duration_sec:
         s.duration_frames && fps
@@ -665,14 +703,29 @@ export async function replyToHcpIfMirrored(opts: {
  * Decisions
  * ========================================================================== */
 
-export async function listDecisions(limit = 50): Promise<Decision[]> {
+/**
+ * `day`, given alone, scopes to one Europe/Berlin calendar day (the JOURNAL
+ * timeline's per-day decisions stream) — matched via `AT TIME ZONE`, not a JS
+ * UTC-midnight range, for the same reason lib/day-score.ts's berlinDay() exists:
+ * this box's clock is UTC and a naive range would put entries between
+ * 22:00–00:00 UTC on the wrong day. `from`/`to` are a raw timestamptz range for
+ * callers that already have instants. Both may be passed; `day` takes
+ * precedence when it disagrees with a `from`/`to` that spans multiple days.
+ */
+export async function listDecisions(
+  limit = 50,
+  filters: { day?: string; from?: string; to?: string } = {},
+): Promise<Decision[]> {
   const r = await pool.query<Decision>(
     `SELECT id, ts::text AS ts, kind, actor, action, payload,
             inbox_item_id, related_job_id
        FROM decisions
+      WHERE ($2::date IS NULL OR (ts AT TIME ZONE 'Europe/Berlin')::date = $2::date)
+        AND ($3::timestamptz IS NULL OR ts >= $3::timestamptz)
+        AND ($4::timestamptz IS NULL OR ts < $4::timestamptz)
       ORDER BY ts DESC
       LIMIT $1`,
-    [limit],
+    [limit, filters.day ?? null, filters.from ?? null, filters.to ?? null],
   );
   return r.rows;
 }
@@ -718,7 +771,10 @@ export interface TodayPayload {
   fleet: {
     name: string;
     state: string;
-    status: "routing" | "render" | "idle" | "stuck";
+    /** "active" = a general-purpose worker that's running but isn't in the
+     *  orchestrator/render buckets. Added alongside the today.ts fix that
+     *  stopped forcing every running non-orchestrator worker to "idle". */
+    status: "routing" | "render" | "active" | "idle" | "stuck";
   }[];
   spend: { value: string; cap: string };
   shipped: { value: string; pipeline: string };

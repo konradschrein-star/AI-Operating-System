@@ -15,13 +15,21 @@ import { promises as fs, createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
 import crypto from "node:crypto";
-import { listAllRuns, listRunShots } from "../lib/uploads-index.ts";
+import {
+  ID_RE,
+  invalidateRunsCache,
+  listAllRuns,
+  listRunShots,
+} from "../lib/uploads-index.ts";
 
 const r = new Hono();
 
 const UPLOAD_DIR = process.env.UPLOAD_DIR ?? "/opt/ai-os/uploads";
 const MAX_FILE_BYTES = Number(process.env.UPLOAD_MAX_BYTES ?? 30 * 1024 * 1024);
-const ID_RE = /^[a-f0-9]{12}$/;
+/* ID_RE is imported, not redeclared: the directory-name gate guarding path
+ * joins here and the one the indexer filters with must be the same regex, or
+ * a directory shape becomes servable-but-unlisted (or the reverse). It admits
+ * a 12-hex run id and a full run UUID. */
 
 const MIME_BY_EXT: Record<string, string> = {
   ".png": "image/png",
@@ -37,6 +45,15 @@ const MIME_BY_EXT: Record<string, string> = {
   ".md": "text/markdown; charset=utf-8",
   ".json": "application/json",
   ".csv": "text/csv",
+  // Run artefacts the library now lists: served as text so the viewer shows
+  // them instead of offering a download of an octet-stream.
+  ".patch": "text/plain; charset=utf-8",
+  ".diff": "text/plain; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".jsonl": "text/plain; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".webm": "video/webm",
+  ".wav": "audio/wav",
 };
 
 function safeName(name: string): string {
@@ -91,6 +108,10 @@ r.post("/", async (c) => {
       size: f.size,
     });
   }
+  // New directories exist as of this instant; the index caches its readdir
+  // sweep for 10s and would otherwise report the store as it was before this
+  // upload — an attachment that "did not arrive" in the library.
+  invalidateRunsCache();
   console.log(
     `[uploads] stored ${out.length} file(s): ${out.map((f) => f.name).join(", ")}`,
   );
@@ -105,14 +126,31 @@ r.get("/index", async (c) => {
   return c.json({ runs });
 });
 
+/**
+ * GET /api/uploads/:id/shots            images only (the camera strip)
+ * GET /api/uploads/:id/shots?include=all  + run artefacts (the library)
+ *
+ * The default stays images-only on purpose: BrowserShots.tsx renders every
+ * entry it receives inside an `<img>`.
+ */
 r.get("/:id/shots", async (c) => {
   const id = c.req.param("id");
   if (!ID_RE.test(id)) return c.json({ error: "bad id" }, 400);
+  const includeParam = c.req.query("include") ?? "images";
+  if (includeParam !== "images" && includeParam !== "all") {
+    return c.json({ error: `include must be "images" or "all"` }, 400);
+  }
   const dir = path.join(UPLOAD_DIR, id);
   const st = await fs.stat(dir).catch(() => null);
   if (!st || !st.isDirectory()) return c.json({ error: "not found" }, 404);
-  const shots = await listRunShots(dir);
-  return c.json({ id, shots });
+  const shots = await listRunShots(dir, { include: includeParam });
+  return c.json({
+    id,
+    include: includeParam,
+    count: shots.length,
+    image_count: shots.filter((s) => s.kind === "image").length,
+    shots,
+  });
 });
 
 r.get("/:id/:name", async (c) => {
