@@ -250,6 +250,62 @@ export function isNamedVhost(d: MapDomain): boolean {
   return d.domain !== "_" && d.domain !== "(no server_name)";
 }
 
+/** A server name, once — with every block that declares it folded in. */
+export interface NamedVhost extends Omit<MapDomain, "file"> {
+  /** Every config file declaring this name, in scan order. Usually one. */
+  files: string[];
+}
+
+/**
+ * The named vhosts as NAMES, not as server blocks.
+ *
+ * `/api/map` emits one row per (server_name × server block) — the unit nginx
+ * is configured in — so the ordinary `:80` redirect + `:443` TLS pair arrives
+ * twice under one name. Counting rows printed "35 server names" on a box that
+ * answers for 18. The merge lives here rather than at each call site so the
+ * header chip, the ingress node and its children read one list and cannot
+ * drift apart again, the same reason `isNamedVhost` is shared.
+ *
+ * Ports, upstreams and roots are unioned; `ssl` is true if ANY block for the
+ * name terminates TLS; the certificate fields come from the first block that
+ * has one — the redirect block carries nulls, and letting those win would
+ * report a live certificate as absent.
+ */
+export function namedVhosts(domains: MapDomain[]): NamedVhost[] {
+  const byName = new Map<string, NamedVhost>();
+  for (const d of domains) {
+    if (!isNamedVhost(d)) continue;
+    const seen = byName.get(d.domain);
+    if (seen === undefined) {
+      byName.set(d.domain, {
+        domain: d.domain,
+        files: [d.file],
+        ports: [...d.ports],
+        ssl: d.ssl,
+        upstreams: [...d.upstreams],
+        roots: [...d.roots],
+        ssl_expires_at: d.ssl_expires_at,
+        ssl_days_left: d.ssl_days_left,
+        ssl_error: d.ssl_error,
+      });
+      continue;
+    }
+    if (!seen.files.includes(d.file)) seen.files.push(d.file);
+    for (const p of d.ports) if (!seen.ports.includes(p)) seen.ports.push(p);
+    for (const u of d.upstreams) if (!seen.upstreams.includes(u)) seen.upstreams.push(u);
+    for (const r of d.roots) if (!seen.roots.includes(r)) seen.roots.push(r);
+    if (d.ssl && !seen.ssl) {
+      seen.ssl = true;
+      seen.ssl_expires_at = d.ssl_expires_at;
+      seen.ssl_days_left = d.ssl_days_left;
+      seen.ssl_error = d.ssl_error;
+    }
+  }
+  const merged = [...byName.values()];
+  for (const v of merged) v.ports.sort((a, b) => a - b);
+  return merged;
+}
+
 /* ── Formatting shared by the map components ─────────────────────────────── */
 
 export function formatBytes(bytes: number): string {

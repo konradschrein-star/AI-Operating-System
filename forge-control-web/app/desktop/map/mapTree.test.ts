@@ -29,6 +29,7 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import { buildMapTree, walkNodes, nodeMatches } from "./mapTree";
+import { namedVhosts } from "./mapApi";
 import type { MapPayload } from "./mapApi";
 
 /* ── Fixture ─────────────────────────────────────────────────────────────────
@@ -139,9 +140,14 @@ function payload(overrides: Partial<MapPayload["sections"]> = {}): MapPayload {
         source: "/etc/nginx/sites-enabled",
         data: {
           dir: "/etc/nginx/sites-enabled",
-          files: 2,
-          count: 3,
+          files: 4,
+          count: 6,
           errors: [],
+          /* SIX rows, THREE names. The route emits one row per
+           * (server_name × server block), so the ordinary :80-redirect +
+           * :443-TLS pair arrives twice under one name — on the real box, 37
+           * rows for 18 names. `os` has its TLS block first, `hub` has it
+           * second: the merge must find the certificate either way. */
           domains: [
             {
               domain: "os.schreinercontentsystems.com",
@@ -161,6 +167,40 @@ function payload(overrides: Partial<MapPayload["sections"]> = {}): MapPayload {
               ssl: false,
               upstreams: [],
               roots: ["/var/www/certbot"],
+              ssl_expires_at: null,
+              ssl_days_left: null,
+              ssl_error: null,
+            },
+            {
+              domain: "hub.schreinercontentsystems.com",
+              file: "hub.conf",
+              ports: [80],
+              ssl: false,
+              upstreams: [],
+              roots: ["/var/www/certbot"],
+              ssl_expires_at: null,
+              ssl_days_left: null,
+              ssl_error: null,
+            },
+            {
+              domain: "hub.schreinercontentsystems.com",
+              file: "hub.conf",
+              ports: [443],
+              ssl: true,
+              upstreams: ["http://127.0.0.1:7702"],
+              roots: [],
+              ssl_expires_at: "2026-09-01T00:00:00.000Z",
+              ssl_days_left: 9,
+              ssl_error: null,
+            },
+            // A name with no TLS block anywhere — the bare IP on the real box.
+            {
+              domain: "65.108.6.149",
+              file: "default-ip.conf",
+              ports: [80],
+              ssl: false,
+              upstreams: [],
+              roots: [],
               ssl_expires_at: null,
               ssl_days_left: null,
               ssl_error: null,
@@ -268,15 +308,19 @@ describe("links", () => {
     const linked = nodes.filter((n) => n.publicUrl !== undefined);
     assert.deepEqual(
       linked.map((n) => n.publicUrl),
-      ["https://os.schreinercontentsystems.com"],
+      [
+        "https://os.schreinercontentsystems.com",
+        "https://hub.schreinercontentsystems.com",
+      ],
       "a link appeared that nginx did not authorise",
     );
   });
 
-  test("a plain-HTTP vhost gets no link — it is the ACME/redirect server", () => {
+  test("a name with no TLS block anywhere gets no link", () => {
     const { nodes } = allNodes(payload());
     const http = nodes.find((n) => n.type === "domain" && n.statusLabel.includes("plain HTTP"));
-    assert.ok(http, "the :80 vhost should still be a node");
+    assert.ok(http, "the HTTP-only vhost should still be a node");
+    assert.equal(http.label, "65.108.6.149");
     assert.equal(http.publicUrl, undefined);
   });
 
@@ -289,7 +333,74 @@ describe("links", () => {
     );
     const ingress = nodes.find((n) => n.id === "ingress-nginx");
     assert.ok(ingress);
-    assert.match(ingress.label, /2 server names/);
+    assert.match(ingress.label, /3 server names/);
+  });
+});
+
+/* ── 2b. A name is counted once, however many blocks declare it ──────────── */
+
+describe("server names are names, not server blocks", () => {
+  test("the :80 and :443 blocks of one name are one node, one count", () => {
+    const { nodes } = allNodes(payload());
+    const os = nodes.filter(
+      (n) => n.type === "domain" && n.label === "os.schreinercontentsystems.com",
+    );
+    assert.equal(os.length, 1, "one name, one node — the pair must be merged");
+
+    const ingress = nodes.find((n) => n.id === "ingress-nginx");
+    assert.ok(ingress);
+    // 6 rows in the payload, 3 names on the box: os, hub, the bare IP.
+    assert.match(ingress.label, /3 server names/);
+    assert.equal(
+      ingress.facts.find((f) => f.label === "Server names")?.value,
+      "3",
+      "the ingress fact must count what the label counts",
+    );
+    assert.equal(
+      ingress.facts.find((f) => f.label === "Vhost files")?.value,
+      "4",
+      "files stay files — only the name count is deduped",
+    );
+  });
+
+  test("the merged node keeps every port and the certificate of the TLS block", () => {
+    const { nodes } = allNodes(payload());
+    // `hub` is the hard ordering: its plain :80 block is listed BEFORE the
+    // :443 one, so taking the first row's fields would report no certificate.
+    const hub = nodes.find(
+      (n) => n.type === "domain" && n.label === "hub.schreinercontentsystems.com",
+    );
+    assert.ok(hub);
+    assert.equal(hub.facts.find((f) => f.label === "Ports")?.value, "80, 443");
+    assert.equal(hub.facts.find((f) => f.label === "Certificate")?.value, "expires 2026-09-01");
+    assert.equal(hub.statusLabel, "TLS · 9 days left");
+    assert.equal(hub.status, "partial", "9 days left is amber, not green");
+    assert.equal(hub.publicUrl, "https://hub.schreinercontentsystems.com");
+    assert.equal(
+      hub.facts.find((f) => f.label === "Upstreams")?.value,
+      "http://127.0.0.1:7702",
+      "the upstream of the TLS block must survive the merge",
+    );
+  });
+
+  test("only the names with TLS are reported as having it", () => {
+    const { nodes } = allNodes(payload());
+    const ingress = nodes.find((n) => n.id === "ingress-nginx");
+    assert.ok(ingress);
+    // 4 of the 6 rows carry ssl:true or sit beside one; 2 of the 3 NAMES do.
+    assert.equal(ingress.facts.find((f) => f.label === "With TLS")?.value, "2");
+  });
+
+  test("the header chip and the ingress node count the same list", () => {
+    // MapSurface's chip and the tree both call namedVhosts(), so the number
+    // Konrad reads at the top is the number the node under it shows.
+    const rows = payload().sections.domains;
+    assert.ok(rows && rows.ok);
+    const chip = namedVhosts(rows.data.domains).length;
+    const ingress = allNodes(payload()).nodes.find((n) => n.id === "ingress-nginx");
+    assert.ok(ingress);
+    assert.equal(ingress.facts.find((f) => f.label === "Server names")?.value, String(chip));
+    assert.equal(chip, 3);
   });
 });
 

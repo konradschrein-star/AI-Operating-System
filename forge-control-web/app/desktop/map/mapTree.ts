@@ -32,7 +32,7 @@ import type {
   MapSection,
   MapSectionName,
 } from "./mapApi";
-import { formatBytes, formatUptime, isNamedVhost, sectionError } from "./mapApi";
+import { formatBytes, formatUptime, namedVhosts, sectionError } from "./mapApi";
 import type { MindMapNode, MindMapStatus } from "./MapInspectorDrawer";
 
 /** A top-level column of the mind map. */
@@ -336,17 +336,17 @@ function infrastructureBranch(payload: MapPayload): MapBranch {
   if (domains && domains.ok) {
     const at = checkedAt(domains);
     const source = sourceOf(domains, "/etc/nginx/sites-enabled");
-    const real = domains.data.domains.filter(isNamedVhost);
+    const real = namedVhosts(domains.data.domains);
     nodes.push({
       id: "ingress-nginx",
-      label: `Nginx ingress · ${real.length} server names`,
+      label: `Nginx ingress · ${real.length} server name${real.length === 1 ? "" : "s"}`,
       type: "group",
       status: domains.data.errors.length > 0 ? "partial" : "up",
       statusLabel:
         domains.data.errors.length > 0
           ? `${domains.data.errors.length} vhost file(s) could not be parsed`
           : `${domains.data.files} vhost files parsed cleanly`,
-      description: `Front doors configured in ${domains.data.dir}. Catch-all servers are excluded from the count; they answer for no name.`,
+      description: `Front doors configured in ${domains.data.dir}. Counted by name, not by server block: catch-alls answer for no name, and a name's :80 redirect and :443 block are one front door.`,
       source,
       checkedAt: at,
       facts: [
@@ -363,7 +363,9 @@ function infrastructureBranch(payload: MapPayload): MapBranch {
       ],
       tags: ["nginx", "ingress"],
       children: real.map((d) => ({
-        id: `dom-${slug(d.domain)}-${d.ports.join("-")}`,
+        /* The name is unique after the merge, so it is the whole id — no port
+         * suffix, and the id no longer moves when a listen directive does. */
+        id: `dom-${slug(d.domain)}`,
         label: d.domain,
         type: "domain" as const,
         status: d.ssl
@@ -375,8 +377,8 @@ function infrastructureBranch(payload: MapPayload): MapBranch {
           ? d.ssl_days_left === null
             ? `TLS configured${d.ssl_error ? ` — certificate unreadable: ${d.ssl_error}` : ""}`
             : `TLS · ${d.ssl_days_left} days left`
-          : "plain HTTP (usually the ACME/redirect server)",
-        description: `Declared in ${d.file}.`,
+          : "plain HTTP — no block for this name terminates TLS",
+        description: `Declared in ${d.files.join(", ")}.`,
         source,
         checkedAt: at,
         facts: [
@@ -392,7 +394,10 @@ function infrastructureBranch(payload: MapPayload): MapBranch {
                   ? "—"
                   : `expires ${d.ssl_expires_at.slice(0, 10)}`,
           },
-          { label: "Config file", value: d.file },
+          {
+            label: d.files.length === 1 ? "Config file" : "Config files",
+            value: d.files.join(", "),
+          },
         ],
         publicUrl: d.ssl ? `https://${d.domain}` : undefined,
         tags: ["nginx", d.ssl ? "tls" : "http"],

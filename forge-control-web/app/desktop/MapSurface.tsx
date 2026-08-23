@@ -25,7 +25,7 @@ import "./MapSurface.css";
 import { CanvasPane } from "./CanvasPane";
 import { VisualMindMap } from "./map/VisualMindMap";
 import { TopologyAtlasGrid } from "./map/TopologyAtlasGrid";
-import { fetchMap, isNamedVhost, sectionData, type MapPayload } from "./map/mapApi";
+import { fetchMap, namedVhosts, sectionData, type MapPayload } from "./map/mapApi";
 
 export type MapMode = "mindmap" | "canvas" | "atlas";
 
@@ -119,9 +119,10 @@ export function MapSurface({
   const domains = sectionData(payload?.sections.domains);
   const storage = sectionData(payload?.sections.storage);
 
-  /* The same predicate the ingress node uses. Counting catch-all servers here
-   * and not there put two different totals for "server names" on one screen. */
-  const namedVhosts = domains ? domains.domains.filter(isNamedVhost).length : null;
+  /* The same list the ingress node builds: catch-alls dropped, and the :80 and
+   * :443 blocks of one name folded into one name. Counting rows here and names
+   * there put two different totals for "server names" on one screen. */
+  const namedVhostCount = domains ? namedVhosts(domains.domains).length : null;
 
   const chips: TelemetryChip[] = [
     {
@@ -144,7 +145,7 @@ export function MapSurface({
     },
     {
       key: "domains",
-      value: namedVhosts === null ? null : String(namedVhosts),
+      value: namedVhostCount === null ? null : String(namedVhostCount),
       label: `server names${domains ? ` · ${domains.files} vhost files` : ""}`,
       unavailable: "/etc/nginx could not be parsed",
     },
