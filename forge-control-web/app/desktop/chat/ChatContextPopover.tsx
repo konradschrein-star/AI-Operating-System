@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { tokens } from "../../tokens";
 import { GEMINI_ACCENT, isGeminiModel } from "../gemini-identity";
 import { modelDisplay } from "../live/agentsApi";
@@ -56,6 +57,18 @@ function extractUsage(meta?: Record<string, unknown> | null) {
   return { input, cacheRead, cacheCreation, output };
 }
 
+/** Fixed width, so the viewport clamp below is arithmetic and not a measure
+ *  of a node that has not been laid out yet. */
+const POPOVER_WIDTH = 270;
+/** Rough height, used only to decide whether "bottom" would fall off screen. */
+const POPOVER_HEIGHT_ESTIMATE = 150;
+const VIEWPORT_MARGIN = 8;
+
+interface PopoverPosition {
+  top: number;
+  left: number;
+}
+
 export function ChatContextPopover({
   meta,
   children,
@@ -65,7 +78,9 @@ export function ChatContextPopover({
 }: ChatContextPopoverProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [position, setPosition] = useState<PopoverPosition | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const anchorRef = useRef<HTMLSpanElement | null>(null);
 
   const occ: ContextOccupancy | null = contextOccupancy(meta);
   const usage = extractUsage(meta);
@@ -76,11 +91,56 @@ export function ChatContextPopover({
     };
   }, []);
 
+  /* The popover used to be `position: absolute` inside the row. The chat rail
+   * is a scroll container, so it clipped the right-hand 40% of the card —
+   * "Free: 331k (34%)", the cache-read figure and the headroom hint were all
+   * cut off at the rail's edge. Measured in the round-4 DoD screenshot pass.
+   * Fixed positioning in a portal is the only way out of an ancestor's
+   * overflow; the trade is that the coordinates have to be measured, and
+   * re-measured whenever anything scrolls under an open popover. */
+  const measure = useCallback((): void => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+
+    const rawLeft =
+      align === "right"
+        ? rect.right - POPOVER_WIDTH
+        : align === "center"
+          ? rect.left + rect.width / 2 - POPOVER_WIDTH / 2
+          : rect.left;
+    const maxLeft = window.innerWidth - POPOVER_WIDTH - VIEWPORT_MARGIN;
+    const left = Math.max(VIEWPORT_MARGIN, Math.min(rawLeft, maxLeft));
+
+    // "bottom" means below the gauge, unless that would run off the foot of
+    // the window — a popover the user cannot read is worse than a flipped one.
+    const wantsTop =
+      side === "top" ||
+      rect.bottom + 6 + POPOVER_HEIGHT_ESTIMATE > window.innerHeight - VIEWPORT_MARGIN;
+    const top = wantsTop ? rect.top - 6 - POPOVER_HEIGHT_ESTIMATE : rect.bottom + 6;
+
+    setPosition({ top: Math.max(VIEWPORT_MARGIN, top), left });
+  }, [align, side]);
+
+  useEffect(() => {
+    if (!isMounted) return;
+    // `capture: true` — the rail scrolls, not the window, and a scroll event
+    // on an inner element does not bubble.
+    const onMove = () => measure();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [isMounted, measure]);
+
   const handleMouseEnter = () => {
     if (disabled) return;
     if (timerRef.current) clearTimeout(timerRef.current);
     // Deliberate 450ms delay to prevent jitter during fast mouse traversal
     timerRef.current = setTimeout(() => {
+      measure();
       setIsMounted(true);
       requestAnimationFrame(() => {
         setIsOpen(true);
@@ -113,39 +173,19 @@ export function ChatContextPopover({
     : "—";
   const remainingPct = Math.max(0, 100 - pct);
 
-  const alignStyles: React.CSSProperties =
-    align === "right"
-      ? { right: 0 }
-      : align === "center"
-        ? { left: "50%", transform: `translateX(-50%) ${isOpen ? "translateY(0)" : "translateY(3px)"}` }
-        : { left: 0 };
-
-  const transformStyle =
-    align === "center"
-      ? undefined
-      : { transform: isOpen ? "translateY(0)" : "translateY(3px)" };
-
-  return (
-    <span
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
-    >
-      {children}
-
-      {isMounted && (
+  const card = isMounted && position && (
         <div
           onClick={(e) => e.stopPropagation()}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
           className="mono"
           style={{
-            position: "absolute",
-            ...(side === "top"
-              ? { bottom: "calc(100% + 6px)" }
-              : { top: "calc(100% + 6px)" }),
-            ...alignStyles,
-            ...transformStyle,
+            position: "fixed",
+            top: position.top,
+            left: position.left,
+            transform: isOpen ? "translateY(0)" : "translateY(3px)",
             zIndex: 1200,
-            width: 270,
+            width: POPOVER_WIDTH,
             padding: "10px 12px",
             background: tokens.bgCard,
             border: `1px solid ${tokens.borderEmphasis}`,
@@ -317,7 +357,21 @@ export function ChatContextPopover({
             </div>
           )}
         </div>
-      )}
+  );
+
+  return (
+    <span
+      ref={anchorRef}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+      style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+    >
+      {children}
+      {/* Portalled to <body>: see `measure` for why absolute positioning
+       *  inside the rail could not work. `document` is guaranteed here —
+       *  `card` is only truthy after a mouseenter, which never runs on the
+       *  server. */}
+      {card ? createPortal(card, document.body) : null}
     </span>
   );
 }
