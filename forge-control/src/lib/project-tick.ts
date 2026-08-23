@@ -2071,7 +2071,26 @@ async function consolidateVerdictGroup(
         workstream,
         members: rows.map((r) => ({ taskId: r.id, writeSet: r.write_set })),
       });
+      /* ── A fix chain inherits the tier of the work it is fixing ────────────
+       *
+       * `createFixChain`'s `tier` is optional, and this call site never passed
+       * it — so every fix-cycle builder and every re-check row was born with
+       * `tier: null`, fell past TIER_MODELS, and ran on the DEFAULT engine.
+       *
+       * Measured 2026-08-23 over one overnight build: 81 of 213 fleet runs
+       * (38%) executed on Claude despite every project being seeded
+       * `architect_tier: "gemini"`. The re-tiering watchdog masked it while it
+       * was alive and the ratio inverted the moment it stopped — 17:00 was 15
+       * Claude runs to 0 Gemini. A tier that only holds while a cron is running
+       * is not a setting, it is a coincidence.
+       *
+       * Inherit rather than hardcode: a gemini project's fix chains stay gemini
+       * and a flagship project's stay flagship, without this file knowing which
+       * fleet it is serving. `rows` are the REVIEWED tasks — the work being
+       * fixed — so their tier is the right one to carry forward. */
+      const inheritedTier = rows.find((r) => r.tier != null)?.tier ?? undefined;
       const chain = await createFixChain({
+        tier: inheritedTier,
         project_id: projectId,
         round,
         cycle: decision.cycle,
