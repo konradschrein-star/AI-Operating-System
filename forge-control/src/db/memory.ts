@@ -28,12 +28,19 @@ import {
   countByReason,
   folderCounts,
   folderRule,
-  EXCLUDED_EXTENSION,
+  isDrawing,
   type IndexHealth,
   type DiskFile,
   type MemoryCounts,
   type ReconcileInput,
 } from "../lib/index-health.ts";
+// Drawings are notes too, as of 2026-08-23. Their "body" is a geometry blob, so
+// every read of one goes through the extractor rather than through
+// extractFrontmatter() — which on a drawing returns 480 KB of base64.
+import {
+  extractDrawingText,
+  ExcalidrawExtractError,
+} from "../lib/excalidraw-extract.ts";
 // The Obsidian deep-link pair, REUSED rather than reimplemented: obsidianUri()
 // already encodes each component separately, which is the whole reason a note
 // whose name contains "&" opens at all (see its comment in lib/vault.ts).
@@ -207,6 +214,58 @@ function extractWikilinks(body: string): string[] {
   return [...set];
 }
 
+/** What the registry stores about one vault file. */
+interface VaultNoteFacts {
+  topic: string;
+  tags: string[];
+  wikilinks: string[];
+}
+
+function tagsFromMeta(meta: Record<string, unknown>): string[] {
+  const rawTags = meta.tags;
+  if (Array.isArray(rawTags)) return rawTags.map(String);
+  if (typeof rawTags === "string" && rawTags.trim()) {
+    return rawTags.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * Reduce one vault file to the three things knowledge_note holds.
+ *
+ * A DRAWING takes a different road to the same three values. Reading a
+ * `.excalidraw.md` as markdown gives a topic ending in ".excalidraw", tags from
+ * the plugin's frontmatter, and zero links — because every `[[wikilink]]` in a
+ * drawing lives on a shape's `link` field or inside an element's rawText,
+ * inside the compressed payload, where a regex over the file body cannot see
+ * it. Routing drawings through the extractor is what makes them findable.
+ */
+function vaultNoteFacts(rel: string, raw: string): VaultNoteFacts {
+  const { meta, body } = extractFrontmatter(raw);
+  const tags = tagsFromMeta(meta);
+
+  if (isDrawing(rel)) {
+    const { graph } = extractDrawingText(rel, raw);
+    if (graph.degraded) {
+      console.warn(`[vault-sync] ${rel}: ${graph.degraded}`);
+    }
+    return {
+      topic: graph.title,
+      // Frontmatter tags first (they include the plugin's own `excalidraw`
+      // marker, which is how a drawing is found as a drawing), then anything
+      // the extractor read off the canvas.
+      tags: [...new Set([...tags, ...graph.tags])],
+      wikilinks: graph.wikilinks,
+    };
+  }
+
+  const topic =
+    typeof meta.title === "string" && meta.title.trim()
+      ? meta.title.trim()
+      : path.basename(rel, ".md").replace(/[_-]+/g, " ");
+  return { topic, tags, wikilinks: extractWikilinks(body) };
+}
+
 async function safeReadVaultFile(vaultPath: string): Promise<string | null> {
   // Defense against path-traversal: only read from inside VAULT_DIR.
   const abs = path.resolve(VAULT_DIR, vaultPath);
@@ -277,18 +336,7 @@ export async function syncVaultNotes(): Promise<VaultSyncResult> {
     seenPaths.push(rel);
     try {
       const raw = await readFile(abs, "utf8");
-      const { meta, body } = extractFrontmatter(raw);
-      const wikilinks = extractWikilinks(body);
-      const rawTags = meta.tags;
-      const tags = Array.isArray(rawTags)
-        ? rawTags.map(String)
-        : typeof rawTags === "string" && rawTags.trim()
-          ? rawTags.split(",").map((s) => s.trim()).filter(Boolean)
-          : [];
-      const topic =
-        typeof meta.title === "string" && meta.title.trim()
-          ? meta.title.trim()
-          : path.basename(rel, ".md").replace(/[_-]+/g, " ");
+      const { topic, tags, wikilinks } = vaultNoteFacts(rel, raw);
 
       await hcp.query(
         `INSERT INTO knowledge_note (topic, vault_path, tags, links, created_by)
@@ -481,22 +529,42 @@ async function measureIndex(): Promise<IndexMeasurement> {
     );
   }
 
-  // Read the body only for the files that need the frontmatter_only decision:
-  // on disk, absent from the embeddings index, non-empty, not a drawing. That
-  // is a couple of dozen files, not 284 — the rest get `hasBody: null` and
-  // reconcile() throws rather than guessing if it ever needs one.
+  // Read the body only for the files that need a content decision: on disk,
+  // absent from the embeddings index, non-empty. That is a few dozen files, not
+  // 284 — the rest get `hasBody: null` and reconcile() throws rather than
+  // guessing if it ever needs one.
+  //
+  // Drawings are IN this set as of 2026-08-23. They used to be exempt because
+  // the classifier excluded them outright; now "does this drawing have anything
+  // on it" is the question that separates `empty_drawing` from the headline, so
+  // it has to be measured — through the extractor, since a drawing's markdown
+  // body is a base64 blob that is never empty and never means anything.
   const files: DiskFile[] = [];
   for (const rel of relPaths) {
     const abs = path.join(VAULT_DIR, rel);
     const st = await stat(abs);
     const bytes = st.size;
-    const needsBody =
-      !embeddingSet.has(rel) &&
-      bytes > 0 &&
-      !rel.toLowerCase().endsWith(EXCLUDED_EXTENSION);
-    const hasBody = needsBody
-      ? extractFrontmatter(await readFile(abs, "utf8")).body.trim().length > 0
-      : null;
+    let hasBody: boolean | null = null;
+    if (!embeddingSet.has(rel) && bytes > 0) {
+      const raw = await readFile(abs, "utf8");
+      if (isDrawing(rel)) {
+        try {
+          hasBody = !extractDrawingText(rel, raw).isEmpty;
+        } catch (err) {
+          // The extractor only throws when handed something that is not a
+          // drawing at all. Report the path — never fold the failure into a
+          // "no content" verdict, which would hide a broken file as a blank one.
+          throw new Error(
+            `index-health: could not extract "${rel}" (${bytes} bytes): ` +
+              (err instanceof ExcalidrawExtractError || err instanceof Error
+                ? err.message
+                : String(err)),
+          );
+        }
+      } else {
+        hasBody = extractFrontmatter(raw).body.trim().length > 0;
+      }
+    }
     files.push({ path: rel, bytes, hasBody });
   }
 
@@ -591,7 +659,7 @@ export async function noteCounts(source?: NoteSource): Promise<MemoryCounts> {
     embedded_files: health.embeddings.files,
     embedded_chunks: health.embeddings.chunks,
     excluded: {
-      excalidraw: countByReason(health, "excluded_extension"),
+      excalidraw: countByReason(health, "empty_drawing"),
       empty: countByReason(health, "empty_file"),
       frontmatter_only: countByReason(health, "frontmatter_only"),
     },

@@ -133,6 +133,233 @@ export const createCanvas = (input: { name: string; folder?: string }) =>
     input,
   );
 
+export type PlanTaskStatus =
+  | "done"
+  | "in_progress"
+  | "planned"
+  | "gap"
+  | "blocked"
+  | "proposal";
+
+export interface PlanTask {
+  id: string;
+  nodeId: string;
+  title: string;
+  workstream: string;
+  phase: number;
+  status: PlanTaskStatus;
+  statusReason: string;
+  depends_on: string[];
+  role: TaskRole;
+  tier: TaskTier;
+  write_set: string[];
+  brief: string;
+  link: string | null;
+}
+
+export interface PlanWorkstream {
+  id: string;
+  name: string;
+  containerId: string | null;
+  taskIds: string[];
+  summary: string;
+}
+
+export interface PlanPhase {
+  phase: number;
+  name: string;
+  taskIds: string[];
+}
+
+export type AmbiguityKind =
+  | "unconnected_node"
+  | "dangling_arrow"
+  | "cycle"
+  | "unexplained_color"
+  | "unlabelled_shape"
+  | "straddling_node";
+
+export type AmbiguitySeverity = "warning" | "question" | "info";
+
+export interface GraphAmbiguity {
+  id: string;
+  kind: AmbiguityKind;
+  severity: AmbiguitySeverity;
+  elementIds: string[];
+  label: string;
+  description: string;
+  question: string;
+}
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  role: string;
+  color?: string;
+  status:
+    | "built"
+    | "partial"
+    | "planned"
+    | "gap"
+    | "blocked"
+    | "proposal"
+    | "unknown";
+  statusReason: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  containerId?: string | null;
+}
+
+export interface GraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  resolvedBy: "explicit" | "proximity" | "unresolved";
+}
+
+export interface ParsedDrawingGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  ambiguities: GraphAmbiguity[];
+  stats: {
+    totalNodes: number;
+    totalEdges: number;
+    cycleCount: number;
+    ambiguityCount: number;
+  };
+}
+
+export interface CanvasPlan {
+  path: string;
+  title: string;
+  summary: string;
+  workstreams: PlanWorkstream[];
+  phases: PlanPhase[];
+  tasks: PlanTask[];
+  ambiguities: GraphAmbiguity[];
+  stats: {
+    totalTasks: number;
+    totalPhases: number;
+    totalWorkstreams: number;
+    ambiguityCount: number;
+    completedTasks: number;
+    blockedTasks: number;
+  };
+  rawMarkdown: string;
+}
+
+export interface CanvasPlanResponse {
+  ok: true;
+  path: string;
+  plan: CanvasPlan;
+  graph: ParsedDrawingGraph;
+  savedMarkdown: string | null;
+  planPath: string;
+}
+
+export interface SaveCanvasPlanInput {
+  path: string;
+  planMarkdown?: string;
+  plan?: CanvasPlan;
+}
+
+export interface SaveCanvasPlanResponse {
+  ok: true;
+  path: string;
+  planPath: string;
+  mtime: number;
+}
+
+export interface PushPlanToProjectInput {
+  path?: string;
+  name?: string;
+  brief?: string;
+  repo?: "ai-os" | "content-forge" | "scratch";
+  base_branch?: string;
+  architect_tier?: TaskTier;
+  origin_chat_id?: string;
+  plan?: CanvasPlan;
+  /** Create the project even though some dependency edges cannot be written.
+   *  Only ever set from an explicit acknowledgement — the default refusal is
+   *  what stops a drawing being seeded as a task graph it does not describe. */
+  allow_unresolved_dependencies?: boolean;
+}
+
+/** One `depends_on` edge the plan carries but `project_tasks` cannot hold —
+ *  it closes a cycle, or points at a task that is not in the plan. */
+export interface UnresolvedPlanDependency {
+  task: string;
+  taskTitle: string;
+  dependsOn: string;
+  dependsOnTitle: string | null;
+  reason: "cycle" | "unknown_task";
+}
+
+export interface PushPlanToProjectResponse {
+  ok: true;
+  project: Record<string, unknown>;
+  architectTask: Record<string, unknown>;
+  tasks: Record<string, unknown>[];
+  tasksCount: number;
+  /** Always present. Non-empty only when the push carried
+   *  `allow_unresolved_dependencies` — these edges were left out. */
+  droppedDependencies: UnresolvedPlanDependency[];
+}
+
+/** The 409 from `/canvas/plan/to-project`, carried as a typed error so the UI
+ *  can offer "create anyway" instead of showing a bare status line. The shared
+ *  `postJson` throws away the response body, which is precisely the diagnostic
+ *  the caller needs here, so this one endpoint reads its own failure. */
+export class UnresolvedDependenciesError extends Error {
+  readonly unresolved: UnresolvedPlanDependency[];
+  readonly hint: string;
+
+  constructor(message: string, unresolved: UnresolvedPlanDependency[], hint: string) {
+    super(message);
+    this.name = "UnresolvedDependenciesError";
+    this.unresolved = unresolved;
+    this.hint = hint;
+  }
+}
+
+export const getCanvasPlan = (path: string) =>
+  getJson<CanvasPlanResponse>(`/canvas/plan?path=${encodeURIComponent(path)}`);
+
+export const saveCanvasPlan = (input: SaveCanvasPlanInput) =>
+  postJson<SaveCanvasPlanResponse>("/canvas/plan/save", input);
+
+export async function pushPlanToProject(
+  input: PushPlanToProjectInput,
+): Promise<PushPlanToProjectResponse> {
+  const path = "/canvas/plan/to-project";
+  const res = await fetch(`${ROOT}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      reason?: string;
+      unresolvable?: UnresolvedPlanDependency[];
+      hint?: string;
+    } | null;
+    if (body?.reason === "unresolvable_dependencies") {
+      throw new UnresolvedDependenciesError(
+        body.error ?? "this plan has dependencies that cannot be written as a task graph",
+        body.unresolvable ?? [],
+        body.hint ?? "",
+      );
+    }
+    throw new Error(body?.error ?? `409 Conflict on ${path}`);
+  }
+
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  return (await res.json()) as PushPlanToProjectResponse;
+}
+
+
 /* ----------------------------------------------------------------------------
  * Subscription quota — deliberately NOT here.
  *
