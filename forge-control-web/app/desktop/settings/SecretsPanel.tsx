@@ -1,69 +1,958 @@
 "use client";
 
 /**
- * SecretsPanel — the SECRETS section of the settings surface.
+ * SecretsPanel — native high-density secrets and credentials management.
  *
- * Deliberately NOT a reimplementation. `app/settings/secrets/page.tsx` owns
- * the reveal/dismiss/delete flows and the rule that a revealed value lives in
- * React state only while you look at it; re-typing any of that here would give
- * the OS two secret readers that can drift apart. This panel mounts that page
- * component and nothing else.
- *
- * What it does have to fix is the page's *chrome*, and it fixes it from the
- * outside because that file belongs to another owner this round:
- *
- *   • the page paints itself `min-height: 100dvh` with its own body padding —
- *     inside a surface slot that reads as a page pasted into a panel, which is
- *     the exact "detached page" feeling this round exists to remove;
- *   • it carries a `<Link href="/settings">` back-link. Clicking that inside
- *     the shell would unmount the whole OS to reach a route the surface has
- *     already replaced. The surface's own BackButton is the back-nav here.
- *   • its `<h1>Secrets</h1>` duplicates the section header above it.
- *
- * The override is a scoped stylesheet keyed on `data-settings-embed`, using
- * `!important` because everything it fights is an inline style. Selectors are
- * chosen to be as specific about INTENT as possible (`a[href="/settings"]`,
- * not "the first link"), so if that page is restyled the override either still
- * matches or visibly stops mattering — it cannot silently hide new content.
- *
- * That last claim is why the h1 rule is PATH-BOUND rather than `h1` alone.
- * `[data-settings-embed="secrets"] h1` is a descendant selector: it hides
- * every h1 the embedded tree ever grows, including one a future section adds
- * three levels down — silently, which is the exact failure the paragraph above
- * promises cannot happen (round 1353 review, finding 4). The rule now names
- * the one element it means: the page title, which sits at
- * `embed > page-root > maxWidth-wrapper > h1` and is that wrapper's first h1
- * (`app/settings/secrets/page.tsx:89`, directly under the `maxWidth: 780`
- * div at :76). A second h1 anywhere — deeper, or later in the same wrapper —
- * renders normally and is therefore VISIBLE, which is the honest default.
+ * Encrypted at rest (AES-256-GCM) under /opt/ai-os/.secrets/store/.
+ * Add, reveal, copy, rotate, and delete credentials. Values are held
+ * ephemerally in React state only while active.
  */
 
-import { type JSX } from "react";
-import SecretsPage from "../../settings/secrets/page";
+import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
+import { tokens } from "../../tokens";
 
-const EMBED_CSS = `
-[data-settings-embed="secrets"] > div {
-  min-height: 0 !important;
-  padding: 0 !important;
-  background: transparent !important;
+export interface SecretMetaItem {
+  name: string;
+  bytes: number;
+  createdAt?: string;
+  updatedAt: string;
+  lastUsedAt?: string | null;
+  accessCount?: number;
+  serviceTag?: string | null;
+  note: string | null;
+  pending: boolean;
+  requestedByRunId: string | null;
 }
-[data-settings-embed="secrets"] > div > div {
-  max-width: none !important;
-  margin: 0 !important;
+
+function timeAgo(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const ms = Date.now() - Date.parse(iso);
+  if (Number.isNaN(ms)) return "—";
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
-[data-settings-embed="secrets"] a[href="/settings"] {
-  display: none !important;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
 }
-[data-settings-embed="secrets"] > div > div > h1:first-of-type {
-  display: none !important;
-}
-`;
 
 export function SecretsPanel(): JSX.Element {
+  const [secrets, setSecrets] = useState<SecretMetaItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+
+  // Ephemeral in-memory reveal store: map of name -> plaintext value.
+  // Values are dropped immediately on unmount, Hide, or list reload.
+  const [revealed, setRevealed] = useState<Record<string, string>>({});
+  const [copied, setCopied] = useState<Record<string, boolean>>({});
+
+  // Modals state
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [rotatingSecret, setRotatingSecret] = useState<SecretMetaItem | null>(null);
+
+  // Form states
+  const [formName, setFormName] = useState("");
+  const [formValue, setFormValue] = useState("");
+  const [formTag, setFormTag] = useState("");
+  const [formNote, setFormNote] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/proxy/secrets", { headers: { accept: "application/json" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as { secrets?: SecretMetaItem[] };
+      setSecrets(data.secrets ?? []);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSecrets([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    return () => {
+      // Clear in-memory secrets on unmount
+      setRevealed({});
+    };
+  }, [load]);
+
+  const handleReveal = async (name: string) => {
+    if (busy) return;
+    setBusy(`${name}:reveal`);
+    setError(null);
+    try {
+      const res = await fetch(`/api/proxy/secrets/${encodeURIComponent(name)}/reveal`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as { value: string };
+      setRevealed((prev) => ({ ...prev, [name]: data.value }));
+      // Reload to update lastUsedAt, accessCount, and clear pending badge if it was set
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleHide = (name: string) => {
+    setRevealed((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
+
+  const handleCopy = async (name: string) => {
+    const val = revealed[name];
+    if (!val) return;
+    try {
+      await navigator.clipboard.writeText(val);
+      setCopied((prev) => ({ ...prev, [name]: true }));
+      setTimeout(() => {
+        setCopied((prev) => ({ ...prev, [name]: false }));
+      }, 1500);
+    } catch {
+      // Clipboard write failed
+    }
+  };
+
+  const handleDismissPending = async (name: string) => {
+    if (busy) return;
+    setBusy(`${name}:dismiss`);
+    try {
+      const res = await fetch(`/api/proxy/secrets/${encodeURIComponent(name)}/clear-pending`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleDelete = async (name: string) => {
+    if (busy) return;
+    if (!confirm(`Delete secret "${name}"? Ciphertext and metadata will be permanently removed.`)) {
+      return;
+    }
+    setBusy(`${name}:delete`);
+    try {
+      const res = await fetch(`/api/proxy/secrets/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      handleHide(name);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const submitAddSecret = async () => {
+    if (!formName.trim() || !formValue) {
+      setModalError("Secret name and value are required.");
+      return;
+    }
+    setBusy("add:submit");
+    setModalError(null);
+    try {
+      const res = await fetch("/api/proxy/secrets", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          name: formName.trim(),
+          value: formValue,
+          service_tag: formTag.trim() || undefined,
+          note: formNote.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText);
+      }
+      setShowAddModal(false);
+      setFormName("");
+      setFormValue("");
+      setFormTag("");
+      setFormNote("");
+      await load();
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const submitRotateSecret = async () => {
+    if (!rotatingSecret || !formValue) {
+      setModalError("New secret value is required.");
+      return;
+    }
+    setBusy("rotate:submit");
+    setModalError(null);
+    try {
+      const res = await fetch(`/api/proxy/secrets/${encodeURIComponent(rotatingSecret.name)}/rotate`, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          value: formValue,
+          service_tag: formTag.trim() || undefined,
+          note: formNote.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText);
+      }
+      handleHide(rotatingSecret.name);
+      setRotatingSecret(null);
+      setFormValue("");
+      setFormTag("");
+      setFormNote("");
+      await load();
+    } catch (e) {
+      setModalError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const filtered = useMemo(() => {
+    if (!secrets) return [];
+    const q = search.trim().toLowerCase();
+    if (!q) return secrets;
+    return secrets.filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        (s.serviceTag && s.serviceTag.toLowerCase().includes(q)) ||
+        (s.note && s.note.toLowerCase().includes(q)),
+    );
+  }, [secrets, search]);
+
+  const pendingCount = (secrets ?? []).filter((s) => s.pending).length;
+
   return (
-    <div data-settings-embed="secrets">
-      <style>{EMBED_CSS}</style>
-      <SecretsPage />
+    <div data-settings-secrets style={{ maxWidth: 940 }}>
+      {/* Top Header & Actions */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 16,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: tokens.textHi }}>
+            Encrypted Secrets Store
+          </div>
+          <div style={{ fontSize: 12, color: tokens.textSoft, marginTop: 2 }}>
+            Encrypted at rest (AES-256-GCM) under <span className="mono">/opt/ai-os/.secrets/store/</span>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <input
+            type="text"
+            placeholder="Filter secrets…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 6,
+              color: tokens.text,
+              fontSize: 12,
+              padding: "6px 10px",
+              width: 180,
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setFormName("");
+              setFormValue("");
+              setFormTag("");
+              setFormNote("");
+              setModalError(null);
+              setShowAddModal(true);
+            }}
+            style={{
+              background: tokens.accent,
+              color: "#fff",
+              border: "none",
+              borderRadius: 6,
+              padding: "6px 14px",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            + Add Secret
+          </button>
+        </div>
+      </div>
+
+      {pendingCount > 0 && (
+        <div
+          className="mono"
+          style={{
+            background: tokens.freezeBgWarn,
+            border: `1px solid ${tokens.freezeBorderWarn}`,
+            color: tokens.warn,
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 16,
+            fontSize: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <span>
+            ⚡ {pendingCount} credential{pendingCount === 1 ? "" : "s"} waiting for you — reveal to mark collected.
+          </span>
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            background: tokens.dangerActionBg,
+            border: `1px solid ${tokens.dangerActionBorder}`,
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 16,
+            fontSize: 12.5,
+            color: tokens.bleed,
+          }}
+        >
+          <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {/* Secrets Table / List */}
+      {secrets && secrets.length === 0 && !error && (
+        <div
+          className="mono"
+          style={{
+            background: tokens.bgCard,
+            border: `1px dashed ${tokens.border}`,
+            borderRadius: 8,
+            padding: 32,
+            textAlign: "center",
+            fontSize: 12,
+            color: tokens.textFaint,
+          }}
+        >
+          No secrets stored in vault yet. Click "+ Add Secret" to register a credential.
+        </div>
+      )}
+
+      {secrets && secrets.length > 0 && filtered.length === 0 && (
+        <div
+          className="mono"
+          style={{
+            background: tokens.bgCard,
+            border: `1px dashed ${tokens.border}`,
+            borderRadius: 8,
+            padding: 24,
+            textAlign: "center",
+            fontSize: 12,
+            color: tokens.textFaint,
+          }}
+        >
+          No secrets match &ldquo;{search}&rdquo;.
+        </div>
+      )}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filtered.map((s) => {
+          const isRevealed = revealed[s.name] !== undefined;
+          const secretVal = revealed[s.name];
+          const isCopied = copied[s.name] === true;
+          const isBusy = busy?.startsWith(`${s.name}:`);
+
+          return (
+            <div
+              key={s.name}
+              style={{
+                background: tokens.bgCard,
+                border: `1px solid ${s.pending ? tokens.freezeBorderWarn : tokens.border}`,
+                borderLeft: `3px solid ${s.pending ? tokens.warn : tokens.borderEmphasis}`,
+                borderRadius: 10,
+                padding: "12px 16px",
+              }}
+            >
+              {/* Row Header */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className="ms" style={{ fontSize: 16, color: tokens.textMuted }}>
+                    key
+                  </span>
+                  <span
+                    className="mono"
+                    style={{ fontSize: 13.5, fontWeight: 600, color: tokens.textHi }}
+                  >
+                    {s.name}
+                  </span>
+                  {s.serviceTag && (
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 10,
+                        background: tokens.bgGutter,
+                        border: `1px solid ${tokens.borderSoft}`,
+                        borderRadius: 4,
+                        padding: "1px 6px",
+                        color: tokens.textSoft,
+                      }}
+                    >
+                      {s.serviceTag}
+                    </span>
+                  )}
+                  {s.pending && (
+                    <span
+                      className="mono"
+                      style={{
+                        background: tokens.freezeBgWarn,
+                        color: tokens.warn,
+                        borderRadius: 4,
+                        padding: "1px 6px",
+                        fontSize: 10,
+                        fontWeight: 600,
+                      }}
+                    >
+                      FOR YOU
+                    </span>
+                  )}
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      background: tokens.bgGutter,
+                      color: tokens.textFaint,
+                      borderRadius: 4,
+                      padding: "1px 5px",
+                    }}
+                  >
+                    AES-256-GCM
+                  </span>
+                </div>
+
+                {/* Metadata badges & timestamps */}
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 11,
+                    color: tokens.textFaint,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <span>{formatBytes(s.bytes)}</span>
+                  <span>updated {timeAgo(s.updatedAt)}</span>
+                  {s.lastUsedAt && <span>used {timeAgo(s.lastUsedAt)}</span>}
+                </div>
+              </div>
+
+              {/* Note or Lineage */}
+              {s.note && (
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: tokens.textSoft,
+                    marginTop: 6,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  {s.note}
+                </div>
+              )}
+
+              {/* Ephemeral Reveal Box */}
+              {isRevealed && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    background: tokens.inputBg,
+                    border: `1px solid ${tokens.borderEmphasis}`,
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                  }}
+                >
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 9.5,
+                      color: tokens.textFaint,
+                      letterSpacing: "0.08em",
+                      marginBottom: 4,
+                    }}
+                  >
+                    VALUE (IN-MEMORY ONLY)
+                  </div>
+                  <pre
+                    className="mono"
+                    style={{
+                      margin: 0,
+                      padding: 0,
+                      fontSize: 12,
+                      color: tokens.textHi,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-all",
+                      userSelect: "all",
+                      WebkitUserSelect: "all",
+                    }}
+                  >
+                    {secretVal}
+                  </pre>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                {!isRevealed ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleReveal(s.name)}
+                    disabled={isBusy}
+                    style={actionBtnStyle(tokens.primaryActionBg, tokens.border, tokens.textHi)}
+                  >
+                    {busy === `${s.name}:reveal` ? "revealing…" : "Reveal"}
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy(s.name)}
+                      style={actionBtnStyle(tokens.okActionBg, tokens.okActionBorder, tokens.ok)}
+                    >
+                      {isCopied ? "copied ✓" : "Copy"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleHide(s.name)}
+                      style={actionBtnStyle(tokens.toolBg, tokens.border, tokens.textMuted)}
+                    >
+                      Hide
+                    </button>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRotatingSecret(s);
+                    setFormValue("");
+                    setFormTag(s.serviceTag ?? "");
+                    setFormNote(s.note ?? "");
+                    setModalError(null);
+                  }}
+                  disabled={isBusy}
+                  style={actionBtnStyle(tokens.toolBg, tokens.border, tokens.textMuted)}
+                >
+                  Rotate
+                </button>
+
+                {s.pending && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDismissPending(s.name)}
+                    disabled={isBusy}
+                    style={actionBtnStyle(tokens.toolBg, tokens.border, tokens.textMuted)}
+                  >
+                    {busy === `${s.name}:dismiss` ? "dismissing…" : "Dismiss flag"}
+                  </button>
+                )}
+
+                <span style={{ flex: 1 }} />
+
+                <button
+                  type="button"
+                  onClick={() => void handleDelete(s.name)}
+                  disabled={isBusy}
+                  style={actionBtnStyle(tokens.dangerActionBg, tokens.dangerActionBorder, tokens.bleed)}
+                >
+                  {busy === `${s.name}:delete` ? "deleting…" : "Delete"}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Add Secret Modal */}
+      {showAddModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 12,
+              padding: 22,
+              maxWidth: 520,
+              width: "100%",
+              boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 600, color: tokens.textHi, marginBottom: 4 }}>
+              Add New Secret
+            </div>
+            <div style={{ fontSize: 12, color: tokens.textSoft, marginBottom: 16 }}>
+              Value is encrypted with AES-256-GCM immediately and never written to transcripts or logs.
+            </div>
+
+            {modalError && (
+              <div
+                style={{
+                  background: tokens.dangerActionBg,
+                  border: `1px solid ${tokens.dangerActionBorder}`,
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  fontSize: 12,
+                  color: tokens.bleed,
+                  marginBottom: 14,
+                }}
+              >
+                {modalError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <label
+                  className="mono"
+                  style={{ fontSize: 11, color: tokens.textLabel, display: "block", marginBottom: 4 }}
+                >
+                  SECRET NAME *
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. stripe-api-key, github-pat-konrad"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  style={inputStyle()}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <label className="mono" style={{ fontSize: 11, color: tokens.textLabel }}>
+                    SECRET VALUE *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: tokens.accent,
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {showPassword ? "Hide Mask" : "Show Value"}
+                  </button>
+                </div>
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Paste secret / API key / token value…"
+                  value={formValue}
+                  onChange={(e) => setFormValue(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={inputStyle()}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="mono"
+                  style={{ fontSize: 11, color: tokens.textLabel, display: "block", marginBottom: 4 }}
+                >
+                  SERVICE TAG (OPTIONAL)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. github, stripe, twenty-crm, telegram"
+                  value={formTag}
+                  onChange={(e) => setFormTag(e.target.value)}
+                  style={inputStyle()}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="mono"
+                  style={{ fontSize: 11, color: tokens.textLabel, display: "block", marginBottom: 4 }}
+                >
+                  NOTE / PURPOSE (OPTIONAL)
+                </label>
+                <textarea
+                  placeholder="Short description of what this credential is for…"
+                  value={formNote}
+                  onChange={(e) => setFormNote(e.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle(), resize: "vertical" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                disabled={busy === "add:submit"}
+                style={actionBtnStyle(tokens.toolBg, tokens.border, tokens.textMuted)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitAddSecret()}
+                disabled={busy === "add:submit"}
+                style={{
+                  background: tokens.accent,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "7px 16px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {busy === "add:submit" ? "Saving…" : "Save Secret"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rotate Secret Modal */}
+      {rotatingSecret && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0, 0, 0, 0.7)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: 20,
+          }}
+        >
+          <div
+            style={{
+              background: tokens.bgCard,
+              border: `1px solid ${tokens.border}`,
+              borderRadius: 12,
+              padding: 22,
+              maxWidth: 520,
+              width: "100%",
+              boxShadow: "0 12px 36px rgba(0,0,0,0.5)",
+            }}
+          >
+            <div style={{ fontSize: 16, fontWeight: 600, color: tokens.textHi, marginBottom: 4 }}>
+              Rotate Secret: <span className="mono">{rotatingSecret.name}</span>
+            </div>
+            <div style={{ fontSize: 12, color: tokens.textSoft, marginBottom: 16 }}>
+              Replaces the encrypted ciphertext in place and updates metadata.
+            </div>
+
+            {modalError && (
+              <div
+                style={{
+                  background: tokens.dangerActionBg,
+                  border: `1px solid ${tokens.dangerActionBorder}`,
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  fontSize: 12,
+                  color: tokens.bleed,
+                  marginBottom: 14,
+                }}
+              >
+                {modalError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <label className="mono" style={{ fontSize: 11, color: tokens.textLabel }}>
+                    NEW SECRET VALUE *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: tokens.accent,
+                      fontSize: 11,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {showPassword ? "Hide Mask" : "Show Value"}
+                  </button>
+                </div>
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Paste rotated secret value…"
+                  value={formValue}
+                  onChange={(e) => setFormValue(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  style={inputStyle()}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="mono"
+                  style={{ fontSize: 11, color: tokens.textLabel, display: "block", marginBottom: 4 }}
+                >
+                  SERVICE TAG
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. github, stripe, twenty-crm"
+                  value={formTag}
+                  onChange={(e) => setFormTag(e.target.value)}
+                  style={inputStyle()}
+                />
+              </div>
+
+              <div>
+                <label
+                  className="mono"
+                  style={{ fontSize: 11, color: tokens.textLabel, display: "block", marginBottom: 4 }}
+                >
+                  NOTE / PURPOSE
+                </label>
+                <textarea
+                  placeholder="Updated note or context…"
+                  value={formNote}
+                  onChange={(e) => setFormNote(e.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle(), resize: "vertical" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+              <button
+                type="button"
+                onClick={() => setRotatingSecret(null)}
+                disabled={busy === "rotate:submit"}
+                style={actionBtnStyle(tokens.toolBg, tokens.border, tokens.textMuted)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitRotateSecret()}
+                disabled={busy === "rotate:submit"}
+                style={{
+                  background: tokens.accent,
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "7px 16px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {busy === "rotate:submit" ? "Rotating…" : "Rotate Secret"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
+function inputStyle(): React.CSSProperties {
+  return {
+    width: "100%",
+    background: tokens.bgBody,
+    border: `1px solid ${tokens.border}`,
+    borderRadius: 6,
+    color: tokens.text,
+    fontSize: 12.5,
+    padding: "7px 10px",
+    boxSizing: "border-box",
+  };
+}
+
+function actionBtnStyle(bg: string, border: string, fg: string): React.CSSProperties {
+  return {
+    background: bg,
+    border: `1px solid ${border}`,
+    borderRadius: 6,
+    color: fg,
+    cursor: "pointer",
+    fontSize: 11.5,
+    padding: "4px 10px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+  };
+}
+
