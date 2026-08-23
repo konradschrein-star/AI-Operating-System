@@ -224,6 +224,14 @@ function resolveStageAlias(stage: string): { status: string; queueName: string |
   if (norm === "AWAITING_QC") {
     return { status: "AWAITING_QC", queueName: null };
   }
+  if (norm === "IDEA" || norm === "IDEA_GENERATION") {
+    // No queue: worker-orchestrator's dispatch-next.ts lists IDEA_GENERATION
+    // under "statuses that do not trigger queue action" (utils/dispatch-next.ts
+    // ~L244), so this is a status-only reset back to the top of the pipeline.
+    // Without this branch the drawer's own "Idea (IDEA_GENERATION)" option
+    // 400s — "IDEA" is not a job_status, so the fallback never matched it.
+    return { status: "IDEA_GENERATION", queueName: null };
+  }
   if (norm === "CLIP_SELECTION") {
     return { status: "CLIP_SELECTION", queueName: "queue-clip-selection" };
   }

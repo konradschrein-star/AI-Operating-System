@@ -1015,10 +1015,12 @@ export function JobDetailDrawer({ jobId, onClose, onJobUpdated }: JobDetailDrawe
                 >
                   <option value="">Infer target stage automatically</option>
                   <option value="render">Render (ROUTING_RENDER)</option>
-                  <option value="qc">QC (AWAITING_QC)</option>
+                  {/* Labels name the status the SERVER actually writes —
+                      `qc` resolves to QMS_VALIDATING, not AWAITING_QC. */}
+                  <option value="qc">QC validation (QMS_VALIDATING)</option>
                   <option value="assets">Assets (ASSET_COLLECTION)</option>
                   <option value="script">Script (SCRIPTING)</option>
-                  <option value="idea">Idea (IDEA_GENERATION)</option>
+                  <option value="idea">Idea — status reset, no queue (IDEA_GENERATION)</option>
                 </select>
               </div>
 
