@@ -14,8 +14,19 @@ import {
   type CuratorAuditResult,
 } from "../api";
 
+/** Fallback only. The real reason travels per-skill in `protected_reason`,
+ *  written next to the id in skills-curator.ts's DEFAULT_PROTECTED_IDS, so the
+ *  surface can say WHY this particular toggle is locked instead of pointing at
+ *  a source file Konrad cannot open from here. */
 const PROTECTED_TOOLTIP =
-  "Protected — a core OS workflow (see DEFAULT_PROTECTED_IDS in skills-curator.ts). Can't be disabled from here.";
+  "Protected — a core OS workflow. Can't be disabled from here.";
+
+function protectedTitle(s: { protected: boolean; protected_reason: string | null }) {
+  if (!s.protected) return undefined;
+  return s.protected_reason
+    ? `Protected — ${s.protected_reason}`
+    : PROTECTED_TOOLTIP;
+}
 
 function fmtTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
@@ -150,6 +161,14 @@ export function SkillsSurface() {
     return m;
   }, [audit]);
 
+  /** The protected set, unfiltered — the CONTEXT COST card names it whatever
+   *  category or search the list is currently narrowed to, because "what can I
+   *  not turn off" is a property of the catalog, not of the current view. */
+  const protectedSkills = useMemo<SkillSummary[]>(
+    () => (listQ.data?.skills ?? []).filter((s) => s.protected),
+    [listQ.data],
+  );
+
   const filtered = useMemo<SkillSummary[]>(() => {
     const all = listQ.data?.skills ?? [];
     let out = cat ? all.filter((s) => s.category === cat) : all;
@@ -226,6 +245,22 @@ export function SkillsSurface() {
               >
                 saving ~{fmtTokens(listQ.data.token_estimate.savings_tokens)} tok
                 /turn
+              </div>
+            )}
+            {protectedSkills.length > 0 && (
+              <div
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  color: tokens.decide,
+                  marginTop: 5,
+                  cursor: "help",
+                }}
+                title={protectedSkills
+                  .map((s) => `${s.id} — ${s.protected_reason ?? "protected"}`)
+                  .join("\n\n")}
+              >
+                {protectedSkills.length} protected · can&apos;t be disabled
               </div>
             )}
           </div>
@@ -482,7 +517,7 @@ export function SkillsSurface() {
                       enabled={s.enabled}
                       disabled={s.protected}
                       pending={pendingIds.has(s.id)}
-                      title={s.protected ? PROTECTED_TOOLTIP : undefined}
+                      title={protectedTitle(s)}
                       onChange={(next) => toggleMut.mutate({ id: s.id, enabled: next })}
                     />
                   </span>
@@ -629,7 +664,7 @@ export function SkillsSurface() {
                     enabled={detailQ.data.enabled}
                     disabled={detailQ.data.protected}
                     pending={pendingIds.has(detailQ.data.id)}
-                    title={detailQ.data.protected ? PROTECTED_TOOLTIP : undefined}
+                    title={protectedTitle(detailQ.data)}
                     onChange={(next) =>
                       toggleMut.mutate({ id: detailQ.data.id, enabled: next })
                     }
@@ -645,9 +680,8 @@ export function SkillsSurface() {
                     marginTop: 8,
                     lineHeight: 1.5,
                   }}
-                  title={PROTECTED_TOOLTIP}
                 >
-                  PROTECTED — core OS workflow, can't be disabled from here.
+                  PROTECTED — {detailQ.data.protected_reason ?? PROTECTED_TOOLTIP}
                 </div>
               )}
               <div

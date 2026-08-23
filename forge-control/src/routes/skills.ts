@@ -5,7 +5,11 @@ import {
   setSkillEnabled,
   estimateCatalogTokens,
 } from "../db/skills.ts";
-import { runCuratorAudit, isProtectedSkill } from "../services/skills-curator.ts";
+import {
+  runCuratorAudit,
+  isProtectedSkill,
+  protectedSkillReason,
+} from "../services/skills-curator.ts";
 
 const r = new Hono();
 
@@ -16,6 +20,10 @@ r.get("/", async (c) => {
   const withProtection = skills.map((s) => ({
     ...s,
     protected: isProtectedSkill(s.id),
+    // Null for the 134 unprotected skills. The UI prints it verbatim so the
+    // reason a toggle is LOCKED travels with the lock instead of living in a
+    // source comment nobody reading the surface can see.
+    protected_reason: protectedSkillReason(s.id),
   }));
   return c.json({
     count: skills.length,
@@ -63,7 +71,11 @@ r.post("/bulk-toggle", async (c) => {
   const results = [];
   for (const id of targetIds) {
     if (isProtectedSkill(id)) {
-      results.push({ id, skipped: true, reason: "protected" });
+      results.push({
+        id,
+        skipped: true,
+        reason: `protected — ${protectedSkillReason(id)}`,
+      });
       continue;
     }
     const skill = await getSkill(id);
@@ -87,7 +99,12 @@ r.post("/:id{.+}/toggle", async (c) => {
   if (!skill) return c.json({ error: "skill not found", id }, 404);
   if (isProtectedSkill(id)) {
     return c.json(
-      { error: "skill is protected and cannot be disabled", id, protected: true },
+      {
+        error: "skill is protected and cannot be disabled",
+        id,
+        protected: true,
+        protected_reason: protectedSkillReason(id),
+      },
       403,
     );
   }
@@ -99,7 +116,13 @@ r.get("/:id{.+}", async (c) => {
   const id = c.req.param("id");
   const skill = await getSkill(id);
   if (!skill) return c.json({ error: "skill not found", id }, 404);
-  return c.json({ skill: { ...skill, protected: isProtectedSkill(id) } });
+  return c.json({
+    skill: {
+      ...skill,
+      protected: isProtectedSkill(id),
+      protected_reason: protectedSkillReason(id),
+    },
+  });
 });
 
 export default r;
