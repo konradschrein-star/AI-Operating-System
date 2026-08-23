@@ -151,6 +151,7 @@ gate_sh "forge-control/ untouched by round 808's own commits" \
    echo '(round 808 authored none of these; any listed file is a sibling task on the same branch)'; \
    exit 0"
 
+gate_sh "check-migration-numbers.ts" "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-migration-numbers.ts | tail -3"
 gate_sh "dollar-sweep.sh" "bash scripts/checks/dollar-sweep.sh | tail -6"
 gate_sh "check-composer-v3.ts" "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-composer-v3.ts | tail -3"
 gate_sh "check-secret-requests.ts" "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-secret-requests.ts | tail -3"
