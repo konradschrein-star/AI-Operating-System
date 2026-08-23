@@ -173,7 +173,7 @@ export function ChatContextPopover({
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     if (unmountTimerRef.current) clearTimeout(unmountTimerRef.current);
     // A grace period, not an immediate close. Gauge and card do not touch, so
-    // the pointer spends a frame or two over neither of them; closing on that
+    // for a frame or two the pointer is over neither of them; closing on that
     // frame is the blink. 120ms is long enough to cross the 6px gap and far
     // too short to read as a hover that stayed.
     closeTimerRef.current = setTimeout(() => {
