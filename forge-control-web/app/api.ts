@@ -948,6 +948,9 @@ export interface SkillSummary {
   risk?: string;
   enabled: boolean;
   protected: boolean;
+  /** One sentence saying WHY it is protected; null when it is not. Written by
+   *  skills-curator.ts's DEFAULT_PROTECTED_IDS, printed verbatim by the UI. */
+  protected_reason: string | null;
 }
 
 export interface SkillDetail extends SkillSummary {
@@ -1119,6 +1122,16 @@ export interface AutonomyResponse {
   rules: GuardrailRule[];
   trips: GuardrailTrip[];
   categories: { key: string; label: string; count: number }[];
+  /** Today's MEASURED Gemini token draw and the cap it is checked against.
+   *  `null` when the server could not read the counter — render "unavailable",
+   *  never a zero, because a confident zero next to a cap reads as headroom. */
+  gemini_daily: {
+    tokens: number;
+    runs: number;
+    /** Gemini runs today carrying no usage rollup — the under-count. */
+    runs_without_usage: number;
+    cap_tokens: number;
+  } | null;
 }
 
 export const fetchAutonomy = () => getJson<AutonomyResponse>("/autonomy");

@@ -10,7 +10,19 @@ import {
   resumeFleet,
   type GuardrailRule,
   type GuardrailTrip,
+  type AutonomyResponse,
 } from "../api";
+
+/** Mirrors DEFAULT_GEMINI_DAILY_TOKEN_CAP in forge-control's db/autonomy.ts.
+ *  Used ONLY as the input's placeholder before the server's own number lands;
+ *  every rendered figure comes from `gemini_daily`, which the server measures. */
+const GEMINI_DAILY_TOKEN_CAP_FALLBACK = 25_000_000;
+
+function fmtTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+  return String(n);
+}
 
 const CATEGORY_COLOR: Record<string, string> = {
   financial: tokens.warn,
@@ -234,6 +246,7 @@ export function AutonomySurface() {
             <RuleRow
               key={rule.id}
               rule={rule}
+              geminiDaily={q.data?.gemini_daily ?? null}
               onToggle={() =>
                 ruleM.mutate({ id: rule.id, enabled: !rule.enabled })
               }
@@ -296,10 +309,13 @@ export function AutonomySurface() {
 
 function RuleRow({
   rule,
+  geminiDaily,
   onToggle,
   onSaveConfig,
 }: {
   rule: GuardrailRule;
+  /** Today's measured Gemini draw, or null when the server could not read it. */
+  geminiDaily: AutonomyResponse["gemini_daily"];
   onToggle: () => void;
   onSaveConfig: (config: Record<string, unknown>) => void;
 }) {
@@ -399,7 +415,7 @@ function RuleRow({
       {hasConfig && (
         <div
           style={{
-            background: "rgba(0,0,0,0.15)",
+            background: tokens.toolBg,
             border: `1px solid ${tokens.borderDivider}`,
             borderRadius: 6,
             padding: "8px 12px",
@@ -469,21 +485,49 @@ function RuleRow({
               )}
 
               {rule.id === "spend.daily_cap" && (
-                <div>
-                  <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
-                    Daily Spend Cap (EUR)
-                  </label>
-                  <input
-                    type="number"
-                    value={Number(configDraft.cap_eur ?? 100)}
-                    onChange={(e) =>
-                      setConfigDraft((prev) => ({
-                        ...prev,
-                        cap_eur: Number(e.target.value),
-                      }))
-                    }
-                    style={configInputStyle}
-                  />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                      Claude — daily cap (EUR)
+                    </label>
+                    <input
+                      type="number"
+                      value={Number(configDraft.cap_eur ?? 100)}
+                      onChange={(e) =>
+                        setConfigDraft((prev) => ({
+                          ...prev,
+                          cap_eur: Number(e.target.value),
+                        }))
+                      }
+                      style={configInputStyle}
+                    />
+                  </div>
+                  {/* The Gemini half of the lever. Until round 2 this rule
+                      returned `blocked: false` unconditionally for Gemini, so
+                      the surface presented a daily cap that could not fire for
+                      the engine Konrad routes cheap parallel work to. Gemini
+                      bills no EUR, so its cap is counted in the unit it does
+                      spend — tokens, summed across every Gemini run today. */}
+                  <div>
+                    <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                      Gemini — daily cap (tokens)
+                    </label>
+                    <input
+                      type="number"
+                      value={Number(
+                        configDraft.gemini_daily_token_cap ??
+                          geminiDaily?.cap_tokens ??
+                          GEMINI_DAILY_TOKEN_CAP_FALLBACK,
+                      )}
+                      onChange={(e) =>
+                        setConfigDraft((prev) => ({
+                          ...prev,
+                          gemini_daily_token_cap: Number(e.target.value),
+                        }))
+                      }
+                      style={configInputStyle}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -593,6 +637,44 @@ function RuleRow({
                     </span>
                   ))
                 )}
+                {/* The Gemini side of the daily cap, MEASURED. `gemini_daily`
+                    is a live SUM over today's Gemini runs, so this line either
+                    shows a real draw or says the counter could not be read —
+                    it never renders a reassuring zero. */}
+                {rule.id === "spend.daily_cap" &&
+                  (geminiDaily === null ? (
+                    <span style={{ color: tokens.warn }}>
+                      gemini today: counter unavailable — cap unenforced
+                    </span>
+                  ) : (
+                    <span
+                      title={
+                        geminiDaily.runs_without_usage > 0
+                          ? `${geminiDaily.runs_without_usage} Gemini run(s) today carry no usage rollup ` +
+                            `(executor restarted mid-run), so this is a floor, not an exact total.`
+                          : undefined
+                      }
+                      style={{
+                        color:
+                          geminiDaily.cap_tokens > 0 &&
+                          geminiDaily.tokens > geminiDaily.cap_tokens * 0.8
+                            ? tokens.warn
+                            : tokens.textMuted,
+                      }}
+                    >
+                      <span style={{ color: tokens.textFaint }}>gemini today=</span>
+                      <span style={{ color: tokens.textHi }}>
+                        {fmtTokenCount(geminiDaily.tokens)}
+                      </span>
+                      <span style={{ color: tokens.textFaint }}>
+                        {" "}
+                        / {fmtTokenCount(geminiDaily.cap_tokens)} tok · {geminiDaily.runs} runs
+                        {geminiDaily.runs_without_usage > 0
+                          ? ` (+${geminiDaily.runs_without_usage} unmetered)`
+                          : ""}
+                      </span>
+                    </span>
+                  ))}
               </div>
               <button
                 onClick={() => {
@@ -616,7 +698,7 @@ const configInputStyle: React.CSSProperties = {
   width: "100%",
   padding: "4px 8px",
   fontSize: 11,
-  background: "rgba(0,0,0,0.3)",
+  background: tokens.inputBg,
   border: `1px solid ${tokens.border}`,
   borderRadius: 4,
   color: tokens.text,
@@ -639,7 +721,7 @@ const configSaveBtnStyle: React.CSSProperties = {
   background: tokens.accent,
   border: "none",
   borderRadius: 4,
-  color: "#fff",
+  color: tokens.accentInk,
   cursor: "pointer",
   fontWeight: 600,
 };
@@ -687,7 +769,7 @@ function TripRow({
             fontSize: 9,
             padding: "1px 5px",
             borderRadius: 3,
-            background: trip.resolved ? "rgba(46,160,67,0.15)" : "rgba(248,81,73,0.15)",
+            background: trip.resolved ? tokens.okActionBg : tokens.dangerActionBg,
             color: trip.resolved ? tokens.ok : tokens.bleed,
           }}
         >
@@ -707,7 +789,7 @@ function TripRow({
             style={{
               fontSize: 9.5,
               padding: "2px 8px",
-              background: "rgba(46,160,67,0.2)",
+              background: tokens.okActionBg,
               border: `1px solid ${tokens.ok}`,
               borderRadius: 4,
               color: tokens.ok,
