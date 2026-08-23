@@ -1,12 +1,26 @@
--- 0043_goals_and_calendar.sql
+-- 0044_goals_and_calendar.sql
 --
 -- GOALS/TASKS surface extensions:
 -- 1. Day tasks calendar time-blocking and Google Calendar linkage.
 -- 2. Life goals (strategic horizon goals: quarterly, yearly, long-term).
 -- 3. Seed life_goals with Konrad's 11 real strategic goals from Obsidian vault.
 --
+-- RENUMBERED 0043 -> 0044 by the operator, 2026-08-23. Three lanes each wrote a
+-- file called 0043 in their own worktree, invisible to each other: gemini_tier
+-- (already on main), goals_and_calendar (this one) and journal_entries. Git does
+-- not conflict on that — the filenames differ, so all three would merge cleanly
+-- and only collide inside a database. scripts/checks/check-migration-numbers.ts
+-- now fails on it. Renaming is safe: this repo has no migration ledger, so the
+-- number only orders a FRESH install, and every statement below is already
+-- applied to content_forge under the old name.
+--
+-- APPLIED to content_forge 2026-08-23 by the operator (deploy step). Verified:
+-- life_goals present with 11 rows, day_tasks carries start_time / duration_min /
+-- gcal_event_id, and a second run is a clean no-op (INSERT 0 0 — the seed is
+-- guarded by WHERE NOT EXISTS on title).
+--
 -- Applied with:
---   psql "$DATABASE_URL" -f db/migrations/0043_goals_and_calendar.sql
+--   psql "$DATABASE_URL" -f db/migrations/0044_goals_and_calendar.sql
 -- Every statement carries IF NOT EXISTS / idempotency guards.
 
 -- 1. Extend day_tasks with scheduling and calendar linkage
