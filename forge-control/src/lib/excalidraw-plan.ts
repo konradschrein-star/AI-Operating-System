@@ -413,6 +413,149 @@ export function compileCanvasPlanFromMarkdown(
 }
 
 /* ==========================================================================
+ * Insertion Order — turning a plan into a real task graph without lying
+ * ========================================================================== */
+
+/** One `depends_on` edge that CANNOT survive the trip into `project_tasks`.
+ *
+ *  `project_tasks.depends_on` holds uuids of rows that already exist, so an
+ *  edge can only be written once its target row has been inserted. Two edges
+ *  can never satisfy that:
+ *   - `cycle` — the target sits on a dependency cycle with the source, so no
+ *     insertion order exists in which both edges point backwards. A cycle also
+ *     makes the project unexecutable: `promoteReadyTasks()` waits for every
+ *     dependency to be 'done', and neither member can ever get there.
+ *   - `unknown_task` — the edge points at an id that is not in `plan.tasks`
+ *     at all (a hand-edited plan, or a task deleted from the markdown while
+ *     its dependents kept the reference). */
+export interface UnresolvableDependency {
+  /** Plan-local id of the task carrying the edge. */
+  task: string;
+  taskTitle: string;
+  /** Plan-local id the edge points at. */
+  dependsOn: string;
+  /** Title of the target, or null when the target is not in the plan. */
+  dependsOnTitle: string | null;
+  reason: "cycle" | "unknown_task";
+}
+
+export interface PlanInsertionOrder {
+  /** Every task in `plan.tasks`, reordered so that each task follows all of
+   *  its resolvable dependencies. Cycle members come last, in plan order. */
+  order: PlanTask[];
+  /** EXACTLY the edges a sequential insert over `order` will fail to write —
+   *  derived from `order` itself, not predicted, so it can neither miss a loss
+   *  nor invent one. Empty means the task graph written to the database is
+   *  edge-for-edge identical to the plan. */
+  unresolvable: UnresolvableDependency[];
+}
+
+/** Order plan tasks for insertion so that no `depends_on` edge is silently
+ *  lost, and NAME the edges that no order can save.
+ *
+ *  The caller used to insert in `plan.tasks` order (phase, then workstream,
+ *  then id) and `.filter()` out any dependency whose row did not exist yet.
+ *  That is correct only by luck: `phase` is graph depth, and two tasks at the
+ *  same depth in different workstreams can still depend on one another, so a
+ *  real edge could vanish with no error and no log — the drawing said "A then
+ *  B" and the seeded project did not. Kahn's algorithm removes that class of
+ *  loss entirely; what is left over is genuinely unrepresentable and is
+ *  returned rather than dropped.
+ *
+ *  The returned `unresolvable` set is a REPLAY of the caller's insert over the
+ *  returned `order`, not a prediction, so it is exactly the set of edges that
+ *  will be missing from `project_tasks` — no more and no less. */
+export function resolvePlanInsertionOrder(tasks: PlanTask[]): PlanInsertionOrder {
+  const byId = new Map<string, PlanTask>();
+  for (const t of tasks) byId.set(t.id, t);
+
+  const titleOf = (id: string): string | null => byId.get(id)?.title ?? null;
+
+  const unresolvable: UnresolvableDependency[] = [];
+  /** Dependencies that CAN be honoured, i.e. point at a task in this plan. */
+  const deps = new Map<string, string[]>();
+
+  for (const t of tasks) {
+    const keep: string[] = [];
+    for (const d of t.depends_on) {
+      if (d === t.id) {
+        // A self-edge is a one-node cycle; report it in the same vocabulary.
+        unresolvable.push({
+          task: t.id,
+          taskTitle: t.title,
+          dependsOn: d,
+          dependsOnTitle: t.title,
+          reason: "cycle",
+        });
+        continue;
+      }
+      if (!byId.has(d)) {
+        unresolvable.push({
+          task: t.id,
+          taskTitle: t.title,
+          dependsOn: d,
+          dependsOnTitle: null,
+          reason: "unknown_task",
+        });
+        continue;
+      }
+      keep.push(d);
+    }
+    deps.set(t.id, keep);
+  }
+
+  const order: PlanTask[] = [];
+  const emitted = new Set<string>();
+
+  // Kahn, iterated in plan order so the output stays stable and still reads
+  // phase-by-phase for everything the ordering does not force.
+  let progressed = true;
+  while (emitted.size < tasks.length && progressed) {
+    progressed = false;
+    for (const t of tasks) {
+      if (emitted.has(t.id)) continue;
+      const ready = deps.get(t.id)!.every((d) => emitted.has(d));
+      if (!ready) continue;
+      order.push(t);
+      emitted.add(t.id);
+      progressed = true;
+    }
+  }
+
+  // Whatever Kahn could not place is blocked by a cycle — either it sits on
+  // one, or it hangs downstream of one. Append it in plan order so the tasks
+  // themselves are still created; the loss is confined to edges.
+  for (const t of tasks) {
+    if (emitted.has(t.id)) continue;
+    order.push(t);
+    emitted.add(t.id);
+  }
+
+  // Now REPLAY the insert the caller is about to do and record every edge it
+  // will actually fail to write. Deriving the report from the final order —
+  // rather than from the point Kahn stalled — is what keeps it exact: a task
+  // downstream of a cycle (leaf <- b, where a <-> b) keeps its edge, because
+  // by the time `leaf` is inserted `b` exists. Predicting instead of replaying
+  // reported that surviving edge as lost, which is its own kind of lie.
+  const inserted = new Set<string>();
+  for (const t of order) {
+    for (const d of deps.get(t.id)!) {
+      if (inserted.has(d)) continue;
+      unresolvable.push({
+        task: t.id,
+        taskTitle: t.title,
+        dependsOn: d,
+        dependsOnTitle: titleOf(d),
+        reason: "cycle",
+      });
+    }
+    inserted.add(t.id);
+  }
+
+  return { order, unresolvable };
+}
+
+/* ==========================================================================
  * Markdown Serialization
  * ========================================================================== */
 

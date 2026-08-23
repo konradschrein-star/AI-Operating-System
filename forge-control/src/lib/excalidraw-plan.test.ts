@@ -5,6 +5,8 @@
  * 1. Actionable plan compilation from synthetic DAGs (topological phases,
  *    workstreams, task specs, role/tier selection, open questions).
  * 2. Plan compilation and markdown rendering from real vault drawings.
+ * 3. Insertion ordering into project_tasks: every representable dependency
+ *    survives, and the ones that cannot are named rather than dropped.
  */
 
 import { test, describe } from "node:test";
@@ -16,6 +18,10 @@ import {
   compileCanvasPlan,
   compileCanvasPlanFromMarkdown,
   serializeCanvasPlanMarkdown,
+  resolvePlanInsertionOrder,
+  type CanvasPlan,
+  type PlanTask,
+  type UnresolvableDependency,
 } from "./excalidraw-plan.ts";
 import { parseDrawingGraphFromMarkdown } from "./excalidraw-graph.ts";
 import { serializeExcalidrawMarkdown, EMPTY_DRAWING } from "./excalidraw-md.ts";
@@ -304,3 +310,271 @@ describe("excalidraw-plan: API routes", async () => {
 });
 
 
+/* ==========================================================================
+ * Insertion order — the seeded task graph must equal the drawn one
+ * ========================================================================== */
+
+describe("resolvePlanInsertionOrder", () => {
+  function planTask(over: Partial<PlanTask> & { id: string }): PlanTask {
+    return {
+      nodeId: "node-" + over.id,
+      title: "Task " + over.id,
+      workstream: "Core",
+      phase: 1,
+      status: "planned",
+      statusReason: "",
+      depends_on: [],
+      role: "builder",
+      tier: "standard",
+      write_set: [],
+      brief: "",
+      link: null,
+      ...over,
+    };
+  }
+
+  /** Replay the route's insert loop over `order` and assert that the edges it
+   *  actually fails to write are exactly the ones reported. This is the whole
+   *  contract: `unresolvable` may neither miss a loss nor invent one. */
+  function assertReportMatchesInsert(
+    order: PlanTask[],
+    unresolvable: UnresolvableDependency[],
+  ): void {
+    const inserted = new Set<string>();
+    const lost: string[] = [];
+    for (const t of order) {
+      for (const d of t.depends_on) if (!inserted.has(d)) lost.push(`${t.id}<-${d}`);
+      inserted.add(t.id);
+    }
+    assert.deepStrictEqual(
+      lost.sort(),
+      unresolvable.map((u) => `${u.task}<-${u.dependsOn}`).sort(),
+    );
+  }
+
+  test("keeps every edge of an acyclic plan and orders dependencies first", () => {
+    // c depends on b depends on a, but the plan lists them in reverse — the
+    // exact shape that used to drop two edges on the floor.
+    const tasks = [
+      planTask({ id: "c", depends_on: ["b"] }),
+      planTask({ id: "b", depends_on: ["a"] }),
+      planTask({ id: "a" }),
+    ];
+
+    const { order, unresolvable } = resolvePlanInsertionOrder(tasks);
+
+    assert.deepStrictEqual(unresolvable, []);
+    assert.deepStrictEqual(order.map((t) => t.id), ["a", "b", "c"]);
+
+    // Simulate the route's insert loop: no edge may be lost.
+    const inserted = new Set<string>();
+    let kept = 0;
+    let lost = 0;
+    for (const t of order) {
+      for (const d of t.depends_on) (inserted.has(d) ? kept++ : lost++);
+      inserted.add(t.id);
+    }
+    assert.strictEqual(lost, 0, "no edge may be dropped for an acyclic plan");
+    assert.strictEqual(kept, 2);
+  });
+
+  test("preserves a cross-workstream edge inside one phase", () => {
+    // Same phase number, different workstreams: plan.tasks is sorted by
+    // (phase, workstream, id), so "alpha" sorts before "zulu" and the edge
+    // alpha <- zulu pointed at a task that did not exist yet.
+    const tasks = [
+      planTask({ id: "alpha", workstream: "Alpha", phase: 2, depends_on: ["zulu"] }),
+      planTask({ id: "zulu", workstream: "Zulu", phase: 2 }),
+    ];
+
+    const { order, unresolvable } = resolvePlanInsertionOrder(tasks);
+
+    assert.deepStrictEqual(unresolvable, []);
+    assert.deepStrictEqual(order.map((t) => t.id), ["zulu", "alpha"]);
+  });
+
+  test("names the edge a 2-node cycle loses instead of dropping it silently", () => {
+    const tasks = [
+      planTask({ id: "a", title: "Ship it", depends_on: ["b"] }),
+      planTask({ id: "b", title: "Review it", depends_on: ["a"] }),
+    ];
+
+    const { order, unresolvable } = resolvePlanInsertionOrder(tasks);
+
+    // Both tasks are still created — only the back edge is unrepresentable.
+    assert.deepStrictEqual(order.map((t) => t.id), ["a", "b"]);
+    assert.deepStrictEqual(unresolvable, [
+      {
+        task: "a",
+        taskTitle: "Ship it",
+        dependsOn: "b",
+        // The title travels with the edge so the refusal reads without the ids.
+        dependsOnTitle: "Review it",
+        reason: "cycle",
+      },
+    ]);
+
+    // And the report is exact: replaying the insert loses that edge and no other.
+    assertReportMatchesInsert(order, unresolvable);
+  });
+
+  test("reports a self-edge as a cycle", () => {
+    const tasks = [planTask({ id: "a", depends_on: ["a"] })];
+    const { order, unresolvable } = resolvePlanInsertionOrder(tasks);
+    assert.deepStrictEqual(order.map((t) => t.id), ["a"]);
+    assert.deepStrictEqual(unresolvable, [
+      {
+        task: "a",
+        taskTitle: "Task a",
+        dependsOn: "a",
+        dependsOnTitle: "Task a",
+        reason: "cycle",
+      },
+    ]);
+  });
+
+  test("reports an edge pointing outside the plan as unknown_task", () => {
+    const tasks = [planTask({ id: "a", depends_on: ["ghost"] })];
+    const { unresolvable } = resolvePlanInsertionOrder(tasks);
+    assert.strictEqual(unresolvable.length, 1);
+    assert.strictEqual(unresolvable[0].reason, "unknown_task");
+    assert.strictEqual(unresolvable[0].dependsOnTitle, null);
+  });
+
+  test("a cycle does not cost the acyclic edges hanging off it", () => {
+    //   root -> a <-> b -> leaf   (a and b cycle; root and leaf are fine)
+    const tasks = [
+      planTask({ id: "root" }),
+      planTask({ id: "a", depends_on: ["root", "b"] }),
+      planTask({ id: "b", depends_on: ["a"] }),
+      planTask({ id: "leaf", depends_on: ["b"] }),
+    ];
+
+    const { order, unresolvable } = resolvePlanInsertionOrder(tasks);
+
+    assert.strictEqual(order.length, 4, "every task is still created");
+    assert.strictEqual(order[0].id, "root");
+
+    // Exactly one edge is unrepresentable: the one closing the cycle. `leaf`
+    // hangs downstream of the cycle but keeps its edge, because `b` exists by
+    // the time it is inserted — reporting leaf<-b as lost would be a lie.
+    assert.deepStrictEqual(
+      unresolvable.map((u) => `${u.task}<-${u.dependsOn}`),
+      ["a<-b"],
+    );
+    assertReportMatchesInsert(order, unresolvable);
+
+    const inserted = new Set<string>();
+    const keptEdges: string[] = [];
+    for (const t of order) {
+      for (const d of t.depends_on) if (inserted.has(d)) keptEdges.push(`${t.id}<-${d}`);
+      inserted.add(t.id);
+    }
+    assert.ok(keptEdges.includes("a<-root"), "acyclic edge into the cycle survives");
+    assert.ok(keptEdges.includes("b<-a"), "the forward edge of the cycle survives");
+    assert.ok(keptEdges.includes("leaf<-b"), "acyclic edge out of the cycle survives");
+  });
+
+  test("empty plan resolves to an empty order", () => {
+    assert.deepStrictEqual(resolvePlanInsertionOrder([]), { order: [], unresolvable: [] });
+  });
+});
+
+describe("POST /api/canvas/plan/to-project: unresolvable dependencies", async () => {
+  const { Hono } = await import("hono");
+  const canvasRouter = (await import("../routes/canvas.ts")).default;
+  const app = new Hono();
+  app.route("/api/canvas", canvasRouter);
+
+  /** A two-task plan whose tasks depend on each other — a drawing with an
+   *  A→B→A arrow loop, which the graph parser already flags as a `cycle`
+   *  ambiguity. Passed inline so the route never reaches the filesystem. */
+  function cyclicPlan(): CanvasPlan {
+    const mk = (id: string, dep: string): PlanTask => ({
+      id,
+      nodeId: "n-" + id,
+      title: "Task " + id.toUpperCase(),
+      workstream: "Core",
+      phase: 1,
+      status: "planned",
+      statusReason: "",
+      depends_on: [dep],
+      role: "builder",
+      tier: "standard",
+      write_set: [],
+      brief: "brief for " + id,
+      link: null,
+    });
+    const tasks = [mk("a", "b"), mk("b", "a")];
+    return {
+      path: "Excalidraw/Cyclic.excalidraw.md",
+      title: "Cyclic",
+      summary: "two tasks pointing at each other",
+      workstreams: [
+        { id: "core", name: "Core", containerId: null, taskIds: ["a", "b"], summary: "" },
+      ],
+      phases: [{ phase: 1, name: "Phase 1", taskIds: ["a", "b"] }],
+      tasks,
+      ambiguities: [
+        {
+          id: "cycle-1",
+          kind: "cycle",
+          severity: "warning",
+          elementIds: ["n-a", "n-b"],
+          label: "Task A ↔ Task B",
+          description: "these two point at each other",
+          question: "which one runs first?",
+        },
+      ],
+      stats: {
+        totalTasks: 2,
+        totalPhases: 1,
+        totalWorkstreams: 1,
+        ambiguityCount: 1,
+        completedTasks: 0,
+        blockedTasks: 0,
+      },
+      rawMarkdown: "# Plan: Cyclic\n",
+    };
+  }
+
+  test("refuses a cyclic plan with 409 and names every lost edge", async () => {
+    const res = await app.request("/api/canvas/plan/to-project", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Cyclic push", plan: cyclicPlan() }),
+    });
+
+    assert.strictEqual(res.status, 409);
+    const body = (await res.json()) as {
+      error: string;
+      reason: string;
+      unresolvable: Array<{ task: string; dependsOn: string; reason: string }>;
+      hint: string;
+    };
+    assert.strictEqual(body.reason, "unresolvable_dependencies");
+    assert.match(body.error, /cannot be written as a task graph/);
+    assert.match(body.error, /close a cycle/);
+    assert.deepStrictEqual(
+      body.unresolvable.map((u) => `${u.task}<-${u.dependsOn}`),
+      ["a<-b"],
+    );
+    assert.strictEqual(body.unresolvable[0].reason, "cycle");
+    assert.match(body.hint, /allow_unresolved_dependencies/);
+  });
+
+  test("the refusal happens before any project is created", async () => {
+    // A refusal that had already called createProject() would need a live
+    // database to get as far as 409. There is none here: the route answers
+    // from the plan alone, which is exactly the ordering being asserted.
+    const res = await app.request("/api/canvas/plan/to-project", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Cyclic push", plan: cyclicPlan() }),
+    });
+    assert.strictEqual(res.status, 409);
+    const body = (await res.json()) as { reason?: string; error: string };
+    assert.strictEqual(body.reason, "unresolvable_dependencies");
+    assert.doesNotMatch(body.error, /ECONNREFUSED|pool|database/i);
+  });
+});

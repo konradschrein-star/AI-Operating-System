@@ -54,6 +54,7 @@ import {
   compileCanvasPlan,
   compileCanvasPlanFromMarkdown,
   serializeCanvasPlanMarkdown,
+  resolvePlanInsertionOrder,
   type CanvasPlan,
 } from "../lib/excalidraw-plan.ts";
 import {
@@ -776,8 +777,23 @@ r.post("/plan/save", async (c) => {
   }
 });
 
-/** POST /api/canvas/plan/to-project { path?, plan?, name?, brief?, repo?, base_branch?, architect_tier?, origin_chat_id? }
- *  Creates a real project in forge-control from a CanvasPlan and seeds all tasks in topological order. */
+/** POST /api/canvas/plan/to-project { path?, plan?, name?, brief?, repo?, base_branch?, architect_tier?, origin_chat_id?, allow_unresolved_dependencies? }
+ *  Creates a real project in forge-control from a CanvasPlan and seeds all tasks in topological order.
+ *
+ *  ── The seeded graph must match the drawing, or the caller must be told ────
+ *
+ *  This is the moment a drawing stops being a picture and becomes work the
+ *  fleet will execute, so it is the last place a silent guess is acceptable.
+ *  Tasks are inserted in the order `resolvePlanInsertionOrder()` computes, so
+ *  every dependency that CAN be expressed is expressed. An edge that no order
+ *  can express — a cycle, or a reference to a task that is not in the plan —
+ *  is refused with 409 and named, one edge at a time.
+ *
+ *  `allow_unresolved_dependencies: true` is the explicit override: the project
+ *  is created and the offending edges are OMITTED, but they come back in the
+ *  201 response as `droppedDependencies` and are logged. The default is refuse
+ *  because a cycle in `project_tasks.depends_on` also wedges the project
+ *  permanently — `promoteReadyTasks()` never promotes either member. */
 r.post("/plan/to-project", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     path?: string;
@@ -788,6 +804,7 @@ r.post("/plan/to-project", async (c) => {
     architect_tier?: TaskTier;
     origin_chat_id?: string;
     plan?: CanvasPlan;
+    allow_unresolved_dependencies?: boolean;
   };
 
   const rel = (body.path ?? "").trim();
@@ -825,6 +842,31 @@ r.post("/plan/to-project", async (c) => {
       metadata.origin_chat_id = originChatId;
     }
 
+    // Decide the insertion order BEFORE anything is written. A refusal here
+    // must leave no half-created project behind.
+    const { order: insertionOrder, unresolvable } = resolvePlanInsertionOrder(plan.tasks);
+    const allowUnresolved = body.allow_unresolved_dependencies === true;
+
+    if (unresolvable.length > 0 && !allowUnresolved) {
+      const cycleCount = unresolvable.filter((u) => u.reason === "cycle").length;
+      return c.json(
+        {
+          error:
+            `${unresolvable.length} dependency edge(s) in this plan cannot be written as a task graph` +
+            (cycleCount > 0
+              ? ` — ${cycleCount} of them ${cycleCount === 1 ? "closes" : "close"} a cycle, ` +
+                `which would also wedge the project permanently`
+              : ""),
+          reason: "unresolvable_dependencies",
+          unresolvable,
+          hint:
+            "Resolve the ambiguity in the drawing or the plan markdown, or re-send with " +
+            "allow_unresolved_dependencies: true to create the project with these edges omitted.",
+        },
+        409,
+      );
+    }
+
     const { project, architectTask } = await createProject({
       name,
       brief,
@@ -843,11 +885,23 @@ r.post("/plan/to-project", async (c) => {
       await setProjectStatus(project.id, "blocked");
     }
 
-    // Insert all plan tasks into project_tasks in topological order
+    if (unresolvable.length > 0) {
+      console.warn(
+        `[canvas/plan/to-project] ${project.id}: creating with ${unresolvable.length} ` +
+          `omitted dependency edge(s) on explicit allow_unresolved_dependencies: ` +
+          unresolvable
+            .map((u) => `${u.taskTitle} <- ${u.dependsOnTitle ?? u.dependsOn} (${u.reason})`)
+            .join("; "),
+      );
+    }
+
+    // Insert all plan tasks in the resolved topological order. Every edge that
+    // survives to here points at a task inserted earlier in this loop, so the
+    // only ids that fail to map are the ones already reported as unresolvable.
     const idMap = new Map<string, string>();
     const createdTasks: ProjectTask[] = [];
 
-    for (const task of plan.tasks) {
+    for (const task of insertionOrder) {
       const mappedDeps = task.depends_on
         .map((pid) => idMap.get(pid))
         .filter((uuid): uuid is string => typeof uuid === "string" && uuid.length > 0);
@@ -877,6 +931,9 @@ r.post("/plan/to-project", async (c) => {
         architectTask,
         tasks: createdTasks,
         tasksCount: plan.tasks.length,
+        // Always present, so a caller never has to infer "nothing was lost"
+        // from the absence of a field.
+        droppedDependencies: unresolvable,
       },
       201,
     );
