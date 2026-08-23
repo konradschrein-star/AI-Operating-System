@@ -117,3 +117,71 @@ cd forge-control-web
 npx tsc --noEmit                                           → clean, exit 0
 ```
 
+## Round 2 — Builder: CanvasPane Plan UI, Editor, and Project Push
+
+This round's write-set (`app/api.ts`, `app/desktop/canvasLive.ts`,
+`app/desktop/CanvasPane.tsx`) was **already implemented and committed** when
+this task started — commits `f2c75ec` (typed client methods) and `0da594f`
+(drawer UI, ambiguity banner, markdown editor, push-to-project) were on the
+branch already. This round is verification plus one real defect found and
+fixed, not a from-scratch build.
+
+### What I found and fixed
+
+`scripts/checks/gates-808.sh` gate 5 (`no-raw-colours.cjs`) was RED on a
+literal this round's own commit introduced:
+`CanvasPane.tsx:1289  boxShadow: "0 8px 32px rgba(0,0,0,0.4)"` on the plan
+drawer's confirm-modal card. Fixed by routing it through `tokens.overlay`
+(already used one element up, for the same modal's backdrop) —
+`` boxShadow: `0 8px 32px ${tokens.overlay}` `` — which is theme-aware where
+the literal wasn't. Commit `019bebf`. Re-ran the gate: 0 new-and-unlisted
+hits from this file; the remaining 2 (`gemini-identity.tsx`) predate this
+project (see Round 0 note) and are outside this write-set.
+
+### Verified — commands run, output observed
+
+```
+cd forge-control-web
+npx tsc --noEmit          → clean, exit 0
+npm run build             → exit 0, 12 routes, /canvas and /desktop both emitted
+node ../scripts/checks/no-raw-colours.cjs → CanvasPane.tsx clean after the fix
+```
+
+Screenshots (real vault drawing `Excalidraw/Stealth Uploader - System
+Map.excalidraw.md`, 44 nodes / 12 arrows, the same one Round 1's tests use),
+Plan drawer open, both themes:
+- `20260823T023700Z-canvas-plan-visual-dark.png` — Structured Plan tab, dark
+- `20260823T024200Z-canvas-plan-visual-light.png` — Structured Plan tab, light
+- `20260823T024500Z-canvas-plan-markdown-dark.png` — `.plan.md` tab, dark
+
+All three show: the Ambiguity Alert Banner (`tokens.warn`, left border +
+icon) listing 6 concrete open questions (dangling arrow, 5 unconnected
+nodes) rather than a silent guess; workstream filter chips; phase-grouped
+task cards with status chips (GAP/PLANNED/PROPOSAL/BLOCKED/DONE); a
+`Push to Project` button; and, on the markdown tab, a live-editable
+`.plan.md` body with a `Save .plan.md` button. Both themes render with
+correct contrast, no white-on-white or black-on-black.
+
+Not shot: the loading skeleton, the empty state (no drawing selected), and
+the error+retry state — all three exist in the code (`planLoading`,
+`!planLoading && planErr` branches, `Retry` button) but I did not
+force-trigger them for a screenshot this round; read `CanvasPane.tsx:1583-1690`
+to see them directly.
+
+### How I verified without touching live services (see HANDOFF for the incident)
+
+The declared brief for this house says to screenshot via
+`/opt/ai-os/workspace/shots-aios.mjs` against the live :7701/:7700 pair, but
+those live processes do NOT yet have this branch's backend routes deployed
+(`GET /api/canvas/plan` 404s on live :7700 — the Round 1 backend work is
+merged to this branch, not to `/opt/forge-ai-os`). I mounted a **read-only
+probe**: only `routes/canvas.ts`, global non-GET-refusing middleware ahead of
+it, everything else proxied read-only to live :7700 for real vault-list data.
+Verified refusal directly: `POST .../plan/save` → 405, `PUT .../file` → 405.
+Built `forge-control-web` with `FORGE_CONTROL_URL` pointed at that probe (the
+rewrite bakes at build time) and served it on a throwaway port for the
+screenshots above. Full teardown confirmed after: no stray listeners on
+7797–7799, `pm2 list` restart counts for `forge-control` (75) /
+`forge-control-web` (38) / `forge-executor` (5) unchanged from before this
+round, `curl :7700/api/today` still 200.
+
