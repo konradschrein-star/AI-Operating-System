@@ -401,7 +401,7 @@ function HabitConfigDialog({
       style={{
         position: "fixed",
         inset: 0,
-        backgroundColor: "rgba(0, 0, 0, 0.65)",
+        backgroundColor: tokens.overlay,
         backdropFilter: "blur(2px)",
         display: "flex",
         alignItems: "center",
