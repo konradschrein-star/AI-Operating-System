@@ -124,3 +124,46 @@ than a single number.
 The only commit after the green run above is this WORKLOG.md append. No gate reads
 `WORKLOG.md`; `gates-808.sh` reads only `docs/plan/artifacts/*`, and
 `forbidden-file-diff` watches the named shared surface/engine files.
+
+### Post-verification: the branch is behind main on this very file
+
+Checked after the green run, because a sibling lane's chat surfaced
+`gemini-identity.tsx` as its own gate-5 blocker.
+
+**main has already landed two exact-literal allowlist rows for
+`gemini-identity.tsx`** (`export const GEMINI_ACCENT = "#8b7bf0";` and the
+escaped `rgba\(139, 123, 240, 0\.16\)`), added after this branch was cut from
+`e2f4812`. The file itself is byte-identical on both sides
+(`941e3b76` on `main` and on this branch), so there is no code disagreement —
+only a governance one.
+
+`git merge-tree --write-tree main HEAD` (non-destructive, neither side touched):
+
+```
+scripts/checks/raw-colour-allowlist.txt   Auto-merging — NO conflict
+  → merged file carries THREE rules for one file: mine at line 36,
+    main's canonical pair at 54-55
+PLAN.md                                   CONFLICT (content)   — expected, every lane conflicts here
+WORKLOG.md                                CONFLICT (add/add)   — another lane also created a root WORKLOG.md
+```
+
+The row therefore now carries its own removal instruction rather than becoming a
+silent duplicate (commit `0da4e11`). It cannot just be deleted on this branch:
+main's rows are not reachable from this merge-base, so the two literals would go
+unlisted and the gate would go red here.
+
+Gate run against the **merged tree** `e23ef545` (extracted with `git archive`,
+scanned, extraction deleted afterwards):
+
+```
+no-raw-colours: PASS — 238 literal(s) across 17 file(s),
+                all accounted for (181 legitimate, 57 known debt, 0 unlisted).   exit 0
+```
+
+Caveat stated plainly: that tree contains conflict markers in `PLAN.md` and
+`WORKLOG.md`, which `no-raw-colours.cjs` does not read — the result is valid for
+the colour gate and says nothing about the other two files.
+
+**For whoever merges this branch:** delete the `gemini-identity.tsx` row at
+line 36 in favour of main's pair, and expect to resolve `PLAN.md` and
+`WORKLOG.md` by hand.
