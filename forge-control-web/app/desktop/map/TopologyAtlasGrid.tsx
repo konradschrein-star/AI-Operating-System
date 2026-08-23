@@ -22,6 +22,7 @@ import {
   formatBytes,
   formatCheckedAt,
   formatUptime,
+  isNamedVhost,
   sectionData,
   sectionError,
   type MapPayload,
@@ -295,7 +296,10 @@ export function TopologyAtlasGrid({
               <span>🌐</span> Ingress &amp; Domains
             </div>
             <span className="atlas-column-badge">
-              {domains ? `${filteredDomains.length}/${domains.count} names` : "—"}
+              {/* "entries", not "names": unlike the header chip and the Mind
+                  Map's ingress node, this raw configuration view keeps the
+                  catch-all servers, so it is counting a different set. */}
+              {domains ? `${filteredDomains.length}/${domains.count} vhost entries` : "—"}
             </span>
           </div>
 
@@ -316,7 +320,9 @@ export function TopologyAtlasGrid({
                         <span>↗</span> {d.domain}
                       </a>
                     ) : (
-                      <span className="atlas-card-title">{d.domain}</span>
+                      <span className="atlas-card-title">
+                        {isNamedVhost(d) ? d.domain : `${d.domain} · catch-all, answers for no name`}
+                      </span>
                     )}
                     <span className={`atlas-badge ${d.ssl ? "ok" : "warn"}`}>
                       {d.ssl

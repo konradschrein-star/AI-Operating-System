@@ -32,7 +32,7 @@ import type {
   MapSection,
   MapSectionName,
 } from "./mapApi";
-import { formatBytes, formatUptime, sectionError } from "./mapApi";
+import { formatBytes, formatUptime, isNamedVhost, sectionError } from "./mapApi";
 import type { MindMapNode, MindMapStatus } from "./MapInspectorDrawer";
 
 /** A top-level column of the mind map. */
@@ -336,9 +336,7 @@ function infrastructureBranch(payload: MapPayload): MapBranch {
   if (domains && domains.ok) {
     const at = checkedAt(domains);
     const source = sourceOf(domains, "/etc/nginx/sites-enabled");
-    const real = domains.data.domains.filter(
-      (d) => d.domain !== "_" && d.domain !== "(no server_name)",
-    );
+    const real = domains.data.domains.filter(isNamedVhost);
     nodes.push({
       id: "ingress-nginx",
       label: `Nginx ingress · ${real.length} server names`,

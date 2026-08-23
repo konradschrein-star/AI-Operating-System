@@ -237,6 +237,19 @@ export function sectionError(
   return null;
 }
 
+/**
+ * Does this vhost answer for a NAME Konrad could type into a browser?
+ *
+ * `server_name _` is nginx's catch-all and `(no server_name)` is the parser's
+ * marker for a block that declares none. Counting either as one of his front
+ * doors inflates the number. This predicate is exported rather than inlined so
+ * the header chip and the ingress node cannot end up printing two different
+ * totals for the same thing — which is exactly what they did before it existed.
+ */
+export function isNamedVhost(d: MapDomain): boolean {
+  return d.domain !== "_" && d.domain !== "(no server_name)";
+}
+
 /* ── Formatting shared by the map components ─────────────────────────────── */
 
 export function formatBytes(bytes: number): string {
