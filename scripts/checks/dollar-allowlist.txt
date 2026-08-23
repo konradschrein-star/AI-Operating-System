@@ -84,3 +84,26 @@ forge-control-web/app/desktop/businesses-inventory.ts	signs off on spend	Line 46
 forge-control-web/app/desktop/businesses-inventory.ts	\$197 / \$497 / \$2,497	Line 592, the `axtrelis` secondary-arm STATE sentence: "Pricing is locked in code at $197 / $497 / $2,497 one-time" (spec §2.2 L211). A third party's own PRICE LIST, transcribed from the spec — the point of the sentence is that a rigorously specified revenue model has no customers in it, which is a business finding, not agent-cost noise. U11 forbids rendering what the fleet costs Konrad; it does not forbid quoting what Konrad's own product charges. Landed round 2 (c94b10d), unlisted until round 4.
 
 forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line 440, Sparkline(): SVG polyline COORDINATES — `${x.toFixed(2)},${y.toFixed(2)}` builds a `points` attribute out of pixel positions computed from `i / values.length * W` and `H - v / max * H`. Geometry, not currency, and the twelfth false positive of the naive toFixed(2) anchor (MemorySurface score, three token-magnitude formatters, …). Came in from `main` with 553fa38, Konrad's own Goals/Tasks daily surface, and met this lane-only gate for the first time at the round-13 merge — the same shape as gate 17's pins. The pattern is the coordinate PAIR, not `.*`: a real € or $ arriving in this file still fails the gate.
+
+# ── aios-autonomy-automation, round 5: the guardrail COCKPIT ────────────────
+#
+# AutonomySurface.tsx is where Konrad SETS the spend caps and reads the trips
+# they produced. That is the same standing exemption slash-registry.ts already
+# carries for `/rules` and `/cap` — "a control surface (a number Konrad SETS),
+# not a display of a dollar amount charged" — and the reason this project
+# exists at all: the caps were switched OFF because the estimator billed Gemini
+# at Claude's rate, and a cap you cannot see the value of is a cap you cannot
+# trust enough to turn back on.
+#
+# The two hand-rolled `€${v.toFixed(2)}` metric values that round 4's review
+# found are GONE — they now go through `fmtEur()` from settings/usageApi.ts, so
+# there is exactly one euro formatter in this app. What is left is the rule ids
+# (`spend.daily_cap`, `spend.per_run_cap`), the payload field the trip carried
+# (`spend_eur`), two metric LABELS, and two cap INPUT labels that have to name
+# their unit. None is a rendered amount this file formats itself.
+#
+# Patterns are scoped to those shapes, never `.*` and never the file: a new
+# `$`-prefixed figure, or a fresh hand-rolled euro string, still fails.
+
+forge-control-web/app/desktop/AutonomySurface.tsx	startsWith\("spend\.|rule\.id === "spend\.(daily|per_run)_cap"|p\.spend_eur !== undefined|Number\(p\.spend_eur\)|label: "(Daily )?Spend",|label="(Daily Hard|Per-Run Claude) Cap \(€\)"	The guardrail cockpit's own subject matter: the `spend.daily_cap` / `spend.per_run_cap` RULE IDS, the `spend_eur` payload field a trip carried, the "Spend" / "Daily Spend" metric labels on that trip, and the "Daily Hard Cap (€)" / "Per-Run Claude Cap (€)" input labels. A cap Konrad sets and the evidence it fired — same reason slash-registry.ts's `/cap` is listed. Every rendered euro VALUE on this surface goes through fmtEur() (settings/usageApi.ts), which is allowlisted at its own file.
+forge-control-web/app/desktop/AutonomySurface.tsx	\(chars / 1_000_000\)\.toFixed\(2\)\}M chars	extractTripMetrics()'s thread-size chip — `${(chars / 1_000_000).toFixed(2)}M chars`, a CHARACTER-magnitude formatter of the same shape and the same false positive as AgentActivity.tsx's humanTokens(), teamApi.ts's fmtTokens() and chat/context-window.ts, all three already listed. Not currency; the thread length is what the spend estimate is computed FROM.

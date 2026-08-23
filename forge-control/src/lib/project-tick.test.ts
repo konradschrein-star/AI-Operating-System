@@ -1411,43 +1411,60 @@ describe("R36 the spawn path resolves per task and writes back only `main`", () 
     );
   });
 
-  test("the workstream feature still needs no cwd change in executor.ts", () => {
-    /* ── NARROWED 2026-08-23, deliberately, with the reason recorded ─────────
-     *
-     * This was a whole-file freeze: `git diff <PRIOR_SHA> -- executor.ts` had to
-     * be empty. Its stated claim (04-phases.md §10) is that the
-     * workstream-worktree work was achieved WITHOUT touching executor.ts,
-     * because executor.ts already takes the child's cwd from
-     * `run.metadata.workspace_dir`.
-     *
-     * That claim is about ONE property of executor.ts. Freezing the whole file
-     * asserted something far larger — that executor.ts may never change again,
-     * for any reason — and that is what it actually enforced: the first
-     * unrelated bug fix to land there tripped it. (That fix: `cc_session_id` is
-     * one slot shared by both engines, so switching a live chat to Gemini handed
-     * agy a Claude session id and the run died with `conversation ... not
-     * found`.)
-     *
-     * A guard that fails for reasons outside its own claim stops being evidence
-     * and becomes a toll on unrelated work. So it now asserts the property it
-     * names. If you are reading this because you changed how the child's cwd is
-     * resolved, the guard is doing its job — do not widen it back to a
-     * whole-file freeze, and do not delete it. */
-    const executorSrc = readFileSync(
-      fileURLToPath(new URL("../executor.ts", import.meta.url)),
-      "utf8",
-    );
-    assert.match(
-      executorSrc,
-      /run\.metadata\?\.workspace_dir/,
-      "executor.ts must still read the child's cwd from run.metadata.workspace_dir — " +
-        "that is the whole reason a workstream gets its own directory without " +
-        "changes here (R36 / 04-phases.md §10)",
-    );
-    // And it must not have grown a competing source of truth for that cwd.
+  test("executor.ts still takes the child's cwd from run.metadata.workspace_dir", () => {
+    // 04-phases.md §10 lists executor.ts as written by NO phase, and until
+    // round 5 of aios-autonomy-automation this test spelled that as
+    // `git diff PRIOR_SHA -- executor.ts` being EMPTY.
+    //
+    // That proxy has now outlived its subject. A later project — one whose
+    // brief names `forge-control/src/executor.ts` explicitly, to make the
+    // pre-flight spend estimate engine-aware so a Gemini run on a flat
+    // subscription stops tripping the EUR cap — edits the guardrail block
+    // ~line 575. The edit is authorized, it is nowhere near the cwd, and a
+    // diff-emptiness pin cannot tell the two apart: it fails on ANY future
+    // edit to this file for ANY reason, on this branch and on `main` after
+    // the merge, with no expiry and nothing to fix.
+    //
+    // So the pin is narrowed to the PROPERTY it was standing in for: a
+    // workstream gets its own directory because the child's cwd comes from
+    // `run.metadata.workspace_dir`, and phase 4C therefore did not have to
+    // touch this file. That is what a regression would break, and it is
+    // asserted directly against the file instead of inferred from a diff.
+    // The `git show` of the pinned revision stays, so the claim "this is how
+    // it read before phase 4C, unchanged" is still proved rather than
+    // asserted.
+    const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+    const read = (rev: string | null): string =>
+      rev === null
+        ? readFileSync(new URL("../executor.ts", import.meta.url), "utf8")
+        : execFileSync("git", ["show", `${rev}:forge-control/src/executor.ts`], {
+            cwd: repoRoot,
+            encoding: "utf8",
+            maxBuffer: 8 * 1024 * 1024,
+          });
+
+    const CWD_BLOCK = `  const cwd =
+    typeof run.metadata?.workspace_dir === "string"
+      ? (run.metadata.workspace_dir as string)
+      : null;`;
+
+    const prior = read(PRIOR_SHA);
     assert.ok(
-      !/workstream_dir|worktree_path/.test(executorSrc),
-      "executor.ts must not resolve a workstream directory itself — project-tick owns that",
+      prior.includes(CWD_BLOCK),
+      `the cwd block is not in executor.ts at ${PRIOR_SHA.slice(0, 7)} — the pin below would be ` +
+        "vacuous, asserting a shape that never existed rather than one that survived",
+    );
+
+    const current = read(null);
+    assert.ok(
+      current.includes(CWD_BLOCK),
+      "executor.ts no longer resolves the child's cwd from run.metadata.workspace_dir — a " +
+        "workstream would run in the shared CC_WORKSPACE and phase 4C's whole mechanism is gone",
+    );
+    assert.equal(
+      current.split("run.metadata?.workspace_dir").length - 1,
+      1,
+      "run.metadata?.workspace_dir must be read in exactly one place in executor.ts",
     );
   });
 

@@ -31,6 +31,8 @@ r.post("/check", async (c) => {
     action?: string;
     category?: string;
     rule_id?: string;
+    model?: string;
+    engine?: string;
     payload?: Record<string, unknown>;
   };
   if (!body.agent || !body.action) {
@@ -41,6 +43,8 @@ r.post("/check", async (c) => {
     action: body.action,
     category: body.category,
     rule_id: body.rule_id,
+    model: body.model,
+    engine: body.engine,
     payload: body.payload,
   });
   return c.json(result);

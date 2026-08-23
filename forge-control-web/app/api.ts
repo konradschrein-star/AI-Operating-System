@@ -1279,14 +1279,23 @@ export const fetchPipeline = async () => {
 /* ----------------------------------------------------------------------------
  * Autonomy (guardrail rules + fleet state + recent trips)
  * -------------------------------------------------------------------------- */
+export type GuardrailCategory =
+  | "financial"
+  | "destructive"
+  | "communication"
+  | "security"
+  | "deployment"
+  | "custom";
+
 export interface GuardrailRule {
   id: string;
   label: string;
   description: string;
-  category: string;
+  category: GuardrailCategory | string;
   enabled: boolean;
   builtin: boolean;
   config: Record<string, unknown>;
+  created_at?: string;
   updated_at: string;
 }
 
@@ -1299,6 +1308,8 @@ export interface GuardrailTrip {
   attempted_action: string;
   payload: Record<string, unknown>;
   resolved: boolean;
+  resolution_note?: string | null;
+  created_at?: string;
 }
 
 export interface AutonomyResponse {
@@ -1323,6 +1334,14 @@ export const updateRule = async (
     patch,
   );
   return r.rule;
+};
+
+export const resolveTrip = async (id: string): Promise<boolean> => {
+  const r = await postJson<{ resolved: boolean }>(
+    `/autonomy/trips/${encodeURIComponent(id)}/resolve`,
+    {},
+  );
+  return Boolean(r.resolved);
 };
 
 /* ----------------------------------------------------------------------------
@@ -1379,6 +1398,8 @@ export interface Webhook {
   name: string;
   description: string | null;
   secret_preview: string;
+  raw_secret?: string;
+  secret_once?: string;
   enabled: boolean;
   prompt_template: string;
   title_template: string | null;
@@ -1391,6 +1412,8 @@ export interface Webhook {
   updated_at: string;
 }
 
+export type CreateWebhookResult = Webhook;
+
 export const fetchWebhooks = async (): Promise<Webhook[]> => {
   const r = await getJson<{ count: number; webhooks: Webhook[] }>("/webhooks");
   return r.webhooks;
@@ -1399,13 +1422,22 @@ export const fetchWebhooks = async (): Promise<Webhook[]> => {
 export const createWebhook = async (input: {
   slug: string;
   name: string;
-  description?: string;
+  description?: string | null;
   prompt_template: string;
-  title_template?: string;
-  worker_label?: string;
-}): Promise<Webhook> => {
-  const r = await postJson<{ webhook: Webhook }>("/webhooks", input);
-  return r.webhook;
+  title_template?: string | null;
+  worker_label?: string | null;
+  enabled?: boolean;
+}): Promise<CreateWebhookResult> => {
+  const r = await postJson<{
+    webhook: Webhook;
+    raw_secret?: string;
+    secret_once?: string;
+  }>("/webhooks", input);
+  return {
+    ...r.webhook,
+    raw_secret: r.raw_secret ?? r.secret_once,
+    secret_once: r.secret_once ?? r.raw_secret,
+  };
 };
 
 export const updateWebhook = async (
@@ -1419,19 +1451,19 @@ export const updateWebhook = async (
     enabled: boolean;
   }>,
 ): Promise<Webhook> => {
-  const r = await patchJson<{ webhook: Webhook }>(`/webhooks/${id}`, patch);
+  const r = await patchJson<{ webhook: Webhook }>(`/webhooks/${encodeURIComponent(id)}`, patch);
   return r.webhook;
 };
 
 export const rotateWebhookSecret = async (
   id: string,
 ): Promise<string> => {
-  const r = await postJson<{ secret: string }>(`/webhooks/${id}/rotate-secret`);
+  const r = await postJson<{ secret: string }>(`/webhooks/${encodeURIComponent(id)}/rotate-secret`, {});
   return r.secret;
 };
 
 export const deleteWebhook = async (id: string): Promise<void> => {
-  await deleteJson(`/webhooks/${id}`);
+  await deleteJson(`/webhooks/${encodeURIComponent(id)}`);
 };
 
 /* ----------------------------------------------------------------------------
@@ -1451,6 +1483,7 @@ export interface CronSchedule {
   last_run_id: string | null;
   last_error: string | null;
   total_fires: number;
+  run_metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -1475,11 +1508,13 @@ export const previewCron = async (
 
 export const createSchedule = async (input: {
   name: string;
-  description?: string;
+  description?: string | null;
   cron_expr: string;
   prompt_template: string;
-  title_template?: string;
-  worker_label?: string;
+  title_template?: string | null;
+  worker_label?: string | null;
+  enabled?: boolean;
+  run_metadata?: Record<string, unknown>;
 }): Promise<CronSchedule> => {
   const r = await postJson<{ schedule: CronSchedule }>("/cron", input);
   return r.schedule;
@@ -1495,16 +1530,25 @@ export const updateSchedule = async (
     prompt_template: string;
     title_template: string | null;
     worker_label: string | null;
+    run_metadata: Record<string, unknown>;
   }>,
 ): Promise<CronSchedule> => {
-  const r = await patchJson<{ schedule: CronSchedule }>(`/cron/${id}`, patch);
+  const r = await patchJson<{ schedule: CronSchedule }>(`/cron/${encodeURIComponent(id)}`, patch);
   return r.schedule;
 };
 
 export const deleteSchedule = async (id: string): Promise<void> => {
-  await deleteJson(`/cron/${id}`);
+  await deleteJson(`/cron/${encodeURIComponent(id)}`);
   return;
 };
+
+export const triggerScheduleRun = async (
+  id: string,
+): Promise<{ ok: boolean; run_id: string }> =>
+  postJson<{ ok: boolean; run_id: string }>(
+    `/cron/${encodeURIComponent(id)}/run`,
+    {},
+  );
 
 /* ----------------------------------------------------------------------------
  * Coding projects — mirrors routes/projects.ts. A task's run is a normal

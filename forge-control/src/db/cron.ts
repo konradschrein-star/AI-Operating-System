@@ -9,6 +9,7 @@
 
 import pg from "pg";
 import { nextFireFromExpr, parseCron } from "../lib/cron-parser.ts";
+import { createRun } from "./runs.ts";
 
 const { Pool } = pg;
 
@@ -249,3 +250,43 @@ export async function recordError(id: string, error: string): Promise<void> {
     [id, error.slice(0, 500), next.toISOString()],
   );
 }
+
+/**
+ * Fire a schedule immediately by ID (manual run trigger).
+ * Creates a run via createRun with { source: 'cron', cron_id: id, manual: true } and returns the created run id.
+ */
+export async function fireScheduleById(id: string): Promise<string> {
+  const sched = await getScheduleById(id);
+  if (!sched) {
+    throw new Error(`Schedule not found: ${id}`);
+  }
+  const title = (sched.title_template ?? `cron: ${sched.name}`).slice(0, 200);
+  const prompt = sched.prompt_template;
+  const run = await createRun({
+    title,
+    prompt,
+    worker: sched.worker_label ?? undefined,
+    metadata: {
+      ...(sched.run_metadata ?? {}),
+      source: "cron",
+      cron_id: id,
+      cron_name: sched.name,
+      manual: true,
+      fired_at: new Date().toISOString(),
+    },
+  });
+
+  await pool.query(
+    `UPDATE cron_schedules
+        SET last_run_at = now(),
+            last_run_id = $2,
+            last_error = NULL,
+            total_fires = total_fires + 1,
+            updated_at = now()
+      WHERE id = $1`,
+    [id, run.id],
+  );
+
+  return run.id;
+}
+

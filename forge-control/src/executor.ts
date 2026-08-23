@@ -28,6 +28,7 @@ import {
   type CcEvent,
 } from "./lib/cc-runner.ts";
 import { engineForModel, resumableSession } from "./lib/engine-session.ts";
+import { isGeminiModel } from "./lib/gemini-runner.ts";
 import { ingestEvent, finalizeRollup } from "./lib/run-rollup.ts";
 import {
   resolveAccount,
@@ -588,28 +589,38 @@ async function processRun(run: ClaimedRun): Promise<void> {
   // engine this run is on BEFORE it writes anything.
   const engine = String(run.metadata?.engine ?? DEFAULT_ENGINE);
   const guardRunning = engine === "claude-code";
+  const model = typeof run.metadata?.model === "string" ? run.metadata.model : undefined;
+  const isGemini = isGeminiModel(model) || engine === "gemini" || engine === "gemini-cli";
 
   // Guardrail pre-flight: spend cap + runtime kill switch on the chat path.
   // Rough thread-char → EUR estimate so spend.per_run_cap can bite before a
   // long burn (real spend is recorded by claude-pool; this is preemptive).
+  // Gemini runs are flat Google AI Pro subscription, 0 USD/EUR direct token cost.
+  // For Gemini runs, set estSpendEur = 0 so EUR spend caps are not falsely tripped.
   const threadChars = (run.thread ?? []).reduce(
     (n, e) => n + String(e.content ?? "").length,
     0,
   );
-  const estSpendEur = Math.max(0.01, (threadChars / 1000) * 0.04);
+  const estSpendEur = isGemini ? 0 : Math.max(0.01, (threadChars / 1000) * 0.04);
   // v1.9: today's actual rolled-up spend from spend_log so the
   // spend.daily_cap guardrail can finally trip when it should. Failures
   // here MUST NOT block the run — fall back to estimating from this turn
   // alone if the rollup query fails.
-  const dailySpendEur = await todaySpendRollup()
-    .then((r) => r.total_eur + estSpendEur)
-    .catch(() => estSpendEur);
+  const dailySpendEur = isGemini
+    ? 0
+    : await todaySpendRollup()
+        .then((r) => r.total_eur + estSpendEur)
+        .catch(() => estSpendEur);
   const guard = await evaluateGuardrails({
     agent: "forge-executor",
-    action: "claude-pool.run",
+    action: isGemini ? "gemini.run" : "claude-pool.run",
     category: "financial",
+    model,
+    engine: isGemini ? "gemini" : engine,
     payload: {
       run_id: run.id,
+      model,
+      engine: isGemini ? "gemini" : engine,
       spend_eur: estSpendEur,
       daily_spend_eur: dailySpendEur,
       thread_chars: threadChars,

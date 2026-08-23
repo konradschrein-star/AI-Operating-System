@@ -185,6 +185,16 @@ gate_sh "check-team-rows.ts — flatten, hiddenRows, frozen time" \
 gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2"
 
+# ── aios-autonomy-automation round 5 ───────────────────────────────────────
+# Five "View Run in Chat" / "Settings → Connections" affordances shipped as
+# `<a>` elements pointing at a query string this one-route console has never
+# read. They typechecked, they built, and they navigated nowhere. The check
+# asserts the replacement (localStorage + the shell's onNav) AND greps the two
+# surfaces so the dead form cannot come back.
+gate_sh "check-deep-link.ts — cross-surface navigation actually navigates" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-deep-link.ts | tail -3"
+
 gate_sh "verify-notification-gap-pins.mjs — fenced quotes + prose pins" \
   "node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2"
 
