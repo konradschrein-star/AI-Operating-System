@@ -554,7 +554,8 @@ describe("POST /api/canvas/plan/to-project: unresolvable dependencies", async ()
     };
     assert.strictEqual(body.reason, "unresolvable_dependencies");
     assert.match(body.error, /cannot be written as a task graph/);
-    assert.match(body.error, /close a cycle/);
+    // Singular here — one edge closes the cycle; the plural branch reads "close".
+    assert.match(body.error, /1 of them closes a cycle/);
     assert.deepStrictEqual(
       body.unresolvable.map((u) => `${u.task}<-${u.dependsOn}`),
       ["a<-b"],
