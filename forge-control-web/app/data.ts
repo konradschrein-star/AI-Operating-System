@@ -29,7 +29,7 @@ export interface NeedsItem {
 export interface FleetWorker {
   name: string;
   state: string;
-  status: "routing" | "render" | "idle" | "stuck";
+  status: "routing" | "render" | "active" | "idle" | "stuck";
 }
 
 export interface InboxAction {

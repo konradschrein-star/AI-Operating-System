@@ -37,6 +37,8 @@ import {
   classifyPhaseState,
   parsePm2Jlist,
   CONTENT_FORGE_PM2_PROCESSES,
+  PHASES,
+  phaseFor,
   type PhaseCount,
   type PhaseState,
   type WorkerHealth,
@@ -78,6 +80,16 @@ export interface PipelineCard {
   stalled: boolean;
   /** Whole days since `status_updated_at`, stalled or not. */
   stall_days: number;
+  /** `users.name` for `content_jobs.assigned_production_va_id`, or null if unassigned. */
+  production_va_name: string | null;
+  /** `users.name` for `content_jobs.assigned_uploader_va_id`, or null if unassigned. */
+  uploader_va_name: string | null;
+  /** bigint column — node-postgres hands bigints back as strings. Null pre-render. */
+  final_video_size_bytes: string | null;
+  final_video_duration_seconds: number | null;
+  render_completed_at: string | null;
+  /** Populated on FAILED_* statuses; null otherwise. */
+  error_message: string | null;
 }
 
 export interface PipelinePhase {
@@ -111,72 +123,6 @@ export interface PipelineSnapshot {
   card_query_limit: number;
   /** Rows the card query actually read. `=== card_query_limit` means capped. */
   card_rows_scanned: number;
-}
-
-const PHASES: {
-  key: string;
-  label: string;
-  description: string;
-  match: RegExp;
-}[] = [
-  {
-    key: "idea",
-    label: "Idea",
-    description: "Topic + brief, pre-script",
-    match: /^(IDEA_GENERATION|TOPIC_SELECTION|BRIEF)/i,
-  },
-  {
-    key: "script",
-    label: "Script",
-    description: "Scripting → script ready",
-    match: /^(SCRIPTING|SCRIPT_READY|SCRIPT_REVIEW)/i,
-  },
-  {
-    key: "voice",
-    label: "Voice",
-    description: "TTS generation",
-    match: /(TTS|VOICE)/i,
-  },
-  {
-    key: "assets",
-    label: "Assets",
-    description: "Image / clip / asset collection",
-    match: /(ASSET|IMAGE|CLIP|FOOTAGE|HEYGEN)/i,
-  },
-  {
-    key: "qc",
-    label: "QC",
-    description: "QMS validation + manual gates",
-    match: /(QMS|QC|AWAITING)/i,
-  },
-  {
-    key: "render",
-    label: "Render",
-    description: "Routing + render + stitch",
-    match: /(ROUTING_RENDER|RENDER|STITCH|FAILED_RENDER)/i,
-  },
-  {
-    key: "publish",
-    label: "Publish",
-    description: "Uploader → published",
-    match: /(UPLOAD|PUBLISH)/i,
-  },
-];
-
-/**
- * First match wins, and the order above is the pipeline order.
- *
- * Note what that means for the live data, measured in premises-remeasured.md
- * § P1: `AWAITING_QC` AND `AWAITING_UPLOADER` both land in `qc`, because `qc`
- * is tested before `render` and `publish` and its pattern includes a bare
- * `AWAITING`. So Publish renders empty while four jobs sit at the gate
- * immediately in front of it — which is exactly the "blocked upstream" state
- * R65 asks this surface to say out loud.
- */
-function phaseFor(status: string): string {
-  if (status === "MARKED_FOR_DELETION") return "deleted";
-  for (const p of PHASES) if (p.match.test(status)) return p.key;
-  return "other";
 }
 
 function humanAge(ts: string | null, now: number): string {
@@ -227,14 +173,28 @@ export async function getPipeline(): Promise<PipelineSnapshot> {
       channel: string;
       template: string;
       status_updated_at: string;
+      production_va_name: string | null;
+      uploader_va_name: string | null;
+      final_video_size_bytes: string | null;
+      final_video_duration_seconds: number | null;
+      render_completed_at: string | null;
+      error_message: string | null;
     }>(
       `SELECT j.id::text, j.title, j.status::text AS status, j.format::text AS format,
               COALESCE(c.name, '—') AS channel,
               COALESCE(t.name, '—') AS template,
-              j.status_updated_at::text AS status_updated_at
+              j.status_updated_at::text AS status_updated_at,
+              pva.name AS production_va_name,
+              uva.name AS uploader_va_name,
+              j.final_video_size_bytes::text AS final_video_size_bytes,
+              j.final_video_duration_seconds,
+              j.render_completed_at::text AS render_completed_at,
+              j.error_message
          FROM content_jobs j
          LEFT JOIN channels c ON c.id = j.channel_id
          LEFT JOIN content_templates t ON t.id = j.template_id
+         LEFT JOIN users pva ON pva.id = j.assigned_production_va_id
+         LEFT JOIN users uva ON uva.id = j.assigned_uploader_va_id
         WHERE j.status <> 'MARKED_FOR_DELETION'
         ORDER BY j.status_updated_at DESC
         LIMIT ${CARD_QUERY_LIMIT}`,
@@ -285,6 +245,12 @@ export async function getPipeline(): Promise<PipelineSnapshot> {
       status_updated_at: row.status_updated_at,
       stalled,
       stall_days,
+      production_va_name: row.production_va_name,
+      uploader_va_name: row.uploader_va_name,
+      final_video_size_bytes: row.final_video_size_bytes,
+      final_video_duration_seconds: row.final_video_duration_seconds,
+      render_completed_at: row.render_completed_at,
+      error_message: row.error_message,
     });
   }
 

@@ -1,5 +1,5 @@
 /**
- * Tests for the day score and the day resolver.
+ * Tests for the day score, day resolver, and streak arithmetic.
  *
  * Run: cd forge-control && npm test   (tsx --test, no test framework dep)
  *
@@ -281,6 +281,44 @@ describe("streaks", () => {
     assert.equal(streakEndingToday(["2026-08-17"], TODAY), 0);
   });
 
+  test("streak crosses month boundary without off-by-one", () => {
+    const ref = "2026-08-02";
+    // 4 consecutive days: July 30, July 31, Aug 1, Aug 2
+    const hit = ["2026-07-30", "2026-07-31", "2026-08-01", "2026-08-02"];
+    assert.equal(streakEndingToday(hit, ref), 4);
+
+    // If Aug 2 unticked yet, still 3 (July 30, 31, Aug 1)
+    const hitUntickedToday = ["2026-07-30", "2026-07-31", "2026-08-01"];
+    assert.equal(streakEndingToday(hitUntickedToday, ref), 3);
+  });
+
+  test("streak crosses year boundary without drifting", () => {
+    const ref = "2026-01-02";
+    const hit = ["2025-12-30", "2025-12-31", "2026-01-01", "2026-01-02"];
+    assert.equal(streakEndingToday(hit, ref), 4);
+    assert.equal(bestStreak(hit), 4);
+  });
+
+  test("streak crosses leap year day Feb 29 cleanly", () => {
+    const ref = "2024-03-01";
+    const hit = ["2024-02-28", "2024-02-29", "2024-03-01"];
+    assert.equal(streakEndingToday(hit, ref), 3);
+    assert.equal(bestStreak(hit), 3);
+  });
+
+  test("duplicate dates and unordered arrays do not corrupt streak", () => {
+    const hit = [
+      "2026-08-18",
+      "2026-08-16",
+      "2026-08-17",
+      "2026-08-18", // duplicate
+      "2026-08-19",
+      "2026-08-17", // duplicate
+    ];
+    assert.equal(streakEndingToday(hit, TODAY), 4);
+    assert.equal(bestStreak(hit), 4);
+  });
+
   test("bestStreak finds the longest run anywhere, deduped and unordered", () => {
     const hit = [
       "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08", // 4
@@ -294,5 +332,14 @@ describe("streaks", () => {
     assert.equal(bestStreak(["2026-08-19"]), 1);
     // Across a month boundary.
     assert.equal(bestStreak(["2026-07-30", "2026-07-31", "2026-08-01"]), 3);
+  });
+
+  test("bestStreak compares multiple non-contiguous runs correctly", () => {
+    const hit = [
+      "2026-05-01", "2026-05-02", "2026-05-03", // 3
+      "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15", // 6
+      "2026-07-01", "2026-07-02", // 2
+    ];
+    assert.equal(bestStreak(hit), 6);
   });
 });

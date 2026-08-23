@@ -4,6 +4,9 @@
   "private": true,
   "description": "Personal AI OS Interface — aggregator backend (Hermes + Content Forge + PM2 + systemd → one HTTP surface)",
   "type": "module",
+  "bin": {
+    "aios": "bin/aios.mjs"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",

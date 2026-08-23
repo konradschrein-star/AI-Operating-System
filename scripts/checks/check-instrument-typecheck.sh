@@ -658,6 +658,21 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
+# The worker pool for step 10a's parallel dispatch. `nproc` may be absent on a
+# minimal image; `getconf` is the POSIX fallback, and 4 is a last-resort
+# default rather than a refusal — a wrong core count only changes how much
+# concurrency this run uses, never what it certifies.
+NPROC="$( nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4 )"
+case "$NPROC" in ''|*[!0-9]*) NPROC=4 ;; esac
+if [ "$NPROC" -lt 1 ]; then NPROC=1; fi
+
+# The content-hash cache's location (step 9d builds the per-subject keys once
+# SUBJECTS and the ledger are known; the directory itself is a run parameter
+# like NPROC, so it is set up here, printed in PROVENANCE below, and never
+# redefined).
+CACHE_DIR="${AIOS_TYPECHECK_CACHE_DIR:-/tmp/.aios-typecheck-cache}"
+mkdir -p "$CACHE_DIR"
+
 START_SECONDS=$SECONDS
 
 # ---------------------------------------------------------------------------
@@ -1190,6 +1205,8 @@ echo "  tsc              : $TSC_VERSION  ($TSC)"
 echo "  node             : $NODE_VERSION  ($NODE_BIN)"
 echo "  subjects found   : $FOUND"
 echo "  invocation       : (cd \$REPO_ROOT && \$TSC -p \$TMP/NNNN.json --pretty false)  # one file per invocation"
+echo "  parallel workers : $NPROC"
+echo "  cache dir        : $CACHE_DIR"
 echo "  temp dir         : $TMP"
 echo
 
@@ -1549,6 +1566,116 @@ declare -A SUBJECT_OUTCOME=()      # path -> clean | fail | missing
 declare -A SUBJECT_FIRST_DIAG=()   # path -> the compiler's first output line
 
 # ---------------------------------------------------------------------------
+# 9d. THE TYPECHECK CACHE (round 4, this project's brief: parallelise and
+#     cache). KEY = sha256(subject bytes ++ profile bytes). ONLY A CLEAN
+#     RESULT (exit 0, zero diagnostics) is ever written, and a cache entry
+#     carries no payload — its NAME is the whole record. A hit means "this
+#     exact byte sequence, through this exact profile, compiled with zero
+#     diagnostics before"; there is nothing else a clean result could have
+#     said, so there is nothing else to store or to read, and a lookup costs
+#     one `[ -f ]` — well under 1ms, measured below in the provenance-style
+#     CACHE block after the loop.
+#
+#     A FAILING subject is NEVER cached — every run recompiles it, live, so a
+#     maintainer fixing a red file always sees the CURRENT diagnostic, not a
+#     stale one, and the discrimination guarantee (break a file, watch it go
+#     red) never has to reason about a cache: a broken subject's hash changes
+#     the moment its bytes change, and until then it was never a HIT to begin
+#     with (it was never clean).
+#
+#     WHAT THIS CACHE DOES NOT SEE: a subject that imports repo-local modules
+#     (`forge-control/src/…`, `@types/…`) is not rehashed when THOSE files
+#     change — only the subject's own bytes and the profile's are in the key.
+#     A stale HIT is possible until the subject's own bytes next change too.
+#     This is the documented shape of a DEV-SPEED cache, not a soundness
+#     guarantee: `rm -rf /tmp/.aios-typecheck-cache`, or set
+#     `AIOS_TYPECHECK_CACHE_DIR` to a fresh path, forces every subject fresh
+#     any time that risk matters — before a merge, for instance.
+#     `CACHE_DIR` itself was set up earlier (with NPROC, before PROVENANCE);
+#     this step only builds the per-subject keys, which need SUBJECTS.
+#
+#     ONE PROCESS, NOT 44×4. The first version of this step forked `cat`,
+#     `cat` and `sha256sum` per subject — 176 forks for 44 files. Measured on
+#     this VPS on a night with ~10 other agent lanes competing for its 16
+#     cores (load average 50-105): that fork storm, not tsc, was the entire
+#     cost of a fully-cached run — the TYPECHECK section (zero tsc
+#     invocations, everything served from cache) still took ~54s, because
+#     each of those 176 tiny forks was paying full scheduler-contention
+#     latency. `hash-batch.js` computes every subject's key in ONE node
+#     process, the same pattern step 10b's suppression scanner already uses
+#     for the same reason: a directory-wide scan is one process wide, not one
+#     process per file.
+# ---------------------------------------------------------------------------
+cat > "$TMP/hash-batch.js" <<'EOF'
+// Written and run by check-instrument-typecheck.sh. argv: <profile-path>
+// then one or more subject paths. One record per subject on stdout:
+//     <index>\t<sha256 hex>      sha256(subject bytes ++ profile bytes)
+//     <index>\tABSENT            subject vanished before it could be hashed
+//     <index>\tERROR:<message>   anything else — the caller refuses
+'use strict';
+const crypto = require('crypto');
+const fs = require('fs');
+const profilePath = process.argv[2];
+const files = process.argv.slice(3);
+let profileBytes;
+try {
+  profileBytes = fs.readFileSync(profilePath);
+} catch (err) {
+  process.stderr.write(`cannot read profile ${profilePath}: ${err && err.message}\n`);
+  process.exit(1);
+}
+for (let i = 0; i < files.length; i++) {
+  const record = (payload) => process.stdout.write(`${i + 1}\t${payload}\n`);
+  try {
+    const bytes = fs.readFileSync(files[i]);
+    const h = crypto.createHash('sha256');
+    h.update(bytes);
+    h.update(profileBytes);
+    record(h.digest('hex'));
+  } catch (err) {
+    record(err && err.code === 'ENOENT' ? 'ABSENT' : `ERROR:${err && err.message}`);
+  }
+}
+EOF
+
+declare -A SUBJECT_CACHE_KEY=()
+declare -A SUBJECT_CACHE_HIT=()
+CACHE_HITS=0
+hash_rc=0
+HASH_RAW="$( "$NODE_BIN" "$TMP/hash-batch.js" "$PROFILE" "${SUBJECTS[@]/#/$REPO_ROOT/}" 2>&1 )" || hash_rc=$?
+if [ "$hash_rc" -ne 0 ]; then
+  echo "REFUSING TO RUN: the cache-key hasher failed (node exit $hash_rc)." >&2
+  printf '%s\n' "$HASH_RAW" | sed 's/^/    /' >&2
+  echo "  It reads the same profile the compiler just proved itself against, so" >&2
+  echo "  this is about an unreadable PROFILE or an unreadable subject, not the" >&2
+  echo "  hasher itself." >&2
+  exit 1
+fi
+while IFS= read -r hash_line; do
+  if [ -z "$hash_line" ]; then continue; fi
+  hash_index="${hash_line%%$'\t'*}"
+  hash_payload="${hash_line#*$'\t'}"
+  hash_subject="${SUBJECTS[$(( hash_index - 1 ))]}"
+  case "$hash_payload" in
+    ABSENT) continue ;;   # the report pass's own -f check names it as MISSING
+    ERROR:*)
+      echo "REFUSING TO RUN: the cache-key hasher could not read a subject." >&2
+      echo "  subject: $hash_subject" >&2
+      echo "  $hash_payload" >&2
+      exit 1
+      ;;
+    *)
+      SUBJECT_CACHE_KEY[$hash_subject]="$hash_payload"
+      if [ -f "$CACHE_DIR/$hash_payload" ]; then
+        SUBJECT_CACHE_HIT[$hash_subject]=1
+        CACHE_HITS=$((CACHE_HITS + 1))
+      fi
+      ;;
+  esac
+done <<< "$HASH_RAW"
+unset hash_rc hash_line hash_index hash_payload hash_subject
+
+# ---------------------------------------------------------------------------
 # 10. COMPILE — one file per invocation (R11). Compiling them together merges
 #     42 unrelated entry points into one program, which is how round 800's
 #     whole-directory attempt pulled app modules into scope and produced
@@ -1565,6 +1692,18 @@ declare -A SUBJECT_FIRST_DIAG=()   # path -> the compiler's first output line
 #     The generated config is named by INDEX, never by the subject's basename:
 #     a basename can carry a leading dash, a space, a quote or a `$`. The
 #     subject itself reaches tsc only inside the JSON, never on a command line.
+#
+#     WHAT CHANGED AT ROUND 4 (this project's brief: parallelise and cache).
+#     "One file per invocation" is still true — R11's reasoning did not
+#     change, only WHEN and HOW MANY invocations happen at once. The
+#     content-hash cache (9d) now skips a subject whose bytes and profile are
+#     byte-for-byte what they were on a prior clean run, and every subject the
+#     cache does not already know clean is compiled by step 10a's bounded
+#     worker pool instead of one invocation at a time. The loop below is now
+#     the REPORT PASS: it reads each subject's result — a cache marker, or a
+#     dispatched worker's output file — back IN SUBJECT ORDER, so two runs of
+#     an unchanged tree still print an identical transcript (NF2) no matter
+#     which worker finished first or how many cores this VPS had that night.
 #
 # 10b. SUPPRESSION SCAN (R28 as amended at round 2; red-team B4 and F2).
 #
@@ -1623,7 +1762,61 @@ if [ "${#SUPPRESSION_HITS[@]}" -ne "$FOUND" ]; then
   exit 1
 fi
 
-echo "TYPECHECK — one tsc invocation per subject, through the profile"
+# ---------------------------------------------------------------------------
+# 10a. PARALLEL DISPATCH — every cache-miss subject compiled concurrently, up
+#      to NPROC at a time. Each compile still travels the EXACT path a
+#      subject always travelled: `write_config` generates the same per-file
+#      config `compile_config` would use, and `$TSC -p … --pretty false` is
+#      invoked with the same cwd pin (REPO_ROOT) that makes profile-fidelity
+#      paths comparable (step 12's note on relative-path diagnostics applies
+#      exactly as before — a background subshell's cwd is its own copy).
+#
+#      OUTPUT DOES NOT INTERLEAVE, because it never shares a stream: each
+#      worker writes its own subject's stdout+stderr and exit code to two
+#      files named by INDEX, and the REPORT PASS below reads them back in
+#      SUBJECT ORDER — so two runs of an unchanged tree still print byte-for-
+#      byte identical transcripts (NF2/S10), regardless of which tsc happened
+#      to finish first this time.
+#
+#      `wait -n` (bash ≥4.3; this repo runs 5.x) caps live workers at NPROC by
+#      blocking for the NEXT one to finish rather than for all of them, so a
+#      44-subject run keeps NPROC compilers busy throughout instead of going
+#      in batches of NPROC-then-idle. The exit status captured inside each
+#      worker (`rc`), never the worker subshell's own exit status, is what the
+#      report pass reads — the subshell's last command is always the `printf`
+#      that records it, so `wait`/`wait -n` themselves stay unaffected by
+#      whatever tsc returned.
+# ---------------------------------------------------------------------------
+mkdir -p "$TMP/out"
+index=0
+running=0
+for subject in "${SUBJECTS[@]}"; do
+  index=$((index + 1))
+  abs="$REPO_ROOT/$subject"
+  if [ ! -f "$abs" ]; then continue; fi                              # MISSING — the report pass names it
+  if [ -n "${SUBJECT_CACHE_HIT[$subject]:-}" ]; then continue; fi    # known clean — nothing to invoke
+
+  cfg="$(printf '%s/%04d.json' "$TMP" "$index")"
+  write_config "$cfg" "$abs"
+  (
+    if out="$( cd "$REPO_ROOT" && "$TSC" -p "$cfg" --pretty false 2>&1 )"; then
+      rc=0
+    else
+      rc=$?
+    fi
+    printf '%s' "$out" > "$TMP/out/$index.out"
+    printf '%s\n' "$rc" > "$TMP/out/$index.rc"
+  ) &
+  running=$((running + 1))
+  if [ "$running" -ge "$NPROC" ]; then
+    wait -n
+    running=$((running - 1))
+  fi
+done
+wait
+unset index running subject abs cfg
+
+echo "TYPECHECK — up to $NPROC tsc invocation(s) in parallel; cache hits invoke none"
 index=0
 for subject in "${SUBJECTS[@]}"; do
   index=$((index + 1))
@@ -1657,17 +1850,36 @@ for subject in "${SUBJECTS[@]}"; do
     done < <(printf '%s\n' "$hits" | tr ',' '\n')
   fi
 
-  cfg="$(printf '%s/%04d.json' "$TMP" "$index")"
-  write_config "$cfg" "$abs"
-  compile_config "$cfg"
-  rc="$COMPILE_RC"
-  OUT="$COMPILE_OUT"
+  if [ -n "${SUBJECT_CACHE_HIT[$subject]:-}" ]; then
+    # A cache entry exists ONLY for a prior CLEAN result (9d) — rc and OUT are
+    # therefore known without reading anything but the marker's existence,
+    # already tested when SUBJECT_CACHE_HIT was populated above.
+    rc=0
+    OUT=""
+    from_cache=1
+  else
+    if [ ! -f "$TMP/out/$index.rc" ]; then
+      echo "REFUSING TO CERTIFY: no dispatched compile result for $subject (index $index)." >&2
+      echo "  Step 10a compiles every non-missing, non-cached subject before this pass" >&2
+      echo "  reads results back; a missing result means the two disagree about what" >&2
+      echo "  was compiled, and this gate will not guess a verdict for it." >&2
+      exit 1
+    fi
+    rc="$(cat "$TMP/out/$index.rc")"
+    OUT="$(cat "$TMP/out/$index.out" 2>/dev/null || true)"
+    from_cache=0
+  fi
   COMPILED=$((COMPILED + 1))
 
   scan_fidelity "$subject" "$OUT"
 
   if [ "$rc" -eq 0 ] && [ -z "$OUT" ]; then
-    printf '  PASS %-48s %s\n' "$subject" "exit 0, 0 diagnostics"
+    if [ "$from_cache" -eq 1 ]; then
+      printf '  PASS %-48s %s\n' "$subject" "exit 0, 0 diagnostics (cached)"
+    else
+      printf '  PASS %-48s %s\n' "$subject" "exit 0, 0 diagnostics"
+      : > "$CACHE_DIR/${SUBJECT_CACHE_KEY[$subject]}"
+    fi
     SUBJECT_OUTCOME[$subject]="clean"
   else
     SUBJECT_OUTCOME[$subject]="fail"
@@ -1684,6 +1896,11 @@ for subject in "${SUBJECTS[@]}"; do
     FAILED=$((FAILED + 1))
   fi
 done
+echo
+
+echo "CACHE — content-hash results in $CACHE_DIR (sha256 of subject bytes + profile bytes; clean only)"
+printf '  %d/%d subject(s) served from cache; %d compiled fresh across up to %d parallel worker(s)\n' \
+  "$CACHE_HITS" "$FOUND" "$(( FOUND - MISSING - CACHE_HITS ))" "$NPROC"
 echo
 
 # ---------------------------------------------------------------------------

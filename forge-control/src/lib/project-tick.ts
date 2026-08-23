@@ -20,7 +20,8 @@
  * agent.spawn_cap ceiling, so there's exactly one place that cap lives.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   promoteReadyTasks,
@@ -36,6 +37,7 @@ import {
   createFixChain,
   setProjectStatus,
   setProjectWorkspace,
+  demoteTaskTier,
   closeFinishedProjects,
   listTasksForProject,
   getProject,
@@ -79,6 +81,11 @@ import {
   formatDelay,
   USAGE_WALL_NOTIFICATION_SOURCE,
 } from "./usage-wall.ts";
+import {
+  isEngineDropout,
+  tierCanDropOut,
+  ENGINE_FALLBACK_TIER,
+} from "./engine-fallback.ts";
 import { projectSlug } from "./run-control-rules.ts";
 import { provisionWorkstream, liveCheckoutPath } from "./workspace.ts";
 import { getFleetState } from "../db/ai_os.ts";
@@ -1386,8 +1393,20 @@ export function buildPrompt(
       `YOUR DECLARED WRITE-SET is ${task.write_set.length > 0 ? task.write_set.join(", ") : "(empty — nothing was declared)"}. ` +
       `Restate it in your final report, and if you wrote ANY file outside it, say so LOUDLY: name each ` +
       `undeclared file and why it had to change. Your reviewer compares the paths your commits touched ` +
-      `against this list and reports an undeclared write as a finding — disclose it first.\n\n` +
-      `${BROWSER_FIRST}`
+      `against this list and reports an undeclared write as a finding — disclose it first.\n` +
+      // R870. The engine behind tier `gemini` cannot create a file — its
+      // write_to_file refuses any path that does not already exist, and a
+      // builder that tries gives up on the spot. precreateWriteSet() has
+      // already touched these paths, so this sentence is TRUE by the time the
+      // run reads it; without it the builder sees an empty file, assumes the
+      // scheduler is confused, and tries to create it anyway.
+      (tierCanDropOut(task.tier)
+        ? `\nEVERY FILE IN THAT WRITE-SET ALREADY EXISTS on disk — the ones that are new to this task ` +
+          `were created empty for you. EDIT them. Do not create them, and do not treat an empty file ` +
+          `as a missing one. If you must bring a path into existence that is not listed, create it with ` +
+          `a shell command (\`printf '' > path\`) before writing to it.\n`
+        : "") +
+      `\n${BROWSER_FIRST}`
     );
   }
   return withPolicy(header);
@@ -1617,6 +1636,83 @@ async function resolveTaskWorkspace(
   return resolved;
 }
 
+/**
+ * R870 — touch a gemini task's declared write-set before dispatch.
+ *
+ * MEASURED 2026-08-23 on agy / gemini-3.7-flash-high, twice. `write_to_file`
+ * can only write inside the run's own artifact directory; any repo path is
+ * refused outright —
+ *
+ *     invalid tool call error (invalid_args)
+ *     .../TodaySurface.tsx is not a valid artifact path; artifacts must be in
+ *     /root/.gemini/antigravity-cli/brain/<conversation-id>/
+ *
+ * — and a builder whose first act is to create a file gives up there, returning
+ * `status:"ERROR"` with an empty response and a spotless worktree. EDITING AN
+ * EXISTING FILE WORKS FINE. The refusal is only about bringing a new path into
+ * existence, so an empty file placed in front of the run is the whole fix, and
+ * it is the difference between "26 tasks lost tonight" and "26 tasks done".
+ *
+ * Non-fatal by construction. A task whose write-set cannot be touched is still
+ * dispatched: the file may simply be one the builder was going to edit anyway,
+ * and refusing to start work over a failed `touch` would be a worse bug than
+ * the one being prevented. Every skip is logged with its reason.
+ *
+ * NEVER TRUNCATES. `wx` fails if the path exists, which is the point — an
+ * existing file is left exactly as it is, and the flag (rather than an
+ * `existsSync` branch) is what closes the window between the check and the
+ * write. Traversal is refused rather than clamped: a write-set entry that
+ * escapes the worktree is a planner bug, and creating the file somewhere else
+ * on the box would hide it.
+ */
+function precreateWriteSet(
+  task: Pick<ProjectTask, "id" | "role" | "title" | "tier" | "write_set">,
+  workspaceDir: string,
+): void {
+  const created: string[] = [];
+  for (const entry of task.write_set) {
+    const rel = entry.trim();
+    if (rel === "") continue;
+    if (isAbsolute(rel)) {
+      console.warn(
+        `[project-tick] task ${task.id}: write-set entry "${rel}" is absolute — not touching it`,
+      );
+      continue;
+    }
+    const abs = resolve(workspaceDir, rel);
+    const inside = relative(workspaceDir, abs);
+    if (inside === "" || inside.startsWith("..")) {
+      console.warn(
+        `[project-tick] task ${task.id}: write-set entry "${rel}" escapes the worktree — ` +
+          `not touching it`,
+      );
+      continue;
+    }
+    if (existsSync(abs)) continue;
+    try {
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, "", { flag: "wx" });
+      created.push(inside);
+    } catch (e) {
+      // EEXIST is the benign race (a sibling tick, or the operator) and needs
+      // no line of its own; anything else is worth seeing.
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") continue;
+      console.warn(
+        `[project-tick] task ${task.id}: could not pre-create "${rel}" ` +
+          `(${e instanceof Error ? e.message : String(e)}) — dispatching anyway`,
+      );
+    }
+  }
+  if (created.length > 0) {
+    console.log(
+      `[project-tick] pre-created ${created.length} write-set file(s) for ${task.tier} ` +
+        `${task.role} task ${task.id} (agy cannot create files, only edit them): ` +
+        created.join(", "),
+    );
+  }
+}
+
 async function spawnTaskRuns(): Promise<void> {
   const claimed = await claimReadyTasks();
   if (claimed.length === 0) return;
@@ -1676,6 +1772,12 @@ async function spawnTaskRuns(): Promise<void> {
       // project's one directory. `main` resolves to exactly what this line
       // resolved to before phase 4.
       const ws = await resolveTaskWorkspace(task);
+      // R870, the preventative half. `agy` cannot bring a new path into
+      // existence; touching the declared write-set first turns every "create
+      // this file" into "edit this file", which it does fine.
+      if (tierCanDropOut(task.tier)) {
+        precreateWriteSet(task, ws.workspace_dir);
+      }
       const prompt = buildPrompt(task, task.project, {
         workstream: task.workstream,
         work_branch: ws.work_branch,
@@ -2287,6 +2389,100 @@ export async function deferForUsageWall(
   return true;
 }
 
+/** Notification source for the engine-fallback push, and how long one push
+ *  speaks for. Its own source string so `lastNotificationAt` dedups it
+ *  against ITSELF and not against the usage-wall pushes — two different
+ *  outages must not silence each other.
+ *
+ *  Thirty minutes: long enough that one bad stretch of `agy` (the incident ran
+ *  26 dropouts across two hours) collapses into a handful of lines rather than
+ *  26 alarms, short enough that Konrad still learns the free engine has gone
+ *  sour while it is still going sour. */
+const ENGINE_FALLBACK_NOTIFICATION_SOURCE = "engine-fallback";
+const ENGINE_FALLBACK_ANNOUNCE_WINDOW_MS = 30 * 60_000;
+
+/**
+ * R870 — a task the ENGINE dropped moves to another engine; it does not fail.
+ *
+ * Mirrors `deferForUsageWall` in shape and in contract: returns true when the
+ * caller must skip its failure path, and every `false` lands on the old
+ * behaviour (task failed, project blocked, Konrad told) — which stays the
+ * right destination for a real failure and an acceptable one for a dropout we
+ * could not re-route.
+ *
+ * The refusals, each for its own reason:
+ *  - tier does not route to a droppable engine — a claude-code failure is a
+ *    real failure, and R860 has already taken the usage walls out of that set.
+ *  - not 'failed' — a cancellation is Konrad's decision and a 'stuck' run has
+ *    its own resume path; neither is ours to reopen.
+ *  - not a dropout signature — the overwhelmingly common case once the tier
+ *    term is applied: the engine ran, the work failed, say so.
+ *  - project not accepting work — re-queuing onto a blocked or paused project
+ *    would smuggle billable work past the gate. Fail it visibly instead. (The
+ *    fallback tier is a PAID engine, so this term is load-bearing here in a way
+ *    it is not for a free one.)
+ *  - the row moved under us — the operator cancelled or retried it between the
+ *    read and the write. Do not pretend the demotion happened.
+ */
+export async function demoteAfterEngineFailure(
+  task: SettledRunningTask,
+  project: Project | null,
+): Promise<boolean> {
+  if (!tierCanDropOut(task.tier)) return false;
+  if (task.run_status !== "failed" || !task.run_id) return false;
+  if (!isEngineDropout(task.last_error)) return false;
+  if (!project || !projectAcceptsWork(project.status)) {
+    console.warn(
+      `[project-tick] task ${task.id} was dropped by the ${task.tier} engine but its project ` +
+        `is ${project?.status ?? "unreadable"} — failing it rather than re-queuing paid work ` +
+        `on a project that is not accepting any`,
+    );
+    return false;
+  }
+
+  const moved = await demoteTaskTier(task.id, task.tier, ENGINE_FALLBACK_TIER);
+  if (!moved) {
+    console.warn(
+      `[project-tick] task ${task.id}: no longer a running ${task.tier} row when the engine ` +
+        `fallback went to write — falling back to the normal failure path`,
+    );
+    return false;
+  }
+
+  console.warn(
+    `[project-tick] engine dropout — ${task.role} task ${task.id} (round ${task.round}) was ` +
+      `dropped by ${task.tier} ("${(task.last_error ?? "").trim().slice(0, 160)}") and is ` +
+      `re-queued on tier ${ENGINE_FALLBACK_TIER} (attempt ${moved.attempt}) — task NOT failed, ` +
+      `project NOT blocked — ${project.name} · ${task.title}`,
+  );
+  await announceEngineFallback(project.name);
+  return true;
+}
+
+/** One calm line per outage window, not one alarm per dropped task. Reuses
+ *  the usage-wall dedup predicate with this path's own source and window; the
+ *  read failing means we announce, for the same reason it does there — a
+ *  duplicate push is an annoyance, a swallowed one is silence. */
+async function announceEngineFallback(projectName: string): Promise<void> {
+  const lastAt = await lastNotificationAt(ENGINE_FALLBACK_NOTIFICATION_SOURCE).catch((e) => {
+    console.warn(
+      `[project-tick] could not read the last engine-fallback push (${
+        e instanceof Error ? e.message : e
+      }) — announcing rather than risking silence`,
+    );
+    return null;
+  });
+  if (!shouldAnnounceOutage(lastAt, Date.now(), ENGINE_FALLBACK_ANNOUNCE_WINDOW_MS)) return;
+  await queueNotification(
+    `↩︎ The Gemini engine (agy) is dropping tasks — returning an empty envelope instead of ` +
+      `doing the work. Affected tasks are being re-queued automatically on Claude ` +
+      `${ENGINE_FALLBACK_TIER} (Sonnet); nothing is blocked and no action is needed. ` +
+      `First one tonight: "${projectName}". Further dropouts in the next 30 min are collapsed ` +
+      `into this message.`,
+    ENGINE_FALLBACK_NOTIFICATION_SOURCE,
+  ).catch(() => {});
+}
+
 async function reconcileSettledTasks(): Promise<void> {
   const settled = await listSettledRunningTasks();
   /** Gating GROUPS touched this tick, keyed `${project_id}:${groupKey(task)}`
@@ -2318,6 +2514,12 @@ async function reconcileSettledTasks(): Promise<void> {
         // runs.wake_after and retried on its own — the task stays 'running' and
         // the project stays 'active'. Everything else falls through unchanged.
         if (await deferForUsageWall(task, project)) continue;
+        // R870: a run the ENGINE dropped (agy handing back an empty envelope)
+        // is re-queued on another engine — the task stays 'ready', the project
+        // stays 'active'. Ordered after the usage wall because the wall is the
+        // narrower signature and parks the run itself; everything that is
+        // neither falls through to the failure path unchanged.
+        if (await demoteAfterEngineFailure(task, project)) continue;
         await setTaskStatus(task.id, "failed");
         await setProjectStatus(task.project_id, "blocked");
         console.warn(

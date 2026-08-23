@@ -3,8 +3,16 @@
  *
  * POST /api/spend         — accepts SpendRow[] or single SpendRow, persists.
  * GET  /api/spend/today   — returns the daily rollup the Today screen consumes.
- * GET  /api/spend/summary — 30-day windows + area breakdown + daily series
- *                           for the Money surface (v2.3).
+ * GET  /api/spend/summary?days=N&provider=P&kind=K
+ *                         — fixed today/d7/d30 windows + an area breakdown and
+ *                           daily series over the last N days (default 30,
+ *                           clamped 1-365) for the Money surface. `provider`
+ *                           and `kind` narrow the breakdown and the series
+ *                           only; `all` or omitted means no filter, and a
+ *                           malformed value is a 400 rather than a silently
+ *                           unfiltered result (see lib/spend-filters.ts). The
+ *                           response's `filters.providers` / `filters.kinds`
+ *                           carry the unfiltered pick lists.
  *
  * The POST endpoint is intentionally permissive: it accepts both `[row]` and
  * `row` payload shapes so gateways can fire-and-forget without ceremony.
@@ -21,6 +29,7 @@ import {
   type SpendRow,
 } from "../db/spend.ts";
 import { recentLimitHits } from "../db/runs.ts";
+import { parseSpendFilters } from "../lib/spend-filters.ts";
 
 const r = new Hono();
 
@@ -96,7 +105,14 @@ r.get("/today", async (c) => {
 });
 
 r.get("/summary", async (c) => {
-  return c.json(await spendSummary());
+  const parsed = parseSpendFilters({
+    days: c.req.query("days"),
+    provider: c.req.query("provider"),
+    kind: c.req.query("kind"),
+  });
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+  const { days, provider, kind } = parsed.value;
+  return c.json(await spendSummary(days, { provider, kind }));
 });
 
 /* Claude Code has no proactive quota API — the CLI only ever tells you

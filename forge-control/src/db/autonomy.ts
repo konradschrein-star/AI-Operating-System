@@ -88,10 +88,9 @@ export async function getAutonomy(): Promise<AutonomyResponse> {
        ORDER BY category, builtin DESC, id`,
   );
 
-  // Synchronize runtime.pause_all enabled flag with fleet_state status
   const rules = rulesR.rows.map((r) => {
-    if (r.id === "runtime.pause_all" && fleet.status === "paused") {
-      return { ...r, enabled: true };
+    if (r.id === "runtime.pause_all") {
+      return { ...r, enabled: fleet.status === "paused" };
     }
     return r;
   });
@@ -163,6 +162,35 @@ export async function updateRule(
   }
   if (sets.length === 0) return null;
   sets.push("updated_at = now()");
+
+  if (id === "runtime.pause_all" && patch.enabled !== undefined) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const r = await client.query<GuardrailRule>(
+        `UPDATE guardrail_rules
+            SET ${sets.join(", ")}
+          WHERE id = $1
+          RETURNING id, label, description, category, enabled, builtin, config, updated_at::text`,
+        params,
+      );
+      const newStatus = patch.enabled ? "paused" : "running";
+      await client.query(
+        `UPDATE fleet_state
+            SET status = $1, updated_at = now(), updated_by = 'guardrail'
+          WHERE id = 1`,
+        [newStatus],
+      );
+      await client.query("COMMIT");
+      return r.rows[0] ?? null;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   const r = await pool.query<GuardrailRule>(
     `UPDATE guardrail_rules
         SET ${sets.join(", ")}
@@ -392,6 +420,10 @@ function evaluateOne(
 ): { blocked: boolean; reason?: string } {
   if (!rule.enabled) return { blocked: false };
   const cfg = rule.config ?? {};
+  const model = typeof payload.model === "string" ? payload.model : undefined;
+  const engine = typeof payload.engine === "string" ? payload.engine : undefined;
+  const isGemini = isGeminiModel(model) || engine === "gemini" || engine === "gemini-cli";
+
   switch (rule.id) {
     case "runtime.pause_all":
       return { blocked: true, reason: "Emergency pause is enabled." };
@@ -405,7 +437,9 @@ function evaluateOne(
 
       if (isGemini) {
         // High-throughput Gemini quota (default 1M tokens per run)
-        const geminiTokenCap = Number(cfg.gemini_token_cap ?? 1_000_000);
+        const geminiTokenCap = Number(
+          cfg.gemini_token_cap ?? cfg.tokens_per_run_cap ?? cfg.token_cap ?? 1_000_000,
+        );
         if (Number.isFinite(geminiTokenCap) && geminiTokenCap > 0 && tokens > geminiTokenCap) {
           return {
             blocked: true,
@@ -416,7 +450,9 @@ function evaluateOne(
       }
 
       // Claude subscription window budget (default 100k tokens per run)
-      const claudeTokenCap = Number(cfg.claude_token_cap ?? 100_000);
+      const claudeTokenCap = Number(
+        cfg.claude_token_cap ?? cfg.tokens_per_run_cap ?? cfg.token_cap ?? 100_000,
+      );
       if (Number.isFinite(claudeTokenCap) && claudeTokenCap > 0 && tokens > claudeTokenCap) {
         return {
           blocked: true,
@@ -509,7 +545,9 @@ async function resolveRunProvider(
 export async function evaluateGuardrails(
   input: GuardrailCheckInput,
 ): Promise<GuardrailCheckResult> {
-  const payload: Record<string, unknown> = { ...(input.payload ?? {}) };
+  const payload: Record<string, unknown> = {
+    ...(input.payload ?? {}),
+  };
   if (input.model !== undefined && payload.model === undefined) {
     payload.model = input.model;
   }
@@ -546,6 +584,12 @@ export async function evaluateGuardrails(
     });
   }
 
+  // Check fleet_state paused status
+  const fleetR = await pool.query<{ status: string }>(
+    `SELECT status FROM fleet_state WHERE id = 1`,
+  );
+  const isFleetPaused = fleetR.rows[0]?.status === "paused";
+
   const params: unknown[] = [];
   const wheres: string[] = ["enabled = true"];
   if (input.rule_id) {
@@ -562,31 +606,35 @@ export async function evaluateGuardrails(
   const rulesR = await pool.query<GuardrailRule>(sql, params);
   const rules = rulesR.rows;
 
-  // Check fleet_state to ensure fleet freeze is synchronized with emergency pause
-  const fleetCheck = await pool.query<{ status: string }>(
-    `SELECT status FROM fleet_state WHERE id = 1`,
-  );
-  const isFleetPaused = fleetCheck.rows[0]?.status === "paused";
-
-  if (isFleetPaused && !rules.some((r) => r.id === "runtime.pause_all")) {
-    rules.unshift({
-      id: "runtime.pause_all",
-      label: "Emergency pause",
-      description: "Fleet is paused via fleet_state.",
-      category: "security",
-      enabled: true,
-      builtin: true,
-      config: {},
-      updated_at: new Date().toISOString(),
-    });
-  } else if (!input.rule_id && !rules.some((r) => r.id === "runtime.pause_all")) {
-    const kill = await pool.query<GuardrailRule>(
-      `SELECT id, label, description, category, enabled, builtin,
-              config, updated_at::text
-         FROM guardrail_rules
-        WHERE id = 'runtime.pause_all' AND enabled = true`,
-    );
-    rules.unshift(...kill.rows);
+  if (isFleetPaused) {
+    if (!rules.some((r) => r.id === "runtime.pause_all")) {
+      const pauseRuleR = await pool.query<GuardrailRule>(
+        `SELECT id, label, description, category, enabled, builtin,
+                config, updated_at::text
+           FROM guardrail_rules
+          WHERE id = 'runtime.pause_all'`,
+      );
+      if (pauseRuleR.rows[0]) {
+        rules.unshift({ ...pauseRuleR.rows[0], enabled: true });
+      } else {
+        rules.unshift({
+          id: "runtime.pause_all",
+          label: "Emergency pause",
+          description: "When tripped, pauses every worker via fleet_state.",
+          category: "security",
+          enabled: true,
+          builtin: true,
+          config: {},
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+  } else if (!input.rule_id) {
+    // If fleet is running, ensure runtime.pause_all does not block unless explicitly targeted
+    const idx = rules.findIndex((r) => r.id === "runtime.pause_all");
+    if (idx >= 0) {
+      rules.splice(idx, 1);
+    }
   }
 
   for (const rule of rules) {

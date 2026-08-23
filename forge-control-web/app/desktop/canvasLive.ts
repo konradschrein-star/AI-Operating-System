@@ -120,3 +120,24 @@ export function subscribeCanvas(
   };
 }
 
+export {
+  getCanvasPlan,
+  saveCanvasPlan,
+  pushPlanToProject,
+  type CanvasPlan,
+  type CanvasPlanResponse,
+  type SaveCanvasPlanInput,
+  type SaveCanvasPlanResponse,
+  type PushPlanToProjectInput,
+  type PushPlanToProjectResponse,
+  type PlanTask,
+  type PlanWorkstream,
+  type PlanPhase,
+  type GraphAmbiguity,
+  type ParsedDrawingGraph,
+  type PlanTaskStatus,
+  type TaskRole,
+  type TaskTier,
+} from "../api";
+
+

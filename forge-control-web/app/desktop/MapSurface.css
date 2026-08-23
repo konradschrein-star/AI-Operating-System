@@ -1,0 +1,939 @@
+/**
+ * MapSurface.css — Comprehensive styling for the AI OS Map surface.
+ * Covers the Mind Map, Planning Canvas, System Atlas Grid, and Inspector Drawer.
+ */
+
+.map-surface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
+  background: var(--fg-bgBody);
+  color: var(--fg-text);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Top Header & Telemetry Strip ── */
+.map-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--fg-bgTabBar);
+  border-bottom: 1px solid var(--fg-borderSoft);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.map-header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.map-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.map-title {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--fg-textHi);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-subtitle {
+  font-size: 11.5px;
+  color: var(--fg-textMuted);
+}
+
+/* Mode Switcher Tabs */
+.map-mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--fg-bgGutter);
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--fg-borderSoft);
+}
+
+.map-mode-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--fg-textMuted);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+}
+
+.map-mode-tab:hover:not(.active) {
+  color: var(--fg-text);
+  background: var(--fg-rowHover);
+}
+
+.map-mode-tab.active {
+  background: var(--fg-bgCard);
+  color: var(--fg-accent);
+  box-shadow: 0 1px 4px var(--fg-overlay);
+  font-weight: 600;
+}
+
+/* Telemetry Status Strip */
+.map-telemetry-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.map-telemetry-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--fg-textSecondary, var(--fg-text));
+  white-space: nowrap;
+}
+
+.map-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.map-dot.green {
+  background: var(--fg-ok);
+}
+
+.map-dot.yellow {
+  background: var(--fg-warn);
+}
+
+/* Round 3 rendered `map-dot red` with no rule behind it: a stopped pm2
+   process got an invisible dot, which reads as "no dot" — i.e. fine. */
+.map-dot.red {
+  background: var(--fg-bleed);
+}
+
+.map-dot.blue {
+  background: var(--fg-info);
+}
+
+.map-dot.gray {
+  background: var(--fg-textMuted);
+}
+
+/* ── Content Viewport ── */
+.map-content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+}
+
+/* ── Visual Mind Map ── */
+.mindmap-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: var(--fg-bgBody);
+  overflow: hidden;
+  position: relative;
+}
+
+.mindmap-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--fg-bgTabBar);
+  border-bottom: 1px solid var(--fg-borderSoft);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.mindmap-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 6px;
+  padding: 4px 8px;
+  width: 240px;
+}
+
+.mindmap-search input {
+  background: transparent;
+  border: none;
+  color: var(--fg-text);
+  font-size: 11.5px;
+  width: 100%;
+  outline: none;
+}
+
+.mindmap-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mindmap-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  border: 1px solid var(--fg-borderSoft);
+  background: var(--fg-bgCard);
+  color: var(--fg-text);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.mindmap-btn:hover {
+  background: var(--fg-bgGutter);
+  border-color: var(--fg-borderEmphasis);
+}
+
+.mindmap-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px 24px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background-image: radial-gradient(var(--fg-borderSoft) 1px, transparent 1px);
+  background-size: 24px 24px;
+  user-select: none;
+}
+
+.mindmap-tree {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 36px;
+  max-width: 1300px;
+  width: 100%;
+}
+
+/* Node Styling */
+.mindmap-node {
+  background: var(--fg-bgCard);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all 180ms ease;
+  box-shadow: 0 2px 8px var(--fg-overlay);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  text-align: left;
+}
+
+.mindmap-node:hover {
+  border-color: var(--fg-accent);
+  box-shadow: 0 4px 16px var(--fg-overlay);
+  transform: translateY(-2px);
+}
+
+.mindmap-node.selected {
+  border-color: var(--fg-accent);
+  outline: 2px solid var(--fg-accent);
+}
+
+/* A search hit — the node whose own text matched, not merely an ancestor. */
+.mindmap-node.hit {
+  border-color: var(--fg-accent);
+  background: var(--fg-rowSelected);
+}
+
+.mindmap-node.root {
+  background: linear-gradient(135deg, var(--fg-bgCard), var(--fg-primaryActionBg));
+  border: 2px solid var(--fg-accent);
+  padding: 14px 20px;
+  border-radius: 12px;
+  min-width: 320px;
+  text-align: center;
+}
+
+.mindmap-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mindmap-node-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg-textHi);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mindmap-node.root .mindmap-node-title {
+  font-size: 15px;
+  justify-content: center;
+}
+
+.mindmap-node-badge {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+}
+
+.mindmap-node-desc {
+  font-size: 11px;
+  color: var(--fg-textMuted);
+  line-height: 1.35;
+}
+
+.mindmap-node-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--fg-textSecondary, var(--fg-textMuted));
+}
+
+.mindmap-branches {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .mindmap-branches {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+}
+
+.mindmap-branch-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--fg-bgGutter);
+  border: 1px dashed var(--fg-borderSoft);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.mindmap-branch-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg-textHi);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--fg-borderSoft);
+}
+
+.mindmap-children-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Inspector Drawer ── */
+.map-drawer-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--fg-overlay);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  display: flex;
+  justify-content: flex-end;
+  animation: fadeIn 150ms ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.map-drawer {
+  width: 440px;
+  max-width: 90vw;
+  height: 100%;
+  background: var(--fg-bgCard);
+  border-left: 1px solid var(--fg-border);
+  box-shadow: -6px 0 24px var(--fg-overlay);
+  display: flex;
+  flex-direction: column;
+  animation: slideLeft 200ms ease;
+  overflow: hidden;
+}
+
+@keyframes slideLeft {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.map-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  background: var(--fg-bgTabBar);
+  border-bottom: 1px solid var(--fg-borderSoft);
+}
+
+.map-drawer-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.map-drawer-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--fg-textHi);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.map-drawer-close {
+  background: transparent;
+  border: none;
+  color: var(--fg-textMuted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.map-drawer-close:hover {
+  background: var(--fg-bgGutter);
+  color: var(--fg-textHi);
+}
+
+.map-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.map-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--fg-borderSoft);
+}
+
+.map-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 120ms ease;
+  text-decoration: none;
+  border: 1px solid var(--fg-borderSoft);
+  background: var(--fg-bgGutter);
+  color: var(--fg-text);
+}
+
+.map-action-btn.primary {
+  background: var(--fg-accent);
+  color: var(--fg-onAccent);
+  border-color: var(--fg-accent);
+}
+
+.map-action-btn:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+.map-drawer-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.map-drawer-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  color: var(--fg-textMuted);
+}
+
+.map-info-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.map-info-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11.5px;
+}
+
+.map-info-label {
+  color: var(--fg-textMuted);
+  flex-shrink: 0;
+}
+
+.map-info-val {
+  color: var(--fg-textHi);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  word-break: break-all;
+  text-align: right;
+}
+
+/* ── Topology Atlas Grid ── */
+.atlas-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--fg-bgBody);
+}
+
+.atlas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--fg-bgTabBar);
+  border-bottom: 1px solid var(--fg-borderSoft);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.atlas-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  padding: 14px 16px;
+  overflow-y: auto;
+}
+
+@media (max-width: 1400px) {
+  .atlas-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .atlas-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.atlas-column {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--fg-bgCard);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 10px;
+  padding: 12px;
+  min-height: 0;
+}
+
+.atlas-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--fg-borderSoft);
+}
+
+.atlas-column-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg-textHi);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.atlas-column-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--fg-bgGutter);
+  color: var(--fg-textMuted);
+  font-weight: 600;
+}
+
+.atlas-column-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.atlas-card {
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  border-radius: 8px;
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  transition: all 120ms ease;
+}
+
+.atlas-card:hover {
+  border-color: var(--fg-borderEmphasis);
+}
+
+.atlas-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.atlas-card-title {
+  font-weight: 600;
+  color: var(--fg-textHi);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.atlas-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--fg-textMuted);
+}
+
+.atlas-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--fg-bgBody);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.atlas-progress-fill {
+  height: 100%;
+  background: var(--fg-accent);
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+
+.atlas-progress-fill.green {
+  background: var(--fg-ok);
+}
+
+.atlas-progress-fill.yellow {
+  background: var(--fg-warn);
+}
+
+.atlas-progress-fill.red {
+  background: var(--fg-bleed);
+}
+
+/* Error panel in column */
+.atlas-column-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 12px;
+  gap: 8px;
+  text-align: center;
+  color: var(--fg-bleed);
+  font-size: 11.5px;
+}
+
+.atlas-column-error button {
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-text);
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Round 4 — provenance chrome.
+   The MAP now states, on screen, where every figure came from and when it was
+   measured. These rules are the vocabulary for that: a source line, a status
+   line under each node, a banner for a failed refresh, and an explicit empty
+   state so "nothing here" can never be mistaken for "nothing was measured".
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.map-title-icon {
+  font-size: 18px;
+}
+
+.map-telemetry-source {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--fg-textMuted);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  padding-left: 12px;
+}
+
+.map-canvas-host {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* ── Mind map ── */
+.mindmap-hint {
+  font-size: 11px;
+  color: var(--fg-textMuted);
+}
+
+.mindmap-search-icon,
+.mindmap-search-clear {
+  color: var(--fg-textMuted);
+}
+
+.mindmap-search-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.mindmap-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mindmap-btn-tiny {
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.mindmap-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.mindmap-banner.error {
+  background: var(--fg-dangerActionBg);
+  border-bottom: 1px solid var(--fg-dangerActionBorder);
+  color: var(--fg-bleed);
+}
+
+.mindmap-banner-note {
+  color: var(--fg-textMuted);
+}
+
+.mindmap-node-status {
+  font-size: 10.5px;
+  color: var(--fg-textSecondary);
+  font-family: var(--font-mono, monospace);
+  line-height: 1.35;
+}
+
+.mindmap-node-children {
+  margin-top: 8px;
+  border-top: 1px solid var(--fg-borderSoft);
+  padding-top: 6px;
+}
+
+.mindmap-subtree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--fg-accent);
+}
+
+.mindmap-branch-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+}
+
+.mindmap-empty,
+.mindmap-empty-full,
+.atlas-column-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--fg-textMuted);
+  font-size: 11px;
+}
+
+.mindmap-empty-full {
+  margin: auto;
+}
+
+.mindmap-provenance {
+  max-width: 900px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-textMuted);
+  border-top: 1px solid var(--fg-borderSoft);
+  padding-top: 12px;
+  text-align: center;
+}
+
+/* ── Inspector drawer ── */
+.map-drawer-prose {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-text);
+  background: var(--fg-bgGutter);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--fg-borderSoft);
+}
+
+.map-tag-chip {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+}
+
+/* ── Atlas ── */
+.atlas-card-state {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-textMuted);
+  white-space: nowrap;
+}
+
+.atlas-card-state.ok {
+  color: var(--fg-ok);
+}
+
+.atlas-card-state.bad {
+  color: var(--fg-bleed);
+}
+
+.atlas-card-note {
+  font-size: 10.5px;
+  color: var(--fg-textMuted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.atlas-card-link {
+  color: var(--fg-accent);
+  text-decoration: none;
+}
+
+.atlas-card-link:hover {
+  text-decoration: underline;
+}
+
+.atlas-badge {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.atlas-badge.ok {
+  background: var(--fg-okActionBg);
+  border-color: var(--fg-okActionBorder);
+  color: var(--fg-ok);
+}
+
+.atlas-badge.warn {
+  background: var(--fg-freezeBgWarn);
+  border-color: var(--fg-freezeBorderWarn);
+  color: var(--fg-warn);
+}
+
+.atlas-subheading {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg-textMuted);
+  margin-top: 6px;
+}
