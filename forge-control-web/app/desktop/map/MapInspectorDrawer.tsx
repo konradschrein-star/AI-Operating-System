@@ -1,43 +1,81 @@
 "use client";
 
 /**
- * MapInspectorDrawer.tsx — Slide-over inspection drawer for nodes in the Visual Mind Map.
+ * MapInspectorDrawer.tsx — slide-over inspector for a node in the Visual Mind Map.
  *
- * Displays detailed information about a selected node:
- * - Live health badge and status notes
- * - Ports, domain, upstream proxy target
- * - Codebase repository path & GitHub link
- * - Machine/Host details (VPS1 / VPS2 / External)
- * - Quick-action buttons (Open URL, View in Live, Open in Files/Library, Chat with Agent)
+ * Every row it renders is a MEASURED fact carried on the node itself, plus the
+ * producer that measured it and the timestamp of that measurement. There is no
+ * field on `MindMapNode` that a component could fill in from belief: round 3
+ * shipped a `githubUrl` rendered as a live `<a href>` pointing at repositories
+ * that answer 404, and the fix is structural — the field is gone, and the only
+ * link this drawer can build is one nginx is configured to serve.
  */
 
 import { useEffect } from "react";
 import { tokens } from "../../tokens";
+import { formatCheckedAt } from "./mapApi";
+
+/** A measured key/value row. `value` is already formatted for display. */
+export interface MindMapFact {
+  label: string;
+  value: string;
+}
+
+export type MindMapNodeKind =
+  | "root"
+  | "business"
+  | "group"
+  | "process"
+  | "host"
+  | "domain"
+  | "datastore"
+  | "disk"
+  | "unit"
+  | "canvas";
+
+/** Green / amber / grey is a claim too, so each carries the words behind it. */
+export type MindMapStatus = "up" | "down" | "partial" | "neutral";
 
 export interface MindMapNode {
   id: string;
   label: string;
-  type: "root" | "venture" | "fleet" | "infra" | "service" | "agent" | "database" | "tool";
-  status?: "online" | "running" | "stopped" | "dormant" | "warning" | "error" | "active" | "unknown" | "not_deployed";
-  statusNote?: string;
+  type: MindMapNodeKind;
+  status: MindMapStatus;
+  /** What the dot means here, in words — "21/28 pm2 processes online". */
+  statusLabel: string;
   description: string;
-  host?: string;
-  port?: number | string;
-  domain?: string;
-  publicUrl?: string | null;
-  adminUrl?: string;
-  repoPath?: string;
-  githubUrl?: string | null;
-  upstreamTarget?: string;
-  metrics?: {
-    cpu?: number;
-    ram?: string;
-    restarts?: number;
-    uptime?: string;
-  };
-  category?: string;
-  tags?: string[];
+  /** The producer `/api/map` read for this node: `pm2 jlist`, a vault note… */
+  source: string;
+  /** ISO timestamp of that read, straight off the section envelope. */
+  checkedAt: string;
+  facts: MindMapFact[];
+  /** Only ever built from a server_name nginx is actually configured with. */
+  publicUrl?: string;
+  /** A filesystem path `/api/map` reported (and, for businesses, stat'ed). */
+  path?: string;
+  /** Surface to jump to, when this node corresponds to one. */
+  navigateTo?: string;
+  tags: string[];
   children?: MindMapNode[];
+}
+
+const STATUS_COLOR: Record<MindMapStatus, string> = {
+  up: tokens.ok,
+  down: tokens.bleed,
+  partial: tokens.warn,
+  neutral: tokens.textMuted,
+};
+
+export function statusColor(status: MindMapStatus): string {
+  return STATUS_COLOR[status];
+}
+
+/** The `map-dot` modifier class for a status — one mapping, used everywhere. */
+export function statusDotClass(status: MindMapStatus): string {
+  if (status === "up") return "green";
+  if (status === "down") return "red";
+  if (status === "partial") return "yellow";
+  return "gray";
 }
 
 interface MapInspectorDrawerProps {
@@ -51,7 +89,6 @@ export function MapInspectorDrawer({
   onClose,
   onNavigateSurface,
 }: MapInspectorDrawerProps) {
-  // Close on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -61,31 +98,6 @@ export function MapInspectorDrawer({
   }, [onClose]);
 
   if (!node) return null;
-
-  const isRunning =
-    node.status === "online" ||
-    node.status === "running" ||
-    node.status === "active";
-  const isStopped =
-    node.status === "stopped" || node.status === "not_deployed";
-  const isWarn = node.status === "warning" || node.status === "error";
-
-  const getStatusColor = () => {
-    if (isRunning) return "var(--fg-ok, #10b981)";
-    if (isStopped) return "var(--fg-bleed, #ef4444)";
-    if (isWarn) return "var(--fg-warn, #f59e0b)";
-    return "var(--fg-textMuted, #6b7280)";
-  };
-
-  const getStatusLabel = () => {
-    if (node.status === "online" || node.status === "running" || node.status === "active") return "Active / Online";
-    if (node.status === "stopped") return "Stopped";
-    if (node.status === "not_deployed") return "Not Deployed";
-    if (node.status === "dormant") return "Dormant";
-    if (node.status === "warning") return "Warning";
-    if (node.status === "error") return "Error";
-    return node.status ?? "Ready";
-  };
 
   return (
     <div
@@ -101,22 +113,15 @@ export function MapInspectorDrawer({
             <div className="map-drawer-title">
               <span
                 className="map-dot"
-                style={{ background: getStatusColor() }}
+                style={{ background: statusColor(node.status) }}
               />
               {node.label}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
               <span className="mindmap-node-badge">{node.type}</span>
-              {node.category && (
-                <span
-                  style={{
-                    fontSize: 10.5,
-                    color: tokens.textMuted,
-                  }}
-                >
-                  {node.category}
-                </span>
-              )}
+              <span style={{ fontSize: 10.5, color: tokens.textMuted }}>
+                measured {formatCheckedAt(node.checkedAt)}
+              </span>
             </div>
           </div>
           <button
@@ -132,7 +137,7 @@ export function MapInspectorDrawer({
 
         {/* Drawer Body */}
         <div className="map-drawer-body">
-          {/* Quick Action Buttons */}
+          {/* Quick actions — only ones that lead somewhere real */}
           <div className="map-drawer-actions">
             {node.publicUrl && (
               <a
@@ -141,103 +146,43 @@ export function MapInspectorDrawer({
                 rel="noopener noreferrer"
                 className="map-action-btn primary"
               >
-                <span>↗</span> Open URL
+                <span>↗</span> Open {new URL(node.publicUrl).host}
               </a>
             )}
-            {node.adminUrl && (
-              <a
-                href={node.adminUrl.startsWith("http") ? node.adminUrl : undefined}
-                target="_blank"
-                rel="noopener noreferrer"
+            {node.path && (
+              <button
+                type="button"
                 className="map-action-btn"
-                onClick={
-                  node.adminUrl.startsWith("http")
-                    ? undefined
-                    : (e) => {
-                        e.preventDefault();
-                        navigator.clipboard?.writeText(node.adminUrl ?? "");
-                      }
-                }
-                title={node.adminUrl}
+                onClick={() => navigator.clipboard?.writeText(node.path ?? "")}
+                title={node.path}
               >
-                <span>⚙</span> {node.adminUrl.startsWith("http") ? "Admin" : "Copy Endpoint"}
-              </a>
+                <span>⧉</span> Copy path
+              </button>
             )}
-            {node.githubUrl && (
-              <a
-                href={node.githubUrl}
-                target="_blank"
-                rel="noopener noreferrer"
+            {onNavigateSurface && node.navigateTo && (
+              <button
+                type="button"
                 className="map-action-btn"
+                onClick={() => onNavigateSurface(node.navigateTo ?? "live")}
               >
-                <span>⌥</span> GitHub
-              </a>
-            )}
-            {onNavigateSurface && (
-              <>
-                <button
-                  type="button"
-                  className="map-action-btn"
-                  onClick={() => onNavigateSurface("live")}
-                >
-                  <span>●</span> View in Live
-                </button>
-                <button
-                  type="button"
-                  className="map-action-btn"
-                  onClick={() => onNavigateSurface("live")}
-                  title="Inspect runtime logs in Live telemetry"
-                >
-                  <span>📜</span> View Logs
-                </button>
-                <button
-                  type="button"
-                  className="map-action-btn"
-                  onClick={() => onNavigateSurface("library")}
-                >
-                  <span>📁</span> Open in Files/Library
-                </button>
-                <button
-                  type="button"
-                  className="map-action-btn"
-                  onClick={() => onNavigateSurface("chat")}
-                >
-                  <span>💬</span> Chat with Agent
-                </button>
-              </>
+                <span>●</span> Open {node.navigateTo}
+              </button>
             )}
           </div>
 
-          {/* Health & Status Card */}
+          {/* Health & Status */}
           <div className="map-drawer-section">
-            <div className="map-drawer-section-title">Health & Status</div>
+            <div className="map-drawer-section-title">Health &amp; Status</div>
             <div className="map-info-grid">
               <div className="map-info-row">
                 <span className="map-info-label">Current State</span>
                 <span
                   className="map-info-val"
-                  style={{ color: getStatusColor(), fontWeight: 600 }}
+                  style={{ color: statusColor(node.status), fontWeight: 600 }}
                 >
-                  {getStatusLabel()}
+                  {node.statusLabel}
                 </span>
               </div>
-              {node.statusNote && (
-                <div className="map-info-row">
-                  <span className="map-info-label">Note</span>
-                  <span
-                    className="map-info-val"
-                    style={{ color: tokens.textSecondary, fontFamily: "inherit" }}
-                  >
-                    {node.statusNote}
-                  </span>
-                </div>
-              )}
-              {node.host && (
-                <div className="map-info-row">
-                  <span className="map-info-label">Host Machine</span>
-                  <span className="map-info-val">{node.host}</span>
-                </div>
-              )}
             </div>
           </div>
 
@@ -245,126 +190,47 @@ export function MapInspectorDrawer({
           {node.description && (
             <div className="map-drawer-section">
               <div className="map-drawer-section-title">Overview</div>
-              <div
-                style={{
-                  fontSize: 12,
-                  lineHeight: 1.5,
-                  color: tokens.text,
-                  background: tokens.bgGutter,
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  border: `1px solid ${tokens.borderSoft}`,
-                }}
-              >
-                {node.description}
+              <div className="map-drawer-prose">{node.description}</div>
+            </div>
+          )}
+
+          {/* Measured facts */}
+          {node.facts.length > 0 && (
+            <div className="map-drawer-section">
+              <div className="map-drawer-section-title">Measured</div>
+              <div className="map-info-grid">
+                {node.facts.map((f) => (
+                  <div className="map-info-row" key={f.label}>
+                    <span className="map-info-label">{f.label}</span>
+                    <span className="map-info-val">{f.value}</span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {/* Endpoints & Ports */}
-          {(node.domain || node.port || node.upstreamTarget || node.publicUrl) && (
-            <div className="map-drawer-section">
-              <div className="map-drawer-section-title">Network & Ingress</div>
-              <div className="map-info-grid">
-                {node.domain && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Domain</span>
-                    <span className="map-info-val">{node.domain}</span>
-                  </div>
-                )}
-                {node.port && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Port</span>
-                    <span className="map-info-val">:{node.port}</span>
-                  </div>
-                )}
-                {node.upstreamTarget && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Upstream Target</span>
-                    <span className="map-info-val">{node.upstreamTarget}</span>
-                  </div>
-                )}
-                {node.publicUrl && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Public URL</span>
-                    <span className="map-info-val">{node.publicUrl}</span>
-                  </div>
-                )}
+          {/* Provenance — the whole point of the round-4 rework */}
+          <div className="map-drawer-section">
+            <div className="map-drawer-section-title">Provenance</div>
+            <div className="map-info-grid">
+              <div className="map-info-row">
+                <span className="map-info-label">Source</span>
+                <span className="map-info-val">{node.source}</span>
+              </div>
+              <div className="map-info-row">
+                <span className="map-info-label">Checked at</span>
+                <span className="map-info-val">{node.checkedAt}</span>
               </div>
             </div>
-          )}
-
-          {/* Repository & Paths */}
-          {(node.repoPath || node.githubUrl) && (
-            <div className="map-drawer-section">
-              <div className="map-drawer-section-title">Codebase & Files</div>
-              <div className="map-info-grid">
-                {node.repoPath && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Filesystem Path</span>
-                    <span className="map-info-val">{node.repoPath}</span>
-                  </div>
-                )}
-                {node.githubUrl && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Git Remote</span>
-                    <span className="map-info-val">{node.githubUrl}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Metrics & Telemetry */}
-          {node.metrics && (
-            <div className="map-drawer-section">
-              <div className="map-drawer-section-title">Runtime Telemetry</div>
-              <div className="map-info-grid">
-                {node.metrics.cpu !== undefined && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">CPU Load</span>
-                    <span className="map-info-val">{node.metrics.cpu.toFixed(1)}%</span>
-                  </div>
-                )}
-                {node.metrics.ram && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Memory</span>
-                    <span className="map-info-val">{node.metrics.ram}</span>
-                  </div>
-                )}
-                {node.metrics.restarts !== undefined && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Restarts</span>
-                    <span className="map-info-val">{node.metrics.restarts}</span>
-                  </div>
-                )}
-                {node.metrics.uptime && (
-                  <div className="map-info-row">
-                    <span className="map-info-label">Uptime</span>
-                    <span className="map-info-val">{node.metrics.uptime}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          </div>
 
           {/* Tags */}
-          {node.tags && node.tags.length > 0 && (
+          {node.tags.length > 0 && (
             <div className="map-drawer-section">
               <div className="map-drawer-section-title">Tags</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {node.tags.map((tag) => (
-                  <span
-                    key={tag}
-                    style={{
-                      fontSize: 10.5,
-                      padding: "2px 8px",
-                      borderRadius: 4,
-                      background: tokens.bgGutter,
-                      border: `1px solid ${tokens.borderSoft}`,
-                      color: tokens.textMuted,
-                    }}
-                  >
+                  <span key={tag} className="map-tag-chip">
                     #{tag}
                   </span>
                 ))}

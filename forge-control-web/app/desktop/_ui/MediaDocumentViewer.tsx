@@ -763,7 +763,7 @@ export function MediaDocumentViewer({
                     </span>
                   </button>
 
-                  <span className="mono" style={{ fontSize: 11, color: "#ccc" }}>
+                  <span className="mono" style={{ fontSize: 11, color: tokens.mediaStageInkDim }}>
                     {formatSeconds(currentTime)} / {formatSeconds(duration)}
                   </span>
 
@@ -796,8 +796,8 @@ export function MediaDocumentViewer({
                         fontSize: 10,
                         padding: "2px 5px",
                         borderRadius: 3,
-                        background: playbackSpeed === s ? tokens.accent : "rgba(255,255,255,0.1)",
-                        color: playbackSpeed === s ? "#000" : "#fff",
+                        background: playbackSpeed === s ? tokens.accent : tokens.mediaStageHover,
+                        color: playbackSpeed === s ? tokens.onAccent : tokens.mediaStageInk,
                         border: "none",
                         cursor: "pointer",
                       }}

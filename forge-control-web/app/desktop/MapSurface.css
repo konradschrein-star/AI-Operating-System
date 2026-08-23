@@ -86,13 +86,13 @@
 
 .map-mode-tab:hover:not(.active) {
   color: var(--fg-text);
-  background: var(--fg-rowHover, rgba(255, 255, 255, 0.05));
+  background: var(--fg-rowHover);
 }
 
 .map-mode-tab.active {
   background: var(--fg-bgCard);
   color: var(--fg-accent);
-  box-shadow: 0 1px 4px var(--fg-overlay, rgba(0, 0, 0, 0.2));
+  box-shadow: 0 1px 4px var(--fg-overlay);
   font-weight: 600;
 }
 
@@ -126,24 +126,25 @@
 }
 
 .map-dot.green {
-  background: var(--fg-ok, #10b981);
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+  background: var(--fg-ok);
 }
 
 .map-dot.yellow {
-  background: var(--fg-warn, #f59e0b);
+  background: var(--fg-warn);
+}
+
+/* Round 3 rendered `map-dot red` with no rule behind it: a stopped pm2
+   process got an invisible dot, which reads as "no dot" — i.e. fine. */
+.map-dot.red {
+  background: var(--fg-bleed);
 }
 
 .map-dot.blue {
-  background: var(--fg-info, #3b82f6);
-}
-
-.map-dot.purple {
-  background: #a855f7;
+  background: var(--fg-info);
 }
 
 .map-dot.gray {
-  background: var(--fg-textMuted, #6b7280);
+  background: var(--fg-textMuted);
 }
 
 /* ── Content Viewport ── */
@@ -232,7 +233,7 @@
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  background-image: radial-gradient(var(--fg-borderSoft, rgba(255, 255, 255, 0.08)) 1px, transparent 1px);
+  background-image: radial-gradient(var(--fg-borderSoft) 1px, transparent 1px);
   background-size: 24px 24px;
   user-select: none;
 }
@@ -254,7 +255,7 @@
   padding: 10px 14px;
   cursor: pointer;
   transition: all 180ms ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 8px var(--fg-overlay);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -264,18 +265,23 @@
 
 .mindmap-node:hover {
   border-color: var(--fg-accent);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 4px 16px var(--fg-overlay);
   transform: translateY(-2px);
 }
 
 .mindmap-node.selected {
   border-color: var(--fg-accent);
   outline: 2px solid var(--fg-accent);
-  box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
+}
+
+/* A search hit — the node whose own text matched, not merely an ancestor. */
+.mindmap-node.hit {
+  border-color: var(--fg-accent);
+  background: var(--fg-rowSelected);
 }
 
 .mindmap-node.root {
-  background: linear-gradient(135deg, var(--fg-bgCard), rgba(59, 130, 246, 0.1));
+  background: linear-gradient(135deg, var(--fg-bgCard), var(--fg-primaryActionBg));
   border: 2px solid var(--fg-accent);
   padding: 14px 20px;
   border-radius: 12px;
@@ -348,7 +354,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--fg-bgGutter);
   border: 1px dashed var(--fg-borderSoft);
   border-radius: 12px;
   padding: 16px;
@@ -378,7 +384,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--fg-overlay);
   backdrop-filter: blur(2px);
   z-index: 50;
   display: flex;
@@ -397,7 +403,7 @@
   height: 100%;
   background: var(--fg-bgCard);
   border-left: 1px solid var(--fg-border);
-  box-shadow: -6px 0 24px rgba(0, 0, 0, 0.35);
+  box-shadow: -6px 0 24px var(--fg-overlay);
   display: flex;
   flex-direction: column;
   animation: slideLeft 200ms ease;
@@ -486,7 +492,7 @@
 
 .map-action-btn.primary {
   background: var(--fg-accent);
-  color: #fff;
+  color: var(--fg-onAccent);
   border-color: var(--fg-accent);
 }
 
@@ -687,15 +693,15 @@
 }
 
 .atlas-progress-fill.green {
-  background: var(--fg-ok, #10b981);
+  background: var(--fg-ok);
 }
 
 .atlas-progress-fill.yellow {
-  background: var(--fg-warn, #f59e0b);
+  background: var(--fg-warn);
 }
 
 .atlas-progress-fill.red {
-  background: var(--fg-bleed, #ef4444);
+  background: var(--fg-bleed);
 }
 
 /* Error panel in column */
@@ -707,7 +713,7 @@
   padding: 24px 12px;
   gap: 8px;
   text-align: center;
-  color: var(--fg-bleed, #ef4444);
+  color: var(--fg-bleed);
   font-size: 11.5px;
 }
 
@@ -719,4 +725,215 @@
   border-radius: 4px;
   font-size: 11px;
   cursor: pointer;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Round 4 — provenance chrome.
+   The MAP now states, on screen, where every figure came from and when it was
+   measured. These rules are the vocabulary for that: a source line, a status
+   line under each node, a banner for a failed refresh, and an explicit empty
+   state so "nothing here" can never be mistaken for "nothing was measured".
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.map-title-icon {
+  font-size: 18px;
+}
+
+.map-telemetry-source {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--fg-textMuted);
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  padding-left: 12px;
+}
+
+.map-canvas-host {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+/* ── Mind map ── */
+.mindmap-hint {
+  font-size: 11px;
+  color: var(--fg-textMuted);
+}
+
+.mindmap-search-icon,
+.mindmap-search-clear {
+  color: var(--fg-textMuted);
+}
+
+.mindmap-search-clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.mindmap-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mindmap-btn-tiny {
+  font-size: 10px;
+  padding: 2px 6px;
+}
+
+.mindmap-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.mindmap-banner.error {
+  background: var(--fg-dangerActionBg);
+  border-bottom: 1px solid var(--fg-dangerActionBorder);
+  color: var(--fg-bleed);
+}
+
+.mindmap-banner-note {
+  color: var(--fg-textMuted);
+}
+
+.mindmap-node-status {
+  font-size: 10.5px;
+  color: var(--fg-textSecondary);
+  font-family: var(--font-mono, monospace);
+  line-height: 1.35;
+}
+
+.mindmap-node-children {
+  margin-top: 8px;
+  border-top: 1px solid var(--fg-borderSoft);
+  padding-top: 6px;
+}
+
+.mindmap-subtree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--fg-accent);
+}
+
+.mindmap-branch-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+}
+
+.mindmap-empty,
+.mindmap-empty-full,
+.atlas-column-empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--fg-textMuted);
+  font-size: 11px;
+}
+
+.mindmap-empty-full {
+  margin: auto;
+}
+
+.mindmap-provenance {
+  max-width: 900px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg-textMuted);
+  border-top: 1px solid var(--fg-borderSoft);
+  padding-top: 12px;
+  text-align: center;
+}
+
+/* ── Inspector drawer ── */
+.map-drawer-prose {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-text);
+  background: var(--fg-bgGutter);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--fg-borderSoft);
+}
+
+.map-tag-chip {
+  font-size: 10.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--fg-bgGutter);
+  border: 1px solid var(--fg-borderSoft);
+  color: var(--fg-textMuted);
+}
+
+/* ── Atlas ── */
+.atlas-card-state {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fg-textMuted);
+  white-space: nowrap;
+}
+
+.atlas-card-state.ok {
+  color: var(--fg-ok);
+}
+
+.atlas-card-state.bad {
+  color: var(--fg-bleed);
+}
+
+.atlas-card-note {
+  font-size: 10.5px;
+  color: var(--fg-textMuted);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.atlas-card-link {
+  color: var(--fg-accent);
+  text-decoration: none;
+}
+
+.atlas-card-link:hover {
+  text-decoration: underline;
+}
+
+.atlas-badge {
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.atlas-badge.ok {
+  background: var(--fg-okActionBg);
+  border-color: var(--fg-okActionBorder);
+  color: var(--fg-ok);
+}
+
+.atlas-badge.warn {
+  background: var(--fg-freezeBgWarn);
+  border-color: var(--fg-freezeBorderWarn);
+  color: var(--fg-warn);
+}
+
+.atlas-subheading {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fg-textMuted);
+  margin-top: 6px;
 }

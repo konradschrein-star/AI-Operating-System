@@ -48,6 +48,20 @@ export const tokens = {
 
   // accent
   accent: v("accent"),
+  /** Ink for text sitting ON an accent fill — flips per theme, unlike `text`. */
+  onAccent: v("onAccent"),
+
+  /* Media stage — the letterbox behind a <video>, the paper behind a PDF, and
+   * the chrome of the player that floats over them. Theme-INVARIANT by design
+   * (see theme.css): a video's surround is black in both palettes. Consumed by
+   * `_ui/MediaDocumentViewer.{tsx,css}`. */
+  mediaStage: v("mediaStage"),
+  mediaStageInk: v("mediaStageInk"),
+  mediaStageInkDim: v("mediaStageInkDim"),
+  mediaStageChrome: v("mediaStageChrome"),
+  mediaStageTrack: v("mediaStageTrack"),
+  mediaStageHover: v("mediaStageHover"),
+  mediaPage: v("mediaPage"),
 
   // status
   ok: v("ok"),

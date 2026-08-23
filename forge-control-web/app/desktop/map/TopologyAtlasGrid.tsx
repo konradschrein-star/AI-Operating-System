@@ -1,178 +1,161 @@
 "use client";
 
 /**
- * TopologyAtlasGrid.tsx — 4-Column Live System & Topology Atlas Grid.
+ * TopologyAtlasGrid.tsx — the System Atlas: four dense telemetry columns.
  *
- * Implements Sectional Error Isolation (Rule N1):
- * Column 1: Processes & Services (PM2 processes + Systemd units)
- * Column 2: Domains & Ingress (19 Nginx vhosts + SSL status + proxy targets)
- * Column 3: Storage & Databases (Disk /, RAM, Postgres, Redis, CouchDB, Vault)
- * Column 4: Providers & Integrations (Claude OAuth, Gemini Pool, ElevenLabs, GitHub)
+ * Column 1  Processes & Services   — pm2 jlist / systemctl list-units
+ * Column 2  Ingress & Domains      — /etc/nginx/sites-enabled
+ * Column 3  Storage & Databases    — df, /proc/meminfo, ss -ltnpH
+ * Column 4  Providers              — /api/usage/quota
+ *
+ * SECTIONAL ERROR ISOLATION, honestly. `/api/map` answers 200 with a per-section
+ * `{ ok:false, error }` when a producer dies, and each column renders ITS error
+ * with a retry. Round 3 had this backwards: a failed fetch silently swapped in a
+ * 16-row `DEFAULT_DOMAINS` constant and a `KNOWN_DATASTORES` list that always
+ * read "Listening", with an error banner wired to state nothing ever set. There
+ * are no fallback constants in this file any more — if it is not measured it is
+ * not drawn, and the reason it is not drawn is on screen.
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { tokens } from "../../tokens";
+import {
+  formatBytes,
+  formatCheckedAt,
+  formatUptime,
+  sectionData,
+  sectionError,
+  type MapPayload,
+} from "./mapApi";
 
-/* ── Helpers ── */
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
-  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i] ?? "B"}`;
+/* ── Column 4's producer: /api/usage/quota ───────────────────────────────── */
+
+interface QuotaWindow {
+  utilization: number;
+  resets_at: string | null;
 }
 
-function formatUptime(ms: number): string {
-  if (!ms || ms <= 0) return "0m";
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  const d = Math.floor(h / 24);
-  if (d > 0) return `${d}d ${h % 24}h`;
-  if (h > 0) return `${h}h ${m % 60}m`;
-  return `${m}m`;
+interface GeminiUsage {
+  cli_installed: boolean;
+  probe_state: string;
+  probe_checked_at: string | null;
+  session_probed_ok: boolean;
+  five_hour: { calls: number; tokens: number | null } | null;
+  seven_day: { calls: number; tokens: number | null } | null;
+  no_limit_note: string | null;
 }
 
-/* ── Fallback / Mock Data for Robustness if Endpoint 404s ── */
-const DEFAULT_DOMAINS = [
-  { domain: "hub.schreinercontentsystems.com", port: 3000, ssl: true, upstream: "127.0.0.1:3000", service: "Content Forge Hub" },
-  { domain: "os.schreinercontentsystems.com", port: 7701, ssl: true, upstream: "127.0.0.1:7701", service: "AI OS Desktop" },
-  { domain: "reelforge.schreinercontentsystems.com", port: 4101, ssl: true, upstream: "127.0.0.1:4101", service: "ReelForge Video" },
-  { domain: "veoforge.schreinercontentsystems.com", port: 5300, ssl: true, upstream: "127.0.0.1:5300", service: "VeoForge Service" },
-  { domain: "veo.schreinercontentsystems.com", port: 8091, ssl: true, upstream: "127.0.0.1:8091", service: "Veo Studio" },
-  { domain: "friend.veo.schreinercontentsystems.com", port: 8091, ssl: true, upstream: "127.0.0.1:8091", service: "Veo Friend" },
-  { domain: "keywordtool.schreinercontentsystems.com", port: 3071, ssl: true, upstream: "127.0.0.1:3071", service: "Keyword Tool V2" },
-  { domain: "thumbnails.schreinercontentsystems.com", port: 3072, ssl: true, upstream: "127.0.0.1:3072", service: "Thumbnail Tool" },
-  { domain: "schreinercontentsystems.com", port: 4321, ssl: true, upstream: "127.0.0.1:4321", service: "Portfolio Site" },
-  { domain: "schichtkommunikationstool.schreinercontentsystems.com", port: 3069, ssl: true, upstream: "127.0.0.1:3069", service: "Shift Tool" },
-  { domain: "obsidian-sync.schreinercontentsystems.com", port: 5984, ssl: true, upstream: "127.0.0.1:5984", service: "CouchDB Vault Sync" },
-  { domain: "forge-api.schreinercontentsystems.com", port: 8099, ssl: true, upstream: "127.0.0.1:8099", service: "Forge API" },
-  { domain: "plane.schreinercontentsystems.com", port: 3010, ssl: true, upstream: "127.0.0.1:3010", service: "Plane PM" },
-  { domain: "tutorials.schreinercontentsystems.com", port: 3000, ssl: true, upstream: "127.0.0.1:3000", service: "Tutorials Hub" },
-  { domain: "crm.167-233-145-218.sslip.io", port: 3000, ssl: true, upstream: "167.233.145.218:3000", service: "Twenty CRM (VPS2)" },
-  { domain: "167-233-145-218.sslip.io", port: 80, ssl: true, upstream: "167.233.145.218:80", service: "Axtrelis Hub (VPS2)" },
-];
+interface QuotaPayload {
+  five_hour: QuotaWindow | null;
+  seven_day: QuotaWindow | null;
+  seven_day_opus: QuotaWindow | null;
+  fetched_at: string | null;
+  gemini: GeminiUsage | null;
+}
 
-const KNOWN_DATASTORES = [
-  { name: "PostgreSQL :5432", port: 5432, desc: "Primary content_forge database", listening: true, process: "postgres" },
-  { name: "PostgreSQL :5434", port: 5434, desc: "AI OS pgvector knowledge database", listening: true, process: "postgres" },
-  { name: "Redis :6379", port: 6379, desc: "Default Redis cache instance", listening: true, process: "redis-server" },
-  { name: "Redis :6382", port: 6382, desc: "BullMQ queue broker for worker jobs", listening: true, process: "redis-server" },
-  { name: "CouchDB :5984", port: 5984, desc: "Obsidian LiveSync remote database", listening: true, process: "beam.smp" },
-  { name: "Ollama :11434", port: 11434, desc: "Local LLM inference runtime", listening: true, process: "ollama" },
-];
+function formatTokens(tokens: number | null): string {
+  if (tokens === null) return "not reported";
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(2)}M`;
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
+  return String(tokens);
+}
 
-export function TopologyAtlasGrid() {
+/* ── The grid ────────────────────────────────────────────────────────────── */
+
+interface TopologyAtlasGridProps {
+  payload: MapPayload | null;
+  loading: boolean;
+  loadError: string | null;
+  onReload: () => void;
+}
+
+export function TopologyAtlasGrid({
+  payload,
+  loading,
+  loadError,
+  onReload,
+}: TopologyAtlasGridProps) {
   const [filterQuery, setFilterQuery] = useState("");
-
-  /* ── Column 1: Processes & Services ── */
-  const [pm2Data, setPm2Data] = useState<{ count: number; online: number; processes: any[] } | null>(null);
-  const [systemdData, setSystemdData] = useState<{ count: number; flapping?: number; units: any[] } | null>(null);
-  const [pm2Err, setPm2Err] = useState<string | null>(null);
   const [showSystemd, setShowSystemd] = useState(false);
 
-  const fetchProcesses = useCallback(async () => {
-    setPm2Err(null);
-    try {
-      const pRes = await fetch("/api/proxy/pm2/list");
-      if (pRes.ok) {
-        const json = await pRes.json();
-        setPm2Data(json);
-      } else {
-        throw new Error(`PM2 API returned ${pRes.status}`);
-      }
-    } catch (err: any) {
-      setPm2Err(err?.message || "Failed to load PM2 processes");
-    }
-
-    try {
-      const sRes = await fetch("/api/proxy/systemd/units");
-      if (sRes.ok) {
-        const sJson = await sRes.json();
-        setSystemdData(sJson);
-      }
-    } catch {
-      // isolated failure
-    }
-  }, []);
-
-  /* ── Column 2: Domains & Ingress ── */
-  const [domainsData, setDomainsData] = useState<any[]>(DEFAULT_DOMAINS);
-  const [domainsErr, setDomainsErr] = useState<string | null>(null);
-
-  const fetchDomains = useCallback(async () => {
-    setDomainsErr(null);
-    try {
-      const res = await fetch("/api/proxy/map?only=domains");
-      if (res.ok) {
-        const json = await res.json();
-        if (json.sections?.domains?.ok && json.sections.domains.data?.domains) {
-          setDomainsData(json.sections.domains.data.domains);
-          return;
-        }
-      }
-      // If /api/map is not ready, retain DEFAULT_DOMAINS
-      setDomainsData(DEFAULT_DOMAINS);
-    } catch (err: any) {
-      // Fallback gracefully to default domains
-      setDomainsData(DEFAULT_DOMAINS);
-    }
-  }, []);
-
-  /* ── Column 3: Storage & Databases ── */
-  const [storageData, setStorageData] = useState<any | null>(null);
-  const [storageErr, setStorageErr] = useState<string | null>(null);
-
-  const fetchStorage = useCallback(async () => {
-    setStorageErr(null);
-    try {
-      const res = await fetch("/api/proxy/system/stats");
-      if (res.ok) {
-        const json = await res.json();
-        setStorageData(json);
-      } else {
-        throw new Error(`System stats returned ${res.status}`);
-      }
-    } catch (err: any) {
-      setStorageErr(err?.message || "Failed to load storage telemetry");
-    }
-  }, []);
-
-  /* ── Column 4: Providers & Integrations ── */
-  const [quotaData, setQuotaData] = useState<any | null>(null);
+  const [quota, setQuota] = useState<QuotaPayload | null>(null);
   const [quotaErr, setQuotaErr] = useState<string | null>(null);
 
   const fetchProviders = useCallback(async () => {
     setQuotaErr(null);
     try {
       const res = await fetch("/api/proxy/usage/quota");
-      if (res.ok) {
-        const json = await res.json();
-        setQuotaData(json);
-      } else {
-        throw new Error(`Quota API returned ${res.status}`);
+      if (!res.ok) throw new Error(`/api/usage/quota → HTTP ${res.status}`);
+      const json: unknown = await res.json();
+      if (typeof json !== "object" || json === null) {
+        throw new Error("/api/usage/quota returned a non-object body");
       }
-    } catch (err: any) {
-      setQuotaErr(err?.message || "Failed to load provider quotas");
+      setQuota(json as QuotaPayload);
+    } catch (err) {
+      setQuotaErr(err instanceof Error ? err.message : String(err));
     }
   }, []);
 
-  // Initial Load
   useEffect(() => {
-    fetchProcesses();
-    fetchDomains();
-    fetchStorage();
-    fetchProviders();
-  }, [fetchProcesses, fetchDomains, fetchStorage, fetchProviders]);
+    void fetchProviders();
+  }, [fetchProviders]);
 
   const q = filterQuery.toLowerCase().trim();
 
-  const filteredProcesses = (pm2Data?.processes ?? []).filter((p: any) =>
-    !q || p.name.toLowerCase().includes(q) || (p.cwd && p.cwd.toLowerCase().includes(q)),
+  const processes = sectionData(payload?.sections.processes);
+  const units = sectionData(payload?.sections.units);
+  const domains = sectionData(payload?.sections.domains);
+  const storage = sectionData(payload?.sections.storage);
+
+  const processesErr = payload ? sectionError(payload.sections.processes, "processes") : null;
+  const unitsErr = payload ? sectionError(payload.sections.units, "units") : null;
+  const domainsErr = payload ? sectionError(payload.sections.domains, "domains") : null;
+  const storageErr = payload ? sectionError(payload.sections.storage, "storage") : null;
+
+  const filteredProcesses = (processes?.processes ?? []).filter(
+    (p) =>
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      (p.cwd !== null && p.cwd.toLowerCase().includes(q)),
   );
 
-  const filteredDomains = (domainsData ?? []).filter((d: any) =>
-    !q || d.domain.toLowerCase().includes(q) || (d.service && d.service.toLowerCase().includes(q)),
+  const filteredUnits = (units?.units ?? []).filter(
+    (u) => !q || u.name.toLowerCase().includes(q) || u.description.toLowerCase().includes(q),
   );
+
+  const filteredDomains = (domains?.domains ?? []).filter(
+    (d) =>
+      !q ||
+      d.domain.toLowerCase().includes(q) ||
+      d.upstreams.some((u) => u.toLowerCase().includes(q)) ||
+      d.ports.some((p) => String(p).includes(q)),
+  );
+
+  /** One place decides what a column shows when it has nothing to show. */
+  const columnBody = (
+    error: string | null,
+    empty: string,
+    rows: React.ReactNode[],
+  ): React.ReactNode => {
+    if (error) {
+      return (
+        <div className="atlas-column-error">
+          <span>⚠️ {error}</span>
+          <button type="button" onClick={onReload}>
+            Retry
+          </button>
+        </div>
+      );
+    }
+    if (payload === null) {
+      return (
+        <div className="atlas-column-empty">
+          {loading ? "Reading /api/map…" : "No reading yet."}
+        </div>
+      );
+    }
+    if (rows.length === 0) return <div className="atlas-column-empty">{empty}</div>;
+    return rows;
+  };
 
   return (
     <div className="atlas-container">
@@ -180,7 +163,7 @@ export function TopologyAtlasGrid() {
       <div className="atlas-toolbar">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div className="mindmap-search">
-            <span style={{ color: tokens.textMuted }}>🔍</span>
+            <span className="mindmap-search-icon">🔍</span>
             <input
               type="text"
               placeholder="Filter processes, domains, ports..."
@@ -190,30 +173,33 @@ export function TopologyAtlasGrid() {
             {filterQuery && (
               <button
                 type="button"
+                className="mindmap-search-clear"
                 onClick={() => setFilterQuery("")}
-                style={{ background: "none", border: "none", color: tokens.textMuted, cursor: "pointer" }}
               >
                 ✕
               </button>
             )}
           </div>
-          <span style={{ fontSize: 11, color: tokens.textMuted }}>
-            4 Isolated Telemetry Columns (Rule N1)
+          <span className="mindmap-hint">
+            {loadError
+              ? `⚠️ ${loadError}`
+              : payload
+                ? `Four isolated columns · /api/map read ${formatCheckedAt(payload.generated_at)}`
+                : "Four isolated columns"}
           </span>
         </div>
 
         <button
           type="button"
           className="mindmap-btn"
+          disabled={loading}
           onClick={() => {
-            fetchProcesses();
-            fetchDomains();
-            fetchStorage();
-            fetchProviders();
+            onReload();
+            void fetchProviders();
           }}
-          title="Refresh All Columns"
+          title="Re-read every producer"
         >
-          <span>↻</span> Refresh Telemetry
+          <span>↻</span> {loading ? "Refreshing…" : "Refresh telemetry"}
         </button>
       </div>
 
@@ -223,100 +209,82 @@ export function TopologyAtlasGrid() {
         <div className="atlas-column">
           <div className="atlas-column-header">
             <div className="atlas-column-title">
-              <span>⚡</span> Processes & Services
+              <span>⚡</span> Processes &amp; Services
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <button
                 type="button"
-                className="mindmap-btn"
-                style={{ fontSize: 10, padding: "2px 6px" }}
+                className="mindmap-btn mindmap-btn-tiny"
                 onClick={() => setShowSystemd(!showSystemd)}
               >
-                {showSystemd ? "Show PM2" : "Show Systemd"}
+                {showSystemd ? "Show PM2" : "Show systemd"}
               </button>
               <span className="atlas-column-badge">
                 {showSystemd
-                  ? `${systemdData?.count ?? 0} units`
-                  : `${pm2Data?.online ?? 0}/${pm2Data?.count ?? 0} online`}
+                  ? units
+                    ? `${units.count} units`
+                    : "—"
+                  : processes
+                    ? `${processes.online}/${processes.count} online`
+                    : "—"}
               </span>
             </div>
           </div>
 
           <div className="atlas-column-content">
-            {pm2Err ? (
-              <div className="atlas-column-error">
-                <span>⚠️ {pm2Err}</span>
-                <button type="button" onClick={fetchProcesses}>Retry</button>
-              </div>
-            ) : !showSystemd ? (
-              filteredProcesses.length > 0 ? (
-                filteredProcesses.map((p: any) => {
-                  const isOnline = p.status === "online";
-                  return (
-                    <div key={p.name} className="atlas-card">
+            {showSystemd
+              ? columnBody(
+                  unitsErr,
+                  q ? "No matching systemd unit." : "No running units reported.",
+                  filteredUnits.map((u) => (
+                    <div key={u.name} className="atlas-card">
                       <div className="atlas-card-header">
                         <div className="atlas-card-title">
                           <span
-                            className={`map-dot ${isOnline ? "green" : "red"}`}
+                            className={`map-dot ${u.active === "active" ? "green" : "gray"}`}
                           />
-                          {p.name}
+                          {u.name}
                         </div>
-                        <span
-                          style={{
-                            fontSize: 10,
-                            color: isOnline ? tokens.ok : tokens.bleed,
-                            fontWeight: 600,
-                          }}
-                        >
-                          {p.status}
-                        </span>
+                        <span className="atlas-card-state">{u.active}</span>
                       </div>
-                      <div className="atlas-card-meta">
-                        {p.pid && <span>PID: {p.pid}</span>}
-                        <span>CPU: {p.cpu_pct ?? p.monit?.cpu ?? 0}%</span>
-                        <span>
-                          RAM: {formatBytes(p.memory_bytes ?? p.monit?.memory ?? 0)}
-                        </span>
-                        <span>Restarts: {p.restarts ?? 0}</span>
-                      </div>
-                      {p.uptime_ms && (
-                        <div style={{ fontSize: 10, color: tokens.textMuted2 }}>
-                          Uptime: {formatUptime(p.uptime_ms)}
-                        </div>
+                      {u.description && (
+                        <div className="atlas-card-note">{u.description}</div>
                       )}
                     </div>
-                  );
-                })
-              ) : (
-                <div style={{ padding: 16, textAlign: "center", color: tokens.textMuted, fontSize: 11 }}>
-                  {filterQuery ? "No matching PM2 processes" : "Loading PM2 processes..."}
-                </div>
-              )
-            ) : (
-              (systemdData?.units ?? [])
-                .filter((u: any) => !q || u.name.toLowerCase().includes(q))
-                .slice(0, 40)
-                .map((u: any) => (
-                  <div key={u.name} className="atlas-card">
-                    <div className="atlas-card-header">
-                      <div className="atlas-card-title">
-                        <span
-                          className={`map-dot ${u.active === "active" ? "green" : "gray"}`}
-                        />
-                        {u.name}
+                  )),
+                )
+              : columnBody(
+                  processesErr,
+                  q ? "No matching pm2 process." : "pm2 reported no processes.",
+                  filteredProcesses.map((p) => {
+                    const isOnline = p.status === "online";
+                    return (
+                      <div key={p.name} className="atlas-card">
+                        <div className="atlas-card-header">
+                          <div className="atlas-card-title">
+                            <span className={`map-dot ${isOnline ? "green" : "red"}`} />
+                            {p.name}
+                          </div>
+                          <span
+                            className={`atlas-card-state ${isOnline ? "ok" : "bad"}`}
+                          >
+                            {p.status}
+                          </span>
+                        </div>
+                        <div className="atlas-card-meta">
+                          {p.pid !== null && <span>PID: {p.pid}</span>}
+                          <span>CPU: {p.cpu_pct}%</span>
+                          <span>RAM: {formatBytes(p.memory_bytes)}</span>
+                          <span>Restarts: {p.restarts}</span>
+                        </div>
+                        <div className="atlas-card-note">
+                          {isOnline ? `Uptime: ${formatUptime(p.uptime_ms)}` : "Not running"}
+                          {p.cwd !== null && ` · ${p.cwd}`}
+                        </div>
                       </div>
-                      <span style={{ fontSize: 10, color: tokens.textMuted }}>
-                        {u.active}
-                      </span>
-                    </div>
-                    {u.description && (
-                      <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                        {u.description}
-                      </div>
-                    )}
-                  </div>
-                ))
-            )}
+                    );
+                  }),
+                )}
           </div>
         </div>
 
@@ -324,58 +292,59 @@ export function TopologyAtlasGrid() {
         <div className="atlas-column">
           <div className="atlas-column-header">
             <div className="atlas-column-title">
-              <span>🌐</span> Ingress & Domains
+              <span>🌐</span> Ingress &amp; Domains
             </div>
             <span className="atlas-column-badge">
-              {filteredDomains.length} vhosts
+              {domains ? `${filteredDomains.length}/${domains.count} names` : "—"}
             </span>
           </div>
 
           <div className="atlas-column-content">
-            {domainsErr ? (
-              <div className="atlas-column-error">
-                <span>⚠️ {domainsErr}</span>
-                <button type="button" onClick={fetchDomains}>Retry</button>
-              </div>
-            ) : filteredDomains.length > 0 ? (
-              filteredDomains.map((d: any, idx: number) => (
-                <div key={d.domain + idx} className="atlas-card">
+            {columnBody(
+              domainsErr,
+              q ? "No matching vhost." : "nginx declared no server names.",
+              filteredDomains.map((d, idx) => (
+                <div key={`${d.domain}-${d.file}-${idx}`} className="atlas-card">
                   <div className="atlas-card-header">
-                    <a
-                      href={`https://${d.domain}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="atlas-card-title"
-                      style={{ color: tokens.accent, textDecoration: "none" }}
-                    >
-                      <span>↗</span> {d.domain}
-                    </a>
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        padding: "1px 5px",
-                        borderRadius: 3,
-                        background: d.ssl ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)",
-                        color: d.ssl ? tokens.ok : tokens.warn,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {d.ssl ? "SSL active" : "HTTP"}
+                    {d.ssl ? (
+                      <a
+                        href={`https://${d.domain}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="atlas-card-title atlas-card-link"
+                      >
+                        <span>↗</span> {d.domain}
+                      </a>
+                    ) : (
+                      <span className="atlas-card-title">{d.domain}</span>
+                    )}
+                    <span className={`atlas-badge ${d.ssl ? "ok" : "warn"}`}>
+                      {d.ssl
+                        ? d.ssl_days_left === null
+                          ? "TLS"
+                          : `TLS ${d.ssl_days_left}d`
+                        : "HTTP"}
                     </span>
                   </div>
-                  {d.service && (
-                    <div style={{ fontSize: 11, color: tokens.textHi, fontWeight: 500 }}>
-                      {d.service}
-                    </div>
-                  )}
                   <div className="atlas-card-meta">
-                    <span>Target: {d.upstream ?? (d.upstreams ? d.upstreams.join(", ") : `:${d.port}`)}</span>
+                    <span>Ports: {d.ports.length > 0 ? d.ports.join(", ") : "—"}</span>
+                    <span>
+                      Upstream: {d.upstreams.length > 0 ? d.upstreams.join(", ") : "static"}
+                    </span>
+                  </div>
+                  <div className="atlas-card-note">
+                    {d.file}
+                    {d.ssl_error !== null && ` · certificate: ${d.ssl_error}`}
                   </div>
                 </div>
-              ))
-            ) : (
-              <div style={{ padding: 16, textAlign: "center", color: tokens.textMuted, fontSize: 11 }}>
-                No matching domain vhosts
+              )),
+            )}
+            {domains && domains.errors.length > 0 && (
+              <div className="atlas-column-error">
+                <span>
+                  ⚠️ {domains.errors.length} vhost file(s) failed to parse:{" "}
+                  {domains.errors.map((e) => `${e.file} (${e.error})`).join("; ")}
+                </span>
               </div>
             )}
           </div>
@@ -385,120 +354,95 @@ export function TopologyAtlasGrid() {
         <div className="atlas-column">
           <div className="atlas-column-header">
             <div className="atlas-column-title">
-              <span>💾</span> Storage & Databases
+              <span>💾</span> Storage &amp; Databases
             </div>
             <span className="atlas-column-badge">
-              6 Datastores
+              {storage
+                ? `${storage.datastores.filter((d) => d.listening).length}/${storage.datastores.length} listening`
+                : "—"}
             </span>
           </div>
 
           <div className="atlas-column-content">
-            {storageErr ? (
-              <div className="atlas-column-error">
-                <span>⚠️ {storageErr}</span>
-                <button type="button" onClick={fetchStorage}>Retry</button>
-              </div>
-            ) : (
-              <>
-                {/* Disk Usage */}
-                {storageData?.disks && (
-                  <div className="atlas-card">
-                    <div className="atlas-card-header">
-                      <span className="atlas-card-title">Disk Storage (/)</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: tokens.textHi }}>
-                        {storageData.disks["/"]?.used_pct ?? 73.5}%
-                      </span>
-                    </div>
-                    <div className="atlas-progress-bar">
-                      <div
-                        className="atlas-progress-fill yellow"
-                        style={{ width: `${storageData.disks["/"]?.used_pct ?? 73.5}%` }}
-                      />
-                    </div>
-                    <div className="atlas-card-meta" style={{ marginTop: 4 }}>
-                      <span>
-                        {formatBytes(storageData.disks["/"]?.used_bytes ?? 714069307392)} /{" "}
-                        {formatBytes(storageData.disks["/"]?.total_bytes ?? 971968172032)}
-                      </span>
-                      <span>
-                        {formatBytes(storageData.disks["/"]?.available_bytes ?? 208450154496)} free
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {/* RAM Usage */}
-                {storageData?.memory && (
-                  <div className="atlas-card">
-                    <div className="atlas-card-header">
-                      <span className="atlas-card-title">Physical RAM (64 GB)</span>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: tokens.textHi }}>
-                        {storageData.memory.used_pct ?? 62.5}%
-                      </span>
-                    </div>
-                    <div className="atlas-progress-bar">
-                      <div
-                        className="atlas-progress-fill green"
-                        style={{ width: `${storageData.memory.used_pct ?? 62.5}%` }}
-                      />
-                    </div>
-                    <div className="atlas-card-meta" style={{ marginTop: 4 }}>
-                      <span>
-                        {formatBytes(storageData.memory.used_bytes ?? 42120646656)} used
-                      </span>
-                      <span>
-                        {formatBytes(storageData.memory.available_bytes ?? 25225965568)} avail
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Databases & Vault List */}
-                <div style={{ fontSize: 11, fontWeight: 700, color: tokens.textMuted, marginTop: 6 }}>
-                  ACTIVE DATASTORES & STORAGE
-                </div>
-                {/* Obsidian Vault Storage Card */}
-                <div className="atlas-card">
+            {columnBody(storageErr, "No storage telemetry returned.", [
+              ...(storage?.disks ?? []).map((disk) => (
+                <div key={`disk-${disk.mount}`} className="atlas-card">
                   <div className="atlas-card-header">
-                    <div className="atlas-card-title">
-                      <span className="map-dot green" />
-                      Obsidian Vault (/opt/obsidian-vault)
-                    </div>
-                    <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                      284+ Notes
-                    </span>
+                    <span className="atlas-card-title">Disk {disk.mount}</span>
+                    <span className="atlas-card-state">{disk.used_pct}%</span>
                   </div>
-                  <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                    Living knowledge repository & CouchDB LiveSync store
+                  <div className="atlas-progress-bar">
+                    <div
+                      className={`atlas-progress-fill ${disk.used_pct > 90 ? "red" : disk.used_pct > 80 ? "yellow" : "green"}`}
+                      style={{ width: `${Math.min(100, disk.used_pct)}%` }}
+                    />
                   </div>
                   <div className="atlas-card-meta">
-                    <span>Path: /opt/obsidian-vault</span>
-                    <span>Sync: :5984</span>
+                    <span>
+                      {formatBytes(disk.used_bytes)} / {formatBytes(disk.total_bytes)}
+                    </span>
+                    <span>{formatBytes(disk.available_bytes)} free</span>
                   </div>
                 </div>
-
-                {KNOWN_DATASTORES.map((ds) => (
-                  <div key={ds.port} className="atlas-card">
-                    <div className="atlas-card-header">
-                      <div className="atlas-card-title">
-                        <span className="map-dot green" />
-                        {ds.name}
+              )),
+              ...(storage
+                ? [
+                    <div key="ram" className="atlas-card">
+                      <div className="atlas-card-header">
+                        <span className="atlas-card-title">
+                          Physical RAM ({formatBytes(storage.memory.total_bytes)})
+                        </span>
+                        <span className="atlas-card-state">
+                          {storage.memory.used_pct}%
+                        </span>
                       </div>
-                      <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                        Listening
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                      {ds.desc}
-                    </div>
-                    <div className="atlas-card-meta">
-                      <span>Process: {ds.process}</span>
-                      <span>Port: :{ds.port}</span>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
+                      <div className="atlas-progress-bar">
+                        <div
+                          className={`atlas-progress-fill ${storage.memory.used_pct > 90 ? "red" : "green"}`}
+                          style={{ width: `${Math.min(100, storage.memory.used_pct)}%` }}
+                        />
+                      </div>
+                      <div className="atlas-card-meta">
+                        <span>{formatBytes(storage.memory.used_bytes)} used</span>
+                        <span>{formatBytes(storage.memory.available_bytes)} available</span>
+                      </div>
+                    </div>,
+                    <div key="ds-heading" className="atlas-subheading">
+                      DOCUMENTED DATA PORTS — listening state measured with ss -ltnpH
+                    </div>,
+                    ...storage.datastores.map((ds) => (
+                      <div key={`ds-${ds.port}`} className="atlas-card">
+                        <div className="atlas-card-header">
+                          <div className="atlas-card-title">
+                            <span className={`map-dot ${ds.listening ? "green" : "red"}`} />
+                            {ds.name}
+                          </div>
+                          <span
+                            className={`atlas-card-state ${ds.listening ? "ok" : "bad"}`}
+                          >
+                            {ds.listening ? "listening" : "not listening"}
+                          </span>
+                        </div>
+                        <div className="atlas-card-meta">
+                          <span>Port: :{ds.port}</span>
+                          <span>Process: {ds.process ?? "unknown"}</span>
+                        </div>
+                      </div>
+                    )),
+                    <div key="listeners" className="atlas-card">
+                      <div className="atlas-card-header">
+                        <span className="atlas-card-title">All TCP listeners</span>
+                        <span className="atlas-card-state">
+                          {storage.listeners.length}
+                        </span>
+                      </div>
+                      <div className="atlas-card-note">
+                        Every port answering on this host, as reported by ss -ltnpH.
+                      </div>
+                    </div>,
+                  ]
+                : []),
+            ])}
           </div>
         </div>
 
@@ -506,10 +450,10 @@ export function TopologyAtlasGrid() {
         <div className="atlas-column">
           <div className="atlas-column-header">
             <div className="atlas-column-title">
-              <span>🔌</span> Providers & API Gateways
+              <span>🔌</span> Model Providers
             </div>
             <span className="atlas-column-badge">
-              Connected
+              {quotaErr ? "—" : quota ? "measured" : "…"}
             </span>
           </div>
 
@@ -517,112 +461,94 @@ export function TopologyAtlasGrid() {
             {quotaErr ? (
               <div className="atlas-column-error">
                 <span>⚠️ {quotaErr}</span>
-                <button type="button" onClick={fetchProviders}>Retry</button>
+                <button type="button" onClick={() => void fetchProviders()}>
+                  Retry
+                </button>
               </div>
+            ) : quota === null ? (
+              <div className="atlas-column-empty">Reading /api/usage/quota…</div>
             ) : (
               <>
-                {/* Claude OAuth */}
                 <div className="atlas-card">
                   <div className="atlas-card-header">
                     <div className="atlas-card-title">
                       <span className="map-dot green" />
-                      Anthropic Claude (OAuth)
+                      Anthropic Claude
                     </div>
-                    <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                      Connected
-                    </span>
+                    <span className="atlas-card-state ok">OAuth</span>
                   </div>
-                  {quotaData?.five_hour && (
+                  {quota.five_hour ? (
                     <>
-                      <div style={{ fontSize: 10.5, color: tokens.textMuted, marginTop: 2 }}>
-                        5-Hour Rate Limit: {quotaData.five_hour.utilization}% used
+                      <div className="atlas-card-note">
+                        5-hour window: {quota.five_hour.utilization}% used
                       </div>
                       <div className="atlas-progress-bar">
                         <div
-                          className={`atlas-progress-fill ${
-                            quotaData.five_hour.utilization > 80 ? "red" : "green"
-                          }`}
-                          style={{ width: `${Math.min(100, quotaData.five_hour.utilization)}%` }}
+                          className={`atlas-progress-fill ${quota.five_hour.utilization > 80 ? "red" : "green"}`}
+                          style={{ width: `${Math.min(100, quota.five_hour.utilization)}%` }}
                         />
                       </div>
                     </>
+                  ) : (
+                    <div className="atlas-card-note">
+                      No 5-hour window reported by /api/usage/quota.
+                    </div>
                   )}
-                  {quotaData?.seven_day && (
-                    <div style={{ fontSize: 10, color: tokens.textMuted2, marginTop: 4 }}>
-                      7-Day Cap: {quotaData.seven_day.utilization}% used
+                  {quota.seven_day && (
+                    <div className="atlas-card-meta">
+                      <span>7-day cap: {quota.seven_day.utilization}%</span>
+                      {quota.seven_day_opus && (
+                        <span>7-day Opus: {quota.seven_day_opus.utilization}%</span>
+                      )}
                     </div>
                   )}
                 </div>
 
-                {/* Gemini Pool */}
-                <div className="atlas-card">
-                  <div className="atlas-card-header">
-                    <div className="atlas-card-title">
-                      <span className="map-dot green" />
-                      Google Gemini Pool (5/5)
-                    </div>
-                    <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                      5 Slots Ready
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                    CLI probe: /root/.local/bin/agy active
-                  </div>
-                  {quotaData?.gemini?.five_hour && (
-                    <div className="atlas-card-meta" style={{ marginTop: 4 }}>
-                      <span>5h Calls: {quotaData.gemini.five_hour.calls}</span>
-                      <span>
-                        Tokens: {(quotaData.gemini.five_hour.tokens / 1_000_000).toFixed(2)}M
+                {quota.gemini && (
+                  <div className="atlas-card">
+                    <div className="atlas-card-header">
+                      <div className="atlas-card-title">
+                        <span
+                          className={`map-dot ${quota.gemini.probe_state === "connected" ? "green" : "red"}`}
+                        />
+                        Google Gemini (agy CLI)
+                      </div>
+                      <span
+                        className={`atlas-card-state ${quota.gemini.probe_state === "connected" ? "ok" : "bad"}`}
+                      >
+                        {quota.gemini.probe_state}
                       </span>
                     </div>
-                  )}
-                </div>
+                    <div className="atlas-card-note">
+                      CLI installed: {quota.gemini.cli_installed ? "yes" : "no"} · last
+                      probe{" "}
+                      {quota.gemini.probe_checked_at
+                        ? formatCheckedAt(quota.gemini.probe_checked_at)
+                        : "never"}
+                    </div>
+                    {quota.gemini.seven_day && (
+                      <div className="atlas-card-meta">
+                        <span>7d calls: {quota.gemini.seven_day.calls}</span>
+                        <span>
+                          7d tokens: {formatTokens(quota.gemini.seven_day.tokens)}
+                        </span>
+                      </div>
+                    )}
+                    {quota.gemini.no_limit_note && (
+                      <div className="atlas-card-note">{quota.gemini.no_limit_note}</div>
+                    )}
+                  </div>
+                )}
 
-                {/* ElevenLabs */}
                 <div className="atlas-card">
                   <div className="atlas-card-header">
-                    <div className="atlas-card-title">
-                      <span className="map-dot green" />
-                      ElevenLabs Voice Engine
-                    </div>
-                    <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                      Live
-                    </span>
+                    <span className="atlas-card-title">Scope of this column</span>
                   </div>
-                  <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                    High-tier TTS generation for Content Forge video pipelines
-                  </div>
-                </div>
-
-                {/* GitHub Integration */}
-                <div className="atlas-card">
-                  <div className="atlas-card-header">
-                    <div className="atlas-card-title">
-                      <span className="map-dot green" />
-                      GitHub Workspace Sync
-                    </div>
-                    <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                      Active
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                    konradschrein-star repositories & worktrees connected
-                  </div>
-                </div>
-
-                {/* Syncthing / CouchDB */}
-                <div className="atlas-card">
-                  <div className="atlas-card-header">
-                    <div className="atlas-card-title">
-                      <span className="map-dot green" />
-                      Obsidian Vault LiveSync
-                    </div>
-                    <span style={{ fontSize: 10, color: tokens.ok, fontWeight: 600 }}>
-                      Active
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 10.5, color: tokens.textMuted }}>
-                    Bi-directional sync with mobile and desktop devices
+                  <div className="atlas-card-note">
+                    Only providers /api/usage/quota actually measures appear here. Other
+                    integrations (ElevenLabs, GitHub, Obsidian LiveSync) have no usage
+                    endpoint wired into forge-control yet, so they are absent rather than
+                    shown with an assumed green light.
                   </div>
                 </div>
               </>

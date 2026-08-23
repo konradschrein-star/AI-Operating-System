@@ -1,41 +1,45 @@
 "use client";
 
 /**
- * MapSurface.tsx — The unified Map, Architecture & Topology Cockpit of Konrad's AI OS.
+ * MapSurface.tsx — the Map, Architecture & Topology cockpit of Konrad's AI OS.
  *
- * Provides 3 distinct interactive modes:
- * 1. 🗺️ Mind Map — Hierarchical visual mind map of Commercial Ventures, AI OS Fleet, and Infrastructure.
- * 2. ✏️ Planning Canvas — Embedded Excalidraw planning canvas (AI OS - Life & Company OS - Planning Canvas.excalidraw.md).
- * 3. 📊 System Atlas — 4-Column live topology grid with sectional error isolation (Processes, Domains, Storage, Providers).
+ * Three modes over ONE live read:
+ * 1. 🗺️ Mind Map      — the vault's project table, pm2, nginx, systemd and the
+ *                       metal, as a navigable tree (see map/mapTree.ts).
+ * 2. ✏️ Planning Canvas — the Excalidraw canvas from the vault.
+ * 3. 📊 System Atlas   — the same measurements as four dense telemetry columns.
  *
- * Live Telemetry Status Strip displays macro totals:
- * - 5 Businesses
- * - 5 Active Agents
- * - 22/28 PM2 Online
- * - 19 Domains
- * - 64 GB RAM (62.5% used)
+ * THIS FILE OWNS THE FETCH. `/api/map` spawns `pm2 jlist`, `ss`, `df` and a
+ * vault walk per request, so the surface reads it once and hands the payload to
+ * whichever mode is mounted. It also means the header strip and the body can
+ * never disagree about what is running.
+ *
+ * The telemetry strip carries no constants. Round 3 shipped `5 Businesses` and
+ * `19 Domains` as hardcoded numbers under a green dot; every chip below is now
+ * either a measured figure or a visibly amber "unavailable" — there is no third
+ * state in which a plausible number appears.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import "./MapSurface.css";
-import { tokens } from "../tokens";
 import { CanvasPane } from "./CanvasPane";
 import { VisualMindMap } from "./map/VisualMindMap";
 import { TopologyAtlasGrid } from "./map/TopologyAtlasGrid";
+import { fetchMap, sectionData, type MapPayload } from "./map/mapApi";
 
 export type MapMode = "mindmap" | "canvas" | "atlas";
 
 const STORAGE_KEY_MODE = "forge.map.mode";
 const DEFAULT_CANVAS_PATH = "Excalidraw/AI OS - Life & Company OS - Planning Canvas.excalidraw.md";
+const REFRESH_MS = 30_000;
 
-interface TelemetrySummary {
-  businessesCount: number;
-  activeAgents: number;
-  pm2Online: number;
-  pm2Total: number;
-  domainsCount: number;
-  ramUsagePct: number;
-  ramTotalGb: number;
+/** A header chip. `value === null` means "not measured" and renders amber. */
+interface TelemetryChip {
+  key: string;
+  value: string | null;
+  label: string;
+  /** Shown as the chip's title when the figure is missing. */
+  unavailable?: string;
 }
 
 export function MapSurface({
@@ -43,7 +47,6 @@ export function MapSurface({
 }: {
   onNavigateSurface?: (surface: string) => void;
 }) {
-  // Restore mode from localStorage if available
   const [mode, setMode] = useState<MapMode>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem(STORAGE_KEY_MODE);
@@ -56,18 +59,13 @@ export function MapSurface({
 
   const [canvasPath, setCanvasPath] = useState<string>(DEFAULT_CANVAS_PATH);
 
-  // Telemetry status strip data
-  const [telemetry, setTelemetry] = useState<TelemetrySummary>({
-    businessesCount: 5,
-    activeAgents: 5,
-    pm2Online: 22,
-    pm2Total: 28,
-    domainsCount: 19,
-    ramUsagePct: 62.5,
-    ramTotalGb: 64,
-  });
+  const [payload, setPayload] = useState<MapPayload | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Sync mode changes to localStorage
+  /** Agents at work today — a different producer, so a different fetch. */
+  const [activeAgents, setActiveAgents] = useState<number | null>(null);
+
   const handleModeChange = (newMode: MapMode) => {
     setMode(newMode);
     if (typeof window !== "undefined") {
@@ -75,54 +73,96 @@ export function MapSurface({
     }
   };
 
-  // Poll live telemetry
-  const fetchLiveTelemetry = useCallback(async () => {
+  const reload = useCallback(async () => {
+    setLoading(true);
     try {
-      const [pm2Res, statsRes, todayRes] = await Promise.allSettled([
-        fetch("/api/proxy/pm2/list"),
-        fetch("/api/proxy/system/stats"),
-        fetch("/api/proxy/today"),
-      ]);
+      const next = await fetchMap();
+      setPayload(next);
+      setLoadError(null);
+    } catch (err) {
+      // Keep whatever we last read on screen and say the refresh failed. The
+      // one thing not allowed is replacing a real figure with an invented one.
+      setLoadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-      let online = 22;
-      let total = 28;
-      if (pm2Res.status === "fulfilled" && pm2Res.value.ok) {
-        const pm2Json = await pm2Res.value.json();
-        if (typeof pm2Json.online === "number") online = pm2Json.online;
-        if (typeof pm2Json.count === "number") total = pm2Json.count;
-      }
-
-      let ramPct = 62.5;
-      if (statsRes.status === "fulfilled" && statsRes.value.ok) {
-        const statsJson = await statsRes.value.json();
-        if (statsJson.memory?.used_pct) ramPct = statsJson.memory.used_pct;
-      }
-
-      let agents = 5;
-      if (todayRes.status === "fulfilled" && todayRes.value.ok) {
-        const todayJson = await todayRes.value.json();
-        if (Array.isArray(todayJson.fleet)) agents = todayJson.fleet.length;
-      }
-
-      setTelemetry({
-        businessesCount: 5,
-        activeAgents: agents,
-        pm2Online: online,
-        pm2Total: total,
-        domainsCount: 19,
-        ramUsagePct: ramPct,
-        ramTotalGb: 64,
-      });
+  const reloadAgents = useCallback(async () => {
+    try {
+      const res = await fetch("/api/proxy/today");
+      if (!res.ok) throw new Error(`/api/today → HTTP ${res.status}`);
+      const json: unknown = await res.json();
+      const fleet =
+        typeof json === "object" && json !== null
+          ? (json as { fleet?: unknown }).fleet
+          : undefined;
+      setActiveAgents(Array.isArray(fleet) ? fleet.length : null);
     } catch {
-      // Retain existing telemetry state on network error
+      // One chip goes amber; the map itself is unaffected.
+      setActiveAgents(null);
     }
   }, []);
 
   useEffect(() => {
-    fetchLiveTelemetry();
-    const timer = setInterval(fetchLiveTelemetry, 30_000);
+    void reload();
+    void reloadAgents();
+    const timer = setInterval(() => {
+      void reload();
+      void reloadAgents();
+    }, REFRESH_MS);
     return () => clearInterval(timer);
-  }, [fetchLiveTelemetry]);
+  }, [reload, reloadAgents]);
+
+  const businesses = sectionData(payload?.sections.businesses);
+  const processes = sectionData(payload?.sections.processes);
+  const domains = sectionData(payload?.sections.domains);
+  const storage = sectionData(payload?.sections.storage);
+
+  const chips: TelemetryChip[] = [
+    {
+      key: "businesses",
+      value: businesses ? String(businesses.active) : null,
+      label: "active projects",
+      unavailable: "the vault project table could not be read",
+    },
+    {
+      key: "agents",
+      value: activeAgents === null ? null : String(activeAgents),
+      label: "agents today",
+      unavailable: "/api/today did not answer",
+    },
+    {
+      key: "pm2",
+      value: processes ? `${processes.online}/${processes.count}` : null,
+      label: "pm2 online",
+      unavailable: "pm2 jlist failed",
+    },
+    {
+      key: "domains",
+      value: domains ? String(domains.count) : null,
+      label: `server names${domains ? ` · ${domains.files} vhosts` : ""}`,
+      unavailable: "/etc/nginx could not be parsed",
+    },
+    {
+      key: "ram",
+      value: storage
+        ? `${Math.round(storage.memory.total_bytes / 1024 ** 3)} GB`
+        : null,
+      label: storage ? `RAM · ${storage.memory.used_pct}% used` : "RAM",
+      unavailable: "/proc/meminfo could not be read",
+    },
+    {
+      key: "disk",
+      value: storage && storage.disks.length > 0
+        ? `${storage.disks[0].used_pct}%`
+        : null,
+      label: storage && storage.disks.length > 0
+        ? `disk ${storage.disks[0].mount}`
+        : "disk",
+      unavailable: "df returned no parseable rows",
+    },
+  ];
 
   return (
     <div className="map-surface">
@@ -130,18 +170,15 @@ export function MapSurface({
       <div className="map-header">
         <div className="map-header-top">
           <div className="map-title-group">
-            <span style={{ fontSize: 18 }}>🗺️</span>
+            <span className="map-title-icon">🗺️</span>
             <div>
-              <div className="map-title">
-                MAP · AI OS & Business Universe
-              </div>
+              <div className="map-title">MAP · AI OS &amp; Business Universe</div>
               <div className="map-subtitle">
-                System topology, physical infrastructure & enterprise mind map
+                System topology, physical infrastructure &amp; project map — measured live
               </div>
             </div>
           </div>
 
-          {/* Mode Selector Tabs */}
           <div className="map-mode-tabs">
             <button
               type="button"
@@ -167,35 +204,28 @@ export function MapSurface({
           </div>
         </div>
 
-        {/* Live Telemetry Status Strip */}
         <div className="map-telemetry-strip">
-          <div className="map-telemetry-chip">
-            <span className="map-dot green" />
-            <span>● <strong>{telemetry.businessesCount}</strong> Businesses</span>
-          </div>
+          {chips.map((chip) => (
+            <div
+              key={chip.key}
+              className="map-telemetry-chip"
+              title={chip.value === null ? chip.unavailable : undefined}
+            >
+              <span className={`map-dot ${chip.value === null ? "yellow" : "green"}`} />
+              <span>
+                <strong>{chip.value ?? "—"}</strong> {chip.label}
+              </span>
+            </div>
+          ))}
 
-          <div className="map-telemetry-chip">
-            <span className="map-dot green" />
-            <span>● <strong>{telemetry.activeAgents}</strong> Active Agents</span>
-          </div>
-
-          <div className="map-telemetry-chip">
-            <span className={`map-dot ${telemetry.pm2Online > 0 ? "green" : "yellow"}`} />
-            <span>
-              ● <strong>{telemetry.pm2Online}/{telemetry.pm2Total}</strong> PM2 online
-            </span>
-          </div>
-
-          <div className="map-telemetry-chip">
-            <span className="map-dot green" />
-            <span>● <strong>{telemetry.domainsCount}</strong> Domains Ingress</span>
-          </div>
-
-          <div className="map-telemetry-chip">
-            <span className="map-dot blue" />
-            <span>
-              ● <strong>{telemetry.ramTotalGb} GB RAM</strong> ({telemetry.ramUsagePct.toFixed(1)}% used)
-            </span>
+          <div className="map-telemetry-source">
+            {loadError
+              ? `⚠️ ${loadError}`
+              : payload
+                ? `/api/map · ${new Date(payload.generated_at).toLocaleTimeString(undefined, { hour12: false })}`
+                : loading
+                  ? "reading /api/map…"
+                  : "no reading yet"}
           </div>
         </div>
       </div>
@@ -204,13 +234,17 @@ export function MapSurface({
       <div className="map-content">
         {mode === "mindmap" && (
           <VisualMindMap
+            payload={payload}
+            loading={loading}
+            loadError={loadError}
+            onReload={() => void reload()}
             onNavigateSurface={onNavigateSurface}
             onOpenCanvas={() => handleModeChange("canvas")}
           />
         )}
 
         {mode === "canvas" && (
-          <div style={{ width: "100%", height: "100%", position: "relative" }}>
+          <div className="map-canvas-host">
             <CanvasPane
               path={canvasPath}
               onPathChange={setCanvasPath}
@@ -220,7 +254,12 @@ export function MapSurface({
         )}
 
         {mode === "atlas" && (
-          <TopologyAtlasGrid />
+          <TopologyAtlasGrid
+            payload={payload}
+            loading={loading}
+            loadError={loadError}
+            onReload={() => void reload()}
+          />
         )}
       </div>
     </div>
