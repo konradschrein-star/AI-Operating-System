@@ -507,7 +507,10 @@ function RuleRow({
                       the surface presented a daily cap that could not fire for
                       the engine Konrad routes cheap parallel work to. Gemini
                       bills no EUR, so its cap is counted in the unit it does
-                      spend — tokens, summed across every Gemini run today. */}
+                      draw down — tokens, summed across every Gemini run today.
+                      ("draw down", not the obvious verb: dollar-sweep.sh's
+                      `\bspen[dt]` anchor cannot tell an outlay from prose, and
+                      the standing rule is to reword rather than allowlist.) */}
                   <div>
                     <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
                       Gemini — daily cap (tokens)
