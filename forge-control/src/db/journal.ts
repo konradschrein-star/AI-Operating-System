@@ -1,5 +1,7 @@
 /**
- * JOURNAL surface data access. Schema: db/migrations/0043_journal_entries.sql.
+ * JOURNAL surface data access. Schema: db/migrations/0045_journal_entries.sql
+ * (written as 0043; renumbered in round 7 because main and two sibling lanes
+ * each held a different 0043 — see that file's own header).
  *
  * A module-local pg.Pool on DATABASE_URL (content_forge), matching db/daily.ts
  * and db/ai_os.ts — `journal_entries` lives in the same database as
