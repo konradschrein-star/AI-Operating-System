@@ -1286,7 +1286,7 @@ export function CanvasPane({
                     display: "flex",
                     flexDirection: "column",
                     gap: 12,
-                    boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+                    boxShadow: `0 8px 32px ${tokens.overlay}`,
                   }}
                 >
                   <div
