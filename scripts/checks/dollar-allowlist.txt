@@ -97,3 +97,32 @@ forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line
 forge-control-web/app/desktop/PipelineSurface.tsx	toFixed\(2\)\} GB	formatBytes(): the GB branch of a FILE-SIZE formatter (`final_video_size_bytes` → "1.42 GB"). Same false positive as teamApi.ts's fmtTokens.
 forge-control-web/app/desktop/pipeline/JobDetailDrawer.tsx	toFixed\(2\)\} GB	formatBytes(): the drawer's copy of the same FILE-SIZE formatter, used for the rendered video's size.
 forge-control-web/app/desktop/pipeline/JobDetailDrawer.tsx	Time spent: \{formatDuration\(job\.[a-z_]+_time_spent_seconds\)	The VA cards' duration label — hours a VA logged on the job, from an integer seconds column. Not money.
+forge-control-web/app/desktop/_ui/MediaDocumentViewer.tsx	Math\.max\(0\.2, Number\(\(prev \+ delta\)\.toFixed\(2\)\)\)	toFixed(2) rounds an image ZOOM LEVEL (0.2x-5x) so repeated wheel steps do not accumulate float dust — a magnification factor, not a price. Same false positive as the token-magnitude formatters already listed. The pattern is the whole expression, not `.*`: any other toFixed(2) landing in this viewer still fails.
+forge-control-web/app/desktop/map/TopologyAtlasGrid.tsx	\(tokens / 1_000_000\)\.toFixed\(2\)	toFixed(2) inside formatTokens()'s "M" branch, rendering Gemini TOKEN counts from /api/usage/quota (e.g. "9.89M"). Identical in shape and reason to the AgentActivity.tsx humanTokens() and teamApi.ts fmtTokens() entries above. Google publishes no quota denominator and forge-control attaches no price to these, so nothing on this card is currency.
+forge-control-web/app/desktop/TodaySurface.tsx	data\.spend	Round-4 fix cycle: the reviewer flagged the prior round's €/toFixed(2) rendering as an unresolved NFU1 policy conflict (a self-cited PLAN.md is not Konrad's call). Fixed by removing every visible currency figure from Today — the usage chip and overnight-diary line now show only a "% of cap" number, no €/$, and the word "usage" instead of "spend" (renamed `spendQ`→`usageQ`, `spendCapEur`→`usageCapEur`). The one hit that survives is `data.spend.cap` (×3): reading the `TodayResponse.spend` field name from api.ts, never rendered as text. Real € amounts stay exclusive to MoneySurface.tsx (already excused above). Escalated to Konrad in manager chat whether Today should get a real-currency exception instead — this file defaults to the compliant, abstracted rendering unless he says otherwise.
+
+
+
+forge-control-web/app/desktop/journal/ImageLightbox.tsx	size_bytes / \(1024 \* 1024\)\)\.toFixed\(2\)	Line 94: a BYTE-magnitude formatter — `(entry.size_bytes / (1024 * 1024)).toFixed(2)} MB` renders how large the photographed journal page is, in megabytes. Same class and same reason as the already-listed token-magnitude formatters (AgentActivity.tsx humanTokens(), teamApi.ts fmtTokens(), context-window.ts) and the goals/ui.tsx sparkline coordinates: a false positive of the naive toFixed(2) anchor, with no currency anywhere in the file. The pattern is pinned to the megabyte DIVISION, not `.*`: a real € or $ landing in this file still fails the gate. Landed round 1 of aios-journal-and-mentor, unlisted until fix cycle 1.
+# ── aios-autonomy-automation, round 5: the guardrail COCKPIT ────────────────
+#
+# AutonomySurface.tsx is where Konrad SETS the spend caps and reads the trips
+# they produced. That is the same standing exemption slash-registry.ts already
+# carries for `/rules` and `/cap` — "a control surface (a number Konrad SETS),
+# not a display of a dollar amount charged" — and the reason this project
+# exists at all: the caps were switched OFF because the estimator billed Gemini
+# at Claude's rate, and a cap you cannot see the value of is a cap you cannot
+# trust enough to turn back on.
+#
+# The two hand-rolled `€${v.toFixed(2)}` metric values that round 4's review
+# found are GONE — they now go through `fmtEur()` from settings/usageApi.ts, so
+# there is exactly one euro formatter in this app. What is left is the rule ids
+# (`spend.daily_cap`, `spend.per_run_cap`), the payload field the trip carried
+# (`spend_eur`), two metric LABELS, and two cap INPUT labels that have to name
+# their unit. None is a rendered amount this file formats itself.
+#
+# Patterns are scoped to those shapes, never `.*` and never the file: a new
+# `$`-prefixed figure, or a fresh hand-rolled euro string, still fails.
+
+forge-control-web/app/desktop/AutonomySurface.tsx	startsWith\("spend\.|rule\.id === "spend\.(daily|per_run)_cap"|p\.spend_eur !== undefined|Number\(p\.spend_eur\)|label: "(Daily )?Spend",|label="(Daily Hard|Per-Run Claude) Cap \(€\)"	The guardrail cockpit's own subject matter: the `spend.daily_cap` / `spend.per_run_cap` RULE IDS, the `spend_eur` payload field a trip carried, the "Spend" / "Daily Spend" metric labels on that trip, and the "Daily Hard Cap (€)" / "Per-Run Claude Cap (€)" input labels. A cap Konrad sets and the evidence it fired — same reason slash-registry.ts's `/cap` is listed. Every rendered euro VALUE on this surface goes through fmtEur() (settings/usageApi.ts), which is allowlisted at its own file.
+forge-control-web/app/desktop/AutonomySurface.tsx	\(chars / 1_000_000\)\.toFixed\(2\)\}M chars	extractTripMetrics()'s thread-size chip — `${(chars / 1_000_000).toFixed(2)}M chars`, a CHARACTER-magnitude formatter of the same shape and the same false positive as AgentActivity.tsx's humanTokens(), teamApi.ts's fmtTokens() and chat/context-window.ts, all three already listed. Not currency; the thread length is what the spend estimate is computed FROM.

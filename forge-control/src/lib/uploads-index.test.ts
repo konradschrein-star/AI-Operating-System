@@ -11,7 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { parseShotName, listRunShots } from "./uploads-index.ts";
+import { parseShotName, listRunShots, ID_RE } from "./uploads-index.ts";
 
 describe("parseShotName", () => {
   test("a well-formed shot name", () => {
@@ -97,5 +97,62 @@ describe("listRunShots", () => {
     const shots = await listRunShots(dir);
     const bb = shots.find((s) => s.name === "20260805T101540Z-perplexity-bot-wall.jpg");
     assert.equal(bb?.size, 2);
+  });
+
+  /* The library needs the run's patches and logs; the camera strip must never
+   * receive them, because BrowserShots.tsx puts every entry it gets into an
+   * `<img>`. Both halves of that contract are asserted here — the default
+   * being images-only is the load-bearing half. */
+  test('include: "all" adds artefacts, and every entry says which kind it is', async () => {
+    const all = await listRunShots(dir, { include: "all" });
+    const names = all.map((s) => s.name).sort();
+    assert.deepEqual(names, [
+      "20260805T101530Z-perplexity-login-wall.png",
+      "20260805T101540Z-perplexity-bot-wall.jpg",
+      "no-stamp.png",
+      "notes.txt",
+    ]);
+    const byName = Object.fromEntries(all.map((s) => [s.name, s]));
+    assert.equal(byName["notes.txt"].kind, "artifact");
+    assert.equal(byName["no-stamp.png"].kind, "image");
+  });
+
+  test("the default is still images only — the camera strip's contract", async () => {
+    const shots = await listRunShots(dir);
+    assert.equal(
+      shots.some((s) => s.kind !== "image"),
+      false,
+    );
+    assert.equal(shots.length, 3);
+  });
+});
+
+describe("ID_RE", () => {
+  test("accepts both directory shapes that exist under /opt/ai-os/uploads", () => {
+    assert.equal(ID_RE.test("87464f95d9e2"), true, "12-hex FORGE_RUN_ID");
+    assert.equal(
+      ID_RE.test("87464f95-d9e2-4b04-95fd-d90ccbf9af8f"),
+      true,
+      "full run UUID",
+    );
+  });
+
+  test("still refuses anything that could leave the upload directory", () => {
+    for (const bad of [
+      "..",
+      "../etc",
+      "87464f95d9e2/..",
+      "87464f95d9e",
+      "87464f95d9e2x",
+      "not-a-run",
+      "",
+      "87464f95-d9e2-4b04-95fd-d90ccbf9af8",
+      // Uppercase stays a 400: no directory on disk is spelled this way, and
+      // uploads-serving.test.ts pins the rejection. See ID_RE's comment.
+      "87464F95D9E2",
+      "87464F95-D9E2-4B04-95FD-D90CCBF9AF8F",
+    ]) {
+      assert.equal(ID_RE.test(bad), false, `must reject ${JSON.stringify(bad)}`);
+    }
   });
 });

@@ -83,6 +83,22 @@
  *
  * Colours are `tokens.*` (CSS variables) only — no hex, no rgb, both themes.
  * There is no polling: this surface loads on mount and after each action.
+ *
+ * ── RELOAD_KEY_CONTRACT — why three cards take a `reloadKey` ─────────────
+ * `ConnectionsPanel`'s **Probe all** posts to `/api/integrations/probe-all`,
+ * which probes Google, agy and GitHub server-side and PERSISTS each record.
+ * The cards below do not know that happened: they load once on mount and
+ * after their OWN actions, so without a nudge the rows would keep showing the
+ * pre-probe reading while the store held a newer one — a surface disagreeing
+ * with the server it just asked, which is the exact defect this project is
+ * removing.
+ *
+ * So the panel bumps `reloadKey` when the batch probe returns and each of the
+ * three re-reads its GET endpoint. It is a NUDGE, not data: nothing renders
+ * it, and a card that never receives one behaves exactly as before
+ * (`undefined` is stable across renders, so the effect does not re-fire).
+ * Only the three ids `probe-all` actually probes take it — bumping the Gemini
+ * or Claude cards would refetch a reading nothing had refreshed.
  */
 
 import {
@@ -971,8 +987,11 @@ export function GeminiCard({
  */
 export function GoogleCard({
   onFacts,
+  reloadKey,
 }: {
   onFacts?: (f: Read<GoogleFacts>) => void;
+  /** Bumped by the panel's Probe all. See `RELOAD_KEY_CONTRACT` below. */
+  reloadKey?: number;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [accounts, setAccounts] = useState<GoogleAccountView[]>([]);
@@ -1009,7 +1028,7 @@ export function GoogleCard({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadKey]);
 
   const runCheck = useCallback(async () => {
     setBusy(true);
@@ -1224,7 +1243,17 @@ export function GoogleCard({
         </Banner>
       )}
 
-      {reauth && <CommandBlock command={reauth.command} why={reauth.why} />}
+      {reauth && (
+        <div style={{ marginTop: 12 }}>
+          <CommandBlock command={reauth.command} why={reauth.why} />
+          <div style={{ marginTop: 6, fontSize: 11.5, color: tokens.textSoft }}>
+            To print the OAuth consent URL directly without an interactive terminal:{" "}
+            <code className="mono" style={{ color: tokens.textHi }}>
+              python3 /opt/ai-os/google-setup/setup.py --auth-url
+            </code>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1253,8 +1282,11 @@ export function GoogleCard({
  */
 export function AgyCard({
   onFacts,
+  reloadKey,
 }: {
   onFacts?: (f: Read<AgyFacts>) => void;
+  /** Bumped by the panel's Probe all. See `RELOAD_KEY_CONTRACT`. */
+  reloadKey?: number;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [flow, setFlow] = useState<AgyFlow | null>(null);
@@ -1287,7 +1319,7 @@ export function AgyCard({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadKey]);
 
   /** The real probe: `<absolute path>/agy models`. ~0.3s, and it never opens
    *  the 60-second OAuth wait that `agy -p` does. */
@@ -1625,8 +1657,11 @@ export function GeminiCliCard({
  */
 export function GitHubCard({
   onFacts,
+  reloadKey,
 }: {
   onFacts?: (f: Read<GithubFacts>) => void;
+  /** Bumped by the panel's Probe all. See `RELOAD_KEY_CONTRACT`. */
+  reloadKey?: number;
 } = {}): JSX.Element {
   const [status, setStatus] = useState<ConnectionStatus | null>(null);
   const [secretName, setSecretName] = useState<string | null>(null);
@@ -1653,7 +1688,7 @@ export function GitHubCard({
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, reloadKey]);
 
   const probe = useCallback(async () => {
     setBusy(true);
@@ -1747,10 +1782,101 @@ export function GitHubCard({
           <span className="mono" style={{ fontSize: 11, color: tokens.textFaint }}>
             {checkedAgo(status.checked_at)}
           </span>
+          {status.identity && (
+            <span style={{ fontSize: 13, color: tokens.textHi }}>
+              Verified as <strong className="mono" style={{ color: tokens.ok }}>@{status.identity}</strong>
+            </span>
+          )}
+        </div>
+      )}
+
+      {secretName && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+          <span className="mono" style={{ fontSize: 10.5, color: tokens.textLabel }}>
+            VAULT BINDING:
+          </span>
+          <span
+            className="mono"
+            style={{
+              fontSize: 11,
+              background: tokens.bgGutter,
+              border: `1px solid ${tokens.borderSoft}`,
+              borderRadius: 4,
+              padding: "2px 7px",
+              color: tokens.textHi,
+            }}
+          >
+            {secretName}
+          </span>
+          <span style={{ fontSize: 11.5, color: tokens.textMuted }}>
+            (AES-256-GCM encrypted in secret store)
+          </span>
         </div>
       )}
 
       {status && <SummaryFields summary={summary} />}
+
+      {/* Verified scope badges parsed from the probe response.
+          GATED ON `connected`, NOT on `status` — the reason this block is
+          narrower than the one below it. Every state has a `detail`, but only
+          a SUCCEEDED probe's detail carries `x-oauth-scopes`. On `absent` the
+          detail is "no secret named github-pat… is stored" and on `broken` it
+          is a 401 body, neither of which matches the header regex — so the
+          block fell through to its own "fine-grained PAT" sentence and told
+          Konrad a token he does not have is a valid one with managed
+          permissions. A permissions panel for a credential that failed to
+          authenticate has nothing true to say, so it does not render. */}
+      {summary.state === "connected" && status && (
+        <div
+          data-github-scopes
+          style={{
+            marginTop: 12,
+            background: tokens.bgGutter,
+            border: `1px solid ${tokens.borderSoft}`,
+            borderRadius: 8,
+            padding: "10px 12px",
+          }}
+        >
+          <Label text="TOKEN PERMISSIONS & SCOPES" />
+          {(() => {
+            const match = status.detail.match(/x-oauth-scopes:\s*([^\n\r.]+)/i);
+            const raw = match && match[1] ? match[1].trim() : "";
+            const isAbsentOrEmpty = !raw || raw.toLowerCase().includes("header absent") || raw.toLowerCase().includes("present but empty");
+            const scopes = isAbsentOrEmpty ? [] : raw.split(",").map((s) => s.trim()).filter(Boolean);
+
+            if (scopes.length > 0) {
+              return (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                  {scopes.map((s) => (
+                    <span
+                      key={s}
+                      className="mono"
+                      style={{
+                        background: tokens.bgCard,
+                        border: `1px solid ${tokens.borderEmphasis}`,
+                        borderRadius: 4,
+                        padding: "2px 8px",
+                        fontSize: 11,
+                        color: tokens.ok,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              );
+            }
+            return (
+              <div style={{ fontSize: 12, color: tokens.textSoft, marginTop: 4 }}>
+                {isAbsentOrEmpty
+                  ? "Fine-grained PAT (permissions managed via GitHub token settings page) or classic token without extra scopes."
+                  : raw}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* R56: the login and the scopes come out of the probe's own answer and
           are printed verbatim, because "which scopes does this token actually

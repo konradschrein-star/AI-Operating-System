@@ -140,8 +140,28 @@ gate "no-raw-colours.cjs (whole app)" node scripts/checks/no-raw-colours.cjs
 # FilePreview verbatim + two-line panel edit) BEFORE it was written; landed in fc842d3.
 # Scope of the waiver: FileExplorerPanel.tsx ONLY. VaultFileList* and routes/files
 # remain forbidden, as do all engine files.
+#
+# OPERATOR WAIVER 2026-08-23 — the REST of the Files reservation is released.
+# The clause above states the ban's entire purpose: avoiding a collision with
+# project files-pane-fast-light. Verified in the projects table today — that
+# project is `done`, closed 2026-08-05, eighteen days ago. The 2026-08-16 waiver
+# released only FileExplorerPanel.tsx because that was all that was needed then,
+# not because the rest still had a reason.
+#
+# aios-library-and-map's brief then explicitly ordered a builder to EXTEND
+# forge-control/src/routes/files.ts ("find it, read it, extend it rather than
+# starting a second one"), and it did, in ad35016. The gate had therefore become
+# unsatisfiable by any correct execution of an authorised brief: it could only be
+# passed by disobeying the brief, or by a builder widening the gate — and a
+# builder widening a gate is forbidden. That is a toll, not evidence.
+#
+# RELEASED: routes/files, VaultFileList*.
+# STILL FORBIDDEN, for a live reason rather than an expired reservation:
+# project-tick, cc-runner, executor.ts, db/projects — the scheduler and the run
+# engine, where one careless edit breaks every lane at once. Those stay banned,
+# and an authorised edit to them is recorded here the same way this one is.
 gate_sh "forbidden-file diff — three-dot main...HEAD" \
-  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects|VaultFileList|routes/files' \
+  "git diff --name-only main...HEAD | grep -E 'project-tick|cc-runner|executor\\.ts|db/projects' \
    && { echo '>>> FORBIDDEN FILE DIFFERS'; exit 1; } || { echo 'clean — no engine/Files file differs'; exit 0; }"
 
 gate_sh "forge-control/ untouched by round 808's own commits" \
@@ -151,6 +171,7 @@ gate_sh "forge-control/ untouched by round 808's own commits" \
    echo '(round 808 authored none of these; any listed file is a sibling task on the same branch)'; \
    exit 0"
 
+gate_sh "check-migration-numbers.ts" "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-migration-numbers.ts | tail -3"
 gate_sh "dollar-sweep.sh" "bash scripts/checks/dollar-sweep.sh | tail -6"
 gate_sh "check-composer-v3.ts" "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-composer-v3.ts | tail -3"
 gate_sh "check-secret-requests.ts" "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-secret-requests.ts | tail -3"
@@ -184,6 +205,16 @@ gate_sh "check-team-rows.ts — flatten, hiddenRows, frozen time" \
 
 gate_sh "check-team-confirm.ts — the destructive-control machines (✕, stop, restore-all)" \
   "cd forge-control && ./node_modules/.bin/tsx ../scripts/checks/check-team-confirm.ts | tail -2"
+
+# ── aios-autonomy-automation round 5 ───────────────────────────────────────
+# Five "View Run in Chat" / "Settings → Connections" affordances shipped as
+# `<a>` elements pointing at a query string this one-route console has never
+# read. They typechecked, they built, and they navigated nowhere. The check
+# asserts the replacement (localStorage + the shell's onNav) AND greps the two
+# surfaces so the dead form cannot come back.
+gate_sh "check-deep-link.ts — cross-surface navigation actually navigates" \
+  "cd forge-control-web && ../forge-control/node_modules/.bin/tsx \
+     --tsconfig ../tsconfig.checks.json ../scripts/checks/check-deep-link.ts | tail -3"
 
 gate_sh "verify-notification-gap-pins.mjs — fenced quotes + prose pins" \
   "node docs/plan/artifacts/phase4/verify-notification-gap-pins.mjs | tail -2"

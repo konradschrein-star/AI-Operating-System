@@ -133,6 +133,233 @@ export const createCanvas = (input: { name: string; folder?: string }) =>
     input,
   );
 
+export type PlanTaskStatus =
+  | "done"
+  | "in_progress"
+  | "planned"
+  | "gap"
+  | "blocked"
+  | "proposal";
+
+export interface PlanTask {
+  id: string;
+  nodeId: string;
+  title: string;
+  workstream: string;
+  phase: number;
+  status: PlanTaskStatus;
+  statusReason: string;
+  depends_on: string[];
+  role: TaskRole;
+  tier: TaskTier;
+  write_set: string[];
+  brief: string;
+  link: string | null;
+}
+
+export interface PlanWorkstream {
+  id: string;
+  name: string;
+  containerId: string | null;
+  taskIds: string[];
+  summary: string;
+}
+
+export interface PlanPhase {
+  phase: number;
+  name: string;
+  taskIds: string[];
+}
+
+export type AmbiguityKind =
+  | "unconnected_node"
+  | "dangling_arrow"
+  | "cycle"
+  | "unexplained_color"
+  | "unlabelled_shape"
+  | "straddling_node";
+
+export type AmbiguitySeverity = "warning" | "question" | "info";
+
+export interface GraphAmbiguity {
+  id: string;
+  kind: AmbiguityKind;
+  severity: AmbiguitySeverity;
+  elementIds: string[];
+  label: string;
+  description: string;
+  question: string;
+}
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  role: string;
+  color?: string;
+  status:
+    | "built"
+    | "partial"
+    | "planned"
+    | "gap"
+    | "blocked"
+    | "proposal"
+    | "unknown";
+  statusReason: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  containerId?: string | null;
+}
+
+export interface GraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  resolvedBy: "explicit" | "proximity" | "unresolved";
+}
+
+export interface ParsedDrawingGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  ambiguities: GraphAmbiguity[];
+  stats: {
+    totalNodes: number;
+    totalEdges: number;
+    cycleCount: number;
+    ambiguityCount: number;
+  };
+}
+
+export interface CanvasPlan {
+  path: string;
+  title: string;
+  summary: string;
+  workstreams: PlanWorkstream[];
+  phases: PlanPhase[];
+  tasks: PlanTask[];
+  ambiguities: GraphAmbiguity[];
+  stats: {
+    totalTasks: number;
+    totalPhases: number;
+    totalWorkstreams: number;
+    ambiguityCount: number;
+    completedTasks: number;
+    blockedTasks: number;
+  };
+  rawMarkdown: string;
+}
+
+export interface CanvasPlanResponse {
+  ok: true;
+  path: string;
+  plan: CanvasPlan;
+  graph: ParsedDrawingGraph;
+  savedMarkdown: string | null;
+  planPath: string;
+}
+
+export interface SaveCanvasPlanInput {
+  path: string;
+  planMarkdown?: string;
+  plan?: CanvasPlan;
+}
+
+export interface SaveCanvasPlanResponse {
+  ok: true;
+  path: string;
+  planPath: string;
+  mtime: number;
+}
+
+export interface PushPlanToProjectInput {
+  path?: string;
+  name?: string;
+  brief?: string;
+  repo?: "ai-os" | "content-forge" | "scratch";
+  base_branch?: string;
+  architect_tier?: TaskTier;
+  origin_chat_id?: string;
+  plan?: CanvasPlan;
+  /** Create the project even though some dependency edges cannot be written.
+   *  Only ever set from an explicit acknowledgement — the default refusal is
+   *  what stops a drawing being seeded as a task graph it does not describe. */
+  allow_unresolved_dependencies?: boolean;
+}
+
+/** One `depends_on` edge the plan carries but `project_tasks` cannot hold —
+ *  it closes a cycle, or points at a task that is not in the plan. */
+export interface UnresolvedPlanDependency {
+  task: string;
+  taskTitle: string;
+  dependsOn: string;
+  dependsOnTitle: string | null;
+  reason: "cycle" | "unknown_task";
+}
+
+export interface PushPlanToProjectResponse {
+  ok: true;
+  project: Record<string, unknown>;
+  architectTask: Record<string, unknown>;
+  tasks: Record<string, unknown>[];
+  tasksCount: number;
+  /** Always present. Non-empty only when the push carried
+   *  `allow_unresolved_dependencies` — these edges were left out. */
+  droppedDependencies: UnresolvedPlanDependency[];
+}
+
+/** The 409 from `/canvas/plan/to-project`, carried as a typed error so the UI
+ *  can offer "create anyway" instead of showing a bare status line. The shared
+ *  `postJson` throws away the response body, which is precisely the diagnostic
+ *  the caller needs here, so this one endpoint reads its own failure. */
+export class UnresolvedDependenciesError extends Error {
+  readonly unresolved: UnresolvedPlanDependency[];
+  readonly hint: string;
+
+  constructor(message: string, unresolved: UnresolvedPlanDependency[], hint: string) {
+    super(message);
+    this.name = "UnresolvedDependenciesError";
+    this.unresolved = unresolved;
+    this.hint = hint;
+  }
+}
+
+export const getCanvasPlan = (path: string) =>
+  getJson<CanvasPlanResponse>(`/canvas/plan?path=${encodeURIComponent(path)}`);
+
+export const saveCanvasPlan = (input: SaveCanvasPlanInput) =>
+  postJson<SaveCanvasPlanResponse>("/canvas/plan/save", input);
+
+export async function pushPlanToProject(
+  input: PushPlanToProjectInput,
+): Promise<PushPlanToProjectResponse> {
+  const path = "/canvas/plan/to-project";
+  const res = await fetch(`${ROOT}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  if (res.status === 409) {
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      reason?: string;
+      unresolvable?: UnresolvedPlanDependency[];
+      hint?: string;
+    } | null;
+    if (body?.reason === "unresolvable_dependencies") {
+      throw new UnresolvedDependenciesError(
+        body.error ?? "this plan has dependencies that cannot be written as a task graph",
+        body.unresolvable ?? [],
+        body.hint ?? "",
+      );
+    }
+    throw new Error(body?.error ?? `409 Conflict on ${path}`);
+  }
+
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} on ${path}`);
+  return (await res.json()) as PushPlanToProjectResponse;
+}
+
+
 /* ----------------------------------------------------------------------------
  * Subscription quota — deliberately NOT here.
  *
@@ -217,6 +444,8 @@ export const fetchLimitHits = async (days = 14): Promise<LimitHit[]> => {
 /* ----------------------------------------------------------------------------
  * Inbox
  * -------------------------------------------------------------------------- */
+export type InboxStatusFilter = "open" | "resolved" | "all";
+
 interface InboxApiItem {
   id: string;
   type: string;
@@ -230,10 +459,49 @@ interface InboxApiItem {
     action_id?: string;
   }[];
   age: string;
+  /** Present only on rows a `resolved`/`all` fetch pulled in. */
+  resolved_at?: string;
+  resolved_by?: string;
+  resolution?: Record<string, unknown>;
 }
 
+/** History item — an InboxItem that carries how/when it was resolved.
+ *  routes/inbox.ts `?status=resolved|all` is the only source of these. */
+export interface InboxHistoryItem extends InboxItemUi {
+  resolved_at: string;
+  resolved_by: string;
+  resolution: Record<string, unknown>;
+}
+
+/** Zero-arg on purpose: existing call sites pass this function itself as a
+ *  react-query `queryFn`, which invokes it with a QueryFunctionContext
+ *  argument — an optional param here would collide with that positional
+ *  call and fail to typecheck. Status filtering for the Inbox surface's
+ *  tabs lives in the dedicated functions below instead. */
 export const fetchInbox = async (): Promise<InboxItemUi[]> => {
   const r = await getJson<{ count: number; items: InboxApiItem[] }>("/inbox");
+  return r.items;
+};
+
+export const fetchInboxByStatus = async (
+  status: InboxStatusFilter,
+  limit?: number,
+): Promise<InboxItemUi[]> => {
+  const qs = new URLSearchParams({ status });
+  if (limit !== undefined) qs.set("limit", String(limit));
+  const r = await getJson<{ count: number; items: InboxApiItem[] }>(
+    `/inbox?${qs}`,
+  );
+  return r.items;
+};
+
+/** Resolved history — Inbox surface's "History" tab. */
+export const fetchInboxHistory = async (
+  limit = 50,
+): Promise<InboxHistoryItem[]> => {
+  const r = await getJson<{ count: number; items: InboxHistoryItem[] }>(
+    `/inbox?status=resolved&limit=${limit}`,
+  );
   return r.items;
 };
 
@@ -402,6 +670,27 @@ export interface MemorySearchHit {
   snippet: string;
   score: number;
   chunk_index: number;
+  note_kind?: string;
+  via?: "title" | "tag" | "vector" | "graph";
+  match_type?:
+    | "exact_title"
+    | "title_match"
+    | "tag_match"
+    | "vector"
+    | "graph"
+    | "empty"
+    | "drawing"
+    | string;
+  match_reason?: string;
+  is_empty?: boolean;
+  is_drawing?: boolean;
+  tags?: string[];
+  explain?: {
+    kind?: string;
+    raw_score?: number;
+    weight?: number;
+    age_days?: number;
+  };
 }
 
 /* v1.7 phase 1+2 — expanded hit shape from /api/memory/search?expand=1.
@@ -429,7 +718,7 @@ export const TRIPLE_CATEGORIES: TripleCategory[] = [
 ];
 
 export interface MemorySearchHitWithLane extends MemorySearchHit {
-  via: "vector" | "graph";
+  via: "title" | "tag" | "vector" | "graph";
   hop: number;
 }
 
@@ -1052,14 +1341,23 @@ export const fetchPipeline = async () => {
 /* ----------------------------------------------------------------------------
  * Autonomy (guardrail rules + fleet state + recent trips)
  * -------------------------------------------------------------------------- */
+export type GuardrailCategory =
+  | "financial"
+  | "destructive"
+  | "communication"
+  | "security"
+  | "deployment"
+  | "custom";
+
 export interface GuardrailRule {
   id: string;
   label: string;
   description: string;
-  category: string;
+  category: GuardrailCategory | string;
   enabled: boolean;
   builtin: boolean;
   config: Record<string, unknown>;
+  created_at?: string;
   updated_at: string;
 }
 
@@ -1072,6 +1370,8 @@ export interface GuardrailTrip {
   attempted_action: string;
   payload: Record<string, unknown>;
   resolved: boolean;
+  resolution_note?: string | null;
+  created_at?: string;
 }
 
 export interface AutonomyResponse {
@@ -1096,6 +1396,14 @@ export const updateRule = async (
     patch,
   );
   return r.rule;
+};
+
+export const resolveTrip = async (id: string): Promise<boolean> => {
+  const r = await postJson<{ resolved: boolean }>(
+    `/autonomy/trips/${encodeURIComponent(id)}/resolve`,
+    {},
+  );
+  return Boolean(r.resolved);
 };
 
 /* ----------------------------------------------------------------------------
@@ -1152,6 +1460,8 @@ export interface Webhook {
   name: string;
   description: string | null;
   secret_preview: string;
+  raw_secret?: string;
+  secret_once?: string;
   enabled: boolean;
   prompt_template: string;
   title_template: string | null;
@@ -1164,6 +1474,8 @@ export interface Webhook {
   updated_at: string;
 }
 
+export type CreateWebhookResult = Webhook;
+
 export const fetchWebhooks = async (): Promise<Webhook[]> => {
   const r = await getJson<{ count: number; webhooks: Webhook[] }>("/webhooks");
   return r.webhooks;
@@ -1172,13 +1484,22 @@ export const fetchWebhooks = async (): Promise<Webhook[]> => {
 export const createWebhook = async (input: {
   slug: string;
   name: string;
-  description?: string;
+  description?: string | null;
   prompt_template: string;
-  title_template?: string;
-  worker_label?: string;
-}): Promise<Webhook> => {
-  const r = await postJson<{ webhook: Webhook }>("/webhooks", input);
-  return r.webhook;
+  title_template?: string | null;
+  worker_label?: string | null;
+  enabled?: boolean;
+}): Promise<CreateWebhookResult> => {
+  const r = await postJson<{
+    webhook: Webhook;
+    raw_secret?: string;
+    secret_once?: string;
+  }>("/webhooks", input);
+  return {
+    ...r.webhook,
+    raw_secret: r.raw_secret ?? r.secret_once,
+    secret_once: r.secret_once ?? r.raw_secret,
+  };
 };
 
 export const updateWebhook = async (
@@ -1192,19 +1513,19 @@ export const updateWebhook = async (
     enabled: boolean;
   }>,
 ): Promise<Webhook> => {
-  const r = await patchJson<{ webhook: Webhook }>(`/webhooks/${id}`, patch);
+  const r = await patchJson<{ webhook: Webhook }>(`/webhooks/${encodeURIComponent(id)}`, patch);
   return r.webhook;
 };
 
 export const rotateWebhookSecret = async (
   id: string,
 ): Promise<string> => {
-  const r = await postJson<{ secret: string }>(`/webhooks/${id}/rotate-secret`);
+  const r = await postJson<{ secret: string }>(`/webhooks/${encodeURIComponent(id)}/rotate-secret`, {});
   return r.secret;
 };
 
 export const deleteWebhook = async (id: string): Promise<void> => {
-  await deleteJson(`/webhooks/${id}`);
+  await deleteJson(`/webhooks/${encodeURIComponent(id)}`);
 };
 
 /* ----------------------------------------------------------------------------
@@ -1224,6 +1545,7 @@ export interface CronSchedule {
   last_run_id: string | null;
   last_error: string | null;
   total_fires: number;
+  run_metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -1248,11 +1570,13 @@ export const previewCron = async (
 
 export const createSchedule = async (input: {
   name: string;
-  description?: string;
+  description?: string | null;
   cron_expr: string;
   prompt_template: string;
-  title_template?: string;
-  worker_label?: string;
+  title_template?: string | null;
+  worker_label?: string | null;
+  enabled?: boolean;
+  run_metadata?: Record<string, unknown>;
 }): Promise<CronSchedule> => {
   const r = await postJson<{ schedule: CronSchedule }>("/cron", input);
   return r.schedule;
@@ -1268,16 +1592,25 @@ export const updateSchedule = async (
     prompt_template: string;
     title_template: string | null;
     worker_label: string | null;
+    run_metadata: Record<string, unknown>;
   }>,
 ): Promise<CronSchedule> => {
-  const r = await patchJson<{ schedule: CronSchedule }>(`/cron/${id}`, patch);
+  const r = await patchJson<{ schedule: CronSchedule }>(`/cron/${encodeURIComponent(id)}`, patch);
   return r.schedule;
 };
 
 export const deleteSchedule = async (id: string): Promise<void> => {
-  await deleteJson(`/cron/${id}`);
+  await deleteJson(`/cron/${encodeURIComponent(id)}`);
   return;
 };
+
+export const triggerScheduleRun = async (
+  id: string,
+): Promise<{ ok: boolean; run_id: string }> =>
+  postJson<{ ok: boolean; run_id: string }>(
+    `/cron/${encodeURIComponent(id)}/run`,
+    {},
+  );
 
 /* ----------------------------------------------------------------------------
  * Coding projects — mirrors routes/projects.ts. A task's run is a normal
@@ -1594,6 +1927,59 @@ export interface DayTask {
   age_days: number;
   /** `carried >= 3`. Drives the "This keeps sliding" strip (§5). */
   stale: boolean;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  status?: string;
+  htmlLink?: string;
+}
+
+export interface CreateCalendarEventInput {
+  summary: string;
+  start: string;
+  end: string;
+  location?: string;
+  description?: string;
+  task_id?: string;
+  calendar?: string;
+}
+
+export type LifeGoalHorizon = "quarterly" | "yearly" | "aspirational" | "active" | string;
+export type LifeGoalStatus = "planned" | "in_progress" | "completed" | "paused" | "abandoned" | string;
+
+export interface LifeGoal {
+  id: string;
+  title: string;
+  status: LifeGoalStatus;
+  horizon: LifeGoalHorizon;
+  area: string | null;
+  progress: number;
+  started_day: string | null;
+  target_day: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LifeGoalInput {
+  title: string;
+  status?: LifeGoalStatus;
+  horizon?: LifeGoalHorizon;
+  area?: string | null;
+  progress?: number;
+  started_day?: string | null;
+  target_day?: string | null;
+  notes?: string | null;
 }
 
 /**
@@ -1696,9 +2082,7 @@ export const fetchDailyDay = (day?: string): Promise<DailyDayResponse> =>
     day ? `/daily?day=${encodeURIComponent(day)}` : "/daily",
   );
 
-/** Draft edit of the intent line and/or the Big 3. 409 once committed (§1) —
- *  callers surface that as "abandon instead of editing", never as a silent
- *  no-op. */
+/** Draft edit of the intent line and/or the Big 3. Fluid editing supported throughout the day. */
 export const saveDayPlan = (
   day: string,
   input: { intent?: string | null; big3?: DayGoal[] },
@@ -1773,6 +2157,9 @@ export interface DayTaskInput {
   due_day?: string | null;
   est_min?: number | null;
   notes?: string | null;
+  start_time?: string | null;
+  duration_min?: number | null;
+  gcal_event_id?: string | null;
 }
 
 export const createDayTask = (input: DayTaskInput): Promise<DayWriteResult> =>
@@ -1795,3 +2182,453 @@ export const rolloverDayTasks = (to?: string): Promise<DayWriteResult> =>
 
 export const fetchDayStats = (days = 90): Promise<DayStats> =>
   getJson<DayStats>(`/daily/stats?days=${days}`);
+
+/* ----------------------------------------------------------------------------
+ * LIBRARY — the run-artefact store and the file write path.
+ *
+ * `/uploads/index` is a directory sweep over /opt/ai-os/uploads; every run
+ * that ever photographed a page or dropped a patch has a row there. `count`
+ * is IMAGES (the camera strip's contract); the library reads `file_count`.
+ * -------------------------------------------------------------------------- */
+
+export interface UploadRunSummary {
+  id: string;
+  /** Images only — what the chat's camera indicator counts. */
+  count: number;
+  image_count: number;
+  artifact_count: number;
+  file_count: number;
+  latest_ts: string | null;
+}
+
+export type RunArtifactKind = "image" | "artifact";
+
+export interface RunArtifact {
+  name: string;
+  /** Server-relative url (`/api/uploads/<id>/<name>`) — prepend PROXY_ROOT
+   *  via `runArtifactUrl` before putting it in a src. */
+  url: string;
+  label: string | null;
+  /** Compact stamp from the filename convention (`20260823T0110Z`), if any. */
+  ts: string | null;
+  size: number;
+  mtime: string;
+  kind: RunArtifactKind;
+}
+
+/** Every upload/run directory, newest first. */
+export const fetchUploadRuns = async (): Promise<UploadRunSummary[]> => {
+  const r = await getJson<{ runs: UploadRunSummary[] }>("/uploads/index");
+  if (!Array.isArray(r.runs)) {
+    throw new Error("/uploads/index returned no `runs` array");
+  }
+  return r.runs;
+};
+
+/**
+ * One run directory's files. `include: "all"` adds patches, logs, JSON and
+ * transcripts to the images — the library wants all of them, the camera strip
+ * must stay on the default because it renders every entry as an `<img>`.
+ */
+export const fetchRunArtifacts = async (
+  runDirId: string,
+  include: "images" | "all" = "all",
+): Promise<RunArtifact[]> => {
+  const r = await getJson<{ shots: RunArtifact[] }>(
+    `/uploads/${encodeURIComponent(runDirId)}/shots?include=${include}`,
+  );
+  if (!Array.isArray(r.shots)) {
+    throw new Error(`/uploads/${runDirId}/shots returned no \`shots\` array`);
+  }
+  return r.shots;
+};
+
+/** Browser-usable url for a run artefact (the server url is API-relative). */
+export const runArtifactUrl = (runDirId: string, name: string): string =>
+  `${ROOT}/uploads/${encodeURIComponent(runDirId)}/${encodeURIComponent(name)}`;
+
+/** Raised when /files/write is refused because the file moved on disk since
+ *  it was loaded (Obsidian, Syncthing, or an agent wrote it first). Mirrors
+ *  CanvasConflictError — the vault never merges, so the caller must offer a
+ *  reload instead of clobbering the other writer. */
+export class FileConflictError extends Error {
+  mtime: number;
+  constructor(detail: string, mtime: number) {
+    super(detail);
+    this.name = "FileConflictError";
+    this.mtime = mtime;
+  }
+}
+
+export interface FileWriteResult {
+  ok: true;
+  root: string;
+  path: string;
+  size: number;
+  /** ms since epoch — pass back as `baseMtime` on the next save. */
+  mtime: number;
+  created: boolean;
+}
+
+/**
+ * Save an edited text file back to one of the file roots.
+ *
+ * Always pass `baseMtime` (the mtime the content was loaded with) for a file
+ * that already exists: without it the write is last-writer-wins, and vault
+ * notes are edited from Obsidian and by agents at the same time.
+ */
+export const writeFileContent = async (input: {
+  root: string;
+  path: string;
+  content: string;
+  baseMtime?: number;
+}): Promise<FileWriteResult> => {
+  const res = await fetch(`${ROOT}/files/write`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (res.status === 409) {
+    const b = (await res.json().catch(() => ({}))) as {
+      detail?: string;
+      mtime?: number;
+    };
+    throw new FileConflictError(
+      b.detail ?? `${input.path} changed on disk since you opened it.`,
+      b.mtime ?? 0,
+    );
+  }
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b.error ?? `${res.status} ${res.statusText} on /files/write`);
+  }
+  return (await res.json()) as FileWriteResult;
+};
+
+/* ----------------------------------------------------------------------------
+ * MAP — the topology aggregator (/api/map).
+ *
+ * Every section is independently error-isolated server-side: the endpoint
+ * answers 200 with `ok: false` on the sections that failed, so a dark nginx
+ * parse never blanks the process list. Render per-section errors; never
+ * collapse a failed section into an empty one.
+ * -------------------------------------------------------------------------- */
+
+export interface MapSectionOk<T> {
+  ok: true;
+  checked_at: string;
+  source: string;
+  data: T;
+}
+
+export interface MapSectionFailed {
+  ok: false;
+  checked_at: string;
+  source: string;
+  error: string;
+}
+
+export type MapSection<T> = MapSectionOk<T> | MapSectionFailed;
+
+export interface MapBusinessProject {
+  name: string;
+  status: string;
+  type: string;
+  deployed: string;
+  /** null when `deployed` is not a filesystem path on this box. */
+  path_exists: boolean | null;
+}
+
+export interface MapBusinesses {
+  note: string;
+  note_mtime: string;
+  projects: MapBusinessProject[];
+  active: number;
+  archived: number;
+}
+
+export interface MapProcess {
+  name: string;
+  pid: number | null;
+  status: string;
+  restarts: number;
+  uptime_ms: number;
+  cpu_pct: number;
+  memory_bytes: number;
+  cwd: string | null;
+  script: string | null;
+}
+
+export interface MapProcesses {
+  count: number;
+  online: number;
+  processes: MapProcess[];
+}
+
+export interface MapUnit {
+  name: string;
+  active: string;
+  sub: string;
+  description: string;
+}
+
+export interface MapUnits {
+  count: number;
+  units: MapUnit[];
+}
+
+export interface MapDomain {
+  domain: string;
+  file: string;
+  ports: number[];
+  ssl: boolean;
+  upstreams: string[];
+  roots: string[];
+  ssl_expires_at: string | null;
+  ssl_days_left: number | null;
+  ssl_error: string | null;
+}
+
+export interface MapDomains {
+  dir: string;
+  files: number;
+  count: number;
+  domains: MapDomain[];
+  errors: { file: string; error: string }[];
+}
+
+export interface MapDisk {
+  mount: string;
+  total_bytes: number;
+  used_bytes: number;
+  available_bytes: number;
+  used_pct: number;
+}
+
+export interface MapStorage {
+  disks: MapDisk[];
+  memory: {
+    total_bytes: number;
+    used_bytes: number;
+    available_bytes: number;
+    used_pct: number;
+  };
+  datastores: {
+    name: string;
+    port: number;
+    listening: boolean;
+    process: string | null;
+  }[];
+  listeners: { port: number; process: string | null; address: string }[];
+}
+
+export interface MapCanvas {
+  path: string;
+  name: string;
+  folder: string;
+  mtime: string;
+  size: number;
+}
+
+export interface MapCanvases {
+  count: number;
+  canvases: MapCanvas[];
+}
+
+export interface MapTopology {
+  generated_at: string;
+  host: { name: string; ip: string };
+  /** Names of the sections that failed this fetch — render a retry for each. */
+  failed_sections: string[];
+  sections: {
+    businesses?: MapSection<MapBusinesses>;
+    processes?: MapSection<MapProcesses>;
+    units?: MapSection<MapUnits>;
+    domains?: MapSection<MapDomains>;
+    storage?: MapSection<MapStorage>;
+    canvases?: MapSection<MapCanvases>;
+  };
+}
+
+export type MapSectionName = keyof MapTopology["sections"];
+
+/** The whole map, or just the named sections (a per-section retry button). */
+export const fetchMapTopology = (
+  only?: readonly MapSectionName[],
+): Promise<MapTopology> =>
+  getJson<MapTopology>(
+    only && only.length > 0
+      ? `/map?only=${encodeURIComponent(only.join(","))}`
+      : "/map",
+  );
+
+/* ----------------------------------------------------------------------------
+ * Journal surface (paper-first capture, day retrospective & decisions)
+ * -------------------------------------------------------------------------- */
+export type JournalEntryType = "paper_photo" | string;
+export type OcrStatus = "unavailable" | "pending" | "done" | "failed" | string;
+
+export interface JournalEntry {
+  id: string;
+  day: string;
+  type: JournalEntryType;
+  upload_id: string | null;
+  file_path: string | null;
+  file_url: string | null;
+  file_name: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  ocr_text: string | null;
+  ocr_status: OcrStatus;
+  caption: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface JournalDayResponse {
+  day: string;
+  count: number;
+  entries: JournalEntry[];
+}
+
+export interface JournalUploadResponse {
+  ok: boolean;
+  entry: JournalEntry;
+  vault: {
+    appended: boolean;
+    path?: string;
+    reason?: string;
+  };
+}
+
+export interface JournalDeleteResponse {
+  ok: boolean;
+  entry: JournalEntry;
+}
+
+export const fetchJournalDay = async (
+  day?: string,
+): Promise<JournalDayResponse> => {
+  const path = day
+    ? `/journal/day?day=${encodeURIComponent(day)}`
+    : "/journal/day";
+  return getJson<JournalDayResponse>(path);
+};
+
+export const uploadJournalPaper = async (
+  file: File | Blob,
+  options?: { day?: string; caption?: string; fileName?: string },
+): Promise<JournalUploadResponse> => {
+  const form = new FormData();
+  const name =
+    options?.fileName ??
+    (file instanceof File ? file.name : "journal-paper.png");
+  form.append("file", file, name);
+  if (options?.day) form.append("day", options.day);
+  if (options?.caption) form.append("caption", options.caption);
+
+  const res = await fetch(`${ROOT}/journal/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      j.error ?? `${res.status} ${res.statusText} on /journal/upload`,
+    );
+  }
+  return (await res.json()) as JournalUploadResponse;
+};
+
+export const deleteJournalEntry = async (
+  id: string,
+): Promise<JournalDeleteResponse> => {
+  return deleteJson<JournalDeleteResponse>(
+    `/journal/entries/${encodeURIComponent(id)}`,
+  );
+};
+
+export interface DecisionEntry {
+  id: string;
+  ts: string;
+  kind:
+    | "dispatch"
+    | "breaker"
+    | "degrade"
+    | "escalate"
+    | "unstick"
+    | "resolve"
+    | "freeze"
+    | "resume"
+    | "guardrail"
+    | "manager"
+    | "user"
+    | string;
+  actor: string;
+  action: string;
+  payload?: Record<string, unknown>;
+  inbox_item_id?: string | null;
+  related_job_id?: string | null;
+}
+
+export const fetchDecisionsForDay = async (
+  day: string,
+  limit = 200,
+): Promise<DecisionEntry[]> => {
+  const path = `/decisions?day=${encodeURIComponent(day)}&limit=${limit}`;
+  const r = await getJson<{ count: number; decisions: DecisionEntry[] }>(path);
+  if (!r || !Array.isArray(r.decisions)) {
+    throw new Error(
+      `GET ${path}: expected {count, decisions:[...]}, got ${typeof r}`,
+    );
+  }
+  return r.decisions;
+};
+export const fetchCalendarEvents = async (
+  start?: string,
+  end?: string,
+): Promise<CalendarEvent[]> => {
+  const qs = new URLSearchParams();
+  if (start) qs.set("start", start);
+  if (end) qs.set("end", end);
+  const path = qs.toString() ? `/daily/calendar?${qs.toString()}` : "/daily/calendar";
+  const r = await getJson<CalendarEvent[] | { events?: CalendarEvent[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.events)) return r.events;
+  return [];
+};
+
+export const createCalendarEvent = (
+  input: CreateCalendarEventInput,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/calendar/events", input);
+
+export const fetchLifeGoals = async (params?: {
+  horizon?: string;
+  status?: string;
+  area?: string;
+}): Promise<LifeGoal[]> => {
+  const qs = new URLSearchParams();
+  if (params?.horizon) qs.set("horizon", params.horizon);
+  if (params?.status) qs.set("status", params.status);
+  if (params?.area) qs.set("area", params.area);
+  const path = qs.toString() ? `/daily/goals?${qs.toString()}` : "/daily/goals";
+  const r = await getJson<LifeGoal[] | { goals?: LifeGoal[] }>(path);
+  if (Array.isArray(r)) return r;
+  if (Array.isArray(r.goals)) return r.goals;
+  return [];
+};
+
+export const createLifeGoal = (
+  input: LifeGoalInput,
+): Promise<DayWriteResult> =>
+  postJson<DayWriteResult>("/daily/goals", input);
+
+export const updateLifeGoal = (
+  id: string,
+  patch: Partial<LifeGoalInput>,
+): Promise<DayWriteResult> =>
+  patchJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`, patch);
+
+export const deleteLifeGoal = (id: string): Promise<DayWriteResult> =>
+  deleteJson<DayWriteResult>(`/daily/goals/${encodeURIComponent(id)}`);
