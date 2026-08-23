@@ -1736,7 +1736,7 @@ function DeleteChatModal({
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0, 0, 0, 0.65)",
+        background: tokens.overlay,
         backdropFilter: "blur(2px)",
         zIndex: 2000,
         display: "flex",
@@ -1754,7 +1754,7 @@ function DeleteChatModal({
           background: tokens.bgCard,
           border: `1px solid ${tokens.borderEmphasis}`,
           borderRadius: 10,
-          boxShadow: "0 16px 40px rgba(0, 0, 0, 0.6)",
+          boxShadow: `0 16px 40px ${tokens.shadowStrong}`,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",

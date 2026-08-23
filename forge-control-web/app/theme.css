@@ -70,6 +70,12 @@
   --fg-scrollbar: #2a2a2e;
   --fg-overlay: rgba(0, 0, 0, 0.6);
   --fg-inputBg: #0b0b0c;
+  /* Drop-shadow ink for lifted chrome. Only the COLOUR is a token — the
+     offsets and blur stay at the call site, because those are geometry and
+     do not change with the theme. Dark: a near-opaque black reads as depth
+     against a near-black page. */
+  --fg-shadowStrong: rgba(0, 0, 0, 0.6);
+  --fg-shadowSoft: rgba(0, 0, 0, 0.45);
   /* Selected list row + tool-call block. These were hardcoded (#101013 /
      #0a0a0c) at 8+ call sites, which is why selected chats and every tool
      row stayed pitch black in light mode. */
@@ -190,6 +196,11 @@ html[data-theme="light"] {
   --fg-scrollbar: #c9c9c4;
   --fg-overlay: rgba(0, 0, 0, 0.35);
   --fg-inputBg: #ffffff;
+  /* Light: the same black at a third of the alpha. A 0.6 shadow on a paper
+     page is a smudge, not depth — the dark values inverted in weight rather
+     than transplanted, same rule as --fg-selectedBg above. */
+  --fg-shadowStrong: rgba(0, 0, 0, 0.2);
+  --fg-shadowSoft: rgba(0, 0, 0, 0.14);
   /* Light: a selected row reads as a soft tint, and a tool block as a faint
      recessed panel — the dark values inverted rather than transplanted. */
   --fg-selectedBg: #e8e8e3;

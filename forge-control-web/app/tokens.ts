@@ -73,6 +73,10 @@ export const tokens = {
   // chrome that must differ per theme but isn't in the original design
   inputBg: v("inputBg"),
   overlay: v("overlay"),
+  /** Drop-shadow ink. Compose the geometry at the call site:
+   *  `boxShadow: \`0 16px 40px ${tokens.shadowStrong}\``. */
+  shadowStrong: v("shadowStrong"),
+  shadowSoft: v("shadowSoft"),
   /** Selected list row / tool-call block — see theme.css. */
   selectedBg: v("selectedBg"),
   rowHover: v("rowHover"),

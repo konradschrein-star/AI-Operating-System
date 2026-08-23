@@ -150,7 +150,7 @@ export function ChatContextPopover({
             background: tokens.bgCard,
             border: `1px solid ${tokens.borderEmphasis}`,
             borderRadius: 7,
-            boxShadow: "0 8px 24px rgba(0, 0, 0, 0.45)",
+            boxShadow: `0 8px 24px ${tokens.shadowSoft}`,
             opacity: isOpen ? 1 : 0,
             transition:
               "opacity 250ms cubic-bezier(0.16, 1, 0.3, 1), transform 250ms cubic-bezier(0.16, 1, 0.3, 1)",

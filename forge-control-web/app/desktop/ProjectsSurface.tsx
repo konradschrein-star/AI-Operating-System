@@ -97,6 +97,13 @@ const STATUS_ORDER: Record<string, number> = {
   cancelled: 4,
 };
 
+/**
+ * A row of GET /projects/managers. The endpoint also returns a currency figure
+ * per project; it is deliberately NOT declared here. Konrad runs on the
+ * subscription, not API billing, so a rendered cost is noise he rejected —
+ * scripts/checks/dollar-sweep.sh is the gate that keeps it out of every
+ * surface except Money. Progress and recency are what this rail shows instead.
+ */
 export interface ManagerRollupRow {
   project_id: string;
   name: string;
@@ -106,9 +113,17 @@ export interface ManagerRollupRow {
   tasks_total: number;
   tokens_in: number;
   tokens_out: number;
-  spent_usd: number;
   last_activity_at: string | null;
 }
+
+/** Rail date filter — "touched within the last …". */
+type DateFilter = "all" | "24h" | "7d" | "30d";
+
+const DATE_FILTER_MS: Record<Exclude<DateFilter, "all">, number> = {
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+  "30d": 30 * 24 * 60 * 60 * 1000,
+};
 
 function humanAge(ts: string | null | undefined): string {
   if (!ts) return "—";
@@ -160,6 +175,7 @@ export function ProjectsSurface({
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "done" | "paused">("all");
   const [repoFilter, setRepoFilter] = useState<"all" | "ai-os" | "content-forge" | "scratch">("all");
+  const [dateFilter, setDateFilter] = useState<DateFilter>("all");
 
   // Main board task search
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
@@ -244,6 +260,14 @@ export function ProjectsSurface({
       if (repoFilter !== "all" && p.repo !== repoFilter) {
         return false;
       }
+      if (dateFilter !== "all") {
+        const touched = new Date(p.updated_at || p.created_at).getTime();
+        // An unparseable timestamp must not silently vanish from a filtered
+        // list — keep the project and let the row show its own age.
+        if (!Number.isNaN(touched) && Date.now() - touched > DATE_FILTER_MS[dateFilter]) {
+          return false;
+        }
+      }
       if (q) {
         const matchName = p.name.toLowerCase().includes(q);
         const matchBrief = (p.brief || "").toLowerCase().includes(q);
@@ -255,7 +279,7 @@ export function ProjectsSurface({
       }
       return true;
     });
-  }, [sortedProjects, searchQuery, statusFilter, repoFilter]);
+  }, [sortedProjects, searchQuery, statusFilter, repoFilter, dateFilter]);
 
   // Filter tasks for Kanban board / Floor
   const filteredTasks = useMemo(() => {
@@ -489,6 +513,36 @@ export function ProjectsSurface({
               </button>
             ))}
           </div>
+
+          {/* Date filter pills — "touched within the last …" */}
+          <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+            <span className="mono" style={{ fontSize: 9.5, color: tokens.textFaint, marginRight: 2 }}>
+              seen:
+            </span>
+            {(["all", "24h", "7d", "30d"] as const).map((df) => (
+              <button
+                key={df}
+                onClick={() => setDateFilter(df)}
+                className="mono"
+                title={
+                  df === "all"
+                    ? "any date"
+                    : `only projects updated in the last ${df}`
+                }
+                style={{
+                  fontSize: 9.5,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  cursor: "pointer",
+                  border: `1px solid ${dateFilter === df ? tokens.accent : tokens.borderSoft}`,
+                  background: dateFilter === df ? tokens.primaryActionBg : "transparent",
+                  color: dateFilter === df ? tokens.accent : tokens.textMuted,
+                }}
+              >
+                {df}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Project list in Rail */}
@@ -629,16 +683,19 @@ export function ProjectsSurface({
                 )}
               </div>
 
-              {/* Progress & Spend badge */}
+              {/* Progress & last-activity badge */}
               <div className="mono" style={{ fontSize: 11, color: tokens.textSecondary, display: "flex", gap: 8 }}>
                 {selectedProjectManager ? (
                   <>
                     <span>
                       {selectedProjectManager.tasks_done}/{selectedProjectManager.tasks_total} done
                     </span>
-                    {selectedProjectManager.spent_usd > 0 && (
-                      <span style={{ color: tokens.accent }}>
-                        ${selectedProjectManager.spent_usd.toFixed(2)}
+                    {selectedProjectManager.last_activity_at && (
+                      <span
+                        style={{ color: tokens.textFaint }}
+                        title={`last activity ${new Date(selectedProjectManager.last_activity_at).toLocaleString()}`}
+                      >
+                        {humanAge(selectedProjectManager.last_activity_at)} ago
                       </span>
                     )}
                   </>
@@ -800,7 +857,7 @@ function ProjectListItem({
 
   const doneCount = managerStats?.tasks_done ?? taskCountStats?.done ?? 0;
   const totalCount = managerStats?.tasks_total ?? taskCountStats?.total ?? 0;
-  const spentUsd = managerStats?.spent_usd ?? 0;
+  const lastActivity = managerStats?.last_activity_at ?? project.updated_at ?? null;
 
   return (
     <div
@@ -868,9 +925,13 @@ function ProjectListItem({
         <span className="mono" style={{ fontSize: 9.5, color: tokens.textFaint }}>
           {totalCount > 0 ? `${doneCount}/${totalCount} done` : project.status}
         </span>
-        {spentUsd > 0 && (
-          <span className="mono" style={{ fontSize: 9.5, color: tokens.accent, marginLeft: "auto" }}>
-            ${spentUsd.toFixed(2)}
+        {lastActivity && (
+          <span
+            className="mono"
+            style={{ fontSize: 9.5, color: tokens.textGhost, marginLeft: "auto" }}
+            title={`last activity ${new Date(lastActivity).toLocaleString()}`}
+          >
+            {humanAge(lastActivity)}
           </span>
         )}
       </div>
