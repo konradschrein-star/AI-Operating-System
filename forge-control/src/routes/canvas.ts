@@ -47,11 +47,34 @@ import {
   type ExcalidrawDoc,
 } from "../lib/excalidraw-md.ts";
 import { applyOps, type PatchOp } from "../lib/excalidraw-build.ts";
+import {
+  parseDrawingGraphFromMarkdown,
+} from "../lib/excalidraw-graph.ts";
+import {
+  compileCanvasPlan,
+  compileCanvasPlanFromMarkdown,
+  serializeCanvasPlanMarkdown,
+  type CanvasPlan,
+} from "../lib/excalidraw-plan.ts";
+import {
+  createProject,
+  createTask,
+  getProject,
+  setProjectWorkspace,
+  setProjectStatus,
+  type ProjectRepo,
+  type TaskTier,
+  type ProjectTask,
+} from "../db/projects.ts";
+import { provisionWorkspace } from "../lib/workspace.ts";
 
 const r = new Hono();
 
 const VAULT_DIR = process.env.OBSIDIAN_VAULT_DIR ?? "/opt/obsidian-vault";
 const EXT = ".excalidraw.md";
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const REPOS = new Set<ProjectRepo>(["ai-os", "content-forge", "scratch"]);
 
 /** Resolve a caller-supplied path INSIDE the vault. Rejects traversal and any
  *  file that isn't a drawing — this endpoint must never become a general
@@ -63,6 +86,19 @@ function safePath(rel: string): string {
     throw new Error("path escapes the vault");
   }
   if (!abs.endsWith(EXT)) throw new Error(`not a drawing (${EXT} required)`);
+  return abs;
+}
+
+/** Resolve a companion .plan.md path inside the vault. */
+function safePlanPath(rel: string): string {
+  const abs = resolve(VAULT_DIR, rel);
+  const within = relative(VAULT_DIR, abs);
+  if (!within || within.startsWith("..") || isAbsolute(within)) {
+    throw new Error("path escapes the vault");
+  }
+  if (!abs.endsWith(".plan.md") && !abs.endsWith(".md")) {
+    throw new Error("not a markdown note (.plan.md required)");
+  }
   return abs;
 }
 
@@ -658,6 +694,196 @@ r.post("/patch", async (c) => {
         ? 400
         : 500;
     if (code === 500) console.error("[canvas/patch]", msg);
+    return c.json({ error: msg }, code);
+  }
+});
+
+/* ---------------------------------------------------------------------------
+ * Canvas Plan compilation, companion persistence, and project conversion.
+ * ------------------------------------------------------------------------- */
+
+/** GET /api/canvas/plan?path=<rel>
+ *  Derives the typed DrawingGraph and actionable CanvasPlan for a drawing in the vault. */
+r.get("/plan", async (c) => {
+  const rel = (c.req.query("path") ?? "").trim();
+  if (!rel) return c.json({ error: "path required" }, 400);
+  try {
+    const abs = safePath(rel);
+    const raw = await readFile(abs, "utf8").catch(() => null);
+    if (raw === null) return c.json({ error: "no such drawing", path: rel }, 404);
+
+    const graph = parseDrawingGraphFromMarkdown(raw, rel);
+    const plan = compileCanvasPlan(graph);
+
+    const planRel = rel.replace(/\.excalidraw\.md$/i, ".plan.md");
+    const absPlan = safePlanPath(planRel);
+    const savedMarkdown = await readFile(absPlan, "utf8").catch(() => null);
+
+    return c.json({
+      ok: true,
+      path: rel,
+      plan,
+      graph,
+      savedMarkdown,
+      planPath: planRel,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code = /escapes|not a drawing/.test(msg) ? 400 : /ENOENT/.test(msg) ? 404 : 500;
+    if (code === 500) console.error("[canvas/plan:get]", msg);
+    return c.json({ error: msg }, code);
+  }
+});
+
+/** POST /api/canvas/plan/save { path, planMarkdown?, plan? }
+ *  Saves an edited or generated plan markdown to <drawing>.plan.md in the vault. */
+r.post("/plan/save", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    path?: string;
+    planMarkdown?: string;
+    plan?: CanvasPlan;
+  };
+  const rel = (body.path ?? "").trim();
+  if (!rel) return c.json({ error: "path required" }, 400);
+  try {
+    const abs = safePath(rel);
+    if (!(await stat(abs).catch(() => null))) {
+      return c.json({ error: "no such drawing", path: rel }, 404);
+    }
+
+    let markdown = (body.planMarkdown ?? "").trim();
+    if (!markdown && body.plan) {
+      markdown = serializeCanvasPlanMarkdown(body.plan);
+    }
+    if (!markdown) {
+      const raw = await readFile(abs, "utf8");
+      const compiled = compileCanvasPlanFromMarkdown(raw, rel);
+      markdown = compiled.rawMarkdown;
+    }
+
+    const planRel = rel.replace(/\.excalidraw\.md$/i, ".plan.md");
+    const absPlan = safePlanPath(planRel);
+    await mkdir(dirname(absPlan), { recursive: true });
+    await writeFile(absPlan, markdown, "utf8");
+    const s = await stat(absPlan);
+
+    return c.json({ ok: true, path: rel, planPath: planRel, mtime: s.mtimeMs });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code = /escapes|not a drawing|not a markdown/.test(msg) ? 400 : 500;
+    if (code === 500) console.error("[canvas/plan:save]", msg);
+    return c.json({ error: msg }, code);
+  }
+});
+
+/** POST /api/canvas/plan/to-project { path?, plan?, name?, brief?, repo?, base_branch?, architect_tier?, origin_chat_id? }
+ *  Creates a real project in forge-control from a CanvasPlan and seeds all tasks in topological order. */
+r.post("/plan/to-project", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    path?: string;
+    name?: string;
+    brief?: string;
+    repo?: ProjectRepo;
+    base_branch?: string;
+    architect_tier?: TaskTier;
+    origin_chat_id?: string;
+    plan?: CanvasPlan;
+  };
+
+  const rel = (body.path ?? "").trim();
+  let plan = body.plan;
+
+  try {
+    if (!plan) {
+      if (!rel) return c.json({ error: "path or plan required" }, 400);
+      const abs = safePath(rel);
+      const raw = await readFile(abs, "utf8").catch(() => null);
+      if (raw === null) return c.json({ error: "no such drawing", path: rel }, 404);
+      plan = compileCanvasPlanFromMarkdown(raw, rel);
+    }
+
+    const name = (body.name ?? plan.title).trim();
+    if (!name) return c.json({ error: "project name required" }, 400);
+
+    const brief = (
+      body.brief ??
+      `${plan.summary}\n\n${plan.rawMarkdown || serializeCanvasPlanMarkdown(plan)}`
+    ).trim();
+
+    const repo: ProjectRepo = body.repo && REPOS.has(body.repo) ? body.repo : "ai-os";
+
+    const metadata: Record<string, unknown> = {
+      source: "canvas",
+      canvas_path: rel || plan.path || null,
+    };
+
+    const originChatId = (body.origin_chat_id ?? "").trim();
+    if (originChatId) {
+      if (!UUID_RE.test(originChatId)) {
+        return c.json({ error: "origin_chat_id must be a uuid" }, 400);
+      }
+      metadata.origin_chat_id = originChatId;
+    }
+
+    const { project, architectTask } = await createProject({
+      name,
+      brief,
+      repo,
+      base_branch: body.base_branch,
+      architect_tier: body.architect_tier ?? "standard",
+      metadata,
+    });
+
+    try {
+      const ws = await provisionWorkspace(project);
+      await setProjectWorkspace(project.id, ws);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[canvas/to-project] workspace provisioning failed for ${project.id}:`, msg);
+      await setProjectStatus(project.id, "blocked");
+    }
+
+    // Insert all plan tasks into project_tasks in topological order
+    const idMap = new Map<string, string>();
+    const createdTasks: ProjectTask[] = [];
+
+    for (const task of plan.tasks) {
+      const mappedDeps = task.depends_on
+        .map((pid) => idMap.get(pid))
+        .filter((uuid): uuid is string => typeof uuid === "string" && uuid.length > 0);
+
+      const res = await createTask({
+        project_id: project.id,
+        round: task.phase,
+        role: task.role,
+        title: task.title,
+        brief: task.brief,
+        tier: task.tier,
+        depends_on: mappedDeps,
+        workstream: task.workstream,
+        write_set: task.write_set,
+      });
+
+      idMap.set(task.id, res.task.id);
+      if (res.created) {
+        createdTasks.push(res.task);
+      }
+    }
+
+    return c.json(
+      {
+        ok: true,
+        project: await getProject(project.id),
+        architectTask,
+        tasks: createdTasks,
+        tasksCount: plan.tasks.length,
+      },
+      201,
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const code = /escapes|not a drawing/.test(msg) ? 400 : /ENOENT/.test(msg) ? 404 : 500;
+    if (code === 500) console.error("[canvas/plan/to-project]", msg);
     return c.json({ error: msg }, code);
   }
 });
