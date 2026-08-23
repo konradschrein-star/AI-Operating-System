@@ -194,3 +194,46 @@ of them** — `PLAN.md`, `WORKLOG.md`, `docs/DEVELOPMENT.md`,
 So: gate 8 is green here and will be red the moment this branch meets main,
 through no change of this lane's. It needs sentence-scoped allowlist rows from
 whoever owns `GoalsTab.tsx` — not from here, and not a `.*` row.
+
+### Independent re-verification of fix cycle 1 (separate turn, same lane)
+
+A later turn re-ran the whole verification from scratch rather than trusting the
+evidence above. Everything below was observed by that turn, at tip `0da4e11`
+(two `WORKLOG.md`-only commits landed during the run; no gate reads that file,
+so the result still describes the code at `e5ea047`).
+
+All six review findings re-checked against disk, and findings 1-3 re-checked
+against the **live** API with read-only GETs:
+
+```
+node forge-control/bin/aios.mjs spend summary --no-color
+  Window  Metered  Calls  Claude Code  Calls
+  Today     €0.00     34      €411.72    114
+  30-day    €0.00     84     €4147.72   1218
+```
+Cross-checked against `curl /api/spend/summary` → `total_eur: 0` is the API's
+real value, and the €4147.72 Claude figure is the one round 1 hid completely.
+`runs show 2ef126b7…` renders 48 comms with sender, direction and real bodies.
+
+Discrimination re-proved independently, without mutating the tracked file:
+`git show 9cf15e9:…/cli-runner.ts` written to a scratch sibling inside the
+package, the suite's import redirected to it with `sed`, both scratch files
+deleted afterwards (`git status` clean).
+
+```
+against the fixed code:      # tests 9  # pass 9  # fail 0
+against pre-fix (9cf15e9):   # tests 9  # pass 1  # fail 8
+```
+
+```
+bash scripts/checks/guard.sh --full        PASS: 11  FAIL: 0  SKIP: 0
+                                           GUARD: GREEN   (real 4m40.356s)
+bash scripts/checks/test-guard-discrimination.sh
+                                           PASSED — 3/3 defect classes flip RED,
+                                           3/3 restores flip GREEN   (exit 0)
+cd forge-control && npx tsc --noEmit        exit 0
+```
+
+Install caveat in `docs/DEVELOPMENT.md` §0 re-confirmed still true:
+`ls /opt/forge-ai-os/forge-control/bin/aios.mjs` → No such file;
+`command -v aios` → nothing. No code was changed by this turn.
