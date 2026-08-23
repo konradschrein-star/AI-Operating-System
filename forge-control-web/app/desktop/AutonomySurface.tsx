@@ -56,10 +56,27 @@ export function AutonomySurface() {
         : freezeFleet("user"),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["autonomy"] }),
   });
+  const resolveM = useMutation({
+    mutationFn: async (tripId: string) => {
+      const res = await fetch(`/api/autonomy/trips/${encodeURIComponent(tripId)}/resolve`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("Failed to resolve trip");
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["autonomy"] }),
+  });
 
   const filtered = useMemo<GuardrailRule[]>(() => {
     const all = q.data?.rules ?? [];
     return cat ? all.filter((r) => r.category === cat) : all;
+  }, [q.data, cat]);
+
+  const filteredTrips = useMemo<GuardrailTrip[]>(() => {
+    const allTrips = q.data?.trips ?? [];
+    if (!cat) return allTrips;
+    const rulesMap = new Map(q.data?.rules.map((r) => [r.id, r.category]));
+    return allTrips.filter((t) => rulesMap.get(t.rule_id) === cat);
   }, [q.data, cat]);
 
   const paused = q.data?.fleet.status === "paused";
@@ -113,6 +130,30 @@ export function AutonomySurface() {
           padding: "16px 20px 32px",
         }}
       >
+        {/* Purpose banner */}
+        <div
+          style={{
+            background: tokens.bgCard,
+            border: `1px solid ${tokens.border}`,
+            borderRadius: 8,
+            padding: "10px 14px",
+            marginBottom: 16,
+            fontSize: 12,
+            color: tokens.textSecondary,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            lineHeight: 1.4,
+          }}
+        >
+          <span className="ms" style={{ fontSize: 16, color: tokens.accent }}>
+            shield
+          </span>
+          <span>
+            Autonomy is your operational safety cockpit — enforce execution boundaries, manage model-specific token budgets (Claude subscription windows vs. high-throughput Gemini quota), and triage tripped guardrails.
+          </span>
+        </div>
+
         {/* Fleet pause hero */}
         <div
           onClick={() => freezeM.mutate()}
@@ -196,6 +237,9 @@ export function AutonomySurface() {
               onToggle={() =>
                 ruleM.mutate({ id: rule.id, enabled: !rule.enabled })
               }
+              onSaveConfig={(cfg) =>
+                ruleM.mutate({ id: rule.id, config: cfg })
+              }
             />
           ))}
         </div>
@@ -209,9 +253,9 @@ export function AutonomySurface() {
             marginBottom: 10,
           }}
         >
-          RECENT TRIPS
+          RECENT TRIPS {cat ? `(${cat})` : ""}
         </div>
-        {(q.data?.trips.length ?? 0) === 0 ? (
+        {filteredTrips.length === 0 ? (
           <div
             className="mono"
             style={{
@@ -235,8 +279,13 @@ export function AutonomySurface() {
               overflow: "hidden",
             }}
           >
-            {q.data?.trips.map((t, i, arr) => (
-              <TripRow key={t.id} trip={t} isLast={i === arr.length - 1} />
+            {filteredTrips.map((t, i, arr) => (
+              <TripRow
+                key={t.id}
+                trip={t}
+                isLast={i === arr.length - 1}
+                onResolve={() => resolveM.mutate(t.id)}
+              />
             ))}
           </div>
         )}
@@ -248,12 +297,31 @@ export function AutonomySurface() {
 function RuleRow({
   rule,
   onToggle,
+  onSaveConfig,
 }: {
   rule: GuardrailRule;
   onToggle: () => void;
+  onSaveConfig: (config: Record<string, unknown>) => void;
 }) {
   const color = CATEGORY_COLOR[rule.category] ?? tokens.textMuted;
-  const cfgKeys = Object.keys(rule.config ?? {});
+  const [isEditing, setIsEditing] = useState(false);
+  const [configDraft, setConfigDraft] = useState<Record<string, unknown>>(() => ({
+    ...(rule.config ?? {}),
+  }));
+
+  const handleSave = () => {
+    onSaveConfig(configDraft);
+    setIsEditing(false);
+  };
+
+  const handleCancel = () => {
+    setConfigDraft({ ...(rule.config ?? {}) });
+    setIsEditing(false);
+  };
+
+  const hasConfig = Object.keys(rule.config ?? {}).length > 0 ||
+    ["spend.per_run_cap", "spend.daily_cap", "agent.spawn_cap", "git.force_push"].includes(rule.id);
+
   return (
     <div
       style={{
@@ -263,92 +331,341 @@ function RuleRow({
         borderRadius: 8,
         padding: "12px 14px",
         display: "flex",
-        alignItems: "center",
-        gap: 12,
+        flexDirection: "column",
+        gap: 10,
         opacity: rule.enabled ? 1 : 0.6,
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span
-            className="mono"
-            style={{
-              fontSize: 9.5,
-              color,
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            {rule.category}
-          </span>
-          <span
-            className="mono"
-            style={{ fontSize: 10, color: tokens.textFaint }}
-          >
-            · {rule.id}
-          </span>
-          {rule.builtin && (
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span
               className="mono"
               style={{
                 fontSize: 9.5,
-                color: tokens.textFaint,
-                border: `1px solid ${tokens.borderDivider}`,
-                borderRadius: 4,
-                padding: "0 5px",
+                color,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
               }}
             >
-              builtin
+              {rule.category}
             </span>
-          )}
-        </div>
-        <div
-          style={{
-            fontSize: 13,
-            color: tokens.textHi,
-            marginTop: 4,
-            fontWeight: 500,
-          }}
-        >
-          {rule.label}
-        </div>
-        <div
-          style={{
-            fontSize: 11.5,
-            color: tokens.textSecondary,
-            marginTop: 3,
-            lineHeight: 1.5,
-          }}
-        >
-          {rule.description}
-        </div>
-        {cfgKeys.length > 0 && (
+            <span
+              className="mono"
+              style={{ fontSize: 10, color: tokens.textFaint }}
+            >
+              · {rule.id}
+            </span>
+            {rule.builtin && (
+              <span
+                className="mono"
+                style={{
+                  fontSize: 9.5,
+                  color: tokens.textFaint,
+                  border: `1px solid ${tokens.borderDivider}`,
+                  borderRadius: 4,
+                  padding: "0 5px",
+                }}
+              >
+                builtin
+              </span>
+            )}
+          </div>
           <div
-            className="mono"
             style={{
-              fontSize: 10,
-              color: tokens.textMuted,
-              marginTop: 6,
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
+              fontSize: 13,
+              color: tokens.textHi,
+              marginTop: 4,
+              fontWeight: 500,
             }}
           >
-            {cfgKeys.map((k) => (
-              <span key={k}>
-                <span style={{ color: tokens.textFaint }}>{k}=</span>
-                {JSON.stringify(rule.config[k])}
-              </span>
-            ))}
+            {rule.label}
           </div>
-        )}
+          <div
+            style={{
+              fontSize: 11.5,
+              color: tokens.textSecondary,
+              marginTop: 3,
+              lineHeight: 1.5,
+            }}
+          >
+            {rule.description}
+          </div>
+        </div>
+        <Toggle on={rule.enabled} onClick={onToggle} color={color} />
       </div>
-      <Toggle on={rule.enabled} onClick={onToggle} color={color} />
+
+      {/* Config display / editor */}
+      {hasConfig && (
+        <div
+          style={{
+            background: "rgba(0,0,0,0.15)",
+            border: `1px solid ${tokens.borderDivider}`,
+            borderRadius: 6,
+            padding: "8px 12px",
+            marginTop: 2,
+          }}
+        >
+          {isEditing ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div
+                className="mono"
+                style={{ fontSize: 10, color: tokens.textMuted, letterSpacing: "0.05em" }}
+              >
+                EDIT CONFIGURATION:
+              </div>
+
+              {rule.id === "spend.per_run_cap" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                      Claude Token Cap
+                    </label>
+                    <input
+                      type="number"
+                      value={Number(configDraft.claude_token_cap ?? 100000)}
+                      onChange={(e) =>
+                        setConfigDraft((prev) => ({
+                          ...prev,
+                          claude_token_cap: Number(e.target.value),
+                        }))
+                      }
+                      style={configInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                      Gemini Token Cap
+                    </label>
+                    <input
+                      type="number"
+                      value={Number(configDraft.gemini_token_cap ?? 1000000)}
+                      onChange={(e) =>
+                        setConfigDraft((prev) => ({
+                          ...prev,
+                          gemini_token_cap: Number(e.target.value),
+                        }))
+                      }
+                      style={configInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                      Cap (EUR)
+                    </label>
+                    <input
+                      type="number"
+                      value={Number(configDraft.cap_eur ?? 50)}
+                      onChange={(e) =>
+                        setConfigDraft((prev) => ({
+                          ...prev,
+                          cap_eur: Number(e.target.value),
+                        }))
+                      }
+                      style={configInputStyle}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {rule.id === "spend.daily_cap" && (
+                <div>
+                  <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                    Daily Spend Cap (EUR)
+                  </label>
+                  <input
+                    type="number"
+                    value={Number(configDraft.cap_eur ?? 100)}
+                    onChange={(e) =>
+                      setConfigDraft((prev) => ({
+                        ...prev,
+                        cap_eur: Number(e.target.value),
+                      }))
+                    }
+                    style={configInputStyle}
+                  />
+                </div>
+              )}
+
+              {rule.id === "agent.spawn_cap" && (
+                <div>
+                  <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                    Max Concurrent Workers
+                  </label>
+                  <input
+                    type="number"
+                    value={Number(configDraft.max ?? 12)}
+                    onChange={(e) =>
+                      setConfigDraft((prev) => ({
+                        ...prev,
+                        max: Number(e.target.value),
+                      }))
+                    }
+                    style={configInputStyle}
+                  />
+                </div>
+              )}
+
+              {rule.id === "git.force_push" && (
+                <div>
+                  <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                    Protected Branches (comma separated)
+                  </label>
+                  <input
+                    type="text"
+                    value={
+                      Array.isArray(configDraft.protected_branches)
+                        ? (configDraft.protected_branches as string[]).join(", ")
+                        : String(configDraft.protected_branches ?? "main, master, prod")
+                    }
+                    onChange={(e) =>
+                      setConfigDraft((prev) => ({
+                        ...prev,
+                        protected_branches: e.target.value
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      }))
+                    }
+                    style={configInputStyle}
+                  />
+                </div>
+              )}
+
+              {!["spend.per_run_cap", "spend.daily_cap", "agent.spawn_cap", "git.force_push"].includes(
+                rule.id,
+              ) &&
+                Object.keys(configDraft).map((k) => (
+                  <div key={k}>
+                    <label style={{ fontSize: 10, color: tokens.textFaint, display: "block" }}>
+                      {k}
+                    </label>
+                    <input
+                      type="text"
+                      value={typeof configDraft[k] === "object" ? JSON.stringify(configDraft[k]) : String(configDraft[k] ?? "")}
+                      onChange={(e) => {
+                        let parsed: unknown = e.target.value;
+                        try {
+                          parsed = JSON.parse(e.target.value);
+                        } catch {}
+                        setConfigDraft((prev) => ({ ...prev, [k]: parsed }));
+                      }}
+                      style={configInputStyle}
+                    />
+                  </div>
+                ))}
+
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <button onClick={handleSave} style={configSaveBtnStyle}>
+                  Save
+                </button>
+                <button onClick={handleCancel} style={configCancelBtnStyle}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <div
+                className="mono"
+                style={{
+                  fontSize: 10.5,
+                  color: tokens.textMuted,
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 10,
+                }}
+              >
+                {Object.keys(rule.config ?? {}).length === 0 ? (
+                  <span style={{ color: tokens.textFaint }}>Default parameters active</span>
+                ) : (
+                  Object.keys(rule.config ?? {}).map((k) => (
+                    <span key={k}>
+                      <span style={{ color: tokens.textFaint }}>{k}=</span>
+                      <span style={{ color: tokens.textHi }}>{JSON.stringify(rule.config[k])}</span>
+                    </span>
+                  ))
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  setConfigDraft({ ...(rule.config ?? {}) });
+                  setIsEditing(true);
+                }}
+                className="mono"
+                style={configEditBtnStyle}
+              >
+                edit config
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function TripRow({ trip, isLast }: { trip: GuardrailTrip; isLast: boolean }) {
+const configInputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "4px 8px",
+  fontSize: 11,
+  background: "rgba(0,0,0,0.3)",
+  border: `1px solid ${tokens.border}`,
+  borderRadius: 4,
+  color: tokens.text,
+  marginTop: 2,
+};
+
+const configEditBtnStyle: React.CSSProperties = {
+  fontSize: 9.5,
+  padding: "2px 8px",
+  background: "transparent",
+  border: `1px solid ${tokens.borderSoft}`,
+  borderRadius: 4,
+  color: tokens.textSecondary,
+  cursor: "pointer",
+};
+
+const configSaveBtnStyle: React.CSSProperties = {
+  fontSize: 10,
+  padding: "4px 10px",
+  background: tokens.accent,
+  border: "none",
+  borderRadius: 4,
+  color: "#fff",
+  cursor: "pointer",
+  fontWeight: 600,
+};
+
+const configCancelBtnStyle: React.CSSProperties = {
+  fontSize: 10,
+  padding: "4px 10px",
+  background: "transparent",
+  border: `1px solid ${tokens.border}`,
+  borderRadius: 4,
+  color: tokens.textMuted,
+  cursor: "pointer",
+};
+
+function TripRow({
+  trip,
+  isLast,
+  onResolve,
+}: {
+  trip: GuardrailTrip;
+  isLast: boolean;
+  onResolve?: () => void;
+}) {
+  const reason = (trip.payload?._reason as string) ?? null;
+  const runId = (trip.payload?.run_id as string) ?? null;
+
   return (
     <div
       style={{
@@ -356,13 +673,25 @@ function TripRow({ trip, isLast }: { trip: GuardrailTrip; isLast: boolean }) {
         borderBottom: isLast ? "none" : `1px solid ${tokens.borderDivider}`,
         display: "flex",
         flexDirection: "column",
-        gap: 3,
+        gap: 4,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={dot(trip.resolved ? tokens.ok : tokens.bleed)} />
-        <span className="mono" style={{ fontSize: 10, color: tokens.textHi }}>
+        <span className="mono" style={{ fontSize: 10.5, color: tokens.textHi, fontWeight: 500 }}>
           {trip.rule_label}
+        </span>
+        <span
+          className="mono"
+          style={{
+            fontSize: 9,
+            padding: "1px 5px",
+            borderRadius: 3,
+            background: trip.resolved ? "rgba(46,160,67,0.15)" : "rgba(248,81,73,0.15)",
+            color: trip.resolved ? tokens.ok : tokens.bleed,
+          }}
+        >
+          {trip.resolved ? "RESOLVED" : "ACTIVE"}
         </span>
         <span style={{ flex: 1 }} />
         <span
@@ -371,16 +700,43 @@ function TripRow({ trip, isLast }: { trip: GuardrailTrip; isLast: boolean }) {
         >
           {humanAge(trip.ts)} · {trip.agent}
         </span>
+        {!trip.resolved && onResolve && (
+          <button
+            onClick={onResolve}
+            className="mono"
+            style={{
+              fontSize: 9.5,
+              padding: "2px 8px",
+              background: "rgba(46,160,67,0.2)",
+              border: `1px solid ${tokens.ok}`,
+              borderRadius: 4,
+              color: tokens.ok,
+              cursor: "pointer",
+            }}
+          >
+            Resolve
+          </button>
+        )}
       </div>
       <div
         style={{
           fontSize: 11.5,
           color: tokens.textSecondary,
-          lineHeight: 1.5,
+          lineHeight: 1.4,
           marginLeft: 14,
         }}
       >
-        {trip.attempted_action}
+        <span>{trip.attempted_action}</span>
+        {reason && (
+          <span style={{ color: tokens.bleed, marginLeft: 8 }}>
+            — {reason}
+          </span>
+        )}
+        {runId && (
+          <span className="mono" style={{ fontSize: 10, color: tokens.textFaint, marginLeft: 8 }}>
+            (run: {runId.slice(0, 8)})
+          </span>
+        )}
       </div>
     </div>
   );
