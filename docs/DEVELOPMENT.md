@@ -124,11 +124,11 @@ bash scripts/checks/guard.sh --fast --json
 ```
 
 ### What the guard actually costs on this box
-Measured 2026-08-23 on the live VPS with ~10 agent lanes running (load average 32-47 on 16 cores):
+Measured 2026-08-23 on the live VPS with ~10 agent lanes running — load average 17-27 on 16 cores for the rows marked measured here, 32-47 for the round-1 reviewer's cold run:
 
 | Run | Measured | PLAN.md target |
 |---|---|---|
-| `guard.sh --full` | **GUARD_FULL_PLACEHOLDER** | — |
+| `guard.sh --full` (11 checks, incl. web build + gates-808) | **3m55s** | — |
 | `check-instrument-typecheck.sh`, warm cache | **19.4s** | <15s cold |
 | `check-instrument-typecheck.sh`, immediately re-run | **15.5s** | <2s hot |
 | `check-instrument-typecheck.sh`, cold cache | ~91s (round-1 reviewer's measurement, load 32-47) | <15s |
