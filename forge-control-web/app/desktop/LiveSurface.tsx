@@ -10,6 +10,7 @@ import {
   type ServiceDegradation,
   type Provider,
 } from "../data";
+import type { LiveResponse as ApiLiveResponse } from "../api";
 import { AgentActivity } from "./live/AgentActivity";
 import { toast } from "./_ui/Toasts";
 
@@ -28,6 +29,22 @@ export interface LiveResponse {
   degradation: ServiceDegradation[];
   providers: Provider[];
 }
+
+/* ── This component's ONLY caller lives in a file it may not edit ────────────
+ *
+ * `DesktopApp.tsx` is owned by another lane; on `main` it already does
+ *   import { LiveSurface } from "./LiveSurface";
+ *   <LiveSurface data={liveQ.data ?? emptyLive} />
+ * passing `api.ts`'s LiveResponse. This file declares its own, so the two only
+ * agree by structural luck — and the day they stop agreeing, the failure lands
+ * in a file this project cannot touch, at merge time, with nobody to blame it
+ * on. The assignment below is a zero-runtime compile-time assertion that the
+ * caller's type still fits ours. If it goes red, fix THIS interface. */
+type _LiveResponseAcceptsApiShape = ApiLiveResponse extends LiveResponse
+  ? true
+  : never;
+const _liveResponseContractHolds: _LiveResponseAcceptsApiShape = true;
+void _liveResponseContractHolds;
 
 export interface SubsystemCheck {
   status: "ok" | "warn" | "error";
