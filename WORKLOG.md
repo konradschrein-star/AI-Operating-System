@@ -245,3 +245,53 @@ refresh. A 409 renders each refused edge with a separate "Create anyway,
 omitting N edges" action, and a lossy push reports its omissions in the success
 panel so it can never read as a clean one. `api.ts` grew a typed
 `UnresolvedDependenciesError` because the shared `postJson` discards the body.
+
+### Round 3 verification (all run, all output real)
+
+| what | result |
+|---|---|
+| `forge-control` `npx tsc --noEmit` | EXIT=0 |
+| `forge-control-web` `npx tsc --noEmit` | EXIT=0 |
+| `forge-control-web` `npm run build` | EXIT=0 |
+| `forge-control` `npm test` | **1719/1719 pass** (8 new) |
+| `scripts/checks/gates-808.sh --strict` | 25 gates · 23 EXECUTED · 2 SKIPPED (no `--browser`) · **1 RED** |
+
+The single RED is gate 5, `no-raw-colours.cjs`, on
+`forge-control-web/app/desktop/gemini-identity.tsx:27,30`. Not this branch:
+`git log -1` on that file is `784e7df`, and `git merge-base --is-ancestor`
+confirms that commit is already on `origin/main`. Pre-existing debt, same
+finding the round-2 reviewer recorded. My files produce no gate-5 hits.
+
+One of my own tests failed the first full-suite run: I fixed the 409 message's
+singular/plural grammar *after* running the plan tests, so `/close a cycle/`
+no longer matched `"1 of them closes a cycle"`. Stale assertion, not a code
+defect — fixed in `795769e` and re-run green. Recording it because the first
+`npm test` genuinely printed `# fail 1`.
+
+### Browser evidence
+
+Driven against a throwaway `next start` on :7419, built with
+`FORGE_CONTROL_URL=http://127.0.0.1:7413` so `/api/proxy` reached **this
+worktree's** canvas router and not live :7700 (the rewrite is baked at build
+time). The probe served a scratch vault holding one copied real drawing;
+`/opt/forge-ai-os` was never touched and no project was created — the run
+clicks "Create Project" once, which the API answers 409 from the plan alone,
+and never clicks "Create anyway".
+
+- `20260823T104944Z-push-gate-{dark,light}.png` — the ambiguity gate: "23
+  UNRESOLVED QUESTIONS … 10 unlabelled shapes, 6 cycles, 4 unconnected nodes,
+  2 dangling arrows, 1 unexplained color", Create Project **disabled**
+  (asserted in-page: `disabled=true`, then `false` after the tick).
+- `20260823T104729Z-push-409-{dark,light}.png` and the `104944Z` pair — the
+  refusal: "3 DEPENDENCIES CANNOT BE SEEDED / Nothing was created", all three
+  edges named with their plan-local ids, and "Create anyway, omitting 3 edges"
+  as a separate action.
+- Zero page errors in either theme. Both themes checked, not just dark.
+
+Anti-evidence worth stating: this drawing renders fine in the Excalidraw
+canvas. The `invalid order key: a0080` crash the round-2 reviewer hit is
+specific to `Stealth Uploader - System Map`, still unfixed, still out of scope.
+
+Teardown: both throwaway servers killed, ports released, `.env.local` removed
+from the worktree, and `forge-control-web` rebuilt with the default so
+`.next/routes-manifest.json` points back at `http://127.0.0.1:7700/api/:path*`.
