@@ -301,3 +301,143 @@ test("buildArrow between horizontally separated boxes leaves the correct edges",
   const endX = (arrow.x as number) + (arrow.points as number[][])[1][0];
   assert.ok(endX < 600, "arrow ends inside the right card");
 });
+
+/* --- Regression: dropped-first-character multi-label codec test ----------- */
+
+test("lossless markdown codec: multi-label drawing round-trips every label byte-identical (no dropped first char)", () => {
+  const labels = [
+    "STEALTH UPLOADER — SYSTEM MAP",
+    "0 · co-planning draft | green = solid path",
+    "1 · CONTENT",
+    "2 · CONTROL PLANE (VPS · out-of-band)",
+    "Content Forge (existing engine)",
+    "Video + Thumbnail + Metadata",
+    "Aspect router 9:16 → Short · 16:9 → Long",
+    "Human calendar jitter · skipped days · re-slot",
+    "PHASE 1 · Days 1–3   LOGGED-OUT WARM",
+    "One profile = one fingerprint = one static IP",
+    "Age the jar 48–72h ⛔ DO NOT log in yet",
+    "Dolphin Cookie Robot builds Wave-1 jar: AEC · NID · SOCS ·\nVISITOR_INFO1",
+  ];
+
+  let elements: ExcalidrawElement[] = [];
+  const { next: nodes } = applyOps(
+    elements,
+    labels.map((label, idx) => ({
+      op: "addNode",
+      label,
+      x: (idx % 3) * 400,
+      y: Math.floor(idx / 3) * 200,
+    })),
+  );
+  elements = nodes;
+
+  const doc: ExcalidrawDoc = {
+    frontmatter: "---\nexcalidraw-plugin: parsed\ntags: [excalidraw]\n---\n",
+    preamble: "==⚠ Switch to EXCALIDRAW VIEW ⚠==\n\n",
+    otherSections: "",
+    drawing: {
+      type: "excalidraw",
+      version: 2,
+      source: "https://github.com/zsviczian/obsidian-excalidraw-plugin",
+      elements,
+      appState: { gridSize: null, viewBackgroundColor: "#ffffff" },
+      files: {},
+    },
+    format: "compressed",
+  };
+
+  for (const format of ["compressed", "parsed"] as const) {
+    const md = serializeExcalidrawMarkdown(doc, format);
+    const reparsed = parseExcalidrawMarkdown(md);
+
+    const origTextEls = elements.filter((e) => e.type === "text");
+    const reparsedTextEls = reparsed.drawing.elements.filter((e) => e.type === "text");
+
+    assert.equal(reparsedTextEls.length, origTextEls.length, `format ${format} lost text elements`);
+
+    for (let i = 0; i < origTextEls.length; i++) {
+      const orig = origTextEls[i];
+      const rep = reparsedTextEls[i];
+      const expectedLabel = labels[i];
+
+      assert.equal(
+        rep.text,
+        expectedLabel,
+        `element [${i}] label mutated in ${format} format: got "${rep.text}", expected "${expectedLabel}"`,
+      );
+      assert.equal(
+        rep.text,
+        orig.text,
+        `element [${i}] text differs from input in ${format} format`,
+      );
+      assert.equal(
+        rep.originalText,
+        orig.originalText,
+        `element [${i}] originalText differs in ${format} format`,
+      );
+      // Explicitly assert initial character survives
+      assert.equal(
+        (rep.text as string)[0],
+        expectedLabel[0],
+        `element [${i}] lost its first character in ${format} format: got "${(rep.text as string)[0]}", expected "${expectedLabel[0]}"`,
+      );
+
+      // Verify Obsidian ## Text Elements index contains the exact label
+      const indexEntry = `${expectedLabel} ^${String(orig.id)}`;
+      assert.ok(
+        md.includes(indexEntry) || md.includes(`^${String(orig.id)}`),
+        `element [${i}] missing from ## Text Elements in ${format} format`,
+      );
+    }
+  }
+});
+
+test("discriminator: deliberately dropping index 0 of elements [1..N] makes the test go RED", () => {
+  const labels = [
+    "STEALTH UPLOADER — SYSTEM MAP",
+    "Content Forge (existing engine)",
+    "Video + Thumbnail + Metadata",
+  ];
+
+  const { next: elements } = applyOps(
+    [],
+    labels.map((label, idx) => ({
+      op: "addNode",
+      label,
+      x: idx * 400,
+      y: 0,
+    })),
+  );
+
+  // Simulate buggy codec that drops index 0 on elements after index 0
+  const corruptedElements = elements.map((el) => {
+    if (el.type === "text") {
+      const textIndex = labels.indexOf(el.text as string);
+      if (textIndex > 0) {
+        return {
+          ...el,
+          text: (el.text as string).slice(1),
+          originalText: (el.originalText as string).slice(1),
+        };
+      }
+    }
+    return el;
+  });
+
+  // Verify that asserting equality on corruptedElements throws AssertionError
+  assert.throws(
+    () => {
+      const textEls = corruptedElements.filter((e) => e.type === "text");
+      for (let i = 0; i < textEls.length; i++) {
+        assert.equal(
+          textEls[i].text,
+          labels[i],
+          `discriminator caught corrupted element [${i}]: "${textEls[i].text}" vs "${labels[i]}"`,
+        );
+      }
+    },
+    /discriminator caught corrupted element \[1\]: "ontent Forge \(existing engine\)" vs "Content Forge \(existing engine\)"/,
+  );
+});
+
