@@ -45,6 +45,7 @@ import { SettingsSurface } from "./settings/SettingsSurface";
 import { ProjectsSurface } from "./ProjectsSurface";
 import { BusinessesSurface } from "./BusinessesSurface";
 import { GoalsSurface } from "./GoalsSurface";
+import { JournalSurface } from "./JournalSurface";
 import { AgentActivity } from "./live/AgentActivity";
 import { QuotaRow } from "./quota/QuotaRow";
 import {
@@ -122,7 +123,7 @@ import {
 /** The keys this branch renders. `search` is in `SURFACES` but not in `NAV`;
  *  the other three (`journal`, `map`, `library`) are `NAV` entries carrying
  *  `unbuilt: true`. `goals` was a fourth until round 8 — see the note above. */
-type PlaceholderKey = "journal" | "map" | "library" | "search";
+type PlaceholderKey = "map" | "library" | "search";
 
 interface PlaceholderCopy {
   tag: string;
@@ -143,19 +144,6 @@ interface PlaceholderCopy {
 }
 
 const PLACEHOLDER_SURFACES: Record<PlaceholderKey, PlaceholderCopy> = {
-  journal: {
-    tag: "JOURNAL",
-    state: "unbuilt",
-    headline: "JOURNAL is not built yet.",
-    subhead:
-      "Nothing failed to load here. This screen was never written — though, unlike GOALS, most of what it would show is already being recorded.",
-    purpose:
-      "A retrospective day view: a date strip to pick a day, the decisions taken that day, and narrative entries written by the machine rather than by hand.",
-    needs:
-      "A JournalSurface, and a date range on the /api/decisions route that already exists. The decisions log is not a wish: content_forge.decisions holds 120 rows written by the inbox resolve path, mounted and readable today, and no screen in this app reads them. Only the auto-written entries would need anything new — and a recurring LLM cost per day.",
-    scheduling:
-      "Nobody is working on it, and os-usable-for-work does not build it. The determination costs the first two thirds at 1 round, 2 builders and no migration, and recommends dropping the auto-written entries rather than carrying a promise nobody intends to fund.",
-  },
   map: {
     tag: "MAP",
     state: "unbuilt",
@@ -501,6 +489,7 @@ export function DesktopApp() {
               `main`'s 553fa38 line, carried forward unmodified — this merge is
               the integration that brings it in. */}
           {surface === "goals" && <GoalsSurface />}
+          {surface === "journal" && <JournalSurface />}
           {isPlaceholderKey(surface) && (
             <PlaceholderSurface info={PLACEHOLDER_SURFACES[surface]} />
           )}
