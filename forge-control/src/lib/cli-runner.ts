@@ -1262,7 +1262,17 @@ ${c("OPTIONS", colors.bold)}
         console.log(JSON.stringify(res, null, 2));
         return;
       }
-      console.log(c("\nToday's Detailed Spend Breakdown:", colors.bold));
+      // `todaySpendRollup()` sums EVERY provider, claude-code included, while
+      // `summary`'s today.total_eur excludes it. Printing both without saying
+      // so makes the CLI look like it contradicts itself.
+      console.log(c("\nToday's Detailed Spend Breakdown (/api/spend/today):", colors.bold));
+      console.log(
+        c(
+          "  total_eur here sums ALL providers including claude-code's notional cost —\n" +
+            "  it is not the same number as the 'Metered' column in 'aios spend summary'.",
+          colors.dim,
+        ),
+      );
       console.log(JSON.stringify(res, null, 2));
       console.log("");
       break;
