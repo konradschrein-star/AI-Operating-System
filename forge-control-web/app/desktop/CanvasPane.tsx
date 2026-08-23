@@ -1759,7 +1759,11 @@ export function CanvasPane({
                         </div>
                       )}
 
-                      {pushErr && !pushBlockers && (
+                      {/* Suppressed only when the blockers panel is actually
+                          on screen — `pushBlockers === []` is truthy, and a
+                          bare `!pushBlockers` would hide the error with
+                          nothing rendered in its place. */}
+                      {pushErr && !(pushBlockers && pushBlockers.length > 0) && (
                         <div
                           className="mono"
                           style={{
