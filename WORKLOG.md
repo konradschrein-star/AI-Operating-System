@@ -185,3 +185,63 @@ screenshots above. Full teardown confirmed after: no stray listeners on
 `forge-control-web` (38) / `forge-executor` (5) unchanged from before this
 round, `curl :7700/api/today` still 200.
 
+
+## Round 3 — fix cycle 1 (reviewer findings from round 2)
+
+### Finding 1 (HIGH) — silent depends_on drop, `canvas.ts:846-871` — FIXED
+
+`POST /api/canvas/plan/to-project` inserted tasks in `plan.tasks` order (phase,
+workstream, id) and `.filter()`ed out any dependency whose row did not exist
+yet. No error, no log, no field in the response.
+
+Measured over all 15 vault drawings before the fix: **`Drawing 2026-07-07
+18.30.43` lost 3 of its 8 dependency edges**, silently. That is the reviewer's
+finding on real data, not a fixture.
+
+- `lib/excalidraw-plan.ts` — new `resolvePlanInsertionOrder()`. Kahn over the
+  plan's own ids, so every representable edge survives regardless of the order
+  `plan.tasks` happens to be in. The `unresolvable` set is a **replay** of the
+  caller's insert over the resulting order, not a prediction — my first version
+  predicted from where Kahn stalled and reported `leaf <- b` (downstream of a
+  cycle, but perfectly writable) as lost. A test caught it; deriving the report
+  from the final order makes it exact by construction.
+- `routes/canvas.ts` — refuses with **409** and names every edge, *before*
+  `createProject()` so a refusal leaves nothing half-created.
+  `allow_unresolved_dependencies: true` is the explicit override; the omissions
+  then come back as `droppedDependencies` and are logged.
+- 8 new tests in `lib/excalidraw-plan.test.ts`.
+
+Verified against the real drawing through a throwaway probe (canvas router only,
+scratch vault, port 7413 — never `src/index.ts`, never the live checkout):
+
+```
+HTTP 409
+"error": "3 dependency edge(s) in this plan cannot be written as a task graph
+          — 3 of them close a cycle, which would also wedge the project permanently"
+"unresolvable": [ Architect/Planner <- Implementer(s) (cycle) x3 ]
+```
+
+### Finding 2 (Milestone 1 not live) — ESCALATED, still open
+
+Re-verified read-only: `/opt/knowledge-mcp/km-indexer.js:36` still carries
+`.excalidraw.md` in `EXCLUDED_EXTENSIONS`. Reported to the manager chat as
+needing a deploy task; the hunks are in `HANDOFF.md` §1/§2. **Not fixed here** —
+editing an untracked, in-use live service from a build task is exactly what the
+worktree-only policy forbids, and round 0 refused it for the same reason.
+
+### Finding 3 (process — live UPDATE from a build task) — ACKNOWLEDGED
+
+No live-database write was made in this round. The only live-system read was
+`grep` over `km-indexer.js`. The probe above mounts one router against a
+**scratch vault** (`/tmp/aios-4a01858a-vault`) and proxies everything else to
+:7700 read-only.
+
+### Reviewer's verdict item 2 — UI gate — FIXED
+
+`CanvasPane.tsx`: Create Project now requires an explicit acknowledgement when
+`plan.ambiguities.length > 0`, naming what is unresolved ("3 cycles, 1 dangling
+arrow"). The acknowledgement re-arms on every dialog open and every plan
+refresh. A 409 renders each refused edge with a separate "Create anyway,
+omitting N edges" action, and a lossy push reports its omissions in the success
+panel so it can never read as a clean one. `api.ts` grew a typed
+`UnresolvedDependenciesError` because the shared `postJson` discards the body.
