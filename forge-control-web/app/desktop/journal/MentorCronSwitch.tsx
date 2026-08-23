@@ -292,7 +292,15 @@ export function MentorCronSwitch({
             borderRadius: "50%",
             background: tokens.bgBody,
             transition: "left 0.2s ease",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+            // A hairline ring, not a drop shadow. The literal that stood here
+            // ("0 1px 3px rgba(0,0,0,0.2)") failed no-raw-colours.cjs, and it
+            // was also inert where it was needed most: in dark mode the knob
+            // is #000 on a #222226 track when the cron is disarmed, and a
+            // black shadow adds nothing to a black knob. textGhost resolves
+            // to #48484e dark / #a6a6ae light, so the ring separates the knob
+            // from BOTH track colours (accent when armed, borderEmphasis when
+            // disarmed) in BOTH palettes.
+            boxShadow: `0 0 0 1px ${tokens.textGhost}`,
           }}
         />
       </button>

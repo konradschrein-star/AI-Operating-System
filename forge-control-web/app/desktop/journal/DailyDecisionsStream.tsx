@@ -14,6 +14,38 @@ interface DailyDecisionsStreamProps {
   onRefresh: () => void;
 }
 
+/**
+ * `DecisionEntry["kind"]` is a modelled union widened with `| string`, because
+ * the column is plain `text` and a future writer can put anything in it.
+ * `decisionKindColor` switches over the closed union with no `default`, so an
+ * unmodelled kind returns `undefined` at runtime while TypeScript still types
+ * it `string` — the value then lands in `border: 1px solid undefined` and the
+ * row silently loses its edge. Casting with `as` (what stood here) hides that;
+ * this narrows for real and falls back to a visible token instead.
+ */
+const MODELLED_DECISION_KINDS = [
+  "dispatch",
+  "breaker",
+  "degrade",
+  "escalate",
+  "unstick",
+  "resolve",
+  "freeze",
+  "resume",
+  "guardrail",
+  "manager",
+  "user",
+] as const;
+
+type ModelledDecisionKind = (typeof MODELLED_DECISION_KINDS)[number];
+
+function kindColorFor(kind: string): string {
+  const known = MODELLED_DECISION_KINDS.find(
+    (k): k is ModelledDecisionKind => k === kind,
+  );
+  return known ? decisionKindColor(known) : tokens.textMuted;
+}
+
 function formatClock(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "—";
@@ -179,18 +211,27 @@ export function DailyDecisionsStream({
               lineHeight: 1.5,
             }}
           >
-            Decisions are automatically recorded here when inbox items are
-            resolved, morning goals are committed, spend caps trip, or agent
-            supervisors act.
+            {/* Only three code paths write to the `decisions` table today —
+                db/ai_os.ts resolveInboxItem (kind `resolve`) and routes/
+                fleet.ts pause/resume (kinds `freeze`/`resume`). The copy that
+                stood here also promised morning-goal commits and budget-cap
+                trips; neither writes a row, so both were invented. Naming the
+                three real writers is what makes this an honest empty state
+                instead of a nicer-sounding one. The rewrite also clears
+                scripts/checks/dollar-sweep.sh, whose currency anchor fired on
+                the old sentence's outlay verb; this comment deliberately does
+                not quote that word, because the gate greps raw file text and
+                would fire on the explanation too. */}
+            Decisions land here when you resolve an inbox item, or pause or
+            resume the fleet. Nothing else writes to this log yet, so a quiet
+            day is genuinely quiet rather than broken.
           </div>
         </div>
       ) : (
         /* Populated Decisions List */
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {decisions.map((dec) => {
-            const kindColor = decisionKindColor(
-              dec.kind as Parameters<typeof decisionKindColor>[0],
-            );
+            const kindColor = kindColorFor(dec.kind);
             const isExpanded = expandedId === dec.id;
             const hasPayload =
               dec.payload && Object.keys(dec.payload).length > 0;

@@ -24,9 +24,28 @@
 -- never mistakes an entry for one queued behind a pipeline that does not
 -- exist yet.
 --
--- Applied by hand, twice, to prove re-runnability:
---   psql "$DATABASE_URL" -f db/migrations/0043_journal_entries.sql
--- against content_forge.
+-- NOT YET APPLIED TO content_forge. A round-4 review checked the live
+-- database and found no `journal_entries` there, correctly failing an earlier
+-- version of this header that claimed otherwise; the claim was false and has
+-- been removed rather than softened. Applying a pending migration to the live
+-- database is the DEPLOY phase's job (docs/tools/deploy-playbook.md §6 step 4,
+-- "apply any pending migrations added by the project ... before restarting
+-- either process") and a build task has no business writing to it, so the
+-- proof below was taken on a throwaway database instead.
+--
+-- Re-runnability, actually measured 2026-08-23 on a per-run scratch database
+-- (`journal_mig_probe_$$`, created and dropped by the same shell), NOT on
+-- content_forge:
+--
+--   psql -d "$SCRATCH" -v ON_ERROR_STOP=1 -f db/migrations/0043_journal_entries.sql
+--     apply 1 → CREATE TABLE / CREATE INDEX
+--     apply 2 → NOTICE: relation "journal_entries" already exists, skipping
+--               NOTICE: relation "journal_entries_day_idx" already exists, skipping
+--               CREATE TABLE / CREATE INDEX, exit 0
+--
+-- Until deploy runs it, GET /api/journal/day, POST /api/journal/upload and
+-- DELETE /api/journal/entries/:id all fail against a missing relation. That is
+-- the expected pre-deploy state, not a defect in the routes.
 --
 -- Every statement carries IF NOT EXISTS — forge-control/src/lib/migrations.test.ts
 -- lints this file for it and there is no migration ledger, so the statement

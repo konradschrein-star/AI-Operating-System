@@ -115,6 +115,11 @@ export function JournalVaultEditor({ day, onSaved }: JournalVaultEditorProps) {
   vaultFileRef.current = vaultFile;
   const splitRef = useRef(split);
   splitRef.current = split;
+  // The path the component is CURRENTLY showing. A debounced autosave captures
+  // the path it was scheduled for and compares against this before writing —
+  // see handleSave's `scheduledForPath` guard below.
+  const vaultPathRef = useRef(vaultPath);
+  vaultPathRef.current = vaultPath;
 
   // Load vault file for day
   const loadDailyNote = useCallback(async () => {
@@ -155,8 +160,50 @@ export function JournalVaultEditor({ day, onSaved }: JournalVaultEditorProps) {
     loadDailyNote();
   }, [loadDailyNote]);
 
-  // Execute CAS save
-  const handleSave = async (forceBaseSha?: string) => {
+  // A pending debounced autosave belongs to the day it was scheduled on.
+  // `JournalRetrospectivePane` renders this component without a `key`, so a
+  // day switch REUSES the instance: the refs above are repointed at the new
+  // day's content while a timer already in flight still carries the old
+  // `vaultPath` in its closure. Firing it PUTs the new day's text at the old
+  // day's path, and the fallout is a conflict banner for a day the UI is no
+  // longer showing.
+  //
+  // Note `key={day}` at the call site would NOT have fixed this: unmounting a
+  // component does not cancel a pending `setTimeout`. Only a cleanup does.
+  //
+  // The window is narrower than it looks, and knowing why matters if anyone
+  // revisits this: the timer's callback is guarded by `isDirtyRef.current`,
+  // and `loadDailyNote` sets `isDirty` false, so a fast read for the new day
+  // usually disarms the stale timer on its own. It is when that read is SLOW,
+  // or throws a non-404 (that catch branch sets `loadError` and never touches
+  // `isDirty`), that the stale write lands. Measured 2026-08-23 by stalling
+  // the second `GET /vault/file` past the debounce: without this cleanup the
+  // browser issued `PUT /vault/file {path: "Daily/2026-08-23.md"}` while the
+  // header read "Sat, 22 Aug 2026"; with it, zero writes.
+  //
+  // Unsaved text for the old day is not written anywhere by this cleanup; the
+  // explicit Save button is the only path that commits, and it always targets
+  // the day on screen.
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+    };
+  }, [vaultPath]);
+
+  // Execute CAS save.
+  // `scheduledForPath`, when given, is the vault path this call was queued
+  // against by the autosave debounce. It is the second line of defence behind
+  // the cleanup above: if the day moved on between the keystroke and the
+  // timer, the write is abandoned rather than aimed at the wrong note. Not an
+  // error path — nothing failed, the target simply stopped being current.
+  const handleSave = async (
+    forceBaseSha?: string,
+    scheduledForPath?: string,
+  ) => {
+    if (scheduledForPath && scheduledForPath !== vaultPathRef.current) return;
     if (isSaving) return;
     setIsSaving(true);
     setSaveError(null);
@@ -229,10 +276,12 @@ export function JournalVaultEditor({ day, onSaved }: JournalVaultEditorProps) {
       clearTimeout(autoSaveTimerRef.current);
     }
 
-    // Debounced auto-save after 2 seconds
+    // Debounced auto-save after 2 seconds, pinned to the path it was typed
+    // into so it cannot land on a different day's note.
+    const scheduledForPath = vaultPath;
     autoSaveTimerRef.current = setTimeout(() => {
       if (isDirtyRef.current && !conflict) {
-        handleSave();
+        handleSave(undefined, scheduledForPath);
       }
     }, 2000);
   };
