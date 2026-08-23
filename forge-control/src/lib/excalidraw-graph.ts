@@ -540,6 +540,7 @@ export function parseDrawingGraph(
     nodes: enrichedNodes,
     edges: enrichedEdges,
     ambiguities,
+    degraded: base.degraded ?? null,
     stats: {
       ...base.stats,
       totalNodes: enrichedNodes.length,
