@@ -16,9 +16,12 @@ node /opt/forge-ai-os/forge-control/bin/aios.mjs guard fast   # from anywhere
 Working in an interactive shell on this box and want the short form? One-time install, pointing at the **live checkout**:
 
 ```bash
+ls /opt/forge-ai-os/forge-control/bin/aios.mjs     # must exist first — see note below
 ln -sf /opt/forge-ai-os/forge-control/bin/aios.mjs /usr/local/bin/aios
 command -v aios && aios terminal list      # verify
 ```
+
+The binary reaches the live checkout only when this branch merges — as of 2026-08-23 19:00 UTC that `ls` fails, so point the symlink at a checkout that has the file, or stay on the `node …` form. The mechanism is verified: a symlink on `$PATH` resolves and the CLI still finds its own `node_modules` through it.
 
 Agent lanes must not do that from a worktree — `/usr/local/bin` is shared, and a symlink into a worktree hijacks Konrad's `aios` and dies with the worktree. In the quick-reference table of §7 commands are written as `aios …` for readability; prefix them with `node forge-control/bin/aios.mjs` if you skipped the install.
 

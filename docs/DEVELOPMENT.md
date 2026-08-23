@@ -28,6 +28,8 @@ ln -sf /opt/forge-ai-os/forge-control/bin/aios.mjs /usr/local/bin/aios
 command -v aios && aios terminal list       # verify: prints the path, then the session table
 ```
 
+> **Availability check first.** `forge-control/bin/aios.mjs` reaches the live checkout only when this branch merges. As of 2026-08-23 19:00 UTC it is **not** there yet (`ls /opt/forge-ai-os/forge-control/bin/aios.mjs` → No such file). Run that `ls` before the `ln -sf`; until it succeeds, point the symlink at a checkout that does have the file, or use the `node …` form. The mechanism itself is verified — a symlink to this worktree's copy on `$PATH` resolves and runs (`import.meta.url` survives the symlink, so the CLI still finds its own `node_modules`).
+
 **Agents in a worktree must not run that.** `/usr/local/bin/aios` is shared; pointing it at a worktree hijacks Konrad's `aios` and it breaks the moment the worktree is torn down. From a worktree, always use `node forge-control/bin/aios.mjs`.
 
 Prerequisite either way: `forge-control/node_modules/.bin/tsx` must exist (see §2 — `pnpm install --frozen-lockfile --prod=false`). The launcher checks for it and tells you exactly that if it is missing.
