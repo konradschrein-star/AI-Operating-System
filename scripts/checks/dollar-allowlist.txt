@@ -101,3 +101,19 @@ forge-control-web/app/api-business.ts	Spend(Window|AreaItem|DailyItem|SummaryRes
 forge-control-web/app/api-business.ts	/spend/summary|fetchSpendSummaryFiltered|metered spend vs shadow	The endpoint path, its fetcher, and the section header naming what the endpoint returns. A URL and a comment; the amounts themselves are rendered by MoneySurface.tsx, which is separately and deliberately excused.
 
 forge-control-web/app/desktop/goals/ui.tsx	x\.toFixed\(2\).*y\.toFixed\(2\)	Line 440, Sparkline(): SVG polyline COORDINATES — `${x.toFixed(2)},${y.toFixed(2)}` builds a `points` attribute out of pixel positions computed from `i / values.length * W` and `H - v / max * H`. Geometry, not currency, and the twelfth false positive of the naive toFixed(2) anchor (MemorySurface score, three token-magnitude formatters, …). Came in from `main` with 553fa38, Konrad's own Goals/Tasks daily surface, and met this lane-only gate for the first time at the round-13 merge — the same shape as gate 17's pins. The pattern is the coordinate PAIR, not `.*`: a real € or $ arriving in this file still fails the gate.
+
+# ── aios-money-and-businesses fix cycle 2: the deploy-skew guards ───────────
+#
+# spend-skew.ts is a PURE module (no React, no fetch, no JSX) whose whole
+# subject is one endpoint: it decides whether /api/spend/summary's response is
+# complete enough to draw, so MoneySurface stops throwing against an API older
+# than itself. Its hits are therefore identifiers and prose ABOUT money data,
+# never a money value — the single € in it sits inside a quoted description of
+# the "€NaN" label the guard exists to prevent.
+#
+# Scoped patterns, not `.*` and not the file: a literal currency amount
+# arriving in either file still fails the gate.
+
+forge-control-web/app/desktop/spend-skew.ts	spend-skew|/api/spend/summary|spendPickLists|spendData|Spend(DailyItem|SummaryResponse)|"€NaN" peak label	Deploy-skew guards for /api/spend/summary: the exported helper names, the imported Spend* type names, the endpoint path (in the header, in the recorded curl, and in the diagnostic the chart renders instead of a series), and header prose naming `spendData.filters.providers` — the read that used to throw. The one € is the quoted "€NaN" peak label the guard prevents, not a value. MoneySurface.tsx, which does render €, is separately and deliberately excused.
+forge-control-web/app/desktop/spend-skew.test.ts	spend-skew|/api/spend/summary|spendPickLists|Spend(DailyItem|SummaryResponse)	spend-skew.ts's unit suite — the same helper and type names, plus the endpoint path in the header comment recording the curl the fixture was captured from. The captured payload's numbers are bare (353.2966, no currency mark), so a real € or $ literal arriving in this file still fails the gate.
+forge-control-web/app/api-business.ts	desktop/spend-skew\.ts	One clause of SpendSummaryResponse's doc comment, naming the module MoneySurface now reads that response through ("MoneySurface reads both through `desktop/spend-skew.ts`"). A file path in prose. The three api-business.ts rows above still bound everything else in the file, and a literal amount arriving here fails the gate.
