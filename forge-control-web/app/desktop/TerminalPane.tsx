@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { tokens } from "../tokens";
+import { dot, tokens } from "../tokens";
 
 const POLL_MS = 700;
 
@@ -70,6 +70,7 @@ interface TerminalRead {
 const CTRL_KEYS: { key: string; label: string; title: string }[] = [
   { key: "C-c", label: "^C", title: "Interrupt (Ctrl-C)" },
   { key: "C-d", label: "^D", title: "End of input (Ctrl-D)" },
+  { key: "C-l", label: "^L", title: "Clear screen (Ctrl-L)" },
   { key: "Escape", label: "ESC", title: "Escape" },
   { key: "Up", label: "↑", title: "Previous command" },
   { key: "Down", label: "↓", title: "Next command" },
@@ -331,12 +332,15 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
         <span className="mono" style={{ fontSize: 10, letterSpacing: "0.08em", color: tokens.textMuted }}>
           TERMINAL
         </span>
-        <span
-          data-terminal-alive={alive ? "1" : "0"}
-          className="mono"
-          style={{ fontSize: 10, color: alive ? tokens.accent : tokens.textFaint }}
-        >
-          {sessionId === null ? "starting…" : alive ? "live" : "exited"}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={dot(alive ? (sessionId === null ? tokens.warn : tokens.ok) : tokens.textFaint, sessionId !== null && alive)} />
+          <span
+            data-terminal-alive={alive ? "1" : "0"}
+            className="mono"
+            style={{ fontSize: 10, color: alive ? (sessionId === null ? tokens.warn : tokens.ok) : tokens.textFaint }}
+          >
+            {sessionId === null ? "starting…" : alive ? "live" : "exited"}
+          </span>
         </span>
         <div style={{ flex: 1 }} />
         {CTRL_KEYS.map((k) => (
@@ -424,10 +428,22 @@ export function TerminalPane({ onClose }: { onClose: () => void }) {
               // typed in the pane by an agent.
               e.preventDefault();
               void send({ key: "Up" });
+            } else if (e.key === "ArrowDown") {
+              e.preventDefault();
+              void send({ key: "Down" });
             } else if (e.key === "Tab") {
               e.preventDefault();
               void send({ text: input, key: "Tab" });
               setInput("");
+            } else if (e.ctrlKey && !e.altKey && !e.metaKey) {
+              const mapped = CTRL_MAP[e.key.toLowerCase()];
+              if (mapped !== undefined) {
+                if (e.key.toLowerCase() === "c" && input.length > 0) {
+                  setInput("");
+                }
+                e.preventDefault();
+                void send({ key: mapped });
+              }
             }
           }}
           style={{
