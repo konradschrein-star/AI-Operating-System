@@ -145,3 +145,185 @@ export interface BusinessPipelineResponse {
 
 export const fetchPipelineBusiness = () =>
   getJson<BusinessPipelineResponse>("/pipeline");
+
+/* ----------------------------------------------------------------------------
+ * Entities — identity registry summary and listings (ai_os :5434).
+ * -------------------------------------------------------------------------- */
+
+export interface EntitySummaryRow {
+  arm: string;
+  kind: string;
+  count: number;
+}
+
+export interface EntityArmSummary {
+  arm: string;
+  total: number;
+  companies: number;
+  persons: number;
+}
+
+export interface EntitiesSummaryResponse {
+  total: number;
+  by_arm_and_kind: EntitySummaryRow[];
+  by_arm: Record<string, { total: number; companies: number; persons: number }>;
+  arms: EntityArmSummary[];
+  as_of: string;
+}
+
+export interface EntityRecord {
+  id: string;
+  kind: "person" | "company";
+  displayName: string;
+  arm: "directory" | "axtrelis" | "youtube" | "infra" | "personal" | "other";
+  ownerId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EntitiesListResponse {
+  entities: EntityRecord[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface FetchEntitiesParams {
+  arm?: string;
+  kind?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export const fetchEntitiesSummary = () =>
+  getJson<EntitiesSummaryResponse>("/entities/summary");
+
+export const fetchEntities = (params: FetchEntitiesParams = {}) => {
+  const query = new URLSearchParams();
+  if (params.arm) query.set("arm", params.arm);
+  if (params.kind) query.set("kind", params.kind);
+  if (params.limit !== undefined) query.set("limit", String(params.limit));
+  if (params.offset !== undefined) query.set("offset", String(params.offset));
+  const qs = query.toString();
+  return getJson<EntitiesListResponse>(`/entities${qs ? `?${qs}` : ""}`);
+};
+
+/* ----------------------------------------------------------------------------
+ * Cash Ledger — net cashflow and financial breakdown by arm (ai_os :5434).
+ * -------------------------------------------------------------------------- */
+
+export interface LedgerArmTotals {
+  arm: string;
+  inEur: number;
+  outEur: number;
+  netEur: number;
+  entries: number;
+}
+
+export interface LedgerSummary {
+  since: string;
+  until: string;
+  byArm: LedgerArmTotals[];
+  totalInEur: number;
+  totalOutEur: number;
+  netEur: number;
+  shadowEur: number;
+  unconvertedRows: number;
+}
+
+export interface LedgerSummaryResponse {
+  summary: LedgerSummary;
+}
+
+export const fetchLedgerSummary = (days?: number) => {
+  const qs = days !== undefined ? `?days=${encodeURIComponent(days)}` : "";
+  return getJson<LedgerSummaryResponse>(`/ledger/summary${qs}`);
+};
+
+/* ----------------------------------------------------------------------------
+ * Bank Accounts & Treasury — Mercury 3x + E&G Private Bank balances.
+ * -------------------------------------------------------------------------- */
+
+export type BankAccountStatus = "active" | "unlinked" | "error" | "manual";
+export type BankAccountType =
+  | "checking"
+  | "savings"
+  | "treasury"
+  | "private_banking";
+
+export interface BankAccount {
+  id: string;
+  name: string;
+  institution: "mercury" | "eg_bank" | "other";
+  account_number_mask: string | null;
+  type: BankAccountType;
+  currency: "USD" | "EUR";
+  current_balance: number;
+  available_balance: number;
+  balance_usd: number;
+  balance_eur: number;
+  status: BankAccountStatus;
+  status_detail: string | null;
+  last_synced_at: string | null;
+}
+
+export interface BankBalancesResponse {
+  connected: boolean;
+  mercury: {
+    connected: boolean;
+    credential_required: boolean;
+    secret_name: string;
+    accounts: BankAccount[];
+    error: string | null;
+  };
+  eg_bank: BankAccount;
+  accounts: BankAccount[];
+  total_liquid_eur: number;
+  total_usd: number;
+  fx_rate_usd_eur: number;
+  as_of: string;
+}
+
+export const fetchBankAccounts = () =>
+  getJson<BankBalancesResponse>("/accounts/bank");
+
+/* ----------------------------------------------------------------------------
+ * Spend Summary — metered spend vs shadow compute with time-series.
+ * -------------------------------------------------------------------------- */
+
+export interface SpendWindow {
+  total_eur: number;
+  calls: number;
+  claude_eur: number;
+  claude_calls: number;
+}
+
+export interface SpendAreaItem {
+  provider: string;
+  kind: string;
+  total_eur: number;
+  calls: number;
+  units: number;
+}
+
+export interface SpendDailyItem {
+  day: string;
+  total_eur: number;
+  shadow_eur?: number;
+  total_compute_eur?: number;
+  calls: number;
+}
+
+export interface SpendSummaryResponse {
+  today: SpendWindow;
+  d7: SpendWindow;
+  d30: SpendWindow;
+  by_area: SpendAreaItem[];
+  daily: SpendDailyItem[];
+}
+
+export const fetchSpendSummaryFiltered = (days?: number) => {
+  const qs = days !== undefined ? `?days=${encodeURIComponent(days)}` : "";
+  return getJson<SpendSummaryResponse>(`/spend/summary${qs}`);
+};
+

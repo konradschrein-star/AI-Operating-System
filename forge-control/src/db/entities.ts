@@ -396,3 +396,148 @@ export async function listEvents(opts: {
   );
   return r.rows.map(rowToEvent);
 }
+
+export interface ListEntitiesOptions {
+  arm?: EntityArm;
+  kind?: EntityKind;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ListEntitiesResult {
+  entities: Entity[];
+  total: number;
+}
+
+/**
+ * List entities with optional filtering by arm and kind, newest updated first.
+ */
+export async function listEntities(
+  opts: ListEntitiesOptions = {},
+): Promise<ListEntitiesResult> {
+  const pool = aiOsPool();
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const offset = Math.max(opts.offset ?? 0, 0);
+
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (opts.arm) {
+    params.push(opts.arm);
+    conditions.push(`arm = $${params.length}`);
+  }
+  if (opts.kind) {
+    params.push(opts.kind);
+    conditions.push(`kind = $${params.length}`);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const countRes = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM entities ${whereClause}`,
+    params,
+  );
+  const total = Number(countRes.rows[0]?.count ?? "0");
+
+  const queryParams = [...params, limit, offset];
+  const r = await pool.query<EntityRow>(
+    `SELECT id, kind, display_name, arm, owner_id,
+            created_at::text AS created_at,
+            updated_at::text AS updated_at
+       FROM entities
+       ${whereClause}
+      ORDER BY updated_at DESC, created_at DESC
+      LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
+    queryParams,
+  );
+
+  return {
+    entities: r.rows.map(rowToEntity),
+    total,
+  };
+}
+
+export interface EntitySummaryRow {
+  arm: EntityArm;
+  kind: EntityKind;
+  count: number;
+}
+
+export interface EntityArmSummary {
+  arm: EntityArm;
+  total: number;
+  companies: number;
+  persons: number;
+}
+
+export interface EntitiesSummary {
+  total: number;
+  by_arm_and_kind: EntitySummaryRow[];
+  by_arm: Record<string, { total: number; companies: number; persons: number }>;
+  arms: EntityArmSummary[];
+  as_of: string;
+}
+
+/**
+ * Return aggregate counts of entities grouped by arm and kind.
+ */
+export async function entitiesSummary(): Promise<EntitiesSummary> {
+  const pool = aiOsPool();
+  const res = await pool.query<{
+    arm: EntityArm;
+    kind: EntityKind;
+    count: string;
+  }>(
+    `SELECT arm, kind, COUNT(*)::text AS count
+       FROM entities
+      GROUP BY arm, kind
+      ORDER BY arm, kind`,
+  );
+
+  const byArmAndKind: EntitySummaryRow[] = res.rows.map((r) => ({
+    arm: r.arm,
+    kind: r.kind,
+    count: Number(r.count),
+  }));
+
+  const total = byArmAndKind.reduce((sum, r) => sum + r.count, 0);
+
+  const byArm: Record<
+    string,
+    { total: number; companies: number; persons: number }
+  > = {};
+
+  for (const arm of ENTITY_ARMS) {
+    byArm[arm] = { total: 0, companies: 0, persons: 0 };
+  }
+
+  for (const row of byArmAndKind) {
+    if (!byArm[row.arm]) {
+      byArm[row.arm] = { total: 0, companies: 0, persons: 0 };
+    }
+    const bucket = byArm[row.arm];
+    bucket.total += row.count;
+    if (row.kind === "company") {
+      bucket.companies += row.count;
+    } else if (row.kind === "person") {
+      bucket.persons += row.count;
+    }
+  }
+
+  const arms: EntityArmSummary[] = ENTITY_ARMS.map((arm) => ({
+    arm,
+    total: byArm[arm]?.total ?? 0,
+    companies: byArm[arm]?.companies ?? 0,
+    persons: byArm[arm]?.persons ?? 0,
+  }));
+
+  return {
+    total,
+    by_arm_and_kind: byArmAndKind,
+    by_arm: byArm,
+    arms,
+    as_of: new Date().toISOString(),
+  };
+}
+

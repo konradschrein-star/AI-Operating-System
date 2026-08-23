@@ -1,6 +1,8 @@
 /**
  * /api/entities — the identity registry.
  *
+ * GET  /api/entities?arm=&kind=&limit=&offset= — list entities
+ * GET  /api/entities/summary                 — aggregate counts by arm and kind
  * POST /api/entities                        — create a person or company
  * GET  /api/entities/:id                    — fetch by OS id
  * GET  /api/entities/lookup?system=&external_id=
@@ -24,6 +26,8 @@ import {
   listLinksForEntity,
   appendEvent,
   listEvents,
+  listEntities,
+  entitiesSummary,
   ENTITY_KINDS,
   ENTITY_ARMS,
   ENTITY_SYSTEMS,
@@ -153,6 +157,44 @@ function parseEvent(raw: unknown): EventInput | { error: string } {
   };
 }
 
+r.get("/", async (c) => {
+  const arm = c.req.query("arm");
+  if (arm !== undefined && !ARM_SET.has(arm)) {
+    return c.json(
+      { error: `arm must be one of: ${ENTITY_ARMS.join(", ")}` },
+      400,
+    );
+  }
+  const kind = c.req.query("kind");
+  if (kind !== undefined && !KIND_SET.has(kind)) {
+    return c.json(
+      { error: `kind must be one of: ${ENTITY_KINDS.join(", ")}` },
+      400,
+    );
+  }
+  const limitRaw = Number(c.req.query("limit") ?? 50);
+  const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
+  const offsetRaw = Number(c.req.query("offset") ?? 0);
+  const offset = Number.isFinite(offsetRaw) ? offsetRaw : 0;
+
+  try {
+    const res = await listEntities({
+      arm: arm as EntityArm | undefined,
+      kind: kind as EntityKind | undefined,
+      limit,
+      offset,
+    });
+    return c.json({
+      entities: res.entities,
+      total: res.total,
+      limit: Math.min(Math.max(limit, 1), 200),
+      offset: Math.max(offset, 0),
+    });
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 r.post("/", async (c) => {
   let body: unknown;
   try {
@@ -171,8 +213,17 @@ r.post("/", async (c) => {
   }
 });
 
-// Order matters: /events and /lookup must come BEFORE /:id or Hono will match
-// them as if "events" were an id.
+// Order matters: /summary, /events and /lookup must come BEFORE /:id or Hono will match
+// them as if they were an id.
+r.get("/summary", async (c) => {
+  try {
+    const summary = await entitiesSummary();
+    return c.json(summary);
+  } catch (err) {
+    return c.json({ error: (err as Error).message }, 500);
+  }
+});
+
 r.get("/lookup", async (c) => {
   const system = c.req.query("system") ?? "";
   const externalId = c.req.query("external_id") ?? "";
