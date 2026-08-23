@@ -141,15 +141,6 @@ export type PlanTaskStatus =
   | "blocked"
   | "proposal";
 
-export type TaskRole =
-  | "architect"
-  | "planner"
-  | "builder"
-  | "reviewer"
-  | "scout";
-
-export type TaskTier = "fast" | "standard" | "flagship";
-
 export interface PlanTask {
   id: string;
   nodeId: string;

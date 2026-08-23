@@ -31,8 +31,17 @@ import {
   getCanvas,
   saveCanvas,
   createCanvas,
+  getCanvasPlan,
+  saveCanvasPlan,
+  pushPlanToProject,
   CanvasConflictError,
   type CanvasListItem,
+  type CanvasPlanResponse,
+  type PlanTask,
+  type GraphAmbiguity,
+  type PlanTaskStatus,
+  type TaskRole,
+  type TaskTier,
 } from "../api";
 import { statCanvas, subscribeCanvas } from "./canvasLive";
 /**
@@ -155,6 +164,71 @@ function relTime(ms: number): string {
   return `${Math.round(diff / (7 * 86_400_000))}w ago`;
 }
 
+function getRoleTokens(role: TaskRole) {
+  switch (role) {
+    case "architect":
+      return { bg: tokens.roleBgArchitect, ink: tokens.roleInkArchitect };
+    case "planner":
+      return { bg: tokens.roleBgPlanner, ink: tokens.roleInkPlanner };
+    case "builder":
+      return { bg: tokens.roleBgBuilder, ink: tokens.roleInkBuilder };
+    case "reviewer":
+      return { bg: tokens.roleBgReviewer, ink: tokens.roleInkReviewer };
+    case "scout":
+      return { bg: tokens.roleBgScout, ink: tokens.roleInkScout };
+    default:
+      return { bg: tokens.roleBgUnknown, ink: tokens.roleInkUnknown };
+  }
+}
+
+function getStatusTokens(status: PlanTaskStatus) {
+  switch (status) {
+    case "done":
+      return {
+        bg: tokens.okActionBg,
+        border: tokens.okActionBorder,
+        text: tokens.ok,
+        label: "DONE",
+      };
+    case "in_progress":
+      return {
+        bg: tokens.primaryActionBg,
+        border: tokens.accent,
+        text: tokens.accent,
+        label: "IN PROGRESS",
+      };
+    case "gap":
+      return {
+        bg: tokens.freezeBgWarn,
+        border: tokens.freezeBorderWarn,
+        text: tokens.warn,
+        label: "GAP",
+      };
+    case "blocked":
+      return {
+        bg: tokens.dangerActionBg,
+        border: tokens.dangerActionBorder,
+        text: tokens.bleed,
+        label: "BLOCKED",
+      };
+    case "proposal":
+      return {
+        bg: tokens.freezeBgWarn,
+        border: tokens.freezeBorderWarn,
+        text: tokens.decide,
+        label: "PROPOSAL",
+      };
+    case "planned":
+    default:
+      return {
+        bg: tokens.bgGutter,
+        border: tokens.border,
+        text: tokens.textMuted,
+        label: "PLANNED",
+      };
+  }
+}
+
 export function CanvasPane({
   path,
   onPathChange,
@@ -197,6 +271,39 @@ export function CanvasPane({
   const [watchErr, setWatchErr] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [pickerQuery, setPickerQuery] = useState("");
+
+  // Plan drawer state
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planTab, setPlanTab] = useState<"visual" | "markdown">("visual");
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planErr, setPlanErr] = useState<string | null>(null);
+  const [planData, setPlanData] = useState<CanvasPlanResponse | null>(null);
+  const [planMarkdownEdit, setPlanMarkdownEdit] = useState<string>("");
+  const [planMarkdownDirty, setPlanMarkdownDirty] = useState(false);
+  const [planSaveStatus, setPlanSaveStatus] = useState<
+    "idle" | "saving" | "saved" | "error"
+  >("idle");
+  const [planSaveErr, setPlanSaveErr] = useState<string | null>(null);
+
+  // Push to project dialog state
+  const [pushDialogOpen, setPushDialogOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [projectRepo, setProjectRepo] = useState<
+    "ai-os" | "content-forge" | "scratch"
+  >("ai-os");
+  const [architectTier, setArchitectTier] = useState<TaskTier>("standard");
+  const [baseBranch, setBaseBranch] = useState("");
+  const [pushingProject, setPushingProject] = useState(false);
+  const [pushResult, setPushResult] = useState<{
+    projectId: string;
+    tasksCount: number;
+  } | null>(null);
+  const [pushErr, setPushErr] = useState<string | null>(null);
+
+  // Workstream filter for visual plan view
+  const [selectedWorkstream, setSelectedWorkstream] = useState<string | null>(
+    null,
+  );
 
   const filteredList = useMemo(() => {
     const q = pickerQuery.toLowerCase();
@@ -301,6 +408,74 @@ export function CanvasPane({
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void flush(), SAVE_DEBOUNCE_MS);
   }, [path, api, flush]);
+
+  const fetchPlan = useCallback(async (drawingPath: string) => {
+    setPlanLoading(true);
+    setPlanErr(null);
+    try {
+      const res = await getCanvasPlan(drawingPath);
+      setPlanData(res);
+      const initialMd = res.savedMarkdown ?? res.plan.rawMarkdown ?? "";
+      setPlanMarkdownEdit(initialMd);
+      setPlanMarkdownDirty(false);
+      setPlanSaveStatus("idle");
+      setPlanSaveErr(null);
+      setProjectName(res.plan.title || "");
+    } catch (e) {
+      setPlanErr(String((e as Error).message ?? e));
+    } finally {
+      setPlanLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (path && planOpen) {
+      void fetchPlan(path);
+    }
+  }, [path, planOpen, fetchPlan]);
+
+  const handleSaveMarkdown = useCallback(async () => {
+    if (!path) return;
+    setPlanSaveStatus("saving");
+    setPlanSaveErr(null);
+    try {
+      await saveCanvasPlan({
+        path,
+        planMarkdown: planMarkdownEdit,
+      });
+      setPlanSaveStatus("saved");
+      setPlanMarkdownDirty(false);
+      void fetchPlan(path);
+    } catch (e) {
+      setPlanSaveStatus("error");
+      setPlanSaveErr(String((e as Error).message ?? e));
+    }
+  }, [path, planMarkdownEdit, fetchPlan]);
+
+  const handlePushProject = useCallback(async () => {
+    if (!path && !planData?.plan) return;
+    setPushingProject(true);
+    setPushErr(null);
+    try {
+      const res = await pushPlanToProject({
+        path: path ?? undefined,
+        name: projectName.trim() || undefined,
+        repo: projectRepo,
+        architect_tier: architectTier,
+        base_branch: baseBranch.trim() || undefined,
+        plan: planData?.plan,
+      });
+      const proj = res.project as { id?: string } | undefined;
+      setPushResult({
+        projectId: proj?.id ?? "created",
+        tasksCount: res.tasksCount || res.tasks?.length || 0,
+      });
+    } catch (e) {
+      setPushErr(String((e as Error).message ?? e));
+    } finally {
+      setPushingProject(false);
+    }
+  }, [path, planData, projectName, projectRepo, architectTier, baseBranch]);
 
   // Adopt an external write (Obsidian / the agent / another tab). Only ever
   // called on a clean pane — a dirty pane must reach the 409 banner instead, so
@@ -558,6 +733,42 @@ export function CanvasPane({
           )}
           <span style={{ flex: 1 }} />
           {path && (
+            <button
+              onClick={() => {
+                setPlanOpen((v) => !v);
+              }}
+              className="mono"
+              title="Toggle structured execution plan & DAG"
+              style={{
+                fontSize: 10.5,
+                color: planOpen ? tokens.accent : tokens.text,
+                background: planOpen ? tokens.primaryActionBg : "transparent",
+                border: `1px solid ${planOpen ? tokens.accent : tokens.border}`,
+                borderRadius: 6,
+                padding: "3px 8px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+              }}
+            >
+              <span>📋 Plan</span>
+              {planData?.plan?.ambiguities &&
+                planData.plan.ambiguities.length > 0 && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: tokens.warn,
+                      fontWeight: 700,
+                    }}
+                    title={`${planData.plan.ambiguities.length} open questions/ambiguities`}
+                  >
+                    ⚠️{planData.plan.ambiguities.length}
+                  </span>
+                )}
+            </button>
+          )}
+          {path && (
             <a
               href={`/canvas?path=${encodeURIComponent(path)}`}
               target="_blank"
@@ -796,36 +1007,1324 @@ export function CanvasPane({
         </div>
       )}
 
-      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {!path ? (
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "row",
+          position: "relative",
+        }}
+      >
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: "relative" }}>
+          {!path ? (
+            <div
+              className="mono"
+              style={{
+                height: "100%",
+                display: "grid",
+                placeItems: "center",
+                color: tokens.textMuted,
+                fontSize: 11,
+                textAlign: "center",
+                padding: 20,
+              }}
+            >
+              no drawing open — pick one above,
+              <br />
+              or ask the agent to draw something.
+            </div>
+          ) : initial ? (
+            <Excalidraw
+              excalidrawAPI={(a: unknown) => setApi(a as typeof api)}
+              // Scene data crosses an untyped boundary (the vault file), so it
+              // arrives as plain JSON. Excalidraw validates/normalises it on
+              // load; asserting here is the honest place to bridge the two.
+              initialData={initial as never}
+              onChange={onChange}
+              theme={themeMode}
+            />
+          ) : null}
+        </div>
+
+        {planOpen && (
           <div
-            className="mono"
             style={{
+              width: 520,
+              minWidth: 380,
+              maxWidth: "50vw",
+              borderLeft: `1px solid ${tokens.borderDivider}`,
+              background: tokens.bgBody,
+              display: "flex",
+              flexDirection: "column",
               height: "100%",
-              display: "grid",
-              placeItems: "center",
-              color: tokens.textMuted,
-              fontSize: 11,
-              textAlign: "center",
-              padding: 20,
+              position: "relative",
+              zIndex: 10,
             }}
           >
-            no drawing open — pick one above,
-            <br />
-            or ask the agent to draw something.
+            {/* Drawer Header */}
+            <div
+              style={{
+                padding: "8px 12px",
+                borderBottom: `1px solid ${tokens.borderDivider}`,
+                background: tokens.bgCard,
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                flexShrink: 0,
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: tokens.accent,
+                      letterSpacing: "0.1em",
+                      fontWeight: 700,
+                    }}
+                  >
+                    PLAN
+                  </span>
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: tokens.textHi,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {planData?.plan?.title ?? (path ? path : "No drawing")}
+                  </span>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={() => path && fetchPlan(path)}
+                    disabled={planLoading || !path}
+                    className="mono"
+                    title="Re-derive execution plan from drawing"
+                    style={{
+                      fontSize: 10.5,
+                      color: tokens.text,
+                      background: "transparent",
+                      border: `1px solid ${tokens.border}`,
+                      borderRadius: 4,
+                      padding: "2px 6px",
+                      cursor: planLoading || !path ? "not-allowed" : "pointer",
+                      opacity: planLoading || !path ? 0.6 : 1,
+                    }}
+                  >
+                    {planLoading ? "analyzing…" : "🔄 Refresh"}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setPushDialogOpen(true);
+                      setPushResult(null);
+                      setPushErr(null);
+                      setProjectName(planData?.plan?.title || "");
+                    }}
+                    disabled={!planData?.plan || planData.plan.tasks.length === 0}
+                    className="mono"
+                    title="Create a project in forge-control from this plan"
+                    style={{
+                      fontSize: 10.5,
+                      color: tokens.accent,
+                      background: tokens.primaryActionBg,
+                      border: `1px solid ${tokens.accent}`,
+                      borderRadius: 4,
+                      padding: "2px 8px",
+                      cursor:
+                        !planData?.plan || planData.plan.tasks.length === 0
+                          ? "not-allowed"
+                          : "pointer",
+                      opacity:
+                        !planData?.plan || planData.plan.tasks.length === 0
+                          ? 0.5
+                          : 1,
+                    }}
+                  >
+                    🚀 Push to Project
+                  </button>
+
+                  <button
+                    onClick={() => setPlanOpen(false)}
+                    className="mono"
+                    title="Close Plan side panel"
+                    style={{
+                      fontSize: 12,
+                      color: tokens.textMuted,
+                      background: "transparent",
+                      border: `1px solid ${tokens.border}`,
+                      borderRadius: 4,
+                      padding: "1px 6px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              {/* Tab Switcher & Stats */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button
+                    onClick={() => setPlanTab("visual")}
+                    className="mono"
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: planTab === "visual" ? 600 : 400,
+                      color: planTab === "visual" ? tokens.accent : tokens.textMuted,
+                      background:
+                        planTab === "visual" ? tokens.primaryActionBg : "transparent",
+                      border: `1px solid ${
+                        planTab === "visual" ? tokens.accent : tokens.border
+                      }`,
+                      borderRadius: 4,
+                      padding: "2px 8px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Structured Plan
+                  </button>
+                  <button
+                    onClick={() => setPlanTab("markdown")}
+                    className="mono"
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: planTab === "markdown" ? 600 : 400,
+                      color:
+                        planTab === "markdown" ? tokens.accent : tokens.textMuted,
+                      background:
+                        planTab === "markdown"
+                          ? tokens.primaryActionBg
+                          : "transparent",
+                      border: `1px solid ${
+                        planTab === "markdown" ? tokens.accent : tokens.border
+                      }`,
+                      borderRadius: 4,
+                      padding: "2px 8px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <span>.plan.md</span>
+                    {planMarkdownDirty && (
+                      <span style={{ color: tokens.warn, fontSize: 8 }}>●</span>
+                    )}
+                  </button>
+                </div>
+
+                {planData?.plan && (
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 9.5,
+                      color: tokens.textMuted,
+                      display: "flex",
+                      gap: 6,
+                    }}
+                  >
+                    <span>
+                      {planData.plan.tasks.length} task
+                      {planData.plan.tasks.length === 1 ? "" : "s"}
+                    </span>
+                    <span>·</span>
+                    <span>
+                      {planData.plan.phases.length} phase
+                      {planData.plan.phases.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Push to Project Modal Dialog */}
+            {pushDialogOpen && (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  background: tokens.overlay,
+                  zIndex: 30,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  padding: 16,
+                }}
+              >
+                <div
+                  style={{
+                    background: tokens.bgCard,
+                    border: `1px solid ${tokens.borderEmphasis}`,
+                    borderRadius: 8,
+                    padding: 16,
+                    width: "100%",
+                    maxWidth: 440,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                    boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <span
+                      className="mono"
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: tokens.textHi,
+                      }}
+                    >
+                      🚀 Push Plan to Project
+                    </span>
+                    <button
+                      onClick={() => setPushDialogOpen(false)}
+                      className="mono"
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        color: tokens.textMuted,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  {pushResult ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div
+                        style={{
+                          background: tokens.okActionBg,
+                          border: `1px solid ${tokens.okActionBorder}`,
+                          borderRadius: 6,
+                          padding: "10px 12px",
+                          color: tokens.ok,
+                          fontSize: 11,
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        ✓ Project created successfully with {pushResult.tasksCount} tasks
+                        seeded in topological order!
+                      </div>
+                      <div
+                        className="mono"
+                        style={{ fontSize: 10.5, color: tokens.textMuted }}
+                      >
+                        Project ID:{" "}
+                        <span style={{ color: tokens.textHi }}>
+                          {pushResult.projectId}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setPushDialogOpen(false);
+                          setPushResult(null);
+                        }}
+                        className="mono"
+                        style={{
+                          fontSize: 11,
+                          color: tokens.accent,
+                          background: tokens.primaryActionBg,
+                          border: `1px solid ${tokens.accent}`,
+                          borderRadius: 6,
+                          padding: "6px 12px",
+                          cursor: "pointer",
+                          marginTop: 4,
+                        }}
+                      >
+                        Done
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <label
+                          className="mono"
+                          style={{ fontSize: 10, color: tokens.textMuted }}
+                        >
+                          PROJECT NAME
+                        </label>
+                        <input
+                          value={projectName}
+                          onChange={(e) => setProjectName(e.target.value)}
+                          placeholder="Project title..."
+                          className="mono"
+                          style={{
+                            fontSize: 11,
+                            background: tokens.inputBg,
+                            border: `1px solid ${tokens.border}`,
+                            borderRadius: 4,
+                            padding: "5px 8px",
+                            color: tokens.text,
+                            outline: "none",
+                          }}
+                        />
+                      </div>
+
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "1fr 1fr",
+                          gap: 8,
+                        }}
+                      >
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <label
+                            className="mono"
+                            style={{ fontSize: 10, color: tokens.textMuted }}
+                          >
+                            TARGET REPO
+                          </label>
+                          <select
+                            value={projectRepo}
+                            onChange={(e) =>
+                              setProjectRepo(
+                                e.target.value as
+                                  | "ai-os"
+                                  | "content-forge"
+                                  | "scratch",
+                              )
+                            }
+                            className="mono"
+                            style={{
+                              fontSize: 11,
+                              background: tokens.inputBg,
+                              border: `1px solid ${tokens.border}`,
+                              borderRadius: 4,
+                              padding: "5px 8px",
+                              color: tokens.text,
+                              outline: "none",
+                            }}
+                          >
+                            <option value="ai-os">ai-os</option>
+                            <option value="content-forge">content-forge</option>
+                            <option value="scratch">scratch</option>
+                          </select>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          <label
+                            className="mono"
+                            style={{ fontSize: 10, color: tokens.textMuted }}
+                          >
+                            ARCHITECT TIER
+                          </label>
+                          <select
+                            value={architectTier}
+                            onChange={(e) =>
+                              setArchitectTier(e.target.value as TaskTier)
+                            }
+                            className="mono"
+                            style={{
+                              fontSize: 11,
+                              background: tokens.inputBg,
+                              border: `1px solid ${tokens.border}`,
+                              borderRadius: 4,
+                              padding: "5px 8px",
+                              color: tokens.text,
+                              outline: "none",
+                            }}
+                          >
+                            <option value="standard">standard (sonnet)</option>
+                            <option value="flagship">flagship (opus)</option>
+                            <option value="fast">fast (haiku)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <label
+                          className="mono"
+                          style={{ fontSize: 10, color: tokens.textMuted }}
+                        >
+                          BASE BRANCH (OPTIONAL)
+                        </label>
+                        <input
+                          value={baseBranch}
+                          onChange={(e) => setBaseBranch(e.target.value)}
+                          placeholder="main"
+                          className="mono"
+                          style={{
+                            fontSize: 11,
+                            background: tokens.inputBg,
+                            border: `1px solid ${tokens.border}`,
+                            borderRadius: 4,
+                            padding: "5px 8px",
+                            color: tokens.text,
+                            outline: "none",
+                          }}
+                        />
+                      </div>
+
+                      {planData?.plan && (
+                        <div
+                          className="mono"
+                          style={{
+                            fontSize: 10,
+                            color: tokens.textSecondary,
+                            background: tokens.bgGutter,
+                            padding: "6px 8px",
+                            borderRadius: 4,
+                            border: `1px solid ${tokens.borderSoft}`,
+                          }}
+                        >
+                          Will seed {planData.plan.tasks.length} tasks across{" "}
+                          {planData.plan.phases.length} phases with DAG dependencies.
+                        </div>
+                      )}
+
+                      {pushErr && (
+                        <div
+                          className="mono"
+                          style={{
+                            fontSize: 10.5,
+                            color: tokens.bleed,
+                            background: tokens.dangerActionBg,
+                            padding: "6px 8px",
+                            borderRadius: 4,
+                          }}
+                        >
+                          {pushErr}
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "flex-end",
+                          gap: 8,
+                          marginTop: 4,
+                        }}
+                      >
+                        <button
+                          onClick={() => setPushDialogOpen(false)}
+                          className="mono"
+                          style={{
+                            fontSize: 11,
+                            color: tokens.textMuted,
+                            background: "transparent",
+                            border: `1px solid ${tokens.border}`,
+                            borderRadius: 6,
+                            padding: "4px 10px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handlePushProject}
+                          disabled={pushingProject || !projectName.trim()}
+                          className="mono"
+                          style={{
+                            fontSize: 11,
+                            color: tokens.accent,
+                            background: tokens.primaryActionBg,
+                            border: `1px solid ${tokens.accent}`,
+                            borderRadius: 6,
+                            padding: "4px 12px",
+                            cursor:
+                              pushingProject || !projectName.trim()
+                                ? "not-allowed"
+                                : "pointer",
+                            opacity:
+                              pushingProject || !projectName.trim() ? 0.6 : 1,
+                          }}
+                        >
+                          {pushingProject ? "Creating…" : "Create Project"}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Drawer Body Container */}
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: "auto",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {/* 1. Loading State */}
+              {planLoading && (
+                <div
+                  style={{
+                    padding: 16,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                  }}
+                >
+                  <div
+                    className="mono"
+                    style={{
+                      fontSize: 11,
+                      color: tokens.textMuted,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span>Analyzing drawing structure and compiling plan…</span>
+                  </div>
+                  <div
+                    style={{
+                      height: 50,
+                      background: tokens.bgGutter,
+                      borderRadius: 6,
+                      border: `1px solid ${tokens.borderSoft}`,
+                    }}
+                  />
+                  <div
+                    style={{
+                      height: 90,
+                      background: tokens.bgGutter,
+                      borderRadius: 6,
+                      border: `1px solid ${tokens.borderSoft}`,
+                    }}
+                  />
+                  <div
+                    style={{
+                      height: 90,
+                      background: tokens.bgGutter,
+                      borderRadius: 6,
+                      border: `1px solid ${tokens.borderSoft}`,
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* 2. Error State */}
+              {!planLoading && planErr && (
+                <div
+                  style={{
+                    padding: 14,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                    background: tokens.dangerActionBg,
+                    border: `1px solid ${tokens.dangerActionBorder}`,
+                    borderRadius: 6,
+                    margin: 12,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: tokens.bleed,
+                    }}
+                  >
+                    <span style={{ fontSize: 13 }}>⚠️</span>
+                    <span
+                      className="mono"
+                      style={{ fontSize: 11, fontWeight: 600 }}
+                    >
+                      Plan Derivation Failed
+                    </span>
+                  </div>
+                  <div
+                    className="mono"
+                    style={{ fontSize: 10.5, color: tokens.bleed }}
+                  >
+                    {planErr}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      onClick={() => path && fetchPlan(path)}
+                      className="mono"
+                      style={{
+                        fontSize: 10.5,
+                        color: tokens.bleed,
+                        background: "transparent",
+                        border: `1px solid ${tokens.bleed}`,
+                        borderRadius: 4,
+                        padding: "3px 8px",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Empty State */}
+              {!planLoading &&
+                !planErr &&
+                (!planData?.plan || planData.plan.tasks.length === 0) && (
+                  <div
+                    style={{
+                      padding: 28,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      textAlign: "center",
+                      gap: 12,
+                      color: tokens.textMuted,
+                      flex: 1,
+                    }}
+                  >
+                    <div style={{ fontSize: 28 }}>📋</div>
+                    <div
+                      style={{
+                        fontSize: 12.5,
+                        fontWeight: 600,
+                        color: tokens.textHi,
+                      }}
+                    >
+                      No actionable tasks recognized
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: tokens.textSecondary,
+                        maxWidth: 340,
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      Add cards, labeled boxes, frames, or connecting arrows to this
+                      drawing. The AI OS compiler will extract hierarchy, workstreams,
+                      and topological phases.
+                    </div>
+                    <button
+                      onClick={() => path && fetchPlan(path)}
+                      className="mono"
+                      style={{
+                        fontSize: 10.5,
+                        color: tokens.accent,
+                        background: tokens.primaryActionBg,
+                        border: `1px solid ${tokens.accent}`,
+                        borderRadius: 6,
+                        padding: "4px 10px",
+                        cursor: "pointer",
+                        marginTop: 4,
+                      }}
+                    >
+                      Re-scan Drawing
+                    </button>
+                  </div>
+                )}
+
+              {/* 4. Populated State - Visual Tab */}
+              {!planLoading &&
+                !planErr &&
+                planData?.plan &&
+                planData.plan.tasks.length > 0 &&
+                planTab === "visual" && (
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 12,
+                    }}
+                  >
+                    {/* Ambiguity Alert Banner (tokens.warn) */}
+                    {planData.plan.ambiguities &&
+                      planData.plan.ambiguities.length > 0 && (
+                        <div
+                          style={{
+                            background: tokens.freezeBgWarn,
+                            border: `1px solid ${tokens.freezeBorderWarn}`,
+                            borderLeft: `4px solid ${tokens.warn}`,
+                            borderRadius: 6,
+                            padding: "10px 12px",
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: 8,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                            }}
+                          >
+                            <span style={{ fontSize: 13, color: tokens.warn }}>
+                              ⚠️
+                            </span>
+                            <span
+                              className="mono"
+                              style={{
+                                fontSize: 11,
+                                fontWeight: 700,
+                                color: tokens.warn,
+                                letterSpacing: "0.06em",
+                              }}
+                            >
+                              AMBIGUITIES & OPEN QUESTIONS (
+                              {planData.plan.ambiguities.length})
+                            </span>
+                          </div>
+
+                          <div
+                            style={{
+                              fontSize: 10.5,
+                              color: tokens.textSecondary,
+                              lineHeight: 1.35,
+                            }}
+                          >
+                            Structural uncertainties detected in drawing topology.
+                            Resolve these decisions instead of guessing:
+                          </div>
+
+                          <div
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 8,
+                            }}
+                          >
+                            {planData.plan.ambiguities.map((a: GraphAmbiguity) => (
+                              <div
+                                key={a.id}
+                                style={{
+                                  background: tokens.bgCard,
+                                  border: `1px solid ${tokens.borderSoft}`,
+                                  borderRadius: 6,
+                                  padding: "8px 10px",
+                                  display: "flex",
+                                  flexDirection: "column",
+                                  gap: 4,
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 6,
+                                  }}
+                                >
+                                  <span
+                                    className="mono"
+                                    style={{
+                                      fontSize: 9,
+                                      padding: "1px 5px",
+                                      borderRadius: 3,
+                                      background:
+                                        a.severity === "warning"
+                                          ? tokens.freezeBgWarn
+                                          : tokens.bgGutter,
+                                      color:
+                                        a.severity === "warning"
+                                          ? tokens.warn
+                                          : tokens.textMuted,
+                                      border: `1px solid ${
+                                        a.severity === "warning"
+                                          ? tokens.freezeBorderWarn
+                                          : tokens.border
+                                      }`,
+                                    }}
+                                  >
+                                    {a.kind.replace(/_/g, " ").toUpperCase()}
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: 11,
+                                      fontWeight: 600,
+                                      color: tokens.textHi,
+                                    }}
+                                  >
+                                    {a.label}
+                                  </span>
+                                </div>
+
+                                <div
+                                  style={{
+                                    fontSize: 10.5,
+                                    color: tokens.textMuted,
+                                  }}
+                                >
+                                  {a.description}
+                                </div>
+
+                                <div
+                                  className="mono"
+                                  style={{
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    color: tokens.accent,
+                                    background: tokens.primaryActionBg,
+                                    padding: "5px 8px",
+                                    borderRadius: 4,
+                                    borderLeft: `2px solid ${tokens.accent}`,
+                                    lineHeight: 1.35,
+                                  }}
+                                >
+                                  ❓ {a.question}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                    {/* Workstreams Filter Bar */}
+                    {planData.plan.workstreams &&
+                      planData.plan.workstreams.length > 0 && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 4,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <span
+                            className="mono"
+                            style={{
+                              fontSize: 9.5,
+                              color: tokens.textMuted,
+                              marginRight: 2,
+                            }}
+                          >
+                            Workstream:
+                          </span>
+                          <button
+                            onClick={() => setSelectedWorkstream(null)}
+                            className="mono"
+                            style={{
+                              fontSize: 9.5,
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              background:
+                                selectedWorkstream === null
+                                  ? tokens.primaryActionBg
+                                  : "transparent",
+                              color:
+                                selectedWorkstream === null
+                                  ? tokens.accent
+                                  : tokens.textMuted,
+                              border: `1px solid ${
+                                selectedWorkstream === null
+                                  ? tokens.accent
+                                  : tokens.border
+                              }`,
+                              cursor: "pointer",
+                            }}
+                          >
+                            All ({planData.plan.tasks.length})
+                          </button>
+                          {planData.plan.workstreams.map((ws) => (
+                            <button
+                              key={ws.id}
+                              onClick={() =>
+                                setSelectedWorkstream(
+                                  selectedWorkstream === ws.name ? null : ws.name,
+                                )
+                              }
+                              className="mono"
+                              style={{
+                                fontSize: 9.5,
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background:
+                                  selectedWorkstream === ws.name
+                                    ? tokens.primaryActionBg
+                                    : "transparent",
+                                color:
+                                  selectedWorkstream === ws.name
+                                    ? tokens.accent
+                                    : tokens.textMuted,
+                                border: `1px solid ${
+                                  selectedWorkstream === ws.name
+                                    ? tokens.accent
+                                    : tokens.border
+                                }`,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {ws.name} ({ws.taskIds.length})
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                    {/* Phase Cards with Tasks */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {planData.plan.phases.map((phase) => {
+                        const phaseTasks = planData.plan.tasks.filter(
+                          (t) =>
+                            t.phase === phase.phase &&
+                            (!selectedWorkstream ||
+                              t.workstream === selectedWorkstream),
+                        );
+                        if (phaseTasks.length === 0) return null;
+
+                        return (
+                          <div
+                            key={phase.phase}
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 6,
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                padding: "6px 8px",
+                                background: tokens.bgGutter,
+                                border: `1px solid ${tokens.borderDivider}`,
+                                borderRadius: 6,
+                              }}
+                            >
+                              <span
+                                className="mono"
+                                style={{
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  color: tokens.accent,
+                                  background: tokens.primaryActionBg,
+                                  padding: "2px 6px",
+                                  borderRadius: 4,
+                                }}
+                              >
+                                PHASE {phase.phase}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 11.5,
+                                  fontWeight: 600,
+                                  color: tokens.textHi,
+                                }}
+                              >
+                                {phase.name}
+                              </span>
+                              <span
+                                className="mono"
+                                style={{
+                                  fontSize: 10,
+                                  color: tokens.textMuted,
+                                  marginLeft: "auto",
+                                }}
+                              >
+                                {phaseTasks.length} task
+                                {phaseTasks.length === 1 ? "" : "s"}
+                              </span>
+                            </div>
+
+                            <div
+                              style={{
+                                display: "flex",
+                                flexDirection: "column",
+                                gap: 6,
+                                paddingLeft: 4,
+                              }}
+                            >
+                              {phaseTasks.map((t: PlanTask) => {
+                                const rTokens = getRoleTokens(t.role);
+                                const sTokens = getStatusTokens(t.status);
+
+                                return (
+                                  <div
+                                    key={t.id}
+                                    style={{
+                                      background: tokens.bgCard,
+                                      border: `1px solid ${tokens.border}`,
+                                      borderRadius: 6,
+                                      padding: "8px 10px",
+                                      display: "flex",
+                                      flexDirection: "column",
+                                      gap: 5,
+                                    }}
+                                  >
+                                    <div
+                                      style={{
+                                        display: "flex",
+                                        alignItems: "center",
+                                        gap: 6,
+                                        flexWrap: "wrap",
+                                      }}
+                                    >
+                                      <span
+                                        className="mono"
+                                        style={{
+                                          fontSize: 9.5,
+                                          fontWeight: 600,
+                                          padding: "1px 6px",
+                                          borderRadius: 4,
+                                          background: rTokens.bg,
+                                          color: rTokens.ink,
+                                          border: `1px solid ${tokens.borderSoft}`,
+                                        }}
+                                      >
+                                        {t.role}
+                                      </span>
+                                      <span
+                                        className="mono"
+                                        style={{
+                                          fontSize: 9,
+                                          padding: "1px 5px",
+                                          borderRadius: 3,
+                                          background: tokens.bgGutter,
+                                          color: tokens.textMuted,
+                                          border: `1px solid ${tokens.borderSoft}`,
+                                        }}
+                                      >
+                                        {t.tier}
+                                      </span>
+                                      <span
+                                        className="mono"
+                                        style={{
+                                          fontSize: 9,
+                                          padding: "1px 5px",
+                                          borderRadius: 3,
+                                          background: sTokens.bg,
+                                          color: sTokens.text,
+                                          border: `1px solid ${sTokens.border}`,
+                                        }}
+                                      >
+                                        {sTokens.label}
+                                      </span>
+                                      <span
+                                        className="mono"
+                                        style={{
+                                          fontSize: 9.5,
+                                          color: tokens.textMuted,
+                                          marginLeft: "auto",
+                                        }}
+                                      >
+                                        {t.workstream}
+                                      </span>
+                                    </div>
+
+                                    <div
+                                      style={{
+                                        fontSize: 11.5,
+                                        fontWeight: 600,
+                                        color: tokens.textHi,
+                                      }}
+                                    >
+                                      {t.title}
+                                    </div>
+
+                                    {t.brief && (
+                                      <div
+                                        style={{
+                                          fontSize: 10.5,
+                                          color: tokens.textSecondary,
+                                          lineHeight: 1.4,
+                                        }}
+                                      >
+                                        {t.brief}
+                                      </div>
+                                    )}
+
+                                    {t.depends_on.length > 0 && (
+                                      <div
+                                        className="mono"
+                                        style={{
+                                          fontSize: 9.5,
+                                          color: tokens.textMuted,
+                                          display: "flex",
+                                          alignItems: "center",
+                                          gap: 4,
+                                          flexWrap: "wrap",
+                                        }}
+                                      >
+                                        <span>depends on:</span>
+                                        {t.depends_on.map((dep) => (
+                                          <span
+                                            key={dep}
+                                            style={{
+                                              padding: "0 4px",
+                                              background: tokens.bgGutter,
+                                              borderRadius: 3,
+                                              border: `1px solid ${tokens.borderSoft}`,
+                                            }}
+                                          >
+                                            {dep}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+
+                                    {t.write_set && t.write_set.length > 0 && (
+                                      <div
+                                        className="mono"
+                                        style={{
+                                          fontSize: 9,
+                                          color: tokens.textMuted,
+                                          display: "flex",
+                                          alignItems: "center",
+                                          gap: 4,
+                                          flexWrap: "wrap",
+                                        }}
+                                      >
+                                        <span>write set:</span>
+                                        <span style={{ color: tokens.textSecondary }}>
+                                          {t.write_set.join(", ")}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+              {/* 4b. Populated State - Markdown Tab */}
+              {!planLoading && !planErr && planTab === "markdown" && (
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    minHeight: 0,
+                    padding: "10px 14px",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 6,
+                    }}
+                  >
+                    <span
+                      className="mono"
+                      style={{ fontSize: 10.5, color: tokens.textMuted }}
+                    >
+                      {planData?.planPath ?? "companion .plan.md note"}
+                    </span>
+                    {planMarkdownDirty && (
+                      <span
+                        className="mono"
+                        style={{ fontSize: 9.5, color: tokens.warn }}
+                      >
+                        ● Unsaved edits
+                      </span>
+                    )}
+                  </div>
+
+                  <textarea
+                    value={planMarkdownEdit}
+                    onChange={(e) => {
+                      setPlanMarkdownEdit(e.target.value);
+                      setPlanMarkdownDirty(true);
+                      setPlanSaveStatus("idle");
+                    }}
+                    placeholder="# Plan Markdown..."
+                    className="mono"
+                    style={{
+                      flex: 1,
+                      minHeight: 320,
+                      width: "100%",
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      padding: "8px 10px",
+                      background: tokens.inputBg,
+                      color: tokens.text,
+                      border: `1px solid ${tokens.border}`,
+                      borderRadius: 6,
+                      outline: "none",
+                      resize: "none",
+                      boxSizing: "border-box",
+                    }}
+                  />
+
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "flex-end",
+                      gap: 8,
+                      marginTop: 8,
+                      flexShrink: 0,
+                    }}
+                  >
+                    {planSaveErr && (
+                      <span
+                        className="mono"
+                        style={{ fontSize: 10, color: tokens.bleed }}
+                      >
+                        {planSaveErr}
+                      </span>
+                    )}
+                    {planSaveStatus === "saved" && (
+                      <span
+                        className="mono"
+                        style={{ fontSize: 10, color: tokens.ok }}
+                      >
+                        ✓ Saved to companion vault note
+                      </span>
+                    )}
+                    <button
+                      onClick={handleSaveMarkdown}
+                      disabled={planSaveStatus === "saving" || !path}
+                      className="mono"
+                      style={{
+                        fontSize: 11,
+                        color: tokens.accent,
+                        background: tokens.primaryActionBg,
+                        border: `1px solid ${tokens.accent}`,
+                        borderRadius: 6,
+                        padding: "4px 10px",
+                        cursor:
+                          planSaveStatus === "saving" || !path
+                            ? "not-allowed"
+                            : "pointer",
+                        opacity: planSaveStatus === "saving" || !path ? 0.6 : 1,
+                      }}
+                    >
+                      {planSaveStatus === "saving" ? "saving…" : "Save .plan.md"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        ) : initial ? (
-          <Excalidraw
-            excalidrawAPI={(a: unknown) => setApi(a as typeof api)}
-            // Scene data crosses an untyped boundary (the vault file), so it
-            // arrives as plain JSON. Excalidraw validates/normalises it on
-            // load; asserting here is the honest place to bridge the two.
-            initialData={initial as never}
-            onChange={onChange}
-            theme={themeMode}
-          />
-        ) : null}
+        )}
       </div>
     </div>
   );
 }
+
