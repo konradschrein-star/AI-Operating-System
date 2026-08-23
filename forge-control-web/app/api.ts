@@ -133,6 +133,181 @@ export const createCanvas = (input: { name: string; folder?: string }) =>
     input,
   );
 
+export type PlanTaskStatus =
+  | "done"
+  | "in_progress"
+  | "planned"
+  | "gap"
+  | "blocked"
+  | "proposal";
+
+export type TaskRole =
+  | "architect"
+  | "planner"
+  | "builder"
+  | "reviewer"
+  | "scout";
+
+export type TaskTier = "fast" | "standard" | "flagship";
+
+export interface PlanTask {
+  id: string;
+  nodeId: string;
+  title: string;
+  workstream: string;
+  phase: number;
+  status: PlanTaskStatus;
+  statusReason: string;
+  depends_on: string[];
+  role: TaskRole;
+  tier: TaskTier;
+  write_set: string[];
+  brief: string;
+  link: string | null;
+}
+
+export interface PlanWorkstream {
+  id: string;
+  name: string;
+  containerId: string | null;
+  taskIds: string[];
+  summary: string;
+}
+
+export interface PlanPhase {
+  phase: number;
+  name: string;
+  taskIds: string[];
+}
+
+export type AmbiguityKind =
+  | "unconnected_node"
+  | "dangling_arrow"
+  | "cycle"
+  | "unexplained_color"
+  | "unlabelled_shape"
+  | "straddling_node";
+
+export type AmbiguitySeverity = "warning" | "question" | "info";
+
+export interface GraphAmbiguity {
+  id: string;
+  kind: AmbiguityKind;
+  severity: AmbiguitySeverity;
+  elementIds: string[];
+  label: string;
+  description: string;
+  question: string;
+}
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  role: string;
+  color?: string;
+  status:
+    | "built"
+    | "partial"
+    | "planned"
+    | "gap"
+    | "blocked"
+    | "proposal"
+    | "unknown";
+  statusReason: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  containerId?: string | null;
+}
+
+export interface GraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  resolvedBy: "explicit" | "proximity" | "unresolved";
+}
+
+export interface ParsedDrawingGraph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  ambiguities: GraphAmbiguity[];
+  stats: {
+    totalNodes: number;
+    totalEdges: number;
+    cycleCount: number;
+    ambiguityCount: number;
+  };
+}
+
+export interface CanvasPlan {
+  path: string;
+  title: string;
+  summary: string;
+  workstreams: PlanWorkstream[];
+  phases: PlanPhase[];
+  tasks: PlanTask[];
+  ambiguities: GraphAmbiguity[];
+  stats: {
+    totalTasks: number;
+    totalPhases: number;
+    totalWorkstreams: number;
+    ambiguityCount: number;
+    completedTasks: number;
+    blockedTasks: number;
+  };
+  rawMarkdown: string;
+}
+
+export interface CanvasPlanResponse {
+  ok: true;
+  path: string;
+  plan: CanvasPlan;
+  graph: ParsedDrawingGraph;
+  savedMarkdown: string | null;
+  planPath: string;
+}
+
+export interface SaveCanvasPlanInput {
+  path: string;
+  planMarkdown?: string;
+  plan?: CanvasPlan;
+}
+
+export interface SaveCanvasPlanResponse {
+  ok: true;
+  path: string;
+  planPath: string;
+  mtime: number;
+}
+
+export interface PushPlanToProjectInput {
+  path?: string;
+  name?: string;
+  brief?: string;
+  repo?: "ai-os" | "content-forge" | "scratch";
+  base_branch?: string;
+  architect_tier?: TaskTier;
+  origin_chat_id?: string;
+  plan?: CanvasPlan;
+}
+
+export interface PushPlanToProjectResponse {
+  ok: true;
+  project: Record<string, unknown>;
+  architectTask: Record<string, unknown>;
+  tasks: Record<string, unknown>[];
+  tasksCount: number;
+}
+
+export const getCanvasPlan = (path: string) =>
+  getJson<CanvasPlanResponse>(`/canvas/plan?path=${encodeURIComponent(path)}`);
+
+export const saveCanvasPlan = (input: SaveCanvasPlanInput) =>
+  postJson<SaveCanvasPlanResponse>("/canvas/plan/save", input);
+
+export const pushPlanToProject = (input: PushPlanToProjectInput) =>
+  postJson<PushPlanToProjectResponse>("/canvas/plan/to-project", input);
+
+
 /* ----------------------------------------------------------------------------
  * Subscription quota — deliberately NOT here.
  *
