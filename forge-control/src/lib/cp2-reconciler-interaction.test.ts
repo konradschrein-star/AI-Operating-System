@@ -843,6 +843,22 @@ describe("R40 — the workstream term reaches every site that keys on (project, 
     assert.match(body, /workstream: input\.graph\.builder\.workstream,/);
     assert.match(body, /write_set: input\.graph\.builder\.write_set,/);
     assert.match(body, /depends_on: \[builder\.id\],/);
+    /* BOTH inserts carry the inherited tier. The builder's was changed and the
+     * checker's was left `tier: null`, so every re-check row was born untiered
+     * and ran on the default engine — measured 100% NULL on rows created after
+     * the first half of the fix went live, while the builders beside them
+     * inherited fine. Two occurrences, and no bare `tier: null` left, is the
+     * assertion that would have caught it. */
+    assert.equal(
+      (body.match(/tier: input\.tier \?\? null,/g) ?? []).length,
+      2,
+      "both the fix builder and every re-check row must inherit the chain's tier",
+    );
+    assert.doesNotMatch(
+      body,
+      /^\s*tier: null,\s*$/m,
+      "a hardcoded `tier: null` in createFixChain sends that row to the default engine",
+    );
     // R41: the guard runs inside the transaction, before anything is written.
     assert.ok(
       body.indexOf('await client.query("BEGIN")') < body.indexOf("duplicatesFixChain(candidate,"),
